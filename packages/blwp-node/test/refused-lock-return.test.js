@@ -48,7 +48,18 @@ test('a lock for a round the seats refuse, never entered, is kept by each seat o
     refusing.why = 'test: this signer node refuses the round';
     const kept = [];
     for (const d of w.nodes) { const r = await hand(d); kept.push([r.status, (await r.text()).slice(0, 90)]); }
+    // AND ITS NODE-FEE LOCK (the same transaction, image H(F), the same refund key): returned with it (measured live 07:26Z:
+    // 49a50535's stake came back, its 2000 msat fee lock stayed locked for its expiry)
+    const feeAt = { txid: outpoint.txid, outIdx: 1n };
+    const feeFields = { paymentImage: { kind: 'hash', bytes: rand(32) }, amountMsat: 2000n, claimPk: w.claimPk, refundPk: refundKeyOf(key), expiration: w.port.height + 200 };
+    await w.port.put(feeAt, feeFields);
+    const feeKept = [];
+    for (const d of w.nodes) { const r = await hand(d, feeFields, feeAt); feeKept.push([r.status, (await r.text()).slice(0, 90)]); }
     const listed = await (await fetch(`${base(w.a)}/stake-lock?round=${toHex(w.rid)}&refund=${toHex(refundKeyOf(key))}`)).json();
+    const feeRow = listed.find((l) => l.outpoint === `${toHex(feeAt.txid)}:1`);
+    const ff = feeRow ? await fetch(`${base(w.a)}/forfeit?round=${toHex(w.rid)}&entry=${feeRow.entryId}`) : null;
+    const ffj = ff && ff.status === 200 ? await ff.json() : { why: ff ? await ff.text() : 'not listed' };
+    const feeVerifies = !!ffj.signature && schnorr.verify(fromHex(ffj.signature), fromHex(ffj.contractId), w.claimPk.subarray(1));
     // 3. THE FORFEIT, signed at once
     const f = await fetch(`${base(w.a)}/forfeit?round=${toHex(w.rid)}&entry=${hid}`);
     const fj = f.status === 200 ? await f.json() : { why: await f.text() };
@@ -64,10 +75,14 @@ test('a lock for a round the seats refuse, never entered, is kept by each seat o
     await w.port.put(third, noHandout);
     const r3 = await hand(w.a, noHandout, third); const w3 = await r3.text();
     console.log('  FACTS:', JSON.stringify({ offered: [offered.status, offeredWhy.slice(0, 90)], kept, listed: listed.map((l) => [l.entryId.slice(0, 8), l.outpoint.slice(0, 8)]),
-      forfeit: [f.status, verifies, String(fj.why || '').slice(0, 120)], wrongKey: [r1.status, w1.slice(0, 90)], entered: [r2.status, w2.slice(0, 90)], noHandout: [r3.status, w3.slice(0, 90)] }));
+      forfeit: [f.status, verifies, String(fj.why || '').slice(0, 120)], feeKept, fee: [ff && ff.status, feeVerifies, String(ffj.why || '').slice(0, 120)], wrongKey: [r1.status, w1.slice(0, 90)], entered: [r2.status, w2.slice(0, 90)], noHandout: [r3.status, w3.slice(0, 90)] }));
     assert.equal(offered.status, 409); assert.match(offeredWhy, /offers that round/);
     for (const [s, why] of kept) assert.equal(s, 201, why);
-    assert.deepEqual(listed.map((l) => [l.entryId, l.outpoint]), [[hid, `${toHex(outpoint.txid)}:0`]]);
+    assert.deepEqual(listed.find((l) => l.entryId === hid) && listed.find((l) => l.entryId === hid).outpoint, `${toHex(outpoint.txid)}:0`);
+    for (const [st, why] of feeKept) assert.equal(st, 201, why);
+    assert.equal(listed.length, 2, 'the stake and its fee lock are not both listed');
+    assert.ok(feeRow && feeRow.entryId !== hid, 'the fee lock is not kept under an id of its own');
+    assert.equal(ff && ff.status, 200, ffj.why); assert.equal(feeVerifies, true, 'the fee lock\'s forfeit does not verify');
     assert.equal(f.status, 200, fj.why); assert.equal(verifies, true, 'the forfeit does not verify under the round\'s claim key');
     assert.equal(r1.status, 409); assert.match(w1, /refund key/);
     assert.equal(r2.status, 409); assert.match(w2, /stakes an entry/);
