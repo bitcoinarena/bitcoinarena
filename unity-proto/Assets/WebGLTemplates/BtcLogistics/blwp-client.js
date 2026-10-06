@@ -11350,15 +11350,18 @@ const PAYOUT_NOTE = 'blwp.payout.';
  * for anything else (the window, a signer node short), asked again.
  */
 async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client = null, onStep = () => {} } = {}) {
+  client = null, onStep = () => {}, refused = false } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
   const noted = `${STAKE_NOTE}${toHex(roundId)}`;
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
   } catch { /* an unreadable note is no note */ }
-  const s = await settlementOf({ roundId, nodes, fetcher });
-  if (!s.ok) return { ok: false, final: false, why: s.why };
+  // A REFUSED ROUND IS NEVER SETTLED (§23.2 REFUSED, kanban #191): its stake comes back by the forfeit alone
+  if (!refused) {
+    const s = await settlementOf({ roundId, nodes, fetcher });
+    if (!s.ok) return { ok: false, final: false, why: s.why };
+  }
   let got;
   try {
     got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep });
@@ -11626,6 +11629,37 @@ async function refundKept({ round, roundId, seed, curve, client, storage, kept =
  * /forfeit (the stake back), and the federation's read-only lockStatus (a lock no signer node will
  * settle, after its expiry). `refund` and `redeem` are never called here.
  */
+/**
+ * A LOCK FOR A ROUND THE SIGNER NODES REFUSE, HANDED TO THEM FOR ITS RETURN (§23.2 REFUSED; kanban #191): POST
+ * /refused-lock to every signer node of the round. Each keeps it only on its own record - it refuses the round, the lock
+ * stakes no entry there, its image is A0 of a handout it holds for the round. Answers how many kept it, and each one's word.
+ */
+async function handRefusedLock({ roundId, lock, nodes, fetcher = fetch } = {}) {
+  const body = JSON.stringify({ outpoint: `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`, fields: lockFieldsToJson(lock.fields) });
+  const said = await Promise.all([...new Set(nodes || [])].map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/refused-lock?round=${toHex(roundId)}`, { method: 'POST', body });
+      return { node, status: r.status, why: (await r.text()).trim().slice(0, 160) };
+    } catch (e) { return { node, status: 0, why: String(e && e.message || e).slice(0, 160) }; }
+  }));
+  return { kept: said.filter((x) => x.status === 201).length, said };
+}
+
+/** The stake owed back at once for a lock of a refused round, or null when no signer node keeps it as refused. */
+async function refusedReturn({ roundId, playerPubkey, lock, nodes, fetcher, client }) {
+  if (!lock || !lock.outpoint) return null;
+  const st = JSON.parse(await client.lockStatus(toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
+  if (!st.stored) return null;
+  const handed = await handRefusedLock({ roundId, lock, nodes, fetcher });
+  if (!handed.kept) return null;
+  const at = `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`;
+  const msat = BigInt(lock.fields.amountMsat);
+  const found = (await findLock({ roundId, playerPubkey, nodes, fetcher })).find((l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}` === at);
+  if (!found) return { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
+  const f = await forfeitOf({ roundId, entryId: found.entryId, nodes, fetcher });
+  return f.ok ? { state: 'owed', how: 'forfeit', refused: true, msat } : { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
+}
+
 async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so nothing in it is owed from a lock');
   const player = playerFor({ ...round, id: roundId }, { seed, curve });
@@ -11678,18 +11712,25 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
       if (!ls.length) stake = { state: s.ok ? 'none' : 'waiting', why: 'this tab keeps no lock for this round' };
       else if (!client) stake = { state: 'waiting', why: 'the federation was not asked yet' };
       else {
-        let owed = 0n; let gone = 0; let waiting = null;
-        for (const l of ls) {
-          const st = JSON.parse(await client.lockStatus(toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
-          if (!st.stored) { gone++; continue; }
-          if (Number(st.stored.blocks_left) > 0) { waiting = { expiration: Number(l.fields.expiration), blockCount: Number(st.block_count) }; continue; }
-          owed += BigInt(l.fields.amountMsat);
+        // §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
+        // still in the federation that no signer node knows is handed to them; if they refuse its round they keep it, and
+        // its forfeit is the stake owed back now - not after its expiry.
+        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, lock: held.lock, nodes, fetcher, client });
+        if (back) stake = back;
+        else {
+          let owed = 0n; let gone = 0; let waiting = null;
+          for (const l of ls) {
+            const st = JSON.parse(await client.lockStatus(toHex(l.outpoint.txid), Number(l.outpoint.outIdx)));
+            if (!st.stored) { gone++; continue; }
+            if (Number(st.stored.blocks_left) > 0) { waiting = { expiration: Number(l.fields.expiration), blockCount: Number(st.block_count) }; continue; }
+            owed += BigInt(l.fields.amountMsat);
+          }
+          const total = ls.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+          if (waiting) stake = { state: 'waiting', how: 'refund', msat: total, ...waiting };
+          else if (owed > 0n) stake = { state: 'owed', how: 'refund', msat: owed };
+          // GONE AFTER ITS EXPIRY: back to the player's key (this tab's refund, or another start's).
+          else stake = { state: 'gone', how: 'refund', msat: total };
         }
-        const total = ls.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
-        if (waiting) stake = { state: 'waiting', how: 'refund', msat: total, ...waiting };
-        else if (owed > 0n) stake = { state: 'owed', how: 'refund', msat: owed };
-        // GONE AFTER ITS EXPIRY: back to the player's key (this tab's refund, or another start's).
-        else stake = { state: 'gone', how: 'refund', msat: total };
       }
     }
   }
@@ -11739,7 +11780,7 @@ function owedToLine(o) {
 async function collectOwed({ look, client, ...ask } = {}) {
   const got = { payout: null, stake: null, refund: null };
   if (look.payoutMsat > 0n) got.payout = await redeemPayout({ ...ask, client });
-  if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client });
+  if (look.stakeMsat > 0n) got.stake = await returnStake({ ...ask, client, refused: !!(look.stake && look.stake.refused) });
   if (look.refundMsat > 0n) got.refund = await refundKept({ ...ask, client });
   return got;
 }

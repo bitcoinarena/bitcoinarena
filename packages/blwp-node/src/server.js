@@ -95,6 +95,7 @@ import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../protocol/src/rerun.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigFault, SIGNED_FINAL_SIG_BYTES } from '../../protocol/src/final-sig.js';
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
+import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../protocol/src/slash.js';
@@ -281,6 +282,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HOW THE SETTLEMENT READS A RUN'S FINALITY - `resultFinality`. A TEST AID, as `finality.rerunMs` is: two signer nodes
   // that agree on a run cannot hold a valid objection against it, so a lock round's late-loser tests hand another view.
   finalityOf = resultFinality,
+  // A TEST AID, as the finality option above is (kanban #191): one more reason this node refuses to offer a round - contract -> why or null.
+  // Production names none; the live reasons are the series and the donation set in force.
+  refusedFor = null,
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): `(roundId, contract) => { firstHeight, blocks }`,
   // defaulting to this daemon's own `chainFor`. Given apart from `chainFor` so a harness can hand its daemons a block
   // clock without also making the verifier check its fixed beacon against that chain.
@@ -774,6 +778,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const forfeits = new Forfeit(round, {
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
+    // §23.2 REFUSED (kanban #191): asked at the forfeit - does this node still refuse that round? (null: it offers it)
+    refusedNow: (rid) => offerRefusalOfRound(rid),
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -1859,7 +1865,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const droppedSeries = new Set();
   const droppedRefusal = (contract) => (contract && contract.seriesId instanceof Uint8Array && droppedSeries.has(toHex(contract.seriesId))
     ? `series ${toHex(contract.seriesId).slice(0, 16)} was taken out of this node's series file: its rounds are not offered or entered` : null);
-  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract);
+  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract)
+    || (typeof refusedFor === 'function' ? refusedFor(contract) : null);
   const seriesRefusalOfRound = (rid) => {
     const row = rid ? round.get(rid) : null;
     if (!row) return null;
@@ -2632,6 +2639,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const forRound = round.get(handout.roundId);
         if (!forRound) return text(res, 404, 'this node holds no such round, so it cannot say what its stakes open at');
         const roundContract = decodeRoundContract(new Uint8Array(forRound.contract));
+        // NO STAKE IS DEALT FOR A ROUND THIS NODE REFUSES (kanban #191): nothing may be locked for it
+        { const why = offerRefusal(roundContract); if (why) return text(res, 409, `handout refused: ${why}`); }
         let threshold;
         try { threshold = roundThreshold(roundContract.settlementSlots); }
         catch (e) { return text(res, 409, e.message); }
@@ -3201,13 +3210,65 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // comes back with only their seed can derive the round's refund key, and
       // nothing else - the outpoint and the stake point were random. Every lock
       // is public in the federation; this signer node answers with the ones it verified.
+      // A STAKE LOCKED FOR A ROUND THIS NODE REFUSES, AND NEVER ENTERED, KEPT FOR ITS RETURN (§23.2 REFUSED; kanban #191,
+      // the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"). Measured live 05:31Z: round 49a50535
+      // refused, a page's 100 sat locked, no entry at any seat - back only after its expiry. Every check on this node's own
+      // record: it refuses the round; the lock stakes no entry here; the lock's image is A0 of a handout this node accepted
+      // for the round and its refund key that handout player's, who entered nothing here; the federation holds it under this
+      // round's claim key. The forfeit (GET /forfeit?round&entry=<handout id>) then returns it to the player at once.
+      if (req.method === 'POST' && url.pathname === '/refused-lock') {
+        const rid = new Uint8Array(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        if (rid.length !== 32) return text(res, 400, 'a refused-round lock is handed over for a round id');
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const rc = decodeRoundContract(new Uint8Array(row.contract));
+        const refusedWhy = offerRefusal(rc);
+        if (!refusedWhy) return text(res, 409, 'this signer node offers that round: a stake in it is entered and settled with the round, never returned as refused');
+        if (rc.stakeMsat === 0n || rc.federationId.every((b) => b === 0)) return text(res, 409, 'that round takes no stake lock');
+        if (!stakeLocks) return text(res, 409, 'this signer node reaches no federation, so it cannot read the lock');
+        let fields, outpoint;
+        try {
+          const body = JSON.parse(Buffer.from(await read(req)).toString('utf8'));
+          fields = lockFieldsFromJson(body.fields);
+          const [txid, outIdx] = String(body.outpoint || '').split(':');
+          if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(outIdx || '')) throw new Error('an outpoint is txid:index');
+          outpoint = { txid: new Uint8Array(Buffer.from(txid, 'hex')), outIdx: BigInt(outIdx) };
+        } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
+        if (round.stakeLockAt(outpoint))
+          return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
+        const claimPk = claimKeyOf(rid);
+        if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk))
+          return text(res, 409, 'that lock names another claim key than this round\'s');
+        const image = fields.paymentImage || {};
+        const hex = image.bytes instanceof Uint8Array ? toHex(image.bytes) : '';
+        let held = null;
+        for (const h of round.handoutsOf(rid)) {
+          let d; try { d = decodeHandout(h.bytes); } catch { continue; }
+          if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { held = { id: h.id, handout: d }; break; }
+        }
+        if (!held) return text(res, 409, 'this signer node holds no handout for that round whose A0 is the lock\'s image: no stake of that round');
+        if (toHex(refundKeyOf(held.handout.playerPubkey)) !== toHex(fields.refundPk))
+          return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
+        const player = toHex(held.handout.playerPubkey);
+        if (round.entriesOf(rid).some(({ entry }) => toHex(entry.playerPubkey) === player))
+          return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
+        const [st, id] = await Promise.all([stakeLocks.status(outpoint), stakeLocks.contractId(fields)]);
+        if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
+        if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
+        if (fields.expiration !== st.blockCount + st.stored.blocksLeft) return text(res, 409, 'that contract\'s expiration is not the one the federation holds');
+        round.putRefusedLock({ handoutId: held.id, roundId: rid, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
+        console.log(`[refused-lock] ${toHex(rid).slice(0, 16)}: ${String(fields.amountMsat)} msat kept for its return (${String(refusedWhy).slice(0, 80)})`);
+        return text(res, 201, `kept for its return: forfeit it at /forfeit?round=${toHex(rid)}&entry=${toHex(held.id)}`);
+      }
+
       if (req.method === 'GET' && url.pathname === '/stake-lock') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const refund = (url.searchParams.get('refund') || '').toLowerCase();
         if (rid.length !== 32 || !/^0[23][0-9a-f]{64}$/.test(refund))
           return text(res, 400, 'a stake lock is asked for by a round id and a 33-byte refund key');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(round.stakeLocksFor(new Uint8Array(rid), refund)));
+        // AND THE LOCKS KEPT FOR A REFUSED ROUND (§23.2 REFUSED, kanban #191), under their handout's id
+        return res.end(JSON.stringify([...round.stakeLocksFor(new Uint8Array(rid), refund), ...round.refusedLocksFor(new Uint8Array(rid), refund)]));
       }
 
       // THE COMMITTEE'S FORFEIT OF A QUALIFIER'S STAKE LOCK (§23.2 row 1, W5b).
