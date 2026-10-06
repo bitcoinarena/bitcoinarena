@@ -30,7 +30,7 @@ public class ClosedRoundNamedTests
     public void WhileARefusalNamesARound_EveryRowSaysItsOwnName()
     {
         var s = DailyLobby.Parse(Json);
-        foreach (var w in DailyLobby.RowWords(s.rows[0], true)) StringAssert.StartsWith("PAID · 100 sats · round 5a7bbb44 · closes 1:11", w);
+        foreach (var w in DailyLobby.RowWords(s.rows[0], true)) StringAssert.StartsWith("PAID · 100 sats · round 5a7bbb44 · join until 1:11", w);
         foreach (var w in DailyLobby.RowWords(s.rows[0])) StringAssert.DoesNotContain("round ", w, "without a refusal the row reads as before");
     }
 
