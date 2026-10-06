@@ -2017,7 +2017,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   // THE ANNOUNCED ROUNDS (ROUNDS-EP-1612 / ROUNDS-HTML-1617): every round held that has not ended, with ISO-8601 UTC
   // start and end and its committees as the census and the beacon draw them - the sortition a client recomputes.
+  // A DRAWN COMMITTEE KEPT PER ROUND (kanban #197, the owner 2026-10-06): once the census and the beacon have drawn it, the
+  // draw is fixed - it was redone for every row of every listing (2,184 of 12,750 ms of one full GET /rounds, seat 7).
+  // A draw that is not made yet (`drawn: false`) is asked again next time.
+  const committeeDrawn = new Map();               // round id hex -> its drawn committees
   const committeeOf = (rid) => {
+    const kept = committeeDrawn.get(toHex(rid));
+    if (kept) return kept;
+    const drawn = committeeDraw(rid);
+    if (drawn.drawn) committeeDrawn.set(toHex(rid), drawn);
+    return drawn;
+  };
+  const committeeDraw = (rid) => {
     const game = roster.committeeFor(rid, 'game');
     const settlement = roster.committeeFor(rid, 'settlement');
     if (!game.ok || !settlement.ok) return { drawn: false, why: (!game.ok ? game : settlement).why };
@@ -2042,6 +2053,56 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // measured on seat 7: one uncached GET /rounds, 1709 rounds, held the loop 6368 ms and /identity waited 6383 ms). Every
   // row is signed and its committee drawn; that work now stops every LISTING_SLICE_MS and lets the loop serve what waits.
   const LISTING_SLICE_MS = 15;
+  // THE FULL LISTING SERVED FROM ROW SIGNATURES SIGNED IN THE BACKGROUND (kanban #197, the owner 2026-10-06, path A of comment
+  // 496): one fresh GET /rounds signed every announced row on the request - 2,291 rows, 8.0 of 12.75 s on seat 7, ~3.2 ms a
+  // signature. The page checks every row against the listing's ONE nowMs within its 60 s skew (lobby.js), so a set of rows
+  // is signed for one time: every SIGN_EVERY_MS the seat signs all announced rows for a new time, in LISTING_SLICE_MS
+  // slices, off the request path, and the full listing is served from the last complete set while it is at most
+  // SIGNED_SERVE_MAX_MS old. A row whose signed facts changed since (phase, assigned here, joined, playing) is signed at
+  // once for the same time. Every row stays listed and the signature format and the page's check are unchanged.
+  const SIGN_EVERY_MS = 45000;
+  const SIGNED_SERVE_MAX_MS = 55000n;
+  let signedSet = null;                           // { atMs: bigint, sigs: Map<round id hex, { key, sig }> }
+  let resigning = null;
+  const rowFacts = (rid, c, nowMs) => {
+    const players = round.playersOf(rid);
+    return { phase: nowMs < c.committeeTimeMs ? 'pending' : 'open', assignedHere: round.signerNodes(rid).length > 0,
+      joined: players.joined, playing: players.playing };
+  };
+  const factsKey = (f) => `${f.phase}|${f.assignedHere ? 1 : 0}|${f.joined}|${f.playing}`;
+  const signRow = (rid, f, nowMs) => schnorr.sign(lobbyListingId({ roundId: rid, nodePubkey: round.pubkey, nowMs, phase: f.phase,
+    assignedHere: f.assignedHere, joined: f.joined, playing: f.playing }), round.identity.secret);
+  // WHETHER A HELD ROUND IS ANNOUNCED AT ALL, and the end it is listed to - read again once the series held change
+  const listable = (kept) => {
+    if (kept.listedUnder !== seriesVersion) {
+      // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
+      // ANNOUNCED (the 82/90 fork: a series replaced before it ran takes no entry at any door, so it is offered nowhere).
+      kept.unlisted = kept.c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!offerRefusal(kept.c);
+      kept.listedEnd = kept.endMs !== null ? kept.endMs : kept.c.entryCloseMs;
+      kept.listedUnder = seriesVersion;
+    }
+    return !kept.unlisted;
+  };
+  const resignAll = async () => {
+    let sliceAt = performance.now();
+    const atMs = BigInt(round.now());
+    const sigs = new Map();
+    for (const roundId of openHeld()) {
+      if (performance.now() - sliceAt >= LISTING_SLICE_MS) { await new Promise((r) => setImmediate(r)); sliceAt = performance.now(); }
+      const kept = heldOf(roundId);
+      if (kept.bad || !listable(kept) || atMs >= kept.listedEnd) continue;
+      const f = rowFacts(roundId, kept.c, atMs);
+      sigs.set(toHex(roundId), { key: factsKey(f), sig: toHex(signRow(roundId, f, atMs)) });
+      committeeOf(roundId);
+    }
+    for (const id of committeeDrawn.keys()) if (!sigs.has(id)) committeeDrawn.delete(id);
+    signedSet = { atMs, sigs };
+  };
+  const resignNow = () => { if (!resigning) resigning = timed('listing re-sign', resignAll).catch((e) => console.log(`[listing] re-sign failed: ${e.message}`)).finally(() => { resigning = null; }); return resigning; };
+  const resignTimer = setInterval(resignNow, SIGN_EVERY_MS);
+  resignTimer.unref();
+  const resignFirst = setTimeout(resignNow, 3000);            // the first set soon after the start
+  resignFirst.unref();
   const announcedRounds = async (url) => {
     let sliceAt = performance.now();
     const yieldIfLong = async () => {
@@ -2049,7 +2110,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       await new Promise((r) => setImmediate(r));
       sliceAt = performance.now();
     };
-    const nowMs = BigInt(round.now());
+    const nextAsked = url.searchParams.get('next') !== null;
+    // THE FULL LISTING AS OF THE LAST SIGNED SET (kanban #197); the lobby's `next` listing is signed fresh, as before
+    const fromSet = !nextAsked && signedSet && BigInt(round.now()) - signedSet.atMs <= SIGNED_SERVE_MAX_MS ? signedSet : null;
+    const nowMs = fromSet ? fromSet.atMs : BigInt(round.now());
     const listed = [];
     // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
     // every round this node holds that has not ended - a series' rounds 72 h ahead included - with its start and
@@ -2075,14 +2139,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const held = { roundId };
       const kept = heldOf(roundId);
       if (kept.bad) continue;
-      if (kept.listedUnder !== seriesVersion) {
-        // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
-        // ANNOUNCED (the 82/90 fork: a series replaced before it ran takes no entry at any door, so it is offered nowhere).
-        kept.unlisted = kept.c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!offerRefusal(kept.c);
-        kept.listedEnd = kept.endMs !== null ? kept.endMs : kept.c.entryCloseMs;
-        kept.listedUnder = seriesVersion;
-      }
-      if (kept.unlisted) continue;
+      if (!listable(kept)) continue;
       const c = kept.c, endMs = kept.listedEnd;
       if (nowMs >= endMs) continue;   // over: announced no longer
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
@@ -2103,21 +2160,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const { held, c, endMs } of candidates) {
       await yieldIfLong();
       const id = toHex(held.roundId);
-      const players = round.playersOf(held.roundId);
+      const facts = rowFacts(held.roundId, c, nowMs);
+      const players = { joined: facts.joined, playing: facts.playing };
       const free = c.stakeMsat === 0n;
       let watchers = 0;
       for (const w of watching.values()) if (toHex(w.roundId) === id) watchers++;
       // §5A.5: before committee_time the lobby shows "committee: pending"
       // and offers no entry; the entry door refuses by the same rule.
-      const phase = nowMs < c.committeeTimeMs ? 'pending' : 'open';
-      const assignedHere = round.signerNodes(held.roundId).length > 0;
+      const { phase, assignedHere } = facts;
       // THE ROUND'S THRESHOLD, from its contract: 2 of 2 here, 5 of 7 on
       // mainnet. A round is playable only when that many of its signer nodes hold
       // it, so the page counts signer nodes, and this one signs what it says.
       let needed = null;
       try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
-      const sig = schnorr.sign(lobbyListingId({ roundId: held.roundId, nodePubkey: round.pubkey, nowMs, phase,
-        assignedHere, joined: players.joined, playing: players.playing }), round.identity.secret);
+      // a kept signature when this row's signed facts are the ones the set signed; else signed now, for the set's time
+      let sig;
+      const keptSig = fromSet && fromSet.sigs.get(id);
+      if (keptSig && keptSig.key === factsKey(facts)) sig = keptSig.sig;
+      else {
+        sig = toHex(signRow(held.roundId, facts, nowMs));
+        if (fromSet) fromSet.sigs.set(id, { key: factsKey(facts), sig });
+      }
       listed.push({
         id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: committeeOf(held.roundId),
@@ -2136,7 +2199,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         needed, signerNodes: c.nodes.length,
         // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
         // joined here, and the two counts. `watching` is not signed.
-        sig: toHex(sig),
+        sig,
       });
     }
     listed.sort((x, y) => (x.phase === y.phase
@@ -4429,6 +4492,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
         clearInterval(settleRecoverTimer);
+        clearInterval(resignTimer);
+        clearTimeout(resignFirst);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);
         settlements.stop();
