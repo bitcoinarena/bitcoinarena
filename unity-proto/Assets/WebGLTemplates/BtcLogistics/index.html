@@ -1474,6 +1474,14 @@
         const ds = await joinStep('fetchDonationSet', () => (ROUND_PREP.get(named.roundIdHex) && ROUND_PREP.get(named.roundIdHex).donation)
           || BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify }));
         if (ds.ok) donationSet = ds.set;
+        // A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED HERE, BEFORE ANY LOCK (kanban #191, measured live
+        // 2026-10-06 05:31Z: round 49a50535 named serial 2 where serial 3 was in force; this step said "no donation" and the
+        // join went on to lock 100 sat, which the session then refused - the stake back only after its expiry)
+        else if (/donation set in force/.test(String(ds.why))) {
+          window.BLWP_JOIN_REFUSED = 'the signer nodes refuse this round: ' + String(ds.why).replace(/^not every signer node of this round serves its donation set: /, '').slice(0, 240);
+          console.error('[blwp] join refused before any lock: ' + window.BLWP_JOIN_REFUSED);
+          return;
+        }
         else { window.BLWP_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
       }
       window.BLWP_DONATION_SET = donationSet;
@@ -3633,9 +3641,10 @@
           joinTheRoundIfOneWasNamed()
             .then(() => {
               join.committed = true;
+              // CANCELLED: refused by time, or by the session (BLWP_REFUSED_JOIN cancels it, kanban #191)
               if (join.cancelled) {
                 if (window.BLWP_JOIN === join) { window.BLWP_ENTRY = undefined; window.BLWP_CHAIN = undefined; window.BLWP_ADVERT = undefined; window.BLWP_ROUND = undefined; }
-                console.error('[blwp] a join answered after it was refused by time: dropped');
+                console.error('[blwp] a join answered after it was refused' + (join.why ? ' (' + String(join.why).slice(0, 120) + ')' : '') + ': dropped');
                 return;
               }
               // A LATE ENTRY IS HELD TO ITS JOIN TICK (kanban #130): released when that tick is due on the round clock.
@@ -3653,7 +3662,7 @@
                 join.stage = startsIn();
                 join.held = true;
                 const release = () => {
-                  if (join.cancelled || window.BLWP_JOIN !== join) return;
+                  if (!window.BLWP_JOIN_GOES_ON(join)) return;
                   if (Date.now() < holdUntilMs) { join.stage = startsIn(); setTimeout(release, Math.min(1000, holdUntilMs - Date.now())); return; }
                   join.held = false; join.stage = ''; join.state = 'joined';
                   console.log(`[blwp] next round ${String(id).slice(0, 16)}: joined at its start (${new Date(holdUntilMs).toISOString()})`);
@@ -3734,13 +3743,20 @@
       const was = window.BLWP_JOIN || {};
       const id = String(was.round || fromAddress || '').toLowerCase();
       const row = (window.BLWP_LOBBY || []).find((x) => x.id === id);
-      const join = Object.assign(was, { state: 'refused', why: String(why), stage: '', round: /^[0-9a-f]{64}$/.test(id) ? id : '' });
+      // CANCELLED WITH IT (kanban #191, measured live 2026-10-06 05:31Z): a join held to its start, refused by the session,
+      // stayed uncancelled - its hold released it at the start as 'joined', and Unity ran a round with no session (the tab hung)
+      const join = Object.assign(was, { state: 'refused', why: String(why), stage: '', held: false, loaded: false, cancelled: true, round: /^[0-9a-f]{64}$/.test(id) ? id : '' });
       if (!join.kindKnown && row) Object.assign(join, { kindKnown: true, free: !!row.free, stakeSats: Number(row.stakeSats) || 0 });
       if (join.round && /the round is closed/.test(join.why)) {
         window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set();
         window.BLWP_CLOSED_ROUNDS.add(join.round);
       }
       return join;
+    };
+    // A JOIN GOES ON ONLY WHILE IT IS THE PAGE'S JOIN, NOT CANCELLED AND NOT REFUSED (kanban #191): asked by the hold's release
+    // and by the join's answer before either sets 'joined'.
+    window.BLWP_JOIN_GOES_ON = (join) => {
+      return !!join && window.BLWP_JOIN === join && !join.cancelled && join.state !== 'refused';
     };
     // A ROUND LINK WHOSE ROUND HAS NOT STARTED IS PLAYED FROM THE LOBBY, HELD TO ITS START (PAID-NIGHT-2155, measured live:
     // a reload of round d581529b 3 min before its start rejoined it with the stake lock it had made, and Unity - reading
