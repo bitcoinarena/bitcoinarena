@@ -11,7 +11,7 @@ import { seriesWriter } from '../src/series-writer.js';
 import { serve } from '../src/server.js';
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { decodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
+import { decodeRoundContract, encodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -207,3 +207,54 @@ test('a series added to the file while the node runs is written on the next pass
   } finally { await s.close(); }
 });
 const toHexId = (b) => Buffer.from(b).toString('hex');
+
+// A SERIES TAKEN OUT OF THE FILE WHILE THE NODE RUNS IS DROPPED (kanban #22, the owner 2026-10-06: series d37c1ef1 and
+// 0813e1a3 named the old donation set, every join into them was refused after the stake was locked, and the reload only
+// added - measured: the file read again, both series still held, all 1920 rounds still listed). Two series with one start,
+// as d37c1ef1 beside a69552a0; the file then names one: the other is no longer held or written, its stored rounds are
+// listed nowhere and a re-post of one is refused by name, while the series still in the file stays held and listed. A read
+// naming no series at all (a file caught empty mid-write) drops nothing.
+test('a series taken out of the file while the node runs is dropped: not held, its rounds not listed or re-posted; the other stays', async () => {
+  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const nodes = [node.round.pubkey];
+  await node.close();
+  const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1;
+  const keep = seriesTemplate(base(nodes), k);
+  const drop = { ...seriesTemplate(base(nodes), k), donationSetId: b32(9) };
+  let answer = null, asked = 0;
+  const seriesReload = () => { asked++; const a = answer; answer = null; return a; };
+  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [keep, drop], seriesEveryMs: 100, seriesReload });
+  try {
+    const held = async () => (await (await fetch(`http://127.0.0.1:${s.port}/series`)).json()).series.map((x) => ({ id: x.series, written: x.written }));
+    const listed = async () => (await (await fetch(`http://127.0.0.1:${s.port}/rounds?ahead=72h`)).json()).rounds.map((r) => r.id);
+    const idOf = (t, i) => toHexId(roundIdOf(seriesRound(t, i)));
+    for (let t = Date.now(); Date.now() - t < 20000 && !(await held()).every((x) => x.written >= ROUNDS_PER_SERIES); await new Promise((r) => setTimeout(r, 200)));
+    const before = { held: await held(), listed: await listed(), stored: s.round.db.prepare('SELECT count(*) n FROM rounds').get().n };
+    answer = [keep];
+    for (let t = Date.now(); Date.now() - t < 5000 && answer !== null; await new Promise((r) => setTimeout(r, 50)));
+    await new Promise((r) => setTimeout(r, 300));
+    const after = { held: await held(), listed: await listed(), stored: s.round.db.prepare('SELECT count(*) n FROM rounds').get().n };
+    const repost = await fetch(`http://127.0.0.1:${s.port}/round`, { method: 'POST', body: encodeRoundContract(seriesRound(drop, 5)) });
+    const repostWhy = await repost.text();
+    answer = [];
+    for (let t = Date.now(); Date.now() - t < 5000 && answer !== null; await new Promise((r) => setTimeout(r, 50)));
+    await new Promise((r) => setTimeout(r, 300));
+    const afterEmpty = { held: await held(), listed: await listed() };
+    console.log('  FACTS:', JSON.stringify({
+      before: { held: before.held.map((x) => `${x.id.slice(0, 8)}:${x.written}`), listed: before.listed.length, stored: before.stored },
+      after: { held: after.held.map((x) => `${x.id.slice(0, 8)}:${x.written}`), listed: after.listed.length, stored: after.stored },
+      repost: [repost.status, repostWhy.slice(0, 120)], afterEmpty: { held: afterEmpty.held.length, listed: afterEmpty.listed.length }, asked }));
+    assert.deepEqual(before.held.map((x) => x.id).sort(), [toHexId(seriesId(keep)), toHexId(seriesId(drop))].sort());
+    assert.equal(before.listed.length, 2 * ROUNDS_PER_SERIES);
+    assert.ok(before.listed.includes(idOf(drop, 0)) && before.listed.includes(idOf(keep, 0)));
+    assert.deepEqual(after.held.map((x) => x.id), [toHexId(seriesId(keep))], 'the series taken out of the file is still held');
+    assert.equal(after.listed.length, ROUNDS_PER_SERIES, 'the listing did not fall by exactly the dropped series');
+    assert.ok(!after.listed.includes(idOf(drop, 0)) && !after.listed.includes(idOf(drop, ROUNDS_PER_SERIES - 1)), 'a dropped round is still listed');
+    assert.ok(after.listed.includes(idOf(keep, 0)) && after.listed.includes(idOf(keep, ROUNDS_PER_SERIES - 1)), 'the kept series lost a round');
+    assert.equal(after.stored, before.stored, 'the stored rounds are kept (hidden, not deleted: a stake in one can still settle)');
+    assert.equal(repost.status, 409);
+    assert.match(repostWhy, /taken out of this node's series file/);
+    assert.equal(afterEmpty.held.length, 1, 'a read naming no series dropped the rest');
+    assert.equal(afterEmpty.listed.length, ROUNDS_PER_SERIES);
+  } finally { await s.close(); }
+});
