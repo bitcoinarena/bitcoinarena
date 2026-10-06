@@ -1,0 +1,35 @@
+diff -ru a/fedimint-api-client/src/api/global_api/with_cache.rs b/fedimint-api-client/src/api/global_api/with_cache.rs
+--- a/fedimint-api-client/src/api/global_api/with_cache.rs	2026-10-06 10:19:29.151609788 +0200
++++ b/fedimint-api-client/src/api/global_api/with_cache.rs	2026-10-06 10:19:43.421650664 +0200
+@@ -349,7 +349,9 @@
+     }
+ 
+     async fn await_transaction(&self, txid: TransactionId) -> TransactionId {
+-        self.request_current_consensus_retry(
++        // BLWP (kanban #192): accepted once f + 1 peers say so - an honest peer answers only after consensus accepted it
++        self.request_with_strategy_retry(
++            crate::query::ThresholdConsensus::one_honest(self.all_peers().to_num_peers()),
+             AWAIT_TRANSACTION_ENDPOINT.to_owned(),
+             ApiRequestErased::new(txid),
+         )
+diff -ru a/fedimint-api-client/src/query.rs b/fedimint-api-client/src/query.rs
+--- a/fedimint-api-client/src/query.rs	2026-10-06 10:19:29.144609278 +0200
++++ b/fedimint-api-client/src/query.rs	2026-10-06 10:19:43.421650664 +0200
+@@ -115,6 +115,17 @@
+             threshold: num_peers.threshold(),
+         }
+     }
++
++    /// BLWP (kanban #192): f + 1 identical responses - at least one honest peer among them. For an answer an honest peer
++    /// gives only once the federation's consensus has decided it (a transaction accepted), f + 1 is as safe as n - f: the
++    /// f a federation tolerates cannot make it up alone, and the client stops waiting on the slowest honest peers.
++    pub fn one_honest(num_peers: NumPeers) -> Self {
++        Self {
++            responses: BTreeMap::new(),
++            retry: BTreeSet::new(),
++            threshold: num_peers.max_evil() + 1,
++        }
++    }
+ }
+ 
+ impl<R: Eq + Clone> QueryStrategy<R> for ThresholdConsensus<R> {

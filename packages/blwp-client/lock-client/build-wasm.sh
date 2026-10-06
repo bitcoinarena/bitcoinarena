@@ -36,6 +36,12 @@ grep -q "fedimint_core::runtime::timeout(" modules/fedimint-mintv2-client/src/ap
 # denomination byte, only the chosen decoded
 patch -p1 < $HERE/fedimint-mintv2-lock-latency.patch
 grep -q "CombinedShareThreshold::new" modules/fedimint-mintv2-client/src/api.rs
+# ACCEPTED ONCE f + 1 GUARDIANS SAY SO (kanban #192, opt-in BLWP_ACCEPT_F1=1): the client's await_transaction stops at f + 1
+# identical answers instead of n - f - an honest guardian answers only after consensus accepted the transaction
+if [ -n "${BLWP_ACCEPT_F1:-}" ]; then patch -p1 < $HERE/fedimint-client-accept-f1.patch; grep -q "fn one_honest" fedimint-api-client/src/query.rs; fi
+# THE ACCEPTANCE AWAITED BESIDE THE SUBMISSION (kanban #192, opt-in BLWP_AWAIT_PARALLEL=1): not after a threshold of submit
+# answers, which the guardians give only once the transaction is accepted
+if [ -n "${BLWP_AWAIT_PARALLEL:-}" ]; then patch -p1 < $HERE/fedimint-client-await-parallel.patch; grep -q "drop(tx_submitted)" fedimint-client-module/src/transaction/sm.rs; fi
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | grep -qx 2
 ln -sfn $HERE blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || sed -i 's/^members = \[/members = [\n  "blwp-lock-client",/' Cargo.toml
