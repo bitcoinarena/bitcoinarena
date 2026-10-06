@@ -259,8 +259,42 @@ pub struct LockClient {
     last_count: std::sync::Mutex<Option<(u64, u64)>>,
 }
 
+/// A LOCK'S CONTRACT FROM ITS FIELDS (JSON: paymentImage {kind, bytes}, amountMsat, claimPk, refundPk, expiration) - a stake
+/// lock's image is a point, a node-fee lock's (and a payout contract's) a hash. Kanban #191 (measured live 2026-10-06 07:58Z,
+/// round 422ecd2e): the redeem built only point images, so a refused round's node-fee lock - forfeited by the seats like its
+/// stake - was refused here ("only a stake lock, whose image is a point, is redeemed here") and stayed to its expiry.
+fn contract_from_fields(fields: &str) -> Result<OutgoingContract, JsError> {
+    let f: serde_json::Value = serde_json::from_str(fields).map_err(js)?;
+    let text = |k: &str| {
+        f.get(k).and_then(|v| v.as_str()).map(str::to_owned).ok_or_else(|| js(format!("the lock names no {k}")))
+    };
+    let image = f.get("paymentImage").ok_or_else(|| js("the lock names no payment image"))?;
+    let bytes = image.get("bytes").and_then(|v| v.as_str()).ok_or_else(|| js("the lock's image has no bytes"))?;
+    let payment_image = match image.get("kind").and_then(|v| v.as_str()) {
+        Some("point") => PaymentImage::Point(PublicKey::from_str(bytes).map_err(js)?),
+        Some("hash") => PaymentImage::Hash(sha256::Hash::from_str(bytes).map_err(js)?),
+        _ => return Err(js("a lock's image is a point or a hash")),
+    };
+    let refund_pk = PublicKey::from_str(&text("refundPk")?).map_err(js)?;
+    let expiration = f.get("expiration").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names no expiration"))?;
+    Ok(OutgoingContract {
+        payment_image,
+        amount: Amount::from_msats(text("amountMsat")?.parse().map_err(js)?),
+        expiration,
+        claim_pk: PublicKey::from_str(&text("claimPk")?).map_err(js)?,
+        refund_pk,
+        ephemeral_pk: refund_pk,
+    })
+}
+
 #[wasm_bindgen]
 impl LockClient {
+    /// The id of the contract a lock's fields build (hex) - the builder the redeem uses, reachable without a federation.
+    #[wasm_bindgen(js_name = outgoingContractId)]
+    pub fn outgoing_contract_id(fields: String) -> Result<String, JsError> {
+        Ok(contract_from_fields(&fields)?.contract_id().0.to_string())
+    }
+
     /// The federation an invite code names, as hex - the id a Round Contract carries.
     #[wasm_bindgen(js_name = federationIdOf)]
     pub fn federation_id_of(invite: String) -> Result<String, JsError> {
@@ -414,25 +448,10 @@ impl LockClient {
         forfeit: String,
         player_secret: String,
     ) -> Result<String, JsError> {
-        let f: serde_json::Value = serde_json::from_str(&fields).map_err(js)?;
-        let text = |k: &str| {
-            f.get(k).and_then(|v| v.as_str()).map(str::to_owned).ok_or_else(|| js(format!("the lock names no {k}")))
-        };
-        let image = f.get("paymentImage").ok_or_else(|| js("the lock names no payment image"))?;
-        if image.get("kind").and_then(|v| v.as_str()) != Some("point") {
-            return Err(js("only a stake lock, whose image is a point, is redeemed here"));
-        }
-        let point = image.get("bytes").and_then(|v| v.as_str()).ok_or_else(|| js("the lock's image has no bytes"))?;
-        let refund_pk = PublicKey::from_str(&text("refundPk")?).map_err(js)?;
-        let expiration = f.get("expiration").and_then(|v| v.as_u64()).ok_or_else(|| js("the lock names no expiration"))?;
-        let contract = OutgoingContract {
-            payment_image: PaymentImage::Point(PublicKey::from_str(point).map_err(js)?),
-            amount: Amount::from_msats(text("amountMsat")?.parse().map_err(js)?),
-            expiration,
-            claim_pk: PublicKey::from_str(&text("claimPk")?).map_err(js)?,
-            refund_pk,
-            ephemeral_pk: refund_pk,
-        };
+        // THE STAKE (image a point) AND A REFUSED ROUND'S NODE-FEE LOCK (image a hash) alike (kanban #191)
+        let contract = contract_from_fields(&fields)?;
+        let refund_pk = contract.refund_pk;
+        let expiration = contract.expiration;
         let sig_bytes = (0..forfeit.len())
             .step_by(2)
             .map(|i| forfeit.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok()))
