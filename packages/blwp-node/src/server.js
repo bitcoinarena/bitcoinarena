@@ -2116,14 +2116,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return resigning;
   };
   // A NEW SET BEFORE THE SERVED ONE AGES OUT (measured live after the roll: a build takes 12-17 s on a loaded seat, so a
-  // fixed 45 s cycle left sets 61-68 s old, and the listing fell back to signing every row): every 5 s the seat starts the
-  // next build once the served set is old enough that the build - as long as the last one, and 3 s more - would end
-  // inside SIGNED_SERVE_MAX_MS. At most every SIGN_EVERY_MS when builds are quick.
+  // fixed 45 s cycle left sets 61-68 s old, and the listing fell back to signing every row; with 3 s to spare, checked
+  // every 5 s, listings still waited 1.3-2.8 s at the turn): every 2 s the seat starts the next build once the served set
+  // is old enough that a build as long as the last one, and 6 s more, would end inside SIGNED_SERVE_MAX_MS. At most every
+  // SIGN_EVERY_MS when builds are quick.
   const resignTimer = setInterval(() => {
     if (resigning) return;
     const age = signedSet ? Number(BigInt(round.now()) - signedSet.atMs) : Infinity;
-    if (age >= Math.min(SIGN_EVERY_MS, Number(SIGNED_SERVE_MAX_MS) - lastBuildMs - 3000)) resignNow();
-  }, 5000);
+    if (age >= Math.min(SIGN_EVERY_MS, Number(SIGNED_SERVE_MAX_MS) - lastBuildMs - 6000)) resignNow();
+  }, 2000);
   resignTimer.unref();
   const resignFirst = setTimeout(resignNow, 3000);            // the first set soon after the start
   resignFirst.unref();
