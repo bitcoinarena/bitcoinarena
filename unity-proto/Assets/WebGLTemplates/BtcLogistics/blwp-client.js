@@ -11645,19 +11645,32 @@ async function handRefusedLock({ roundId, lock, nodes, fetcher = fetch } = {}) {
   return { kept: said.filter((x) => x.status === 201).length, said };
 }
 
-/** The stake owed back at once for a lock of a refused round, or null when no signer node keeps it as refused. */
-async function refusedReturn({ roundId, playerPubkey, lock, nodes, fetcher, client }) {
-  if (!lock || !lock.outpoint) return null;
-  const st = JSON.parse(await client.lockStatus(toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
-  if (!st.stored) return null;
-  const handed = await handRefusedLock({ roundId, lock, nodes, fetcher });
-  if (!handed.kept) return null;
-  const at = `${toHex(lock.outpoint.txid)}:${lock.outpoint.outIdx}`;
-  const msat = BigInt(lock.fields.amountMsat);
-  const found = (await findLock({ roundId, playerPubkey, nodes, fetcher })).find((l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}` === at);
-  if (!found) return { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
-  const f = await forfeitOf({ roundId, entryId: found.entryId, nodes, fetcher });
-  return f.ok ? { state: 'owed', how: 'forfeit', refused: true, msat } : { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
+/**
+ * The stake owed back at once for the locks of a refused round - the stake and its node-fee lock, both to this seed's
+ * refund key (measured live 07:26Z: 49a50535's stake came back and its 2000 msat fee lock stayed for its expiry) - or null
+ * when no signer node keeps them as refused.
+ */
+async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, client }) {
+  const still = [];
+  for (const lock of (locks || []).filter((l) => l && l.outpoint)) {
+    const st = JSON.parse(await client.lockStatus(toHex(lock.outpoint.txid), Number(lock.outpoint.outIdx)));
+    if (st.stored) still.push(lock);
+  }
+  if (!still.length) return null;
+  let kept = 0;
+  for (const lock of still) kept += (await handRefusedLock({ roundId, lock, nodes, fetcher })).kept > 0 ? 1 : 0;
+  if (!kept) return null;
+  const msat = still.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+  const at = (l) => `${toHex(l.outpoint.txid)}:${l.outpoint.outIdx}`;
+  const named = await findLock({ roundId, playerPubkey, nodes, fetcher });
+  const found = still.map((l) => named.find((n) => at(n) === at(l))).filter(Boolean);
+  if (!found.length) return { state: 'waiting', how: 'forfeit', refused: true, msat, why: 'handed to the signer nodes, and none names it yet' };
+  for (const l of found) {
+    const f = await forfeitOf({ roundId, entryId: l.entryId, nodes, fetcher });
+    if (!f.ok) return { state: 'waiting', how: 'forfeit', refused: true, msat, why: f.why };
+  }
+  const owed = found.reduce((t, l) => t + BigInt(l.fields.amountMsat), 0n);
+  return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
 }
 
 async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null } = {}) {
@@ -11715,7 +11728,10 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
         // §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock
         // still in the federation that no signer node knows is handed to them; if they refuse its round they keep it, and
         // its forfeit is the stake owed back now - not after its expiry.
-        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, lock: held.lock, nodes, fetcher, client });
+        // the fee lock from the tab's saved lock when the record handed in carries the stake alone (a collect record does)
+        const saved = held.lock.feeLock ? null : savedLock(storage, { roundId, playerPubkey: player.pubkey });
+        const feeLock = held.lock.feeLock || (saved && saved.lock && saved.lock.feeLock) || null;
+        const back = await refusedReturn({ roundId, playerPubkey: player.pubkey, locks: [held.lock, feeLock], nodes, fetcher, client });
         if (back) stake = back;
         else {
           let owed = 0n; let gone = 0; let waiting = null;

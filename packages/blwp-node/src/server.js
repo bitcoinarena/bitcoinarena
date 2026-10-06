@@ -25,7 +25,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../protocol/src/contracts.js';
-import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { roundEndMs, startDeadlineOf } from '../../protocol/src/first-mark.js';
@@ -3234,19 +3234,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(outIdx || '')) throw new Error('an outpoint is txid:index');
           outpoint = { txid: new Uint8Array(Buffer.from(txid, 'hex')), outIdx: BigInt(outIdx) };
         } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
-        if (round.stakeLockAt(outpoint))
+        if (round.stakeLockAt(outpoint) || (round.feeLockAt && round.feeLockAt(outpoint)))
           return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
         const claimPk = claimKeyOf(rid);
         if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk))
           return text(res, 409, 'that lock names another claim key than this round\'s');
         const image = fields.paymentImage || {};
         const hex = image.bytes instanceof Uint8Array ? toHex(image.bytes) : '';
+        // THE STAKE: its image is A0 of the handout. ITS NODE-FEE LOCK (image H(F), the same transaction, the same refund key -
+        // measured live 07:26Z: 49a50535's stake came back and its 2000 msat fee lock stayed for its expiry): the handout
+        // whose player's refund key it names. Kept under an id of its own, H(handout id || "fee").
         let held = null;
         for (const h of round.handoutsOf(rid)) {
           let d; try { d = decodeHandout(h.bytes); } catch { continue; }
           if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { held = { id: h.id, handout: d }; break; }
+          if (image.kind === 'hash' && toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk)) {
+            held = { id: sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')])), handout: d }; break; }
         }
-        if (!held) return text(res, 409, 'this signer node holds no handout for that round whose A0 is the lock\'s image: no stake of that round');
+        if (!held) return text(res, 409, image.kind === 'hash'
+          ? 'this signer node holds no handout for that round whose player that fee lock refunds to: no fee of that round'
+          : 'this signer node holds no handout for that round whose A0 is the lock\'s image: no stake of that round');
         if (toHex(refundKeyOf(held.handout.playerPubkey)) !== toHex(fields.refundPk))
           return text(res, 409, 'that lock\'s refund key is not the handout player\'s: it returns to nobody this round dealt');
         const player = toHex(held.handout.playerPubkey);

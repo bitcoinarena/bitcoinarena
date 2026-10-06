@@ -2596,6 +2596,13 @@ export class Round {
     return n;
   }
 
+  /** The entry a verified fee lock at this outpoint already pays for, or null (kanban #191: never returned as refused). */
+  feeLockAt(outpoint) {
+    const r = this.db.prepare('SELECT entry_id FROM fee_locks WHERE outpoint = ?')
+      .get(`${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`);
+    return r ? { entryId: new Uint8Array(r.entry_id) } : null;
+  }
+
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */
   stakeLockAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM stake_locks WHERE outpoint = ?')
