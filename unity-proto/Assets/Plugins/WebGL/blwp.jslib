@@ -537,6 +537,9 @@ mergeInto(LibraryManager.library, {
       })
       .catch(function (e) {
         // No client, so the page's own word is the only one there is.
+        // CLOSED BEFORE IT IS LET GO (kanban #191, measured live 11:32:15Z): its socket - opened beside the entry - stayed
+        // up, dropped ~2 min later, and its onDrop reached net.client.reconnect with net.client null; Unity alerted, the tab held
+        try { if (net.client && net.client.close) net.client.close(); } catch (closeErr) { /* already gone */ }
         net.client = null;
         net.state = 'error';
         net.error = String(e && e.message ? e.message : e);
@@ -672,12 +675,15 @@ mergeInto(LibraryManager.library, {
         var ended = keepEndedRun(net);
         if (typeof window !== 'undefined' && window.BLWP_RUN_OVER) window.BLWP_RUN_OVER(word, ended);
       };
+      // ONLY FOR ITS OWN CLIENT (kanban #191): a client let go of - refused, or replaced by another join - is never reconnected
+      var client = net.client;
       net.client.onDrop = function () {
-        net.client.reconnect(net.where).then(function (r) {
+        if (net.client !== client) return;
+        client.reconnect(net.where).then(function (r) {
           if (!r) return;              // the run ended; onEnd has already said so
           net.resumedAt = r.nextTick;
           console.log('[blwp] resumed at tick ' + r.nextTick + ' after '
-            + net.client.tries + ' try(s), ' + r.batches + ' batches and '
+            + client.tries + ' try(s), ' + r.batches + ' batches and '
             + r.receipts + ' behind us');
         });
       };
