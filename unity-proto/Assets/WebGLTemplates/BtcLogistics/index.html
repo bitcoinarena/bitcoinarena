@@ -250,6 +250,10 @@
     #blwp-console-thumb { position: fixed; z-index: 22; width: 4px; border-radius: 2px; background: #f7931a;
       pointer-events: none; display: none; }
     body.blwp-console-open:not(.blwp-console-held):not(.blwp-clean) #blwp-console-thumb.on { display: block; }
+    /* PARKED IN THE LOBBY (kanban #198): above the lobby's chrome (the backup strip and the balance boxes are z 30), so no
+       console line sits under a lobby widget; the place itself keeps it off the balance boxes and the round rows. */
+    body.blwp-console-lobby #blwp-wallet { z-index: 35; }
+    body.blwp-console-lobby #blwp-console-thumb { z-index: 36; }
     body.blwp-console-open #blwp-wallet .owed { font-size: 12px; }
     body.blwp-console-open #blwp-players { font-size: 10px; line-height: 1.25; padding: 4px 7px; max-width: min(40vw, 320px); }
     body.blwp-clean #blwp-console-go { display: none !important; }
@@ -2919,7 +2923,33 @@
         // cargo bay while that is up; never left of the screen's middle less a margin, the truck's lane; 280 px at most.
         // WHERE 260 PX DO NOT FIT between the Console button and that bottom, the panel keeps its height and steps aside
         // (blwp-console-held): the button stays, dimmed, and says why - never squeezed onto a control.
-        if (panel && consoleOpen()) {
+        // WHILE THE LOBBY IS UP (kanban #198, the owner 2026-10-06: "Stepped aside while the lobby is up. Not drawn over the
+        // lobby content"): the open console parks along the top edge under the Console button - 260 x 260, drawn above the
+        // lobby's chrome (blwp-console-lobby) - at the right if that is clear of the balance boxes and the round rows
+        // (Unity's own rectangles, BLWP_UNITY_LOBBY, and the page's balance strip), else slid left along the top edge until
+        // it is; where no spot on that edge is clear, it steps aside (held). Out of the lobby, the truck view's rule below.
+        const L = window.BLWP_UNITY_LOBBY;
+        const inLobby = !!(L && L.showing);
+        document.body.classList.toggle('blwp-console-lobby', !!(panel && consoleOpen() && inLobby));
+        let lobbyPark = null;
+        if (panel && consoleOpen() && inLobby) {
+          const SIZE = 260;
+          const avoid = [L.balance, ...((L.rows || []).map((r) => r && r.rect))]
+            .filter((q) => Array.isArray(q) && q[2] > 0 && q[3] > 0).map(([x, y, w, h]) => ({ l: x, t: y, r: x + w, b: y + h }));
+          const lb = document.getElementById('blwp-lobby-balance');
+          if (lb && getComputedStyle(lb).display !== 'none') { const q = lb.getBoundingClientRect(); if (q.width && q.height) avoid.push({ l: q.left, t: q.top, r: q.right, b: q.bottom }); }
+          const pTop = Math.round(geo.btnBottom + gap);
+          const hits = (x) => avoid.some((q) => x < q.r && x + SIZE > q.l && pTop < q.b && pTop + SIZE > q.t);
+          const rightX = W - geo.right - SIZE;
+          let x = rightX;
+          while (x >= geo.m && hits(x)) x -= 4;
+          const clear = x >= geo.m && !hits(x) && pTop + SIZE <= H - geo.m;
+          document.body.classList.toggle('blwp-console-held', !clear);
+          go.title = clear ? '' : 'The Console steps aside in the lobby - no spot on the top edge clears the balance and the rounds';
+          lobbyPark = { clear, edge: !clear ? 'none' : x === rightX ? 'top right' : 'top edge, slid left to ' + Math.round(x) + ' px', x: Math.round(x), top: pTop };
+          panel.style.top = pTop + 'px'; panel.style.bottom = 'auto'; panel.style.left = 'auto'; panel.style.maxHeight = '';
+          panel.style.right = Math.round(W - x - SIZE) + 'px'; panel.style.width = SIZE + 'px'; panel.style.maxWidth = SIZE + 'px';
+        } else if (panel && consoleOpen()) {
           const PANEL_H = 260;
           const bottom = Math.min(geo.pads ? geo.padTop - geo.m : H - geo.m, geo.floor - geo.m);
           const held = bottom - PANEL_H < geo.btnBottom + gap;
@@ -2933,10 +2963,19 @@
           panel.style.width = Math.round(width) + 'px'; panel.style.maxWidth = '280px';
         } else document.body.classList.remove('blwp-console-held');
         paintConsoleThumb();
-        window.BLWP_CONSOLE_PLACED = { top: top === null ? null : Math.round(top), right: right === null ? null : Math.round(right), bh, bw, corner: c || null,
+        window.BLWP_CONSOLE_PLACED = { lobby: lobbyPark, top: top === null ? null : Math.round(top), right: right === null ? null : Math.round(right), bh, bw, corner: c || null,
           geo: { btnBottom: Math.round(geo.btnBottom), right: Math.round(geo.right), pads: geo.pads, padTop: Math.round(geo.padTop), m: Math.round(geo.m * 10) / 10 } };
       };
       window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());
+      // AND WHEN THE LOBBY OPENS OR CLOSES, OR ITS BALANCE OR ROWS MOVE (kanban #198): the open console parks or comes back
+      {
+        let lobbyWas = '';
+        setInterval(() => {
+          const L = window.BLWP_UNITY_LOBBY;
+          const now = L && L.showing ? JSON.stringify([L.balance, (L.rows || []).map((r) => r && r.rect)]) : 'off';
+          if (now !== lobbyWas) { lobbyWas = now; try { window.BLWP_PLACE_CONSOLE(); } catch { /* placed on the next slot */ } }
+        }, 300);
+      }
       // THE DRAWN THUMB (kanban #198): over the panel's right edge, sized and moved from its scroll; iOS Safari draws its own
       // only while a finger scrolls, so a phone would not see that the console holds more
       function paintConsoleThumb() {
