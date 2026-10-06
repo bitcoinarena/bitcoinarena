@@ -16,7 +16,7 @@ const BLWPCLIENT = { lobbyLine: (raw) => `line of ${raw.id}` };
 const joinedOf = (line) => { const m = String(line).match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
 const lobbyViewRow = new Function('BLWPCLIENT', 'joinedOf', `${SRC}\nreturn lobbyViewRow;`)(BLWPCLIENT, joinedOf);
 const NOW = Date.UTC(2026, 9, 4, 11, 26, 15);
-const raw = (startIn, closeIn, more) => ({ id: 'r1', phase: 'open', startTimeMs: NOW + startIn, entryCloseMs: NOW + closeIn, ...more });
+const raw = (startIn, closeIn, more) => ({ id: 'r1', phase: 'open', startTimeMs: NOW + startIn, entryCloseMs: NOW + closeIn, signerNodes: 7, ...more });
 const row = (r, more) => ({ id: r.id, raw: r, free: false, signerNodesAgree: 7, needed: 5, join: true, stakeSats: '100', ...more });
 
 test('a round not yet started: startS and leftS from its own times, whole seconds up', () => {
@@ -38,4 +38,11 @@ test('a pending round has no entry countdown yet; a row without times gives -1 f
   assert.deepEqual([pending.startS, pending.leftS], [120, -1]);
   const bare = lobbyViewRow({ id: 'r2', line: 'old line', free: true, signerNodesAgree: 2, needed: 2, join: true }, NOW);
   assert.deepEqual([bare.startS, bare.leftS, bare.free, bare.line], [-1, -1, true, 'old line']);
+});
+
+test('each row carries its committee size (total) from the row\'s own signerNodes, -1 when the row does not say (#43 follow-up)', () => {
+  assert.equal(lobbyViewRow(row(raw(45000, 90000)), NOW).total, 7, 'a paid round of 7');
+  assert.equal(lobbyViewRow(row(raw(45000, 90000, { signerNodes: 2 })), NOW).total, 2, 'a free pair of 2 - from the row, not a constant');
+  const bare = lobbyViewRow({ id: 'r2', line: 'old line', free: true, signerNodesAgree: 2, needed: 2, join: true }, NOW);
+  assert.equal(bare.total, -1);
 });

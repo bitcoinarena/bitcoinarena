@@ -19,6 +19,8 @@ namespace Blwp
         public int leftS = -1;
         /// <summary>Whole seconds until the round starts, 0 once it has started; -1 when the page did not say (an older page) - kanban #43.</summary>
         public int startS = -1;
+        /// <summary>The round's committee size - its signer nodes, from its verified contract (7 paid, 2 free); -1 when the page did not say (#43 follow-up).</summary>
+        public int total = -1;
         public int joined;
         /// <summary>What a paying round costs to enter, in whole sats; 0 for a free round.</summary>
         public long stakeSats;
@@ -201,6 +203,49 @@ namespace Blwp
         public static bool Closed(string why) => !string.IsNullOrEmpty(why) && why.Contains("the round is closed");
 
         /// <summary>A round's name in the lobby: the first 8 of its id.</summary>
+        /// <summary>
+        /// THE HEADER ABOVE THE ROUNDS (kanban #43 follow-up, the owner 2026-10-06, plan comment 430): one shared line naming each
+        /// kind listed with that kind's OWN signer numbers, from its rows - the same source as the row. Paid and free together:
+        /// "ROUNDS · PAID: 5 OF 7 SIGNER NODES · FREE: 2 OF 2"; one kind: "ROUNDS · JOIN NEEDS 5 OF 7 SIGNER NODES". A kind whose
+        /// rows differ says "PER ROUND" (each row keeps its "(N needed)"); a row without the committee size (an older page)
+        /// says "N NEEDED" with no "OF"; nothing listed: "ROUNDS". No fixed number: every count is a row's.
+        /// </summary>
+        public static string HeaderWords(LobbyRow[] rows)
+        {
+            if (rows == null || rows.Length == 0) return "ROUNDS";
+            string paid = KindNumbers(rows, false), free = KindNumbers(rows, true);
+            // "SIGNER NODES" follows the paid numbers only when they read "N OF M" (plan 430: "PAID: PER ROUND", "PAID: 5 NEEDED")
+            if (paid != null && free != null)
+                return paid.Contains(" OF ") ? $"ROUNDS · PAID: {paid} SIGNER NODES · FREE: {free}" : $"ROUNDS · PAID: {paid} · FREE: {free}";
+            string one = paid ?? free;
+            if (one == "PER ROUND") return "ROUNDS · SIGNER NODES PER ROUND";
+            if (one.EndsWith(" NEEDED")) return $"ROUNDS · JOIN NEEDS {one.Substring(0, one.Length - " NEEDED".Length)} SIGNER NODES";
+            return $"ROUNDS · JOIN NEEDS {one} SIGNER NODES";
+        }
+
+        /// <summary>One kind's numbers over its rows: "5 OF 7", "5 NEEDED" (no committee size), "PER ROUND" (rows differ), or null (none of that kind).</summary>
+        static string KindNumbers(LobbyRow[] rows, bool free)
+        {
+            string seen = null;
+            foreach (var r in rows)
+            {
+                if (r == null || r.free != free) continue;
+                string n = r.total > 0 ? $"{r.needed} OF {r.total}" : $"{r.needed} NEEDED";
+                if (seen == null) seen = n;
+                else if (seen != n) return "PER ROUND";
+            }
+            return seen;
+        }
+
+        /// <summary>
+        /// THE LINE UNDER THE ROUNDS (#43 follow-up): only the round PLAY joins, in its row's words - "PLAY joins round c71ee776 -
+        /// 7 signer nodes agree (5 needed)". Without a round to join: "PLAY waits for a round whose signer nodes agree" (never
+        /// "both"), or "PLAY waits for an open round" when nothing is listed.
+        /// </summary>
+        public static string HintWords(LobbyRow r, int listed) => r != null
+            ? $"PLAY joins round {ShortId(r.id)} - {r.agree} signer {(r.agree == 1 ? "node agrees" : "nodes agree")} ({r.needed} needed)"
+            : listed > 0 ? "PLAY waits for a round whose signer nodes agree" : "PLAY waits for an open round";
+
         public static string ShortId(string id) => string.IsNullOrEmpty(id) ? "" : (id.Length > 8 ? id.Substring(0, 8) : id);
 
         /// <summary>What a round is: FREE, or PAID and what it costs (the owner 2026-09-15 16:08: "PAID · 100 sats").</summary>
