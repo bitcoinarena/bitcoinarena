@@ -689,6 +689,18 @@ export function openStore(path = ':memory:') {
 
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
+    -- A STAKE LOCKED FOR A ROUND THIS SIGNER NODE REFUSES, AND NEVER ENTERED (§23.2 row REFUSED; kanban #191, the owner
+    -- 2026-10-06): kept under the id of this node's own accepted handout for the round that the lock's image is A0 of, so
+    -- the forfeit (asked by round and that id) returns it to the player at once.
+    CREATE TABLE IF NOT EXISTS refused_locks (
+      handout_id   BLOB PRIMARY KEY,
+      round_id     BLOB NOT NULL,
+      outpoint     TEXT NOT NULL,
+      fields       TEXT NOT NULL,
+      contract_id  TEXT NOT NULL,
+      kept_ms      INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS stake_locks (
       entry_id     BLOB PRIMARY KEY,
       round_id     BLOB NOT NULL,
