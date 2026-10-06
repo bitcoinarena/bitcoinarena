@@ -103,6 +103,8 @@ const readSeriesFile = (path) => readFileSync(path, 'utf8').split(/\n/).map((l) 
     }
     return t;
   });
+// THE OPERATOR'S REFUSE-ROUNDS FILE (kanban #191): round ids this node refuses at every door, read again when it changes
+if (process.env.BLWP_REFUSE_ROUNDS_FILE) options.refuseRoundsFile = process.env.BLWP_REFUSE_ROUNDS_FILE;
 if (process.env.BLWP_SERIES_FILE) {
   const path = process.env.BLWP_SERIES_FILE;
   try { options.series = readSeriesFile(path); } catch (e) { console.error(`BLWP_SERIES_FILE: a line is not a series: ${e.message}`); process.exit(2); }
