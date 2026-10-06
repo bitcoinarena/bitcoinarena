@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { chooseDonation, depositDonationMsat } from '../src/donation-choice.js';
+import { pageFunction } from './page-script.js';
 
 const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
 function lift(name) {
@@ -21,7 +22,7 @@ const storage = (init = {}) => { const m = new Map(Object.entries(init)); return
 // a fresh window per page load: donationBps reads the store once and keeps it on window.BLWP_DONATION_BPS
 function pageWith(sessionStorage) {
   const window = { sessionStorage };
-  const donationBps = new Function('window', `${lift('donationBps')}\nreturn donationBps;`)(window);
+  const donationBps = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window'], lift('donationBps'), 'return donationBps;')(window);
   return { window, donationBps };
 }
 const ROUND = { stakeMsat: 100000n };
@@ -99,7 +100,7 @@ const warmDonation = (s, stakeSats = 100) => {
   const { donationBps, window } = pageWith(s);
   window.sessionStorage = s;
   const BLWPCLIENT = { lobbyStakeSats: () => stakeSats, depositDonationMsat };
-  return new Function('BLWPCLIENT', 'r', 'donationBps', 'window', `return ${WARM};`)(BLWPCLIENT, { id: RID, raw: {} }, donationBps, window);
+  return pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['BLWPCLIENT', 'r', 'donationBps', 'window'], WARM, ';', 'return ')(BLWPCLIENT, { id: RID, raw: {} }, donationBps, window);
 };
 
 test('the warm quote sizes the donation the join will write: a kept choice wins over Settings; none falls back to Settings', () => {

@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { pageFunction } from '../../blwp-client/test/page-script.js';
 
 const HTML = readFileSync(new URL('../pages/rounds.html', import.meta.url), 'utf8');
 const SCRIPT = HTML.slice(HTML.indexOf('<script>') + '<script>'.length, HTML.lastIndexOf('</script>'));
@@ -42,7 +43,7 @@ function page(answers) {
     const a = typeof answers === 'function' ? answers(url) : answers[url.split('?')[0]];
     return { ok: a.status === 200, status: a.status, json: async () => a.body, text: async () => (typeof a.body === 'string' ? a.body : JSON.stringify(a.body)) };
   };
-  new Function('document', 'fetch', 'setInterval', SCRIPT)(document, fetch, () => 0);
+  pageFunction(new URL('../pages/rounds.html', import.meta.url), ['document', 'fetch', 'setInterval'], SCRIPT)(document, fetch, () => 0);
   const click = async (id) => { for (const fn of cardFor(id).btn.handlers) fn(); await tick(); };
   return { els, cards, asked, click, cardFor };
 }

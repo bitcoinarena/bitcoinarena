@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { pageFunction } from './page-script.js';
 
 const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
 const SRC = (() => { const at = PAGE.indexOf('    function openWithdraw(ctx) {'); assert.ok(at > 0); return PAGE.slice(at, PAGE.indexOf('\n    }\n', at) + 6); })();
@@ -23,7 +24,7 @@ function panel({ can, invoiceMsat = null, withdraw = async () => ({ ok: true, ga
   };
   const window = { BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
   const document = { getElementById: (id) => els[id] };
-  const openWithdraw = new Function('document', 'window', 'BLWPCLIENT', 'payStatus', 'vault', 'paintHistory', `${SRC}\nreturn openWithdraw;`)(
+  const openWithdraw = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'payStatus', 'vault', 'paintHistory'], SRC, 'return openWithdraw;')(
     document, window, BLWPCLIENT, () => status, () => ({}), () => {});
   openWithdraw({ round: {}, invite: 'fed1', seed: new Uint8Array(32), gateways: [] });
   const type = (text) => { els['blwp-wd-invoice'].value = text; els['blwp-wd-invoice'].oninput(); };

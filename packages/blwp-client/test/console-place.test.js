@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { pageFunction } from './page-script.js';
 
 const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
 const a = html.indexOf('      window.BLWP_PLACE_CONSOLE = () => {');
@@ -24,7 +25,7 @@ function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = sl
   const classes = new Set();
   const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } },
     getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } : id === 'blwp-wallet' ? panel : null) };
-  new Function('window', 'document', 'go', 'consoleOpen', 'paintConsoleThumb', body + '\nwindow.BLWP_PLACE_CONSOLE();')(window, document, go, () => open, () => {});
+  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window', 'document', 'go', 'consoleOpen', 'paintConsoleThumb'], body, 'window.BLWP_PLACE_CONSOLE();')(window, document, go, () => open, () => {});
   const px = (v) => Number(String(v).replace('px', ''));
   const btn = slot ? { top: px(go.style.top), right: px(go.style.right) } : { top: btnTop, right: null };
   btn.bottom = btn.top + bh;
