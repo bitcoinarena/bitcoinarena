@@ -1,0 +1,18 @@
+diff -ru pa/fedimint-client-module/src/transaction/sm.rs pb/fedimint-client-module/src/transaction/sm.rs
+--- a/fedimint-client-module/src/transaction/sm.rs	2026-10-06 10:26:02.700315758 +0200
++++ b/fedimint-client-module/src/transaction/sm.rs	2026-10-06 10:26:02.720317217 +0200
+@@ -295,9 +295,12 @@
+     async fn trigger_created_accepted(
+         txid: TransactionId,
+         context: DynGlobalClientContext,
+-        mut tx_submitted: watch::Receiver<bool>,
++        tx_submitted: watch::Receiver<bool>,
+     ) {
+-        let _ = tx_submitted.wait_for(|submitted| *submitted).await;
++        // BLWP (kanban #192): awaited at once, beside the submission - not after a threshold of submit answers, each of
++        // which a guardian gives only once the transaction is accepted (the client waited for acceptance twice, one after
++        // the other). A guardian answers await_transaction only once its consensus accepted the transaction.
++        drop(tx_submitted);
+         context.api().await_transaction(txid).await;
+         debug!(target: LOG_CLIENT_NET_API, %txid, "Transaction accepted in consensus");
+     }
