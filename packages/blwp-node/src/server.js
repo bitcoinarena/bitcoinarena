@@ -89,7 +89,7 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/object
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { installedCores, coreForRound, TRUCK } from './cores.js';
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../protocol/src/rerun.js';
@@ -285,6 +285,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A TEST AID, as the finality option above is (kanban #191): one more reason this node refuses to offer a round - contract -> why or null.
   // Production names none; the live reasons are the series and the donation set in force.
   refusedFor = null,
+  // THE OPERATOR'S REFUSE-ROUNDS FILE (kanban #191, the owner 2026-10-06 path A): round ids, one per line, this node refuses at
+  // every door from the moment the file changes - read again by its mtime, no restart. Empty in normal running.
+  refuseRoundsFile = null,
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): `(roundId, contract) => { firstHeight, blocks }`,
   // defaulting to this daemon's own `chainFor`. Given apart from `chainFor` so a harness can hand its daemons a block
   // clock without also making the verifier check its fixed beacon against that chain.
@@ -1865,8 +1868,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const droppedSeries = new Set();
   const droppedRefusal = (contract) => (contract && contract.seriesId instanceof Uint8Array && droppedSeries.has(toHex(contract.seriesId))
     ? `series ${toHex(contract.seriesId).slice(0, 16)} was taken out of this node's series file: its rounds are not offered or entered` : null);
+  const refuseFile = { seen: undefined, ids: new Set() };
+  const fileRefusal = (contract) => {
+    if (!refuseRoundsFile) return null;
+    let m = null;
+    try { m = statSync(refuseRoundsFile).mtimeMs; } catch { m = null; }
+    if (m !== refuseFile.seen) {
+      refuseFile.seen = m;
+      let ids = new Set();
+      try { ids = new Set(readFileSync(refuseRoundsFile, 'utf8').split(/\s+/).map((x) => x.toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x))); } catch { ids = new Set(); }
+      refuseFile.ids = ids;
+      console.log(`[refuse-rounds] ${ids.size} round(s) refused by the operator's file`);
+    }
+    if (!refuseFile.ids.size) return null;
+    const id = toHex(roundIdOf(contract));
+    return refuseFile.ids.has(id) ? `this signer node's operator refuses round ${id.slice(0, 16)} (refuse-rounds file)` : null;
+  };
   const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract)
-    || (typeof refusedFor === 'function' ? refusedFor(contract) : null);
+    || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null);
   const seriesRefusalOfRound = (rid) => {
     const row = rid ? round.get(rid) : null;
     if (!row) return null;
