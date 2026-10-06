@@ -104,3 +104,95 @@ test('a bad version, a file without the marker, or data without the build asset 
   assert.match(r2.stderr, /the build TextAsset \(8 bytes\) was not found/);
   assert.ok(readFileSync(noAsset).equals(noAssetBytes));
 });
+
+// THE STAMP INSIDE AN LZ4 BLOCK (kanban #200: the 0.0.2822 build keeps `build` in a compressed block of data.unity3d, and
+// the tool refused it). The fixture is Unity's layout: UnityWebData1.0 with three files, the middle one a UnityFS bundle
+// (format 8, block table LZ4HC behind a 16-byte aligned header, blocks LZ4HC) - one block holding the stamp, one holding a
+// back-reference so the decoder's matches run.
+const lz4Literal = (b) => {   // one LZ4 sequence of literals and nothing else, as the format allows
+  const n = b.length; const head = [n >= 15 ? 0xf0 : n << 4];
+  if (n >= 15) { let r = n - 15; while (r >= 255) { head.push(255); r -= 255; } head.push(r); }
+  return Buffer.concat([Buffer.from(head), b]);
+};
+// "abcd" then a match of 12 four back, then the literal tail "xyz": "abcdabcdabcdabcdxyz"
+const MATCHED = Buffer.from([0x48, 0x61, 0x62, 0x63, 0x64, 0x04, 0x00, 0x30, 0x78, 0x79, 0x7a]);
+const MATCHED_OUT = Buffer.from('abcdabcdabcdabcdxyz');
+// the stamp's four digits as a match on the same digits 20,012 bytes back, as Unity's LZ4 left 0.0.2822: never in the clear
+const len15 = (n) => { const o = []; if (n >= 15) { let r = n - 15; while (r >= 255) { o.push(255); r -= 255; } o.push(r); } return o; };
+function lz4Stamped(b, digitsAt, from) {
+  const lit = b.subarray(0, digitsAt);
+  const seq = Buffer.from([(lit.length >= 15 ? 15 : lit.length) << 4, ...len15(lit.length)]);
+  const off = Buffer.from([(digitsAt - from) & 0xff, (digitsAt - from) >> 8]);
+  return Buffer.concat([seq, lit, off, lz4Literal(b.subarray(digitsAt + 4))]);
+}
+function unityWeb(stamp) {
+  const stream = payload(stamp);
+  const vAt = stream.indexOf(Buffer.from(stamp, 'latin1'));
+  stream.write(stamp.slice(4), 100000, 'latin1');
+  const parts = [stream.subarray(0, 131072), stream.subarray(131072)];
+  const blocks = [{ u: parts[0].length, c: lz4Stamped(parts[0], vAt + 4, 100000) }, { u: parts[1].length, c: lz4Literal(parts[1]) },
+    { u: MATCHED_OUT.length, c: MATCHED }];
+  const nodeName = Buffer.from('CAB-fixture\u0000', 'latin1');
+  const total = blocks.reduce((s, b) => s + b.u, 0);
+  const info = Buffer.alloc(20 + blocks.length * 10 + 4 + 20 + nodeName.length);
+  info.writeUInt32BE(blocks.length, 16);
+  blocks.forEach((b, i) => { info.writeUInt32BE(b.u, 20 + i * 10); info.writeUInt32BE(b.c.length, 24 + i * 10); info.writeUInt16BE(3, 28 + i * 10); });
+  let q = 20 + blocks.length * 10;
+  info.writeUInt32BE(1, q); info.writeBigUInt64BE(0n, q + 4); info.writeBigUInt64BE(BigInt(total), q + 12); info.writeUInt32BE(4, q + 20); nodeName.copy(info, q + 24);
+  const infoC = lz4Literal(info);
+  const head = Buffer.concat([Buffer.from('UnityFS\u0000', 'latin1'), Buffer.from([0, 0, 0, 8]), Buffer.from('5.x.x\u00006000.0.82f1\u0000', 'latin1'), Buffer.alloc(8 + 12)]);
+  const hEnd = head.length;
+  head.writeUInt32BE(infoC.length, hEnd - 12); head.writeUInt32BE(info.length, hEnd - 8); head.writeUInt32BE(0x243, hEnd - 4);
+  const pad = (b) => Buffer.concat([b, Buffer.alloc(((b.length + 15) & ~15) - b.length)]);
+  const bundle = Buffer.concat([pad(Buffer.concat([pad(head), infoC])), ...blocks.map((b) => b.c)]);
+  bundle.writeBigUInt64BE(BigInt(bundle.length), hEnd - 20);
+  const files = [['pre.json', Buffer.from('{"pre":1}')], ['data.unity3d', bundle], ['post.bin', Buffer.alloc(3000, 9)]];
+  const table = files.map(([n]) => 12 + Buffer.byteLength(n));
+  const headSize = 20 + table.reduce((a, b) => a + b, 0);
+  const web = Buffer.alloc(headSize);
+  web.write('UnityWebData1.0\u0000', 0, 'latin1'); web.writeUInt32LE(headSize, 16);
+  let p = 20, off = headSize;
+  for (const [n, b] of files) { web.writeUInt32LE(off, p); web.writeUInt32LE(b.length, p + 4); web.writeUInt32LE(Buffer.byteLength(n), p + 8); web.write(n, p + 12); p += 12 + Buffer.byteLength(n); off += b.length; }
+  return { web: Buffer.concat([web, ...files.map(([, b]) => b)]), stream: Buffer.concat([stream, MATCHED_OUT]), blocks: blocks.map((b) => b.c), vAt };
+}
+/** The web data read back: its files, and data.unity3d's blocks as the tool must leave them readable. */
+function readWeb(w) {
+  const files = {};
+  for (let p = 20; p < w.readUInt32LE(16);) { const off = w.readUInt32LE(p), sz = w.readUInt32LE(p + 4), nl = w.readUInt32LE(p + 8); files[w.subarray(p + 12, p + 12 + nl).toString()] = w.subarray(off, off + sz); p += 12 + nl; }
+  const f = files['data.unity3d'];
+  let q = 12; q = f.indexOf(0, q) + 1; q = f.indexOf(0, q) + 1;
+  const size = Number(f.readBigUInt64BE(q)); const cbi = f.readUInt32BE(q + 8), ubi = f.readUInt32BE(q + 12), flags = f.readUInt32BE(q + 16);
+  assert.equal(flags & 0x3f, 0, 'the block table is written uncompressed');
+  const at0 = (q + 20 + 15) & ~15; const info = f.subarray(at0, at0 + cbi); assert.equal(cbi, ubi);
+  let at = (at0 + cbi + 15) & ~15; const out = []; const kinds = [];
+  for (let i = 0; i < info.readUInt32BE(16); i++) {
+    const u = info.readUInt32BE(20 + i * 10), c = info.readUInt32BE(24 + i * 10), k = info.readUInt16BE(28 + i * 10) & 0x3f;
+    kinds.push(k); out.push(f.subarray(at, at + c)); at += c;
+  }
+  return { files, size, length: f.length, end: at, kinds, raw: out };
+}
+
+test('the stamp in an LZ4 block of data.unity3d: that block is stored plain with the new stamp, every other byte and file kept', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'stamp-'));
+  const { web, stream, vAt } = unityWeb('0.0.2822');
+  const { file } = unityBrotli(web, 22);
+  assert.ok(!/0\.0\.2822/.test(zlib.brotliDecompressSync(file).toString('latin1')), 'the fixture holds the stamp only compressed');
+  const path = join(dir, 'webgl-fork.data.unityweb');
+  writeFileSync(path, file);
+  const r = await run(path, '0.0.2830');
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, new RegExp(`stamp 0\\.0\\.2822 at ${vAt} of data\\.unity3d \\(LZ4 blocks\\) -> 0\\.0\\.2830`));
+  const back = readWeb(zlib.brotliDecompressSync(readFileSync(path)));
+  assert.equal(back.files['pre.json'].toString(), '{"pre":1}');
+  assert.ok(back.files['post.bin'].equals(Buffer.alloc(3000, 9)), 'the file behind the bundle moved, its bytes did not');
+  assert.equal(back.size, back.length, 'the bundle names its own new length');
+  assert.equal(back.end, back.length, 'its blocks fill it exactly');
+  assert.deepEqual(back.kinds, [0, 3, 3], 'the stamped block plain, the others LZ4 as Unity wrote them');
+  const want = stream.subarray(0); Buffer.from('0.0.2830', 'latin1').copy(want, vAt);
+  assert.ok(back.raw[0].equals(want.subarray(0, 131072)), 'the plain block is the stamped stream');
+  const { blocks } = unityWeb('0.0.2822');
+  assert.ok(back.raw[1].equals(blocks[1]) && back.raw[2].equals(blocks[2]), 'the other blocks keep Unity\'s compressed bytes (the third, with its match, was decoded to look for the stamp)');
+  // stamped once, the stamp is in the clear: the next deploy's stamp of this file takes the plain path
+  const again = await run(path, '0.0.2831', path);
+  assert.match(again.stdout, /stamp 0\.0\.2830 at \d+ -> 0\.0\.2831/);
+});
