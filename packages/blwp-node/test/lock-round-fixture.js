@@ -129,7 +129,7 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
 // fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
 // `address`: the entry names the fixture's Lightning address at every signer node once it has played.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null } = {}) {
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1 } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -226,6 +226,10 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       if (stale) {
         answers.push(said(await say(d.port, sign(stale.h))));
         (forked.staleAnswers = forked.staleAnswers || []).push(said(await say(d.port, sign(stale.s))));
+        // `staleMarks: N` (kanban #155, measured live: 63 refused marks from one stuck page): N - 1 more, each naming the
+        // same old parent with another state - every one refused, every one a "second child" on paper
+        for (let k = 1; k < staleMarks; k++)
+          forked.staleAnswers.push(said(await say(d.port, sign({ ...stale.s, stateHash: sha256(Uint8Array.of(k, ...stale.s.stateHash)) }))));
         continue;
       }
       answers.push(said(await say(d.port, fork === 'one-seat' ? forked.x : (i === 0 ? forked.x : forked.y))));
