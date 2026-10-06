@@ -1,6 +1,6 @@
 {
     "name": "BtcLogistics.EditTests",
-    "references": ["UnityEngine.TestRunner", "UnityEditor.TestRunner", "BtcLogistics.Runtime"],
+    "references": ["UnityEngine.TestRunner", "UnityEditor.TestRunner", "BtcLogistics.Runtime", "Unity.InputSystem", "Unity.InputSystem.TestFramework"],
     "includePlatforms": ["Editor"],
     "excludePlatforms": [],
     "overrideReferences": true,
