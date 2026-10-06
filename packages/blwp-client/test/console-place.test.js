@@ -1,6 +1,9 @@
-// THE CONSOLE BUTTON AND ITS PANEL, PLACED FROM THE HUD'S OWN SLOT (the owner 2026-10-04): index.html's BLWP_PLACE_CONSOLE run
-// on fake slots - the two measured screens and an upright phone. The button and the open panel stay inside the screen and
-// off the throttle pad; the panel is capped to the room under the button. The function is the page's own text, run here.
+// THE CONSOLE BUTTON AND ITS PANEL, PLACED FROM THE HUD'S OWN SLOT: index.html's BLWP_PLACE_CONSOLE run on fake slots - the
+// measured screens and an upright phone. The button stays under the HUD corner (the owner 2026-10-04). THE OPEN PANEL (kanban
+// #198, the owner 2026-10-06 17:11: it covered the truck) is bottom right at its fixed 260 px: its right edge at the HUD's
+// corner margin, its bottom one HUD margin above the throttle pad (the screen's bottom margin where no pads are drawn) and
+// above the cargo bay, right of the screen's middle (the truck's lane), at most 280 px wide. Where 260 px do not fit
+// between the button and that bottom, it keeps its height and steps aside (held). The function is the page's own text.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -10,84 +13,105 @@ const a = html.indexOf('      window.BLWP_PLACE_CONSOLE = () => {');
 const b = html.indexOf("      window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());", a);
 assert.ok(a > 0 && b > a, 'the page places its Console button in BLWP_PLACE_CONSOLE');
 const body = html.slice(a, b);
+const PANEL_H = 260;
+const css = html.slice(html.indexOf('body.blwp-console-open #blwp-wallet { position: fixed;'), html.indexOf('#blwp-console-thumb {'));
 
 /** The page's function over a fake window: the canvas fills the window, the button is 64 x 22 as measured. */
-function place(slot, { open = true, bw = 64, bh = 22 } = {}) {
-  const style = () => ({});
-  const go = { offsetWidth: bw, offsetHeight: bh, style: style() };
-  const panel = { style: style() };
-  const window = { innerWidth: slot.w, innerHeight: slot.h, BLWP_HUD_CORNER: slot };
+function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = slot && slot.h, coarse = true, btnTop = 52 } = {}) {
+  const go = { offsetWidth: bw, offsetHeight: bh, style: {}, title: '', getBoundingClientRect: () => ({ top: btnTop, bottom: btnTop + bh, height: bh }) };
+  const panel = { style: {} };
+  const window = { innerWidth: w, innerHeight: h, BLWP_HUD_CORNER: slot, matchMedia: () => ({ matches: coarse }) };
   const classes = new Set();
-  const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } }, getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: slot.w, height: slot.h }) } : id === 'blwp-wallet' ? panel : null) };
-  new Function('window', 'document', 'go', 'consoleOpen', body + '\nwindow.BLWP_PLACE_CONSOLE();')(window, document, go, () => open);
+  const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } },
+    getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } : id === 'blwp-wallet' ? panel : null) };
+  new Function('window', 'document', 'go', 'consoleOpen', 'paintConsoleThumb', body + '\nwindow.BLWP_PLACE_CONSOLE();')(window, document, go, () => open, () => {});
   const px = (v) => Number(String(v).replace('px', ''));
-  const btn = { top: px(go.style.top), right: px(go.style.right) };
-  btn.bottom = btn.top + bh; btn.rightX = slot.w - btn.right; btn.left = btn.rightX - bw;
+  const btn = slot ? { top: px(go.style.top), right: px(go.style.right) } : { top: btnTop, right: null };
+  btn.bottom = btn.top + bh;
+  if (slot) { btn.rightX = w - btn.right; btn.left = btn.rightX - bw; }
   const held = classes.has('blwp-console-held');
-  const p = open ? { held, top: px(panel.style.top), right: px(panel.style.right), maxH: px(panel.style.maxHeight), maxW: px(panel.style.maxWidth) } : null;
-  if (p) { p.bottom = p.top + p.maxH; p.rightX = slot.w - p.right; p.left = p.rightX - p.maxW; }
-  return { btn, p };
+  let p = null;
+  if (open) {
+    p = { held, title: go.title, right: px(panel.style.right), bottomGap: px(panel.style.bottom), width: px(panel.style.width), maxW: px(panel.style.maxWidth) };
+    p.bottom = h - p.bottomGap; p.top = p.bottom - PANEL_H; p.rightX = w - p.right; p.left = p.rightX - p.width;
+  }
+  return { btn, p, placed: window.BLWP_CONSOLE_PLACED };
 }
-const pad = (s) => ({ left: s.padX, right: s.padX + s.padW, top: s.padY });
-const overlaps = (r, q) => r.left < q.right && r.rightX > q.left && r.bottom > q.top;
+const PAD = (s) => ({ left: s.padX, right: s.padX + s.padW, top: s.padY });
 
-// the slots Unity sent, read off the live page 0.0.2519 (1280x720, 844x390) and an upright phone's shape
+// the slots Unity sent, read off the live page 0.0.2519 (1280x720, 844x390) and an upright phone's shape; `pads` as DriveHud.PadsShown
 const SLOTS = {
-  desktop: { w: 1280, h: 720, top: 313, right: 1254.8, padX: 1110.8, padY: 394.2, padW: 144, m: 25.2 },
-  phone: { w: 844, h: 390, top: 221.7, right: 830, padX: 752, padY: 213, padW: 78, m: 14 },
-  upright: { w: 390, h: 844, top: 120, right: 376, padX: 290, padY: 700, padW: 86, m: 14 },
+  desktop: { w: 1280, h: 720, top: 313, right: 1254.8, padX: 1110.8, padY: 394.2, padW: 144, m: 25.2, pads: 0 },
+  desktopTouch: { w: 1280, h: 720, top: 313, right: 1254.8, padX: 1110.8, padY: 394.2, padW: 144, m: 25.2, pads: 1 },
+  phone: { w: 844, h: 390, top: 221.7, right: 830, padX: 752, padY: 213, padW: 78, m: 14, pads: 1 },
+  upright: { w: 430, h: 932, top: 120, right: 415, padX: 333, padY: 735, padW: 86, m: 15, pads: 1 },
 };
 
-for (const [name, s] of Object.entries(SLOTS)) {
-  test(`${name} ${s.w}x${s.h}: the button and the open panel stay inside the screen and off the throttle pad`, () => {
-    const { btn, p } = place(s);
-    assert.ok(btn.top >= Math.round(s.top) - 1, `the button under the HUD corner (top ${btn.top}, slot ${s.top})`);
-    assert.ok(btn.left >= 0 && btn.rightX <= s.w && btn.bottom <= s.h, `the button inside the screen ${JSON.stringify(btn)}`);
-    assert.ok(!overlaps({ left: btn.left, rightX: btn.rightX, bottom: btn.bottom }, pad(s)) || btn.bottom <= s.padY, `the button off the pad ${JSON.stringify(btn)}`);
-    assert.ok(p.top >= btn.bottom, 'the panel under the button');
-    assert.ok(p.bottom <= s.h, `the panel's bottom ${p.bottom} inside the ${s.h} px screen`);
-    assert.ok(p.left >= 0 && p.rightX <= s.w, `the panel inside the screen ${JSON.stringify(p)}`);
-    assert.ok(p.rightX <= s.padX || p.top >= s.padY + 9999 || p.bottom <= s.padY, `the panel off the throttle pad's column ${JSON.stringify(p)}`);
-    assert.ok(p.maxW <= 280, 'at most 280 px wide');
-  });
-}
+test('the height is fixed at 260 CSS px in the page\'s own CSS - a height, not a max, border and padding inside it, scrolling', () => {
+  assert.match(css, /height: 260px;/);
+  assert.match(css, /max-height: none;/);
+  assert.match(css, /box-sizing: border-box;/);
+  assert.match(css, /overflow-y: scroll;/);
+  assert.match(css, /touch-action: pan-y;/);
+  assert.doesNotMatch(body, /maxHeight = Math/, 'the panel\'s height is not set from the room left any more');
+});
+
+test('upright phone 430x932 in a round: bottom right, one HUD margin above the throttle pad, right edge at the HUD margin, off the truck\'s lane', () => {
+  const s = SLOTS.upright;
+  const { btn, p } = place(s);
+  assert.equal(p.held, false);
+  assert.equal(p.right, Math.round(s.w - s.right), 'the right gap is the HUD corner margin');
+  assert.ok(p.bottom <= s.padY - s.m + 0.5, `its bottom ${p.bottom} one margin above the throttle pad's top ${s.padY}`);
+  assert.ok(p.bottom >= s.padY - s.m - 1, 'and right there, not floating higher');
+  assert.ok(p.top >= btn.bottom, `260 px of it under the button (top ${p.top}, button bottom ${btn.bottom})`);
+  assert.ok(p.left >= s.w / 2 + s.m - 1, `left of it the screen's middle stays clear (left ${p.left})`);
+  assert.ok(p.width <= 280 && p.maxW === 280);
+});
+
+test('desktop 1280x720 without pads: bottom right at the screen\'s margin, 280 px wide', () => {
+  const s = SLOTS.desktop;
+  const { btn, p } = place(s);
+  assert.equal(p.held, false);
+  assert.ok(Math.abs(p.bottom - (s.h - s.m)) <= 1, `its bottom ${p.bottom} one margin above the screen's bottom`);
+  assert.ok(p.top >= btn.bottom);
+  assert.equal(p.width, 280);
+  assert.equal(p.right, Math.round(s.w - s.right));
+});
+
+test('where 260 px do not fit above the throttle pad (844x390 phone, 1280x720 with pads) the panel keeps its height and steps aside, saying why', () => {
+  for (const s of [SLOTS.phone, SLOTS.desktopTouch]) {
+    const { p } = place(s);
+    assert.equal(p.held, true, `${s.w}x${s.h}: not held`);
+    assert.match(p.title, /needs 260 px above the throttle pad/);
+  }
+});
+
+test('the cargo bay up: the panel stands above the bay, or steps aside until ROLL OUT where 260 px do not fit', () => {
+  const tall = { ...SLOTS.upright, top: 300, floor: 700 };
+  const up = place(tall).p;
+  assert.equal(up.held, false);
+  assert.ok(up.bottom <= tall.floor - tall.m + 0.5, `its bottom ${up.bottom} above the bay's top ${tall.floor}`);
+  const short = { ...SLOTS.desktop, top: 373.3, floor: 508.3 };
+  const held = place(short).p;
+  assert.equal(held.held, true);
+  assert.match(held.title, /after ROLL OUT/);
+  const after = place({ ...SLOTS.desktop }).p;
+  assert.equal(after.held, false, 'the bay closes and the next slot lets the panel back');
+});
+
+test('the lobby, before the HUD is placed: TouchPad.RectFor\'s rule in CSS pixels - bottom 45.25vmin + 3.5vmin up, right 3.5vmin', () => {
+  const { p } = place(null, { w: 430, h: 932 });
+  const vmin = 4.3;
+  assert.equal(p.held, false);
+  assert.equal(p.right, Math.round(3.5 * vmin));
+  assert.equal(p.bottomGap, Math.round(45.25 * vmin + 3.5 * vmin));
+  const noTouch = place(null, { w: 1280, h: 720, coarse: false }).p;
+  assert.equal(noTouch.bottomGap, Math.round(3.5 * 7.2), 'no pads drawn: the screen\'s bottom margin');
+  assert.match(css, /@media \(pointer: coarse\) \{ body\.blwp-console-open #blwp-wallet \{ bottom: calc\(45\.25vmin \+ 3\.5vmin\); \} \}/);
+});
 
 test('closed, the panel is left alone; the button is still placed', () => {
   const { btn, p } = place(SLOTS.phone, { open: false });
   assert.equal(p, null);
   assert.ok(btn.top > 0);
-});
-
-// THE CARGO BAY UP (measured live on 0.0.2521, a FREE round's chooser): the HUD's slot top is then under the cargo chooser
-// and its floor the bay's top - 1280x720: chooser to 367, bay from 508.3; 844x390: chooser to ~200, bay from 257.6.
-test('1280x720 with the cargo bay up: button and panel in the band between the chooser and the bay', () => {
-  const s = { ...SLOTS.desktop, top: 373.3, floor: 508.3 };
-  const { btn, p } = place(s);
-  assert.equal(p.held, false);
-  assert.ok(btn.top >= 367, `the button under the chooser (top ${btn.top})`);
-  assert.ok(p.top >= btn.bottom, 'the panel under the button');
-  assert.ok(p.bottom <= s.floor, `its bottom ${p.bottom} above the bay's top ${s.floor}`);
-  assert.ok(p.maxH >= 80, `room for the lock lines (${p.maxH} px)`);
-});
-
-test('844x390 with the cargo bay up: the band is too short, so the panel steps aside (held) - it covers nothing', () => {
-  const s = { ...SLOTS.phone, top: 203.5, floor: 257.6 };
-  const { btn, p } = place(s);
-  assert.equal(p.held, true, 'held while the bay is up');
-  assert.ok(btn.bottom <= s.floor, `the button stays, above the bay (bottom ${btn.bottom})`);
-});
-
-test('the bay closes (ROLL OUT): the next slot lets the panel back', () => {
-  const s = { ...SLOTS.phone, top: 203.5, floor: 257.6 };
-  const doc = place(s);
-  assert.equal(doc.p.held, true);
-  const after = place(SLOTS.phone);
-  assert.equal(after.p.held, false);
-  assert.ok(after.p.bottom <= SLOTS.phone.h);
-});
-
-test('no floor sent (an older build): the screen bottom, as before', () => {
-  const { p } = place(SLOTS.phone);
-  assert.equal(p.held, false);
-  assert.ok(p.bottom <= SLOTS.phone.h);
 });

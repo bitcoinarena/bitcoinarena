@@ -230,8 +230,26 @@
       font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #c9d1d9;
       background: rgba(13,16,20,0.72); border: 1px solid #3a4452; border-radius: 4px; cursor: pointer; }
     #blwp-console-go[aria-expanded="true"] { color: #0d1014; background: #f7931a; border-color: #f7931a; }
-    body.blwp-console-open #blwp-wallet { top: 78px; right: 8px; max-width: 280px; max-height: 45vh; overflow-y: auto;
-      font-size: 11px; line-height: 1.3; padding: 6px 8px; }
+    /* THE OPEN CONSOLE: BOTTOM RIGHT, 260 PX, SCROLLING (kanban #198, the owner 2026-10-06 17:11, phone screenshot: the console
+       covered the truck). Its height is fixed at twice the box in that screenshot - the box measured 289 image px against
+       the Console button's 50 px for its 22.3 CSS px, so 129 CSS px; twice is 260 - border and padding inside it, never
+       growing or shrinking with its lines. It stands in the bottom right corner one HUD margin above the throttle pad
+       (BLWP_PLACE_CONSOLE, from DriveHud.ConsoleSlot); before the HUD is placed, by TouchPad.RectFor's own rule: the
+       right column's top is 45.25vmin up, the margin 3.5vmin. Its lines scroll inside it; a touch on it is the panel's. */
+    body.blwp-console-open #blwp-wallet { position: fixed; top: auto; left: auto; right: 3.5vmin; bottom: 3.5vmin;
+      width: min(280px, calc(100vw - 7vmin)); max-width: 280px; height: 260px; max-height: none; box-sizing: border-box;
+      overflow-y: scroll; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch;
+      font-size: 11px; line-height: 1.3; padding: 6px 12px 6px 8px;
+      scrollbar-width: thin; scrollbar-color: #f7931a transparent; }
+    @media (pointer: coarse) { body.blwp-console-open #blwp-wallet { bottom: calc(45.25vmin + 3.5vmin); } }
+    body.blwp-console-open #blwp-wallet::-webkit-scrollbar { width: 4px; }
+    body.blwp-console-open #blwp-wallet::-webkit-scrollbar-track { background: transparent; }
+    body.blwp-console-open #blwp-wallet::-webkit-scrollbar-thumb { background: #f7931a; border-radius: 2px; }
+    /* THE THUMB, DRAWN (iOS Safari shows its own only while scrolling): over the panel's right edge, where the desktop
+       scrollbar's thumb is, sized and moved from the panel's scroll - so a phone always sees there is more. */
+    #blwp-console-thumb { position: fixed; z-index: 22; width: 4px; border-radius: 2px; background: #f7931a;
+      pointer-events: none; display: none; }
+    body.blwp-console-open:not(.blwp-console-held):not(.blwp-clean) #blwp-console-thumb.on { display: block; }
     body.blwp-console-open #blwp-wallet .owed { font-size: 12px; }
     body.blwp-console-open #blwp-players { font-size: 10px; line-height: 1.25; padding: 4px 7px; max-width: min(40vw, 320px); }
     body.blwp-clean #blwp-console-go { display: none !important; }
@@ -450,6 +468,7 @@
   <div id="blwp-players"></div>
   <div id="blwp-refund"></div>
   <button id="blwp-console-go" type="button" aria-expanded="false" title="Consensus and federation lines">Console</button>
+  <div id="blwp-console-thumb" aria-hidden="true"></div>
   <div id="blwp-wallet">
     <div class="owed" id="blwp-owed"></div>
     <div class="spent" id="blwp-spent"></div>
@@ -2875,44 +2894,75 @@
       // of the pad. The open panel goes under the button. No layout rule here: every number is the HUD's.
       window.BLWP_PLACE_CONSOLE = () => {
         const c = window.BLWP_HUD_CORNER, canvas = document.getElementById('canvas');
-        if (!c || !canvas || !c.w || !c.h) return;
-        const r = canvas.getBoundingClientRect(), sx = r.width / c.w, sy = r.height / c.h;
         const bh = go.offsetHeight || 20, bw = go.offsetWidth || 64, gap = 4;
-        let top = r.top + c.top * sy, right = window.innerWidth - (r.left + c.right * sx);
-        const padTop = r.top + c.padY * sy, padLeft = r.left + c.padX * sx, padRight = r.left + (c.padX + c.padW) * sx;
-        const btnLeft = window.innerWidth - right - bw;
-        if (top + bh > padTop - gap && btnLeft < padRight) right = window.innerWidth - padLeft + c.m * 0.5 * sx;
-        go.style.top = Math.round(top) + 'px';
-        go.style.right = Math.round(right) + 'px';
+        const W = window.innerWidth, H = window.innerHeight, vmin = Math.min(W, H) / 100;
+        // THE HUD'S OWN NUMBERS once it has placed itself; before that (the lobby) TouchPad.RectFor's rule in CSS pixels
+        let geo, top = null, right = null;
+        if (c && canvas && c.w && c.h) {
+          const r = canvas.getBoundingClientRect(), sx = r.width / c.w, sy = r.height / c.h;
+          top = r.top + c.top * sy; right = W - (r.left + c.right * sx);
+          const padTop = r.top + c.padY * sy, padLeft = r.left + c.padX * sx, padRight = r.left + (c.padX + c.padW) * sx;
+          const btnLeft = W - right - bw;
+          if (top + bh > padTop - gap && btnLeft < padRight) right = W - padLeft + c.m * 0.5 * sx;
+          go.style.top = Math.round(top) + 'px';
+          go.style.right = Math.round(right) + 'px';
+          geo = { btnBottom: top + bh, right: W - (r.left + c.right * sx), pads: c.pads !== 0, padTop, m: c.m * sy,
+            floor: r.top + (Number.isFinite(c.floor) ? c.floor : c.h) * sy, bayUp: Number.isFinite(c.floor) && c.floor < c.h };
+        } else {
+          const b = go.getBoundingClientRect();
+          geo = { btnBottom: b.height ? b.bottom : 52 + bh, right: 3.5 * vmin, pads: window.matchMedia('(pointer: coarse)').matches,
+            padTop: H - 45.25 * vmin, m: 3.5 * vmin, floor: H, bayUp: false };
+        }
         const panel = document.getElementById('blwp-wallet');
-        // AND NO LOWER THAN THE SCREEN (the owner 2026-10-04: at 844x390 the panel's 45vh from under the button ran to y 423):
-        // its height is the room left under the button, less the HUD's own margin - the 45vh cap still applies above that
+        // THE OPEN CONSOLE, BOTTOM RIGHT AT ITS FIXED 260 PX (kanban #198): its right edge at the HUD's corner margin, its
+        // bottom one HUD margin above the throttle pad (the screen's bottom margin where no pads are drawn) and above the
+        // cargo bay while that is up; never left of the screen's middle less a margin, the truck's lane; 280 px at most.
+        // WHERE 260 PX DO NOT FIT between the Console button and that bottom, the panel keeps its height and steps aside
+        // (blwp-console-held): the button stays, dimmed, and says why - never squeezed onto a control.
         if (panel && consoleOpen()) {
-          const pTop = Math.round(top + bh + gap);
-          // under the button, right-aligned with it, the shipped 280 px wide - not stretched from the left edge by the
-          // phone-landscape rule (measured 844x390: that put it over the left steering pads)
-          // AND NEVER OVER THE THROTTLE PAD'S COLUMN: where its column runs under the button (1280x720), the panel stands
-          // left of the pad as the button does at phone size
-          const pRight = Math.max(right, window.innerWidth - padLeft + c.m * 0.5 * sx);
-          panel.style.right = Math.round(pRight) + 'px';
-          panel.style.left = 'auto'; panel.style.maxWidth = '280px';
-          // AND ABOVE THE CARGO BAY (measured 844x390, paid round: the panel lay over HUNTED, LOAD and ROLL OUT): the HUD's
-          // floor is the bay's top while it is up, and its slot top is then under the cargo chooser - the panel opens in the
-          // band between them. WHERE THAT BAND HOLDS LESS THAN PANEL_MIN (844x390: 57 px) THE PANEL STEPS ASIDE while the bay
-          // is up and comes back with the next slot, at ROLL OUT: above the button it would lie on the chooser's crates
-          // (measured 0.0.2521), and every other part of that screen is a control or the bay.
-          const PANEL_MIN = 80;
-          const floor = r.top + (Number.isFinite(c.floor) ? c.floor : c.h) * sy;
-          const below = Math.min(window.innerHeight * 0.45, floor - pTop - c.m * 0.5 * sy, window.innerHeight - pTop - c.m * sy);
-          const held = below < PANEL_MIN;
+          const PANEL_H = 260;
+          const bottom = Math.min(geo.pads ? geo.padTop - geo.m : H - geo.m, geo.floor - geo.m);
+          const held = bottom - PANEL_H < geo.btnBottom + gap;
           document.body.classList.toggle('blwp-console-held', held);
-          go.title = held ? 'The Console opens after ROLL OUT - the cargo bay leaves it no room on this screen' : '';
-          panel.style.top = pTop + 'px';
-          panel.style.maxHeight = Math.round(Math.max(40, below)) + 'px';
+          go.title = !held ? '' : geo.bayUp ? 'The Console opens after ROLL OUT - the cargo bay leaves it no room on this screen'
+            : 'The Console needs 260 px above the throttle pad - this screen holds less';
+          const width = Math.max(120, Math.min(280, W - geo.right - W / 2 - geo.m));
+          panel.style.top = 'auto'; panel.style.left = 'auto'; panel.style.maxHeight = '';
+          panel.style.right = Math.round(geo.right) + 'px';
+          panel.style.bottom = Math.round(H - bottom) + 'px';
+          panel.style.width = Math.round(width) + 'px'; panel.style.maxWidth = '280px';
         } else document.body.classList.remove('blwp-console-held');
-        window.BLWP_CONSOLE_PLACED = { top: Math.round(top), right: Math.round(right), bh, bw, corner: c };
+        paintConsoleThumb();
+        window.BLWP_CONSOLE_PLACED = { top: top === null ? null : Math.round(top), right: right === null ? null : Math.round(right), bh, bw, corner: c || null,
+          geo: { btnBottom: Math.round(geo.btnBottom), right: Math.round(geo.right), pads: geo.pads, padTop: Math.round(geo.padTop), m: Math.round(geo.m * 10) / 10 } };
       };
       window.addEventListener('resize', () => window.BLWP_PLACE_CONSOLE());
+      // THE DRAWN THUMB (kanban #198): over the panel's right edge, sized and moved from its scroll; iOS Safari draws its own
+      // only while a finger scrolls, so a phone would not see that the console holds more
+      function paintConsoleThumb() {
+        const t = document.getElementById('blwp-console-thumb'), p = document.getElementById('blwp-wallet');
+        if (!t || !p) return;
+        const shown = consoleOpen() && !document.body.classList.contains('blwp-console-held') && getComputedStyle(p).display !== 'none' && p.clientHeight > 0;
+        t.classList.toggle('on', shown);
+        if (!shown) return;
+        const r = p.getBoundingClientRect();
+        const range = Math.max(0, p.scrollHeight - p.clientHeight);
+        const h = Math.max(16, r.height * Math.min(1, p.clientHeight / Math.max(1, p.scrollHeight)));
+        t.style.left = Math.round(r.right - 4) + 'px';
+        t.style.top = Math.round(r.top + (range > 0 ? (p.scrollTop / range) * (r.height - h) : 0)) + 'px';
+        t.style.height = Math.round(h) + 'px';
+      }
+      window.BLWP_CONSOLE_THUMB = paintConsoleThumb;
+      {
+        const p = document.getElementById('blwp-wallet');
+        if (p) {
+          p.addEventListener('scroll', paintConsoleThumb, { passive: true });
+          new MutationObserver(() => paintConsoleThumb()).observe(p, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['style'] });
+          // A TOUCH ON THE CONSOLE IS THE CONSOLE'S: it scrolls the panel and goes no further (the canvas is a sibling)
+          for (const ev of ['touchstart', 'touchmove', 'touchend', 'pointerdown', 'pointermove', 'pointerup', 'wheel'])
+            p.addEventListener(ev, (e) => { if (consoleOpen()) e.stopPropagation(); }, { passive: true });
+        }
+      }
       // a click on the button is the page's, never Unity's
       go.addEventListener('pointerdown', (e) => e.stopPropagation());
       go.addEventListener('click', (e) => { e.stopPropagation(); set(!consoleOpen()); });
