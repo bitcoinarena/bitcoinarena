@@ -22,7 +22,7 @@ import { bech32Encode, convertBits } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { sha256 } from '../../protocol/src/hash.js';
@@ -1833,4 +1833,50 @@ test('an imported seed with no wallet here is recovered from the federation; a m
   // a lock client without recover: joined
   const other = b32(0x73); const tab2 = tabStorage(); markSeedRecover(tab2, toHex(other));
   assert.deepEqual((await opened(tab2, other, false)).calls, ['join']);
+});
+
+// §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): a lock the tab
+// keeps for a round no seat settles and no seat knows - round 49a50535, measured live: 100 sat back only after its expiry -
+// is handed to the round's signer nodes (POST /refused-lock); once one keeps it, /stake-lock names it and the forfeit is the
+// stake owed back now, by forfeit, with no settlement; returnStake redeems it without waiting for one.
+test('a kept lock for a round the signer nodes refuse is handed to them, owed back at once by forfeit, and redeemed with no settlement', async () => {
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 98000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const kept = { lock: { outpoint: { txid: b32(0xd8), outIdx: 0n }, fields } };
+  const handed = [];
+  const seats = ({ keeps = true } = {}) => async (url, opts = {}) => {
+    if (url.includes('/lock-settlement')) return new Response(JSON.stringify({ state: 'NONE' }), { status: 200 });
+    if (url.includes('/refused-lock')) {
+      handed.push({ url, body: JSON.parse(opts.body) });
+      return keeps ? new Response('kept for its return', { status: 201 }) : new Response('this signer node offers that round', { status: 409 });
+    }
+    if (url.includes('/stake-lock')) return new Response(JSON.stringify(keeps && handed.length
+      ? [{ entryId: 'aa'.repeat(32), outpoint: `${'d8'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c9', refused: true }] : []), { status: 200 });
+    if (url.includes('/forfeit')) return new Response(JSON.stringify({ signature: 'ab'.repeat(64), contractId: 'c9', claimPk: toHex(CLAIM) }), { status: 200 });
+    return new Response('no', { status: 404 });
+  };
+  const redeemed = [];
+  const wallet = { async lockStatus() { return JSON.stringify({ block_count: 314, stored: { contract_id: 'c9', blocks_left: 150 } }); },
+    async redeem(txid, idx) { redeemed.push(`${txid.slice(0, 8)}:${idx}`); return JSON.stringify({ forfeit_verifies: true, accepted: true, amount_msat: 98000, balance_before: 1000, balance_after: 99000 }); },
+    async withdrawableMsat() { return '0'; }, async balanceMsat() { return '1000'; } };
+  const ask = { round, roundId: rid, seed, curve: pageCurve, nodes: ['http://a.test', 'http://b.test'] };
+  // REFUSED BY THE SEATS: handed over, owed back now
+  const look = await lookOwed({ ...ask, fetcher: seats(), client: wallet, kept });
+  console.log(`  refused round: stake ${JSON.stringify({ state: look.stake.state, how: look.stake.how, refused: look.stake.refused, msat: String(look.stake.msat) })}, handed to ${handed.length}`);
+  assert.equal(handed.length, 2, 'the lock was not handed to every signer node of the round');
+  assert.deepEqual(handed[0].body, { outpoint: `${'d8'.repeat(32)}:0`, fields: lockFieldsToJson(fields) });
+  assert.equal(look.stake.state, 'owed');
+  assert.equal(look.stake.how, 'forfeit');
+  assert.equal(look.stake.refused, true);
+  assert.equal(look.stakeMsat, 98000n);
+  // AND REDEEMED WITH NO SETTLEMENT
+  const got = await collectOwed({ look, client: wallet, ...ask, invite: INVITE, LockClient: { join: async () => wallet }, fetcher: seats() });
+  assert.equal(got.stake && got.stake.ok, true, JSON.stringify(got.stake, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.deepEqual(redeemed, [`${'d8'.repeat(4)}:0`]);
+  // A ROUND THE SEATS OFFER: nothing kept, the expiry path as before
+  handed.length = 0;
+  const offered = await lookOwed({ ...ask, fetcher: seats({ keeps: false }), client: wallet, kept });
+  assert.equal(offered.stake.state, 'waiting');
+  assert.equal(offered.stake.how, 'refund');
+  assert.equal(offered.stakeMsat, 0n);
 });

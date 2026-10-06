@@ -1853,6 +1853,32 @@ export class Round {
         bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /** Every handout this signer node accepted for one round: its id and bytes. */
+  handoutsOf(roundIdBytes) {
+    return this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ?').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ id: new Uint8Array(r.handout_id), bytes: new Uint8Array(r.bytes) }));
+  }
+
+  /** §23.2 REFUSED (kanban #191): a lock for a round this signer node refuses, never entered, kept under its handout's id. */
+  putRefusedLock({ handoutId, roundId, outpoint, fields, contractId }) {
+    this.db.prepare('INSERT OR REPLACE INTO refused_locks (handout_id, round_id, outpoint, fields, contract_id, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(handoutId), Buffer.from(roundId), `${Buffer.from(outpoint.txid).toString('hex')}:${outpoint.outIdx}`,
+        JSON.stringify(fields), contractId, this.now());
+  }
+
+  refusedLock(handoutIdBytes) {
+    const r = this.db.prepare('SELECT round_id, outpoint, fields, contract_id, kept_ms FROM refused_locks WHERE handout_id = ?').get(Buffer.from(handoutIdBytes));
+    return r ? { roundId: new Uint8Array(r.round_id), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, keptMs: Number(r.kept_ms) } : null;
+  }
+
+  /** The refused-round locks of one round that refund to `refundHex`, shaped as stakeLocksFor's (entryId = the handout id). */
+  refusedLocksFor(roundIdBytes, refundHex) {
+    return this.db.prepare('SELECT handout_id, outpoint, fields, contract_id FROM refused_locks WHERE round_id = ?')
+      .all(Buffer.from(roundIdBytes))
+      .map((r) => ({ entryId: Buffer.from(r.handout_id).toString('hex'), outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, refused: true }))
+      .filter((l) => String(l.fields.refundPk).toLowerCase() === String(refundHex).toLowerCase());
+  }
+
   /** A stake lock this signer node verified: the handed contract (JSON), its id, its outpoint. */
   putStakeLock({ entryId, roundId, outpoint, fields, contractId }) {
     this.db.prepare('INSERT OR REPLACE INTO stake_locks (entry_id, round_id, outpoint, fields, contract_id, verified_ms) VALUES (?, ?, ?, ?, ?, ?)')

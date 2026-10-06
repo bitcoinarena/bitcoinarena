@@ -43,8 +43,10 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null } = {}) {
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null } = {}) {
     this.round = round;
+    // §23.2 REFUSED (kanban #191): rid -> why this node refuses the round, or null while it offers it
+    this.refusedNow = refusedNow;
     // THE OTHER SIGNER NODES' PROOF OF TWO FIRST MARKS, pulled and checked here before a
     // Void lock is refunded (M3.3-34): `pullProof(rid, eid)` keeps a pair that
     // verifies in this signer node's own store.
@@ -66,7 +68,22 @@ export class Forfeit {
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const lock = this.round.stakeLock(entryIdBytes);
+    let lock = this.round.stakeLock(entryIdBytes);
+    // §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): no entry,
+    // but a lock this node kept for a round it refuses, under its handout's id (POST /refused-lock) - returned at once, on
+    // this node's own record that it still refuses the round and that the lock stakes no entry here. No result, no window.
+    let refused = null;
+    if (!lock && this.round.refusedLock) {
+      const kept = this.round.refusedLock(entryIdBytes);
+      if (kept && toHex(kept.roundId) === toHex(roundIdBytes)) {
+        const why = this.refusedNow ? this.refusedNow(roundIdBytes) : null;
+        if (!why) return refuse('this signer node offers that round: a lock kept for it as refused is not returned');
+        const [txid, idx] = String(kept.outpoint).split(':');
+        if (this.round.stakeLockAt && this.round.stakeLockAt({ txid: fromHex(txid), outIdx: BigInt(idx) }))
+          return refuse('that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
+        lock = kept; refused = why;
+      }
+    }
     if (!lock) return refuse('this signer node verified no stake lock for that entry, so it forfeits nothing');
     // ENTRY_VOID (§16, §23.2 "forfeit at once; if nobody acts, the lock expires"):
     // an outage refund, on THIS signer node's own record of it - never on an asker's
@@ -74,7 +91,7 @@ export class Forfeit {
     // run with no first mark. The lock goes back to the player's refund key
     // now, instead of at expiry. Everything else below still holds: the lock
     // this signer node verified, the round's claim key, the contract rebuilt here.
-    const voided = this.round.entryVoid ? this.round.entryVoid(entryIdBytes) : null;
+    const voided = !refused && this.round.entryVoid ? this.round.entryVoid(entryIdBytes) : null;
     // TWO FIRST MARKS AFTER THE VOID (§13B, §13C; ruled 2026-09-12): once this
     // signer node holds the player's second first mark - or its no-quorum rule decided
     // FORFEIT - the Void stays as history and it signs no refund. Measured before
@@ -108,7 +125,7 @@ export class Forfeit {
       return refuse('this signer node learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
         + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other signer nodes: it signs no refund of the lock - `
         + 'a signer node it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
-    if (!voided) {
+    if (!voided && !refused) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
