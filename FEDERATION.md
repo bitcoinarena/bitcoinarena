@@ -10,14 +10,14 @@ The Round Contract names `FEDERATION` (§23.6). Never single custody. No
 central gateway and no central node: **no single node is needed, and no
 single node can take money.**
 
-Amended 2026-09-21 (the owner: the **player wallet**, spec §24A.1, v4.6.3): the
+Amended 2026-09-21 (the owner: the **player wallet**, spec §24A.1): the
 stake is spent from e-cash the player holds in the federation, winnings and
 refunds are redeemed into that wallet automatically and shown as pending
 until then, and Lightning is used only when the player deposits or
 withdraws. Steps 2, 3 and 6 below, the residuals, rehearsal items 8-11 and
 the rulings of that date carry it. Nothing about the lock changes.
 
-Amended the same day (the owner: the federation's **life**, spec §23A, v4.6.4):
+Amended the same day (the owner: the federation's **life**, spec §23A):
 at least ten guardians on mainnet (7 of 10), testnet 5 of 7 (the owner 2026-09-27), drawn by
 sortition from bonded guardian-capable census nodes, replaced by succession
 two losses before a halt with every player's notes migrating on their own,
@@ -73,7 +73,7 @@ collects it inclusive, from every player, not only from losers).
 1. The committees are known (§23.1 precondition). Alice picks `P`, puts
    `H(P)` in the Entry Contract, VSS-shares `P` to the settlement seats. As
    today.
-2. **Deposit.** Alice's player wallet (§24A.1, v4.6.3) holds e-cash in this
+2. **Deposit.** Alice's player wallet (§24A.1) holds e-cash in this
    federation from an earlier deposit or an earlier win. If it holds less
    than stake plus fee, her external wallet (NWC budget, QR, WebLN) pays a
    stock LNv2 receive invoice, made through a gateway her client picks at
@@ -168,7 +168,7 @@ paths are the ones every LNv2 payment runs; this use of them is not.
   locks. Unchanged from §22.
 - **Gateways.** Can refuse or fail a deposit or withdrawal; cannot take it.
   Needs at least two gateways run by different operators.
-- **Player wallet (v4.6.3).** Standing e-cash is the same claim on the
+- **Player wallet.** Standing e-cash is the same claim on the
   federation a lock is, for as long as the player leaves it there. Counted
   in the exposure cap; shown beside the federation's name; Withdraw offered
   wherever the balance is.
@@ -191,8 +191,8 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 4. **Federation fees:** MUST `disable_base_fees` (`lnv2-server/src/lib.rs:298`)
    (the owner 2026-09-15). Base fees stay 0. The game's 22A node fee is 5% (Bitcoin Arena; 2% under BLWP) to
    sitting seats and is not a Fedimint fee.
-5. **Spec** §6, §9, §22, §23, §24A updated (v4.6.2, with this file); §24
-   and §24A.1 for the player wallet (v4.6.3).
+5. **Spec** §6, §9, §22, §23, §24A updated with this file; §24
+   and §24A.1 for the player wallet.
 6. **The rehearsal below passes.**
 
 ---
@@ -395,7 +395,7 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
 
 ## Rulings (the owner 2026-09-21)
 
-- **The player wallet** (§24A.1, v4.6.3): the round wallet is one wallet
+- **The player wallet** (§24A.1): the round wallet is one wallet
   per player seed and federation. The player deposits into it, stakes from
   it, and withdraws from it over a Lightning invoice, any amount, any time.
   No custody; no channel to any central server: the client speaks to the
@@ -478,7 +478,7 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
   configuration; the operator sees one thing, never a second service
   (spec §23A.2).
 
-## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in spec v4.6.2 (the owner 15:10: "alles dokumentieren und lösen")
+## Security findings (Fable, 2026-09-11 15:00) — RESOLVED in the spec (the owner 15:10: "alles dokumentieren und lösen")
 
 Where each fix now lives: F1 §7 + §23.1 steps 1–2 (`stake_point`, Feldman
 `A0`); F2 §24 (seed-derived key, fingerprint, known-good client hash); F3
