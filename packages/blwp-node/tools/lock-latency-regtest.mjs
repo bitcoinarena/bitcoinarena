@@ -15,17 +15,18 @@
  * Nothing here names a live chain: the federation is the one the invite names, the payer the lnd named.
  */
 import { readFileSync, copyFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { performance } from 'node:perf_hooks';
+import { performance, monitorEventLoopDelay } from 'node:perf_hooks';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 const env = process.env;
-for (const k of ['INVITE_FILE', 'WASM_PKG', 'LNCLI', 'PAYER_DIR', 'PAYER_RPC']) if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
-const COUNT = Number(env.COUNT || 20), AMOUNT = BigInt(env.AMOUNT_MSAT || 10000), LIMIT_MS = Number(env.LIMIT_MS || 200), WAIT_MS = 10000;
+// ECASH_FILE (kanban #192): funded by e-cash notes of the federation (a fedimint-cli client's, from an on-chain peg-in) - no payer
+for (const k of ['INVITE_FILE', 'WASM_PKG', ...(env.ECASH_FILE ? [] : ['LNCLI', 'PAYER_DIR', 'PAYER_RPC'])]) if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
+const GAP_MS = Number(env.GAP_MS || 0), COUNT = Number(env.COUNT || 20), AMOUNT = BigInt(env.AMOUNT_MSAT || 10000), LIMIT_MS = Number(env.LIMIT_MS || 200), WAIT_MS = 10000;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 }, (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.BLWP_TN4_NETWORK || 'testnet4'}`, ...a]);
@@ -44,28 +45,77 @@ const store = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.
 const lc = await wasm.LockClient.join(invite, wasm.LockClient.federationIdOf(invite), toHex(new Uint8Array(randomBytes(32))), store);
 say({ step: 'joined' });
 
+if (env.ECASH_FILE) {
+  // FUNDED BY NOTES (kanban #192): the federation's own e-cash, handed over
+  const got = JSON.parse(await within(lc.receiveEcash(readFileSync(env.ECASH_FILE, 'utf8').trim()), 120000, 'the notes'));
+  say({ step: 'funded', by: 'ecash', got, balanceMsat: await lc.balanceMsat() });
+} else {
 // FUNDED THROUGH A GATEWAY: every lock's amount, and room for the federation's fees
 const deposit = AMOUNT * BigInt(COUNT) + 400000n;
 const rcv = JSON.parse(await lc.receive(String(deposit), ''));
 const paid = await payer('payinvoice', '--force', rcv.invoice);
 const final = await within(lc.awaitReceive(rcv.operation), 120000, 'the deposit');
 say({ step: 'funded', msat: deposit, paid: (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0], final, balanceMsat: await lc.balanceMsat() });
+}
 
+// THE LOBBY'S WAIT (kanban #178 step 2): the tweak queue full before the first lock (TWEAKS_BEFORE, default 200; 0 skips)
+const TWEAKS_BEFORE = Number(env.TWEAKS_BEFORE ?? 200);
+if (TWEAKS_BEFORE > 0 && typeof lc.tweaksReady === 'function') {
+  const f0 = performance.now();
+  while (lc.tweaksReady() < TWEAKS_BEFORE && performance.now() - f0 < 300000) await new Promise((r) => setTimeout(r, 250));
+  say({ step: 'tweaks', ready: lc.tweaksReady(), wanted: TWEAKS_BEFORE, waitedMs: Math.round(performance.now() - f0) });
+}
 const locks = [];
+const statusCalls = [];      // POLL_STATUS: how long each lockStatus (two threshold reads) took; negative when it threw
 for (let i = 0; i < COUNT; i++) {
+  // GAP_MS: idle time before each lock (a player locks once per join; the previous lock's change notes are finished by then)
+  if (GAP_MS) await new Promise((r) => setTimeout(r, GAP_MS));
+  // the client's one thread: how long it was blocked during this lock (kanban #178 split)
+  const loop = monitorEventLoopDelay({ resolution: 10 }); loop.enable();
   const t0 = performance.now();
-  let submitted = null, t1 = null, t2 = null, why = null;
+  let submitted = null, t1 = null, t2 = null, why = null, statusMs = null, timing = null, acceptedWall = null, rawSeen = null, tickGaps = null, hookSeen = null;
   try {
     submitted = JSON.parse(await within(lc.lockSubmit(key(), String(AMOUNT), '', '0', key(), key(), 150, '[]'), WAIT_MS, 'the hand-over'));
     t1 = performance.now();
-    await within(lc.lockAccepted(JSON.stringify(submitted)), WAIT_MS, 'the federation\'s acceptance');
+    // POLL_STATUS=1 (the split, kanban #178): beside lockAccepted, read the stake output's status every 25 ms - when the
+    // guardians' stored answer is first readable by this client, set against when lockAccepted reports the acceptance
+    let polled = null;
+    const poll = env.POLL_STATUS === '1' ? (async () => {
+      for (let k = 0; k < 400 && polled === null; k++) {
+        const q0 = performance.now();
+        try { const st = JSON.parse(await lc.lockStatus(String(submitted.txid), 0)); statusCalls.push(Math.round(performance.now() - q0)); if (st && st.stored) { polled = performance.now(); break; } } catch { statusCalls.push(-Math.round(performance.now() - q0)); }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    })() : null;
+    // #178 step 1: the raw wasm promise's own settle time, and the longest gap of a 1 ms ticker while it is open
+    let hook = null;
+    // the hook at the answer: a microtask and a timer, each stamped - a late timer means the thread itself was busy
+    globalThis.__blwp178 = (ms) => { const h = { returned: ms, hookAt: Date.now(), microAt: null, timerAt: null }; hook = h; queueMicrotask(() => { h.microAt = Date.now(); }); setTimeout(() => { h.timerAt = Date.now(); }, 0); };
+    const rawP = lc.lockAccepted(JSON.stringify(submitted));
+    let lastTick = Date.now(); const ticks = [];
+    const ticker = setInterval(() => { const n = Date.now(); ticks.push([n, n - lastTick]); lastTick = n; }, 1);
+    rawP.then(() => { rawSeen = Date.now(); }, () => {});
+    const accRaw = await within(rawP, WAIT_MS, 'the federation\'s acceptance').finally(() => clearInterval(ticker));
+    // STOP: the client knows - taken at once, before any probe below waits (a probe's wait once inflated this, kanban #178)
     t2 = performance.now();
+    acceptedWall = Date.now();   // #178 step 1: the same clock as the wasm's own marks
+    tickGaps = ticks.filter(([, g]) => g >= 20).map(([n, g]) => [n, g]);
+    if (hook && hook.timerAt === null) await new Promise((r) => setTimeout(r, 5));
+    hookSeen = hook;
+    const acc = JSON.parse(accRaw);
+    timing = acc.timing || null;
+    if (poll) { await within(poll, WAIT_MS, 'the status poll'); statusMs = polled === null ? null : Math.round(polled - t1); }
   } catch (e) { why = String(e && e.message ? e.message : e).slice(0, 200); }
   // the wall clock beside each instant, to set against the guardians' own logs (their "Transaction accepted" lines)
   const wall = (t) => (t === null ? null : Math.round(performance.timeOrigin + t));
-  const lock = { i, txid: submitted ? String(submitted.txid) : null, startAt: wall(t0), submittedAt: wall(t1), acceptedAt: wall(t2),
+  loop.disable();
+  // the host's load beside the clocks (the owner 2026-10-05: the live seats, donors and tn4 guardians share this host)
+  const pressure = (() => { try { return Number((readFileSync('/proc/pressure/cpu', 'utf8').match(/some avg10=([\d.]+)/) || [])[1]); } catch { return null; } })();
+  const host = { load1: Math.round(loadavg()[0] * 10) / 10, cpuPressure10: pressure };
+  const blockedMs = { max: Math.round(loop.max / 1e6), p50: Math.round(loop.percentile(50) / 1e6), mean: Math.round(loop.mean / 1e6) };
+  const lock = { i, host, blockedMs, txid: submitted ? String(submitted.txid) : null, startAt: wall(t0), submittedAt: wall(t1), acceptedAt: wall(t2),
     submitMs: t1 === null ? null : Math.round(t1 - t0),
-    acceptMs: t2 === null ? null : Math.round(t2 - t1), why };
+    acceptMs: t2 === null ? null : Math.round(t2 - t1), statusMs, submitTiming: submitted && submitted.timing ? submitted.timing : null, timing, acceptedWall, rawSeen, tickGaps, hookSeen, why };
   locks.push(lock);
   say({ step: 'lock', ...lock });
 }
@@ -75,5 +125,6 @@ const over = accepted.filter((ms) => ms >= LIMIT_MS).length;
 const pass = missing === 0 && over === 0;
 say({ step: 'summary', count: COUNT, limitMs: LIMIT_MS, accepted: accepted.length, missing, over,
   acceptMs: accepted.length ? { p50: pct(accepted, 0.5), p95: pct(accepted, 0.95), max: Math.max(...accepted), min: Math.min(...accepted) } : null,
-  submitMs: { p50: pct(locks.filter((l) => l.submitMs !== null).map((l) => l.submitMs), 0.5) }, pass });
+  submitMs: { p50: pct(locks.filter((l) => l.submitMs !== null).map((l) => l.submitMs), 0.5) },
+  ...(statusCalls.length ? { statusCallMs: { n: statusCalls.length, p50: pct(statusCalls.map(Math.abs), 0.5), p95: pct(statusCalls.map(Math.abs), 0.95), max: Math.max(...statusCalls.map(Math.abs)), threw: statusCalls.filter((x) => x < 0).length } } : {}), pass });
 process.exit(pass ? 0 : 1);
