@@ -491,6 +491,7 @@ export class Client {
     this.marksTimedOut = 0;       // marks never sent: a node did not hold their inputs in time
     this.marksTimedOutWhy = null;
     this.pendingLink = null;      // { id, bytes, tick }: stored by some node, not carried by the committee
+    this.marksHeadRecovered = 0;  // heads read back from the nodes after a mark neither carried nor pending (kanban #155)
     this.marksRelinked = 0;       // pending links re-sent until the committee carried them
     this.publishing = null;
     this.marking = null;
@@ -1119,7 +1120,12 @@ export class Client {
     let receipt = null;
     if (typeof answer === 'string')
       (answer.startsWith(CLOSED) ? unreached : refused).unshift(`${this.base}: ${answer}`);
-    else receipt = this.readReceipt(answer, built.id);
+    // THIS CLIENT'S OWN NODE'S RECEIPT IS CHECKED AS A PEER'S IS (kanban #155): one that fails the check is a refusal named
+    // by its node, not an exception that loses the whole mark - measured in the 0.0.2815 control, a throw here left the
+    // mark stored at every seat and nothing on this side to say so.
+    else {
+      try { receipt = this.readReceipt(answer, built.id); } catch (e) { refused.unshift(`${this.base}: ${e.message}`); }
+    }
     const live = this.live(built.id);
 
     // A MARK SOME NODE STORED AND THE COMMITTEE DID NOT CARRY IS KEPT.
@@ -1667,6 +1673,21 @@ export class Client {
     // are the ones just recovered, each verified here; a duplicate signer
     // cannot inflate the count and a receipt that fails its mark, the
     // committee or its signature never reached the count at all.
+    const { adopted, receipts } = await this.carriedHead({ roundId, entryId });
+    if (adopted) this.head = adopted;
+
+    return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
+             batchHead: this.batchHead, head: this.head, receipts,
+             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+  }
+
+  /**
+   * THE NEWEST MARK THE COMMITTEE CARRIES, READ BACK FROM THE NODES: this node's marks, newest first, and the first one
+   * that five distinct committee keys have receipted - the receipts recovered from this node and from every peer, each
+   * verified. Used by `resume` after a drop or a reload, and by `markNow` when a mark was neither carried nor pending
+   * (kanban #155). Moves nothing itself; answers `{ adopted, receipts }`.
+   */
+  async carriedHead({ roundId, entryId }) {
     const marks = await this.recoverReceipts({ roundId, entryId });
     // AND EACH COMMITTEE PEER'S OWN RECEIPTS (the owner 2026-10-03, the reload in a running round): every node receipts a
     // mark to the client that sent it, so after a RELOAD the newest mark's receipts were in the closed tab - measured on
@@ -1693,11 +1714,7 @@ export class Client {
       const id = checkpointId(decodeCheckpoint(splitSigned(cb.subarray(at, at + SIGNED_CHECKPOINT_BYTES)).body));
       if (this.live(id)) { adopted = id; break; }
     }
-    if (adopted) this.head = adopted;
-
-    return { ticks: ok.ticks, batches: t.batches.length, nextTick: this.nextTick,
-             batchHead: this.batchHead, head: this.head, receipts: marks.length,
-             live: adopted !== null, witnessed: adopted ? this.witnessed(adopted) : 0, transcript: t };
+    return { adopted, receipts: marks.length };
   }
 
   /**
@@ -1761,6 +1778,7 @@ export class Client {
     this.marksTimedOutWhy = null;
     this.pendingLink = null;
     this.marksRelinked = 0;
+    this.marksHeadRecovered = 0;
     this.publishing = null;
     this.marking = null;
     // FROM THE JOIN TICK TOO (kanban #130, measured live on 0.0.2727, round f9857c83: a late entry at tick 1750 VOIDed on its first
@@ -2265,9 +2283,22 @@ export class Client {
             };
           }
         }
-        return this.mark(stateHash, {
+        const r = await this.mark(stateHash, {
           roundId: where.roundId, entryId: where.entryId, tick, inputChainHash, final,
         });
+        // A MARK NEITHER CARRIED NOR PENDING, AND REFUSED SOMEWHERE, MAY STILL BE THE SEATS' HEAD (kanban #155). Measured
+        // live: all 7 seats stored and receipted a mark (testnet4 ea63aa94 @1620; the control on 0.0.2815, entry 0b68a08f,
+        // @1140) while this client counted none of the answers, so it set no pending link, kept the mark before as its
+        // head, and every later mark named that old parent - refused at every seat "does not follow the chain head", and
+        // the rest of the run (63 s in the control) was never carried. So the head is read back from the nodes, as after a
+        // drop: the newest mark five committee keys receipted (`carriedHead`) - the next mark chains onto it.
+        if (!r.live && !this.pendingLink && r.refused && r.refused.length && !final) {
+          try {
+            const { adopted } = await this.carriedHead(where);
+            if (adopted && toHex(adopted) !== toHex(this.head)) { this.head = adopted; this.marksHeadRecovered++; r.headRecovered = toHex(adopted); }
+          } catch (e) { r.headRecoverFailed = e.message; }
+        }
+        return r;
       }
       return {
         answer: `timed out after ${this.markWaitMs} ms waiting for the inputs before tick ${tick}`,
@@ -2316,6 +2347,7 @@ export class Client {
       + (this.markWaiting !== null ? ` waiting ${this.markWaiting}` : '')
       + (this.marksTimedOut ? ` timed out ${this.marksTimedOut}` : '')
       + (this.pendingLink ? ` pending link ${this.pendingLink.tick}` : '')
+      + (this.marksHeadRecovered ? ` head read back ${this.marksHeadRecovered}` : '')
       + (this.marksRelinked ? ` relinked ${this.marksRelinked}` : '')
       + (this.drops ? ` drops ${this.drops} tries ${this.tries} resumed ${this.resumedAt}` : '')
       + (this.batchesInterrupted ? ` interrupted ${this.batchesInterrupted}` : '')
