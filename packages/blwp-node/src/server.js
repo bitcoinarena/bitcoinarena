@@ -16,7 +16,7 @@
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
-import { seriesRoundCheck } from '../../protocol/src/series.js';
+import { seriesRoundCheck, seriesId } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -355,6 +355,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (donationSetSignedBy(s, { authority: at.authority, verify: verifyDonation }).ok) return { ok: true, set: s };
     }
     return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
+  };
+  // A PAYING ROUND THAT NAMES A SET OTHER THAN THE ONE IN FORCE, AS A REFUSAL (kanban #191, the owner 2026-10-06: series
+  // d37c1ef1 named serial 2 where serial 3 was in force; its rounds were written and listed 7 of 7, a page locked a stake into
+  // one, and only the session refused it). One answer per network, census height and set id - every round of a series asks.
+  const inForceKept = new Map();
+  const donationInForceRefusal = (contract) => {
+    if (!contract || !(contract.stakeMsat > 0n) || !donationSets.length || !donationKeysForNetworkId(contract.networkId)) return null;
+    const key = `${toHex(contract.networkId)}:${contract.censusHeight}:${toHex(contract.donationSetId)}`;
+    if (!inForceKept.has(key)) { const ds = donationSetFor(contract); inForceKept.set(key, !ds.ok && /in force/.test(ds.why) ? ds.why : null); }
+    return inForceKept.get(key);
   };
 
   // THE BEACON IS KEPT WITH THE ROUND (M3.3-34). A signer node restarted while it holds
@@ -1829,7 +1839,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   // AND EVERY ROUND OF THE NEXT 72 HOURS, WRITTEN (NODE72-1131). A series that leaves less than the 72 h lead is
   // refused at start, by name, rather than written short.
-  const writers = series.map((t) => seriesWriter(round, t));
+  // NOT ONE NAMING A DONATION SET OTHER THAN THE ONE IN FORCE (kanban #191): not written, not held - said once, by name
+  const refusedSeries = new Set();
+  const refuseSeries = (t) => {
+    const why = donationInForceRefusal(t);
+    if (!why) return false;
+    const id = toHex(seriesId(t));
+    if (!refusedSeries.has(id)) { refusedSeries.add(id); console.error(`[series] ${id.slice(0, 16)} not written: ${why}`); }
+    return true;
+  };
+  const writers = series.filter((t) => !refuseSeries(t)).map((t) => seriesWriter(round, t));
   // A ROUND OF A SERIES IS TAKEN ONLY AS THE SERIES DERIVES IT (ALL-BUT-MIN-1727): its id H(series_id || i) of a series
   // this node holds, its index inside 0 .. round_count - 1, its entry window the derived one. Every door that takes
   // something for a round - the round itself, an entry, a lock, a settlement - asks this; a round naming no series
@@ -1840,7 +1859,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const droppedSeries = new Set();
   const droppedRefusal = (contract) => (contract && contract.seriesId instanceof Uint8Array && droppedSeries.has(toHex(contract.seriesId))
     ? `series ${toHex(contract.seriesId).slice(0, 16)} was taken out of this node's series file: its rounds are not offered or entered` : null);
-  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract);
+  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract);
   const seriesRefusalOfRound = (rid) => {
     const row = rid ? round.get(rid) : null;
     if (!row) return null;
@@ -1905,6 +1924,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const held = new Set(writers.map((w) => toHex(w.id)));
     const named = new Set();
     for (const t of now) {
+      if (refuseSeries(t)) { named.add(toHex(seriesId(t))); continue; }
       let w;
       try { w = seriesWriter(round, t); } catch (e) { console.error(`[series] a new line refused: ${e.message}`); continue; }
       const id = toHex(w.id);
@@ -2261,10 +2281,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
         // AND IT NAMES THE DONATION SET IN FORCE AT ITS CENSUS HEIGHT (27A.4, a soft fork; LNURL-0822) - asked where this node
         // holds its network's sets; a round already written below a newer set's valid_from keeps the one it named.
-        if (contract.stakeMsat > 0n && donationSets.length && donationKeysForNetworkId(contract.networkId)) {
-          const ds = donationSetFor(contract);
-          if (!ds.ok && /in force/.test(ds.why)) return text(res, 409, ds.why);
-        }
+        { const why = donationInForceRefusal(contract); if (why) return text(res, 409, why); }
 
         // AND ITS FEDERATION IS BONDED (§23.6, P3; RULED the owner 2026-09-25): asked here, before round.open, with
         // guardiansBonded's own refusal - measured before: under threshold and none bonded were 409 with the round already
