@@ -1842,7 +1842,9 @@ test('an imported seed with no wallet here is recovered from the federation; a m
 test('a kept lock for a round the signer nodes refuse is handed to them, owed back at once by forfeit, and redeemed with no settlement', async () => {
   const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
   const fields = { paymentImage: { kind: 'point', bytes: POINT }, amountMsat: 98000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
-  const kept = { lock: { outpoint: { txid: b32(0xd8), outIdx: 0n }, fields } };
+  // AND ITS NODE-FEE LOCK, output 1 of the same transaction (measured live 07:26Z: it stayed locked for its expiry)
+  const feeFields = { paymentImage: { kind: 'hash', bytes: b32(0x77) }, amountMsat: 2000n, claimPk: CLAIM, refundPk: refundKeyOf(player.pubkey), expiration: 464 };
+  const kept = { lock: { outpoint: { txid: b32(0xd8), outIdx: 0n }, fields, feeLock: { outpoint: { txid: b32(0xd8), outIdx: 1n }, fields: feeFields } } };
   const handed = [];
   const seats = ({ keeps = true } = {}) => async (url, opts = {}) => {
     if (url.includes('/lock-settlement')) return new Response(JSON.stringify({ state: 'NONE' }), { status: 200 });
@@ -1851,7 +1853,8 @@ test('a kept lock for a round the signer nodes refuse is handed to them, owed ba
       return keeps ? new Response('kept for its return', { status: 201 }) : new Response('this signer node offers that round', { status: 409 });
     }
     if (url.includes('/stake-lock')) return new Response(JSON.stringify(keeps && handed.length
-      ? [{ entryId: 'aa'.repeat(32), outpoint: `${'d8'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c9', refused: true }] : []), { status: 200 });
+      ? [{ entryId: 'aa'.repeat(32), outpoint: `${'d8'.repeat(32)}:0`, fields: lockFieldsToJson(fields), contractId: 'c9', refused: true },
+        { entryId: 'bb'.repeat(32), outpoint: `${'d8'.repeat(32)}:1`, fields: lockFieldsToJson(feeFields), contractId: 'c8', refused: true }] : []), { status: 200 });
     if (url.includes('/forfeit')) return new Response(JSON.stringify({ signature: 'ab'.repeat(64), contractId: 'c9', claimPk: toHex(CLAIM) }), { status: 200 });
     return new Response('no', { status: 404 });
   };
@@ -1863,16 +1866,16 @@ test('a kept lock for a round the signer nodes refuse is handed to them, owed ba
   // REFUSED BY THE SEATS: handed over, owed back now
   const look = await lookOwed({ ...ask, fetcher: seats(), client: wallet, kept });
   console.log(`  refused round: stake ${JSON.stringify({ state: look.stake.state, how: look.stake.how, refused: look.stake.refused, msat: String(look.stake.msat) })}, handed to ${handed.length}`);
-  assert.equal(handed.length, 2, 'the lock was not handed to every signer node of the round');
-  assert.deepEqual(handed[0].body, { outpoint: `${'d8'.repeat(32)}:0`, fields: lockFieldsToJson(fields) });
+  assert.equal(handed.length, 4, 'the stake and its fee lock were not handed to every signer node of the round');
+  assert.deepEqual(handed.map((h) => h.body.outpoint).sort(), [`${'d8'.repeat(32)}:0`, `${'d8'.repeat(32)}:0`, `${'d8'.repeat(32)}:1`, `${'d8'.repeat(32)}:1`]);
   assert.equal(look.stake.state, 'owed');
   assert.equal(look.stake.how, 'forfeit');
   assert.equal(look.stake.refused, true);
-  assert.equal(look.stakeMsat, 98000n);
+  assert.equal(look.stakeMsat, 100000n, 'the stake and its fee lock are not both owed back');
   // AND REDEEMED WITH NO SETTLEMENT
   const got = await collectOwed({ look, client: wallet, ...ask, invite: INVITE, LockClient: { join: async () => wallet }, fetcher: seats() });
   assert.equal(got.stake && got.stake.ok, true, JSON.stringify(got.stake, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
-  assert.deepEqual(redeemed, [`${'d8'.repeat(4)}:0`]);
+  assert.deepEqual(redeemed.sort(), [`${'d8'.repeat(4)}:0`, `${'d8'.repeat(4)}:1`]);
   // A ROUND THE SEATS OFFER: nothing kept, the expiry path as before
   handed.length = 0;
   const offered = await lookOwed({ ...ask, fetcher: seats({ keeps: false }), client: wallet, kept });

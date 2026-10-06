@@ -79,7 +79,8 @@ export class Forfeit {
         const why = this.refusedNow ? this.refusedNow(roundIdBytes) : null;
         if (!why) return refuse('this signer node offers that round: a lock kept for it as refused is not returned');
         const [txid, idx] = String(kept.outpoint).split(':');
-        if (this.round.stakeLockAt && this.round.stakeLockAt({ txid: fromHex(txid), outIdx: BigInt(idx) }))
+        const at = { txid: fromHex(txid), outIdx: BigInt(idx) };
+        if ((this.round.stakeLockAt && this.round.stakeLockAt(at)) || (this.round.feeLockAt && this.round.feeLockAt(at)))
           return refuse('that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
         lock = kept; refused = why;
       }
