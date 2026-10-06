@@ -272,3 +272,33 @@ test('(h) a page stuck on an old head - a later mark naming the old parent, refu
     assert.ok(won);
   } finally { await w.close(); }
 });
+
+test('(i) a page stuck on an old head for 63 marks (measured live on 0.0.2815, kanban #155) costs each seat a bounded number of signature checks, not 63 x 63 per call, and is not forfeited', async () => {
+  const N = 63;
+  const w = await lockRound();
+  try {
+    const won = await lockAndPlay(w, WINNER, { address: true });
+    const stuck = await lockAndPlay(w, CHEAT, { fork: 'stale', staleMarks: N });
+    const checks = [w.a, w.b].map((d) => { const c = { n: 0 }; const own = d.round.playerSigned.bind(d.round); d.round.playerSigned = (b) => { c.n++; return own(b); }; return c; });
+    const t0 = Date.now();
+    await closeRound(w);
+    const got = await untilSettled(w, 60000);
+    const closeMs = Date.now() - t0;
+    const facts = { refused: stuck.forked.staleAnswers.filter((a) => /does not follow the chain head/.test(a)).length, checks: checks.map((c) => c.n), closeMs,
+      stuck: [w.a, w.b].map((d) => ({ results: resultsAt(d, w, stuck.eid), state: resultFinality(d.round, w.rid, stuck.eid).state,
+        provenFork: d.round.provenFork(w.rid, stuck.eid), pairsOnPaper: d.round.equivocation(w.rid, stuck.eid).length })),
+      settled: got.state };
+    console.log('  FACTS (63 stale marks):', JSON.stringify(facts));
+    assert.equal(facts.refused, 2 * N, `not every stale mark was refused at both seats: ${stuck.forked.staleAnswers.slice(0, 4)}`);
+    for (const s of facts.stuck) {
+      assert.ok(s.pairsOnPaper >= N, 'fewer pairs on paper than stale marks: not the case the test names');
+      assert.equal(s.provenFork, null, 'refused stale-head marks proved a fork');
+      assert.equal(s.state, 'FINAL');
+      assert.doesNotMatch(s.results[0], /^FORFEIT/, 'an honest stuck page was forfeited');
+    }
+    // each pair's two signatures checked about once when it is kept - before, every call re-checked all pairs per pair
+    for (const n of facts.checks) assert.ok(n <= 8 * N, `a seat checked ${n} player signatures for ${N} stale marks`);
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.ok(won);
+  } finally { await w.close(); }
+});
