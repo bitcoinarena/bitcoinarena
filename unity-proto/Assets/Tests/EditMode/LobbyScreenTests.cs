@@ -230,19 +230,54 @@ public class LobbyScreenTests
         Assert.IsNotNull(s, "the page's lobby view was not read");
         foreach (var w in DailyLobby.RowWords(s.rows[1]))
         {
-            StringAssert.StartsWith("PAID · 100 sats · closes 16:40 · 2 of 2 signer nodes", w, "a form of the paying row does not say its stake");
+            StringAssert.StartsWith("PAID · 100 sats · join until 16:40 · 2 signer nodes (2 needed)", w, "a form of the paying row does not say its stake");
             // NEVER "SEAT" TO THE PLAYER (the owner 2026-09-15 16:22).
             StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
         }
         foreach (var w in DailyLobby.RowWords(s.rows[0]))
         {
-            StringAssert.StartsWith("FREE · closes 16:33 · 2 of 2 signer nodes", w);
+            StringAssert.StartsWith("FREE · join until 16:33 · 2 signer nodes (2 needed)", w);
             StringAssert.DoesNotContain("sat", w, "a free row names an amount");
             StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
         }
         StringAssert.Contains("1 joined", DailyLobby.RowWords(s.rows[0])[1]);
-        Assert.AreEqual("PAID · 1 sat · entry open · 2 of 2 signer nodes",
+        Assert.AreEqual("PAID · 1 sat · entry open · 2 signer nodes (2 needed)",
             DailyLobby.RowWords(new LobbyRow { free = false, stakeSats = 1, agree = 2, needed = 2, joinable = true })[2]);
+    }
+
+    /// <summary>
+    /// THE ROW NEVER READS AS A ROUND LENGTH (kanban #43, the owner 2026-10-04 11:25Z: "PAID · 100 sats · closes 1:57 · 7 of 5
+    /// signer nodes" - how can that be a 90 s round?). The countdown was the ENTRY close of a round not yet started. The row
+    /// says when the round starts and until when it can be joined, from the page's own fields; "7 signer nodes (5 needed)".
+    /// </summary>
+    [Test]
+    public void BeforeTheStartTheRowSaysStartsInAndJoinUntil()
+    {
+        var s = DailyLobby.Parse("{\"mode\":\"lobby\",\"rows\":["
+            + "{\"id\":\"58a0072b00\",\"free\":false,\"agree\":7,\"needed\":5,\"joinable\":true,\"leftS\":90,\"startS\":45,\"joined\":0,\"stakeSats\":100}]}");
+        Assert.AreEqual(45, s.rows[0].startS, "the page's startS was not read");
+        Assert.AreEqual("PAID · 100 sats · starts in 0:45 · join until 1:30 · 7 signer nodes (5 needed)", DailyLobby.RowWords(s.rows[0])[2]);
+        foreach (var w in DailyLobby.RowWords(s.rows[0])) StringAssert.DoesNotContain("closes", w);
+    }
+
+    [Test]
+    public void AfterTheStartALateJoinRowSaysStartedAndJoinUntil()
+    {
+        var late = new LobbyRow { id = "58a0072b00", free = false, stakeSats = 100, agree = 7, needed = 5, joinable = true, leftS = 30, startS = 0 };
+        Assert.AreEqual("PAID · 100 sats · started · join until 0:30 · 7 signer nodes (5 needed)", DailyLobby.RowWords(late)[2]);
+        var free = new LobbyRow { id = "aaaa1111", free = true, agree = 2, needed = 2, joinable = true, leftS = 75, startS = 15 };
+        Assert.AreEqual("FREE · starts in 0:15 · join until 1:15 · 2 signer nodes (2 needed)", DailyLobby.RowWords(free)[2], "a free row reads the same without the price");
+    }
+
+    /// <summary>An OLDER PAGE sends no startS: the row says only until when it can be joined - no start, and no countdown that reads like a round length.</summary>
+    [Test]
+    public void AnOlderPageWithNoStartTimeShowsNoRoundLength()
+    {
+        var s = DailyLobby.Parse("{\"mode\":\"lobby\",\"rows\":["
+            + "{\"id\":\"58a0072b00\",\"free\":false,\"agree\":7,\"needed\":5,\"joinable\":true,\"leftS\":117,\"joined\":0,\"stakeSats\":100}]}");
+        Assert.AreEqual(-1, s.rows[0].startS, "no startS from the page is -1, not 0 (0 would say started)");
+        Assert.AreEqual("PAID · 100 sats · join until 1:57 · 7 signer nodes (5 needed)", DailyLobby.RowWords(s.rows[0])[2]);
+        foreach (var w in DailyLobby.RowWords(s.rows[0])) { StringAssert.DoesNotContain("closes", w); StringAssert.DoesNotContain("starts", w); StringAssert.DoesNotContain("started", w); }
     }
 
     /// <summary>
