@@ -1,9 +1,9 @@
-# BLWP v4.6.1 — Pure Node.js Implementation Design
+# Bitcoin Arena — Pure Node.js Implementation Design
 
 Written 2026-08-31. **Design document only — nothing here is implemented.**
 
 This describes, in concrete engineering terms, how I would build the
-providerless protocol specified in `multiplayer_p2p.md` (BLWP v4.6.1) as an
+providerless protocol specified in `multiplayer_p2p.md` as an
 **all-JavaScript system**: the daemon, the protocol library, the browser
 client, the threshold cryptography, and — the interesting part — the
 deterministic simulation core itself. No Rust, no WASM toolchain, no native
@@ -513,7 +513,7 @@ two independent providers required to agree.
 
 Canonicalization then follows the spec exactly: filter, **sort by
 `(txid, vout)`**, Merkle-root the leaves. Sorting by `H(node_pubkey)` — as
-pre-4.6.1 drafts said — is grindable, because a node can mine a pubkey that
+earlier drafts said — is grindable, because a node can mine a pubkey that
 lands wherever it likes; a txid cannot be chosen after funding. The code
 should carry that comment, because the weaker version looks equivalent.
 
