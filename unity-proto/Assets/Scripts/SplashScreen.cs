@@ -715,12 +715,11 @@ public class SplashScreen : MonoBehaviour
         }
 
         var rows = _lobby.rows;
-        int needed = 2;
-        foreach (var r in rows) if (r.needed > 0) { needed = r.needed; break; }
         var head = new GUIStyle(_body)
             { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, wordWrap = false };
         head.normal.textColor = PanelSkin.Gold;
-        GUI.Label(l.head, Fit(head, $"ROUNDS · JOIN NEEDS {needed} OF {needed} SIGNER NODES", l.head.width), head);
+        // each kind listed with its own signer numbers, from its rows (kanban #43 follow-up) - no fixed 2
+        GUI.Label(l.head, Fit(head, Blwp.DailyLobby.HeaderWords(rows), l.head.width), head);
         if (_offset >= rows.Length) _offset = 0;
         if (l.rows > 0 && rows.Length > l.rows)
         {
@@ -795,12 +794,8 @@ public class SplashScreen : MonoBehaviour
         // list says is not said again here - this line says what PLAY does now.
         if (RefusalHere) return $"not joined: {_joinWhy}";
         int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
-        if (k >= 0)
-        {
-            var r = _lobby.rows[k];
-            return $"PLAY joins round {Short(r.id)} - {r.agree} of {r.needed} signer nodes agree";
-        }
-        return _lobby.rows.Length > 0 ? "PLAY waits for a round both signer nodes agree on" : "PLAY waits for an open round";
+        // the round PLAY joins, in its row's words; or what PLAY waits for (kanban #43 follow-up)
+        return Blwp.DailyLobby.HintWords(k >= 0 ? _lobby.rows[k] : null, _lobby.rows.Length);
     }
 
     void JoinPicked()
@@ -840,8 +835,6 @@ public class SplashScreen : MonoBehaviour
     }
 
     static string Escape(string s) => (s ?? "").Replace("<", "‹").Replace(">", "›");
-    static string Short(string id) => string.IsNullOrEmpty(id) ? "" : (id.Length > 8 ? id.Substring(0, 8) : id);
-
     static string R(Rect r) => string.Format(System.Globalization.CultureInfo.InvariantCulture,
         "[{0:0},{1:0},{2:0},{3:0}]", r.x, r.y, r.width, r.height);
     static string J(string s) => "\"" + (s ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
