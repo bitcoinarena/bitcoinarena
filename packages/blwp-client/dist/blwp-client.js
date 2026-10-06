@@ -19260,7 +19260,8 @@ function lobbyLine(row, nowMs = Date.now()) {
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
-  const agree = `${row.signerNodesAgree} of ${row.needed} signer nodes agree`
+  // "N signer nodes agree (M needed)", never "7 of 5" (kanban #43, the owner 2026-10-04 11:25Z)
+  const agree = `${row.signerNodesAgree} signer ${row.signerNodesAgree === 1 ? 'node agrees' : 'nodes agree'} (${row.needed} needed)`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.signerNodesAgree} more` : '');
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
