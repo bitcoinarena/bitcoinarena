@@ -55,12 +55,14 @@ test('a cold full GET /rounds is served from the background-signed set: under 1 
     console.log('  FACTS:', JSON.stringify({ rows, coldMs: Math.round(before.ms), nowMs: before.body.nowMs }));
     assert.ok(rows > 2000, `the node lists ${rows} rounds - not a large listing`);
     assert.ok(before.ms < 1000, `a cold full listing of ${rows} rounds took ${Math.round(before.ms)} ms`);
-    assert.ok(pageChecks(before.body), 'a row of the served set does not check the page\'s way');
-    // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - the next listing says so, signed, without waiting out the cycle
+    // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - the next listing says so, signed, without waiting out the cycle.
+    // Asked before the first listing's 2,880 signatures are checked: on a loaded machine that check outlasted the test
+    // server's 5 s keep-alive, and fetch reused the closed connection (ECONNRESET, measured on the test host 2026-10-06).
     const pick = before.body.rounds[5];
     const own = s.round.playersOf.bind(s.round);
     s.round.playersOf = (rid) => (Buffer.from(rid).toString('hex') === pick.id ? { joined: 1, playing: 0 } : own(rid));
     const after = await cold('b');
+    assert.ok(pageChecks(before.body), 'a row of the served set does not check the page\'s way');
     const row = after.body.rounds.find((x) => x.id === pick.id);
     console.log('  FACTS (changed row):', JSON.stringify({ coldMs: Math.round(after.ms), joinedBefore: pick.joined, joinedAfter: row.joined, sameNowMs: after.body.nowMs === before.body.nowMs }));
     assert.equal(row.joined, 1, 'the changed row still shows its old count');

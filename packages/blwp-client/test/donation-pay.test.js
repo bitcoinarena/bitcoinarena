@@ -43,6 +43,7 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { encodeDonationSetBody, donationSetBodyId, authorityRotationId, encodeAuthorityRotation } from '../../protocol/src/authority.js';
+import { pageFunction } from './page-script.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -326,8 +327,8 @@ function paintThePage({ round, entry, donationPaid, settlement, spent = SHIPPED.
     replaceChildren(...kids) { this.children = kids; if (!kids.length) this.textContent = ''; },
     appendChild(kid) { this.children.push(kid); return kid; },
   });
-  new Function('document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget',
-    `${src}\n return paintWallet();`)(
+  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'wallet', 'spent', 'owed', 'paying', 'walletWhy', 'budget'],
+    src, ' return paintWallet();')(
     { getElementById: el }, { BLWP_ROUND: round, BLWP_ENTRY: entry, BLWP_DONATION_PAID: donationPaid, BLWP_SETTLEMENT: settlement },
     SHIPPED, { connected: false }, spent, owed, false, '', null);
   return made;
@@ -351,7 +352,7 @@ async function settleOnThePage({ hold, spent, stakeCommitment, round }) {
   const client = { joinedEntry: { stakeCommitment }, where: { entryId: 'ee'.repeat(32) } };
   const win = { BLWP_ROUND: round, BLWP_STAKE: { signerNodeKeys, nodes: ['http://127.0.0.1:1', 'http://127.0.0.1:2'] } };
   const BL = { ...SHIPPED, settlementBy: (o) => SHIPPED.settlementBy({ ...o, fetcher }) };
-  await new Function('window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet', `${src}\n return askTheSettlement();`)(
+  await pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window', 'BLWPCLIENT', 'theClient', 'spent', 'paintWallet'], src, ' return askTheSettlement();')(
     win, BL, () => client, spent, () => {});
   return win.BLWP_SETTLEMENT;
 }
@@ -375,7 +376,7 @@ function showNotedOnThePage({ search, storage }) {
   const src = body.slice(0, body.indexOf('\n    }') + 6);
   const made = {};
   const el = (id) => (made[id] = made[id] || { textContent: '', classes: new Set(), classList: { add(c) { made[id].classes.add(c); } } });
-  new Function('document', 'window', 'BLWPCLIENT', 'location', `${src}\n return showNotedDonation();`)(
+  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['document', 'window', 'BLWPCLIENT', 'location'], src, ' return showNotedDonation();')(
     { getElementById: el }, { sessionStorage: storage, BLWP_CURVE: pageCurve }, SHIPPED, { search });
   return made['blwp-donation-noted'];
 }
