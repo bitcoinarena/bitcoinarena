@@ -2082,7 +2082,9 @@ public class DriveHud : MonoBehaviour
         return "{\"w\":" + w + ",\"h\":" + h + ",\"top\":" + (bottom + m * 0.25f).ToString("0.#", I)
              + ",\"floor\":" + floor.ToString("0.#", I)
              + ",\"right\":" + (w - m).ToString("0.#", I) + ",\"padX\":" + up.x.ToString("0.#", I) + ",\"padY\":" + up.y.ToString("0.#", I)
-             + ",\"padW\":" + up.width.ToString("0.#", I) + ",\"m\":" + m.ToString("0.#", I) + "}";
+             + ",\"padW\":" + up.width.ToString("0.#", I) + ",\"m\":" + m.ToString("0.#", I)
+             // WHETHER THE PADS ARE DRAWN (kanban #198): the open console stands above the throttle pad only where there is one
+             + ",\"pads\":" + (PadsShown ? 1 : 0) + "}";
     }
     string _consoleSlotSent;
 

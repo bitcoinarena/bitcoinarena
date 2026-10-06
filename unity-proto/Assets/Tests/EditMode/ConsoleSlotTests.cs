@@ -9,7 +9,7 @@ using UnityEngine;
 /// </summary>
 public class ConsoleSlotTests
 {
-    [System.Serializable] class Slot { public float w, h, top, right, padX, padY, padW, m, floor; }
+    [System.Serializable] class Slot { public float w, h, top, right, padX, padY, padW, m, floor, pads; }
 
     static Slot SlotOf(DriveHud hud, int w, int h) => JsonUtility.FromJson<Slot>(hud.ConsoleSlot(w, h));
 
@@ -54,6 +54,22 @@ public class ConsoleSlotTests
             Assert.Less(s.top, hud.HudChartPanel(w, h).y, "above the chart, which is down over the pads");
         }
         finally { Object.DestroyImmediate(hud.gameObject); }
+    }
+
+    /// <summary>WHETHER THE PADS ARE DRAWN (kanban #198): the page stands the open console one margin above the throttle pad
+    /// only where there is one, else at the screen's bottom margin - the slot says DriveHud.PadsShown.</summary>
+    [Test]
+    public void TheSlotSaysWhetherThePadsAreDrawn()
+    {
+        var hud = new GameObject("hud").AddComponent<DriveHud>();
+        try
+        {
+            DriveHud.PadsOverride = true;
+            Assert.AreEqual(1f, SlotOf(hud, 430, 932).pads, "pads drawn");
+            DriveHud.PadsOverride = false;
+            Assert.AreEqual(0f, SlotOf(hud, 1280, 720).pads, "no pads");
+        }
+        finally { DriveHud.PadsOverride = null; Object.DestroyImmediate(hud.gameObject); }
     }
 
     /// <summary>THE FLOOR (measured 844x390 on 0.0.2519, paid round: the open panel covered HUNTED, LOAD and ROLL OUT): the
