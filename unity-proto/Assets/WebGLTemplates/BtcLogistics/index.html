@@ -988,6 +988,13 @@
 
     const canvas = document.getElementById('canvas');
     const config = {
+      // AN UNCAUGHT ERROR IS LOGGED, NEVER ALERTED (kanban #191, measured live 2026-10-06 11:32:15Z on 0.0.2813): Unity's
+      // loader runs its error handler on the first uncaught error, and its default is alert() - a modal that held the tab
+      // (no script ran, CDP unanswered) after a refused join's socket dropped. Answering true here skips that alert.
+      errorHandler: (message, filename, lineno) => {
+        console.error('[blwp] uncaught page error (logged, not alerted): ' + message + (filename ? ' at ' + filename + ':' + lineno : ''));
+        return true;
+      },
       dataUrl: 'Build/{{{ DATA_FILENAME }}}',
       frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
       codeUrl: 'Build/{{{ CODE_FILENAME }}}',

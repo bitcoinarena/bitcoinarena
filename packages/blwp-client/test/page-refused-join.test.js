@@ -60,3 +60,26 @@ test('the join refuses on "donation set in force" at its donation-set step, befo
   assert.match(branch, /window\.BLWP_JOIN_REFUSED = 'the signer nodes refuse this round: '/);
   assert.match(branch, /return;/);
 });
+
+// THE TAB NEVER FREEZES ON A REFUSED JOIN (kanban #191, measured live 2026-10-06 11:32:15Z on 0.0.2813, round dad75338, and at
+// 05:31Z / 08:02Z before): ~2 min after the refusal the session's socket - opened beside the entry - dropped; the jslib's
+// onDrop called net.client.reconnect with net.client already null (the session-error path nulled it without closing the
+// client): "TypeError: Cannot read properties of null (reading 'reconnect')"; Unity's loader then ran its error handler, whose
+// default is alert() - a modal that holds the tab (CDP Runtime.evaluate and Page.enable unanswered, renderer ~2% CPU).
+const JSLIB = readFileSync(new URL('../../../unity-proto/Assets/Plugins/WebGL/blwp.jslib', import.meta.url), 'utf8');
+
+test('an uncaught page error is logged, never alerted: the Unity config names an errorHandler that answers true', () => {
+  const at = PAGE.indexOf('    const config = {');
+  assert.ok(at > 0, 'index.html has no Unity config');
+  const config = PAGE.slice(at, PAGE.indexOf('\n    };\n', at));
+  assert.match(config, /errorHandler: \(message, filename, lineno\) => \{[^]*?console\.error\([^]*?return true;\s*\}/, 'no errorHandler that logs and answers true');
+});
+
+test('the session-error path closes the client before it lets go of it, and onDrop acts only for its own client', () => {
+  const at = JSLIB.indexOf("        // No client, so the page's own word is the only one there is.");
+  assert.ok(at > 0, 'the session-error path is not where it was');
+  const errPath = JSLIB.slice(at, JSLIB.indexOf('net.state = ', at));
+  assert.match(errPath, /if \(net\.client && net\.client\.close\) net\.client\.close\(\);[^]*net\.client = null;/, 'the client is nulled without being closed');
+  const drop = JSLIB.slice(JSLIB.indexOf('net.client.onDrop = function'), JSLIB.indexOf('// THE SOCKET OPENS BESIDE THE ROUND'));
+  assert.match(drop, /if \(net\.client !== client\) return;/, 'onDrop reconnects through net.client whatever it now is');
+});
