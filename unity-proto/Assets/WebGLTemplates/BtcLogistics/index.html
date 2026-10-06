@@ -3292,7 +3292,9 @@
         const line = raw ? BLWPCLIENT.lobbyLine(raw, nowMs) : r.line;
         const startS = raw && raw.startTimeMs !== undefined ? secsTo(raw.startTimeMs) : -1;
         const leftS = raw && raw.entryCloseMs !== undefined && raw.phase !== 'pending' ? secsTo(raw.entryCloseMs) : -1;
-        return { id: r.id, line, free: !!r.free, agree: r.signerNodesAgree | 0, needed: r.needed | 0,
+        // total: the round's committee size from its verified contract (7 paid, 2 free) - the header's "N OF M" (#43 follow-up)
+        const total = raw && raw.signerNodes !== undefined ? Number(raw.signerNodes) | 0 : -1;
+        return { id: r.id, line, free: !!r.free, agree: r.signerNodesAgree | 0, needed: r.needed | 0, total,
           joinable: !!r.join && leftS !== 0, leftS, startS, joined: joinedOf(line), stakeSats: Number(r.stakeSats) || 0 };
       };
       // THE ROUND PLAY CHOSE STAYS HIGHLIGHTED (the owner 2026-10-02: "once a round has been selected with play the highlighting
