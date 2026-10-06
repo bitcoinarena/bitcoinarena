@@ -63,7 +63,7 @@ OutgoingContract {
 }
 ```
 
-Beside it sits a **fee lock** with the same keys for the node fee (5% since v2, §0A.8; §22A
+Beside it sits a **fee lock** with the same keys for the node fee (5% in Bitcoin Arena, §0A.8; §22A
 collects it inclusive, from every player, not only from losers).
 
 ---
@@ -189,7 +189,7 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 3. **At least two gateways** run by different operators. The client picks at
    random and falls back.
 4. **Federation fees:** MUST `disable_base_fees` (`lnv2-server/src/lib.rs:298`)
-   (the owner 2026-09-15). Base fees stay 0. The game's 22A node fee is 5% (v2; 2% in v1) to
+   (the owner 2026-09-15). Base fees stay 0. The game's 22A node fee is 5% (Bitcoin Arena; 2% under BLWP) to
    sitting seats and is not a Fedimint fee.
 5. **Spec** §6, §9, §22, §23, §24A updated (v4.6.2, with this file); §24
    and §24A.1 for the player wallet (v4.6.3).
@@ -412,9 +412,9 @@ multiplayer_p2p.md §22A "The donation set", §24A and its payment table (#31, 2
   the draining bands, several federations picked by load, abandonment and
   the bond, succession with automatic migration, and the channels are
   RULED HERE in §23A for the owner to overrule.
-- **Guardians earn from the node fee** (§22A; 5% since v2): three equal pools, game/verify,
+- **Guardians earn from the node fee** (§22A; 5% in Bitcoin Arena): three equal pools, game/verify,
   settlement, and the seated guardians of the round's federation, paid in
-  the settlement transaction. The total is 5% since v2 (the owner 2026-10-06).
+  the settlement transaction. The total is 5% in Bitcoin Arena (the owner 2026-10-06).
 - **A slashed guardian bond** goes 75% evenly to the active census nodes and
   25% to the developers (§22A's donation set), never to the guardians who
   attested the absence (§23A.5).

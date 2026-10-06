@@ -1,4 +1,4 @@
-# Bitcoin Arena — protocol v2 (formerly BTC Logistics War, BLWP v4.6)
+# Bitcoin Arena — protocol v1 (formerly BTC Logistics War, BLWP v4.6)
 ## Providerless P2P protocol for games and other contests with a stake
 
 > **Bitcoin Arena and nextblock (RULED, the owner 2026-10-06).** The engine and
@@ -10,9 +10,10 @@
 > chooses which games it hosts. The money split is **10% of the gross
 > stake**: 5% mandatory to the nodes (three equal pools), and a default
 > donation of 2.5% to the protocol devs and 2.5% to the game dev, which the
-> player may lower as today. Every wire tag is renamed, so this is protocol
-> version 2 and a new network (§0A). Where this document says BLWP it means
-> the Bitcoin Arena protocol; where it describes the truck, it describes
+> player may lower as today. Every wire tag is renamed, so every id changes;
+> BLWP never ran on a public network, so Bitcoin Arena starts as protocol
+> version **1** (§0A.9, the owner 2026-10-06). Where this document says BLWP it
+> means the Bitcoin Arena protocol; where it describes the truck, it describes
 > nextblock.
 
 **Status:** architecture concept, security-hardened
@@ -214,7 +215,7 @@ work.
 
 | What | Name | In code |
 |---|---|---|
-| the engine and its protocol | **Bitcoin Arena**, protocol v2 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
+| the engine and its protocol | **Bitcoin Arena**, protocol v1 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
 | the first game | **nextblock** - "Tick Tok, next Block" | `nextblock` (its core, its Unity project and its page assets in one package) |
 | the site | `bitcoin-arena.io` (not registered yet; the current pages stay until it is) | |
 | the repository | `github.com/a tester/bitcoin-arena`, with the whole history of this one kept | |
@@ -256,7 +257,7 @@ GameManifest {
   game_name                       // "nextblock"
   game_dev_pubkey                 // the developer's key; it signs this body
   version, parent_manifest_id     // 0 for the first; an update names the one it replaces
-  result_type                     // REPLAY (a replayed run) - the only one in v2 (§0A.7)
+  result_type                     // REPLAY (a replayed run) - the only one in Arena v1 (§0A.7)
   cores[]                         // sim core hashes this game runs (the sim_wasm_hash of §5)
   configs[]                       // config hashes per core (§27A.7.5)
   run_ticks_max, round_period     // what a round of it may ask
@@ -302,7 +303,7 @@ an advertisement update, never a new bond (§5A.2). RULED HERE:
 
 Settlement seats must compute the payout table (§20) without running a
 game. So **a payout rule is the engine's, not the game's** (RULED HERE): the
-engine defines the rules - in v2 one, §18A's rank curve - and a manifest
+engine defines the rules - in Arena v1 one, §18A's rank curve - and a manifest
 picks one and gives its numbers (`payout_params`: the curve's numerator and
 denominator, the minimum score). A game asking for a rule the engine does
 not have is not a valid game.
@@ -325,10 +326,10 @@ confirmation before a stake.
 
 The engine is not only a game engine: later, contests whose result is an
 attested outcome - a price, an event - can use the same custody and
-settlement, for example **prediction markets**. In v2 the only
+settlement, for example **prediction markets**. In Arena v1 the only
 `result_type` is `REPLAY`; an `ATTESTED` type, its objection and its payout
 rules (binary, pari-mutuel) are a later revision (board #206). Nothing in
-v2 may assume that a result is a replayed run outside the code that handles
+Arena v1 may assume that a result is a replayed run outside the code that handles
 `REPLAY`.
 
 ## 0A.8 The money: 10% of the gross stake
@@ -358,27 +359,30 @@ stake (gross, what leaves the wallet)              100%
   same whoever the recipients are.
 - Free rounds carry no fee and no donation.
 
-## 0A.9 Protocol version 2, and the move
+## 0A.9 Protocol version 1, and the move from BLWP
 
-**Every wire tag is renamed (RULED, the owner 2026-10-06), so every id
-changes.** RULED HERE:
+**Every wire tag is renamed (RULED, the owner 2026-10-06), so every id changes.
+BLWP never ran on a public network, so this is Bitcoin Arena protocol
+version 1, not a version 2 of anything (the owner 2026-10-06).** RULED HERE:
 
-- tagged hashes move from `BLWP/v1/...` to `ARENA/v2/...`, the publication
-  magic from `"BLW"` to `"ARN"`, and `protocol_version` to **2**;
-- because ids and genesis bytes change, each network (mainnet, testnet4,
-  regtest) gets a new `network_id`: v2 is a **successor network** in the
-  sense of §27A.8;
-- **bonds cross by re-affirmation** (§27A.8.3): one small transaction per
-  operator, no bond spent, no new maturity - a confirmed bond stays the bond
-  (§5A.2) - followed by a v2 advertisement update naming `hosted_games[]`;
-- the federation does not change: its id is its guardians' names and
-  addresses, not a BLWP tag, so **the player wallet's e-cash carries over**
-  untouched;
-- **the v1 network finishes what it posted**: its series run out, its rounds
-  settle and pay under v1; no new v1 series is posted once v2 opens; a seat
-  may run both until the last v1 round is settled;
-- nextblock's first v2 manifest is published before the first v2 series,
-  with the protocol devs and the game dev the same donation set.
+- tagged hashes move from `BLWP/v1/...` to `ARENA/v1/...` and the
+  publication magic from `"BLW"` to `"ARN"`; `protocol_version` stays **1**;
+- mainnet has nothing to move: it starts as Bitcoin Arena with its own
+  genesis and `network_id`, and no successor-network rule (§27A.8) applies;
+- testnet4 and regtest are test networks: the new tags give each a new
+  `network_id`, and what runs there now is test operation, not a public
+  history. In practice on testnet4:
+  - **bonds are kept by re-affirmation** (§27A.8.3's transaction): one small
+    transaction per operator, no bond spent, no new maturity - a confirmed
+    bond stays the bond (§5A.2) - then an advertisement update naming
+    `hosted_games[]`;
+  - **the federation does not change** (its id is its guardians' names and
+    addresses, not a BLWP tag), so the player wallets' e-cash carries over;
+  - the series already posted under the BLWP tags run out and settle as they
+    are; no new one is posted once Bitcoin Arena rounds open; a seat may run
+    both until the last BLWP round is settled;
+- nextblock's first manifest is published before the first Bitcoin Arena
+  series, with the protocol devs and the game dev the same donation set.
 
 ---
 
@@ -886,7 +890,7 @@ NodeAdvertisement {
   guardian_of[]                // v4.6.2: (federation_id, guardian peer key) this operator runs (§23.6)
   guardian_capable             // v4.6.4: the third role, opt-in: willing to hold custody as a guardian (§23A.2)
   guardian_endpoint            // v4.6.4: the fedimintd API endpoint the client and the seats use (§23A.4)
-  hosted_games[]               // v2: the game_ids this node hosts, opt-in (§0A.4); game/verify is drawn only from hosts
+  hosted_games[]               // Arena v1: the game_ids this node hosts, opt-in (§0A.4); game/verify is drawn only from hosts
   timestamp
   signature                    // by node_pubkey over all of the above
 }
@@ -1684,7 +1688,7 @@ candidate". If no publication confirms in time - before `series_start(k)` on
 mainnet, below the beacon block on testnet4 - series `k` does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
 **Who pays the fee.** The publisher pays it from its own wallet and is
-reimbursed from the node fee (§22A, 5% since v2) of the series' round 0 - or, if round
+reimbursed from the node fee (§22A, 5% in Bitcoin Arena) of the series' round 0 - or, if round
 0 has no entries, the first round of the series that settles with any. The
 reimbursement is one line in that round's settlement: `publisher_payout =
 min(publication fee, fee_cap)` to the publisher's bond key, where the fee is
@@ -2135,7 +2139,7 @@ that acts under it is slashable.
 
 ## 5A.12 Fee fairness under sortition
 
-The node fee (5% since v2, §0A.8) goes only to the committee that actually serves the round
+The node fee (5% in Bitcoin Arena, §0A.8) goes only to the committee that actually serves the round
 (§22A). Because selection is bond-weighted and stateless, long-run fee
 income is proportional to bonded capital and uptime, not to the number of
 identities. No node holds a permanent slot, and no developer, lobby or round
@@ -2201,8 +2205,8 @@ signature is required.
 ```text
 RoundContract {
   round_id
-  protocol_version                 // 2 (§0A.9)
-  game_id                          // v2: the exact GameManifest this round plays (§0A.3)
+  protocol_version                 // 1, Bitcoin Arena (§0A.9)
+  game_id                          // Arena v1: the exact GameManifest this round plays (§0A.3)
   sim_wasm_hash                    // client checks against known-good list (§5); must be in the manifest's cores[]
 
   map
@@ -2234,7 +2238,7 @@ RoundContract {
        // which network_id commits to. A contract disagreeing with the
        // network it names is invalid, not a smaller committee.
 
-  node_fee_bps = 500               // basis points of the gross round amount, so 5% (v2, §0A.8; was 200)
+  node_fee_bps = 500               // basis points of the gross round amount, so 5% (Bitcoin Arena, §0A.8; BLWP had 200)
   config_hash                      // the game_config this round runs (§27A.7.5)
   donation_bps_max = 10000         // protocol cap (v4.6)
 
@@ -2991,7 +2995,7 @@ EV. In a pool, nothing prices it. A cautious player simply arrives,
 qualifies under §18, and takes a rank-weighted share of a pool funded
 entirely by other people's failures.
 
-> **v2 note (§0A.8):** this analysis was made with the 2% fee of v1. With the
+> **Bitcoin Arena note (§0A.8):** this analysis was made with BLWP's 2% fee. With the
 > 5% node fee every expected value below moves down by three points (the edge
 > route is −5% instead of −2%) before any donation; the argument and its
 > conclusion are unchanged.
@@ -3302,7 +3306,7 @@ node_fee = 5.00% of gross_round_volume
                                  the Round Contract names, §23A) v4.6.4
 ```
 
-**RULED (the owner 2026-09-21): guardians earn from the node fee** (then 2%, 5% since v2). They carry the
+**RULED (the owner 2026-09-21): guardians earn from the node fee** (2% under BLWP, 5% in Bitcoin Arena). They carry the
 reserve, the bond and the liability of every round the federation settles,
 and until this ruling had no income at all (Fedimint base fees are 0). The
 three-way equal split is RULED HERE, and confirmed by the owner 2026-10-06 with the total at 5%. The guardian pool
@@ -3554,7 +3558,7 @@ The node fee raises no such question: it is the same percentage for
 everyone, so it scales every contribution identically and cancels out of
 the ranking entirely.
 
-## Example: 61-player round, all at the default donation (v2, §0A.8)
+## Example: 61-player round, all at the default donation (Bitcoin Arena, §0A.8)
 
 ```text
 gross_round_volume = 6,100 sat   (61 x 100, the wallet commitments)
@@ -4957,7 +4961,7 @@ deliberately visible: the pre-commitment disclosure panel (§22A) and the
 ```text
 Round #92831
 game stake:            100 sat
-node fee:                5 sat (5%, v2)
+node fee:                5 sat (5%, Bitcoin Arena)
 developer donation:      0 to 5 sat (player's choice; default 5: 2.5 protocol devs, 2.5 game dev)
 census_height:         H (Bitcoin), roots in the contract
 published_at:          11:50   committee unknowable, no entry possible
@@ -5126,7 +5130,7 @@ the ones below it: **the floor moving is not an eviction.**
 
 ## 27A.4 Network identity and the donation authority
 
-**Two donation sets since v2 (§0A.8).** What this section governs is the
+**Two donation sets in Bitcoin Arena (§0A.8).** What this section governs is the
 **protocol devs'** set: one per network, signed by the donation authority.
 Each game names its **own** set in its manifest, signed by the game dev's
 key (§0A.3); the network's authority cannot change a game's set, and a
@@ -5490,7 +5494,7 @@ playability: the enemies you see are doing a job, or the core has not
 replaced the old army yet.
 
   economy {
-    node_fee_bps            500      // 5% of the gross round amount, INCLUSIVE (v2, §0A.8; was 200).
+    node_fee_bps            500      // 5% of the gross round amount, INCLUSIVE (Bitcoin Arena, §0A.8; BLWP had 200).
                                      // A ballot, never a median: paid by the
                                      // player, so it cannot be set by the
                                      // operators alone (§27A.2)
@@ -6010,7 +6014,7 @@ simplification was trying to avoid. Bond-weighted stateless sortition
 9. No central internal player balance.
 10. `FINAL` losses cannot later become refunds due to an infrastructure attack.
 11. One public `blwp-node` package for all roles.
-12. 5% node fee (v2; 2% in v1) distributed deterministically to eligible selected slots and guardians.
+12. 5% node fee (Bitcoin Arena; 2% under BLWP) distributed deterministically to eligible selected slots and guardians.
 13. Developer donation optional at protocol level and possibly 0%.
 14. No privileged developer admin key.
 15. **Committee seed from randomness published after the round_id** (§5A.5).
@@ -6201,7 +6205,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 
 ```text
 100% game stake  -> P2P game pool
-5% node fee      -> eligible selected slots and guardians (5/3 % per pool, v2)
+5% node fee      -> eligible selected slots and guardians (5/3 % per pool, Bitcoin Arena)
 0% or chosen     -> optional developer donation
 ```
 
@@ -6220,7 +6224,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 > may overturn it within the objection window by replaying the transcript.
 > Seven separately selected instances hold shares of each stake's preimage
 > and a threshold wallet, so no single party ever holds player funds, and
-> doing nothing refunds everyone. A fixed 5% infrastructure fee (v2; 2% in v1) goes to the
+> doing nothing refunds everyone. A fixed 5% infrastructure fee (Bitcoin Arena; 2% under BLWP) goes to the
 > slots that served; the developer donation is the player's choice and may be
 > zero. Anyone can create a round, and no company is required to decide who
 > won or to move funds.
