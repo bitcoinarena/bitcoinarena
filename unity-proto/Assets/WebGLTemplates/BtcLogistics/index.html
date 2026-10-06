@@ -363,8 +363,10 @@
   <!-- THE LOBBY'S STRIP, AND NOTHING MORE (the owner 2026-09-25 21:11-21:16, phone: the wallet page stood where the lobby
        should be). After the loading screen the lobby is the only screen: this is a small strip over its top edge - the
        backup warning with its way out, and the gear to Settings - and never the page. The wallet itself (balance,
-       Deposit, Withdraw, Move) is in Settings. Hidden while the loading screen is up and while a round is driven. -->
-  <div id="blwp-money" style="display:none">
+       Deposit, Withdraw, Move) is in Settings. THE GEAR FROM THE FIRST PAINT (kanban #200: Settings waited 2.6-5.1 s for
+       Unity's lobby): shown over the loading screen and Unity's title too, hidden only while a round's own screens are up
+       (paintMoney); the backup warning stays over the lobby alone. -->
+  <div id="blwp-money">
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
          warning is the only thing standing between a player and losing a wallet he never wrote down. -->
     <div id="blwp-backup-warn" style="display:none">
@@ -446,6 +448,15 @@
       <div class="muted" id="blwp-seed-restore-why"></div>
     </section>
   </div>
+  <script>
+  // SETTINGS OPENS ON THE FIRST CLICK (kanban #200): this runs as the page is parsed, before the bundles, the wallet or
+  // Unity, so the gear opens the panel at once. The page's main script fills it (BLWP_PAINT_SETTINGS) - at once when it
+  // is up, or as soon as it is if the panel was opened before it.
+  document.getElementById('blwp-settings-go').addEventListener('click', () => {
+    document.getElementById('blwp-settings').style.display = '';
+    if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); else window.BLWP_SETTINGS_EARLY = true;
+  });
+  </script>
   <div id="blwp-seed-modal" role="dialog" aria-modal="true">
     <div class="modal-box">
       <div id="blwp-seed-words">
@@ -2208,15 +2219,17 @@
       const settings = document.getElementById('blwp-settings');
       if (!money) return;
       if (drivingNow()) { money.style.display = 'none'; if (settings) settings.style.display = 'none'; return; }
-      // THE LOBBY'S STRIP, ONLY OVER THE LOBBY: not over the loading screen, and not over a round's own screens (the
-      // cargo panel, the drive) - Unity says what it draws (BLWP_UNITY_LOBBY), and the strip follows the lobby.
+      // THE GEAR FROM THE FIRST PAINT (kanban #200): the strip is up over the loading screen, Unity's title and the lobby,
+      // and gone over a round's own screens (the cargo panel, the drive) - Unity says when it leaves the lobby
+      // (BLWP_UNITY_LOBBY.showing false). THE BALANCE AND THE BACKUP WARNING ONLY OVER THE LOBBY, as before.
       const u = window.BLWP_UNITY_LOBBY;
-      money.style.display = window.unityInstance && !document.getElementById('boot') && u && u.showing && u.lobby ? '' : 'none';
+      const overLobby = !!(window.unityInstance && !document.getElementById('boot') && u && u.showing && u.lobby);
+      money.style.display = u && u.showing === false ? 'none' : '';
       // THE BALANCE OVER THE LOBBY'S OWN ROW: Unity's layout units scaled to the canvas as it sits on the page
       const balEl = document.getElementById('blwp-lobby-balance');
       const cv = document.getElementById('canvas');
       const row = u && u.balance;
-      if (balEl && cv && money.style.display === '' && Array.isArray(row) && row[2] > 0 && Array.isArray(u.screen)) {
+      if (balEl && cv && overLobby && Array.isArray(row) && row[2] > 0 && Array.isArray(u.screen)) {
         const c = cv.getBoundingClientRect(); const kx = c.width / u.screen[0]; const ky = c.height / u.screen[1];
         Object.assign(balEl.style, { display: 'flex', left: `${c.left + row[0] * kx}px`, top: `${c.top + row[1] * ky}px`,
           width: `${row[2] * kx}px`, height: `${row[3] * ky}px` });
@@ -2225,7 +2238,7 @@
       const line = (st && seed) ? BLWPCLIENT.backupLine(st, seed) : BLWPCLIENT.NO_BACKUP_LINE;
       document.getElementById('blwp-backup-notice').textContent = line;
       const warn = document.getElementById('blwp-backup-warn');
-      if (warn) warn.style.display = line ? 'flex' : 'none';
+      if (warn) warn.style.display = line && overLobby ? 'flex' : 'none';
       document.getElementById('blwp-settings-backup').textContent = line || 'This wallet is backed up.';
       // THE BALANCE IS READ, NEVER COMPUTED HERE. Until the player wallet of §24A.1 exists this says what
       // it honestly knows - nothing yet - rather than inventing a number the page would then be trusted for.
@@ -2583,9 +2596,8 @@
     }
     // SETTINGS: three things and a Close, and the phrase is only shown when asked for.
     const settingsPanel = () => document.getElementById('blwp-settings');
-    document.getElementById('blwp-settings-go').addEventListener('click', () => {
-      settingsPanel().style.display = ''; paintSettings(); paintHistory(); paintOtherWallets();
-    });
+    // THE GEAR'S CLICK IS TAKEN BY THE EARLY SCRIPT UNDER THE PANEL (kanban #200), which opens it and calls this to fill it
+    window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); };
     // THE OTHER WALLETS THIS BROWSER KEEPS (the owner 2026-10-02: "now fix the balances" - his 402 sat sat in another kept
     // phrase's wallet while this tab showed 0; seven phrases in one browser, three of them holding sats). Every kept phrase
     // with a wallet here, other than this tab's, is opened read-only (20 s each at most), its balance shown, and offered:
@@ -2683,6 +2695,8 @@
       if (document.activeElement !== nameField) { nameField.value = currentName(); nameUpdate.disabled = true; }
       paintMoney();
     }
+    // SETTINGS OPENED BEFORE THIS SCRIPT RAN (kanban #200): filled now, once
+    if (window.BLWP_SETTINGS_EARLY && settingsPanel().style.display !== 'none') { window.BLWP_SETTINGS_EARLY = false; window.BLWP_PAINT_SETTINGS(); }
     // THE SEED PHRASE, A SMALL MODAL OVER SETTINGS (the owner 2026-09-29 12:47): the 24 words numbered in a grid, and
     // Verify seed phrase - one word at a time, 1 to 24, each out of four taken from this phrase. A wrong tap does not
     // advance. After word 24 the backup is recorded by the same rule as before (verifyAndRecord) and the modal says so.
