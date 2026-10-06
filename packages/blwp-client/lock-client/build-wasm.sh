@@ -41,6 +41,27 @@ grep -q "CombinedShareThreshold::new" modules/fedimint-mintv2-client/src/api.rs
 if [ -n "${BLWP_ACCEPT_F1:-}" ]; then patch -p1 < $HERE/fedimint-client-accept-f1.patch; grep -q "fn one_honest" fedimint-api-client/src/query.rs; fi
 # THE ACCEPTANCE AWAITED BESIDE THE SUBMISSION (kanban #192, opt-in BLWP_AWAIT_PARALLEL=1): not after a threshold of submit
 # answers, which the guardians give only once the transaction is accepted
+# THE TWEAK GRINDER YIELDS FOR REAL (kanban #192, opt-in BLWP_GRINDER_YIELD=1): sleep(0) is ready at its first poll on wasm
+# (n0_future), so the grinder held the client's one thread for a whole tweak (~65536 tries, ~250 ms) - the acceptance waited
+# behind it (measured: 5 of 7 guardian answers arriving at once after a 220-280 ms gap). A 1 ms sleep every 1024 tries.
+if [ -n "${BLWP_GRINDER_YIELD:-}" ]; then
+  F=modules/fedimint-mintv2-client/src/lib.rs
+  grep -q "if tries % 4096 == 0 {" $F
+  perl -0pi -e 's/if tries % 4096 == 0 \{\n(\s*)fedimint_core::task::sleep\(Duration::ZERO\)\.await;/if tries % 1024 == 0 {\n$1fedimint_core::task::sleep(Duration::from_millis(1)).await;/' $F
+  grep -q "if tries % 1024 == 0 {" $F && grep -q "sleep(Duration::from_millis(1))" $F
+fi
+# THE CHANGE NOTES' CHECKS CUT INTO PIECES (kanban #192, opt-in BLWP_NOTE_YIELDS=1): a threshold of answers gathered first, each
+# note's combined blinded signature then checked with a real 1 ms yield between notes, and a real yield before and between the
+# output state machine's note checks - every check kept; the ~250 ms block that held the next lock's acceptance is gone
+if [ -n "${BLWP_NOTE_YIELDS:-}" ]; then patch -p1 < $HERE/fedimint-mintv2-note-yields.patch; grep -q "struct GatherThreshold" modules/fedimint-mintv2-client/src/api.rs; fi
+# THE CHANGE NOTES CHECKED IN ONE BATCH (kanban #192, opt-in BLWP_NOTE_BATCH=1; not with BLWP_NOTE_YIELDS): a threshold of answers
+# gathered first, all combined blinded signatures checked in one random-linear-combination batch, the finalized notes likewise;
+# one multi-Miller loop instead of two pairings per note - the same notes accepted, a fraction of the CPU on the one thread
+if [ -n "${BLWP_NOTE_BATCH:-}" ]; then patch -p1 < $HERE/fedimint-mintv2-note-batch.patch; grep -q "pub fn verify_blinded_signatures_batch" crypto/tbs/src/lib.rs; fi
+# BATCH 2 (kanban #192, opt-in BLWP_NOTE_BATCH2=1, instead of BLWP_NOTE_BATCH): the batch with 128-bit random factors, and each
+# note's combined signature made once (kept from the checked batch for the output state machine) - measured: G1 scalar
+# multiplications were most of the change-note CPU that held the client's one thread
+if [ -n "${BLWP_NOTE_BATCH2:-}" ]; then patch -p1 < $HERE/fedimint-mintv2-note-batch2.patch; grep -q "static COMBINED" modules/fedimint-mintv2-client/src/api.rs; fi
 if [ -n "${BLWP_AWAIT_PARALLEL:-}" ]; then patch -p1 < $HERE/fedimint-client-await-parallel.patch; grep -q "drop(tx_submitted)" fedimint-client-module/src/transaction/sm.rs; fi
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | grep -qx 2
 ln -sfn $HERE blwp-lock-client

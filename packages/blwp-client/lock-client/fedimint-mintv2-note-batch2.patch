@@ -1,0 +1,271 @@
+diff -ru ba/crypto/tbs/src/lib.rs b2/crypto/tbs/src/lib.rs
+--- a/crypto/tbs/src/lib.rs	2026-10-06 12:05:33.173575315 +0200
++++ b/crypto/tbs/src/lib.rs	2026-10-06 12:28:37.872523172 +0200
+@@ -268,3 +268,114 @@
+ 
+ #[cfg(test)]
+ mod tests;
++
++/// BLWP kanban #192: many (blinded) signature checks in one - a random linear combination, one multi-Miller loop, one final
++/// exponentiation: e(sum r_i sig_i, -g2) * prod_pk e(sum_(i: pk) r_i msg_i, pk) == 1. With random r_i (from the OS) a single
++/// invalid signature makes the batch fail except with negligible probability, so it accepts exactly what the one-by-one
++/// checks accept; the CPU is one Miller loop per distinct key instead of two full pairings per signature.
++fn batch_check(items: impl Iterator<Item = (G1Affine, G1Affine, G2Affine)>) -> bool {
++    let mut rng = OsRng;
++    let mut sig_sum = G1Projective::identity();
++    let mut by_pk: Vec<(G2Affine, G1Projective)> = Vec::new();
++    let mut any = false;
++    for (msg, sig, pk) in items {
++        any = true;
++        // 128-bit random factors (BLWP kanban #192): half the doublings of a full scalar; a batch with a bad signature still
++        // passes only with probability 2^-128
++        let r = Scalar::from_raw([rand::RngCore::next_u64(&mut rng), rand::RngCore::next_u64(&mut rng), 0, 0]);
++        sig_sum += G1Projective::from(sig) * r;
++        match by_pk.iter_mut().find(|(p, _)| *p == pk) {
++            Some((_, acc)) => *acc += G1Projective::from(msg) * r,
++            None => by_pk.push((pk, G1Projective::from(msg) * r)),
++        }
++    }
++    if !any {
++        return true;
++    }
++    let neg_g2 = bls12_381::G2Prepared::from(-G2Affine::generator());
++    let sig_aff = sig_sum.to_affine();
++    let prepared: Vec<(G1Affine, bls12_381::G2Prepared)> =
++        by_pk.iter().map(|(pk, acc)| (acc.to_affine(), bls12_381::G2Prepared::from(*pk))).collect();
++    let mut terms: Vec<(&G1Affine, &bls12_381::G2Prepared)> = prepared.iter().map(|(a, b)| (a, b)).collect();
++    terms.push((&sig_aff, &neg_g2));
++    bls12_381::multi_miller_loop(&terms).final_exponentiation() == bls12_381::Gt::identity()
++}
++
++/// BLWP kanban #192: verify_blinded_signature for many at once (see batch_check).
++pub fn verify_blinded_signatures_batch(items: &[(BlindedMessage, BlindedSignature, AggregatePublicKey)]) -> bool {
++    batch_check(items.iter().map(|(m, s, pk)| (m.0, s.0, pk.0)))
++}
++
++/// BLWP kanban #192: verify for many at once (see batch_check).
++pub fn verify_batch(items: &[(Message, Signature, AggregatePublicKey)]) -> bool {
++    batch_check(items.iter().map(|(m, s, pk)| (m.0, s.0, pk.0)))
++}
++
++
++#[cfg(test)]
++mod blwp_batch_tests {
++    // BLWP kanban #192: the batch checks accept exactly what the one-by-one checks accept - every valid set, and no set
++    // with one wrong signature, one signature under another key, or one message swapped.
++    use bls12_381::Scalar;
++    use group::ff::Field;
++    use rand::rngs::OsRng;
++
++    use super::*;
++
++    fn key() -> (SecretKeyShare, AggregatePublicKey) {
++        let sk = SecretKeyShare(Scalar::random(&mut OsRng));
++        let pk = AggregatePublicKey(derive_pk_share(&sk).0);
++        (sk, pk)
++    }
++
++    fn sets() -> (Vec<(BlindedMessage, BlindedSignature, AggregatePublicKey)>, Vec<(Message, Signature, AggregatePublicKey)>) {
++        let keys = [key(), key()];
++        let mut blinded = Vec::new();
++        let mut plain = Vec::new();
++        for i in 0..8u8 {
++            let (sk, pk) = &keys[usize::from(i % 2)];
++            let msg = Message::from_bytes_sha256(&[i; 33]);
++            let bk = BlindingKey::random();
++            let bmsg = blind_message(msg, bk);
++            let bsig = BlindedSignature(sign_message(bmsg, *sk).0);
++            assert!(verify_blinded_signature(bmsg, bsig, *pk));
++            let sig = unblind_signature(bk, bsig);
++            assert!(verify(msg, sig, *pk));
++            blinded.push((bmsg, bsig, *pk));
++            plain.push((msg, sig, *pk));
++        }
++        (blinded, plain)
++    }
++
++    #[test]
++    fn a_valid_set_passes_both_batches() {
++        let (blinded, plain) = sets();
++        assert!(verify_blinded_signatures_batch(&blinded));
++        assert!(verify_batch(&plain));
++        assert!(verify_batch(&[]));
++    }
++
++    #[test]
++    fn one_bad_signature_fails_the_batch() {
++        for bad in 0..8 {
++            let (mut blinded, mut plain) = sets();
++            blinded[bad].1 = blinded[(bad + 1) % 8].1;
++            plain[bad].1 = plain[(bad + 1) % 8].1;
++            assert!(!verify_blinded_signatures_batch(&blinded), "a wrong blinded signature at {bad} passed");
++            assert!(!verify_batch(&plain), "a wrong signature at {bad} passed");
++        }
++    }
++
++    #[test]
++    fn a_signature_under_another_key_or_a_swapped_message_fails() {
++        let (mut blinded, mut plain) = sets();
++        blinded[3].2 = blinded[4].2;
++        plain[3].2 = plain[4].2;
++        assert!(!verify_blinded_signatures_batch(&blinded));
++        assert!(!verify_batch(&plain));
++        let (blinded, mut plain) = sets();
++        plain[5].0 = Message::from_bytes_sha256(b"another");
++        assert!(verify_blinded_signatures_batch(&blinded));
++        assert!(!verify_batch(&plain));
++    }
++}
+diff -ru ba/modules/fedimint-mintv2-client/src/api.rs b2/modules/fedimint-mintv2-client/src/api.rs
+--- a/modules/fedimint-mintv2-client/src/api.rs	2026-10-06 12:05:33.164574671 +0200
++++ b/modules/fedimint-mintv2-client/src/api.rs	2026-10-06 12:28:20.876278264 +0200
+@@ -54,6 +54,37 @@
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
+         tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> BTreeMap<PeerId, Vec<BlindedSignatureShare>> {
++        // BLWP kanban #192: a threshold of well-formed answers first (no CPU work), then every note's combined blinded
++        // signature checked in ONE batch (tbs::verify_blinded_signatures_batch) - the one-by-one checks were ~8 pairings in
++        // one synchronous block that held the client's one thread (wasm) and the next lock's acceptance behind it. If the
++        // batch fails, the share-by-share strategy below runs, as before.
++        let gathered = self
++            .request_with_strategy_retry(
++                GatherThreshold { len: issuance_requests.len(), threshold: self.all_peers().to_num_peers().threshold(), gathered: BTreeMap::new() },
++                SIGNATURE_SHARES_ENDPOINT.to_owned(),
++                ApiRequestErased::new(range),
++            )
++            .await;
++        let items: Vec<_> = issuance_requests
++            .iter()
++            .enumerate()
++            .map(|(i, request)| {
++                let agg = tbs::aggregate_signature_shares(
++                    &gathered.iter().map(|(peer, shares)| (peer.to_usize() as u64, shares[i])).collect(),
++                );
++                (request.blinded_message(), agg, tbs_agg_pks[&request.denomination])
++            })
++            .collect();
++        if tbs::verify_blinded_signatures_batch(&items) {
++            // BLWP kanban #192: each note's combined signature kept for the output state machine, which combined the same
++            // shares again (5 G1 multiplications a note) - only after the batch passed, so the fallback never meets it
++            if let Ok(mut kept) = COMBINED.lock() {
++                for (request, (_, agg, _)) in issuance_requests.iter().zip(items.iter()) {
++                    kept.insert(request.tweak, *agg);
++                }
++            }
++            return gathered;
++        }
+         self.request_with_strategy_retry(
+             // This query collects a threshold of 2f + 1 valid blind signature shares
+             CombinedShareThreshold::new(issuance_requests, tbs_pks, tbs_agg_pks, self.all_peers().to_num_peers()),
+@@ -132,6 +163,36 @@
+ /// fails its note's check. Only then is every gathered answer checked share by share as before, the guardians with a bad
+ /// share are dropped (and not asked again, as before), and the query waits for more answers. The result is the same as the
+ /// stock strategy's: exactly a threshold of answers whose every share is valid. The blinded messages are computed once.
++/// BLWP kanban #192: each note's combined blinded signature, by its request's tweak (16 random bytes), from the checked batch
++/// to the output state machine that finalizes the note - taken out there, so each is used once.
++pub(crate) static COMBINED: std::sync::LazyLock<std::sync::Mutex<BTreeMap<[u8; 16], tbs::BlindedSignature>>> =
++    std::sync::LazyLock::new(|| std::sync::Mutex::new(BTreeMap::new()));
++
++/// BLWP kanban #192: a threshold of answers of the right length, unchecked - the caller checks them (one batch).
++struct GatherThreshold {
++    len: usize,
++    threshold: usize,
++    gathered: BTreeMap<PeerId, Vec<BlindedSignatureShare>>,
++}
++
++impl QueryStrategy<Vec<BlindedSignatureShare>, BTreeMap<PeerId, Vec<BlindedSignatureShare>>> for GatherThreshold {
++    fn process(
++        &mut self,
++        peer: PeerId,
++        shares: Vec<BlindedSignatureShare>,
++    ) -> QueryStep<BTreeMap<PeerId, Vec<BlindedSignatureShare>>> {
++        if shares.len() != self.len {
++            return QueryStep::Failure(ServerError::InvalidResponse(anyhow::anyhow!("Invalid number of signatures shares")));
++        }
++        self.gathered.insert(peer, shares);
++        if self.gathered.len() < self.threshold {
++            QueryStep::Continue
++        } else {
++            QueryStep::Success(std::mem::take(&mut self.gathered))
++        }
++    }
++}
++
+ struct CombinedShareThreshold {
+     requests: Vec<NoteIssuanceRequest>,
+     messages: Vec<BlindedMessage>,
+diff -ru ba/modules/fedimint-mintv2-client/src/output.rs b2/modules/fedimint-mintv2-client/src/output.rs
+--- a/modules/fedimint-mintv2-client/src/output.rs	2026-10-06 12:05:33.164574671 +0200
++++ b/modules/fedimint-mintv2-client/src/output.rs	2026-10-06 12:28:20.877278337 +0200
+@@ -8,7 +8,7 @@
+ use fedimint_core::core::OperationId;
+ use fedimint_core::db::IDatabaseTransactionOpsCoreTyped;
+ use fedimint_core::encoding::{Decodable, Encodable};
+-use fedimint_mintv2_common::{Denomination, verify_note};
++use fedimint_mintv2_common::Denomination;
+ use tbs::{AggregatePublicKey, BlindedSignatureShare, PublicKeyShare, aggregate_signature_shares};
+ 
+ use crate::api::MintV2ModuleApi;
+@@ -104,7 +104,8 @@
+             // BLWP kanban #178: one macrotask yield before this output's CPU work (each note's blinded message, the share
+             // checks, the notes). Measured on the test host: run in the same microtask drain as the acceptance, it held the
+             // lock's answer to JS back by ~100-240 ms. The work and its checks are unchanged; it only starts a turn later.
+-            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::ZERO).await;
++            // BLWP kanban #192: a real yield - sleep(ZERO) is ready at its first poll on wasm (n0_future) and yielded nothing
++            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(1)).await;
+ 
+             let shares = global_context
+                 .module_api()
+@@ -135,13 +136,21 @@
+             };
+         };
+ 
++        // BLWP kanban #192: every note finalized, then all checked in ONE batch (tbs::verify_batch, the same check as
++        // verify_note made for each) - and only then stored; any invalid note fails the batch and the output, as before
++        let mut notes = Vec::new();
++        let mut checks = Vec::new();
+         for (i, request) in old_state.common.issuance_requests.iter().enumerate() {
+-            let agg_blind_signature = aggregate_signature_shares(
+-                &signature_shares
+-                    .iter()
+-                    .map(|(peer, shares)| (peer.to_usize() as u64, shares[i]))
+-                    .collect(),
+-            );
++            // BLWP kanban #192: the combination the checked batch already made, else combined here as before
++            let kept = crate::api::COMBINED.lock().ok().and_then(|mut k| k.remove(&request.tweak));
++            let agg_blind_signature = kept.unwrap_or_else(|| {
++                aggregate_signature_shares(
++                    &signature_shares
++                        .iter()
++                        .map(|(peer, shares)| (peer.to_usize() as u64, shares[i]))
++                        .collect(),
++                )
++            });
+ 
+             let spendable_note = request.finalize(agg_blind_signature);
+ 
+@@ -149,13 +158,18 @@
+                 .get(&request.denomination)
+                 .expect("No aggregated pk found for denomination");
+ 
+-            if !verify_note(spendable_note.note(), pk) {
+-                return MintOutputStateMachine {
+-                    common: old_state.common,
+-                    state: OutputSMState::Failure,
+-                };
+-            }
++            checks.push((fedimint_mintv2_common::nonce_message(spendable_note.note().nonce), spendable_note.note().signature, pk));
++            notes.push(spendable_note);
++        }
++
++        if !tbs::verify_batch(&checks) {
++            return MintOutputStateMachine {
++                common: old_state.common,
++                state: OutputSMState::Failure,
++            };
++        }
+ 
++        for spendable_note in notes {
+             dbtx.module_tx()
+                 .insert_new_entry(&SpendableNoteKey(spendable_note), &())
+                 .await;
