@@ -1979,6 +1979,9 @@
     // when something is owed, or while this browser has not yet read it empty (TAB_EMPTY: ecash an older build left in a
     // round wallet is still found once).
     const TAB_EMPTY = 'blwp.tabempty.';
+    // THE NOTE GOES WHEREVER THE ROUND'S WALLET MAY HOLD ECASH (kanban #200, comment 574): a zero read through the player
+    // wallet is never proof that the round's own wallet is empty
+    const dropTabEmpty = (id) => { try { vault().removeItem(TAB_EMPTY + id); } catch { /* read with its wallet next time */ } };
     async function lookRound(r) {
       let empty = false; try { empty = vault().getItem(TAB_EMPTY + r.roundIdHex) === '1'; } catch { empty = false; }
       // the player wallet not opening yet: this tick looks at nothing (the next one does), for the page's first 30 s; after
@@ -2176,6 +2179,9 @@
       const own = await roundWallet(r);
       if (!own) return { ok: false, why: 'this round\'s withdrawal is open in another tab of this browser - withdraw it there, or close that tab' };
       const ask = roundAsk(r, own.LockClient);
+      // THE ROUND'S WALLET IS ABOUT TO HOLD WHAT IS COLLECTED (kanban #200, comment 574): its empty note goes before the
+      // collect, so a pay that fails - or throws before the last look below - leaves the next load joining this wallet
+      dropTabEmpty(r.roundIdHex);
       payoutAsking = true;
       // WHILE IT RUNS THE SCREEN SAYS SO (live, run A3: a Withdraw ran ~5 min with no line, the tab
       // was closed mid-way and what it had collected was lost with the tab's wallet).
@@ -2195,6 +2201,8 @@
           onStep: (step) => { console.log('[blwp] withdraw, player wallet: ' + step); window.BLWP_WITHDRAW_STEP = step; paintWallet(); } });
         window.BLWP_OWED = await BLWPCLIENT.lookOwed(Object.assign({}, ask, { client: own.client }));
         window.BLWP_WITHDRAWABLE = window.BLWP_OWED.inTabMsat;
+        // STILL ECASH IN THE ROUND'S WALLET AFTER THE PAY (it failed): no empty note for it - the warning stays
+        if (window.BLWP_WITHDRAWABLE > 0n) dropTabEmpty(r.roundIdHex);
       } finally { payoutAsking = false; window.BLWP_WITHDRAWING = false; }
       console.log('[blwp] withdraw: ' + BLWPCLIENT.withdrawLine(done.withdraw, window.BLWP_WITHDRAWABLE));
       paintWallet();
