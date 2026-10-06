@@ -17,10 +17,10 @@ const PANEL_H = 260;
 const css = html.slice(html.indexOf('body.blwp-console-open #blwp-wallet { position: fixed;'), html.indexOf('#blwp-console-thumb {'));
 
 /** The page's function over a fake window: the canvas fills the window, the button is 64 x 22 as measured. */
-function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = slot && slot.h, coarse = true, btnTop = 52 } = {}) {
+function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = slot && slot.h, coarse = true, btnTop = 52, lobby = null } = {}) {
   const go = { offsetWidth: bw, offsetHeight: bh, style: {}, title: '', getBoundingClientRect: () => ({ top: btnTop, bottom: btnTop + bh, height: bh }) };
   const panel = { style: {} };
-  const window = { innerWidth: w, innerHeight: h, BLWP_HUD_CORNER: slot, matchMedia: () => ({ matches: coarse }) };
+  const window = { innerWidth: w, innerHeight: h, BLWP_HUD_CORNER: slot, BLWP_UNITY_LOBBY: lobby, matchMedia: () => ({ matches: coarse }) };
   const classes = new Set();
   const document = { body: { classList: { toggle: (k, on) => (on ? classes.add(k) : classes.delete(k)), remove: (k) => classes.delete(k), contains: (k) => classes.has(k) } },
     getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h }) } : id === 'blwp-wallet' ? panel : null) };
@@ -32,8 +32,9 @@ function place(slot, { open = true, bw = 64, bh = 22, w = slot && slot.w, h = sl
   const held = classes.has('blwp-console-held');
   let p = null;
   if (open) {
-    p = { held, title: go.title, right: px(panel.style.right), bottomGap: px(panel.style.bottom), width: px(panel.style.width), maxW: px(panel.style.maxWidth) };
-    p.bottom = h - p.bottomGap; p.top = p.bottom - PANEL_H; p.rightX = w - p.right; p.left = p.rightX - p.width;
+    p = { held, lobbyClass: classes.has('blwp-console-lobby'), title: go.title, right: px(panel.style.right), bottomGap: px(panel.style.bottom), width: px(panel.style.width), maxW: px(panel.style.maxWidth) };
+    if (panel.style.bottom === 'auto') { p.top = px(panel.style.top); p.bottom = p.top + PANEL_H; } else { p.bottom = h - p.bottomGap; p.top = p.bottom - PANEL_H; }
+    p.rightX = w - p.right; p.left = p.rightX - p.width;
   }
   return { btn, p, placed: window.BLWP_CONSOLE_PLACED };
 }
@@ -114,4 +115,50 @@ test('closed, the panel is left alone; the button is still placed', () => {
   const { btn, p } = place(SLOTS.phone, { open: false });
   assert.equal(p, null);
   assert.ok(btn.top > 0);
+});
+
+// THE LOBBY (kanban #198, the owner 2026-10-06: "Stepped aside while the lobby is up. Not drawn over the lobby content"): Unity's
+// own lobby rectangles as read off the live page 0.0.2821 at 430x932 - the balance boxes and the two round rows
+const LOBBY = { showing: true, balance: [56, 468, 318, 34], rows: [{ rect: [56, 538, 318, 30] }, { rect: [56, 572, 318, 30] }] };
+const clearOf = (p, [x, y, ww, hh]) => p.rightX <= x || p.left >= x + ww || p.bottom <= y || p.top >= y + hh;
+
+test('the lobby up: the open console parks top right under the button, 260 x 260, clear of the balance boxes and the round rows, above the lobby', () => {
+  const s = SLOTS.upright;
+  const { btn, p, placed } = place(s, { lobby: LOBBY });
+  assert.equal(p.held, false);
+  assert.equal(p.lobbyClass, true, 'drawn above the lobby chrome (blwp-console-lobby)');
+  assert.equal(p.width, 260);
+  assert.ok(p.top >= btn.bottom, `under the Console button (top ${p.top}, button bottom ${btn.bottom})`);
+  assert.equal(p.right, Math.round(s.w - s.right), 'at the right margin');
+  for (const r of [LOBBY.balance, ...LOBBY.rows.map((x) => x.rect)]) assert.ok(clearOf(p, r), `the panel ${JSON.stringify(p)} lies on ${r}`);
+  assert.equal(placed.lobby.edge, 'top right');
+  assert.match(html, /body\.blwp-console-lobby #blwp-wallet \{ z-index: 35; \}/);
+});
+
+test('the lobby with a widget at the top right: the panel slides left along the top edge until clear, and says so', () => {
+  const s = SLOTS.upright;
+  const lobby = { ...LOBBY, rows: [...LOBBY.rows, { rect: [300, 200, 100, 30] }] };
+  const { p, placed } = place(s, { lobby });
+  assert.equal(p.held, false);
+  assert.equal(p.width, 260);
+  assert.ok(clearOf(p, [300, 200, 100, 30]));
+  assert.match(placed.lobby.edge, /^top edge, slid left to \d+ px$/);
+});
+
+test('the lobby with no clear spot on the top edge: the panel steps aside (held) rather than lie on the lobby', () => {
+  const s = SLOTS.upright;
+  const lobby = { ...LOBBY, rows: [...LOBBY.rows, { rect: [0, 150, 430, 40] }] };
+  const { p, placed } = place(s, { lobby });
+  assert.equal(p.held, true);
+  assert.equal(placed.lobby.edge, 'none');
+  assert.match(p.title, /steps aside in the lobby/);
+});
+
+test('the lobby closed again: the truck view comes back as measured - bottom right one margin above the throttle pad', () => {
+  const s = SLOTS.upright;
+  const { p, placed } = place(s, { lobby: { ...LOBBY, showing: false } });
+  assert.equal(p.lobbyClass, false);
+  assert.equal(placed.lobby, null);
+  assert.ok(Math.abs(p.bottom - (s.padY - s.m)) <= 1);
+  assert.ok(p.left >= s.w / 2 + s.m - 1);
 });
