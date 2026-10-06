@@ -4,7 +4,7 @@
 > **Bitcoin Arena and nextblock (RULED, the owner 2026-10-06).** The engine and
 > the game are separated. **Bitcoin Arena** is the engine: custody,
 > settlement and verify, for any number of games and, later, other contests
-> such as prediction markets. **nextblock** ("Tick Tok, next Block",
+> such as prediction markets. **Tick Tock, Next Block** ("nextblock",
 > `nextblock` in code) is the first game: the truck game this document
 > describes. Games are plugins any developer may register; each node
 > chooses which games it hosts. The money split is **10% of the gross
@@ -216,7 +216,7 @@ work.
 | What | Name | In code |
 |---|---|---|
 | the engine and its protocol | **Bitcoin Arena**, protocol v1 | `arena` (packages `arena-protocol`, `arena-node`, `arena-client`, `arena-donor`) |
-| the first game | **nextblock** - "Tick Tok, next Block" | `nextblock` (its core, its Unity project and its page assets in one package) |
+| the first game | **Tick Tock, Next Block** - short "nextblock" (the owner 2026-10-06) | `nextblock` (its core, its Unity project and its page assets in one package) |
 | the site | `bitcoin-arena.io` (not registered yet; the current pages stay until it is) | |
 | the repository | `github.com/a tester/bitcoin-arena`, with the whole history of this one kept | |
 
