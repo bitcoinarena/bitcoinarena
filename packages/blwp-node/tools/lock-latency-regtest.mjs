@@ -14,7 +14,7 @@
  *     node tools/lock-latency-regtest.mjs
  * Nothing here names a live chain: the federation is the one the invite names, the payer the lnd named.
  */
-import { readFileSync, copyFileSync } from 'node:fs';
+import { readFileSync, copyFileSync, writeFileSync } from 'node:fs';
 import { tmpdir, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
@@ -127,4 +127,11 @@ say({ step: 'summary', count: COUNT, limitMs: LIMIT_MS, accepted: accepted.lengt
   acceptMs: accepted.length ? { p50: pct(accepted, 0.5), p95: pct(accepted, 0.95), max: Math.max(...accepted), min: Math.min(...accepted) } : null,
   submitMs: { p50: pct(locks.filter((l) => l.submitMs !== null).map((l) => l.submitMs), 0.5) },
   ...(statusCalls.length ? { statusCallMs: { n: statusCalls.length, p50: pct(statusCalls.map(Math.abs), 0.5), p95: pct(statusCalls.map(Math.abs), 0.95), max: Math.max(...statusCalls.map(Math.abs)), threw: statusCalls.filter((x) => x < 0).length } } : {}), pass });
+// THE LEFTOVER NOTES BACK (kanban #192): a run's lock client keeps its wallet in memory only - what the locks did not use is
+// handed back to ECASH_FILE.back for the federation's own client to receive, not lost with the process
+if (env.ECASH_FILE) {
+  try { const back = JSON.parse(await within(lc.sendAllEcash(), 60000, 'the leftover notes'));
+    if (back.ecash) writeFileSync(`${env.ECASH_FILE}.back`, back.ecash);
+    say({ step: 'returned', msat: back.msat }); } catch (e) { say({ step: 'returned', error: String(e && e.message || e).slice(0, 200) }); }
+}
 process.exit(pass ? 0 : 1);

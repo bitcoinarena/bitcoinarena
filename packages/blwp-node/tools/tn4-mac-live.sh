@@ -59,10 +59,12 @@ case $CMD in
     # ONE ATTEMPT: fresh notes for a fresh lock client (WASM dir $4), COUNT locks, the log $H/attempt-<label>.log
     LABEL=${3:?label}; WASM=${4:?wasm dir}
     # NOTES_FILE: notes already sent (a run cut short); else fresh notes from the client
-    if [ -n "${NOTES_FILE:-}" ]; then N=$NOTES_FILE; else N=$("$0" notes "$H" "${NOTES_MSAT:-2000000}") || die "no notes"; fi
+    if [ -n "${NOTES_FILE:-}" ]; then N=$NOTES_FILE; else N=$("$0" notes "$H" "${NOTES_MSAT:-600000}") || die "no notes"; fi
     [ -s "$N" ] || die "the notes file is empty: $(head -c 300 $H/notes.json)"
     ( cd "$HERE/.." && INVITE_FILE=$H/invite-code WASM_PKG=$WASM ECASH_FILE=$N BLWP_TN4_NETWORK=testnet4 COUNT=${COUNT:-20} \
-      "$NODE" tools/lock-latency-regtest.mjs ) > $H/attempt-$LABEL.log 2>&1; RC=$?
+      "$NODE" ${LAT_NODE_FLAGS:-} tools/lock-latency-regtest.mjs ) > $H/attempt-$LABEL.log 2>&1; RC=$?
+    # the leftover notes back into the federation's own client
+    [ -s "$N.back" ] && fc module mintv2 receive "$(cat $N.back)" > $H/back-$LABEL.json 2>&1 && mv "$N.back" "$N.back.received"
     say "attempt $LABEL (wasm $WASM, rc $RC): $(grep '"step":"summary"' $H/attempt-$LABEL.log | tail -1)" ;;
   delay)
     stop_nodes
