@@ -675,3 +675,52 @@ test('a checkpoint that wakes after the player\'s own link went is skipped, not 
     await round.close();
   }
 });
+
+// A MARK BOTH DAEMONS STORED WHILE THIS CLIENT COUNTED NONE OF THEIR ANSWERS (kanban #155, measured live: testnet4
+// ea63aa94 @1620, and the control on 0.0.2815, entry 0b68a08f @1140 - all 7 seats stored and receipted the mark, the page
+// set no pending link and kept the mark before as its head, and every later mark named that old parent: refused at every
+// seat "does not follow the chain head", the rest of the run never carried). No reload, no reconnect: the next mark must
+// still chain onto the mark the daemons carry.
+test('a mark the daemons stored but whose receipts this client never counted: the head is read back, and the next mark chains onto it on both', async () => {
+  const round = await standUpRound({ host: '127.0.0.1', portA: 18292, portB: 18293 });
+  let t;
+  try {
+    const named = await joinFromQuery(new URL(round.url).search);
+    t = await tab(round, named, { pageNodes: true });
+    const { client, rid, eid } = t;
+    const [A, B] = [client.base, ...client.peers];
+    const own = client.readReceipt.bind(client);
+    let drop = false;
+    client.readReceipt = (bytes, markId) => {
+      if (drop) throw new Error('the receipt never reached this client');
+      return own(bytes, markId);
+    };
+    const links = [];
+    for (const tick of [60, 120, 180, 240, 300]) {
+      drive(client, 60);
+      drop = tick === 180;
+      const r = await client.markNow(driven(7, tick), tick);
+      drop = false;
+      links.push(r);
+      await client.awaitPeers();
+      console.log(`  tick ${tick}: live ${r.live}, refused ${r.refused.length}, head read back ${r.headRecovered ? r.headRecovered.slice(0, 8) : '-'}`
+        + ` | checkpoints A ${await stored(A, rid, eid)} B ${await stored(B, rid, eid)}`);
+    }
+    // the mark at 180: stored and receipted at both, counted by nobody here - then read back as the head
+    assert.equal(links[2].live, false, 'the dropped receipts were counted: not the case the test names');
+    assert.equal(links[2].headRecovered, toHex(links[2].id), 'the head was not read back onto the mark both daemons carry');
+    assert.equal(client.marksHeadRecovered, 1);
+    // and every later mark names it, and is carried by both
+    for (const i of [3, 4]) {
+      assert.deepEqual(links[i].refused, [], `the mark at ${[60, 120, 180, 240, 300][i]} was refused: ${links[i].refused}`);
+      assert.equal(links[i].live, true);
+      assert.equal(toHex(links[i].checkpoint.previousHash), toHex(links[i - 1].id), `link ${i} does not name the mark before it`);
+    }
+    assert.deepEqual([await stored(A, rid, eid), await stored(B, rid, eid)], [5, 5], 'not all five marks are stored on both');
+    assert.deepEqual([await equivocation(A, rid, eid), await equivocation(B, rid, eid)], [204, 204], 'a daemon holds a fork proof');
+    assert.match(client.status(300), / head read back 1/);
+  } finally {
+    if (t) { t.client.ended = true; t.client.close(); }
+    await round.close();
+  }
+});
