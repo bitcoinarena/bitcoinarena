@@ -27,6 +27,7 @@ import { connect as netConnect } from 'node:net';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
+import { signInWorker } from './listing-sign.js';
 import { decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { roundEndMs, startDeadlineOf } from '../../protocol/src/first-mark.js';
 import { OBJECTION_WINDOW_MS, windowsOf } from '../../protocol/src/window.js';
@@ -2056,8 +2057,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FULL LISTING SERVED FROM ROW SIGNATURES SIGNED IN THE BACKGROUND (kanban #197, the owner 2026-10-06, path A of comment
   // 496): one fresh GET /rounds signed every announced row on the request - 2,291 rows, 8.0 of 12.75 s on seat 7, ~3.2 ms a
   // signature. The page checks every row against the listing's ONE nowMs within its 60 s skew (lobby.js), so a set of rows
-  // is signed for one time: every SIGN_EVERY_MS the seat signs all announced rows for a new time, in LISTING_SLICE_MS
-  // slices, off the request path, and the full listing is served from the last complete set while it is at most
+  // is signed for one time: every SIGN_EVERY_MS the seat signs all announced rows for a new time, off the request path -
+  // each row's facts read in LISTING_SLICE_MS slices on this loop, the signatures made in a worker (listing-sign.js) - and the full listing is served from the last complete set while it is at most
   // SIGNED_SERVE_MAX_MS old. A row whose signed facts changed since (phase, assigned here, joined, playing) is signed at
   // once for the same time. Every row stays listed and the signature format and the page's check are unchanged.
   const SIGN_EVERY_MS = 45000;
@@ -2086,20 +2087,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const resignAll = async () => {
     let sliceAt = performance.now();
     const atMs = BigInt(round.now());
-    const sigs = new Map();
+    const rows = [];                              // { id, key, msg } of every announced row, signed together below
+    const committees = new Map();                 // round id hex -> its committee answer as of this set, drawn or not
     for (const roundId of openHeld()) {
       if (performance.now() - sliceAt >= LISTING_SLICE_MS) { await new Promise((r) => setImmediate(r)); sliceAt = performance.now(); }
       const kept = heldOf(roundId);
       if (kept.bad || !listable(kept) || atMs >= kept.listedEnd) continue;
       const f = rowFacts(roundId, kept.c, atMs);
-      sigs.set(toHex(roundId), { key: factsKey(f), sig: toHex(signRow(roundId, f, atMs)) });
-      committeeOf(roundId);
+      rows.push({ id: toHex(roundId), key: factsKey(f), msg: lobbyListingId({ roundId, nodePubkey: round.pubkey, nowMs: atMs,
+        phase: f.phase, assignedHere: f.assignedHere, joined: f.joined, playing: f.playing }) });
+      // AND ITS COMMITTEE AS OF THIS SET, drawn or not yet (measured on seat 4 after the first cut: the rounds not drawn yet
+      // were asked again on every listing - 542 of 1,639 ms); a drawn one is kept for good (committeeDrawn)
+      committees.set(toHex(roundId), committeeOf(roundId));
     }
+    // THE SIGNATURES IN A WORKER, not on this loop (the slices made one set 12-17 s on a loaded seat)
+    const signed = await signInWorker(rows.map((r) => r.msg), round.identity.secret);
+    const sigs = new Map(rows.map((r, i) => [r.id, { key: r.key, sig: toHex(signed[i]) }]));
     for (const id of committeeDrawn.keys()) if (!sigs.has(id)) committeeDrawn.delete(id);
-    signedSet = { atMs, sigs };
+    signedSet = { atMs, sigs, committees };
   };
-  const resignNow = () => { if (!resigning) resigning = timed('listing re-sign', resignAll).catch((e) => console.log(`[listing] re-sign failed: ${e.message}`)).finally(() => { resigning = null; }); return resigning; };
-  const resignTimer = setInterval(resignNow, SIGN_EVERY_MS);
+  let lastBuildMs = 8000;
+  const resignNow = () => {
+    if (!resigning) {
+      const t0 = performance.now();
+      resigning = timed('listing re-sign', resignAll).catch((e) => console.log(`[listing] re-sign failed: ${e.message}`))
+        .finally(() => { lastBuildMs = performance.now() - t0; resigning = null; });
+    }
+    return resigning;
+  };
+  // A NEW SET BEFORE THE SERVED ONE AGES OUT (measured live after the roll: a build takes 12-17 s on a loaded seat, so a
+  // fixed 45 s cycle left sets 61-68 s old, and the listing fell back to signing every row): every 5 s the seat starts the
+  // next build once the served set is old enough that the build - as long as the last one, and 3 s more - would end
+  // inside SIGNED_SERVE_MAX_MS. At most every SIGN_EVERY_MS when builds are quick.
+  const resignTimer = setInterval(() => {
+    if (resigning) return;
+    const age = signedSet ? Number(BigInt(round.now()) - signedSet.atMs) : Infinity;
+    if (age >= Math.min(SIGN_EVERY_MS, Number(SIGNED_SERVE_MAX_MS) - lastBuildMs - 3000)) resignNow();
+  }, 5000);
   resignTimer.unref();
   const resignFirst = setTimeout(resignNow, 3000);            // the first set soon after the start
   resignFirst.unref();
@@ -2112,7 +2136,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     const nextAsked = url.searchParams.get('next') !== null;
     // THE FULL LISTING AS OF THE LAST SIGNED SET (kanban #197); the lobby's `next` listing is signed fresh, as before
-    const fromSet = !nextAsked && signedSet && BigInt(round.now()) - signedSet.atMs <= SIGNED_SERVE_MAX_MS ? signedSet : null;
+    const setNow = () => (!nextAsked && signedSet && BigInt(round.now()) - signedSet.atMs <= SIGNED_SERVE_MAX_MS ? signedSet : null);
+    // no set young enough while one is being signed: that build, not every row signed again here
+    if (!nextAsked && !setNow() && resigning) await resigning;
+    const fromSet = setNow();
     const nowMs = fromSet ? fromSet.atMs : BigInt(round.now());
     const listed = [];
     // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
@@ -2183,7 +2210,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       listed.push({
         id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
-        startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: committeeOf(held.roundId),
+        startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: (fromSet && fromSet.committees.get(id)) || committeeOf(held.roundId),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
         // THE RUN LENGTH, ANNOUNCED (the 82/90 fork, the owner 2026-10-01: "It must be part of the round announcement"):
         // the contract's blockTicks - in the signed contract this row names - and what it is in seconds.
