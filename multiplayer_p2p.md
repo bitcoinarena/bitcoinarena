@@ -3494,6 +3494,7 @@ federation's own consensus view of Bitcoin.
 | `DELIVERED` (qualifying) | Forfeit the stake lock → it returns to the player's key | 5-of-7 settlement signature over the lock, published; the player's own client redeems it, and only the player can |
 | `FAILED` / `FORFEIT` | Claim the stake lock inside the round's settlement transaction | `FINAL` result + elapsed `W` + no valid objection + ≥5 preimage shares released + 5-of-7 settlement signature over that transaction |
 | `VOID` / `ENTRY_VOID` | Forfeit at once; if nobody acts, the lock expires | Nothing — after expiry only the player's key can take it |
+| `REFUSED` — a round the signer nodes refuse (its donation set is not the one in force at its census height, or its series is not held), a stake locked for it and never entered | Forfeit at once → it returns to the player's key, without waiting for expiry | Each of ≥5 settlement signer nodes on its own record: it refuses the round, the lock stakes no entry it holds, the lock's image is `A0` of a handout it accepted for that round and its refund key that handout player's (who entered nothing), the federation holds the lock under the round's claim key; 5-of-7 signature over the lock's contract id; only the player's key redeems it |
 | Payout to a qualifier | A payout contract in the same settlement transaction: a lock already past expiry whose refund key is the qualifier, redeemable at once by that key alone | Final payout table (5-of-7) + 5-of-7 settlement signature |
 
 > **WINNINGS-AUTO (RULED, the owner 2026-10-01).** Winnings are paid
@@ -3512,6 +3513,14 @@ The **settlement transaction** is one atomic federation transaction per
 round: every loser's stake lock and every fee lock in; one payout contract
 per qualifier and per paid node slot out. Every settlement node rebuilds it
 from the public payout table and signs only the transaction it rebuilt.
+
+> **REFUSED-RETURN (RULED, the owner 2026-10-06 08:57).** A round the signer
+> nodes refuse gets an immediate refund: a stake that was locked for it and
+> never entered is not held until its expiry. The player's client hands the
+> lock to the round's signer nodes; each checks it against its own record
+> and signs the forfeit that returns it. It can never return a stake that
+> entered: a lock any signer node holds as an entry's stake is refused
+> there, and an entered stake is held by at least five.
 
 The default path — nobody acting — is always the refund. That is what makes
 infrastructure failure safe. It holds while the federation runs; a halted
