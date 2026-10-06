@@ -1835,12 +1835,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // something for a round - the round itself, an entry, a lock, a settlement - asks this; a round naming no series
   // is not a series round and is not touched.
   const seriesRefusal = (contract) => { const c = seriesRoundCheck(contract, series); return c.ok ? null : c.why; };
+  // A SERIES TAKEN OUT OF THE SERIES FILE (kanban #22, the owner 2026-10-06): its rounds are offered at no door - not listed,
+  // not re-posted, no entry, no lock - while a stake already in one still settles (the settlement keeps seriesRefusal).
+  const droppedSeries = new Set();
+  const droppedRefusal = (contract) => (contract && contract.seriesId instanceof Uint8Array && droppedSeries.has(toHex(contract.seriesId))
+    ? `series ${toHex(contract.seriesId).slice(0, 16)} was taken out of this node's series file: its rounds are not offered or entered` : null);
+  const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract);
   const seriesRefusalOfRound = (rid) => {
     const row = rid ? round.get(rid) : null;
     if (!row) return null;
     let c;
     try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
     return seriesRefusal(c);
+  };
+  const offerRefusalOfRound = (rid) => {
+    const row = round.get(rid);
+    if (!row) return null;
+    let c;
+    try { c = decodeRoundContract(new Uint8Array(row.contract)); } catch { return null; }
+    return offerRefusal(c);
   };
   // ROUNDS POSTED AHEAD OF THEIR BEACON, assigned once it is on the chain: a pass every 5 s, a few a pass, each kept until
   // it is assigned or ten minutes past its committee time (then it is the 409 a late post gets). A restart forgets the set;
@@ -1881,20 +1894,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
   let seriesTimer = null;
-  let seriesVersion = 0;               // bumped when a series is added while running: the listing's verdicts are read again
+  let seriesVersion = 0;               // bumped when a series is added or dropped while running: the listing's verdicts are read again
   const takeNewSeries = () => {
     if (typeof seriesReload !== 'function') return;
     let now;
     try { now = seriesReload(); } catch (e) { console.error(`[series] the series file did not read: ${e.message} - the series held stay`); return; }
     if (!now) return;
+    // A FILE NAMING NO SERIES AT ALL (caught empty mid-write) drops nothing: the series held stay
+    if (!now.length) { console.error('[series] the series file names no series - the series held stay'); return; }
     const held = new Set(writers.map((w) => toHex(w.id)));
+    const named = new Set();
     for (const t of now) {
       let w;
       try { w = seriesWriter(round, t); } catch (e) { console.error(`[series] a new line refused: ${e.message}`); continue; }
       const id = toHex(w.id);
+      named.add(id);
       if (held.has(id)) continue;
+      if (droppedSeries.delete(id)) seriesVersion++;
       series.push(t); writers.push(w); held.add(id); seriesVersion++;
       console.log(`[series] ${id.slice(0, 16)}: taken from the series file without a restart`);
+    }
+    // AND ONE THE FILE NO LONGER NAMES IS DROPPED (kanban #22: the reload only added, and a series taken out stayed held,
+    // written and listed until a restart): its writer stops, its stored rounds stay in the store but are offered nowhere
+    for (let i = writers.length - 1; i >= 0; i--) {
+      const id = toHex(writers[i].id);
+      if (named.has(id)) continue;
+      writers.splice(i, 1); droppedSeries.add(id); seriesVersion++;
+      console.log(`[series] ${id.slice(0, 16)}: taken out of the series file - no longer held; its rounds are offered nowhere`);
     }
   };
   if (writers.length || typeof seriesReload === 'function') {
@@ -2006,7 +2032,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (kept.listedUnder !== seriesVersion) {
         // §13A, WINDOW-10-SPEC: not 600 000 ms, never listed. A ROUND OF A SERIES THIS NODE NO LONGER HOLDS IS NOT
         // ANNOUNCED (the 82/90 fork: a series replaced before it ran takes no entry at any door, so it is offered nowhere).
-        kept.unlisted = kept.c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!seriesRefusal(kept.c);
+        kept.unlisted = kept.c.objectionWindowMs !== OBJECTION_WINDOW_MS || !!offerRefusal(kept.c);
         kept.listedEnd = kept.endMs !== null ? kept.endMs : kept.c.entryCloseMs;
         kept.listedUnder = seriesVersion;
       }
@@ -2162,7 +2188,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
-        { const why = seriesRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
+        { const why = offerRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
         // PICK B (protocol/src/old-series.js): testnet4's id before genesis_series_start opens a round of series 3cfbe516
         // and nothing else.
         if (isOldTestnet4Id(contract.networkId) && !(contract.seriesId && isOldTestnet4Series(contract.seriesId)))
@@ -2450,13 +2476,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND A SMALL ONE 5 s - 2 s missed most of a lobby's polls, every few seconds each (NODE-OPT-1648; JOIN-TIME-1359, the owner 2026-10-02: "Keep cutting the load of empty and open rounds"): the lobby's
         // `?next=8` was made afresh on every ask from every open lobby every few seconds - 1038 of them over 200 ms in seat 1's
         // recent log, up to 14.8 s held - and its joined/playing counts may lag 5 s where a page takes 60.
-        if (!body || nowReal - body.at > (body.large ? 30000 : 5000)) {
+        // AND NONE KEPT PAST A CHANGE OF THE SERIES HELD (kanban #22): a dropped series' rounds left the listing only 30 s later
+        if (!body || nowReal - body.at > (body.large ? 30000 : 5000) || body.version !== seriesVersion) {
           // ONE BUILD PER QUERY AT A TIME: every asker that comes while it yields waits for the same listing
           let building = listingBuilding.get(q);
           if (!building) {
             building = (async () => {
+              const version = seriesVersion;
               const { nowMs, listed } = await announcedRounds(url);
-              const made = { at: nowReal, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
+              const made = { at: nowReal, version, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
               listingKept.set(q, made);
               if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
               return made;
@@ -2617,7 +2645,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       if (req.method === 'POST' && url.pathname === '/entry') {
         const contract = decodeEntryContract(await read(req));
-        { const why = seriesRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
+        { const why = offerRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
@@ -3117,7 +3145,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
-        { const why = seriesRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (the owner 2026-10-03)
         let donationRecipients = null;
@@ -3143,7 +3171,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
-        { const why = seriesRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
+        { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
         try { got = await verifyFeeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
