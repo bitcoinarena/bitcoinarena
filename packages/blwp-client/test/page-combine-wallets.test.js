@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { pageFunction } from './page-script.js';
 
 const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
 const SRC = (() => {
@@ -52,8 +53,8 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
   const window = { BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
   const navigator = { locks: { request: async (name, _o, fn) => fn(heldLocks.some((h) => name === 'blwp.phrase.' + h.slice(0, 16)) ? null : { name }) } };
   const sessionStorage = { getItem: (k) => (k === 'blwp.player.seed' ? SEEDS.cur : null) };
-  const combineWallets = new Function('vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console',
-    `${SRC}\nreturn combineWallets;`)(() => proxy, sessionStorage, BLWPCLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
+  const combineWallets = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
+    SRC, 'return combineWallets;')(() => proxy, sessionStorage, BLWPCLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
   const run = () => combineWallets(main, { federation: 'fed1invite' }, { federationId: FED });
   const pendingKeys = () => [...store.keys()].filter((k) => k.startsWith('blwp.ecash.pending.'));
   return { run, main, wallets, log, opened, store, pendingKeys, total: () => main.msat + [...wallets.values()].reduce((t, w) => t + w.msat, 0n) };
