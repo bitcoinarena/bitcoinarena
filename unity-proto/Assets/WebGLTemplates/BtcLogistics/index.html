@@ -2035,12 +2035,13 @@
     }
     // THE SAME SCAN, ASKED BY THE LIVE HARNESS over its signer nodes (as BLWP_WITHDRAW is the page's own Withdraw).
     window.BLWP_FIND_OWED = (nodes, federation) => findTheRoundsOwed({ nodes, federation });
-    // WHAT THE LOBBY HANDS UNITY (the owner 2026-09-14): what the kept round still owes, as the page
-    // looked at it - the federation's part and the round wallet's - for the lobby to say so.
+    // WHAT THE LOBBY HANDS UNITY (the owner 2026-09-14): ecash in the kept round's OWN wallet - the round wallet's part only.
+    // NOT WHAT THE ROUND OWES (kanban #106, the owner 2026-10-04 13:39: "Withdrawal available: 98 sat" while those 98 sat were
+    // already inside the confirmed balance): WINNINGS-AUTO collects what is owed into the player wallet and the balance chips
+    // show it, pending and then confirmed; the owed amount of the last look stayed behind once the record was done. What a
+    // failed Withdraw leaves in the round's wallet is in no chip, so that alone is said here.
     function withdrawAvailable() {
-      const o = window.BLWP_OWED;
-      const inTab = typeof window.BLWP_WITHDRAWABLE === 'bigint' ? window.BLWP_WITHDRAWABLE : 0n;
-      const msat = (o && typeof o.owedMsat === 'bigint' ? o.owedMsat : 0n) + inTab;
+      const msat = typeof window.BLWP_WITHDRAWABLE === 'bigint' ? window.BLWP_WITHDRAWABLE : 0n;
       return { available: msat > 0n || !!window.BLWP_ELSEWHERE, msat: String(msat), elsewhere: !!window.BLWP_ELSEWHERE };
     }
     window.BLWP_WITHDRAW_AVAILABLE = withdrawAvailable;
