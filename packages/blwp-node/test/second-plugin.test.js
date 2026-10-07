@@ -37,6 +37,8 @@ test('a round of tally, a second minimal game, opens, replays and settles ACCEPT
     await closeRound(w);
     const tally = await untilSettled(w);
     const tallyResults = { high: signedResults(w, high.eid), low: signedResults(w, low.eid) };
+    // A GAME THAT DRAWS NO PICTURE HAS NO GHOST, said for that reason (hole 2 of comment 747), on the slow and the live path
+    const tallyGhost = { frame: w.a.ghosts.frameFor(w.rid, high.eid, 300), latest: w.a.ghosts.latest(w.rid, high.eid) };
 
     // THE NEXTBLOCK ROUND ON THE SAME TWO NODES
     const n = await openLockRound(w);
@@ -45,6 +47,7 @@ test('a round of tally, a second minimal game, opens, replays and settles ACCEPT
     await closeRound(n);
     const nextblock = await untilSettled(n);
     const nextblockResults = { won: signedResults(n, won.eid), lost: signedResults(n, lost.eid) };
+    const truckGhost = n.a.ghosts.frameFor(n.rid, won.eid, 600);
 
     // A ROUND OF A GAME NEITHER NODE HOSTS
     const stranger = { ...n.c, gameId: b32(0x99) };
@@ -59,7 +62,13 @@ test('a round of tally, a second minimal game, opens, replays and settles ACCEPT
       tally: { round: toHex(w.rid).slice(0, 16), state: tally.state, why: tally.why, results: tallyResults },
       nextblock: { round: toHex(n.rid).slice(0, 16), state: nextblock.state, why: nextblock.why, results: nextblockResults },
       refused: refused.map((r) => ({ ...r, why: r.why.slice(0, 120) })),
+      ghosts: { tally: tallyGhost, truck: { ok: truckGhost.ok, why: truckGhost.why, x: truckGhost.ghost && truckGhost.ghost.x } },
     }));
+    for (const [k, g] of Object.entries(tallyGhost)) {
+      assert.equal(g.ok, false, `${k}: a tally run was pictured`);
+      assert.equal(g.why, 'tally draws no picture, so its runs have no ghost', k);
+    }
+    assert.equal(truckGhost.ok, true, truckGhost.why);
 
     // TALLY: each run replayed by tally's core at both nodes, DELIVERED, scored by its sum; the round settled
     for (const [k, per, sum] of [['high', tallyResults.high, 600 * 7], ['low', tallyResults.low, 600 * 2]])

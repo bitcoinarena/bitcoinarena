@@ -36,7 +36,9 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
         if (!listed.configs.some((h) => toHex(h) === config))
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
     }
-    out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores }));
+    // `replayPage`: the game's own replay page, when it has one (kanban #202) - the engine serves it, never draws a game
+    out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
+      replayPage: p.replayPage || null }));
   }
   return out;
 }

@@ -1,4 +1,4 @@
-// THE REPLAY PAGE'S OWN SCRIPT, RUN (kanban #150: pages/replay.html was outside coverage - no test ran a line of it). The
+// THE REPLAY PAGE'S OWN SCRIPT, RUN (kanban #150: pages/replay.html, nextblock's own since #202, was outside coverage - no test ran a line of it). The
 // script runs as it is, under the page's own name (page-script.js), on a small fake page (no jsdom, as rounds-page rules):
 // a status element, fetch faked per path. Measured: what the page tells the player when the link names no run, when no
 // node it asks holds the run - this node first, then the round's committee endpoints it is given - and when the run's
@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from '../../blwp-client/test/page-script.js';
 
-const PAGE = new URL('../pages/replay.html', import.meta.url);
+const PAGE = new URL('../../core/plugin/nextblock-replay.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const at = HTML.indexOf('(async function () {\n  const q = new URLSearchParams(location.search);');
 const SCRIPT = HTML.slice(at, HTML.lastIndexOf('})();', HTML.indexOf('</script>', at)) + '})();'.length);

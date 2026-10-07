@@ -8,6 +8,7 @@
 import { toHex } from '../../protocol/src/hash.js';
 import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin, seriesRunFits } from '../../protocol/src/series.js';
 import { pluginForRound } from './plugins.js';
+import { seriesPeriodFits } from '../../protocol/src/manifest.js';
 
 export const SERIES_HORIZON_MS = SERIES_WRITE_AHEAD_MS;       // 72 h on every network (TN24-1405)
 
@@ -20,6 +21,11 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
   if (!lead.ok) throw new Error(`series refused: ${lead.why}`);
   // AND ITS RUN FITS ITS SLOT (the 82/90 fork): on a core that takes the round's run length, at most 82 s of 90.
   const runs = round && round.plugins ? pluginForRound(template, round.plugins) : null;
+  // AND ITS GAME RUNS ON THIS NETWORK'S SERIES GRID (kanban #202: the manifest's round_period is read)
+  if (runs && runs.ok) {
+    const period = seriesPeriodFits(runs.plugin.manifest);
+    if (!period.ok) throw new Error(`series refused: ${period.why}`);
+  }
   if (runs && runs.ok && !Number.isInteger(runs.core.fixedRunTicks)) {
     const fits = seriesRunFits(template);
     if (!fits.ok) throw new Error(`series refused: ${fits.why}`);

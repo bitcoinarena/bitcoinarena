@@ -71,6 +71,10 @@ export function ghostFor({
 }) {
   if (!Number.isInteger(tick) || tick < 0)
     return { ok: false, why: 'a ghost is at a whole tick' };
+  // A GAME WHOSE CORE DRAWS NO PICTURE HAS NO GHOST (kanban #202: `picture` is a plugin's optional extra) - said for that
+  // reason, before any replay, and never as a run that did not reach its tick.
+  if (core && core.adapter && typeof core.adapter.picture !== 'function')
+    return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
   if (!entry || !(entry.playerPubkey instanceof Uint8Array))
     return { ok: false, why: 'no entry contract to say whose truck that is' };
   if (!Array.isArray(batches) || !batches.length)
@@ -208,8 +212,12 @@ export class Ghosts {
     const key = `${hex(roundIdBytes)}:${hex(entryIdBytes)}`;
     const had = this.runs.get(key);
     if (had) return had;
+    // THE LIVE PATH REFUSES AS THE SLOW ONE DOES (kanban #202): a game that draws no picture keeps no run warm for one
+    const core = this.#coreOf(roundIdBytes);
+    if (core && core.adapter && typeof core.adapter.picture !== 'function')
+      return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
     const made = new RunInProgress(entry, {
-      core: this.#coreOf(roundIdBytes),
+      core,
       roundRandomness: this.#randomnessOf(roundIdBytes, entry, entryIdBytes),
     });
     this.runs.set(key, made);
@@ -228,7 +236,7 @@ export class Ghosts {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.plugins);
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
-    return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
+    return found.ok ? { ...found.core, game: found.plugin.name, config: found.config, runTicks: found.runTicks,
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes) } } : null;
   }
 

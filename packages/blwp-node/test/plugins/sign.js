@@ -21,14 +21,14 @@ export function testDevKey(word) {
  * replayFile? }, every one listed in the manifest with the configs it installs. The rest are the manifest's terms.
  */
 export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDenominator = 4, minScore = 1, version = 1,
-  parentManifestId = NO_PARENT, dev = name, clients = [], gameDonationSetId = new Uint8Array(32) }) {
+  parentManifestId = NO_PARENT, dev = name, clients = [], gameDonationSetId = new Uint8Array(32), roundPeriodMs = 0n }) {
   const devKey = testDevKey(dev);
   const pubkey = devKey.pubkey;
   const sorted = (hs) => [...hs].sort();
   const body = {
     gameName: name, gameDevPubkey: pubkey, version, parentManifestId, resultType: RESULT_TYPE.REPLAY,
     cores: sorted([...cores.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...cores.get(h).configs.keys()]).map(fromHex) })),
-    runTicksMax, roundPeriodMs: 0n, payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator, rankDenominator, minScore,
+    runTicksMax, roundPeriodMs, payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator, rankDenominator, minScore,
     clients, gameDonationSetId,
   };
   const manifest = signManifest(body, devKey);

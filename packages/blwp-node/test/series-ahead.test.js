@@ -260,3 +260,40 @@ test('a series taken out of the file while the node runs is dropped: not held, i
     assert.equal(afterEmpty.listed.length, ROUNDS_PER_SERIES);
   } finally { await s.close(); }
 });
+
+// A GAME'S round_period IS READ (kanban #202, hole 3 of comment 747): every series of this network runs on the 90 s grid,
+// so a game whose manifest names another period gets no series here - refused by the series writer and by the door's
+// game check (pluginForRound) for a round of a series - while one naming 90 s, or 0 (no period), runs.
+test('a series of a game whose manifest names a 60 s period is refused by the writer and the door; 90 s and 0 run', async () => {
+  const { pluginForRound } = await import('../src/plugins.js');
+  const { NEXTBLOCK } = await import('../../core/plugin/nextblock.js');
+  const { TALLY_CORE } = await import('./plugins/tally/index.js');
+  const { testGame } = await import('./plugins/sign.js');
+  const { toHex } = await import('../../protocol/src/hash.js');
+  const cores = new Map([[TALLY_CORE.hash, TALLY_CORE]]);
+  const games = {
+    p90: testGame({ name: 'tally90', cores, runTicksMax: 600, roundPeriodMs: 90000n }),
+    p60: testGame({ name: 'tally60', cores, runTicksMax: 600, roundPeriodMs: 60000n }),
+    p0: testGame({ name: 'tally0', cores, runTicksMax: 600 }),
+  };
+  const round = new Round(openStore(':memory:'), () => NOW, { plugins: [NEXTBLOCK, ...Object.values(games)] });
+  const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1;
+  const templateOf = (g) => seriesTemplate({ ...base([round.pubkey]), gameId: g.gameId, simCoreHash: Uint8Array.from(Buffer.from(TALLY_CORE.hash, 'hex')),
+    configHash: Uint8Array.from(Buffer.from([...TALLY_CORE.configs.keys()][0], 'hex')), blockTicks: 600, startDeadlineTicks: 300 }, k);
+  const facts = {};
+  for (const [name, g] of Object.entries(games)) {
+    const t = templateOf(g);
+    let writer = 'ok';
+    try { seriesWriter(round, t); } catch (e) { writer = e.message; }
+    const door = pluginForRound(seriesRound(t, 0), round.plugins);
+    // the same game outside a series is not asked for a period
+    const lone = pluginForRound({ ...t, startDeadlineTicks: 300 }, round.plugins);
+    facts[name] = { writer, door: door.ok ? 'ok' : door.why, lone: lone.ok ? 'ok' : lone.why, game: toHex(g.gameId).slice(0, 16) };
+  }
+  console.log('  FACTS (round_period):', JSON.stringify(facts));
+  const why = 'game "tally60" runs every 60000 ms, and this network\'s series run every 90000 ms';
+  assert.equal(facts.p60.writer, `series refused: ${why}`);
+  assert.equal(facts.p60.door, why);
+  assert.equal(facts.p60.lone, 'ok');
+  for (const k2 of ['p90', 'p0']) assert.deepEqual([facts[k2].writer, facts[k2].door, facts[k2].lone], ['ok', 'ok', 'ok'], k2);
+});
