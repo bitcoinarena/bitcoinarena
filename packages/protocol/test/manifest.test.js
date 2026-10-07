@@ -40,7 +40,10 @@ test('a manifest encodes, decodes to itself, and its id is the hash of body and 
 });
 
 test('the encoder holds a manifest to one encoding and to the engine\'s result types and payout rules', () => {
-  assert.throws(() => encodeManifestBody({ ...BODY, resultType: 2 }), /result type 2 is not one this engine has/);
+  // REPLAY and ATTESTED are the engine's (§0A.7a, kanban #206); anything else is not
+  assert.throws(() => encodeManifestBody({ ...BODY, resultType: 9 }), /result type 9 is not one this engine has \(REPLAY, ATTESTED\)/);
+  // and a replayed game pays by the rank curve, not the attested games' pari-mutuel rule
+  assert.throws(() => encodeManifestBody({ ...BODY, payoutRule: PAYOUT_RULE.PARI_MUTUEL }), /a replayed game pays by the rank curve/);
   assert.throws(() => encodeManifestBody({ ...BODY, payoutRule: 9 }), /payout rule 9 is not one of the engine's/);
   assert.throws(() => encodeManifestBody({ ...BODY, cores: [...BODY.cores].reverse() }), /not sorted/);
   assert.throws(() => encodeManifestBody({ ...BODY, cores: [] }), /at least one core/);

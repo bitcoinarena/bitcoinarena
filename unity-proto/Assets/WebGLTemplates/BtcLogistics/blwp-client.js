@@ -777,6 +777,8 @@ const TYPE_RERUN_RESULT = 0x19;
 const TYPE_FINAL_SIGNATURE = 0x1a;
 // A GAME'S MANIFEST (§0A.3, kanban #202): a game is a plugin the engine reads through this, never through its code.
 const TYPE_GAME_MANIFEST = 0x1c;
+// AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
+const TYPE_OUTCOME_ATTESTATION = 0x1d;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -891,6 +893,8 @@ const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'BLWP/v1/GameManifestBody',
   gameManifest: 'BLWP/v1/GameManifest',
+  // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
+  outcomeAttestation: 'BLWP/v1/OutcomeAttestation',
 };
 
 /**
@@ -1806,8 +1810,19 @@ function encodeEntryContract(e) {
   const donations = e.donationOutpoints || [];
   if (!Array.isArray(donations)) throw new Error('donationOutpoints is a list of federation outpoints');
   if (donations.length) w.vec(donations, (o, ww) => writeOutpoint(ww, o, 'a donation outpoint'));
+  // THE PICK (§0A.7a, kanban #206): on a round of an attested game the entry backs one outcome by its index, in place of a
+  // run. WRITTEN ONLY WHEN THERE IS ONE, after a marker no donation list can start with (its u16 count's first byte is 0
+  // below 256 outpoints): every entry before this keeps exactly its bytes and its id.
+  if (e.pick !== undefined && e.pick !== null) {
+    if (!Number.isInteger(e.pick) || e.pick < 0 || e.pick > 255) throw new Error('a pick is an outcome index, 0 to 255');
+    w.u8(PICK_MARKER);
+    w.u8(e.pick);
+  }
   return w.finish();
 }
+
+/** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
+const PICK_MARKER = 0xa7;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 const STAKE_POINT_BYTES = 33;
@@ -1842,9 +1857,13 @@ function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length) {
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== PICK_MARKER) throw new Error('these bytes carry something after the entry that is not a pick');
+    e.pick = r.u8();
   }
   r.end();
   return e;

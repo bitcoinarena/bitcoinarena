@@ -23,7 +23,7 @@ import {
   TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
-  TYPE_GAME_MANIFEST,
+  TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION,
 } from './constants.js';
 
 /**
@@ -69,6 +69,8 @@ export const FRAMES = new Map([
   [TYPE_DONATION_SET_KEYS, { name: 'DonationSetKeys', authority: true }],
   // A game's manifest (§0A.3, kanban #202): signed by its developer, it decides which cores and configs a round may run.
   [TYPE_GAME_MANIFEST, { name: 'GameManifest', authority: true }],
+  // An attested round's outcome (§0A.7a, kanban #206): k of its game's attestors decide which picks win - and so the table.
+  [TYPE_OUTCOME_ATTESTATION, { name: 'OutcomeAttestation', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],
