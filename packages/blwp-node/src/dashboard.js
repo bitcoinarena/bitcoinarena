@@ -1,6 +1,6 @@
 // /Dashboard: WHAT THIS NODE EARNED, SPENT AND DID (the owner 2026-10-01 15:44/15:45, open list item 2 of 21:16).
 //
-// "Every node serves /Dashboard. An interactive page with charts. A node earns from the 2% node fee ... Each category has
+// "Every node serves /Dashboard. An interactive page with charts. A node earns from the 5% node fee ... Each category has
 // its own earnings, and totals for the day, the month, and the year. Categories: game/verify fee, settlement fee,
 // guardian/custody fee, other earnings if any, Lightning costs, gateway costs, and absolute profit. Also: since when the
 // node has been active, which rounds it checked and what it earned on each, which settlements it made, and which
