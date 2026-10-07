@@ -43,6 +43,8 @@ const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { t
 
 /** How often the #152 backfill tries a recovered round it could not rebuild before it marks it checked (#231). */
 export const BACKFILL_TRIES = 4;
+/** ...counted at most once per this many ms, whatever the seat restarts (#231): 6 h, the backfill's own clock. */
+export const BACKFILL_TRY_GAP_MS = 6 * 3600 * 1000;
 export const SUBMITTING = 'SUBMITTING';
 export const ACCEPTED = 'ACCEPTED';
 export const REFUSED = 'REFUSED';
@@ -83,8 +85,9 @@ export class LockSettlement {
    */
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
-    turnClock = null, donationSetFor = null, finalityOf = resultFinality } = {}) {
+    turnClock = null, donationSetFor = null, now = () => Date.now(), finalityOf = resultFinality } = {}) {
     this.round = round;
+    this.now = now;
     // THE ROUND'S SIGNED DONATION SET (server.js `donationSetFor`): where a walk-away's claimed lock sends its 25%.
     this.donationSetFor = donationSetFor;
     // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
@@ -872,7 +875,8 @@ export class LockSettlement {
    * THE BACKFILL OF #152 (the owner 2026-10-07): every settlement this seat recovered from the federation ("found in the
    * federation after this signer node was inside it") with no donation output indexed for it, once each - the same matched
    * rebuild, only payouts the guardians still hold, a marker per round with a definitive outcome so none is asked twice -
-   * a round not rebuildable yet stays unmarked and is tried on the next pass (#231). Paced: one round per
+   * a round not rebuildable yet stays unmarked and is tried on later passes, a try counted at most once per 6 h, and marked
+   * checked after BACKFILL_TRIES counted tries (#231). Paced: one round per
    * `paceMs`, so a seat with hundreds of them is not held at a core (#229).
    */
   async backfillDonationKeys({ paceMs = 3000 } = {}) {
@@ -894,7 +898,14 @@ export class LockSettlement {
       const notRebuilt = !r.indexed && !r.redeemed && !r.mismatched && r.why !== 'its plan pays no donation key';
       // ...BUT NOT FOREVER (the owner 2026-10-07): after BACKFILL_TRIES passes that could not rebuild it - a day or more on the
       // 6 h clock - the round is marked checked with the reason, and not asked again
-      const tries = notRebuilt && this.round.noteBackfillTry ? this.round.noteBackfillTry(rid) : 0;
+      // A TRY COUNTS ONLY WHEN THE ROUND'S LAST COUNTED TRY IS BACKFILL_TRY_GAP_MS OLD (the owner 2026-10-07, #231 comment 723):
+      // a seat start inside that time runs the pass but consumes nothing, so BACKFILL_TRIES tries span about a day
+      let tries = 0;
+      if (notRebuilt && this.round.backfillTry) {
+        const was = this.round.backfillTry(rid), at = this.now();
+        tries = was ? was.tries : 0;
+        if (!was || at - was.lastMs >= BACKFILL_TRY_GAP_MS) { tries++; this.round.putBackfillTry(rid, tries, at); }
+      }
       if (!notRebuilt) this.round.markDonationBackfilled(rid, { indexed: r.indexed || 0, why: r.why || null });
       else if (tries >= BACKFILL_TRIES) {
         this.round.markDonationBackfilled(rid, { indexed: 0, why: `not rebuilt after ${tries} tries: ${r.why}` });
