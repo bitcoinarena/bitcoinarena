@@ -14,7 +14,7 @@
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -39,6 +39,8 @@ import { toHex } from '../../protocol/src/hash.js';
 import { CORE_HASH } from '../../blwp-node/tools/core-hash.mjs';
 import { entryFor, attestedClaimKey, roundLocks } from '../src/join.js';
 import { pageCurve } from '../src/page-curve.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const require = createRequire(import.meta.url);
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -57,12 +59,12 @@ async function federationRound({ signerNodes = 2, keyOf = () => CLAIM, federatio
   // harness's (claimKeyFor), which is what this file stages. Only the round's censusRoot changes.
   const slot = bondedChainSlot(lockPort());
   for (let i = 0; i < signerNodes; i++)
-    daemons.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, chainFor: slot.chainFor,
+    daemons.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, chainFor: slot.chainFor,
       randomnessFor: slot.randomnessFor, funded: () => true, claimKeyFor: () => keyOf(i) }));
   const now = BigInt(Date.now());
   const drafted = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-    gameVerifySlots: signerNodes, settlementSlots: signerNodes, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
+    gameVerifySlots: signerNodes, settlementSlots: signerNodes, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId, stakeExpiryBlocks: 144,
     publicationRelays: daemons.map((d) => `http://127.0.0.1:${d.port}`), donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
@@ -150,7 +152,7 @@ test('a stranger\'s signed claim key counts for nothing, and a node not assigned
     assert.match(got.why, /1 of 2 signer nodes attest this claim key/);
     // AND A NODE THAT IS NOT A SIGNER NODE OF THIS ROUND SIGNS NOTHING FOR IT.
     // ON THE SAME CHAIN: it reads the round's census, and its key is not in it.
-    const outsider = await serve(openStore(':memory:'), { port: 0, stakeLocks: f.slot.port, chainFor: f.slot.chainFor,
+    const outsider = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: f.slot.port, chainFor: f.slot.chainFor,
       randomnessFor: f.slot.randomnessFor, funded: () => true, claimKeyFor: () => CLAIM });
     try {
       await fetch(`http://127.0.0.1:${outsider.port}/round`, { method: 'POST', body: encodeRoundContract(f.round) });

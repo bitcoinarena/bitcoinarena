@@ -11,7 +11,7 @@
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // THE RUN LENGTH IS THE CORE'S. A literal 9000 here is refused by the node as "a
 // contract disagreeing with the network it names" - 400, not 201.
@@ -44,6 +44,8 @@ import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protoc
 import { donationSetId } from '../../protocol/src/donation.js';
 import { encodeDonationSetBody, donationSetBodyId, authorityRotationId, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { pageFunction } from './page-script.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -59,7 +61,7 @@ const lockedFor = (stakePoint = Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c
   claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
   stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
 });
-const paying = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+const paying = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const seed = b32(0x5e);
 const entryOf = (donationMsat) => ({ ...entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat, ...lockedFor() }), roundId: b32(0x21) });
 const verifyEd25519 = async (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
@@ -454,7 +456,7 @@ test('a tab that cannot keep the record does not ask the wallet at all', async (
 // ---- the set, from the signer nodes
 
 const contractFor = (nodes) => ({
-  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash', startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: SET_ID,
@@ -468,7 +470,7 @@ test('the page takes the set from every signer node of the round, checked under 
   // ON A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25): one chain both daemons read. Only the round's
   // censusRoot changes.
   const slot = bondedChainSlot(lockPort());
-  for (let i = 0; i < 2; i++) signerNodes.push(await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, chainFor: slot.chainFor,
+  for (let i = 0; i < 2; i++) signerNodes.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, funded: () => true, now: () => NOW, donationSets: [SET] }));
   try {
     const drafted = contractFor(signerNodes.map((s) => s.round.pubkey));

@@ -8,7 +8,7 @@ import { testNow, skipTo } from './test-clock.js';
 import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
 import { signFinalSig } from '../../protocol/src/final-sig.js';
 import { resultFinality } from '../src/finality.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
 // it names, so every round built here was 400 at `POST /round` and every suite below it died before a stake
@@ -62,6 +62,7 @@ import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
+import { HOSTED } from './plugins/hosted.js';
 
 export const b32 = (n) => new Uint8Array(32).fill(n);
 
@@ -249,6 +250,7 @@ export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks
 // plants ONE first mark at the end of its run, so the round names a deadline
 // past it (planted-marks.js says why); the omitted default is not moved.
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 export { PLANTED_FIRST_MARK_DEADLINE };
 
 /**
@@ -269,7 +271,7 @@ export function presentDay(contract, endMs) {
 export const contractFor = (nodes, _windowNoLongerChosen, publicationRelays = []) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE,
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: nodes.length, settlementSlots: nodes.length, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
+  gameVerifySlots: nodes.length, settlementSlots: nodes.length, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // FEDERATION, NAMING TEST_FEDERATION_ID: the one custody this network has (RULED 2026-09-22 22:59 -
   // THRESHOLD_LN does not exist).
   entryCloseMs: 2000n, objectionWindowMs: OBJECTION_WINDOW_MS, custody: 'FEDERATION',
@@ -387,7 +389,7 @@ export async function sevenSignerNodes(windowMs, relays, { storedBeforeTheRule =
   // handed - never a DKG toward a key that is not there.
   const slot = bondedChainSlot(lockPort());
   const port = slot.port;
-  const holder = await serve(openStore(':memory:'), {
+  const holder = await serve(openStore(':memory:'), { plugins: HOSTED, 
     port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     claimKeyFor: () => new Uint8Array(33).fill(2), advertsFor: () => adverts, ...(finality ? { finality } : {}), ...(peers ? { peers } : {}) });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): the block clock every fixture daemon reads.

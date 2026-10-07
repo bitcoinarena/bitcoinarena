@@ -11,13 +11,14 @@ import { NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const TOOL = new URL('../tools/testnet4-late-tail.mjs', import.meta.url).pathname;
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
 const LIVE = {
   networkId: NETWORK_ID_TESTNET4, configHash: b32(1), censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7,
-  simCoreHash: b32(9), committeeTimeMs: 1000n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 100000n, entryCloseMs: 100000n,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(9), committeeTimeMs: 1000n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 100000n, entryCloseMs: 100000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID,
   stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 150000, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 4920, exposureReference: 1000,

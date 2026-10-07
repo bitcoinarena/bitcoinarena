@@ -18,7 +18,7 @@
 // lock fixture's port, and each entry arrives with its stake and fee locked in it (lockedEntry). Contracts unchanged.
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -41,6 +41,8 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sha256 = (b) => new Uint8Array(createHash('sha256').update(Buffer.from(b)).digest());
 const coefficients = [1n, 2n, 3n, 4n].map((n) => n * 0x1234567890abcdefn + 7n);
@@ -50,7 +52,7 @@ const FUNDED = { funded: () => true };
 // claim key is claimKeyFor's; the beacon is that chain's, not a fixed hash. Only censusRoot changes in the contract.
 async function onChain() {
   const slot = bondedChainSlot(lockPort());
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, stakeLocks: slot.port, chainFor: slot.chainFor,
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, stakeLocks: slot.port, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   return { lp: slot.port, node, slot };
 }
@@ -59,7 +61,7 @@ const drafted = (node) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
   // SEVEN SETTLEMENT SIGNER NODES, because the handouts below are dealt 5-of-7 to
   // seven: the door now asks the round what its stakes open at (M3.3-26).
-  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,

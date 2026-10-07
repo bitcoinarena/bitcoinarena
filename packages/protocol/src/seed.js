@@ -5,7 +5,7 @@ import { taggedHash } from './hash.js';
 import { TAG } from './constants.js';
 import { toHex } from './hash.js';
 import { committeeSeedFrom } from './committee-seed.js';
-import { WORLD_SHARED_CONFIGS } from './known-cores.js';
+import { WORLD_SHARED_CONFIGS } from './known-games.js';
 
 export function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)

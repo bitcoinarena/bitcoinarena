@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
-import { TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
@@ -54,6 +54,8 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { CORE_HASH } from './core-hash.mjs';
 // THE RUN LENGTH IS THE CORE'S: a contract naming another is refused at the door as a second clock.
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -132,14 +134,14 @@ const claimSecret = secp256k1.utils.randomSecretKey();
 const claimPk = secp256k1.getPublicKey(claimSecret, true);
 const signerNodes = [];
 for (let i = 0; i < 2; i++)
-  signerNodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, stakeLocks: port, claimKeyFor: () => claimPk }));
+  signerNodes.push(await serve(openStore(':memory:'), { plugins: [NEXTBLOCK], port: 0, funded: () => true, stakeLocks: port, claimKeyFor: () => claimPk }));
 const nodes = signerNodes.map((d) => `http://127.0.0.1:${d.port}`);
 const STAKE = 1000000n;
 let seq = 0;
 const contract = () => {
   const now = BigInt(Date.now());
   return { networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
-    simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
+    gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
     objectionWindowMs: 3000n, custody: 'FEDERATION', slashMinimumServed: 20 + (seq++), slashRemainder: 'SPLIT',
     stakeExpiryBlocks: 144, publicationRelays: nodes,
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),

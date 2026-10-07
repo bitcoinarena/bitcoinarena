@@ -318,8 +318,9 @@ is the record: the dates, the hashes and the one transition pair.
 - **A round names the config of the rules it plays (fix 1 of the 2026-10-04 spec audit; §27A.6 "a round is bound to
   the config it was created under").** Each core plays its own config: 2069b4c2 the founding config bbae68dc, de2f263d
   the config dbb49344 (genesis.js `encodeGameConfigV2`: versioned, hashed from the core's own constants, naming par, the
-  T bounds and the cargo rule). Seats hold core+config pairs and refuse any other (cores.js); the client lists the same
-  pairs (known-cores.js `KNOWN_GOOD_CORE_CONFIGS`) and refuses a known core under a config it does not play.
+  T bounds and the cargo rule). Seats hold core+config pairs per game and refuse any other (blwp-node/src/plugins.js,
+  since kanban #202 the game's manifest lists them); the client lists the same pairs per game (protocol/src/known-games.js
+  `KNOWN_GOOD_GAMES`) and refuses a known core under a config its game does not list.
 - **The network id commits to the founding config only.** It is the config the network was founded on (read from the
   frozen 2069b4c2 core) and does not move when the rules do - no refound. Later configs live beside it under the same
   network id, each named by the rounds that play it (§27A.6, §27A.7.8).

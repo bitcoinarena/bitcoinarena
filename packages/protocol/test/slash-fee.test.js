@@ -22,6 +22,7 @@ import {
   slashCommitment, FEE_WITHOUT_SERVICE,
 } from '../src/slash.js';
 import { nodeFeeTable, feeTableId, feeOwed, GAME_VERIFY, SETTLEMENT } from '../src/fee.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);
@@ -35,7 +36,7 @@ const MINIMUM = 20;
 // because this number decides whether a bond is taken.
 // A WHOLE CONTRACT, because the fee table hashes the round it belongs to.
 const contract = {
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: MINIMUM, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40,

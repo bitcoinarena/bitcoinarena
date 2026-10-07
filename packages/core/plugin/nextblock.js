@@ -1,0 +1,17 @@
+// NEXTBLOCK AS A PLUGIN (kanban #202, §0A.2-0A.3; the owner 2026-10-06: the engine is Bitcoin Arena, the game is "Tick
+// Tock, Next Block" - `nextblock` in code). The registration a node's launcher hands serve() (blwp-node/src/main.js):
+// the game's manifest as its developer signed it with the dev client (public bytes, nextblock-manifest.js), its id, and the cores the node installed for it (truck-cores.js, what was
+// blwp-node/src/cores.js's truck half). The engine imports none of this; it reads a game through its manifest
+// (protocol/src/manifest.js) and a core through its adapter, as blwp-node/src/plugins.js hands them on.
+export * from './truck-cores.js';
+import { NEXTBLOCK_CORES } from './truck-cores.js';
+import { fromHex } from '../../protocol/src/hash.js';
+import { decodeManifest, gameIdOf } from '../../protocol/src/manifest.js';
+import { NEXTBLOCK_MANIFEST_HEX } from './nextblock-manifest.js';
+
+/** THE SIGNED MANIFEST, and its id: what a round of nextblock names as its game_id (§0A.3). */
+export const NEXTBLOCK_MANIFEST = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
+export const NEXTBLOCK_GAME_ID = gameIdOf(NEXTBLOCK_MANIFEST);
+
+/** THE REGISTRATION a node's launcher hands serve() (blwp-node/src/plugins.js): the manifest and the cores it installed. */
+export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_MANIFEST, gameId: NEXTBLOCK_GAME_ID, cores: NEXTBLOCK_CORES });

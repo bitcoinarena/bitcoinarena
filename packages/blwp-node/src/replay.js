@@ -15,7 +15,7 @@
 // told the same thing".
 //
 // So a core is stepped HERE and nowhere else in the daemon - since M3 R1 the core the round names,
-// which cores.js (the only file that imports one) hands in. One door, and it opens on a transcript
+// which plugins.js hands in, as the game's registration installed it. One door, and it opens on a transcript
 // that is already stored and already finished.
 //
 // THE SHAPE IS `core/tools/replay.js`, whose own header said this was coming:
@@ -24,7 +24,7 @@
 // off disk." Same loop, same order, no second reading of the rules.
 import { isMainThread, parentPort, workerData, Worker } from 'node:worker_threads';
 // AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07) IT IS HANDED THE CORE: the round names one, the
-// signer node's cores.js resolves it, and this file drives that core's adapter - it imports none. The
+// signer node's plugins.js resolves it, and this file drives that core's adapter - it imports none. The
 // loop is the same; what a tick's events are, what a run came to and what a picture is are the
 // core's to say.
 import { lastTickOfRun, runTicksForEntry } from '../../protocol/src/contracts.js';
@@ -194,7 +194,8 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
     // more: x, z, heading are what draws a truck on a map, and every other
     // word of the state would be a claim about somebody's run that a 5 Hz
     // frame cannot prove and a renderer does not need.
-    if (wanted.has(t.tick)) {
+    // A GAME WHOSE ADAPTER DRAWS NO PICTURE (kanban #202: `picture` is a plugin's optional extra) has none to take.
+    if (wanted.has(t.tick) && typeof a.picture === 'function') {
       taken.set(t.tick, { tick: t.tick, ...a.picture(st) });
     }
 
@@ -257,7 +258,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
  * taken - for as long as it took, and a daemon that goes deaf while it thinks
  * is a daemon that drops the run it is meant to be witnessing. IMPLEMENTATION
  * calls for worker threads, each loading the simulator once - since M3 R1 the core the round names,
- * by its adapter's URL (cores.js), not a core this file imports.
+ * by its adapter's URL (the game's registration), not a core this file imports.
  *
  * IT IS THE SAME FILE. The worker entry is this module: a Worker is started on
  * `import.meta.url`, so there is exactly one door to the simulator whichever
@@ -394,7 +395,7 @@ export class RunInProgress {
 
   /** x, z and heading as of the last tick stepped. Three words, like `replay`. */
   pose() {
-    return { tick: this.at, ...this.a.picture(this.st) };
+    return { tick: this.at, ...(typeof this.a.picture === 'function' ? this.a.picture(this.st) : {}) };
   }
 
   /**

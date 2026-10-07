@@ -1,6 +1,6 @@
 // One process holds a round: open it, take an entry, store batches, close it.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -16,9 +16,11 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
-  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -29,7 +31,7 @@ const entryFor = (rid) => ({
   roundId: rid, playerPubkey: b32(5), sessionPubkey: b32(6),
   stakeCommitment: b32(7), stakeMsat: 100000n, feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32),
 });
-const fresh = () => new Round(openStore(), () => 1234);
+const fresh = () => new Round(openStore(), () => 1234, { plugins: HOSTED });
 
 test('the round id is the tagged hash of its contract, not the node\'s idea', () => {
   const r = fresh(), c = contract();
@@ -122,12 +124,14 @@ test('a batch for a round or an entry the node has not got is refused', () => {
  */
 //
 // AND SINCE M3 R1 (the owner 2026-09-15 08:03/08:07: the signer nodes replay the core a round names; several
-// cores at once) THE DOOR HAS TWO HALVES, each still exactly one file: cores.js is the only file that
-// IMPORTS a core - the installed cores, by hash - and replay.js is the only file that STEPS one, the
-// core it is handed. Measured before the split: the one file that did both was replay.js.
-test('the node imports a core only in cores.js and steps one only in replay.js', async () => {
+// cores at once) THE DOOR HAS TWO HALVES: one file brings the cores, and replay.js is the only file that STEPS one, the
+// core it is handed. Since kanban #202 (a game is a plugin) NO engine file imports a core at all: the launcher, main.js,
+// imports the game's registration (core/plugin/nextblock.js) and hands it to serve(), and plugins.js passes each round's
+// core on. Measured before the split: the one file that did both was replay.js; before #202, cores.js imported the cores.
+test('the node imports no core, only its launcher imports a game\'s registration, and only replay.js steps a core', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
   const imports = [];
+  const registrations = [];
   const steps = [];
   // THE GUARD READS CODE, NOT PROSE. This file is written in long comments, and one of them in
   // preflight.js says "this M3 step (RULED 2026-09-20...)" - which the bare regex read as a core being
@@ -135,10 +139,12 @@ test('the node imports a core only in cores.js and steps one only in replay.js',
   const codeOf = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
   for (const f of readdirSync(new URL('../src/', import.meta.url).pathname)) {
     const src = codeOf(readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8'));
-    if (/packages\/core|@blwp\/core|core\/src/.test(src)) imports.push(f);
+    if (/packages\/core|@blwp\/core|core\/src|core\/frozen/.test(src)) imports.push(f);
+    if (/core\/plugin\//.test(src)) registrations.push(f);
     if (/\bstep\s*\(/.test(src)) steps.push(f);
   }
-  assert.deepEqual(imports, ['cores.js'], 'a core is imported somewhere other than the one door, or nowhere');
+  assert.deepEqual(imports, [], 'an engine file imports a core');
+  assert.deepEqual(registrations, ['main.js'], 'a game is registered somewhere other than the launcher, or nowhere');
   assert.deepEqual(steps, ['replay.js'], 'a core is stepped somewhere other than the replay, or nowhere');
 
   // and that door replays a finished transcript - it does not tick anything
@@ -167,8 +173,8 @@ test('a round outlives the process that opened it', async () => {
   let id;
   // The clock is after the committee forms, because entry opens then (5A.5).
   // This test is about a round surviving a restart, not about the window.
-  { const r = new Round(openStore(path), () => 600); id = r.open(c); r.enter(entryFor(id)); }
-  { const r = new Round(openStore(path), () => 700);
+  { const r = new Round(openStore(path), () => 600, { plugins: HOSTED }); id = r.open(c); r.enter(entryFor(id)); }
+  { const r = new Round(openStore(path), () => 700, { plugins: HOSTED });
     assert.ok(r.get(id), 'the round is still there after a fresh handle');
     assert.equal(r.db.prepare('SELECT COUNT(*) n FROM entries').get().n, 1); }
   rmSync(path, { force: true });
@@ -221,7 +227,7 @@ test('a batch that fails part of the way through leaves no tick behind', () => {
 // before start + 37 s, when more than 45 s of its run (to start + 82 s) remain; late-entry-cutoff.test.js has the rest.
 test('a late-join round takes a new entry until start + 37 s, refuses one from then, and takes the same entry again after (2026-10-04)', () => {
   let now = 0;
-  const r = new Round(openStore(), () => now);
+  const r = new Round(openStore(), () => now, { plugins: HOSTED });
   const c = { ...contract(), entryCloseMs: contract().startTimeMs + 45000n, seriesId: new Uint8Array(32).fill(3), roundIndex: 0 };
   const rid = r.open(c);
   now = Number(c.startTimeMs) + 5000;                         // 5 s in: a join tick of 0 is within the clock's 10 s
@@ -233,7 +239,7 @@ test('a late-join round takes a new entry until start + 37 s, refuses one from t
 
 test('a round closing entry at its start keeps the old door: no time limit at entry', () => {
   let now = 0;
-  const r = new Round(openStore(), () => now);
+  const r = new Round(openStore(), () => now, { plugins: HOSTED });
   const c = contract();
   const rid = r.open(c);
   now = Number(c.startTimeMs) + 600000;

@@ -10,7 +10,7 @@
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -35,6 +35,8 @@ import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const CORE = fromHex(coreHashHex());
@@ -52,7 +54,7 @@ const ADVERT = 'ab'.repeat(64);
 
 const contractOn = (a, b, seed = 0x43) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20 + (seed - 0x43),
@@ -91,8 +93,8 @@ test('every way of naming a round badly is refused by name', () => {
 
 test('two daemons hold the round, and the page joins the one the URL names', async () => {
   const slot = bondedChainSlot(lockPort());
-  const a = await serve(openStore(':memory:'), { port: 0, ...onChain(slot) });
-  const b = await serve(openStore(':memory:'), { port: 0, ...onChain(slot) });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...onChain(slot) });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...onChain(slot) });
   try {
     const contract = bonded(contractOn(a.round.pubkey, b.round.pubkey), slot, [a, b]);
     const client = new Client({ base: `http://127.0.0.1:${a.port}`, sign, verify });
@@ -123,7 +125,7 @@ test('two daemons hold the round, and the page joins the one the URL names', asy
 
 test('a node answering with a different round is refused, not played', async () => {
   const slot = bondedChainSlot(lockPort());
-  const a = await serve(openStore(':memory:'), { port: 0, ...onChain(slot) });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...onChain(slot) });
   try {
     const wanted = bonded(contractOn(a.round.pubkey, b32(9)), slot, [a]);
     const other = bonded(contractOn(a.round.pubkey, b32(9), 0x44), slot, [a]);
@@ -209,7 +211,7 @@ const lockedFor = (stakePoint = Uint8Array.of(2, ...b32(0x6c))) => ({
 
 test('a signer node carries the seed\'s key for the round, its fingerprint is the player\'s to check, and any other key is refused', async () => {
   const seed = b32(0x5e);
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
   const random = (n) => new Uint8Array(n).fill(9);
   const player = playerFor(round, { seed, curve: feldmanGroup });
 
@@ -241,7 +243,7 @@ test('a signer node carries the seed\'s key for the round, its fingerprint is th
 });
 
 test('the signer node a page takes carries the round\'s own amounts', () => {
-  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: BLOCK_TICKS, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
+  const round = { id: b32(0x0c), stakeMsat: 100000n, blockTicks: BLOCK_TICKS, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
   let n = 0;
   const random = (len) => new Uint8Array(len).fill(++n);
   const me = { seed: b32(5), curve: feldmanGroup };
@@ -450,7 +452,7 @@ test('a page deals its own stake: the commitment is a hash and the ref is a hand
 
   const secrets = Array.from({ length: 7 }, () => rand(32));
   const signerNodes = secrets.map((s) => schnorr.getPublicKey(s));
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE, federationId: TEST_FEDERATION_ID };
 
   const me = { seed: b32(5), curve: feldmanGroup };
   const stake = await stakeFor(round, {
@@ -492,7 +494,7 @@ test('a page refuses to deal without a curve, a committee, or a player', async (
   const rand = (n) => new Uint8Array(randomBytes(n));
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const signerNodes = Array.from({ length: 7 }, () => schnorr.getPublicKey(rand(32)));
-  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
+  const round = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE };
 
   await assert.rejects(() => stakeFor(round, { signerNodes, random: rand, playerPubkey: b32(5) }),
     /needs a curve, and none was injected/);
@@ -516,7 +518,7 @@ test('feeLockOf through entryFor: no F, not H(F), the wrong amount refused by na
   const { toHex: hx, fromHex: fh, sha256 } = await import('../../protocol/src/hash.js');
   const { coreHashHex } = await import('../../core/tools/hash-core.js');
   const { feldmanGroup } = await import('../../blwp-node/src/curve.js');
-  const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, simCoreHash: fh(coreHashHex()), federationId: TEST_FEDERATION_ID };
+  const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fh(coreHashHex()), federationId: TEST_FEDERATION_ID };
   const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
   const fetcher = async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ paymentHash: 'aa'.repeat(32), amountMsat: String(NET), request: 'lnbcrt-fed' }) });
   const stake = await federationStakeFor(round, { nodes: ['http://a'], fetcher });

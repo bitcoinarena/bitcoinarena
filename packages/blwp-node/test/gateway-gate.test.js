@@ -15,6 +15,7 @@ import { contractFor, opts, b32 } from './window-fixture.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const KEY_A = '02' + 'a1'.repeat(32);
 const KEY_B = '03' + 'b2'.repeat(32);
@@ -24,7 +25,7 @@ async function opened(gateways, { stakeMsat } = {}) {
   // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
   // key is claimKeyFor's. Only the round's censusRoot changes.
   const slot = bondedChainSlot(lockPort({ gateways }));
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const drafted = { ...contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']),

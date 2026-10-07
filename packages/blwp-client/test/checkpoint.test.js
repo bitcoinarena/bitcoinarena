@@ -19,7 +19,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -52,6 +52,8 @@ import { createServer } from 'node:http';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 // FUNDED, because these are rounds somebody paid for. A node started without
 // being told who pays refuses everything now - disk is spent only on stakes
 // that exist - so a test that means to play a round has to say so.
@@ -67,7 +69,7 @@ const sign = (id) => ed25519.sign(id, session);
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 
 const contract = () => ({
-  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -151,7 +153,7 @@ async function inputs(client, rid, eid, ticks = 600) {
 }
 
 async function rig() {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   // The committee is this node plus six more keys, because 13C counts five of
   // seven and one node cannot be five however many times it answers.
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
@@ -470,8 +472,8 @@ test('a reconnecting client recovers the same receipts, byte for byte', async ()
  * was made on.
  */
 test('a receipt gossiped to a second node is recoverable from that node too', async () => {
-  const one = await serve(openStore(), { port: 0, ...FUNDED });
-  const two = await serve(openStore(), { port: 0, ...FUNDED });
+  const one = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
+  const two = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const committee = [one.round.pubkey, two.round.pubkey];
     const c = { ...contract(), nodes: committee };

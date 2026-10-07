@@ -11,6 +11,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { guardianPorts, guardianEnv, fedimintNetwork, funnelBaseFor, guardianEndpoint, startGuardian } from '../src/guardian.js';
+import { HOSTED } from './plugins/hosted.js';
 
 // Tailscale's own answers, as `tailscale status --json` / `tailscale funnel status --json` give them on the test host
 const TS = {
@@ -57,7 +58,7 @@ test("the node carries its guardian's websocket at /guardian, and /play and ever
   const api = createServer(); const echo = new WebSocketServer({ server: api });
   echo.on('connection', (ws, req) => ws.on('message', (m) => ws.send(`guardian heard ${m} on ${req.url}`)));
   await new Promise((r) => api.listen(0, '127.0.0.1', r));
-  const node = await serve(openStore(':memory:'), { port: 0,
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0,
     guardian: { apiPort: api.address().port, endpoint: 'wss://seat.example.com/guardian-1/guardian' } });
   try {
     const said = await new Promise((resolve, reject) => {
@@ -80,7 +81,7 @@ test("the node carries its guardian's websocket at /guardian, and /play and ever
     const r = await (await fetch(`http://127.0.0.1:${node.port}/guardian`)).json();
     assert.deepEqual(r, { guardian: true, endpoint: 'wss://seat.example.com/guardian-1/guardian' });
   } finally { await node.close(); echo.close(); api.close(); }
-  const plain = await serve(openStore(':memory:'), { port: 0 });
+  const plain = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0 });
   try {
     assert.deepEqual(await (await fetch(`http://127.0.0.1:${plain.port}/guardian`)).json(), { guardian: false });
   } finally { await plain.close(); }

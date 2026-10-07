@@ -10,7 +10,7 @@
 // committee from the census, the same rule the receipt pull uses; a list the
 // operator gave still wins.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -32,6 +32,8 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
@@ -100,7 +102,7 @@ const chainWith = (bonds, contract) => {
 };
 const contractFor = (nodes, censusRoot) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
@@ -111,8 +113,8 @@ const contractFor = (nodes, censusRoot) => ({
 });
 
 test('a daemon given no peers asks the other settlement signer node, off the census, for its share', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const keys = [a.round.pubkey, b.round.pubkey];
     const bonds = [bondOf(keys[0], 1, `ws://127.0.0.1:${a.port}`), bondOf(keys[1], 2, `ws://127.0.0.1:${b.port}`)];
@@ -131,7 +133,7 @@ test('a daemon given no peers asks the other settlement signer node, off the cen
     const beacon = { hash: named.hash, height: named.height, timeMs: named.timeMs };
     const storeA = a.round.db;
     await a.close();
-    const again = await serve(storeA, { port: a.port, ...FUNDED, chainFor: () => published, randomnessFor: () => beacon });
+    const again = await serve(storeA, { plugins: HOSTED, port: a.port, ...FUNDED, chainFor: () => published, randomnessFor: () => beacon });
     try {
       const rid = again.round.open(c);
       const joined = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon }).assignSignerNodes(rid);

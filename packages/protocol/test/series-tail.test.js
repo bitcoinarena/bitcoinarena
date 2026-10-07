@@ -5,9 +5,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { seriesTemplate, seriesIndexAt, seriesRound, seriesLeadIsValid, seriesId, seriesRoundCheck } from '../src/series.js';
 import { NETWORK_ID_TESTNET4, NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const base = (networkId) => ({ networkId, configHash: b32(1), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(3),
+const base = (networkId) => ({ networkId, configHash: b32(1), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(3),
   committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: b32(4), stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: b32(5),
   censusHeight: 154539, censusRoot: b32(2), stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 4920, exposureReference: 1000,

@@ -11,7 +11,7 @@
 // identities are bonded on the chain and assigned from the census, which step 1
 // of this slice made possible by making a node's identity its bond key.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -35,6 +35,8 @@ import { beaconFromChain } from '../../protocol/src/beacon.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 // A CLOCK AFTER THE COMMITTEE FORMS. It was 1234 - a millisecond in 1970 -
 // which is now before the round's own committee_time, and a node refuses an
@@ -82,7 +84,7 @@ const chainWith = (bonds, contract) => {
 };
 const contractWith = (nodes, censusRoot) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION',
@@ -108,8 +110,8 @@ function rootFor(bonds, nodes) {
 }
 
 test('two daemons bond their own identities and are assigned from the chain', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, funded: () => true });
-  const b = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   try {
     // THE KEYS ARE THE DAEMONS' OWN. Before step 1 this line was impossible:
     // an ed25519 identity could not be a bond key at all.
@@ -135,10 +137,10 @@ test('two daemons bond their own identities and are assigned from the chain', as
 });
 
 test('a contract that names a stranger, or misses a assigned node, is refused by name', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const mine = node.round.pubkey;
-    const other = new Round(openStore(':memory:'), () => AFTER_COMMITTEE).pubkey;
+    const other = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED }).pubkey;
     const keys = [mine, other];
     const bonds = [bondOfKey(mine, 1), bondOfKey(other, 2)];
     const root = rootFor(bonds, keys);
@@ -181,13 +183,13 @@ test('a contract that names a stranger, or misses a assigned node, is refused by
 
 test('the round door refuses a chain-unsupported committee, and signer nodes a supported one', async () => {
   const keys = [];
-  const first = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
-  const second = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const first = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const second = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
   keys.push(first.pubkey, second.pubkey);
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
   const root = rootFor(bonds, keys);
 
-  const node = await serve(openStore(':memory:'), {
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, 
     port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract),
   });
   try {
@@ -218,8 +220,8 @@ test('a assigned key with a bad signature and a well-signed stranger fail differ
   const { encodeCheckpointReceipt, joinSignedReceipt, receiptId } =
     await import('../../protocol/src/receipt.js');
 
-  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
-  const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const keys = [round.pubkey, peer.pubkey];
   const bonds = [bondOfKey(keys[0], 1), bondOfKey(keys[1], 2)];
   const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract) });
@@ -254,7 +256,7 @@ test('a assigned key with a bad signature and a well-signed stranger fail differ
   assert.throws(() => round.takeReceipt(forged), /does not verify/);
 
   // NOT JOINED, WELL SIGNED: refused for membership.
-  const outsider = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const outsider = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const away = receiptFrom(outsider.pubkey, outsider.identity.secret);
   assert.throws(() => round.takeReceipt(away.good), /is not on this round's committee/);
 
@@ -275,8 +277,8 @@ test('a round nobody joined trusts nobody', async () => {
     await import('../../protocol/src/checkpoint.js');
   const { GENESIS } = await import('../../protocol/src/transcript.js');
 
-  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
-  const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const peer = new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const keys = [round.pubkey, peer.pubkey];
   // The contract NAMES both, and this node was never assigned it.
   const rid = round.open(contractWith(keys, b32(2)));

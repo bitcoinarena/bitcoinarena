@@ -19,7 +19,7 @@ import { joinFromQuery, tabSeed, playerFor, entryFor, worldSeedFor } from '../sr
 import { watchGhosts } from '../src/ghost-field.js';
 import { fetchLobby } from '../src/lobby.js';
 import { replay } from '../../blwp-node/src/replay.js';
-import { TRUCK } from '../../blwp-node/src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { decodeTranscript, flatten } from '../../protocol/src/transcript.js';

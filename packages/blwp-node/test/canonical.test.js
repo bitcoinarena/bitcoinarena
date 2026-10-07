@@ -10,7 +10,7 @@
 // simulator, and then two of them could disagree. What is measured is which
 // marks the committee actually carried, and which inputs those marks commit to.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -39,6 +39,8 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);
@@ -55,7 +57,7 @@ const peers = Array.from({ length: 6 }, () => ed25519.utils.randomSecretKey());
 const peerKeys = peers.map((k) => schnorr.getPublicKey(k));
 
 const contract = (nodes) => ({
-  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -83,7 +85,7 @@ const receiptFrom = (secret, id, ms) => {
  * signed one.
  */
 function played(carried = []) {
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c = contract([...peerKeys, round.identity.pubkey]);
   const rid = round.open(c);
   assumeAssigned(round, rid, c.nodes);
@@ -186,7 +188,7 @@ test('five receipts from one signer are not five members', () => {
 });
 
 test('an entry with no checkpoints at all is refused by name', () => {
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c = contract([...peerKeys, round.identity.pubkey]);
   const rid = round.open(c);
   const eid = round.enter(entryFor(rid));
@@ -196,8 +198,8 @@ test('an entry with no checkpoints at all is refused by name', () => {
 test('the door serves it, and names its refusal', async () => {
   const { round, rid, eid } = played([5, 5]);
   const short = played([2, 1]);
-  const node = await serve(round.db, { port: 0, funded: () => true });
-  const other = await serve(short.round.db, { port: 0, funded: () => true });
+  const node = await serve(round.db, { plugins: HOSTED, port: 0, funded: () => true });
+  const other = await serve(short.round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const at = (p, r, e) =>
       fetch(`http://127.0.0.1:${p}/canonical?round=${toHex(r)}&entry=${toHex(e)}`);

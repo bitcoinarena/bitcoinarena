@@ -23,6 +23,7 @@ import {
   seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesRound, genesisSeriesStart, ROUNDS_PER_SERIES, ROUND_PERIOD_MS,
   SERIES_MAX_MS, LATE_JOIN_MS, TAIL_COMMITTEE_LEAD_MIN_MS,
 } from '../../protocol/src/series.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 const [nodeUrl, startIso, outDir, send] = process.argv.slice(2);
 if (!nodeUrl || !startIso || !outDir) { console.error('usage: testnet4-late-tail.mjs <node url> <tail start ISO> <out dir> [--send]'); process.exit(2); }
@@ -50,7 +51,7 @@ const H = Number(env.CENSUS_HEIGHT || (Number(cli('getblockcount')) - 2));
 if (H < KEYS.validFrom) throw new Error(`census ${H} is below the set of keys' valid_from ${KEYS.validFrom}`);
 const view = await blocksOver(bitcoindRpc({ url: env.BLWP_TN4_RPC || 'http://127.0.0.1:48332', cookiePath: env.BLWP_TN4_COOKIE || '/mnt/bitcoin/tn4/testnet4/.cookie' }), H - 2016, H);
 const base0 = { ...live, censusHeight: H, donationSetId: setIdOf(KEYS.recipients) }; delete base0.seriesId; delete base0.roundIndex; delete base0.seriesCount; delete base0.seriesCutFrom;
-const census = new Roster(new Round(openStore(':memory:')), { chainFor: () => view }).censusFor(roundId(base0), null, { posted: base0, asRoundsOwn: false });
+const census = new Roster(new Round(openStore(':memory:'), undefined, { plugins: [NEXTBLOCK] }), { chainFor: () => view }).censusFor(roundId(base0), null, { posted: base0, asRoundsOwn: false });
 if (!census.ok) throw new Error('census: ' + census.why);
 say({ step: 'census', height: H, root: toHex(census.root), entries: census.entries.length, donationSet: toHex(base0.donationSetId).slice(0, 16) });
 const base = { ...base0, censusRoot: census.root }; delete base.seriesId; delete base.roundIndex; delete base.seriesCount; delete base.seriesCutFrom;

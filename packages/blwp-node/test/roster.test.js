@@ -11,7 +11,7 @@
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -37,6 +37,8 @@ import { bondSetFor } from '../src/curve.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 // A CLOCK AFTER THE COMMITTEE FORMS. It was 1234 - a millisecond in 1970 -
 // which is now before the round's own committee_time, and a node refuses an
@@ -69,7 +71,7 @@ const FROM = HEIGHT - 20;
 
 const contractFor = (over = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: COMMITTEE_TIME + 60500n, entryCloseMs: COMMITTEE_TIME + 200000n,
   objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
@@ -129,7 +131,7 @@ function rootFor(bonds, over = {}) {
 }
 
 function daemon(bonds, over = {}) {
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const contract = contractFor({ ...over, censusRoot: rootFor(bonds, over) });
   const rid = round.open(contract);
   const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
@@ -216,7 +218,7 @@ test('the caller cannot name a minimum of its own', () => {
 });
 
 test('a node with no chain view holds no round, and says which it is missing', () => {
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const rid = round.open(contractFor({ censusRoot: rootFor([bondOf(0x11), bondOf(0x12)]) }));
   const blind = new Roster(round);        // the default: no source of blocks
 
@@ -240,7 +242,7 @@ const guarding = (g) => [{ federationId: TEST_FEDERATION_ID, guardianKey: g }];
 
 test('the committee door answers off the chain, and refuses a short census by name', async () => {
   const bonds = [bondOf(0x11, ['game'], guarding(guardianKey(1))), bondOf(0x12, ['game'], guarding(guardianKey(2)))];
-  const node = await serve(openStore(), {
+  const node = await serve(openStore(), { plugins: HOSTED, 
     port: 0, funded: () => true, stakeLocks: guardingPort([guardianKey(1), guardianKey(2)], 2), chainFor: ({ contract } = {}) => chainWith(bonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract),
   });
@@ -267,7 +269,7 @@ test('the committee door answers off the chain, and refuses a short census by na
   // THE SHORT CENSUS: one bond, on a one-guardian federation it bonds - so the round opens and is stored, and the refusal
   // measured is the committee door's own.
   const thinBonds = [bondOf(0x11, ['game'], guarding(guardianKey(1)))];
-  const thin = await serve(openStore(), {
+  const thin = await serve(openStore(), { plugins: HOSTED, 
     port: 0, funded: () => true, stakeLocks: guardingPort([guardianKey(1)], 1), chainFor: ({ contract } = {}) => chainWith(thinBonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(thinBonds, contract), contract),
   });
@@ -334,7 +336,7 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const honest = rootFor(bonds);
 
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const rid = round.open(contractFor({ censusRoot: b32(0x5a) }));
   const roster = new Roster(round, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract) });
@@ -351,7 +353,7 @@ test('a round whose census root is not the chain\'s is refused, not served', () 
   assert.equal(signerNodes.committee, undefined);
 
   // THE SAME BLOCKS, THE ROOT THEY REALLY PRODUCE: held.
-  const good = new Round(openStore(), () => AFTER_COMMITTEE);
+  const good = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const goodId = good.open(contractFor({ censusRoot: honest }));
   const right = new Roster(good, { chainFor: ({ contract } = {}) => chainWith(bonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract) });
@@ -481,7 +483,7 @@ test('the roster refuses a beacon that is late but not the block its chain names
     height: later,
     timeMs: BigInt(medianTimePast(headers.headers, headers.firstHeight, later)) * 1000n,
   };
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const wrongId = round.open(contractFor({ censusRoot: rootFor(bonds, {}) }));
   const crooked = new Roster(round, {
     chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: () => wrong,
@@ -500,7 +502,7 @@ test('a node with no chain view still refuses on 27 alone, and says the check di
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const view = chainWith(bonds);
   const contract = contractFor({ censusRoot: rootFor(bonds, {}) });
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const rid = round.open(contract);
 
   // No chain: the beacon cannot be checked against one, and the answer says so
@@ -539,7 +541,7 @@ test('a node closing a round refuses a beacon its own chain does not name', asyn
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const view = chainWith(bonds);
   const headers = { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight };
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const contract = contractFor({ censusRoot: rootFor(bonds, {}) });
   const rid = round.open(contract);
 
@@ -561,14 +563,14 @@ test('a node closing a round refuses a beacon its own chain does not name', asyn
   };
 
   // WITH A CHAIN: refused, and the reason names both blocks.
-  const seeing = new Verifier(round, { randomnessFor: () => wrong, chainFor: () => view });
+  const seeing = new Verifier(round, { plugins: HOSTED, randomnessFor: () => wrong, chainFor: () => view });
   seeing.onRoundClosed(rid);
   assert.equal(seeing.queued.length, 1);
   assert.match(seeing.queued[0].refused,
     new RegExp(`is block ${later} where this chain names ${named.height}`));
 
   // THE HONEST BEACON GOES THROUGH the same door.
-  const good = new Verifier(round, {
+  const good = new Verifier(round, { plugins: HOSTED, 
     randomnessFor: ({ contract: c }) => beaconOf(view, c), chainFor: () => view,
   });
   good.onRoundClosed(rid);
@@ -586,7 +588,7 @@ test('a node closing a round refuses a beacon its own chain does not name', asyn
 test('a round its chain never published, or published in its beacon block, is not joined', () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
   const contract = contractFor({ censusRoot: rootFor(bonds, {}) });
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const rid = round.open(contract);
 
   const unpublished = new Roster(round, { chainFor: () => chainWith(bonds),
@@ -621,7 +623,7 @@ test('a round its chain never published, or published in its beacon block, is no
  */
 test('the census is derived once for a round and a view, and again when the view begins somewhere else', () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const contract = contractFor({ censusRoot: rootFor(bonds) });
   const rid = round.open(contract);
   let derived = 0;
@@ -646,7 +648,7 @@ test('the census is derived once for a round and a view, and again when the view
   assert.notEqual(elsewhere, first, 'a view beginning elsewhere answered with the kept census');
 
   // AND A REFUSAL IS NEVER KEPT: a round whose root the chain does not give is asked again, not remembered.
-  const wrong = new Round(openStore(), () => AFTER_COMMITTEE);
+  const wrong = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const rid2 = wrong.open(contractFor({ censusRoot: new Uint8Array(32).fill(0x99) }));
   const bad = new Roster(wrong, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c),
     randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
@@ -664,7 +666,7 @@ test('the census is derived once for a round and a view, and again when the view
  */
 test('the committee and the seed are kept per view, and a new header builds them again', () => {
   const bonds = [bondOf(0x11), bondOf(0x12)];
-  const round = new Round(openStore(), () => AFTER_COMMITTEE);
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const contract = contractFor({ censusRoot: rootFor(bonds) });
   const rid = round.open(contract);
   let grown = 0;
@@ -695,7 +697,7 @@ test('the committee and the seed are kept per view, and a new header builds them
 
   // AND A DIFFERENT CENSUS IS A DIFFERENT COMMITTEE: nothing is served across a chain that says something else.
   const others = [bondOf(0x21), bondOf(0x22)];
-  const elsewhere = new Round(openStore(), () => AFTER_COMMITTEE);
+  const elsewhere = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
   const otherContract = contractFor({ censusRoot: rootFor(others) });
   const rid2 = elsewhere.open(otherContract);
   const second = new Roster(elsewhere, { chainFor: ({ contract: c } = {}) => chainWith(others, c),
@@ -737,7 +739,7 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
   // asks who was assigned.
   const seats = [keyFor(0x13), keyFor(0x14)];
   const over = { nodes: seats, gameVerifySlots: 2, settlementSlots: 2 };
-  const node = await serve(openStore(), {
+  const node = await serve(openStore(), { plugins: HOSTED, 
     port: 0, funded: () => true, chainFor: ({ contract } = {}) => chainWith(bonds, contract),
     randomnessFor: ({ contract }) => beaconOf(chainWith(bonds, contract), contract),
   });

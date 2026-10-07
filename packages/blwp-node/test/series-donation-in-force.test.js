@@ -14,7 +14,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { seriesWriter } from '../src/series-writer.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { encodeRoundContract, encodeEntryContract, roundId } from '../../protocol/src/contracts.js';
 import { seriesTemplate, seriesRound, seriesIndexAt, seriesId } from '../../protocol/src/series.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -23,6 +23,8 @@ import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets
 import { donationSetId } from '../../protocol/src/donation.js';
 import { decodeDonationSetBody } from '../../protocol/src/authority.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1790600000000;
@@ -32,7 +34,7 @@ const SET2 = { ...decodeDonationSetBody(Uint8Array.from(Buffer.from('14000130927
   signature: Uint8Array.from(Buffer.from('e69e56d2cc1b2d0172fae95f205e1eaa586046d2b8e387869d1f8601f9cba7a7203956149f0231bbdb90cdfcc088dcb63502e5e81230137672d176644b890f0d', 'hex')) };
 const base = (nodes, set) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
-  simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
   donationSetId: donationSetId(set.recipients), censusHeight: 900100, censusRoot: b32(2), stakeMsat: 100000n,
@@ -43,14 +45,14 @@ const base = (nodes, set) => ({
 test('a series naming a donation set not in force is not written or held; its stored rounds are listed nowhere and refused at /round and /entry', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'series-in-force-'));
   const path = join(dir, 'node.db');
-  const probe = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const probe = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   const nodes = [probe.round.pubkey, b32(8)]; await probe.close();
   const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1;
   const good = seriesTemplate(base(nodes, SET2), k);
   const bad = seriesTemplate(base(nodes, SET), k);          // the old set at a height where serial 2 is in force
   // THE LIVE SEATS' STORE: the old-set series' rounds already written
-  { const w = seriesWriter(new Round(openStore(path), () => NOW), bad); w.write(NOW, Date.now() + 60000); }
-  const s = await serve(openStore(path), { port: 0, funded: () => true, roundClock: () => NOW, series: [good, bad], seriesEveryMs: 100, donationSets: [SET, SET2] });
+  { const w = seriesWriter(new Round(openStore(path), () => NOW, { plugins: HOSTED }), bad); w.write(NOW, Date.now() + 60000); }
+  const s = await serve(openStore(path), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [good, bad], seriesEveryMs: 100, donationSets: [SET, SET2] });
   try {
     const url = `http://127.0.0.1:${s.port}`;
     const badIds = new Set(); for (let i = 0; i < 960; i++) badIds.add(toHex(roundId(seriesRound(bad, i))));

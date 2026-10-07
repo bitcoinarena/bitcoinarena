@@ -12,19 +12,19 @@
 // accepted; 9600 ticks of a 9000-tick run were all stored and all replayed;
 // and `transcriptBelongsToEntry` reported the run length as unchecked.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
-import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../../core/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { encodeInputBatch } from '../../protocol/src/batch.js';
@@ -36,11 +36,13 @@ import { lastTickOfRun, runTicksForEntry, runLengthIsTheCores } from '../../prot
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1788700000000;
 const contractWith = (blockTicks) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
@@ -78,12 +80,13 @@ function drive(round, rid, eid, from, count) {
 // longer is refused by name. On the truck BEFORE the fork (its hash d15c39bb..., installed as the same core held to one
 // length) only its own BLOCK_TICKS opens. Before the fork this test refused every length but BLOCK_TICKS on the one truck.
 test('a round names its run length on the truck after the fork - 1 to 10800 opens, longer is refused; the truck before the fork takes only its 10800', () => {
-  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const round = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
   for (const ticks of [BLOCK_TICKS, 4920, 1, BLOCK_TICKS - 1]) assert.ok(round.open(contractWith(ticks)), `a round naming ${ticks} was refused`);
+  // SINCE NEXTBLOCK IS A GAME (kanban #202) its manifest's run_ticks_max refuses these before the core is asked
   for (const ticks of [BLOCK_TICKS + 1, 0])
-    assert.throws(() => round.open(contractWith(ticks)), new RegExp(`says a run is ${ticks} ticks, and btc-logistics truck runs 1 to ${BLOCK_TICKS}`));
+    assert.throws(() => round.open(contractWith(ticks)), new RegExp(`that round's run is ${ticks} ticks; game "nextblock" runs at most ${BLOCK_TICKS}`));
   // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
-  const before = (ticks) => ({ ...contractWith(ticks), simCoreHash: fromHexForFork(TRUCK_BEFORE_FORK_HASH), configHash: GENESIS_CONFIG_HASH, slashMinimumServed: 21 });
+  const before = (ticks) => ({ ...contractWith(ticks), gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHexForFork(TRUCK_BEFORE_FORK_HASH), configHash: GENESIS_CONFIG_HASH, slashMinimumServed: 21 });
   assert.ok(round.open(before(BLOCK_TICKS)), 'a round of the truck before the fork, at its 10800, was refused');
   for (const ticks of [4920, BLOCK_TICKS - 1])
     assert.throws(() => round.open(before(ticks)), new RegExp(`says a run is ${ticks} ticks and this core ends one at ${BLOCK_TICKS}`));
@@ -92,7 +95,7 @@ test('a round names its run length on the truck after the fork - 1 to 10800 open
 });
 
 test('a whole run is stored, and the tick after it is refused', () => {
-  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const round = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
   const rid = round.open(contractWith(BLOCK_TICKS));
   const eid = round.enter(entryOn(rid));
 
@@ -111,7 +114,7 @@ test('a whole run is stored, and the tick after it is refused', () => {
 // KANBAN #130 (the owner 2026-10-04 14:30: "A later join does not extend the round. The late joiner has less time"): a late
 // entry's run ends at the round's last tick, the same as every run - before, it had a whole run from its own join.
 test('a late joiner\'s run ends with the round\'s: from its join tick to the round\'s last tick', () => {
-  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const round = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
   const rid = round.open(contractWith(BLOCK_TICKS));
   const eid = round.enter(entryOn(rid, 3000));
 
@@ -148,8 +151,9 @@ test('replay refuses a transcript that reaches past the run, however it was got'
 // AN 82 s ROUND (the 82/90 fork): its contract's 4920 ticks, carried with the core (coreForRound's runTicks) into the
 // replay - the run ends at its tick 4919, the core ends it MISSED there, and one tick more is a transcript past the run.
 test('an 82 s round replays to its own 4920 ticks: a whole run replays and ends MISSED, one tick more is refused', async () => {
-  const { coreForRound } = await import('../src/cores.js');
-  const found = coreForRound(contractWith(4920));
+  const { coreOfGame } = await import('../src/plugins.js');
+  const { NEXTBLOCK } = await import('../../core/plugin/nextblock.js');
+  const found = coreOfGame(contractWith(4920), NEXTBLOCK);
   assert.equal(found.ok, true, found.why);
   const core = { ...found.core, config: found.config, runTicks: found.runTicks };
   const entry = entryOn(b32(1));
@@ -167,18 +171,20 @@ test('an 82 s round replays to its own 4920 ticks: a whole run replays and ends 
 
 // M3 R1 R3 (the owner 2026-09-15 08:07: several cores and rule sets at once): a round's run length is its own
 // core's under its config, not the truck's BLOCK_TICKS - measured on the round store itself.
-test('a round\'s run length is its own core\'s under its config: the counter opens at its 120 and refuses 9000, and a store without it opens neither', async () => {
-  const { COUNTER, CONFIGS } = await import('./cores/counter.js');
-  const { installedCores } = await import('../src/cores.js');
+test('a round\'s run length is its own core\'s under its config: the counter opens at its 120 and refuses 9000, and a store without its game opens neither', async () => {
+  const { COUNTER, CONFIGS, COUNTER_GAME, COUNTER_GAME_ID } = await import('./cores/counter.js');
+  const { NEXTBLOCK } = await import('../../core/plugin/nextblock.js');
   const { fromHex } = await import('../../protocol/src/hash.js');
   const [LOW] = CONFIGS;
-  const counterRound = (blockTicks) => ({ ...contractWith(blockTicks), simCoreHash: fromHex(COUNTER.hash), configHash: LOW.hash });
-  const withCounter = new Round(openStore(':memory:'), () => NOW + 1000, { cores: installedCores([COUNTER]) });
+  const counterRound = (blockTicks) => ({ ...contractWith(blockTicks), gameId: COUNTER_GAME_ID, simCoreHash: fromHex(COUNTER.hash), configHash: LOW.hash });
+  const withCounter = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: [NEXTBLOCK, COUNTER_GAME] });
   assert.ok(withCounter.open(counterRound(LOW.config.ticks)));
+  // SINCE THE COUNTER IS A GAME (kanban #202) its manifest says a run is at most 120 ticks, and that refuses the round
+  // before the core is asked
   assert.throws(() => withCounter.open(counterRound(BLOCK_TICKS)),
-    new RegExp(`says a run is ${BLOCK_TICKS} ticks and this core ends one at ${LOW.config.ticks}`));
-  const truckOnly = new Round(openStore(':memory:'), () => NOW + 1000);
-  assert.throws(() => truckOnly.open(counterRound(LOW.config.ticks)), /this signer node holds no core/);
+    new RegExp(`that round's run is ${BLOCK_TICKS} ticks; game "counter" runs at most ${LOW.config.ticks}`));
+  const truckOnly = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: [NEXTBLOCK] });
+  assert.throws(() => truckOnly.open(counterRound(LOW.config.ticks)), /this node does not host game/);
   assert.throws(() => lastTickOfRun(3000), /counted from the round's run length/);
   assert.equal(lastTickOfRun(30, LOW.config.ticks), LOW.config.ticks - 1);
   assert.throws(() => lastTickOfRun(3000, LOW.config.ticks), /an entry joins at a tick of the round's run, 0 to/);

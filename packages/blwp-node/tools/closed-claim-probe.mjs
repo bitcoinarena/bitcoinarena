@@ -34,7 +34,7 @@ const until = async (fn, ms = 8000) => { for (let t = Date.now(); Date.now() - t
 
 async function signerNodes() {
   const port = lockPort();
-  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  const mk = (db, p = 0) => serve(db, { plugins: [NEXTBLOCK], port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbB = openStore(':memory:');
   const a = await mk(openStore(':memory:'));
   let b = await mk(dbB);
@@ -116,6 +116,7 @@ async function askForfeit(w, run) {
 const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 
 import { encodeCheckpointReceipt, receiptId, joinSignedReceipt } from '../../protocol/src/receipt.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 // ---- THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C): can one signer node's word void an
 // entry at the other signer node? B is up and open throughout (1a, 1b, 2'); in (2) it

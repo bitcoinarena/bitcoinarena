@@ -17,7 +17,8 @@ import { LOSER, RANDOMNESS, wordsAt, loaded } from './window-fixture.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../protocol/src/beacon.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { decodeCheckpoint, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
-import { coreForRound, installedCores } from '../src/cores.js';
+import { coreOfGame } from '../src/plugins.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 import { replay } from '../src/replay.js';
 import { init, step } from '../../core/src/sim.js';
 import { hash as stateHash } from '../../core/src/state.js';
@@ -27,7 +28,7 @@ const named = async (d, rid) => {
   const r = await fetch(`http://127.0.0.1:${d.port}/randomness?round=${toHex(rid)}`);
   return { status: r.status, height: r.headers.get('x-height'), hash: toHex(new Uint8Array(await r.arrayBuffer())) };
 };
-const coreOf = (c) => { const found = coreForRound(c, installedCores()); assert.equal(found.ok, true, found.why); return { ...found.core, config: found.config }; };
+const coreOf = (c) => { const found = coreOfGame(c, NEXTBLOCK); assert.equal(found.ok, true, found.why); return { ...found.core, config: found.config }; };
 const marksAt = (d, w, eid) => {
   const { bytes, count } = d.round.checkpoints(w.rid, eid);
   return Array.from({ length: count }, (_, i) => decodeCheckpoint(bytes.subarray(i * SIGNED_CHECKPOINT_BYTES, i * SIGNED_CHECKPOINT_BYTES + CHECKPOINT_BYTES)));

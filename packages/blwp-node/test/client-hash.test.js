@@ -16,7 +16,10 @@ const TOOL = at('../tools/client-hash.mjs');
 const LIST = JSON.parse(readFileSync(at('../../blwp-client/known-good-clients.json'), 'utf8'));
 const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics');
 // The lock client (W1b) makes the player's stake lock, so it is pinned too.
-const SCRIPTS = ['blwp-client.js', 'blwp-curve.js', 'blwp-core.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
+const SCRIPTS = ['blwp-client.js', 'blwp-curve.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
+// AND EACH GAME'S OWN (kanban #202: one list per game): nextblock's core bundle.
+const GAME_SCRIPTS = { nextblock: ['blwp-core.js'] };
+const pinsOf = (name) => LIST.pinned[name] || Object.values(LIST.games).map((g) => g.pinned[name]).find(Boolean);
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const run = (arg) => new Promise((done) => {
   execFile(process.execPath, [TOOL, arg], { encoding: 'utf8' }, (err, stdout) =>
@@ -26,11 +29,12 @@ const lineOf = (out, name) => (out.split('\n').find((l) => l.startsWith(name + '
 
 test('the list pins the scripts the rebuilt bundle and the template carry, and not index.html', () => {
   assert.deepEqual(Object.keys(LIST.pinned).sort(), [...SCRIPTS].sort());
+  for (const [game, names] of Object.entries(GAME_SCRIPTS)) assert.deepEqual(Object.keys(LIST.games[game].pinned).sort(), [...names].sort(), game);
   for (const [name, source] of [['blwp-client.js', '../../blwp-client/dist/blwp-client.js'],
     ['blwp-curve.js', '../../blwp-client/dist/blwp-curve.js'], ['blwp-core.js', '../../core/dist/blwp-core.js'],
     ['blwp_lock_client.js', '../../blwp-client/dist/blwp_lock_client.js'],
     ['blwp_lock_client_bg.wasm', '../../blwp-client/dist/blwp_lock_client_bg.wasm']]) {
-    assert.ok(LIST.pinned[name].includes(sha(at(source))), `${name}: the built file is not on the list`);
+    assert.ok(pinsOf(name).includes(sha(at(source))), `${name}: the built file is not on the list`);
     assert.equal(sha(join(TEMPLATE, name)), sha(at(source)), `${name}: the template is not the built file`);
   }
   assert.ok(LIST.notPinned['index.html']);
@@ -54,7 +58,8 @@ test('the tool, over HTTP, finds the served template a known-good client, and sa
 
 test('a served script that differs by one byte is a MISMATCH, and a missing one is missing', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'client-hash-'));
-  for (const name of SCRIPTS) copyFileSync(join(TEMPLATE, name), join(dir, name));
+  // the engine's scripts and each game's, as the page serves both
+  for (const name of [...SCRIPTS, ...Object.values(GAME_SCRIPTS).flat()]) copyFileSync(join(TEMPLATE, name), join(dir, name));
   const bytes = readFileSync(join(dir, 'blwp-client.js'));
   bytes[bytes.length - 1] ^= 1;
   writeFileSync(join(dir, 'blwp-client.js'), bytes);

@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openStore, nodeIdentity } from '../src/store.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { RUN_82_TICKS } from './round-2of2.mjs';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { seriesTemplate, seriesRound, seriesIndexAt, seriesId, ROUND_PERIOD_MS } from '../../protocol/src/series.js';
@@ -30,6 +30,7 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { feldmanGroup } from '../src/curve.js';
 import { rand, secretScalar } from '../test/window-fixture.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const env = process.env, RT = env.RT, RPCPORT = env.RPCPORT || '30601';
 if (!RT) throw new Error('RT=<a private regtest datadir>');
@@ -44,7 +45,7 @@ const keys = stores.map((p) => { const db = openStore(p); const k = nodeIdentity
 // ---- one series: today's, both nodes its committee
 const base = {
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
-  simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
   donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n,

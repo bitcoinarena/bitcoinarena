@@ -31,10 +31,11 @@ import {
 import {
   encodeRoundContract, decodeRoundContract, roundId, contractIsForThisBuild,
 } from '../src/contracts.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1),
   startTimeMs: 1788200000000n, entryCloseMs: 1788200060000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),

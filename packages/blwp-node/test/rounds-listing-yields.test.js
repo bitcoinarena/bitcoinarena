@@ -6,18 +6,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { seriesTemplate, seriesIndexAt } from '../../protocol/src/series.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1790600000000;
 const base = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
@@ -28,12 +30,12 @@ const base = (nodes) => ({
 });
 
 test('a whole /rounds listing does not hold the loop: /identity answers every 10 ms while it is built, and two asks share one build', async () => {
-  const first = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const first = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [first.round.pubkey];
   await first.close();
   const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW) - 1;
   const series = [0, 1, 2, 3].map((j) => seriesTemplate(base(nodes), k0 + j));
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series });
   try {
     const at = `http://127.0.0.1:${s.port}`;
     const waits = [];

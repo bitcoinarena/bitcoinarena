@@ -57,6 +57,11 @@ export function encodeRoundContract(c) {
   // then which build - a decoder can refuse a foreign contract before parsing
   // anything else about it.
   w.bytes32(c.networkId);
+  // WHICH GAME (§0A.3, §6 game_id; kanban #202): the exact GameManifest this round plays, by its id. After the network
+  // and before the rules: the manifest says which cores and configs the round may name (manifest.js roundFitsManifest),
+  // and a node that does not host this game refuses the round by it before reading anything the game decides.
+  if (!(c.gameId instanceof Uint8Array) || c.gameId.length !== 32) throw new Error('a round names the 32-byte id of the game it plays (game_id, §0A.3)');
+  w.bytes32(c.gameId);
   w.bytes32(c.configHash);
 
   w.bytes32(c.simCoreHash);
@@ -244,6 +249,7 @@ export function decodeRoundContract(bytes) {
     // the census could not read it off a contract that did not carry it back.
     protocolVersion: version,
     networkId: r.bytes32(),
+    gameId: r.bytes32(),
     configHash: r.bytes32(),
     simCoreHash: r.bytes32(),
     startTimeMs: r.u64(),
@@ -504,7 +510,7 @@ export function stakePointIsTheHandouts(entry, handout) {
  */
 //
 // AND SINCE M3 R1 R3 (the owner 2026-09-15 08:07: several cores at once) "the core" is the ROUND'S core
-// under the round's config - handed in as `coreTicks` by whoever resolved it (the signer node's cores.js) -
+// under the round's config - handed in as `coreTicks` by whoever resolved it (the signer node's plugins.js) -
 // and no longer the truck's BLOCK_TICKS read from its rules: the protocol names no game.
 export function runLengthIsTheCores(contract, coreTicks) {
   if (!contract || !Number.isInteger(contract.blockTicks))

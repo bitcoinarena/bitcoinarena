@@ -19,6 +19,7 @@ import { encodeRoundContract, decodeRoundContract, roundId } from '../src/contra
 import { MIN_ENTRY_WINDOW_MS } from '../src/constants.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { toHex } from '../src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const said = (joinTick, deadlineTicks, firstMark) => firstMarkOutcome({ joinTick, deadlineTicks, firstMark }).outcome;
@@ -77,7 +78,7 @@ test('the line is join tick + deadline, inclusive, and a late joiner counts from
 
 const contract = (extra = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: b32(1), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [],
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: 9000,

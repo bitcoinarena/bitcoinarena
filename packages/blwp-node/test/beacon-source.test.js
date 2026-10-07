@@ -24,6 +24,7 @@ import { hash256, blockHashOf } from '../../protocol/src/chain.js';
 import { committeeSeedFromBeacon, beaconFromChain, medianTimePast } from '../../protocol/src/beacon.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = Math.floor(Date.now() / 1000);
@@ -105,7 +106,7 @@ test('what it holds is the block the chain names, and the seed is that hash', as
 });
 
 test('a node holding no beacon says who it cannot signer node, rather than joining', async () => {
-  const round = new Round(openStore(':memory:'));
+  const round = new Round(openStore(':memory:'), undefined, { plugins: HOSTED });
   const c = contract();
 
   // NO BEACON. This is what a 2-of-2 with no bitcoind now looks like.

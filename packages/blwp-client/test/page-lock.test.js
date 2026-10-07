@@ -9,7 +9,7 @@
 //
 // MEASURED BEFORE (TASKBOOK, W1b): the page built every entry with a zero
 // stake_lock_outpoint, loaded no lock client and posted no /lock.
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -37,6 +37,7 @@ import { roundId, encodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { CORE_HASH } from '../../blwp-node/tools/core-hash.mjs';
 import { joinedWithLock, CLAIM } from '../../blwp-node/test/lock-fixture.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 // The shape of a real invite (bech32m, prefix `fed1`, separator `1`): the first
@@ -46,7 +47,7 @@ const POINT = Uint8Array.from([0x03, ...b32(0x5e)]);
 const now = BigInt(Date.now());
 const round = {
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
-  simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID,
   stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:9'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
   censusRoot: b32(2), committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 1000000n,
@@ -1725,7 +1726,7 @@ test('a committed lock is reused before the start, and resumed until the close, 
   const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
   const { coreHashHex } = await import('../../core/tools/hash-core.js');
   const { randomBytes } = await import('node:crypto');
-  const round = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+  const round = { id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
   const entry = Object.assign(entryFor(round, { seed: b32(0x5e), curve: feldmanGroup, random: (n) => new Uint8Array(randomBytes(n)),
     claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
     stakeLock: { outpoint: { txid: b32(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: Uint8Array.of(2, ...b32(0x6c)) } } } }),

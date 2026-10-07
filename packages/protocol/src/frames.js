@@ -23,6 +23,7 @@ import {
   TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
+  TYPE_GAME_MANIFEST,
 } from './constants.js';
 
 /**
@@ -66,6 +67,8 @@ export const FRAMES = new Map([
   [TYPE_RERUN_RESULT, { name: 'RerunResult', authority: true }],
   [TYPE_FINAL_SIGNATURE, { name: 'FinalSignature', authority: true }],
   [TYPE_DONATION_SET_KEYS, { name: 'DonationSetKeys', authority: true }],
+  // A game's manifest (§0A.3, kanban #202): signed by its developer, it decides which cores and configs a round may run.
+  [TYPE_GAME_MANIFEST, { name: 'GameManifest', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],

@@ -15,12 +15,13 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { HEADER_BYTES } from '../../protocol/src/chain.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const fixture = new Uint8Array(2 * HEADER_BYTES).fill(7);
 const proof = { hex: 'ab'.repeat(20), merkle: ['cd'.repeat(32)], pos: 0 };
 
 test('a node given no chain says so at both doors', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0 });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0 });
   try {
     const h = await fetch(`http://127.0.0.1:${node.port}/headers`);
     assert.equal(h.status, 404);
@@ -33,8 +34,7 @@ test('a node given no chain says so at both doors', async () => {
 });
 
 test('a node given a chain serves it as 80-byte records and the proof beside it', async () => {
-  const node = await serve(openStore(':memory:'),
-    { port: 0, headerBytes: fixture, bondProof: proof });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, headerBytes: fixture, bondProof: proof });
   try {
     const h = await fetch(`http://127.0.0.1:${node.port}/headers`);
     assert.equal(h.status, 200);

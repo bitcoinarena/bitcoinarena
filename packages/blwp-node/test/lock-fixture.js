@@ -28,6 +28,7 @@ import { beaconFromChain } from '../../protocol/src/beacon.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 // HARNESS KEY: a claim key the tests hand a signer node (`claimKeyFor`), to measure the
@@ -264,7 +265,7 @@ export async function joinedWithLock(extra = {}, { federationId = TEST_FEDERATIO
   // behind - so the claim key is handed (CLAIM, the key the locks below name), never a DKG toward a key that is not there.
   const slot = bondedChainSlot(lockPort());
   const port = slot.port;
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => CLAIM, ...extra });
   let c; let rid;
   // A ROUND THE CODEC OR THE DOOR REFUSES (M3 W7) CLOSES THE SIGNER NODE IT STARTED: measured, a refused

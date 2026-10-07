@@ -13,7 +13,7 @@
 // same three words, from the core driven directly and from the daemon's
 // tables, at the same tick.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { ghostFor, ghostForChecked } from '../src/ghosts.js';
-import { TRUCK } from '../src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 import { init, step, submitLiquidation } from '../../core/src/sim.js';
 import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
@@ -33,10 +33,12 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
-  settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
+  settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
@@ -75,7 +77,7 @@ function played(ticks, { from = 0 } = {}) {
 
 /** The same run through the daemon's door, with the batches kept. */
 function stored(ticks, { from = 0, chunk = CHUNK } = {}) {
-  const r = new Round(openStore(), () => 1234);
+  const r = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const rid = r.open(contract());
   const entry = entryFor(rid, from);
   const eid = r.enter(entry);
@@ -193,7 +195,7 @@ test('a head the chain never reached is refused, genesis included', () => {
 });
 
 test('a run with no published inputs produces no picture', () => {
-  const r = new Round(openStore(), () => 1234);
+  const r = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const rid = r.open(contract());
   const entry = entryFor(rid, 0);
   const eid = r.enter(entry);

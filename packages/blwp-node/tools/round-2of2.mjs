@@ -27,7 +27,7 @@
  * Bitcoin. A round played on it is a local test round. Reading a real chain is
  * the operator's own bitcoind, and no live node is touched from here.
  */
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../protocol/src/test-donation-sets.js';
@@ -65,6 +65,10 @@ import { genesisFor } from '../../protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
+import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../core/plugin/nextblock.js';
+// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202, §0A.4): nextblock, as src/main.js does.
+const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
+
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 /**
@@ -301,7 +305,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // store); this tool starts nodes only, and the Daily's nodes hold no key, so they answer {guardian: false}.
   for (const m of members) {
     if (attach) { m.guardian = await guardianFieldsFromNode(`http://${host}:${m.port}`); continue; }
-    const probe = await startNode({ db: m.db, path: m.path }, { port: m.port, host }, guardianChain);
+    const probe = await launchNode({ db: m.db, path: m.path }, { port: m.port, host }, guardianChain);
     try { m.guardian = await guardianFieldsFromNode(`http://${host}:${probe.port}`); }
     finally { await probe.close(); }
   }
@@ -617,7 +621,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     writeProof(`${attach.proofDir}/bond.json`, JSON.stringify(bondProof));
   }
   const attached = (m) => ({ port: m.port, round: { pubkey: m.id.pubkey }, attached: true, close: async () => {} });
-  let a = attach ? attached(members[0]) : await startNode({ db: dbA, path: pathA }, optsA, guardianChain);
+  let a = attach ? attached(members[0]) : await launchNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
@@ -625,7 +629,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
   // can be posted to it; the caller closes it, and restartB serves it on portB.
-  let b = attach ? attached(members[1]) : await startNode({ db: dbB, path: pathB }, bDownAtStart ? { ...optsB, port: 0 } : optsB, guardianChain);
+  let b = attach ? attached(members[1]) : await launchNode({ db: dbB, path: pathB }, bDownAtStart ? { ...optsB, port: 0 } : optsB, guardianChain);
   // AND THE THIRD, WHEN THERE IS ONE. Served exactly like the other two - a
   // bonded census node that is not also a running daemon would be a bond
   // vouching for a guardian nobody can reach.
@@ -636,7 +640,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const rest = [];
   for (const o of optsBeyond) {
     const m = members[2 + rest.length];
-    rest.push(attach ? attached(m) : await startNode({ db: m.db, path: m.path }, o, guardianChain));
+    rest.push(attach ? attached(m) : await launchNode({ db: m.db, path: m.path }, o, guardianChain));
   }
   const nodeC = rest[0] || null;
   if (a.port !== portA)
@@ -696,7 +700,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // assigned set against `nodes` EXACTLY, both ways, so with three bonded
     // nodes and two slots the sortition would seat two of the three and the
     // contract could not know which - it would be refused by its own daemons.
-    gameVerifySlots: members.length, settlementSlots: members.length, simCoreHash: CORE_HASH,
+    gameVerifySlots: members.length, settlementSlots: members.length, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE_HASH,
     committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + (entryCloseAtMs == null ? BigInt(entryWindowMs)
@@ -1136,15 +1140,15 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // EVERY DAEMON, so a caller does not have to know how many there are.
     get daemons() { return [a, b, ...rest]; }, beacon: beaconSeen,
     // AND DAEMON A, the same way (M3.3-34 path 2: a forward to A lost while A is down).
-    async restartA() { await a.close(); a = await startNode({ db: dbA, path: pathA }, optsA, guardianChain); return a; },
+    async restartA() { await a.close(); a = await launchNode({ db: dbA, path: pathA }, optsA, guardianChain); return a; },
     // DAEMON B RESTARTS: the same store, identity, options and port, served
     // again - what an operator's restart is, for measuring what a client does
     // across one. Nothing it held is lost, because the store is the same.
-    async restartB() { await b.close(); b = await startNode({ db: dbB, path: pathB }, optsB, guardianChain); return b; },
+    async restartB() { await b.close(); b = await launchNode({ db: dbB, path: pathB }, optsB, guardianChain); return b; },
     // AND ANY FURTHER ONE, by its place after A and B - the same store, identity, options and port.
     async restartRest(i) {
       await rest[i].close();
-      rest[i] = await startNode({ db: members[2 + i].db, path: members[2 + i].path }, optsBeyond[i], guardianChain);
+      rest[i] = await launchNode({ db: members[2 + i].db, path: members[2 + i].path }, optsBeyond[i], guardianChain);
       return rest[i];
     },
     nodes: reach,

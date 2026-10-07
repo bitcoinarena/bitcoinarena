@@ -13,6 +13,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { opts, wait } from '../test/window-fixture.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -42,7 +43,7 @@ out({ step: 'W6 restart: what the SIGKILL left', killedAfter: { signerNode: kill
 const t = Date.now();
 const signerNodes = [];
 for (const i of [0, 1])
-  signerNodes.push(await serve(openStore(`${P}/signer node-${i}.sqlite`), { port: kill.ports[i], ...opts, stakeLocks: ports[i], poolCurve: curve, finality: { everyMs: 250 } }));
+  signerNodes.push(await serve(openStore(`${P}/signer node-${i}.sqlite`), { plugins: [NEXTBLOCK], port: kill.ports[i], ...opts, stakeLocks: ports[i], poolCurve: curve, finality: { everyMs: 250 } }));
 for (const [d, o] of [[signerNodes[0], signerNodes[1]], [signerNodes[1], signerNodes[0]]]) {
   const there = [`http://127.0.0.1:${o.port}`];
   d.verifier.peers = there; d.stakeSecrets.peers = there; d.dkg.peers = there;

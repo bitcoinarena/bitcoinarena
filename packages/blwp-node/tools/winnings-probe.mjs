@@ -87,6 +87,7 @@ import { askerOrder } from '../src/payout.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
 import { serveDonationRecipients } from '../src/lnurl-recipients.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -159,7 +160,7 @@ const stores = Array.from({ length: N }, (_, i) => join(dir, `${'abcdefg'[i]}.db
 // `ports`: a restart comes back on each node's own port - the round's contract names those endpoints.
 const up = async (ports = []) => {
   const nodes = [];
-  for (const [i, path] of stores.entries()) nodes.push(await serve(openStore(path), { port: ports[i] || 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
+  for (const [i, path] of stores.entries()) nodes.push(await serve(openStore(path), { plugins: [NEXTBLOCK], port: ports[i] || 0, ...opts, stakeLocks: slot.port, poolCurve: curve,
     finality: { everyMs: 500 }, lnurlFetch, winningsEveryMs: 3000, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor,
     ...(WALK ? { donationSets: [TEST_DONATION_SET_REGTEST], doorSweepMs: 250 } : {}) }));
   for (const d of nodes) d.round.chainView = CLOCK.chainView();

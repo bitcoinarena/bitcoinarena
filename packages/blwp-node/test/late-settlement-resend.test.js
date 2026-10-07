@@ -31,6 +31,7 @@ import { largestPayoutMsat } from '../../protocol/src/lock-settlement.js';
 import { askerOrder } from '../src/payout.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const LATE = { name: 'late', key: b32(6), worldSecret: b32(0xc1), ticks: 1000 };
 const REAL_FEES = { ppm: 0n, baseMsat: 1000n };
@@ -47,7 +48,7 @@ async function settledOnDisk() {
   const view = new Map();
   const finalityOf = (round, rid, eid) => (view.has(toHex(eid)) ? view.get(toHex(eid))(round, rid, eid) : resultFinality(round, rid, eid));
   const start = async (name, at = 0) => {
-    const d = await serve(openStore(join(dir, `${name}.sqlite`)), { port: at, ...opts, stakeLocks: port, poolCurve: curve,
+    const d = await serve(openStore(join(dir, `${name}.sqlite`)), { plugins: HOSTED, port: at, ...opts, stakeLocks: port, poolCurve: curve,
       finality: { everyMs: 100, lateEveryMs: 3600000 }, lnurlFetch: address.fetchLike, finalityOf,
       chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
     d.round.chainView = CLOCK.chainView();

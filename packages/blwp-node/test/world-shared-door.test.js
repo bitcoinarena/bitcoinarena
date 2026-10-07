@@ -3,19 +3,19 @@
 // world - the same seed word the page's join computes (seed.js worldSeedWord) - for every player, whatever key he brings;
 // a per-player round (v3, f51759b6) keeps each player's own. Fixtures from run-length.test.js.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH as TRUCK_CONFIG_HASH, TRUCK_SHARED_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH as TRUCK_CONFIG_HASH, TRUCK_SHARED_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
-import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../../core/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { encodeInputBatch } from '../../protocol/src/batch.js';
@@ -31,7 +31,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1788700000000;
 const contractWith = (blockTicks) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
@@ -50,18 +50,20 @@ const entryOn = (rid, joinTick = 0) => ({
 const words = () => [45875, 0, 0, 0, 0];
 import { worldSeedWord } from '../../protocol/src/seed.js';
 import { roundId as roundIdOf } from '../../protocol/src/contracts.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const shared = () => ({ ...contractWith(BLOCK_TICKS), configHash: TRUCK_SHARED_CONFIG_HASH });
 const zero = new Uint8Array(32);
 
 test('a shared-world round takes an entry with a zero world secret and refuses one with a secret of its own', () => {
-  const round = new Round(openStore(':memory:'), () => NOW + 1000);
+  const round = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
   const rid = round.open(shared());
   assert.ok(round.enter({ ...entryOn(rid), worldSecret: zero }));
   assert.throws(() => round.enter({ ...entryOn(rid), playerPubkey: b32(0x66), worldSecret: b32(0x5e) }),
     /shares one world among its players: an entry names no world secret/);
   // a per-player round (v3) takes a secret as before
-  const per = new Round(openStore(':memory:'), () => NOW + 1000);
+  const per = new Round(openStore(':memory:'), () => NOW + 1000, { plugins: HOSTED });
   assert.ok(per.enter(entryOn(per.open(contractWith(BLOCK_TICKS)))));
 });
 

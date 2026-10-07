@@ -10,7 +10,7 @@
 // run is over, the transcript is in the node's own tables, and the replay is
 // the same core over the same inputs in the same order.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -19,7 +19,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder, replayInWorker as replayInWorkerUnder, NO_SEED_RULE, NO_CORE_RULE } from '../src/replay.js';
-import { TRUCK } from '../src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 const replayInWorker = (t, e, o = {}) => replayInWorkerUnder(t, e, { core: TRUCK, ...o });
@@ -31,10 +31,12 @@ import { GENESIS } from '../../protocol/src/transcript.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
-  settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
+  settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
@@ -81,7 +83,7 @@ function played(ticks, { from = 0, liquidations = LIQUIDATIONS } = {}) {
 
 /** The same run, put through the daemon's door: batches in, transcript out. */
 function stored(ticks, { from = 0, chunk = 100, liquidations = LIQUIDATIONS } = {}) {
-  const r = new Round(openStore(), () => 1234);
+  const r = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c = contract();
   const rid = r.open(c);
   const entry = entryFor(rid, from);

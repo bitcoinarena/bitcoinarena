@@ -29,6 +29,7 @@ import { transcriptBytesHash } from '../../protocol/src/posting.js';
 import {
   b32, rand, WINDOW_MS, wait, WINNER, LOSER, contractFor, say, joinAndPlay, opts, sevenSignerNodes,
 } from './window-fixture.js';
+import { HOSTED } from './plugins/hosted.js';
 
 /** A relay that keeps whatever it is given and writes down every request; `lies` gives back other bytes. */
 async function countingRelay({ lies = false } = {}) {
@@ -127,7 +128,7 @@ test('seven signer nodes: a contract that names no relay is never final, whateve
 });
 
 test('a daemon\'s relay door keeps a transcript only under the hash its bytes have', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const bytes = rand(300);
     const name = toHex(transcriptBytesHash(bytes));

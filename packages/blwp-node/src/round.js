@@ -35,7 +35,7 @@ import { receiptsNeeded } from '../../protocol/src/genesis.js';
 import { decodeHandout } from '../../protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf } from '../../protocol/src/first-mark.js';
-import { coreForRound, installedCores, runLengthFits } from './cores.js';
+import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../protocol/src/window.js';
 import { decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
@@ -94,11 +94,12 @@ const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attemp
   txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why, donation: !!r.donation });
 
 export class Round {
-  constructor(db, now = () => Date.now(), { cores = installedCores() } = {}) {
+  constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
-    // THE CORES THIS SIGNER NODE RUNS (M3 R1): a round is opened only on one of them, and its run length is theirs.
-    this.cores = cores;
+    // THE GAMES THIS NODE HOSTS (kanban #202, §0A.4; M3 R1): a round is opened only on one of them, on a core installed for
+    // it, and its run length is that core's.
+    this.plugins = hostedPlugins(plugins);
     // Read once, and made on the first ask if the file has none. A node that
     // could not sign would have to answer a checkpoint with something other
     // than a receipt, and there is no such answer.
@@ -321,7 +322,7 @@ export class Round {
     // another. Measured before this existed: 9000, 4500 and 1 were all
     // accepted here.
     // THE ROUND'S OWN CORE AND CONFIG say how long a run is (M3 R1 R3), not the truck's rules.
-    const runs = coreForRound(contract, this.cores);
+    const runs = pluginForRound(contract, this.plugins);
     if (!runs.ok) throw new Error(runs.why);
     // THE ROUND'S RUN LENGTH ON THE CORE IT NAMES (the 82/90 fork): any the core takes - the old core only its own.
     const runLength = runLengthFits(runs.core, runs.config, contract.blockTicks);

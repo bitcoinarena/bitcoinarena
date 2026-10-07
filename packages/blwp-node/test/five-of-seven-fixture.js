@@ -30,6 +30,7 @@ import { hash as stateHash } from '../../core/src/state.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
+import { HOSTED } from './plugins/hosted.js';
 export const WINDOW = 800;
 export const NEEDED = 5;
 export const PAST = PLANTED_FIRST_MARK_DEADLINE + 100;          // past the round's start line
@@ -43,7 +44,7 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
   const slot = custody === 'lock' ? bondedChainSlot(lockPort()) : null;
   const locks = slot ? slot.port : null;
   const dbs = Array.from({ length: 7 }, () => openStore(':memory:'));
-  const mk = (i, port = 0) => serve(dbs[i], { port, ...opts, finality: { everyMs: 100 },
+  const mk = (i, port = 0) => serve(dbs[i], { plugins: HOSTED, port, ...opts, finality: { everyMs: 100 },
     stakeLocks: locks, poolCurve: curve, ...(slot ? { chainFor: slot.chainFor, randomnessFor: slot.randomnessFor } : {}) });
   const signerNodes = [];
   for (let i = 0; i < 7; i++) signerNodes.push(await mk(i));

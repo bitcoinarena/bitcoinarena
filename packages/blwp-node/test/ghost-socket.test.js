@@ -12,7 +12,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -35,10 +35,12 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { assumeStakeSeen } from './assignment.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = (stakeMsat = 0n) => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
-  settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
+  settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
@@ -127,7 +129,7 @@ async function twoIdentities(node, stakeMsat = 0n) {
 }
 
 test('a second identity\'s ghost arrives on the socket, carrying the truck the core reached', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const { rid, b, eidA, eidB, batchOf } = await twoIdentities(node);
     const viewer = await talk(node.port);
@@ -180,7 +182,7 @@ test('a second identity\'s ghost arrives on the socket, carrying the truck the c
  * on a stake existing.
  */
 test('a round that asks no stake takes two players with no Lightning, and the ghost follows', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const { rid, b, eidA, eidB, batchOf, joins } = await twoIdentities(node, 0n);
     assert.deepEqual(joins.map((s) => s.status), [201, 201], 'a free round was refused');
@@ -204,7 +206,7 @@ test('a round that asks no stake takes two players with no Lightning, and the gh
 });
 
 test('a new batch shows the subscriber the new picture, and never their own', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const { rid, eidA, eidB, batchOf } = await twoIdentities(node);
     const viewer = await talk(node.port);
@@ -238,7 +240,7 @@ test('a new batch shows the subscriber the new picture, and never their own', as
 });
 
 test('a watch names a round and an entry, or it is refused by name', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const { rid, eidA, eidB } = await twoIdentities(node);
     const sock = await talk(node.port);
@@ -265,7 +267,7 @@ test('a round with no randomness yet shows nobody anything', async () => {
   // The daemon does not invent a beacon (verify.js says why at length), and a
   // picture needs the world seed the beacon mixes. So the honest answer is no
   // picture, not a truck in a world nobody else can reproduce.
-  const node = await serve(openStore(), { port: 0, funded: () => true });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const { rid, eidA, eidB, batchOf } = await twoIdentities(node);
     const viewer = await talk(node.port);
@@ -285,10 +287,10 @@ test('a round with no randomness yet shows nobody anything', async () => {
 test('the subscriber is shown the interest set, not the whole field', async () => {
   // K is a node's bandwidth policy (piece 3), so it is measured on the service
   // the socket uses rather than by opening twenty sockets.
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c = contract();
   const rid = round.open(c);
-  const ghosts = new Ghosts(round, { randomnessFor: () => ({ hash: BEACON }), limit: 2 });
+  const ghosts = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => ({ hash: BEACON }), limit: 2 });
 
   const ids = [];
   for (let n = 10; n < 16; n++) {
@@ -323,11 +325,11 @@ test('the subscriber is shown the interest set, not the whole field', async () =
 });
 
 test('a tick past the published inputs is refused on the socket path too', async () => {
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const rid = round.open(contract());
   const e = entryFor(rid, 11);
   const eid = round.enter(e);
-  const ghosts = new Ghosts(round, { randomnessFor: () => ({ hash: BEACON }) });
+  const ghosts = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => ({ hash: BEACON }) });
 
   // no inputs yet: no picture, and the reason is that rather than "no tick"
   assert.match(ghosts.latest(rid, eid).why, /published no inputs/);
@@ -356,8 +358,8 @@ test('a subscriber of one round is not shown another round\'s trucks', () => {
   // broke nothing, because every test had one round in play. A daemon serves
   // many, and a picture from a round you are not in is a truck from another
   // world - the private world of 0.9 is per round, not per node.
-  const round = new Round(openStore(), () => 1234);
-  const ghosts = new Ghosts(round, { randomnessFor: () => ({ hash: BEACON }) });
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
+  const ghosts = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => ({ hash: BEACON }) });
 
   const mine = round.open(contract());
   const other = round.open({ ...contract(), censusHeight: 900001 });
@@ -387,7 +389,7 @@ test('a subscriber that is not keeping up is shed, not buffered', async () => {
   // A ghost decides nothing (piece 2), so a picture a stalled socket would
   // read minutes late is worth less than the memory the node holds it in. The
   // rule is the client's own: a quarter of a megabyte behind is behind.
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const { rid, eidA, eidB, batchOf } = await twoIdentities(node);
     const viewer = await talk(node.port);

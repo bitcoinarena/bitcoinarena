@@ -24,7 +24,7 @@ import { toHex as hex } from '../../protocol/src/hash.js';
 import { batchId, batchTicks } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { replay, RunInProgress } from './replay.js';
-import { coreForRound, installedCores } from './cores.js';
+import { pluginForRound, hostedPlugins } from './plugins.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -145,10 +145,11 @@ export function ghostForChecked(options) {
 export const STEP_BUDGET = 150;
 
 export class Ghosts {
-  constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, cores = installedCores() } = {}) {
+  constructor(round, { randomnessFor = () => undefined, limit = GHOST_SUBSCRIPTIONS, plugins = [] } = {}) {
     this.round = round;
-    // THE CORES THIS SIGNER NODE INSTALLED (M3 R1): a round's picture is drawn by the core it names, or not at all.
-    this.cores = cores;
+    // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1): a round's picture is drawn by the core its game installed, or not at
+    // all - and only by a core whose adapter draws one (`picture` is a game's optional extra).
+    this.plugins = hostedPlugins(plugins);
     this.randomnessFor = randomnessFor;
     this.limit = limit;
     this.frames = new Map();
@@ -220,12 +221,12 @@ export class Ghosts {
     return this.runs.delete(`${hex(roundIdBytes)}:${hex(entryIdBytes)}`);
   }
 
-  /** The core the round names, as this signer node's cores.js resolves it (M3 R1) - or none: nothing is pictured. */
+  /** The core the round names, as this node's plugins.js resolves it (M3 R1) - or none: nothing is pictured. */
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const found = coreForRound(contract, this.cores);
+    const found = pluginForRound(contract, this.plugins);
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
     return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes) } } : null;

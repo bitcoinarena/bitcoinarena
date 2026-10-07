@@ -29,6 +29,7 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 const curve = { ...feldmanGroup, tweakPoint };
 const REFERENCE_DEADLINE = 120;
@@ -38,7 +39,7 @@ const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint
 
 async function signerNodes() {
   const port = lockPort();
-  const mk = (db, p = 0) => serve(db, { port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  const mk = (db, p = 0) => serve(db, { plugins: [NEXTBLOCK], port: p, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
   const a = await mk(dbA);

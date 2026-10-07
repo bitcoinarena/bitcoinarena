@@ -31,6 +31,7 @@ import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const WINDOW = 60000n;          // MIN_ENTRY_WINDOW_MS: committee -> start
 const ENTRY = 120000n;          // start -> entry close, as round-2of2 opens them
@@ -40,7 +41,7 @@ test('the node lists the rounds a player can still join - free or paying, open o
   // key is claimKeyFor's. A node with a chain view checks every round's census, free ones too: each round's censusRoot is
   // bonded just before it is posted, and nothing else in it changes.
   const slot = bondedChainSlot(lockPort());
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, funded: () => true, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, funded: () => true, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   const base = `http://127.0.0.1:${d.port}`;
   try {

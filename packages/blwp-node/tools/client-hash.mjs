@@ -32,8 +32,10 @@ async function served(name) {
   try { return readFileSync(join(where, name)); } catch { return null; }
 }
 
+// THE ENGINE'S SCRIPTS AND EACH GAME'S (kanban #202: one list per game): a page serves both, and both decide money.
+const PINNED = [...Object.entries(LIST.pinned), ...Object.values(LIST.games || {}).flatMap((g) => Object.entries(g.pinned))];
 let good = true;
-for (const [name, hashes] of Object.entries(LIST.pinned)) {
+for (const [name, hashes] of PINNED) {
   const bytes = await served(name);
   if (!bytes) { console.log(`${name.padEnd(15)} missing`); good = false; continue; }
   const got = createHash('sha256').update(bytes).digest('hex');

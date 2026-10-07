@@ -14,6 +14,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 // A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
@@ -23,7 +24,7 @@ const lockedFor = (stakePoint = Uint8Array.of(2, ...new Uint8Array(32).fill(0x6c
   claimKey: { ok: true, ref: new Uint8Array(32).fill(0x9a) },
   stakeLock: { outpoint: { txid: new Uint8Array(32).fill(0xd8), outIdx: 0 }, fields: { paymentImage: { kind: 'point', bytes: stakePoint } } },
 });
-const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
+const round = { id: new Uint8Array(32).fill(7), stakeMsat: 1000000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const NET = round.stakeMsat - entryFeeMsat(round.stakeMsat);
 const HASH = 'aa'.repeat(32);
 

@@ -5,7 +5,7 @@
 //
 //   node signer-node-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
 //   node signer-node-lock-regtest.mjs signer node <dir> <keys.json>  a signer node, the real port, the handovers
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -29,6 +29,8 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { CORE_HASH } from './core-hash.mjs';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 // THE FEDERATION THIS SETUP JOINED NAMES THE ROUND (M3 W7): its id from the setup's invite, read by the lock client.
 const { LockClient } = createRequire(import.meta.url)(`${process.env.WASM_PKG}/blwp_lock_client.js`);
@@ -62,7 +64,7 @@ const stakes = JSON.parse(readFileSync(`${dir}/stakes.json`, 'utf8'));
 const claimPk = fromHex(JSON.parse(readFileSync(keysPath, 'utf8')).claimPk);
 const lockOf = (name) => JSON.parse(readFileSync(`${dir}/lock-${name}.json`, 'utf8'));
 const port = stakeLockPort({ bin: process.env.LOCK_BIN, dataDir: `${dir}/client` });
-const signerNode = await serve(openStore(':memory:'), {
+const signerNode = await serve(openStore(':memory:'), { plugins: [NEXTBLOCK], 
   port: 0, funded: () => true, randomnessFor: () => ({ hash: b32(0x9b), height: 900001, timeMs: 900n }),
   stakeLocks: port, claimKeyFor: () => claimPk,
 });
@@ -71,7 +73,7 @@ try {
   const now = BigInt(Date.now());
   const c = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1,
-    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
+    gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS,
     entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n, objectionWindowMs: 3000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: fromHex(LockClient.federationIdOf(process.env.INVITE)), stakeExpiryBlocks: 144,
     publicationRelays: [`http://127.0.0.1:${signerNode.port}`], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,

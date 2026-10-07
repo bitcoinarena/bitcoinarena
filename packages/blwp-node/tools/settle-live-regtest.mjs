@@ -21,7 +21,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { assumeAssigned } from '../test/assignment.js';
@@ -44,6 +44,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { playerFor } from '../../blwp-client/src/join.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
 import { redeemPayout, payoutLine, returnStake, stakeBackLine, withdrawCollected, withdrawLine, tabLockWallet, refundKept, refundLine } from '../../blwp-client/src/page-lock.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -467,8 +468,7 @@ const dyingAfterAnswer = (p, i) => Object.assign(Object.create(p), {
 });
 async function round(stakeMsat) {
   const w6 = env.W6_KILL === '1';
-  const mk = (i) => serve(openStore(w6 ? `${P}/signer node-${i}.sqlite` : ':memory:'),
-    { port: 0, ...opts, stakeLocks: w6 ? dyingAfterAnswer(ports[i], i) : ports[i], poolCurve: curve, finality: { everyMs: 250 } });
+  const mk = (i) => serve(openStore(w6 ? `${P}/signer node-${i}.sqlite` : ':memory:'), { plugins: [NEXTBLOCK], port: 0, ...opts, stakeLocks: w6 ? dyingAfterAnswer(ports[i], i) : ports[i], poolCurve: curve, finality: { everyMs: 250 } });
   const a = await mk(0); const b = await mk(1);
   W6.state.ports = [a.port, b.port];
   try {

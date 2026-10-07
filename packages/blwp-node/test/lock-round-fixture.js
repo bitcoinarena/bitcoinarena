@@ -32,6 +32,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
+import { HOSTED } from './plugins/hosted.js';
 
 // A WINNER NAMES A LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid; the others' shares
 // are pooled over those who did). `lnurl` is that address: it answers LUD-16/LUD-06 with real-format invoices whose
@@ -78,12 +79,13 @@ export async function nameAddress(daemons, played, address = ADDRESS) {
 export const curve = { ...feldmanGroup, tweakPoint };
 
 // `n`: THE ROUND'S SIGNER NODES - 2 (a 2-of-2), or 7 (5 of 7, receiptsNeeded); `a` and `b` are the first two.
-export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2, endMs = testNow() + 3000 } = {}) {
+// `round`: fields of the round's contract over the fixture's (kanban #202: another game's id, core, config and run length).
+export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2, endMs = testNow() + 3000, round = {} } = {}) {
   const address = lnurl(port);
   // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25: a paying round opens only on a node that reads the
   // chain). Both signer nodes are running daemons, so the round's claim key is their own live DKG, as before.
   const slot = bondedChainSlot(port);
-  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve, finality: { everyMs: 100 },
+  const mk = () => serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: slot.port, poolCurve: curve, finality: { everyMs: 100 },
     chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, lnurlFetch: address.fetchLike, ...serveOpts });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): one block clock both signer nodes read.
   const nodes = [];
@@ -95,8 +97,21 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
     d.stakeSecrets.peers = there;
     d.dkg.peers = there;
   }
+  return openLockRound({ a, b, nodes, port, slot, lnurl: address, close: async () => { for (const d of nodes) await d.close(); } },
+    { minScore, stakeMsat, endMs, round });
+}
+
+/**
+ * A ROUND OPENED ON SIGNER NODES ALREADY STANDING (kanban #202: a second round on the same two nodes, of another game):
+ * `on` is what lockRound stood - its nodes, lock port, chain slot and address - and the round is built, bonded, opened and
+ * keyed on them as lockRound's first. Answers the same object lockRound does, for this round.
+ */
+export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs = testNow() + 3000, round = {} } = {}) {
+  const { nodes, slot } = on;
+  const [a] = nodes;
+  const n = nodes.length;
   const first = { ...contractFor(nodes.map((d) => d.round.pubkey), BigInt(WINDOW_MS), nodes.map((d) => `http://127.0.0.1:${d.port}`)),
-    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore, stakeMsat };
+    custody: 'FEDERATION', federationId: TEST_FEDERATION_ID, minScore, stakeMsat, ...round };
   // THE ROUND ENDS NOW, NOT IN 1970 (§13A/§13C, kanban #26: a result counts only if its seat held it before the round's end
   // + 600 s + 5 s). The fixture's rounds were dated in 1970, so every result they held came decades after their window
   // closed - under the deadline every run of them would be VOID. A round ends 3 s after it is built (or at `endMs`); its
@@ -121,15 +136,15 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
   const beacon = slot.randomnessFor({ contract: c });
   assert.ok(beacon && beacon.hash, 'the bonded chain names no beacon for the round');
   console.log(`  BEACON (lockRound): ${toHex(beacon.hash)} at ${beacon.height}`);
-  return { a, b, nodes, needed: receiptsNeeded(n), c, rid, port, slot, lnurl: address, claimPk: held.pool.groupPublicKey, randomness: beacon.hash,
-    close: async () => { for (const d of nodes) await d.close(); } };
+  return { ...on, needed: receiptsNeeded(n), c, rid, claimPk: held.pool.groupPublicKey, randomness: beacon.hash };
 }
 
 // `feeLock` DEFAULTS TO TRUE (2026-09-21): on a federation that charges no base fee this round's gate mints
 // fee locks at every size measured, so an entry that brings none is refused at the door - which is pick (a)
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
 // `address`: the entry names the fixture's Lightning address at every signer node once it has played.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1 } = {}) {
+// `game`: { adapter, config } - the run played by that game's core, not the truck's (kanban #202), with no loads in its batch.
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -158,11 +173,35 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 } : null;
   if (feeLock) await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
-    ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: bedFrom(0) };
-  const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
-  for (let t = 0; t < who.ticks; t++) step(st, ...play.words(t));
+    ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: game ? [] : bedFrom(0) };
+  let endHash;
+  // A GAME'S RUN (kanban #202) IN TWO BATCHES: a first mark at `game.firstMark` (before the round's start deadline - a run
+  // that only ends at its run length cannot make its first mark at its end), then the rest and the last mark.
+  let gameRun = null;
+  if (game) {
+    const gs = game.adapter.start(seedWordForEntry(entry, w.randomness || RANDOMNESS), game.config, { runTicks: w.c.blockTicks });
+    const first = game.firstMark || 60;
+    const hashOf = (hex) => Uint8Array.from(hex.match(/../g).map((x) => parseInt(x, 16)));
+    for (let t = 0; t < first; t++) game.adapter.step(gs, play.words(t));
+    const b1 = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
+      ticks: Array.from({ length: first }, (_, t) => play.words(t)), liquidations: [], loads: [] };
+    const m1 = { roundId: w.rid, entryId: eid, tick: first, stateHash: hashOf(game.adapter.stateHash(gs)), inputChainHash: batchId(b1),
+      previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
+    for (let t = first; t < who.ticks; t++) game.adapter.step(gs, play.words(t));
+    const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: first,
+      ticks: Array.from({ length: who.ticks - first }, (_, t) => play.words(first + t)), liquidations: [], loads: [] };
+    const m2 = { roundId: w.rid, entryId: eid, tick: who.ticks, stateHash: hashOf(game.adapter.stateHash(gs)), inputChainHash: batchId(b2),
+      previousHash: checkpointId(m1), sessionPubkey: ed25519.getPublicKey(session) };
+    const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
+    gameRun = { b1, b2, m1: sign(m1), m2: sign(m2), first };
+    endHash = game.adapter.stateHash(gs);
+  } else {
+    const st = loaded(init(seedWordForEntry(entry, w.randomness || RANDOMNESS)));
+    for (let t = 0; t < who.ticks; t++) step(st, ...play.words(t));
+    endHash = stateHash(st);
+  }
   const mark = { roundId: w.rid, entryId: eid, tick: who.ticks,
-    stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
+    stateHash: Uint8Array.from(endHash.match(/../g).map((x) => parseInt(x, 16))),
     inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(session) };
   const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), session));
   for (const d of w.nodes || [w.a, w.b]) {
@@ -185,8 +224,19 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     // `noMarks`: seated and staked, and nothing sent - a walk-away (§15 at the door)
     if (noMarks) continue;
     if (fork) continue;                                   // the fork's run goes out below, seat by seat
+    if (gameRun) {
+      // a later seat may already hold a batch, forwarded by the first (its answer is then 0 new ticks)
+      for (const [msg, want] of [[encodeInputBatch(gameRun.b1), String(gameRun.first)], [gameRun.m1, SIGNED_RECEIPT_BYTES],
+        [encodeInputBatch(gameRun.b2), String(who.ticks - gameRun.first)], [gameRun.m2, SIGNED_RECEIPT_BYTES]]) {
+        const got = await say(d.port, msg);
+        if (typeof want === 'number') assert.equal(got.length, want, typeof got === 'string' ? `the mark was refused: ${got}` : undefined);
+        else assert.ok(got === want || got === '0', `a batch was answered ${String(got).slice(0, 160)}`);
+      }
+      continue;
+    }
     assert.equal(await say(d.port, encodeInputBatch(input)), String(who.ticks));
-    assert.equal((await say(d.port, signedMark)).length, SIGNED_RECEIPT_BYTES);
+    const receipt = await say(d.port, signedMark);
+    assert.equal(receipt.length, SIGNED_RECEIPT_BYTES, typeof receipt === 'string' ? `the mark was refused: ${receipt}` : undefined);
   }
   // `fork` (§13B at a later tick; kanban #25): the run in two batches, a first mark at tick 60, and at its end mark X to
   // the first seat and a contradicting mark Y to the second - `fork: 'tick'` Y at the same tick with another state,

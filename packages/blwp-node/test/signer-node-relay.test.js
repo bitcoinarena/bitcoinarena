@@ -21,6 +21,7 @@ import { serve } from '../src/server.js';
 import { assumeAssigned } from './assignment.js';
 import { encodeRoundContract } from '../../protocol/src/contracts.js';
 import { b32, WINDOW_MS, contractFor, opts } from './window-fixture.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const open = (d, c) => fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
 
@@ -28,7 +29,7 @@ test('the same paying round naming a relay opens, and a free round naming none o
   // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
   // key is claimKeyFor's. A node with a chain view checks every round's census; only censusRoot changes.
   const slot = bondedChainSlot(lockPort());
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot });
     const paying = bonded(contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), [`http://127.0.0.1:${d.port}`]));
@@ -46,7 +47,7 @@ test('a stored paying round naming no relay is given no federation stake invoice
   const fed = { asked: 0, amountMsat: null };
   const federation = { async receive({ amountMsat }) { fed.asked++; fed.amountMsat = amountMsat; return { request: 'lnbcrt-federation' }; } };
   const lightning = { async decode() { return { paymentHash: b32(0x44), amountMsat: fed.amountMsat }; } };
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, lightning, federation });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, lightning, federation });
   try {
     const c = contractFor([d.round.pubkey, b32(0x33)], BigInt(WINDOW_MS), []);
     const rid = d.round.open(c);

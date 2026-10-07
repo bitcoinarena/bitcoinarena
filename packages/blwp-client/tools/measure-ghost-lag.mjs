@@ -11,7 +11,7 @@ import net from 'node:net';
 import { createRequire } from 'node:module';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { openStore } from '../../blwp-node/src/store.js';
@@ -23,6 +23,8 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { Client } from '../src/client.js';
 import { watchGhosts } from '../src/ghost-field.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : d; };
 const SECONDS = Number(arg('seconds', 10));
@@ -51,7 +53,7 @@ function slowLink(port, ms) {
 const pct = (xs, p) => xs[Math.min(xs.length - 1, Math.floor(p * xs.length))];
 
 async function once(delay) {
-  const node = await serve(openStore(), { port: 0, funded: () => true,
+  const node = await serve(openStore(), { plugins: [NEXTBLOCK], port: 0, funded: () => true,
     randomnessFor: () => ({ hash: BEACON, height: 900005, timeMs: 900n }) });
   const link = await slowLink(node.port, delay);
   const base = `http://127.0.0.1:${link.port}`;
@@ -59,7 +61,7 @@ async function once(delay) {
   const watcher = new Client({ base, core, sign, verify });
   const c = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
-    gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+    gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
     committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
     startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
     // A FREE ROUND: this measures ghost lag, and money is nothing to it. FEDERATION, because the custody

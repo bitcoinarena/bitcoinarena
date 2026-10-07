@@ -13,6 +13,7 @@ import { sharesNeededFor, stakeFor, postHandout, stakeSeenNeeded } from '../src/
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { fromHex } from '../../protocol/src/hash.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const CORE = fromHex(coreHashHex());
@@ -25,18 +26,18 @@ test('stakeFor deals at the round\'s threshold unless told otherwise, and refuse
   // ITS DEFAULT WAS A FLAT 5, whatever the round. The page and the harness now
   // pass the round's number, but a default that contradicts a 2-of-2 is the
   // same player-chosen threshold the node's door refuses, one caller away.
-  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, simCoreHash: CORE };
-  const seven = { id: b32(0x12), stakeMsat: 100000n, settlementSlots: 7, simCoreHash: CORE };
+  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE };
+  const seven = { id: b32(0x12), stakeMsat: 100000n, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE };
   assert.equal((await deal(two, signerNodesOf(2))).handout.needed, 2);
   assert.equal((await deal(seven, signerNodesOf(7))).handout.needed, 5);
   await assert.rejects(() => deal(two, signerNodesOf(2), { needed: 5 }), /this round's stakes open at 2 of 2/);
   await assert.rejects(() => deal(seven, signerNodesOf(7), { needed: 7 }), /this round's stakes open at 5 of 7/);
-  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n, simCoreHash: CORE }, signerNodesOf(7)),
+  await assert.rejects(() => deal({ id: b32(0x13), stakeMsat: 100000n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE }, signerNodesOf(7)),
     /names no settlement slots/);
 });
 
 test('postHandout counts against the threshold the stake was dealt at, not a flat 5', async () => {
-  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, simCoreHash: CORE };
+  const two = { id: b32(0x11), stakeMsat: 100000n, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE };
   const stake = await deal(two, signerNodesOf(2), { needed: 2 });
   const took = async () => ({ ok: true, text: async () => '' });
   const put = await postHandout(stake, ['http://a', 'http://b'], { fetcher: took });

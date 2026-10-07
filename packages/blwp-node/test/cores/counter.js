@@ -8,6 +8,7 @@
 // not special to them: the same adapter face (core/src/adapter.js), its own hash, its own configs.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { testGame } from '../plugins/sign.js';
 
 const sha = (s) => createHash('sha256').update(s).digest();
 
@@ -35,8 +36,12 @@ export const COUNTER_HASH = sha(readFileSync(new URL(import.meta.url))).toString
 export const CONFIGS = [{ target: 1000, ticks: 120 }, { target: 2000000000, ticks: 120 }]
   .map((c) => ({ config: c, hash: sha(`counter-config:${c.target}:${c.ticks}`) }));
 
-/** The registry entry a signer node installs beside the truck (serve's `cores`). */
+/** The core as its game installs it (kanban #202: a core is installed for a game, never beside one). */
 export const COUNTER = Object.freeze({
   name: CORE.name, hash: COUNTER_HASH, url: new URL(import.meta.url).href, adapter: CORE,
   configs: new Map(CONFIGS.map(({ config, hash }) => [hash.toString('hex'), config])),
 });
+
+/** THE COUNTER AS A GAME OF ITS OWN (kanban #202): its manifest, signed by a test key, and the core above. */
+export const COUNTER_GAME = testGame({ name: 'counter', cores: new Map([[COUNTER_HASH, COUNTER]]), runTicksMax: 120 });
+export const COUNTER_GAME_ID = COUNTER_GAME.gameId;

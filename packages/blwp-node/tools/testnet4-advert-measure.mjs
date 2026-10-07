@@ -23,9 +23,10 @@ import { NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { guardiansOf, offersFrom, bondedGuardians } from '../../blwp-client/src/guardians.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const home = env.BLWP_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
@@ -61,7 +62,7 @@ const view = rt.blocksFrom(from, tip);
 // question is what the census holds, not whether some round named it
 const base = {
   networkId: NETWORK_ID_TESTNET4, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],

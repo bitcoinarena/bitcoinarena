@@ -31,13 +31,14 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 
 const curve = { ...feldmanGroup, tweakPoint };
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 
 async function signerNodes({ free = false } = {}) {
   const port = lockPort();
-  const mk = (db) => serve(db, { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
+  const mk = (db) => serve(db, { plugins: [NEXTBLOCK], port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 } });
   const a = await mk(openStore(':memory:'));
   const b = await mk(openStore(':memory:'));
   for (const [d, o] of [[a, b], [b, a]]) {

@@ -12,13 +12,15 @@ import { stakeFor, entryFor, playerFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { fromHex } from '../../protocol/src/hash.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const CORE = fromHex(coreHashHex());
 const UNKNOWN = b32(1);            // what every launcher used to write
 const seed = b32(0x5e);
-const paying = (simCoreHash) => ({ id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, simCoreHash, federationId: TEST_FEDERATION_ID });
+// SINCE KANBAN #202 A ROUND NAMES ITS GAME, and a core is known only as a core its game lists (known-game.js)
+const paying = (simCoreHash, gameId = NEXTBLOCK_GAME_ID) => ({ id: b32(0x21), stakeMsat: 100000n, settlementSlots: 7, gameId, simCoreHash, federationId: TEST_FEDERATION_ID });
 // A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
 // join.test's fixtures): this paying fixture used to be hold-shaped - a stake and no federation - and entryFor now refuses
 // that shape. It keeps measuring what it measured, on a real FEDERATION entry: an attested claim key and a stake lock with
@@ -33,14 +35,20 @@ const keyFor = (round) => playerFor(round, { seed, curve: feldmanGroup }).pubkey
 test('stakeFor deals no stake into a paying round on an unknown core', async () => {
   const round = paying(UNKNOWN);
   await assert.rejects(() => stakeFor(round, { signerNodes: signerNodes(), curve: feldmanGroup, random: rand, playerPubkey: keyFor(round) }),
-    /not on this client's known-good list/);
+    /nextblock's manifest does not list/);
+  // and a round of a game this client does not know, whatever core it names
+  const stranger = paying(CORE, b32(0x99));
+  await assert.rejects(() => stakeFor(stranger, { signerNodes: signerNodes(), curve: feldmanGroup, random: rand, playerPubkey: keyFor(stranger) }),
+    /not on this client's known-good list of games/);
   await assert.rejects(() => stakeFor({ ...round, simCoreHash: undefined },
     { signerNodes: signerNodes(), curve: feldmanGroup, random: rand, playerPubkey: keyFor(round) }), /names no 32-byte core hash/);
 });
 
 test('entryFor joins nobody at a paying round on an unknown core', () => {
   assert.throws(() => entryFor(paying(UNKNOWN), { seed, curve: feldmanGroup, random: rand }),
-    /not on this client's known-good list/);
+    /nextblock's manifest does not list/);
+  assert.throws(() => entryFor(paying(CORE, b32(0x99)), { seed, curve: feldmanGroup, random: rand }),
+    /not on this client's known-good list of games/);
 });
 
 test('the listed core signer nodes, stake and all', async () => {
@@ -52,6 +60,6 @@ test('the listed core signer nodes, stake and all', async () => {
 });
 
 test('a free round risks nothing and is joined whatever core it names', () => {
-  const free = { id: b32(0x22), stakeMsat: 0n, simCoreHash: UNKNOWN };
+  const free = { id: b32(0x22), stakeMsat: 0n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: UNKNOWN };
   assert.equal(entryFor(free, { seed, curve: feldmanGroup, random: rand }).stakeMsat, 0n);
 });

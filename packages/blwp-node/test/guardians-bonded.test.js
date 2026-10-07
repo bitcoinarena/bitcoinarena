@@ -13,7 +13,7 @@
 // The census here is two bonded signer nodes, as in signer-node-committee.test.js; the federation's size and
 // threshold are the port's, which stands in for the federation's config.
 import { TWO_GATEWAYS } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,6 +36,8 @@ import { beaconFromChain } from '../../protocol/src/beacon.js';
 import { advertId } from '../../protocol/src/advert.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { guardiansOf, offersFrom, bondedGuardians } from '../../blwp-client/src/guardians.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const guardianKey = (n) => Uint8Array.from([0x02, ...b32(0x60 + n)]);
@@ -76,7 +78,7 @@ const beaconOf = (bonds, contract) => {
 };
 const contractWith = (nodes, censusRoot, over = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   startTimeMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 60500n,
   entryCloseMs: BigInt(FIRST_TIME + 15 * SPACING) * 1000n + 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
@@ -108,12 +110,12 @@ const federation = ({ id = TEST_FEDERATION_ID, keys, threshold }) => ({
 
 /** Two signer nodes bonded on the chain - each advertising the guardian keys given - and one door. */
 async function door({ advertised = [[], []], port }) {
-  const signerNodes = [new Round(openStore(':memory:'), () => AFTER_COMMITTEE), new Round(openStore(':memory:'), () => AFTER_COMMITTEE)];
+  const signerNodes = [new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED }), new Round(openStore(':memory:'), () => AFTER_COMMITTEE, { plugins: HOSTED })];
   const keys = signerNodes.map((s) => s.pubkey);
   const bonds = keys.map((k, i) => bondOfKey(k, i + 1, advertised[i].map((g) => ({ federationId: TEST_FEDERATION_ID, guardianKey: g })),
     signerNodes[i].identity.secret));
   const root = rootFor(bonds, keys);
-  const node = await serve(openStore(':memory:'), {
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, 
     port: 0, funded: () => true, stakeLocks: port,
     chainFor: ({ contract } = {}) => chainWith(bonds, contract), randomnessFor: ({ contract }) => beaconOf(bonds, contract),
   });
