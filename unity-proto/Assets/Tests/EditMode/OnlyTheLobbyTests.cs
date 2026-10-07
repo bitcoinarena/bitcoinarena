@@ -64,7 +64,8 @@ public class OnlyTheLobbyTests
         string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
         StringAssert.Contains("window.BLWP_LOADOUT_OPEN = open !== 0;", lib);
         string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
-        StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; return; }", page);
+        // and the Console is told the strip is gone (427bab76, the console collapse: the strip lives behind its button)
+        StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
         int a = page.IndexOf("const nodeHealth = {};"), b = page.IndexOf("function paintPlayers()");
         int c = page.IndexOf("const ab = ['A', 'B']");
         string strip = page.Substring(a, b - a) + page.Substring(c, page.IndexOf('\n', c) - c);
