@@ -11,7 +11,8 @@ import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
   paysBondMarker,
 } from './chain.js';
-import { decodeAdvert, splitSignedAdvert, advertId } from './advert.js';
+import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
+import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
 
 /**
@@ -42,6 +43,10 @@ export function encodeEntry(e) {
   w.u32(e.height);
   w.vec([...e.roles].sort(), (r, ww) => ww.u8(ROLES.indexOf(r)),
         { sortedBy: (a, b) => (a < b ? -1 : a > b ? 1 : 0) });
+  // AND THE GAMES IT HOSTS (§0A.4, kanban #204), for the reason `roles` is here: the game/verify draw reads them, so the
+  // root commits to them. Taken off the advertisement by RESOLVE, as the roles are.
+  if (!Array.isArray(e.hostedGames)) throw new Error('a census entry names the games its node hosts ([] for none)');
+  w.vec(e.hostedGames, (g, ww) => ww.bytes32(g));
   return w.finish();
 }
 
@@ -97,9 +102,28 @@ export function censusMinimumFor(contract) {
  * which is what 5A.3 makes eligibility mean - a settlement node is not a game
  * node that happens to be bonded.
  */
+/**
+ * MAY THIS ENTRY SERVE THIS ROUND IN THIS ROLE: it declares the role, and for the game/verify pool (game, verify) it hosts
+ * the round's game (§0A.4, kanban #204). Settlement and relay are game-agnostic: they sign payout tables and hold
+ * custody, never replay, so they are drawn from the whole census.
+ */
+export function eligibleFor(e, contract, role) {
+  if (!(e.roles || []).includes(role)) return false;
+  if (poolOfRole(role) !== GAME_VERIFY) return true;
+  return hostsGame(e, contract && contract.gameId);
+}
+
 export function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
-  const have = (entries || []).filter((e) => (e.roles || []).includes(role)).length;
+  const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
+  // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4, kanban #204): a game too few nodes host has no
+  // paying rounds, and says why
+  if (have < minimum && poolOfRole(role) === GAME_VERIFY)
+    return {
+      ok: false, have, need: minimum, network,
+      why: `that census carries ${have} ${role} node${have === 1 ? '' : 's'} where ${network} was born needing ${minimum}, counting only `
+        + `the nodes that host game ${contract.gameId instanceof Uint8Array ? toHex(contract.gameId).slice(0, 16) : '(none)'} (§0A.4): no round of it is drawn`,
+    };
   if (have < minimum)
     return {
       ok: false, have, need: minimum, network,
@@ -595,6 +619,11 @@ export function chainFactsAt(blocks, censusHeight) {
  * running". So a transaction answers this about itself, and SCAN and RESOLVE
  * ask it the same way rather than two ways.
  */
+/** The advertisement a bond transaction commits to (raw bytes or parsed), or null - as SCAN reads it. */
+export function advertInTransaction(raw) {
+  try { return committedAdvertIn(raw instanceof Uint8Array ? parseTransaction(raw) : raw); } catch { return null; }
+}
+
 function committedAdvertIn(tx) {
   const commitments = commitmentsOf(tx);
   if (!commitments.length) return null;
@@ -657,6 +686,7 @@ function candidatesIn(blocks, censusHeight, network) {
         vout: advert.bondVout,
         pubkey: advert.nodePubkey,
         roles: advert.roles,
+        hostedGames: advert.hostedGames,
       });
     }
   }
@@ -1082,6 +1112,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
       bondSats,
       pubkey: read.advert.nodePubkey,
       roles,
+      hostedGames: read.advert.hostedGames,
       advert: read.advert,
       advertId: read.advertId,
     });
@@ -1215,7 +1246,8 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
         updatedOut.push({ ...e, why: 'its newest advertisement update declares no role or not this round\'s version' });
         continue;
       }
-      eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles,
+      // the update's games replace the bond's first advertisement's (kanban #204: a hosted-games change is an update)
+      eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
         updatedBy: { txid: u.txid, height: u.height, position: u.position } });
     }
   }

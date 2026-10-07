@@ -200,7 +200,7 @@ const TIP = HEIGHT + 10;
 const FROM = HEIGHT - 20;
 const advertFor = (key, endpoint) => ({
   nodePubkey: key, operatorId: 'operator', protocolVersions: [1],
-  roles: ['game', 'settlement'], endpoint, region: 'eu-west',
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement'], endpoint, region: 'eu-west',
   capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,

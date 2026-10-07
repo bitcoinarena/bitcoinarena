@@ -26,13 +26,14 @@ import { bondTransaction } from '../tools/bond.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
 import { deriveCensus, resolveCensus, scanCensus } from '../src/census.js';
 import { genesisFor } from '../src/genesis.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const HEIGHT = 900000;
 const TIP = HEIGHT + 10;
 const advertFor = (n) => ({
   nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
-  roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
@@ -48,7 +49,7 @@ const round = (over = {}) => ({
   bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
   censusHeight: HEIGHT, censusConfirmations: 6, networkId: NETWORK_ID_REGTEST, ...over,
 });
-const candidates = [{ txid: BOND_ID, vout: 0, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] }];
+const candidates = [{ txid: BOND_ID, vout: 0, pubkey: b32(0x11), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }];
 const resolve = () => ({ transaction: BOND });
 
 test('a composed census with no curve is refused instead of returning a root', () => {

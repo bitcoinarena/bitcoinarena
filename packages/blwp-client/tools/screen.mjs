@@ -49,7 +49,7 @@ const node = await serve(openStore(), { plugins: [NEXTBLOCK], port: 0, funded: (
 const operator = node.round.identity.secret;
 const advert = {
   nodePubkey: node.round.pubkey, operatorId: 'screen', protocolVersions: [1],
-  roles: ['game', 'verify'], endpoint: `ws://127.0.0.1:${node.port}`,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify'], endpoint: `ws://127.0.0.1:${node.port}`,
   region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
   settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,

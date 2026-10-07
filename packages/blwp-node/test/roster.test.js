@@ -83,7 +83,7 @@ const contractFor = (over = {}) => ({
 });
 
 const advertFor = (n, roles, guardianOf = []) => ({
-  nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [1], roles,
+  nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [1], roles, hostedGames: [NEXTBLOCK_GAME_ID],
   endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
   bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf, timestamp: 1788700000000n,

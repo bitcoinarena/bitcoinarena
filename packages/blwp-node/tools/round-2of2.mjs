@@ -324,7 +324,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // node and the other a settlement node is not a 2-of-2, it is two
       // committees of one. Measured: with 'game' and 'verify' alone the census
       // carried 0 settlement nodes where regtest was born needing 2.
-      roles: ['game', 'verify', 'settlement'],
+      hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify', 'settlement'],
       endpoint: process.env[`BLWP_WSS_${port}`] || `ws://${host}:${port}`,
       region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
       settlementCapabilities: 0, lightningCapabilities: 0,

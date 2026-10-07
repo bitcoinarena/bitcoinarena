@@ -89,7 +89,7 @@ test('an odd merkle level promotes rather than duplicates', () => {
 test('the census is immutable for a height', () => {
   const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), advertId: b32(n + 90),
                        bondSats: 100000n,
-                       height: 800000 + n, roles: ['game'], spent: false });
+                       height: 800000 + n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false });
   const args = {
     contract: { censusHeight: 900000, censusConfirmations: 6 },
     view: spanning(900000, 900100),
@@ -102,7 +102,7 @@ test('the census is immutable for a height', () => {
 test('immature and spent bonds are excluded', () => {
   const mk = (n, h, spent) => ({ txid: b32(n), vout: 0, pubkey: pk(n), advertId: b32(n + 90),
                                  bondSats: 100000n,
-                                 height: h, roles: ['game'], spent });
+                                 height: h, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent });
   const c = commitCensus(
     [mk(1, 800000, false), mk(2, 900099, false), mk(3, 800000, true)],
     { contract: { censusHeight: 900000, censusConfirmations: 6 },
@@ -126,7 +126,7 @@ test('a bond below the minimum still counts once, never zero', () => {
 
 test('selection never divides, and heavier bonds win more often', () => {
   const mk = (n, bond) => ({ txid: b32(n), vout: 0, pubkey: pk(n), bondSats: bond,
-                             height: 1, roles: ['game'], spent: false });
+                             height: 1, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false });
   const entries = [];
   for (let i = 1; i <= 20; i++) entries.push(mk(i, i === 1 ? 5000000n : 100000n));
 
@@ -134,7 +134,7 @@ test('selection never divides, and heavier bonds win more often', () => {
   for (let s = 0; s < 200; s++) {
     const pick = selectCommittee({
       entries, role: 'game',
-      contract: { gameVerifySlots: 3, bondMinSats: 100000n, networkId: NETWORK_ID_REGTEST },
+      contract: { gameVerifySlots: 3, bondMinSats: 100000n, networkId: NETWORK_ID_REGTEST, gameId: NEXTBLOCK_GAME_ID },
       // A DIFFERENT SEED EVERY ROUND, which is what a beacon gives: the point
       // of the run is that weight decides across many draws, not one.
       committeeSeed: b32(s % 256),
@@ -148,14 +148,14 @@ test('selection never divides, and heavier bonds win more often', () => {
 
 test('the same seed picks the same committee', () => {
   const mk = (n) => ({ txid: b32(n), vout: 0, pubkey: pk(n), bondSats: 100000n,
-                       height: 1, roles: ['game'], spent: false });
+                       height: 1, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false });
   const entries = [1, 2, 3, 4, 5].map(mk);
   // A ROUND NAMES ITS NETWORK, because the census minimum is a genesis fact
   // and the network id is what says which genesis. A bare contract without one
   // is refused now, the same way the census refuses one.
   const round = {
     committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', gameVerifySlots: 2, bondMinSats: 100000n,
-    networkId: NETWORK_ID_REGTEST,
+    networkId: NETWORK_ID_REGTEST, gameId: NEXTBLOCK_GAME_ID,
   };
   const a = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: SEED });
   const b = selectCommittee({ entries, contract: round, role: 'game', committeeSeed: SEED });
@@ -172,7 +172,7 @@ test('the same seed picks the same committee', () => {
   // a settlement signer node count is a different number, and a role with no pool has
   // no committee at all rather than a silent zero
   assert.equal(selectCommittee({
-    entries: entries.map((e) => ({ ...e, roles: ['settlement'] })),
+    entries: entries.map((e) => ({ ...e, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['settlement'] })),
     contract: { ...round, settlementSlots: 4 }, role: 'settlement',
     committeeSeed: SEED }).length, 4);
   assert.throws(() => selectCommittee({ entries, contract: round, role: 'relay', committeeSeed: SEED }),
@@ -204,7 +204,7 @@ test('the same seed picks the same committee', () => {
   // caller's number would look inert when it was not.
   const uneven = [1, 2, 3, 4, 5].map((n) => ({
     txid: b32(n), vout: 0, pubkey: pk(n), bondSats: BigInt(n) * 400000n,
-    height: 1, roles: ['game'], spent: false,
+    height: 1, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   }));
   const fair = selectCommittee({
     entries: uneven, contract: round, role: 'game', committeeSeed: SEED });

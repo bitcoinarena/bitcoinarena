@@ -30,11 +30,12 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 // `BOND` is this file's funding transaction, so the arbitration set comes in
 // under its own name.
 import { BOND as SET, keyFor, bondFor } from './curve.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n) => ({
   nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
-  roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
@@ -52,7 +53,7 @@ const contract = {
   censusHeight: HEIGHT, censusConfirmations: 6,
   bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId: NETWORK_ID_REGTEST,
 };
-const candidates = [{ txid: BOND_ID, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }];
+const candidates = [{ txid: BOND_ID, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }];
 
 const view = (at, { tip = TIP, bits } = {}) => {
   const blocks = [];

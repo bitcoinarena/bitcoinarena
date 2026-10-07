@@ -650,7 +650,7 @@ test('two daemons given the same published hash and height derive the same seed 
     // AND THE SAME SEED PICKS THE SAME SIGNER NODES.
     const entries = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
       txid: b32(n), vout: 0, pubkey: b32(0xa0 + n), bondSats: 100000n,
-      height: 1, roles: ['game'], spent: false,
+      height: 1, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
     }));
     // THE SEED IS THE BEACON'S, handed to the lottery: the contract carries no
     // seed the selection reads, which is what makes grinding a round id

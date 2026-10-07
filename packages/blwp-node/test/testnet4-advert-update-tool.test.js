@@ -22,6 +22,7 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { readAdvertUpdate } from '../../protocol/src/advert-update.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const TOOL = new URL('../tools/testnet4-advert-update.mjs', import.meta.url).pathname;
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -37,7 +38,7 @@ function bondKey(nodeKey) {
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine }).outputKey;
 }
 const advert = (nodePubkey, guardianKey, n) => ({
-  nodePubkey, operatorId: '2of2', protocolVersions: [1], roles: ['game', 'verify', 'settlement'],
+  nodePubkey, operatorId: '2of2', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify', 'settlement'],
   endpoint: `wss://node-${n}.example/`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
   bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [{ federationId: FED, guardianKey: fromHex(guardianKey) }],

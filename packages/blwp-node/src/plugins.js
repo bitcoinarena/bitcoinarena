@@ -48,6 +48,24 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
   return out;
 }
 
+/**
+ * DOES THIS NODE'S ADVERTISEMENT NAME THE GAMES IT HOSTS (§0A.4, kanban #204, the owner 2026-10-07)? An advertised game this
+ * node does not host would draw it into game/verify committees it cannot serve: refused, by name - the node does not
+ * start. A hosted game the advertisement does not name only means the node is not drawn for it until an advertisement
+ * update names it: said, not refused.
+ */
+export function advertisedGamesCheck(advert, plugins) {
+  const hosted = new Set(plugins.keys());
+  const advertised = (advert && Array.isArray(advert.hostedGames) ? advert.hostedGames : []).map(toHex);
+  const notHosted = advertised.filter((g) => !hosted.has(g));
+  const unadvertised = [...hosted].filter((g) => !advertised.includes(g)).map((g) => plugins.get(g).name);
+  if (notHosted.length)
+    return { ok: false, notHosted, unadvertised,
+      why: `this node's advertisement names game${notHosted.length === 1 ? '' : 's'} ${notHosted.map((g) => g.slice(0, 16)).join(', ')} `
+        + 'it does not host (BLWP_GAMES): it would be drawn to replay rounds it cannot play - post an advertisement update or host the game' };
+  return { ok: true, unadvertised };
+}
+
 /** Every core a node installed, over all the games it hosts, by hash: what a stored round's replay page may be served from. */
 export function installedCoresOf(plugins) {
   const all = new Map();

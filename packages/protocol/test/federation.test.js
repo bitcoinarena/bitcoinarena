@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeAdvert, decodeAdvert } from '../src/advert.js';
 import { federationIsBonded } from '../src/federation.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const key = (n) => Uint8Array.from([0x02, ...b32(n)]);
@@ -19,7 +20,7 @@ const ask = (census, over = {}) => federationIsBonded({
 
 test('an advertisement carries guardian_of[] in its signed bytes, sorted', () => {
   const a = {
-    nodePubkey: b32(1), operatorId: 'op', protocolVersions: [1], roles: ['settlement'],
+    nodePubkey: b32(1), operatorId: 'op', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['settlement'],
     endpoint: 'ws://n', region: 'eu', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: b32(0), bondVout: 0,
     bondScriptTemplateVersion: 1, payoutPubkey: b32(3),

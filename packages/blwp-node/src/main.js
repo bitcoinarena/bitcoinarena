@@ -50,7 +50,10 @@ import { startNode } from './node-start.js';
 import { pathToFileURL } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { hostsFromEnv, hostsReader } from './hosts.js';
-import { statSync, readFileSync } from 'node:fs';
+import { statSync, readFileSync, existsSync } from 'node:fs';
+import { advertInTransaction } from '../../protocol/src/census.js';
+import { readAdvertUpdate } from '../../protocol/src/advert-update.js';
+import { fromHex } from '../../protocol/src/hash.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../protocol/src/test-donation-sets.js';
 
@@ -150,6 +153,16 @@ if (process.env.BLWP_ATTACH_PROOF_DIR) {
   const dir = process.env.BLWP_ATTACH_PROOF_DIR;
   options.headerBytes = () => { try { return new Uint8Array(readFileSync(`${dir}/headers.bin`)); } catch { return null; } };
   options.bondProof = () => { try { return JSON.parse(readFileSync(`${dir}/bond.json`, 'utf8')); } catch { return null; } };
+  // THIS NODE'S ADVERTISEMENT (kanban #204): the newest it posted - an update's, when the operator put the update
+  // transaction beside the bond as advert-update.json ({ hex }) - else the one its bond committed to. serve() holds its
+  // hosted_games to BLWP_GAMES and refuses to start on an advertised game it does not host.
+  try {
+    const update = existsSync(`${dir}/advert-update.json`) ? JSON.parse(readFileSync(`${dir}/advert-update.json`, 'utf8')) : null;
+    const read = update && update.hex ? readAdvertUpdate(fromHex(update.hex), { network: process.env.BLWP_DONATION_NETWORK || 'regtest' }) : null;
+    const bond = options.bondProof();
+    const advert = read && read.ok ? read.advert : (bond && bond.hex ? advertInTransaction(fromHex(bond.hex)) : null);
+    if (advert) options.ownAdvert = advert;
+  } catch (e) { console.error(`[games] cannot read this node's advertisement: ${e.message}`); }
 }
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });

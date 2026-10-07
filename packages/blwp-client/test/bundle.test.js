@@ -123,7 +123,7 @@ test('the bundle proves an endpoint exactly as the modules do', () => {
   const nodePubkey = schnorr.getPublicKey(secret);
   const advert = {
     nodePubkey, operatorId: 'somebody', protocolVersions: [1],
-    roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
+    hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
     capacityClass: 2, softwareHash: b32(3), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
     bondScriptTemplateVersion: 1, payoutPubkey: b32(4), guardianOf: [], timestamp: 1788700000000n,

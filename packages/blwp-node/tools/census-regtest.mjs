@@ -39,10 +39,11 @@ import { splitBlock } from '../../protocol/src/block.js';
 import { bondMarker } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const RT = process.env.RT;
 if (!RT) { console.error('RT=<datadir> is required'); process.exit(2); }
-const B = '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';   // another host's bitcoin-cli by BITCOIN_CLI
 const PORT = process.env.RPCPORT || '29443';
 const cli = (...a) =>
   execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8' }).trim();
@@ -118,7 +119,7 @@ function fund(spk, btc = '1.0') {
 const payTo = fromHex(JSON.parse(cli('getaddressinfo', cli('getnewaddress'))).scriptPubKey);
 
 const advertFor = (nodeKey, endpoint, guardian = {}) => ({
-  nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+  nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
   endpoint, region: 'eu-west', capacityClass: 1, softwareHash: new Uint8Array(32).fill(2),
   settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
@@ -261,7 +262,7 @@ console.log('scanned?   elsewhere:',
 // ---- AND A LIST THAT LIES ABOUT THE SAME BLOCKS
 const lying = [honest, doomed, shallow].map((b) => ({
   txid: fromHex(b.txid).reverse(), vout: 0, pubkey: b.nodeKey,
-  bondSats: b.bondSats, height: funded, spent: false, roles: ['game'],
+  bondSats: b.bondSats, height: funded, spent: false, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
 }));
 const told = deriveCensus({ blocks, firstHeight: FROM }, { contract, resolve, bond: SET, candidates: lying });
 console.log('# handed a list claiming all three unspent and deep:');

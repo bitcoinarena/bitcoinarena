@@ -13,6 +13,7 @@ import {
   advertUpdatePayload, readAdvertUpdatePayload, readAdvertUpdate, checkAgainstBond, newestUpdates, ADVERT_UPDATE_BYTES,
 } from '../../protocol/src/advert-update.js';
 import { advertUpdateTransaction, bondTransaction } from '../../protocol/tools/bond.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
@@ -24,7 +25,7 @@ const OLD_KEY = Uint8Array.from([0x03, ...b32(0x4d)]);
 const NEW_KEY = Uint8Array.from([0x02, ...b32(0x7a)]);
 
 const advert = (guardianKey, timestamp = 1788700000000n, nodePubkey = NODE) => ({
-  nodePubkey, operatorId: '2of2', protocolVersions: [1], roles: ['game', 'verify', 'settlement'],
+  nodePubkey, operatorId: '2of2', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify', 'settlement'],
   endpoint: 'wss://node-1.example/', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
   bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [{ federationId: FED, guardianKey }],

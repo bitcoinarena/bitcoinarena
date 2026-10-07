@@ -31,11 +31,12 @@ import {
 } from '../src/census.js';
 import { selectCommittee } from '../src/sortition.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
   nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
-  roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n, ...over,

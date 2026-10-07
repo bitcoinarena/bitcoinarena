@@ -21,6 +21,7 @@ import { parseTransaction } from '../src/tx.js';
 import { bondTransaction } from '../tools/bond.js';
 import { resolveCensus } from '../src/census.js';
 import { fromHex } from '../src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 // A REAL MAINNET TRANSACTION THAT COMMITS TO NOTHING: block 100000, index 1,
 // pre-segwit, two P2PKH outputs and no OP_RETURN. Copied from `tx.test.js`
@@ -39,7 +40,7 @@ const LEGACY_100000 = fromHex(
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
   nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
-  roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n, ...over,
@@ -56,7 +57,7 @@ const funded = (n, sats) => {
     seen: { transaction },
     entry: {
       txid: parseTransaction(transaction).txid, vout: 0, pubkey: b32(n),
-      bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+      bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
     },
   };
 };
@@ -64,7 +65,7 @@ const funded = (n, sats) => {
 const contract = { bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId: NETWORK_ID_REGTEST };
 const entryFor = (n, over = {}) => ({
   txid: parseTransaction(bondOf(n, over.advert || {})).txid, vout: 0,
-  pubkey: b32(n), bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+  pubkey: b32(n), bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   ...(over.entry || {}),
 });
 
@@ -188,8 +189,8 @@ test('the bond amount is the output\'s, not the number the entry claims', () => 
 test('an advertisement that declares no role, or no version we speak, is out', () => {
   const { entries, map } = rig();
 
-  const noRole = { transaction: bondOf(0x21, { roles: [] }) };
-  const seen = resolveCensus([entryFor(0x21, { advert: { roles: [] } })], {
+  const noRole = { transaction: bondOf(0x21, { hostedGames: [NEXTBLOCK_GAME_ID], roles: [] }) };
+  const seen = resolveCensus([entryFor(0x21, { advert: { hostedGames: [NEXTBLOCK_GAME_ID], roles: [] } })], {
     contract, resolve: () => noRole,
   });
   assert.equal(seen.eligible.length, 0);
@@ -286,7 +287,7 @@ test('a witness body the commitment does not name is refused', () => {
   });
   const entry = {
     txid: parseTransaction(wrong).txid, vout: 0, pubkey: b32(0x31),
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   };
   const seen = resolveCensus([entry], { contract, resolve: () => ({ transaction: wrong }) });
   assert.equal(seen.eligible.length, 0, 'a body nothing committed to was taken');
@@ -296,7 +297,7 @@ test('a witness body the commitment does not name is refused', () => {
 test('a transaction that commits to nothing at all resolves nothing', () => {
   const entry = {
     txid: parseTransaction(LEGACY_100000).txid, vout: 0, pubkey: b32(0x41),
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   };
   const seen = resolveCensus([entry], {
     contract, resolve: () => ({ transaction: LEGACY_100000 }),
@@ -315,7 +316,7 @@ test('the roles come from the resolved advertisement, not from the entry', () =>
   const tx = bondOf(0x51);
   const entry = {
     txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(0x51),
-    bondSats: 60000n, height: 900000, roles: ['settlement'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['settlement'], spent: false,
   };
   const seen = resolveCensus([entry], { contract, resolve: () => ({ transaction: tx }) });
 
@@ -359,7 +360,7 @@ test('RESOLVE checks the advertisement signature when its caller brings a curve'
   });
   const entryOf = (transaction) => ({
     txid: parseTransaction(transaction).txid, vout: 0, pubkey: b32(0x11),
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   });
 
   const mine = signedWith(MINE);
@@ -461,7 +462,7 @@ test('RESOLVE reads spentness and depth off the chain rather than off the entry'
 
   const entryFor = (tx, n, over = {}) => ({
     txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(n),
-    bondSats: 60000n, height: HEIGHT - 20, roles: ['game'], spent: false, ...over,
+    bondSats: 60000n, height: HEIGHT - 20, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false, ...over,
   });
   const byKey = new Map([[0x11, live], [0x12, doomed], [0x13, shallow]]);
   const resolve = (e) => ({ transaction: byKey.get(e.pubkey[0]) });
@@ -543,7 +544,7 @@ test('a census checks the marker of its own network, not the default', async () 
   });
   const entryFor = (tx) => ({
     txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(0x11),
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   });
   const round = (networkId) => ({
     bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION, networkId,

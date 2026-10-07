@@ -7,12 +7,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeAdvert, decodeAdvert, advertId } from '../src/advert.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 
 // an advert as the tools build it today (regtest-bond.mjs postBond), and node 1's own guardian endpoint (GET /guardian)
 const advert = () => ({
-  nodePubkey: b32(1), operatorId: '2of2', protocolVersions: [1], roles: ['game', 'settlement', 'verify'],   // the order the encoder writes
+  nodePubkey: b32(1), operatorId: '2of2', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement', 'verify'],   // the order the encoder writes
   endpoint: 'wss://seat.example.com/guardian-1', region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: b32(0), bondVout: 0, bondScriptTemplateVersion: 1,

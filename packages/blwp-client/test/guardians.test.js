@@ -12,6 +12,7 @@ import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { blockHashOf, BITCOIN_MAINNET_GENESIS_HEADER } from '../../protocol/src/chain.js';
 import { bondTransaction, blockOf, advertUpdateTransaction } from '../../protocol/tools/bond.js';
 import { guardiansOf, bondedGuardians } from '../src/guardians.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const key = (n) => Uint8Array.from([0x02, ...b32(n)]);
@@ -30,7 +31,7 @@ const node = (n) => {
   return { secret, pubkey: schnorr.getPublicKey(secret) };
 };
 const advertFor = (pubkey, guardianOf) => ({
-  nodePubkey: pubkey, operatorId: 'guardian', protocolVersions: [1], roles: ['settlement'],
+  nodePubkey: pubkey, operatorId: 'guardian', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['settlement'],
   endpoint: 'wss://guardian.example:443', region: 'eu', capacityClass: 1, softwareHash: b32(3),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
   bondScriptTemplateVersion: 1, payoutPubkey: b32(4), guardianOf, timestamp: 1788700000000n,

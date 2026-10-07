@@ -53,7 +53,7 @@ test('the census root matches, and so does every leaf', () => {
   const v = load('census');
   const mk = (n, bond, height) => ({
     txid: b32(n), vout: n % 3, pubkey: b32(200 - n), advertId: b32(n + 60),
-    bondSats: BigInt(bond), height, roles: ['game', 'verify'], spent: false,
+    bondSats: BigInt(bond), height, hostedGames: [b32(0x67)], roles: ['game', 'verify'], spent: false,
   });
   const c = commitCensus(
     [mk(7, 100000, 800007), mk(3, 500000, 800003), mk(11, 100000, 800011), mk(5, 2000000, 800005)],
@@ -70,7 +70,7 @@ test('the census root matches, and so does every leaf', () => {
 test('tickets, weights and the chosen committee match', () => {
   const v = load('sortition');
   const mk = (n, bond) => ({ txid: b32(n), vout: 0, pubkey: b32(n),
-                             bondSats: BigInt(bond), height: 1, roles: ['game'], spent: false });
+                             bondSats: BigInt(bond), height: 1, hostedGames: [b32(0x67)], roles: ['game'], spent: false });
   const entries = [mk(1, 5000000), mk(2, 100000), mk(3, 100000), mk(4, 300000), mk(5, 100000)];
   const seed = fromHex(v.committeeSeed);
 
@@ -84,7 +84,7 @@ test('tickets, weights and the chosen committee match', () => {
     // is drawn for names its network like any other, because the census
     // minimum is a genesis fact. Five entries clear regtest's two. The seed is
     // an argument now: a beacon fixes it, and no contract names it.
-    contract: { gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin), networkId: NETWORK_ID_REGTEST },
+    contract: { gameVerifySlots: 3, bondMinSats: BigInt(v.bondMin), networkId: NETWORK_ID_REGTEST, gameId: b32(0x67) },
     committeeSeed: seed });
   assert.deepEqual(picked.map((e) => toHex(e.txid)), v.selected);
 });

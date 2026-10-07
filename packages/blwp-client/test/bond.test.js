@@ -25,6 +25,7 @@ import { advertId } from '../../protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { provenBond, askForBond } from '../src/bond.js';
 import { reach } from '../src/directory.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const operator = ed25519.utils.randomSecretKey();
@@ -32,7 +33,7 @@ const operatorPubkey = schnorr.getPublicKey(operator);
 
 const advertFor = (endpoint) => ({
   nodePubkey: operatorPubkey, operatorId: 'somebody', protocolVersions: [1],
-  roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
   softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(4), guardianOf: [], timestamp: 1788700000000n,
