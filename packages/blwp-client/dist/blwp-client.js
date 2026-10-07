@@ -11452,6 +11452,39 @@ function savedCollects(storage, { seed = null } = {}) {
   return out.sort((a, b) => a.savedMs - b.savedMs);
 }
 
+/**
+ * EVERY SAVED PHRASE OF THIS BROWSER, NOT ONLY THE TAB'S (kanban #153, ruled the owner 2026-10-07): a closed tab's round pays
+ * into the wallet of the seed that joined it, and a later tab - which may take another kept phrase, the one with the most
+ * wallet entries - still collects it. The tab's own phrase first, then the kept list (`blwp.seeds`), each once.
+ */
+function browserSeedHexes(storage, tabSeed = null) {
+  const out = [];
+  const add = (h) => { const x = String(h || '').toLowerCase(); if (/^[0-9a-f]{64}$/.test(x) && !out.includes(x)) out.push(x); };
+  add(tabSeed instanceof Uint8Array ? toHex(tabSeed) : tabSeed);
+  let kept = [];
+  try { kept = JSON.parse((storage && storage.getItem('blwp.seeds')) || '[]'); } catch { kept = []; }
+  for (const k of Array.isArray(kept) ? kept : []) add(typeof k === 'string' ? k : k && k.hex);
+  return out;
+}
+
+/**
+ * THE ROUND RECORDS A TAB COLLECTS (kanban #153): every record whose seed is one of the browser's saved phrases, each
+ * collected into its OWN seed's wallet (`seed` on the record, never the tab's), with `own` saying whether it is the tab's
+ * phrase; and, apart, the records whose seed no saved phrase holds - no key is left to redeem them, so they are named
+ * `uncollectable` and paid into no other wallet.
+ */
+function recordsToCollect(storage, { tabSeed = null } = {}) {
+  const seeds = browserSeedHexes(storage, tabSeed);
+  const mine = tabSeed instanceof Uint8Array ? toHex(tabSeed) : String(tabSeed || '').toLowerCase();
+  const collectable = [], uncollectable = [];
+  for (const r of savedCollects(storage, {})) {
+    const hex = toHex(r.seed);
+    if (seeds.includes(hex)) collectable.push(Object.assign(r, { own: hex === mine }));
+    else uncollectable.push(Object.assign(r, { own: false, why: 'its seed is not kept in this browser: no key is left to collect it' }));
+  }
+  return { seeds, collectable, uncollectable };
+}
+
 /** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
 function markCollectDone(storage, roundIdHex, done, seed = null) {
   try {
@@ -19685,6 +19718,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
          returnStake: returnStake, stakeBackLine: stakeBackLine,
          saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,
+         browserSeedHexes: browserSeedHexes, recordsToCollect: recordsToCollect,
          tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,
          invoiceQrSvg: invoiceQrSvg,
          warmLockQuotes: warmLockQuotes,
