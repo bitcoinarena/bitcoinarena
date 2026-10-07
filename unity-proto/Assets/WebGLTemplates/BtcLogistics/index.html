@@ -2376,6 +2376,19 @@
         wrap.className = 'pay-status' + (kind ? ' ' + kind : ''); wrap.style.display = ''; },
       hide() { wrap.style.display = 'none'; } };
     }
+    // WHY ONE ROUND'S DEPOSIT IS MORE THAN ITS STAKE (kanban #30): the round's need - the stake lock, the node fee lock, the
+    // donation, and the fee allowance when fees are charged - rounded up to the smallest whole sat that holds 1, 2, 5 and 10
+    // rounds (page-lock.js oneRoundDepositMsat). Notes are 1 msat since "1 sat = 1 sat" (the owner 2026-10-01), so those fees
+    // are the only reasons. '' when the deposit is the stake.
+    // stake and oneRound in msat
+    function depositWhyLine(stake, oneRound) {
+      if (stake === null || stake === undefined || oneRound === null || oneRound === undefined) return '';
+      const st = BigInt(stake), one = BigInt(oneRound);
+      if (st <= 0n || one === st) return '';
+      const sats = (msat) => { const w = (msat / 1000n).toLocaleString('en-US'); const f = msat % 1000n;
+        return `${f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w} sat`; };
+      return `A round costs ${sats(st)}. You deposit ${sats(one)} per round: the stake, plus the round's node fee and donation, rounded up to a whole sat. Whatever a round does not use stays in your wallet.`;
+    }
     function showDepositOffer(offer, { message = '', title = 'Deposit', overSettings = false } = {}) {
       const el = document.getElementById('blwp-deposit');
       if (!el) return;
@@ -2408,8 +2421,8 @@
       // Lightning payment, the federation's e-cash in the player wallet - or the invoice expired or failed.
       const status = payStatus(el);
       const host = (u) => { try { return new URL(u).host; } catch { return String(u || ''); } };
-      // EXACT AMOUNTS (N rounds play N rounds, the owner 2026-10-01): a deposit is sized in whole 512 msat notes, so it can be
-      // 100.352 sat - shown as it is, never rounded to a sat it is not
+      // EXACT AMOUNTS (N rounds play N rounds, the owner 2026-10-01): shown as they are, never rounded to a sat they are not -
+      // deposits are whole sats, notes are 1 msat (page-lock.js NOTE_MSAT, "1 sat = 1 sat")
       const satNum = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n;
         return f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w; };
       const sats = (msat) => `${satNum(msat)} sat`;
@@ -2467,9 +2480,7 @@
           custom.style.visibility = c.key === 'custom' ? 'visible' : 'hidden';
           // WHY NOT EXACTLY THE STAKE: the round tabs only (Custom and the rest say their own amount)
           const one = offer.choices[0] && offer.choices[0].rounds === 1 ? offer.choices[0].msat : null;
-          why.textContent = c.rounds && one && offer.perRoundStake > 0n && one !== offer.perRoundStake
-            ? `A round costs ${sats(offer.perRoundStake)}. You deposit ${sats(one)} per round because the federation's e-cash comes in notes of 0.512 sat and every part of a round (stake, node fee, donation) is paid in whole notes. Whatever a round does not use stays in your wallet.`
-            : '';
+          why.textContent = c.rounds ? depositWhyLine(offer.perRoundStake, one) : '';
           if (c.key !== 'custom') show(c.msat); else { field.focus(); typed(); }
         });
         tabs.appendChild(b); return b;
