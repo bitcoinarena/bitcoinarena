@@ -15,6 +15,7 @@ import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { computeCurrentConfigHash, computeDe2fConfigHash, computeConfigV3Hash } from '../../protocol/src/genesis.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../protocol/src/manifest.js';
+import { ROUND_PERIOD_MS } from '../../protocol/src/series.js';
 
 /**
  * THE CONFIG A ROUND ON THE TRUCK NAMES (the owner 2026-10-04, fix 1 of the spec audit; §27A.6 "a round is bound to the config
@@ -130,7 +131,7 @@ export const NEXTBLOCK_CORES = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, T
  * NEXTBLOCK'S MANIFEST BODY, from this registration (§0A.3): every core above with the configs it plays, a run of at
  * most the truck's RUN_TICKS, §18A's rank curve at 3/4, a floor of one score unit, the client scripts the game serves
  * (`clients`, the nextblock list in blwp-client/known-good-clients.json) and the donation set the testnet4 series name.
- * round_period 0: the game asks no fixed period of its rounds. The signed manifest (nextblock-manifest.js) is this body
+ * round_period: the 90 s grid its series run on (series.js ROUND_PERIOD_MS). The signed manifest (nextblock-manifest.js) is this body
  * signed by the game's developer with the dev client (blwp-donor/bin/sign-game-manifest.mjs); nextblock-manifest.test.js holds the two to the same bytes.
  */
 export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetId }) {
@@ -143,7 +144,7 @@ export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetI
     resultType: RESULT_TYPE.REPLAY,
     cores: sorted([...NEXTBLOCK_CORES.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...NEXTBLOCK_CORES.get(h).configs.keys()]).map(fromHex) })),
     runTicksMax: TRUCK_ADAPTER.RUN_TICKS,
-    roundPeriodMs: 0n,
+    roundPeriodMs: ROUND_PERIOD_MS,
     payoutRule: PAYOUT_RULE.RANK_CURVE,
     rankNumerator: 3,
     rankDenominator: 4,
