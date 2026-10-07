@@ -4,7 +4,9 @@
 // before the lobby in Unity's RunEndsAtDeliveredTests.AWreckShowsWastedBeforeTheLobby.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { init, step, teleport, groundAt, submitSample, frontAt } from '../src/sim.js';
+import { init, step, teleport, groundAt, submitSample, frontAt, groundCandles } from '../src/sim.js';
+import * as C from '../src/chart.js';
+import { flatGround } from '../src/rules/ground.js';
 import { frontlineZ } from '../src/rules/frontline.js';
 import { levelled } from '../src/rules/candles.js';
 import { heightAtWorld } from '../src/rules/ground.js';
@@ -120,28 +122,98 @@ test('a tank does not steer by the truck: the same tank with the truck anywhere 
 
 const lanesOf = (s) => [0, 1, 2].map((o) => T.objectiveLane(s, L.O_TACTICS, o));
 
-test('three objectives on distinct inner lanes, the spec\'s table on seeds 1-5, apart where the front allows it', () => {
-  // WAR_TACTICS.md §4.11, measured table: RIDGE, HOLLOW, GAP by slot.
-  const table = { 1: [3, 1, 5], 2: [2, 4, 1], 3: [4, 1, 5], 4: [5, 1, 3], 5: [2, 4, 3] };
-  const seen = new Set();
-  for (let seedWord = 1; seedWord <= 20; seedWord++) {
-    const lanes = lanesOf(init(seedWord).i32);
-    if (table[seedWord]) {
-      assert.deepEqual(lanes, table[seedWord], `seed ${seedWord}: objectives on other lanes than §4.11's table`);
-      assert.ok(!seen.has(lanes.join()), `seed ${seedWord}: two of seeds 1-5 give the same three objectives`);
-      seen.add(lanes.join());
+// A MOVING CHART, as a round's tape: one sample every 300 ticks, whole basis points around the open, hashed from
+// (seed, sample) so every seed walks its own way.
+const walkPrice = (seedWord, n, open) => { const bp = Math.max(1, Math.floor(open / 10000));
+  let h = (Math.imul(seedWord, 0x9e3779b1) ^ Math.imul(n + 0x7f4a7c15, 0x85ebca77)) >>> 0; h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d) >>> 0; h ^= h >>> 12;
+  return ((h % 17) - 8) * bp; };
+const objWords = (s) => [0, 1, 2].map((o) => s[L.O_TACTICS + T.TAC_OBJ + o] & ~0xFF00);   // lane and candle, not the holder
+/** §4.11 read independently, from chart.js's GROUND view: HIGH and LOW its own CH_HIGH_T / CH_LOW_T candles, OPEN the newest
+ *  candle on the ground whose low..high holds the open (null when none). Round candle indices. */
+function chartObjectives(st) {
+  const out = new Int32Array(C.CH_WORDS); C.chartView(st, C.CHART_GROUND, out);
+  const n = out[C.CH_CANDLES], first = out[C.CH_FIRST], open = out[C.CH_OPEN];
+  const onGround = (i) => out[C.CH_CANDLE + 4 * n + i] !== C.CH_NONE;
+  let op = null;
+  for (let i = 0; i < n; i++) { const b = C.CH_CANDLE + 4 * i; if (onGround(i) && out[b + 2] <= open && open <= out[b + 1]) op = first + i; }
+  return [first + (out[C.CH_HIGH_T] >> 16), first + (out[C.CH_LOW_T] >> 16), op];
+}
+
+test('the three objectives are the chart\'s HIGH, LOW and OPEN (§4.11): their candles, their lanes, re-read on the sample tick only, moving with the chart', () => {
+  let moves = 0, checked = 0;
+  for (const seedWord of [1, 2, 3, 4, 5]) {
+    const st = init(seedWord), s = st.i32, open = s[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN];
+    for (let o = 0; o < 3; o++) assert.equal(T.objectiveHolder(s, L.O_TACTICS, o), T.HOLDER_NONE, `seed ${seedWord}: a holder at init`);
+    let p = open, words = objWords(s), lanesBefore = lanesOf(s).join();
+    for (let t = 1; t <= 3600; t++) {
+      const sampled = t % 300 === 0;
+      if (sampled) { p += walkPrice(seedWord, t / 300, open); submitSample(st, p); }
+      step(st, 0, 0, 0, ONE, 0);
+      if (!sampled) {
+        assert.deepEqual(objWords(s), words, `seed ${seedWord} tick ${t}: an objective moved between samples`);
+        continue;
+      }
+      words = objWords(s);
+      const want = chartObjectives(st), cands = groundCandles(st);
+      for (let o = 0; o < 3; o++) {
+        if (want[o] === null) { assert.equal(T.objectiveLane(s, L.O_TACTICS, o), T.OBJ_ABSENT, `seed ${seedWord} tick ${t}: OPEN present with no crossing`); continue; }
+        assert.equal(T.objectiveCandle(s, L.O_TACTICS, o), want[o], `seed ${seedWord} tick ${t}: objective ${o} on candle ${T.objectiveCandle(s, L.O_TACTICS, o)}, the chart's is ${want[o]}`);
+        const c = cands.find((x) => x[0] === want[o]);
+        assert.equal(T.objectiveLane(s, L.O_TACTICS, o), T.slotOfX(c[3]), `seed ${seedWord} tick ${t}: objective ${o} not on its candle's lane`);
+        checked++;
+      }
+      if (lanesOf(s).join() !== lanesBefore) moves++;
+      lanesBefore = lanesOf(s).join();
     }
-    assert.deepEqual(lanesOf(init(seedWord).i32), lanes, `seed ${seedWord}: two inits disagree on the objectives`);
-    assert.equal(new Set(lanes).size, 3, `seed ${seedWord}: two objectives share a lane`);
-    for (const lane of lanes) assert.ok(lane >= 1 && lane <= 5, `seed ${seedWord}: an objective on outer lane ${lane}`);
-    for (let o = 1; o < 3; o++) {
-      const taken = lanes.slice(0, o);
-      if (!taken.some((t) => Math.abs(t - lanes[o]) === 1)) continue;
-      const apart = [1, 2, 3, 4, 5].filter((l) => taken.every((t) => Math.abs(t - l) >= 2));
-      assert.equal(apart.length, 0, `seed ${seedWord}: objective ${o} beside a taken lane while lane ${apart[0]} was free`);
+  }
+  assert.ok(checked >= 150 && moves > 0, `nothing to check: ${checked} objective reads, the lanes moved ${moves} times`);
+});
+
+test('OPEN is absent while the window holds no crossing of the open (§4.11): no lane, no target, no supply, off the chart', () => {
+  const st = init(1), s = st.i32, open = s[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN], bp = Math.max(1, Math.floor(open / 10000));
+  for (let k = 1; k <= 70; k++) submitSample(st, open + (200 + k) * bp);       // the whole window above the open
+  assert.equal(T.objectiveLane(s, L.O_TACTICS, T.OBJ_OPEN), T.OBJ_ABSENT);
+  assert.equal(T.objectivePresent(s, L.O_TACTICS, T.OBJ_OPEN), false);
+  assert.notEqual(T.objectiveLane(s, L.O_TACTICS, T.OBJ_HIGH), T.OBJ_ABSENT);
+  assert.notEqual(T.objectiveLane(s, L.O_TACTICS, T.OBJ_LOW), T.OBJ_ABSENT);
+  const out = new Int32Array(C.CH_WORDS); C.chartView(st, C.CHART_GROUND, out);
+  assert.equal(out[C.CH_OBJ + T.OBJ_OPEN * C.CH_OBJ_WORDS + 4], 0, 'an absent OPEN is on the chart');
+  // a held word under it counts for nobody's supply, and no assault picks it
+  s[L.O_TACTICS + T.TAC_OBJ + T.OBJ_OPEN] = T.OBJ_ABSENT | (T.HOLDER_BULL << 8);
+  s[L.O_TACTICS + T.TAC_OBJ + T.OBJ_HIGH] = (s[L.O_TACTICS + T.TAC_OBJ + T.OBJ_HIGH] & ~0xFF00) | (T.HOLDER_BULL << 8);
+  s[L.O_TACTICS + T.TAC_OBJ + T.OBJ_LOW] = (s[L.O_TACTICS + T.TAC_OBJ + T.OBJ_LOW] & ~0xFF00) | (T.HOLDER_BULL << 8);
+  s[L.O_TACTICS + T.TAC_MARKET + T.MK_TREND] = 0; s[L.O_TACTICS + T.TAC_MARKET + T.MK_MOMENTUM] = 0;
+  assert.equal(T.supplyOf(s, L.O_TACTICS, -1), 2, 'the bulls\' supply counted an absent objective');
+  for (let tick = 1; tick <= 20000; tick++) {
+    T.assaultClock(s, L.O_TACTICS, tick);
+    for (const side of [-1, 1]) if (T.assaultPhase(s, L.O_TACTICS, side) !== T.ASSAULT_IDLE)
+      assert.notEqual(T.assaultTarget(s, L.O_TACTICS, side), T.OBJ_OPEN, `tick ${tick}: an assault on an absent OPEN`);
+  }
+});
+
+test('nothing in the objectives reads the ground (§4.11): the same samples on a flat ground give the same objective words', () => {
+  for (const seedWord of [1, 2, 3]) {
+    const a = init(seedWord), b = init(seedWord);
+    b.ground = flatGround(b.ground.cols, b.ground.rows);
+    const open = a.i32[L.O_TACTICS + T.TAC_MARKET + T.MK_OPEN];
+    let p = open;
+    for (let n = 1; n <= 24; n++) {
+      p += walkPrice(seedWord, n, open);
+      submitSample(a, p); submitSample(b, p);
+      assert.deepEqual(objWords(b.i32), objWords(a.i32), `seed ${seedWord} sample ${n}: the objectives read the ground`);
     }
-    // no holder at init
-    for (let o = 0; o < 3; o++) assert.equal(T.objectiveHolder(init(seedWord).i32, L.O_TACTICS, o), T.HOLDER_NONE);
+  }
+});
+
+test('the push ceiling is 24 m on every lane, HIGH\'s lane included, with no trend and no assault (§4.11: the old RIDGE cap is gone with RIDGE)', () => {
+  for (const seedWord of [1, 2, 3, 4, 5]) {
+    const s = init(seedWord).i32;
+    s[L.O_TACTICS + T.TAC_MARKET + T.MK_TREND] = 0;
+    for (const si of [0, 1]) s[L.O_TACTICS + T.TAC_ASSAULT + 3 * si] = 0;          // idle
+    for (const side of [-1, 1]) for (let slot = 0; slot < T.SLOTS_PER_SIDE; slot++) {
+      const c = T.laneTerms(s, L.O_TACTICS, side, slot).ceiling;
+      assert.equal(c, 24 * ONE, `seed ${seedWord} side ${side} slot ${slot}${slot === T.objectiveLane(s, L.O_TACTICS, 0) ? ' (objective 0\'s lane)' : ''}: ceiling ${c / ONE} m`);
+    }
   }
 });
 
@@ -155,13 +227,13 @@ test('a team\'s objective weight is 2 on an objective\'s lane, 1 beside one, 0 e
   }
 });
 
-test('push moves one 8 m step on its re-read only, on a confirmed verdict with the team on post, stays in [-8, the lane ceiling], at most 16 on a quiet RIDGE; holders flip only on their re-read', () => {
+test('push moves one 8 m step on its re-read only, on a confirmed verdict with the team on post, stays in [-8, the lane ceiling]; holders flip only on their re-read', () => {
   const pushTick = (s, w, tick) => ((tick + ((T.mix(s[L.O_TACTICS + T.TAC_SEED], 300 + w) >>> 1) % 300)) % 300) === 0;
   const holdTick = (s, o, tick) => ((tick + ((T.mix(s[L.O_TACTICS + T.TAC_SEED], 400 + o) >>> 1) % 300)) % 300) === 0;
   // Seeds 1-10: the hold cadence steps a push rarely (measured 0-10 steps a seed, 50 in all; seeds 1, 2 and 8 none).
   let steps = 0, flips = 0;
   for (const seedWord of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
-    const st = init(seedWord), s = st.i32, lanes = lanesOf(s);
+    const st = init(seedWord), s = st.i32;
     const seamAt = (x) => frontAt(st, x), ground = (x, z) => groundAt(st, x, z);
     for (let t = 0; t < 3600; t++) {
       const before = Array.from({ length: 12 }, (_, w) => s[L.O_TACTICS + T.TAC_PUSH + w]);
@@ -180,22 +252,14 @@ test('push moves one 8 m step on its re-read only, on a confirmed verdict with t
       const tick = s[L.O_TICK];
       for (let w = 0; w < 12; w++) {
         const now = s[L.O_TACTICS + T.TAC_PUSH + w], d = now - before[w];
-        // The ceiling is the lane's own (laneTerms, §4.11-§4.14): 16 on RIDGE's lane and 24 elsewhere, raised by the trend and
+        // The ceiling is the lane's own (laneTerms, §4.11-§4.14): 24 on every lane, moved by the trend and
         // by an assault (40 on its lane, 32 beside). Measured on the moving chart (2026-09-17): seed 6 tick 2332, team 11 at
         // 32 m beside an assault - [-8, 24] held on these seeds only while no assault pushed past 24.
         const ceiling = T.laneTerms(s, L.O_TACTICS, w < 6 ? -1 : 1, s[L.O_TACTICS + T.TAC_SLOT + w]).ceiling;
         assert.ok(now >= -8 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push ${now / ONE} m`);
         if (d > 0) assert.ok(now <= ceiling, `seed ${seedWord} tick ${tick}: team ${w} pushed to ${now / ONE} m over its ceiling ${ceiling / ONE}`);
-        if (s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE] && T.assaultPhase(s, L.O_TACTICS, w < 6 ? -1 : 1) === T.ASSAULT_IDLE && T.trendFor(s, L.O_TACTICS, w < 6 ? -1 : 1) <= 0)
-          assert.ok(now <= 16 * ONE, `seed ${seedWord} tick ${tick}: team ${w} on RIDGE pushed ${now / ONE} m`);
         if (d === 0) continue;
-        // a scoot onto RIDGE may cut a push to the crest's 16 m on the shooter's tick
-        // RIDGE's ceiling is not the literal 16 m once §4.14 is in it: the trend's side gets + 8 x strength and the
-        // side it runs against - 8 x strength (RULED 2026-09-19 with the seeded tape, which opens some rounds with a
-        // trend where the old flat tape never did). The exemption reads the lane's own ceiling, so it still exempts
-        // exactly the scoot that cuts a push to the crest and nothing else.
-        const ontoRidge = s[L.O_TACTICS + T.TAC_SLOT + w] === lanes[T.OBJ_RIDGE] && now === ceiling && d < 0;
-        if (!ontoRidge) {
+        {
           assert.ok(pushTick(s, w, tick), `seed ${seedWord} tick ${tick}: team ${w} push moved off its re-read tick`);
           assert.equal(Math.abs(d), 8 * ONE, `seed ${seedWord} tick ${tick}: team ${w} push moved ${d / ONE} m`);
           assert.ok(onPostAtRead[w], `seed ${seedWord} tick ${tick}: team ${w} pushed with a tank off post`);
@@ -257,20 +321,24 @@ test('with nobody fighting and no assault running, a team rests at +8 m on an ob
   }
 });
 
-test('the objective words are the same with the truck parked and driven through RIDGE, until the fight itself differs', () => {
+test('the objective words are the same with the truck parked and driven through HIGH, until the fight itself differs', () => {
   // Seeds 83 and 63. RE-PICKED with the army deployed at spawn (the owner 2026-09-19): a tank is now put on its post
   // when it spawns, so the opening world is a different world and seeds 21 and 109 - picked against the walk-in -
   // now part after 35 ticks and compare nothing. The same search as before over seeds 1-120 (the worlds identical
   // past 300 ticks with a holder written inside that stretch) leaves 14 qualifying; these two hold the most of both,
   // splitting at 606 and 352 ticks with 1169 and 838 holder-ticks. The assertion, its thresholds and what it holds
   // are unchanged: the objective words must not read the truck.
-  for (const seedWord of [83, 63]) {
+  // RE-PICKED AGAIN when §4.11's objectives became the chart's (kanban #29): HIGH, LOW and OPEN sit on other lanes than
+  // the relief's three did, so the fight around them is another fight and seed 83 parted after 93 ticks. The same
+  // search over seeds 1-120 leaves 36 qualifying; these two hold the most of both - identical for 1232 and 998 ticks,
+  // with 2841 and 2804 holder-ticks.
+  for (const seedWord of [110, 109]) {
     const a = init(seedWord), b = init(seedWord);
-    const ridgeX = T.slotX(T.objectiveLane(a.i32, L.O_TACTICS, T.OBJ_RIDGE));
+    const highX = T.slotX(T.objectiveLane(a.i32, L.O_TACTICS, T.OBJ_HIGH));
     let compared = 0, written = 0;
     for (let t = 0; t < 1800; t++) {
       step(a, 0, 0, 0, ONE, ONE);
-      teleport(b, ridgeX + Math.round((-40 + 80 * t / 1800) * ONE), Math.round((20 - 40 * t / 1800) * ONE), 0);
+      teleport(b, highX + Math.round((-40 + 80 * t / 1800) * ONE), Math.round((20 - 40 * t / 1800) * ONE), 0);
       step(b, 0, 0, 0, ONE, ONE);
       for (let o = 0; o < 3; o++) assert.equal(T.objectiveLane(b.i32, L.O_TACTICS, o), T.objectiveLane(a.i32, L.O_TACTICS, o));
       let same = true;
@@ -471,7 +539,10 @@ test('an assault starts only on an objective the side does not hold, never while
   // 12 once 087b707f raised fight difficulty (the owner 2026-09-23: FIRE_DAMAGE 11/13 -> 12/14, RIFLE_DAMAGE
   // 10 -> 11): harder hits kill more of the men an assault needs, fewer survive to hold, and the clock reads
   // the holders. Measured on this seed with every §4.12 clause above still passing; only the count moved.
-  assert.equal(starts, 12, `${starts} assaults, not the measured 12`);
+  // 10 once §4.11's objectives became the chart's HIGH, LOW and OPEN (kanban #29): the assaults go for other lanes, and
+  // where they go decides who holds, which is what the clock reads. Every §4.12 clause above passed on the run that moved
+  // it (the only red was this line: "10 assaults, not the measured 12").
+  assert.equal(starts, 10, `${starts} assaults, not the measured 10`);
   assert.ok(starts > 0, 'no assault ran at all, so nothing above was checked');
 });
 
