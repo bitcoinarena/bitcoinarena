@@ -66,3 +66,23 @@ test('withdraw: below the minimum nothing is asked of the LND; above it, the lar
   const high = await withdrawToLnd({ client: { withdrawableMsat: async () => '25000', withdraw: async (inv) => JSON.stringify({ state: 'Success', preimage: 'ab' }) }, lnd, minMsat: 10000n });
   assert.equal(high.withdrawn, true); assert.deepEqual(made, [25000n]);
 });
+
+// ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (kanban #230, the owner 2026-10-07 11:50): every pass joined the federation
+// again and never closed the client - after 29 h each donor held ~720 sockets, 680 MB and 54-57% CPU between its 300 s passes,
+// and every client wrote the same wallet file. walletClients joins once per federation and hands that client back.
+test('walletClients: one join per federation across passes; a failed join is tried again next pass', async () => {
+  const { walletClients } = await import('../src/donor.js');
+  let joins = 0, fail = true;
+  const clientFor = walletClients(async (invite, fed) => { joins++; if (fed === 'bad' && fail) throw new Error('no answer'); return { fed, n: joins }; });
+  const a1 = await clientFor('inv', 'fedA', 's', null);
+  const a2 = await clientFor('inv', 'fedA', 's', null);
+  const [a3, a4] = await Promise.all([clientFor('inv', 'fedA', 's', null), clientFor('inv', 'fedA', 's', null)]);
+  assert.equal(joins, 1, `${joins} joins for one federation over four asks`);
+  assert.ok(a1 === a2 && a2 === a3 && a3 === a4, 'the same client every pass');
+  await clientFor('inv', 'fedB', 's', null);
+  assert.equal(joins, 2, 'a second federation has its own client');
+  await assert.rejects(clientFor('inv', 'bad', 's', null), /no answer/);
+  fail = false;
+  const b = await clientFor('inv', 'bad', 's', null);
+  assert.equal(b.fed, 'bad', 'a failed join is not kept: the next pass joins again');
+});

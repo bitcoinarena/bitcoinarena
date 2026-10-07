@@ -97,6 +97,24 @@ export async function redeemAll({ client, donations, recipientPkHex, secretHex, 
  * THE WITHDRAW TO THE DEV'S OWN LND, once there is enough to be worth one Lightning fee: the largest invoice the wallet can
  * pay through a gateway (fees taken off by the stock client), made by the dev's LND and paid from the federation.
  */
+/**
+ * ONE WALLET CLIENT PER FEDERATION FOR THE PROCESS (kanban #230, the owner 2026-10-07 11:50): each pass joined the federation
+ * again and no client was ever closed - after 29 h a donor held ~720 sockets and 680 MB and spent 54-57% CPU between its 300 s
+ * passes, and every one of those clients wrote the same wallet file. `join` is called once per federation; the join itself is
+ * kept, so two asks never open two clients; a join that failed is forgotten and tried again on the next pass.
+ */
+export function walletClients(join) {
+  const held = new Map();
+  return (invite, federationId, secret, store) => {
+    if (!held.has(federationId)) {
+      const p = Promise.resolve().then(() => join(invite, federationId, secret, store));
+      held.set(federationId, p);
+      p.catch(() => { if (held.get(federationId) === p) held.delete(federationId); });
+    }
+    return held.get(federationId);
+  };
+}
+
 export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blwp donations' }) {
   const can = BigInt(await client.withdrawableMsat());
   if (can < minMsat) return { withdrawn: false, withdrawableMsat: can, why: `${can} msat withdrawable, below the ${minMsat} msat minimum` };
