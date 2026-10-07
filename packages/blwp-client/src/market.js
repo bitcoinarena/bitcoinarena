@@ -41,7 +41,9 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
  * donation (0-5%, the player's own setting) and the net stake that is at risk. An unpinned market carries the second
  * confirmation's words: its developer key and manifest id.
  */
-export function pickSheet({ market, stakeMsat, donationBps = 500 }) {
+// `contract`: the round's (its stake is read here, so the page names no contract field); `stakeMsat` instead, for a caller with no
+// contract at hand.
+export function pickSheet({ market, contract = null, stakeMsat = contract ? contract.stakeMsat : 0n, donationBps = 500 }) {
   const stake = BigInt(stakeMsat);
   const fee = entryFeeMsat(stake);
   const donation = (stake * BigInt(donationBps)) / 10000n;
@@ -82,6 +84,15 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
   const lock = stakeLock ? await handLock({ entryId: eid, fields: stakeLock.fields, nodes: took, needed: took.length, fetcher }) : null;
   const feeLock = stakeLock && stakeLock.feeLock ? await handLock({ entryId: eid, fields: stakeLock.feeLock.fields, nodes: took, needed: took.length, fetcher, door: 'fee-lock' }) : null;
   return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock, feeLock };
+}
+
+/**
+ * THE TAB'S RECORD OF A PICK (what the lobby's market lines are made of): its round, entry and pick, its market's game, its
+ * stake and entry close as the round's contract says them, and the signer nodes to ask for its outcome.
+ */
+export function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = false }) {
+  return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(round.stakeMsat), entryCloseMs: String(round.entryCloseMs),
+    nodes: [...nodes], confirmed: !!confirmed };
 }
 
 /** Ed25519 through the browser's WebCrypto; null where the browser cannot (the attestation is then shown unverified). */
@@ -143,12 +154,12 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     }
     const check = o.check || { verified: false, why: 'not checked yet' };
     if (!check.verified) {
-      lines.push({ kind: 'market', text: `${head}: the seats say '${o.label}' - UNVERIFIED (${check.why})` });
+      lines.push({ kind: 'market', text: `${head}: the signer nodes say '${o.label}' - UNVERIFIED (${check.why})` });
       continue;
     }
     const row = o.table && o.table.rows ? o.table.rows.find((r) => r.entryId === p.entryIdHex) : null;
     const signed = `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
-    if (!row) { lines.push({ kind: 'market', text: `${head}: ${signed} · your pick is not in the seats' table` }); continue; }
+    if (!row) { lines.push({ kind: 'market', text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     const net = BigInt(row.netMsat);
     const pay = BigInt(row.payoutMsat);
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
