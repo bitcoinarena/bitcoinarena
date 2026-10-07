@@ -93,3 +93,38 @@ test('a duplicated tab does not run the same wallet: it finds the phrase locked,
   assert.notEqual(b.seed, a.seed, 'after the reload the duplicate is still the first tab\'s player');
   assert.equal(b.reloaded(), false);
 });
+
+// A NEW TAB THAT FINDS A KEPT PHRASE'S LOCK TAKEN BY ANOTHER TAB'S COLLECT DOES NOT MINT (kanban #153 (b), the owner 2026-10-07):
+// measured on 0.0.2842 (comment 695), tab B took the free kept phrase adddd868 while tab A was collecting its record under
+// blwp.phrase.adddd868..., found the lock taken, dropped the phrase, reloaded and minted a new one (13ea16be). It now waits
+// for the collect to let go and keeps the phrase; a phrase a LIVE tab holds is still dropped (two tabs, two players).
+function fakeLocks(taken) {
+  const asked = [];
+  return { asked, request: (name, opts, cb) => { if (typeof opts === 'function') { cb = opts; opts = {}; } asked.push({ name, wait: !opts.ifAvailable });
+    if (taken.has(name) && opts.ifAvailable) return Promise.resolve(cb(null)); return Promise.resolve(cb({ name })); } };
+}
+
+test('a kept phrase whose lock a collect holds: the new tab keeps it and waits, no reload, no new phrase', () => {
+  const L = store();
+  const a = openTab(L); const p = a.seed; a.close(); clock += 60_000;      // a kept phrase, no tab on it
+  L.setItem('blwp.seed.collecting.' + p.slice(0, 16), JSON.stringify({ at: clock }));   // another tab is collecting its record
+  const locks = fakeLocks(new Set(['blwp.phrase.' + p.slice(0, 16)]));
+  let reloads = 0; const T = store();
+  const k = Keeper({ L, T, now: () => clock, every: () => {}, on: () => {}, random: () => `tab${++tabs}`, locks, reload: () => { reloads++; } });
+  k.beat();
+  assert.equal(T.getItem('blwp.player.seed'), p, 'the tab dropped the kept phrase');
+  assert.equal(reloads, 0, 'the tab reloaded to take a new phrase');
+  assert.equal(JSON.parse(L.getItem('blwp.seeds')).length, 1, 'a phrase was minted for a collision');
+  assert.ok(locks.asked.some((x) => x.name === 'blwp.phrase.' + p.slice(0, 16) && x.wait), 'it waits for the lock');
+});
+
+test('a kept phrase a live tab holds (a duplicated tab): still dropped, as before', () => {
+  const L = store();
+  const a = openTab(L); const p = a.seed;
+  const locks = fakeLocks(new Set(['blwp.phrase.' + p.slice(0, 16)]));
+  let reloads = 0; const T = store(); T.setItem('blwp.player.seed', p); T.setItem('blwp.tab.id', 'dup');
+  const k = Keeper({ L, T, now: () => clock, every: () => {}, on: () => {}, random: () => `tab${++tabs}`, locks, reload: () => { reloads++; } });
+  k.beat();
+  assert.equal(reloads, 1);
+  assert.equal(T.getItem('blwp.player.seed'), null);
+});
