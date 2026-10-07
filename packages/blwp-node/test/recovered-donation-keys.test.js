@@ -32,12 +32,14 @@ function storeWith(rows) {
     settlementDonationOutputs: (rid) => out.filter((r) => toHex(r.roundId) === toHex(rid)).length,
     donationBackfilled: (rid) => marks.has(toHex(rid)),
     markDonationBackfilled: (rid, r) => marks.set(toHex(rid), r),
-    noteBackfillTry: (rid) => { const n = (tries.get(toHex(rid)) || 0) + 1; tries.set(toHex(rid), n); return n; },
+    backfillTry: (rid) => tries.get(toHex(rid)) || null,
+    putBackfillTry: (rid, n, at) => tries.set(toHex(rid), { tries: n, lastMs: at }),
   };
   return { round, out, marks };
 }
+let clock = Date.parse('2026-10-07T12:00:00Z');
 function seat(round, { plan = PLAN, stored = () => true } = {}) {
-  const s = new LockSettlement(round, { port: { status: async (o) => ({ stored: stored(o) ? { contractId: 'c', blocksLeft: 10 } : null }), settle: async () => ({}) } });
+  const s = new LockSettlement(round, { now: () => clock, port: { status: async (o) => ({ stored: stored(o) ? { contractId: 'c', blocksLeft: 10 } : null }), settle: async () => ({}) } });
   s.federationSaw = async () => ({ verdict: 'in', why: '3 of 3 payout contract(s) stored' });
   s.planOf = async () => ({ ok: true, plan });
   return s;
@@ -105,20 +107,30 @@ test('backfill: a recovered round not rebuildable now stays unmarked and is inde
   assert.equal(marks.size, 1);
 });
 
-test('backfill: a round still not rebuildable after BACKFILL_TRIES passes is marked checked with the reason, and not asked again', async () => {
-  const { BACKFILL_TRIES } = await import('../src/settlement.js');
+test('backfill: a try counts only when the round\'s last counted try is 6 h old; four spaced tries mark it checked with the reason', async () => {
+  const { BACKFILL_TRIES, BACKFILL_TRY_GAP_MS } = await import('../src/settlement.js');
+  assert.equal(BACKFILL_TRIES, 4); assert.equal(BACKFILL_TRY_GAP_MS, 6 * 3600 * 1000);
   const rows = new Map([[toHex(RID), { kept: { txid: TXID, state: ACCEPTED, why: RECOVERED }, moves: MOVES }]]);
   const { round, out, marks } = storeWith(rows);
   const s = seat(round);
   s.planOf = async () => ({ ok: false, why: 'nothing is claimed while a run is not final with its window closed: 7c27840f is PROVISIONALLY_FINAL' });
-  for (let k = 1; k < BACKFILL_TRIES; k++) {
-    const r = await s.backfillDonationKeys({ paceMs: 0 });
-    assert.equal(r.checked, 1); assert.equal(marks.size, 0, `marked after ${k} tries`);
-  }
-  const last = await s.backfillDonationKeys({ paceMs: 0 });
+  const H = 3600 * 1000, t0 = clock;
+  const pass = async (atMs) => { clock = atMs; return s.backfillDonationKeys({ paceMs: 0 }); };
+  await pass(t0);                                                     // first try: counted (1)
+  assert.equal(round.backfillTry(RID).tries, 1);
+  for (const h of [1, 2, 3, 5.9]) await pass(t0 + h * H);             // restarts inside 6 h: the pass runs, no try consumed
+  assert.equal(round.backfillTry(RID).tries, 1, 'a restart inside 6 h consumed a try');
+  assert.equal(marks.size, 0);
+  await pass(t0 + 6 * H);                                             // 6 h after the last counted try: counted (2)
+  assert.equal(round.backfillTry(RID).tries, 2);
+  await pass(t0 + 7 * H);                                             // 1 h later: not counted
+  assert.equal(round.backfillTry(RID).tries, 2);
+  await pass(t0 + 12 * H);                                            // (3)
+  assert.equal(marks.size, 0, 'marked before four counted tries');
+  const last = await pass(t0 + 18 * H);                               // (4): marked, with the reason
+  assert.equal(round.backfillTry(RID).tries, BACKFILL_TRIES);
   assert.equal(last.gaveUp, 1);
-  assert.match(marks.get(toHex(RID)).why, new RegExp(`not rebuilt after ${BACKFILL_TRIES} tries: its plan was not rebuilt: nothing is claimed`));
-  const after = await s.backfillDonationKeys({ paceMs: 0 });
-  assert.equal(after.checked, 0, 'asked again after it was marked');
+  assert.match(marks.get(toHex(RID)).why, /^not rebuilt after 4 tries: its plan was not rebuilt: nothing is claimed/);
+  assert.equal((await pass(t0 + 30 * H)).checked, 0, 'asked again after it was marked');
   assert.equal(out.length, 0);
 });
