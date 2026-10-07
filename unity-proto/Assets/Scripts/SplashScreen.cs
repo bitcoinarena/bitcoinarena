@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 #if UNITY_WEBGL && !UNITY_EDITOR
 using System.Runtime.InteropServices;
 #endif
@@ -55,6 +56,8 @@ public class SplashScreen : MonoBehaviour
     readonly System.Collections.Generic.List<int> _howToShown = new System.Collections.Generic.List<int>();
     Rect _lastName, _lastKey, _lastMore, _lastBalance;
     string _lastNotice = "";
+    /// <summary>The collect lines this frame drew - text, kind, rect, font size - for the lobby report (kanban #153).</summary>
+    readonly List<(string text, string kind, Rect rect, int size)> _lastCollect = new List<(string, string, Rect, int)>();
     string _lastSilent = "";
     Rect _lastSilentRect;
     string _lastHint = "";
@@ -773,6 +776,31 @@ public class SplashScreen : MonoBehaviour
             PanelSkin.Border(_lastSilentRect, new Color(1f, 0.42f, 0.42f, 0.9f));
             GUI.Label(new Rect(_lastSilentRect.x + 10f, _lastSilentRect.y + 6f, inner, height - 12f), said, red);
         }
+        // THE COLLECT'S OWN LINES (kanban #153, the owner 2026-10-07): under the last round row - and under the red box when there is
+        // one - inside the list, each set smaller until it fits its width, never past the list's foot (so never over the hint,
+        // PLAY or SPECTATE); nothing when the page wrote none. The words and their kind are the page's.
+        _lastCollect.Clear();
+        var collectLines = Blwp.DailyLobby.CollectLines(_lobby);
+        if (collectLines.Length > 0 && l.list.height > 0)
+        {
+            int drawnRows = Mathf.Clamp(rows.Length - _offset, 0, l.rows);
+            float top = Mathf.Max(l.list.y + drawnRows * l.rowH, _lastSilentRect.height > 0f ? _lastSilentRect.yMax + 4f : 0f);
+            if (rows.Length == 0 && string.IsNullOrEmpty(_lastSilent)) top = l.list.y + l.rowH;   // under "No round is open"
+            var cs = new GUIStyle(_body) { alignment = TextAnchor.MiddleLeft, wordWrap = false, clipping = TextClipping.Clip };
+            float lineH = Mathf.Max(l.rowH * 0.62f, 14f);
+            foreach (var c in collectLines)
+            {
+                if (top + lineH > l.list.yMax) break;
+                var rect = new Rect(l.list.x + 8f, top, l.list.width - 16f, lineH);
+                var said = new GUIContent(c.text);
+                cs.fontSize = Mathf.RoundToInt(font * 0.85f);
+                while (cs.fontSize > 9 && cs.CalcSize(said).x > rect.width) cs.fontSize--;
+                cs.normal.textColor = Blwp.DailyLobby.CollectColour(c.kind);
+                GUI.Label(rect, said, cs);
+                _lastCollect.Add((c.text, c.kind, rect, cs.fontSize));
+                top += lineH;
+            }
+        }
         if (rows.Length == 0 && l.list.height > 0 && string.IsNullOrEmpty(_lastSilent))
         {
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
@@ -868,6 +896,7 @@ public class SplashScreen : MonoBehaviour
               .Append(",\"howToPrev\":").Append(R(_lastHowToPrev)).Append(",\"howToNext\":").Append(R(_lastHowToNext))
               .Append(",\"silent\":").Append(J(_lastSilent)).Append(",\"hintText\":").Append(J(_lastHint)).Append(",\"silentRect\":").Append(R(_lastSilentRect))
               .Append(",\"picked\":").Append(J(_pickId))
+              .Append(",\"collect\":[").Append(string.Join(",", _lastCollect.ConvertAll((c) => "{\"text\":" + J(c.text) + ",\"kind\":" + J(c.kind) + ",\"rect\":" + R(c.rect) + ",\"size\":" + c.size + "}"))).Append(']')
               .Append(",\"listed\":").Append(_lobby.rows.Length).Append(",\"rows\":[");
             for (int i = 0; i < _drawnRows.Count; i++)
             {

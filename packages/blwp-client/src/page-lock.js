@@ -1272,6 +1272,36 @@ export function recordsToCollect(storage, { tabSeed = null } = {}) {
   return { seeds, collectable, uncollectable };
 }
 
+/**
+ * THE COLLECT'S LINES FOR THE LOBBY (kanban #153, the owner 2026-10-07): at most three, only those that apply, in the words of
+ * the collect's records line - another kept seed's records (open / done, collected too; or held by another tab), a failed
+ * collect, an uncollectable record. `records` as the page keeps them in BLWP_RECORDS ({ round, seed, own, state });
+ * `failed` a Map round -> the error; `held` a Set of rounds another tab holds. Each: { text, kind }.
+ */
+export function collectLines(records = [], { failed = new Map(), held = new Set() } = {}) {
+  const r8 = (x) => String(x || '').slice(0, 8);
+  const lines = [];
+  const others = records.filter((r) => !r.own && r.state !== 'uncollectable');
+  if (others.length) {
+    const seeds = [...new Set(others.map((r) => r8(r.seed)))];
+    const each = others.map((r) => `${r8(r.round)} ${held.has(r.round) ? 'held by another tab' : r.state === 'done' ? 'done' : 'open'}`);
+    const collected = others.some((r) => !held.has(r.round));
+    lines.push({ kind: 'other', text: `Other kept seed${seeds.length > 1 ? 's' : ''} ${seeds.join(', ')}: round${others.length > 1 ? 's' : ''} ${each.join(', ')}${collected ? ', collected too' : ''}` });
+  }
+  const bad = records.filter((r) => failed.has(r.round));
+  if (bad.length) {
+    const why = String(failed.get(bad[0].round) || '').slice(0, 60);
+    lines.push({ kind: 'failed', text: `Collect failed for round${bad.length > 1 ? 's' : ''} ${bad.map((r) => r8(r.round)).join(', ')}: ${why} - tried again` });
+  }
+  const lost = records.filter((r) => r.state === 'uncollectable');
+  if (lost.length) {
+    lines.push({ kind: 'uncollectable', text: lost.length > 1
+      ? `Uncollectable: rounds ${lost.map((r) => `${r8(r.round)} (seed ${r8(r.seed)})`).join(', ')} - their seeds are not kept in this browser: no key is left to collect them`
+      : `Uncollectable: round ${r8(lost[0].round)} (seed ${r8(lost[0].seed)}) - its seed is not kept in this browser: no key is left to collect it` });
+  }
+  return lines.slice(0, 3);
+}
+
 /** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
 export function markCollectDone(storage, roundIdHex, done, seed = null) {
   try {
@@ -1302,18 +1332,22 @@ const COLLECT_NOTE = 'blwp.collect.';
  * its id and name a federation. Nothing is spent. Returns the rounds worth keeping - the page
  * keeps them and looks at them as its own.
  */
-export async function findOwedRounds({ seed, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [] } = {}) {
-  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher = fetch, sinceMs = 0, known = [], knownBySeed = null } = {}) {
+  // EVERY SAVED PHRASE AT ONCE (kanban #153, the owner 2026-10-07): each signer node's /settled is read once and matched against
+  // every phrase's keys - 7 asks on 7 signer nodes, not 7 per phrase. One `seed` (with `known`) is the one-phrase scan as before.
+  const list = Array.isArray(seeds) ? seeds : [seed];
+  if (!list.length || !list.every((s) => s instanceof Uint8Array && s.length === 32))
     throw new Error('the rounds owed to a player are found from the player\'s 32-byte seed, and none was given');
   const base = (n) => String(n).replace(/\/+$/, '');
-  const skip = new Set(known.map((h) => String(h).toLowerCase()));
+  const skipOf = (s) => new Set(((knownBySeed && knownBySeed.get(toHex(s))) || (list.length === 1 ? known : [])).map((h) => String(h).toLowerCase()));
+  const skips = list.map(skipOf);
   const listed = new Map();
   for (const node of nodes) {
     let got = null;
     try { const r = await fetcher(`${base(node)}/settled?since=${Math.max(0, Math.floor(Number(sinceMs) || 0))}`); if (r.ok) got = await r.json(); } catch { got = null; }
     for (const x of (got && Array.isArray(got.rounds) ? got.rounds : [])) {
       const id = String(x.id || '').toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(id) || skip.has(id)) continue;
+      if (!/^[0-9a-f]{64}$/.test(id)) continue;
       const l = listed.get(id) || { payouts: new Set(), refunds: new Set() };
       for (const k of x.payouts || []) l.payouts.add(String(k).toLowerCase());
       for (const k of x.refunds || []) l.refunds.add(String(k).toLowerCase());
@@ -1321,20 +1355,28 @@ export async function findOwedRounds({ seed, curve, nodes = [], fetcher = fetch,
     }
   }
   const found = [];
+  const contracts = new Map();
   for (const [id, l] of listed) {
-    const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve }).pubkey));
-    const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
-    if (!payout && !lock) continue;
-    let round = null;
-    for (const node of nodes) {
-      try {
-        const r = await fetcher(`${base(node)}/round?id=${id}`);
-        if (!r.ok) continue;
-        const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
-        if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
-      } catch { /* this signer node did not answer, or not with the round */ }
+    for (let i = 0; i < list.length; i++) {
+      if (skips[i].has(id)) continue;
+      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve }).pubkey));
+      const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
+      if (!payout && !lock) continue;
+      if (!contracts.has(id)) {
+        let round = null;
+        for (const node of nodes) {
+          try {
+            const r = await fetcher(`${base(node)}/round?id=${id}`);
+            if (!r.ok) continue;
+            const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+            if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
+          } catch { /* this signer node did not answer, or not with the round */ }
+        }
+        contracts.set(id, round);
+      }
+      const round = contracts.get(id);
+      if (round) found.push({ roundIdHex: id, round, payout, lock, seed: list[i] });
     }
-    if (round) found.push({ roundIdHex: id, round, payout, lock });
   }
   return found;
 }

@@ -879,6 +879,13 @@
         locks.request('blwp.phrase.' + cur.slice(0, 16), { ifAvailable: true }, (lock) => {
           if (lock) return new Promise(() => {});   // held for the tab's life
           if (T.getItem(KEY) !== cur) return undefined;
+          // ANOTHER TAB'S COLLECT HOLDS IT FOR A MOMENT, NOT ANOTHER PLAYER (kanban #153 (b), the owner 2026-10-07: "the seed keeper
+          // must not mint"): the phrase is kept and the lock waited for - no reload, no new phrase per collision
+          let collecting = null; try { collecting = JSON.parse(L.getItem('blwp.seed.collecting.' + cur.slice(0, 16)) || 'null'); } catch { collecting = null; }
+          if (collecting && now() - collecting.at < 30000) {
+            locks.request('blwp.phrase.' + cur.slice(0, 16), () => new Promise(() => {}));
+            return undefined;
+          }
           T.removeItem(KEY); T.removeItem(FROM);
           T.setItem('blwp.tab.id', random());       // a duplicated tab copied its id too
           reload();
@@ -2046,12 +2053,23 @@
     // ANOTHER PHRASE'S WALLET, NEVER WHILE ANOTHER TAB HOLDS IT (the owner 2026-10-01: two clients on one wallet spent one note
     // twice): a record of another kept phrase is looked at and collected only while this tab holds that phrase's browser lock
     // (the lock the seed keeper takes, blwp.phrase.<16>) and no other tab has beaten on it in 12 s; else it waits its turn.
+    // WHAT THE LOBBY SAYS OF THE COLLECT (kanban #153): the rounds whose last collect threw, and the other phrases' rounds
+    // another tab holds - read by BLWPCLIENT.collectLines into the lobby's collect lines
+    const collectFailed = window.BLWP_COLLECT_FAILED = new Map();
+    const collectHeld = window.BLWP_COLLECT_HELD = new Set();
     function withRecordPhrase(r, fn) {
       if (r.own) return fn();
       const hex = BLWPCLIENT.toHex(r.seed);
       try { const h = JSON.parse(vault().getItem('blwp.seed.held.' + hex.slice(0, 16)) || 'null'); if (h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('blwp.tab.id')) return Promise.resolve(null); } catch { /* read below */ }
       if (!navigator.locks || typeof navigator.locks.request !== 'function') return fn();
-      return navigator.locks.request('blwp.phrase.' + hex.slice(0, 16), { ifAvailable: true }, (lock) => (lock ? fn() : null));
+      // WHILE IT HOLDS ANOTHER PHRASE'S LOCK, THE COLLECT SAYS SO (kanban #153 (b)): a new tab that finds that lock taken waits
+      // for it (blwpSeedKeeper) instead of dropping the phrase and minting another
+      const mark = 'blwp.seed.collecting.' + hex.slice(0, 16);
+      return navigator.locks.request('blwp.phrase.' + hex.slice(0, 16), { ifAvailable: true }, async (lock) => {
+        if (!lock) return null;
+        try { vault().setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* said or not, the lock is held */ }
+        try { return await fn(); } finally { try { vault().removeItem(mark); } catch { /* it goes stale in 30 s */ } }
+      });
     }
     function newestKept() {
       const kept = keptRecords().collectable.filter((r) => BLWPCLIENT.roundLocks(r.round));
@@ -2070,21 +2088,20 @@
         // EVERY SAVED PHRASE OF THIS BROWSER (kanban #153), each scanned with its own key and its finds kept under its own seed
         const tabHex = BLWPCLIENT.toHex(collectSeed());
         const seeds = BLWPCLIENT.browserSeedHexes ? BLWPCLIENT.browserSeedHexes(vault(), tabHex) : [tabHex];
-        const all = [];
+        // ONE READ OF EACH SIGNER NODE PER SCAN (kanban #153, the owner 2026-10-07): its /settled list is matched against every
+        // phrase's keys - 7 asks on 7 signer nodes however many phrases are kept (was 7 per phrase: 49 for seven)
+        const knownBySeed = new Map(seeds.map((hex) => [hex, BLWPCLIENT.savedCollects(vault(), { seed: BLWPCLIENT.fromHex(hex) }).map((r) => r.roundIdHex)]));
+        const found = await BLWPCLIENT.findOwedRounds({ seeds: seeds.map((hex) => BLWPCLIENT.fromHex(hex)), knownBySeed, curve: window.BLWP_CURVE, nodes: named.nodes,
+          sinceMs: Date.now() - OWED_LOOKBACK_MS });
         for (const hex of seeds) {
-          const seed = BLWPCLIENT.fromHex(hex);
-          const known = BLWPCLIENT.savedCollects(vault(), { seed }).map((r) => r.roundIdHex);
-          const found = await BLWPCLIENT.findOwedRounds({ seed, curve: window.BLWP_CURVE, nodes: named.nodes,
-            sinceMs: Date.now() - OWED_LOOKBACK_MS, known });
+          const mine = found.filter((f) => BLWPCLIENT.toHex(f.seed) === hex);
           console.log('[blwp] collect scan (' + (hex === tabHex ? 'this tab\'s phrase ' : 'kept phrase ') + hex.slice(0, 8) + '): the last 24 h settled rounds over '
-            + named.nodes.length + ' signer node(s) - ' + found.length + ' new round(s) name its key'
-            + (found.length ? ' (' + found.map((f) => f.roundIdHex.slice(0, 8) + (f.payout ? ' payout' : '') + (f.lock ? ' lock' : '')).join(', ') + ')' : '')
-            + ', ' + known.length + ' already kept');
-          for (const f of found)
-            BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed });
-          all.push(...found);
+            + named.nodes.length + ' signer node(s), read once for ' + seeds.length + ' phrase(s) - ' + mine.length + ' new round(s) name its key'
+            + (mine.length ? ' (' + mine.map((f) => f.roundIdHex.slice(0, 8) + (f.payout ? ' payout' : '') + (f.lock ? ' lock' : '')).join(', ') + ')' : '')
+            + ', ' + knownBySeed.get(hex).length + ' already kept');
         }
-        const found = all;
+        for (const f of found)
+          BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed: f.seed });
         window.BLWP_FOUND_OWED = found.map((f) => f.roundIdHex);
         if (found.length) { console.log('[blwp] owed: ' + found.length + ' round(s) settled in the last 24 h name a key of this browser'); lookThePayout(); }
         return window.BLWP_FOUND_OWED;
@@ -2197,8 +2214,9 @@
           }
           return true;
           });
-          if (res === null) collectNote(older.roundIdHex.slice(0, 8), 'kept phrase ' + BLWPCLIENT.toHex(older.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free');
-        } catch (e) { console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
+          if (res === null) { collectHeld.add(older.roundIdHex); collectNote(older.roundIdHex.slice(0, 8), 'kept phrase ' + BLWPCLIENT.toHex(older.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free'); }
+          else { collectHeld.delete(older.roundIdHex); collectFailed.delete(older.roundIdHex); }
+        } catch (e) { collectFailed.set(older.roundIdHex, e.message); collectHeld.delete(older.roundIdHex); console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
       }
       try {
         // THE NEWEST RECORD MAY BE ANOTHER KEPT PHRASE'S (kanban #153): the whole look and collect runs while this tab holds
@@ -2233,8 +2251,9 @@
         }
         return true;
         });
-        if (newestDone === null) collectNote(newest.roundIdHex.slice(0, 8), 'kept phrase ' + BLWPCLIENT.toHex(newest.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free');
-      } catch (e) { console.error('[blwp] owed: ' + e.message); }
+        if (newestDone === null) { collectHeld.add(newest.roundIdHex); collectNote(newest.roundIdHex.slice(0, 8), 'kept phrase ' + BLWPCLIENT.toHex(newest.seed).slice(0, 8) + ' is held by another tab: collected there, or here once it is free'); }
+        else { collectHeld.delete(newest.roundIdHex); collectFailed.delete(newest.roundIdHex); }
+      } catch (e) { if (newest) { collectFailed.set(newest.roundIdHex, e.message); collectHeld.delete(newest.roundIdHex); } console.error('[blwp] owed: ' + e.message); }
       payoutAsking = false; payoutAskingSince = 0;
       paintWallet();
     }
@@ -3726,7 +3745,10 @@
         continuing: (() => { const n = window.BLWP_NEXT;
           return !!n && window.BLWP_CONTINUE !== false && (n.state === 'looking' || n.state === 'joining'); })(),
         // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
-        withdraw: withdrawAvailable() });
+        withdraw: withdrawAvailable(),
+        // THE COLLECT'S LINES (kanban #153): another kept seed's records, a failed collect, an uncollectable record - the
+        // page's words; Unity draws them under the round rows
+        collect: BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.BLWP_RECORDS || [], { failed: window.BLWP_COLLECT_FAILED || new Map(), held: window.BLWP_COLLECT_HELD || new Set() }) : [] });
       window.BLWP_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after

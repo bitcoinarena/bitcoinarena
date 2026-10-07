@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 #if UNITY_WEBGL && !UNITY_EDITOR
 using System.Runtime.InteropServices;
@@ -62,6 +63,17 @@ namespace Blwp
         public bool elsewhere;
     }
 
+    /// <summary>
+    /// ONE COLLECT LINE THE PAGE WROTE (kanban #153, the owner 2026-10-07): the page owns the words - another kept seed's record,
+    /// a failed collect, an uncollectable record - and their kind (other, failed, uncollectable); Unity only draws them.
+    /// </summary>
+    [Serializable]
+    public class LobbyCollectLine
+    {
+        public string text = "";
+        public string kind = "";
+    }
+
     [Serializable]
     public class LobbyState
     {
@@ -78,6 +90,8 @@ namespace Blwp
         public int answerS = 10;
         /// <summary>The page is taking the player to the next round (SPECTATE-2158): no lobby until exit game or its start.</summary>
         public bool continuing;
+        /// <summary>The collect's own lines (kanban #153): at most three, drawn under the round rows; none when empty.</summary>
+        public LobbyCollectLine[] collect = new LobbyCollectLine[0];
     }
 
     /// <summary>
@@ -148,6 +162,24 @@ namespace Blwp
         /// until it is withdrawn. Nothing is collected by looking; the Withdraw is the page's.
         /// "" when there is none.
         /// </summary>
+        /// <summary>
+        /// THE COLLECT LINES TO DRAW (kanban #153): the page's strings as it wrote them, empty ones dropped, at most three.
+        /// </summary>
+        public static LobbyCollectLine[] CollectLines(LobbyState s)
+        {
+            if (s == null || s.collect == null) return new LobbyCollectLine[0];
+            var keep = new List<LobbyCollectLine>();
+            foreach (var c in s.collect)
+                if (c != null && !string.IsNullOrEmpty(c.text) && keep.Count < 3) keep.Add(c);
+            return keep.ToArray();
+        }
+
+        /// <summary>A collect line's colour by its kind: grey-blue for another kept seed, red for a failed collect, orange for uncollectable.</summary>
+        public static Color CollectColour(string kind) =>
+            kind == "failed" ? new Color(1f, 0.50f, 0.46f)
+            : kind == "uncollectable" ? new Color(1f, 0.62f, 0.20f)
+            : new Color(0.62f, 0.70f, 0.78f);
+
         public static string WithdrawNotice(LobbyState s)
         {
             if (s == null || s.withdraw == null || !s.withdraw.available) return "";
