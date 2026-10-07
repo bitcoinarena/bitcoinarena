@@ -14,7 +14,7 @@ import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
 import { donationSetId } from '../src/donation.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');

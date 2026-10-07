@@ -12,8 +12,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { sharesNeededFor, stakeFor, postHandout, stakeSeenNeeded } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { fromHex } from '../../protocol/src/hash.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const CORE = fromHex(coreHashHex());

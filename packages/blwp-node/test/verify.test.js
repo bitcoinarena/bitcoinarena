@@ -10,7 +10,7 @@
 // on a signer node that reaches a federation now.
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -24,8 +24,8 @@ import { WebSocket } from 'ws';
 import { createServer } from 'node:http';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash } from '../../nextblock/src/state.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
@@ -45,9 +45,9 @@ import { selectCommittee } from '../../protocol/src/sortition.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 // The round's randomness is a future Bitcoin block hash (5A) that this daemon

@@ -5,7 +5,7 @@
 //
 //   node signer-node-lock-regtest.mjs prepare <dir>          three stakes: P, its point, an even-y player, a fee preimage F
 //   node signer-node-lock-regtest.mjs signer node <dir> <keys.json>  a signer node, the real port, the handovers
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -29,8 +29,8 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { CORE_HASH } from './core-hash.mjs';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 // THE FEDERATION THIS SETUP JOINED NAMES THE ROUND (M3 W7): its id from the setup's invite, read by the lock client.
 const { LockClient } = createRequire(import.meta.url)(`${process.env.WASM_PKG}/blwp_lock_client.js`);

@@ -12,7 +12,7 @@ import { LOSER } from './window-fixture.js';
 import { readTranscript } from '../src/transcript-read.js';
 import { replay } from '../src/replay.js';
 import { coreOfGame } from '../src/plugins.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { decodeEntryContract } from '../../protocol/src/contracts.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -54,7 +54,7 @@ test('the replay doors: a page, the run as the node replays it, the round\'s own
 
     // THE PAGE'S STEPPING, with what the doors handed it: the served core, the served transcript, the entry and the
     // beacon from the same node - against this node's own replay of the run.
-    const R = require('../../core/dist/blwp-replay-core.js');
+    const R = require('../../nextblock/dist/blwp-replay-core.js');
     const ent = decodeEntryContract((await get(A, `/entry?id=${eid}`)).body);
     const beacon = (await get(A, `/randomness?round=${rid}`)).body;
     const st = R.CORE.start(seedWordForEntry(ent, beacon));
@@ -69,8 +69,8 @@ test('the replay doors: a page, the run as the node replays it, the round\'s own
 });
 
 test('the served replay core is the build of core/src\'s adapter: the same state as the modules over a run with a load', async () => {
-  const R = require('../../core/dist/blwp-replay-core.js');
-  const { CORE } = await import('../../core/src/adapter.js');
+  const R = require('../../nextblock/dist/blwp-replay-core.js');
+  const { CORE } = await import('../../nextblock/src/adapter.js');
   const run = { ticks: Array.from({ length: 400 }, (_, t) => ({ tick: t, words: [65536, ((t * 977) % 60000) - 30000, 0, 0, 0] })), loads: [[10, 2000, 50]], liquidations: [[120, 3]] };
   const a = R.CORE.start(424242), b = CORE.start(424242);
   const ea = R.CORE.eventsOf(run), eb = CORE.eventsOf(run);
@@ -85,10 +85,10 @@ test('the committed dist/blwp-replay-core.js is the build of core/src as it stan
   const { join } = await import('node:path');
   const out = mkdtempSync(join(tmpdir(), 'replay-core-'));
   try {
-    execFileSync(process.execPath, [new URL('../../core/tools/bundle-replay.js', import.meta.url).pathname],
+    execFileSync(process.execPath, [new URL('../../nextblock/tools/bundle-replay.js', import.meta.url).pathname],
       { env: { ...process.env, BLWP_BUNDLE_OUT: out }, stdio: 'ignore' });
     assert.ok(Buffer.compare(readFileSync(join(out, 'blwp-replay-core.js')),
-      readFileSync(new URL('../../core/dist/blwp-replay-core.js', import.meta.url))) === 0,
-    'dist/blwp-replay-core.js is not the build of core/src - run node packages/core/tools/bundle-replay.js');
+      readFileSync(new URL('../../nextblock/dist/blwp-replay-core.js', import.meta.url))) === 0,
+    'dist/blwp-replay-core.js is not the build of core/src - run node packages/nextblock/tools/bundle-replay.js');
   } finally { rmSync(out, { recursive: true, force: true }); }
 });

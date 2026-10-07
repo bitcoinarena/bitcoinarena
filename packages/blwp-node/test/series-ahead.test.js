@@ -9,8 +9,8 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { seriesWriter } from '../src/series-writer.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { decodeRoundContract, encodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
@@ -21,7 +21,7 @@ import {
   ROUND_PERIOD_MS, SERIES_MAX_MS, SERIES_LEAD_MIN_MS, ROUNDS_PER_SERIES, SERIES_CLOCKS, seriesClockFor, SERIES_WRITE_AHEAD_MS,
 } from '../../protocol/src/series.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1790600000000;
@@ -266,7 +266,7 @@ test('a series taken out of the file while the node runs is dropped: not held, i
 // game check (pluginForRound) for a round of a series - while one naming 90 s, or 0 (no period), runs.
 test('a series of a game whose manifest names a 60 s period is refused by the writer and the door; 90 s and 0 run', async () => {
   const { pluginForRound } = await import('../src/plugins.js');
-  const { NEXTBLOCK } = await import('../../core/plugin/nextblock.js');
+  const { NEXTBLOCK } = await import('../../nextblock/plugin/nextblock.js');
   const { TALLY_CORE } = await import('./plugins/tally/index.js');
   const { testGame } = await import('./plugins/sign.js');
   const { toHex } = await import('../../protocol/src/hash.js');

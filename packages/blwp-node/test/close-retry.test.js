@@ -30,8 +30,8 @@ import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../.
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { HOSTED } from './plugins/hosted.js';

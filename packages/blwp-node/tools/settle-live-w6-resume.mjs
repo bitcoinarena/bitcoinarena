@@ -13,7 +13,7 @@ import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { opts, wait } from '../test/window-fixture.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;

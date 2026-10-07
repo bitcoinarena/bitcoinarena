@@ -12,7 +12,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -36,9 +36,9 @@ import { toHex } from '../../protocol/src/hash.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const require = createRequire(import.meta.url);
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
@@ -225,7 +225,7 @@ test('the page ships the client it is written against, and one consumer of onGho
   // the first step. Two copies of a built file drift; a test that compares
   // them does not.
   const shippedCore = readFileSync(root + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/blwp-core.js');
-  const builtCore = readFileSync(root + 'packages/core/dist/blwp-core.js');
+  const builtCore = readFileSync(root + 'packages/nextblock/dist/blwp-core.js');
   assert.equal(Buffer.compare(shippedCore, builtCore), 0,
     `the template ships ${shippedCore.length} bytes of core and the build is ${builtCore.length}`);
 
@@ -436,7 +436,7 @@ import { RETIRE_TICK } from '../src/ghost-field.js';
 import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
 // THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
 // 9000, so every test here that stands up a real daemon died before it could watch anything.
-import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS as RUN_TICKS } from '../../nextblock/src/rules/gate.js';
 
 /**
  * WHAT `GhostField.Show` DOES WITH EACH DRAINED ITEM: make or move one truck per

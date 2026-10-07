@@ -32,8 +32,8 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 
 const PLAYERS = Number(process.env.PLAYERS || 100);

@@ -738,7 +738,12 @@ export function publicationRelaysAreValid(c) {
   return { ok: true };
 }
 
-export function contractWarnings(c) {
+/**
+ * WHAT A CLIENT WARNS ABOUT BEFORE ANYONE STAKES. The engine's own: a flat rank curve (§18A.7) and a min_score that is a
+ * danger rule. THE GAME'S FIELDS ARE THE GAME'S TO JUDGE (kanban #203): `gameWarnings` is the round's game's own check of
+ * the fields only it reads - nextblock's `roundWarnings` (exposure ignored, a degenerate time factor) - appended here.
+ */
+export function contractWarnings(c, gameWarnings = null) {
   const out = [];
   // Integer comparison, not a quotient. This is only a client warning and a
   // float here would change nothing - which is exactly why it is worth not
@@ -746,9 +751,8 @@ export function contractWarnings(c) {
   // will be somewhere it matters.
   if (Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
     out.push('flat_rank_curve');
-  if (c.exposureReference === 0) out.push('exposure_ignored');
-  if (c.timeFloor >= c.timeCeil) out.push('time_factor_degenerate');
   // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
   if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
+  if (typeof gameWarnings === 'function') out.push(...gameWarnings(c));
   return out;
 }

@@ -14,8 +14,8 @@
 // peers' receipts at the close, and every record goes through `takeReceipt`
 // unchanged - the mark held here, the signer joined, the signature verified.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -41,9 +41,9 @@ import {
   encodeCheckpointReceipt, receiptId, joinSignedReceipt, splitSignedReceipt,
   decodeCheckpointReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
-import { init, step } from '../../core/src/sim.js';
+import { init, step } from '../../nextblock/src/sim.js';
 import { loaded, bedFrom } from './window-fixture.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { chainOf, FIRST_TIME, SPACING, publicationOf } from '../../protocol/tools/chainview.js';
@@ -54,7 +54,7 @@ import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };

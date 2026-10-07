@@ -11,9 +11,9 @@
  * 2026-09-23: 2 of 5 fixed keys delivered anywhere in 256 last bytes).
  */
 import { secp256k1, schnorr } from '@noble/curves/secp256k1.js';
-import { init, step } from '../../core/src/sim.js';
-import { O_SCORE, S_STATE, S_DELIVERED } from '../../core/src/state.js';
-import { RUN_LIVE, RUN_DELIVERED, RUN_WRECKED } from '../../core/src/rules/gate.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { O_SCORE, S_STATE, S_DELIVERED } from '../../nextblock/src/state.js';
+import { RUN_LIVE, RUN_DELIVERED, RUN_WRECKED } from '../../nextblock/src/rules/gate.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { WINNER, LOSER, RANDOMNESS, wordsAt } from '../test/window-fixture.js';
 import { toHex } from '../../protocol/src/hash.js';

@@ -10,7 +10,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
 import { coreOfGame } from '../src/plugins.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { verifiedFinal } from '../src/verdict.js';
 import { checkObjectionBundle } from '../src/objection-check.js';
 

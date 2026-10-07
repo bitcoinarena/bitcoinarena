@@ -1,6 +1,6 @@
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -11,7 +11,7 @@ import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 // THE LOBBY COUNTS PLAYERS, NOT ENTRIES (the owner 2026-09-16 15:36: "after each successful run lobby says 1
 // joined then 2 then 3 as if he never left"). Every PLAY is a new entry; measured on the Daily, one free round

@@ -20,7 +20,7 @@ import { genesisSeriesStart } from '../../protocol/src/series.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const TOOL = new URL('../tools/testnet4-series.mjs', import.meta.url).pathname;
 const FAKE = new URL('./fake-bitcoin-cli.mjs', import.meta.url).pathname;

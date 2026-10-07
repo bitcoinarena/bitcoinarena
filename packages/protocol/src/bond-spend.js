@@ -15,7 +15,7 @@
 // transaction" - not a match against a published vector. That is a weaker
 // claim about the CODE and a stronger one about the RESULT, and it is written
 // down so nobody later reads a green test here as a vector match.
-import { sha256bytes } from '../../core/src/sha256.js';
+import { sha256bytes } from './sha256.js';
 import { taggedHash } from './hash.js';
 
 const cat = (...parts) => {

@@ -640,7 +640,8 @@ export class Verifier {
     const found = pluginForRound(contract, this.plugins);
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
     return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
-      world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes) } } : null;
+      world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes),
+        sharedWorld: [...found.plugin.sharedWorld] } } : null;
   }
 
   /**

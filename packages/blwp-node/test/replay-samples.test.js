@@ -1,8 +1,8 @@
 // THE LIVE PRICE ON THE SIGNER NODES (the owner 2026-09-17 16:01): price samples ride the batch beside their ticks, the node
 // stores and serves them, and a replay reaches the state of the page that fought on the moving chart.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -10,11 +10,11 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
-import { init, step, submitSample, submitTape } from '../../core/src/sim.js';
-import { hash, O_TRUCK, T_X, T_Z } from '../../core/src/state.js';
+import { init, step, submitSample, submitTape } from '../../nextblock/src/sim.js';
+import { hash, O_TRUCK, T_X, T_Z } from '../../nextblock/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 
@@ -22,7 +22,7 @@ import { GENESIS } from '../../protocol/src/transcript.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const ONE = 65536;
 const b32 = (n) => new Uint8Array(32).fill(n);
 const SEED = 1;

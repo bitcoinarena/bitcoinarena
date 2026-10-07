@@ -1,7 +1,7 @@
 // One process holds a round: open it, take an entry, store batches, close it.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -17,7 +17,7 @@ import { toHex } from '../../protocol/src/hash.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
@@ -128,7 +128,7 @@ test('a batch for a round or an entry the node has not got is refused', () => {
 // core it is handed. Since kanban #202 (a game is a plugin) NO engine file imports a core at all: the launcher, main.js,
 // imports the game's registration (core/plugin/nextblock.js) and hands it to serve(), and plugins.js passes each round's
 // core on. Measured before the split: the one file that did both was replay.js; before #202, cores.js imported the cores.
-test('the node imports no core, only its launcher imports a game\'s registration, and only replay.js steps a core', async () => {
+test('the node imports no core and registers no game, and only replay.js steps a core', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
   const imports = [];
   const registrations = [];
@@ -144,7 +144,8 @@ test('the node imports no core, only its launcher imports a game\'s registration
     if (/\bstep\s*\(/.test(src)) steps.push(f);
   }
   assert.deepEqual(imports, [], 'an engine file imports a core');
-  assert.deepEqual(registrations, ['main.js'], 'a game is registered somewhere other than the launcher, or nowhere');
+  // since kanban #203 not even the launcher: main.js hosts what BLWP_GAMES names, nextblock's bin/node.mjs names nextblock
+  assert.deepEqual(registrations, [], 'an engine file registers a game');
   assert.deepEqual(steps, ['replay.js'], 'a core is stepped somewhere other than the replay, or nowhere');
 
   // and that door replays a finished transcript - it does not tick anything

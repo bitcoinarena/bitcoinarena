@@ -6,7 +6,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { dashboardData, dashboardHtml } from '../src/dashboard.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 test('an empty node: every category and period is there, at 0, with 30 days of chart', () => {
   const d = dashboardData(new Round(openStore(), () => Date.UTC(2026, 9, 3, 12), { plugins: HOSTED }), { nowMs: Date.UTC(2026, 9, 3, 12) });
@@ -35,14 +35,14 @@ test('a real node: /dashboard opens a round to its players from api/round-result
   const { serve } = await import('../src/server.js');
   const { Client } = await import('../../blwp-client/src/client.js');
   const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
-  const { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } = await import('../../core/plugin/nextblock.js');
-  const { BLOCK_TICKS } = await import('../../core/src/rules/gate.js');
+  const { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } = await import('../../nextblock/plugin/nextblock.js');
+  const { BLOCK_TICKS } = await import('../../nextblock/src/rules/gate.js');
   const { TEST_DONATION_SET_REGTEST } = await import('../../protocol/src/test-donation-sets.js');
   const { donationSetId } = await import('../../protocol/src/donation.js');
   const { toHex } = await import('../../protocol/src/hash.js');
   const { ed25519 } = await import('@noble/curves/ed25519.js');
   const { createRequire } = await import('node:module');
-  const core = createRequire(import.meta.url)('../../core/dist/blwp-core.js');
+  const core = createRequire(import.meta.url)('../../nextblock/dist/blwp-core.js');
   const b32 = (n) => new Uint8Array(32).fill(n);
   const session = ed25519.utils.randomSecretKey();
   const node = await serve(openStore(), { plugins: HOSTED, port: 0, funded: () => true });
@@ -144,8 +144,8 @@ test('api/round-result names every player: the custom name, else the lobby\'s ge
   const { displayNameFromKey } = await import('../../protocol/src/display-name.js');
   const { encodeRoundContract, roundId, encodeEntryContract } = await import('../../protocol/src/contracts.js');
   const { TEST_FEDERATION_ID } = await import('../../protocol/src/test-federation.js');
-  const { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } = await import('../../core/plugin/nextblock.js');
-  const { BLOCK_TICKS } = await import('../../core/src/rules/gate.js');
+  const { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } = await import('../../nextblock/plugin/nextblock.js');
+  const { BLOCK_TICKS } = await import('../../nextblock/src/rules/gate.js');
   const { TEST_DONATION_SET_REGTEST } = await import('../../protocol/src/test-donation-sets.js');
   const { donationSetId } = await import('../../protocol/src/donation.js');
   const { toHex } = await import('../../protocol/src/hash.js');

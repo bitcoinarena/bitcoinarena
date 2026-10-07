@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { openStore } from '../src/store.js';
 import { startNode, holdsGuardianKey } from '../src/node-start.js';
 import { standUpRound } from '../tools/round-2of2.mjs';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 // A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202, §0A.4): nextblock, as src/main.js does.
 const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
 

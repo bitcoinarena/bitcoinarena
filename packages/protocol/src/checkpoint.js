@@ -42,7 +42,7 @@
 // core rather than a library: a thing that pins money should not gain a
 // dependency whose version could change its answer.
 //
-// The state hash comes from the CLIENT. `packages/core`'s `hash(st)` produces
+// The state hash comes from the CLIENT. `packages/nextblock`'s `hash(st)` produces
 // it, and nothing in the node's `src/` imports the core - the node stores
 // bytes it cannot recompute, which is what keeps the daemon a store rather
 // than a second simulator.

@@ -10,7 +10,7 @@
 // already carried through the determinism harness, and a hash that pins money
 // should not gain a dependency whose version could change its output.
 
-import { sha256bytes } from '../../core/src/sha256.js';
+import { sha256bytes } from './sha256.js';
 import { utf8Encode } from './utf8.js';
 
 const tagCache = new Map();

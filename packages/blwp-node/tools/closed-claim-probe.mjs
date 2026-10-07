@@ -19,8 +19,8 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
@@ -116,7 +116,7 @@ async function askForfeit(w, run) {
 const closeAt = (d, w) => say(d.port, `close ${toHex(w.rid)}`);
 
 import { encodeCheckpointReceipt, receiptId, joinSignedReceipt } from '../../protocol/src/receipt.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 
 // ---- THE CLOSED-CLAIM TRUST BOUNDARY (§16, §13C): can one signer node's word void an
 // entry at the other signer node? B is up and open throughout (1a, 1b, 2'); in (2) it

@@ -8,21 +8,17 @@
 // both parked: "the round contract measures its length in TICKS and an HTLC in
 // TIME, and the protocol defines no tick rate to convert between them."
 //
-// THE RATE IS NOT DECLARED HERE. It is imported from the core, which is the
-// only thing entitled to say how long its own tick is: the tick is a property
-// of the simulation binary, and `simCoreHash` is what a round signs to pin
-// that binary. A literal in this file would be a second clock - one number in
-// the thing that runs the round and another in the thing that pays for it -
-// and two clocks that agree today agree only until one of them is edited. It
-// is the same rule as the payout table: one implementation, and no argument
-// through which a caller can supply a different one.
+// THE RATE IS THE NETWORK'S, STATED HERE (kanban #203, the owner 2026-10-07: "Engine states the tick rate; a nextblock
+// test checks the core matches"). It was imported from the core - the one game - and the engine imports no game now. A
+// game runs at this rate or it cannot be a game of this network: nextblock/test/engine-shared.test.js holds the core's
+// TICK_DT and ticks per second to these three numbers, so the two still cannot drift - the check moved from an import
+// to a test.
 //
-// This is the shape `hash.js` already uses to take `sha256bytes` off the core:
-// "a hash that pins money should not gain a dependency whose version could
-// change its output."
-import { TICK_DT, TICKS_PER_SECOND_NUM, TICKS_PER_SECOND_DEN } from '../../core/src/tick.js';
+// TICK_DT is 1092 in Q16.16 (1092 / 65536 s a tick, 60.0147 ticks a second); ticks per second is ONE / TICK_DT.
+export const TICK_DT = 1092;
+export const TICKS_PER_SECOND_NUM = 65536;
+export const TICKS_PER_SECOND_DEN = TICK_DT;
 
-export { TICK_DT };
 
 /**
  * MILLISECONDS PER TICK, AS A REDUCED INTEGER RATIO.

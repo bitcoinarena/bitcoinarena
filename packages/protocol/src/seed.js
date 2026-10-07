@@ -5,7 +5,6 @@ import { taggedHash } from './hash.js';
 import { TAG } from './constants.js';
 import { toHex } from './hash.js';
 import { committeeSeedFrom } from './committee-seed.js';
-import { WORLD_SHARED_CONFIGS } from './known-games.js';
 
 export function playerSubSeed({ roundRandomness, playerPubkey, worldSecret, joinTick }) {
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32)
@@ -49,10 +48,15 @@ export function seedWordForEntry(entry, roundRandomness) {
 export const TAG_ROUND_WORLD = 'BLWP/v1/RoundWorld';
 const WORLD = new TextEncoder().encode('world');
 
-/** Whether a round's config makes one world for the whole round (WORLD_SHARED_CONFIGS, chosen by its config hash). */
-export function worldIsShared(contract) {
+/**
+ * Whether a round's config makes one world for the whole round. ASKED OF THE ROUND'S GAME (kanban #203: the engine
+ * imports no game): `sharedWorld` is the config hashes (hex) the round's game says share one world - on a node its
+ * registration's (plugins.js), on the client its known-games entry (known-game.js sharedWorldOf).
+ */
+export function worldIsShared(contract, sharedWorld) {
+  if (!Array.isArray(sharedWorld)) throw new Error('which configs share one world is the round\'s game\'s to say, and none was given');
   return !!(contract && contract.configHash instanceof Uint8Array && contract.configHash.length === 32
-    && WORLD_SHARED_CONFIGS.includes(toHex(contract.configHash)));
+    && sharedWorld.includes(toHex(contract.configHash)));
 }
 
 /** round_seed: H(committee_seed || "world") - the committee seed of §5A.5 over the round's census root, id and beacon. */
@@ -69,10 +73,10 @@ export function roundWorldSeed({ contract, roundId, roundRandomness }) {
  * guessing the rule would drive another world. Shared: the round seed only - no secret, key or join tick of the player's.
  * Otherwise: the per-player seed, byte for byte as before.
  */
-export function worldSeedWord({ entry, roundRandomness, contract, roundId }) {
+export function worldSeedWord({ entry, roundRandomness, contract, roundId, sharedWorld }) {
   if (!contract || !(contract.configHash instanceof Uint8Array))
     throw new Error('no round contract to choose the world rule by: the world is the round config\'s, not the caller\'s');
-  if (!worldIsShared(contract)) return seedWordForEntry(entry, roundRandomness);
+  if (!worldIsShared(contract, sharedWorld)) return seedWordForEntry(entry, roundRandomness);
   const id = roundId || (entry && entry.roundId);
   if (!(id instanceof Uint8Array) || id.length !== 32) throw new Error('a shared world needs the round id');
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32) throw new Error('round_randomness is 32 bytes');
@@ -80,8 +84,8 @@ export function worldSeedWord({ entry, roundRandomness, contract, roundId }) {
 }
 
 /** On a shared-world round the entry's secret field must be zeros (it is kept so stored entry ids hold). */
-export function worldSecretFits(contract, worldSecret) {
-  if (!worldIsShared(contract)) return { ok: true };
+export function worldSecretFits(contract, worldSecret, sharedWorld) {
+  if (!worldIsShared(contract, sharedWorld)) return { ok: true };
   if (!(worldSecret instanceof Uint8Array) || worldSecret.length !== 32 || worldSecret.some((b) => b !== 0))
     return { ok: false, why: 'this round shares one world among its players: an entry names no world secret (32 zero bytes)' };
   return { ok: true };

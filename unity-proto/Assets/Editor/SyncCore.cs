@@ -17,7 +17,7 @@ using UnityEngine;
 /// </summary>
 public static class SyncCore
 {
-    const string CoreDir = "../packages/core";
+    const string CoreDir = "../packages/nextblock";
     const string ClientDir = "../packages/blwp-client";
 
     [MenuItem("Tools/BTC Logistics/Sync Deterministic Core")]

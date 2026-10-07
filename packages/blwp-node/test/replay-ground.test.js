@@ -22,8 +22,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { init, step } from '../../core/src/sim.js';
-import { O_TRUCK, T_X, T_Z } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { O_TRUCK, T_X, T_Z } from '../../nextblock/src/state.js';
 
 const M = (w) => (w / 65536).toFixed(3);
 const WORDS = [45875, 22000, 0, 0, 0];

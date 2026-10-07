@@ -244,8 +244,10 @@ class Reader {
   }
 }
 
-// ---- core/src/sha256.js
-// SHA-256 in integer-only JavaScript.
+// ---- protocol/src/sha256.js
+// SHA-256 in integer-only JavaScript - THE ENGINE'S OWN (kanban #203: the engine imports no game). The same code as
+// nextblock/src/sha256.js, which stays inside the core's hash; nextblock/test/engine-shared.test.js holds the two to the
+// same digests.
 //
 // The core cannot use node:crypto (it runs in the browser) or SubtleCrypto (it
 // is async, and hashing sits inside a synchronous tick). Everything here is
@@ -1215,7 +1217,7 @@ const SCORE_SCALE = 100000;
 // core rather than a library: a thing that pins money should not gain a
 // dependency whose version could change its answer.
 //
-// The state hash comes from the CLIENT. `packages/core`'s `hash(st)` produces
+// The state hash comes from the CLIENT. `packages/nextblock`'s `hash(st)` produces
 // it, and nothing in the node's `src/` imports the core - the node stores
 // bytes it cannot recompute, which is what keeps the daemon a store rather
 // than a second simulator.
@@ -2126,7 +2128,12 @@ function publicationRelaysAreValid(c) {
   return { ok: true };
 }
 
-function contractWarnings(c) {
+/**
+ * WHAT A CLIENT WARNS ABOUT BEFORE ANYONE STAKES. The engine's own: a flat rank curve (§18A.7) and a min_score that is a
+ * danger rule. THE GAME'S FIELDS ARE THE GAME'S TO JUDGE (kanban #203): `gameWarnings` is the round's game's own check of
+ * the fields only it reads - nextblock's `roundWarnings` (exposure ignored, a degenerate time factor) - appended here.
+ */
+function contractWarnings(c, gameWarnings = null) {
   const out = [];
   // Integer comparison, not a quotient. This is only a client warning and a
   // float here would change nothing - which is exactly why it is worth not
@@ -2134,17 +2141,16 @@ function contractWarnings(c) {
   // will be somewhere it matters.
   if (Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
     out.push('flat_rank_curve');
-  if (c.exposureReference === 0) out.push('exposure_ignored');
-  if (c.timeFloor >= c.timeCeil) out.push('time_factor_degenerate');
   // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
   if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
+  if (typeof gameWarnings === 'function') out.push(...gameWarnings(c));
   return out;
 }
 
 // ---- protocol/src/batch.js
 // An input batch: what a player sends while a round is running.
 //
-// THE SHAPE IS THE CORE'S, not a new one. `packages/core`'s `step` takes
+// THE SHAPE IS THE CORE'S, not a new one. `packages/nextblock`'s `step` takes
 // throttle, steer, brake, handbrake and practice, in that order, and the
 // golden vectors record exactly those five per tick. A batch carries the same
 // five in the same order, so a node's transcript and a golden vector are the
@@ -3670,261 +3676,6 @@ async function payInvoice(where, invoice, options = {}) {
   return { ok: true, preimage, feesPaidMsat: said.result.fees_paid };
 }
 
-// ---- core/src/fixed.js
-// Q16.16 fixed point. THE ONLY FILE that may use * and / directly, and the
-// determinism guard enforces that (tools/check-determinism.js).
-//
-// One unit is 1/65536. The range is +/-32768, which covers a 260 x 170 m map,
-// velocities, angles and health with room to spare.
-//
-// Every operation here produces an exact integer result, so it is identical in
-// every conforming engine: ECMAScript specifies integer arithmetic on Numbers
-// exactly as long as operands and results are integers below 2^53, and
-// specifies the bitwise operators as 32-bit with defined wrapping.
-
-const SHIFT = 16;
-const ONE = 65536;
-const HALF = 32768;
-
-const fromInt = (n) => (n << SHIFT) | 0;
-const toInt = (x) => x >> SHIFT;            // arithmetic shift = floor
-
-/** Only for constants in source. Never call this on runtime data. */
-const fromFloat = (f) => Math.round(f * ONE) | 0;
-
-const add = (a, b) => (a + b) | 0;
-const sub = (a, b) => (a - b) | 0;
-const neg = (a) => (-a) | 0;
-const abs = (a) => (a < 0 ? (-a) | 0 : a);
-
-/**
- * Fast multiply. Exact while |a*b| < 2^53, which holds for any pair of Q16.16
- * values whose product stays inside the representable range - the intermediate
- * is at most 2^31 * 2^31 = 2^62, so this is NOT universally safe and the caller
- * must know its magnitudes. Used on the simulation's hot paths.
- */
-const mulFast = (a, b) => ((a * b) / ONE) | 0;
-
-/**
- * Rounding multiply, and rounding conversion back to a whole number. `mulFast`
- * and `toInt` both throw the fraction away, which is right for the simulation -
- * a truncation there is a rule, applied identically on every engine - but wrong
- * where the value being produced is a *reported* number that some other
- * implementation rounds. The score is the one such number: the old game ends on
- * `Mathf.RoundToInt`, so the core has to round too or it sits a point low on
- * roughly half of all runs. Same magnitude rules as `mulFast`: the caller must
- * know |a*b| stays under 2^53.
- */
-const mulRound = (a, b) => (((a * b) + (ONE >> 1)) / ONE) | 0;
-const toIntRound = (x) => (x + (ONE >> 1)) >> SHIFT;
-
-/**
- * Exact multiply for anything that could overflow the double's integer range.
- * BigInt is exact at any width; it allocates, so it stays off per-unit inner
- * loops by convention rather than by enforcement.
- */
-const mulWide = (a, b) =>
-  Number((BigInt(a) * BigInt(b)) >> BigInt(SHIFT)) | 0;
-
-/** Truncating divide. Returns 0 for a zero divisor rather than NaN or Infinity. */
-const div = (a, b) => (b === 0 ? 0 : ((a * ONE) / b) | 0);
-
-/**
- * Rounding divide, the counterpart of `mulRound` and for the same reason: a
- * quotient that feeds a *reported* number must not lose its fraction, or the
- * loss compounds through the multiplies that follow it. Every truncation leans
- * the same way, so they add rather than cancel. Only for those; `div` stays
- * the simulation's divide.
- */
-const divRound = (a, b) =>
-  b === 0 ? 0 : (((a * ONE) + ((b / 2) | 0)) / b) | 0;
-
-/**
- * Rounded `a * b / c` without ever landing on the intermediate. A ratio taken
- * on its own has to be stored as a Q16.16 fraction of at most 1.0, which
- * quantises it to 1.5e-5 - and once that ratio is scaled up by a thousand the
- * error is scaled with it. Kept as one expression the quotient is only ever
- * rounded at the end, at the precision of the answer rather than the ratio.
- * The caller must know |a*b| stays under 2^53.
- */
-const mulDivRound = (a, b, c) =>
-  c === 0 ? 0 : (((a * b) + ((c / 2) | 0)) / c) | 0;
-
-/**
- * Truncating divide of two PLAIN INTEGERS - not Q16.16 values.
- *
- * `div` scales its numerator by ONE first, which is right for fixed-point and
- * wrong for a count. Splitting a hundred parts of something, or a byte into
- * buckets, was being written as `x / n | 0` at the call site, which is exactly
- * the arithmetic the guard exists to keep in one auditable file.
- *
- * Truncates towards zero, as `| 0` does, so it is the same value the inline
- * form produced. Both arguments must already be int32.
- */
-const idiv = (a, b) => (b === 0 ? 0 : (a / b) | 0);
-
-const min = (a, b) => (a < b ? a : b);
-const max = (a, b) => (a > b ? a : b);
-const clamp = (x, lo, hi) => (x < lo ? lo : x > hi ? hi : x);
-const sign = (a) => (a > 0 ? 1 : a < 0 ? -1 : 0);
-
-/**
- * Integer square root of a Q16.16 value, by Newton-Raphson on integers.
- *
- * Math.sqrt is correctly rounded and would in fact be deterministic, but it is
- * banned wholesale rather than by exception: a whitelist with one hole in it is
- * a whitelist somebody widens later.
- */
-function sqrt(x) {
-  if (x <= 0) return 0;
-  // sqrt(x/ONE)*ONE = sqrt(x*ONE); the product needs 48 bits, so it stays exact
-  let n = x * ONE;
-  let r = 1 << 15;
-  for (let i = 0; i < 24; i++) {
-    const next = ((r + (n / r)) / 2) | 0;
-    if (next === r) break;
-    r = next;
-  }
-  return r | 0;
-}
-
-/**
- * Length of a 2D vector, both components Q16.16.
- *
- * The first version scaled the components down by 256 before squaring, out of
- * caution about overflow, and then applied the FIXED-POINT square root to the
- * result - counting the scale twice. It returned roughly 256x too much, the
- * speed cap fired on the first tick, and the vehicle covered five metres in
- * fifty seconds. No overflow guard was needed: at the map's maximum speed the
- * intermediate is 3.4e12, comfortably inside the exact integer range.
- */
-/**
- * Cube root, Q16.16 in and out.
- *
- * `Math.cbrt` is out for the same reason `Math.sqrt` is: it is a host
- * function, and the poison test refuses every one of them. Newton on
- * `y = (2y + x/y^2) / 3`, which is the cube-root iteration written in this
- * file's own operations - `mulFast` for `y^2`, `div` for `x/y^2`, `idiv` for
- * the third - so there is no arithmetic here that is not already tested.
- *
- * Twenty iterations from a power-of-two start. The iteration thirds its error
- * when it is far out, so the largest input this core has - a liquidation
- * capped at 32767 millions, whose root is 32 - is reached in a handful;
- * twenty is the same work for every input, which keeps the cost off the
- * input value.
- *
- * The last three lines are the correction. Newton lands within a unit but not
- * always ON the floor, and a root that is one Q16.16 unit high would make a
- * crater one fifteen-thousandth of a metre wider on one machine and not on
- * another if any step ever rounded differently. So it is walked to the exact
- * floor: the largest y whose cube does not exceed x.
- *
- * Bounds. The caller's x reaches 32767 * ONE = 2.147e9 and the root 32 * ONE.
- * `mulFast(y, y)` peaks at 4.4e12 before its divide and `div(x, t)` at 1.4e14,
- * both exact in a double long before 2^53. Above that the input would have to
- * be a liquidation of thirty-two billion dollars, which `LIQ_MAX` refuses.
- */
-function cbrt(x) {
-  if (x <= 0) return 0;
-
-  // THE START MATTERS, and starting at 1.0 does not work. Newton's first step
-  // from there is `(2 + x) / 3`, which for x = 1000 lands on 334 - and 334
-  // squared in Q16.16 is 7.3e9, past a signed word, so `mulFast` wraps
-  // negative and the iteration is destroyed before it has begun. Measured:
-  // 1000 came out as 334.15 and 8000 as 2667.
-  //
-  // So the start is a power of two at the right size. `x` is ONE * v, so
-  // log2(x) = 16 + log2(v) and the root is ONE * v^(1/3) = 2^(16 + log2(v)/3).
-  // From there the iteration never overshoots and every intermediate stays
-  // inside the range the bounds note below promises.
-  let bits = -1;
-  for (let t = x; t > 0; t >>>= 1) bits++;
-  let shift = 16 + (((bits - 16) / 3) | 0);
-  if (shift < 0) shift = 0;
-  if (shift > 30) shift = 30;
-  let y = (1 << shift) | 0;
-  if (y < 1) y = 1;
-
-  for (let i = 0; i < 20; i++) {
-    const sq = mulFast(y, y);
-    if (sq <= 0) break;
-    y = idiv(add(add(y, y), div(x, sq)), 3);
-    if (y <= 0) { y = 1; break; }
-  }
-
-  // The cube is compared, never stored, so it is worked out in the double
-  // domain: `mulFast` would wrap at y = 32.0 exactly, where the true cube is
-  // 2^31, and a wrap in the CORRECTION would turn "too big" into "far too
-  // small" and walk the answer the wrong way. Exact to 2^53, which the bounds
-  // note below is well inside.
-  const cube = (v) => ((v * v) / ONE) * v / ONE;
-  while (y > 1 && cube(y) > x) y = (y - 1) | 0;
-  while (cube((y + 1) | 0) <= x) y = (y + 1) | 0;
-  return y;
-}
-
-const length2 = (x, y) => {
-  if (x === 0 && y === 0) return 0;
-  return sqrt((mulFast(x, x) + mulFast(y, y)) | 0);
-};
-
-// ---- core/src/tick.js
-// THE TICK THE SIMULATION ACTUALLY RUNS, AND THE CORE IS WHAT KNOWS IT.
-//
-// Section 5 of multiplayer_p2p.md requires a "fixed protocol tick" and names
-// no number: no rate, no interval, no unit, and nobody who emits one. Ticks
-// are only ever the unit something else is counted in - a checkpoint's `tick`
-// (10), an input batch's `first_tick`/`last_tick` (11), a late joiner's
-// `join_tick`, "the exposure integral accumulated per simulation tick". The
-// round contract, meanwhile, measures the round in TIME: `start_time`,
-// `entry_close_time`, `player_run_duration // T_run`, with the worked example
-// at "T_run: 3 minutes".
-//
-// So the conversion between the two is not in the spec, and it cannot be
-// invented in the protocol either: the tick is a property of the simulation
-// binary, which is what `sim_wasm_hash` / `simCoreHash` commits to. A round
-// signed under one core and replayed under another must not be able to
-// disagree about how long it was. The core states it; everything else reads
-// it. That is the same rule as the payout table - one implementation, no
-// second path - applied to time.
-//
-// IT IS NOT A SIXTIETH OF A SECOND. TICK_DT is 1092 in Q16.16, which is
-// 0.01666259765625 s, and 1/60 is 0.016666... The two are not the same number
-// and they do not round the same way: `rules/air.js` already had to write
-// Y_LERP against the tick rather than against a sixtieth, because 1-exp(-2/60)
-// gave 2149 where the tick asks for 2148. Sixty ticks is 65520 in Q16.16
-// seconds, not 65536 - a second of ticks is 244 microseconds short of a
-// second, and over a three-minute run that is worth about two and a half
-// ticks. A protocol that wrote "60" would be a second clock disagreeing with
-// the first.
-//
-// The only other place sixty is written down is a comment in `BlwpNet.cs`,
-// which is exactly the leftover number not to copy into a money path.
-
-/**
- * ONE TICK, IN Q16.16 SECONDS. Every rule in `sim.js` steps by this and
- * nothing else, so it is the whole definition of how long a tick is.
- */
-const TICK_DT = 1092;
-
-/**
- * TICKS PER SECOND, AS AN EXACT RATIO AND NEVER AS A NUMBER.
- *
- *     ONE / TICK_DT  =  65536 / 1092  =  60.014652...
- *
- * It does not divide, so any single value for it is already a rounding. Kept
- * as a numerator and a denominator: a caller that needs a count multiplies and
- * divides once, in integers, and whatever does not divide is a remainder it
- * can be told about rather than a difference it never sees. `TICKS_PER_SECOND`
- * as a float would put 60.014652 into arithmetic that has to agree bit for bit
- * on every machine, which is the one thing this core exists to prevent.
- *
- * Neither half is a fresh literal: the numerator IS `ONE`, the denominator IS
- * the tick, so there is no third number that could drift from the other two.
- */
-const TICKS_PER_SECOND_NUM = ONE;
-const TICKS_PER_SECOND_DEN = TICK_DT;
-
 // ---- protocol/src/tick.js
 // TIME, IN THE ONLY UNIT THE SIMULATION HAS.
 //
@@ -3936,18 +3687,16 @@ const TICKS_PER_SECOND_DEN = TICK_DT;
 // both parked: "the round contract measures its length in TICKS and an HTLC in
 // TIME, and the protocol defines no tick rate to convert between them."
 //
-// THE RATE IS NOT DECLARED HERE. It is imported from the core, which is the
-// only thing entitled to say how long its own tick is: the tick is a property
-// of the simulation binary, and `simCoreHash` is what a round signs to pin
-// that binary. A literal in this file would be a second clock - one number in
-// the thing that runs the round and another in the thing that pays for it -
-// and two clocks that agree today agree only until one of them is edited. It
-// is the same rule as the payout table: one implementation, and no argument
-// through which a caller can supply a different one.
+// THE RATE IS THE NETWORK'S, STATED HERE (kanban #203, the owner 2026-10-07: "Engine states the tick rate; a nextblock
+// test checks the core matches"). It was imported from the core - the one game - and the engine imports no game now. A
+// game runs at this rate or it cannot be a game of this network: nextblock/test/engine-shared.test.js holds the core's
+// TICK_DT and ticks per second to these three numbers, so the two still cannot drift - the check moved from an import
+// to a test.
 //
-// This is the shape `hash.js` already uses to take `sha256bytes` off the core:
-// "a hash that pins money should not gain a dependency whose version could
-// change its output."
+// TICK_DT is 1092 in Q16.16 (1092 / 65536 s a tick, 60.0147 ticks a second); ticks per second is ONE / TICK_DT.
+const TICK_DT = 1092;
+const TICKS_PER_SECOND_NUM = 65536;
+const TICKS_PER_SECOND_DEN = TICK_DT;
 
 
 /**
@@ -6987,35 +6736,9 @@ function committeeSeedFrom({
 }
 
 
-// ---- protocol/src/known-games.js
-// GENERATED by packages/protocol/tools/known-games.js from each game's signed manifest - do not edit by hand.
-//
-// The games this client lets a player stake on (§0A.6, §5; kanban #202), by game_id: each with the cores (sim_wasm_hash)
-// and, per core, the configs its manifest lists. A paying round naming any other game, or a core or config its game does
-// not list, is refused by `gameIsKnownGood` (known-game.js).
-const KNOWN_GOOD_GAMES = Object.freeze({
-  '0081b8aa7776c7f3a4c15637da6a256811c87ee2299f82e6bc901f66167cf340': Object.freeze({
-    name: 'nextblock',
-    cores: Object.freeze({
-      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
-      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
-      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
-    }),
-  }),
-});
-
-// The configs whose rounds share ONE world per round (§5A.5 round_seed; #23): seed.js derives every player's world from the
-// round alone under these, and per player (as before) under every other config.
-const WORLD_SHARED_CONFIGS = Object.freeze([
-  '2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d',
-]);
-
 // ---- protocol/src/seed.js
 // Player sub-seed, the owner 2026-09-08: secret lives on the Entry Contract so
 // a node can replay. IMPLEMENTATION.md: H(round_randomness || pubkey || secret || join_tick).
-
 
 
 
@@ -7063,10 +6786,15 @@ function seedWordForEntry(entry, roundRandomness) {
 const TAG_ROUND_WORLD = 'BLWP/v1/RoundWorld';
 const WORLD = new TextEncoder().encode('world');
 
-/** Whether a round's config makes one world for the whole round (WORLD_SHARED_CONFIGS, chosen by its config hash). */
-function worldIsShared(contract) {
+/**
+ * Whether a round's config makes one world for the whole round. ASKED OF THE ROUND'S GAME (kanban #203: the engine
+ * imports no game): `sharedWorld` is the config hashes (hex) the round's game says share one world - on a node its
+ * registration's (plugins.js), on the client its known-games entry (known-game.js sharedWorldOf).
+ */
+function worldIsShared(contract, sharedWorld) {
+  if (!Array.isArray(sharedWorld)) throw new Error('which configs share one world is the round\'s game\'s to say, and none was given');
   return !!(contract && contract.configHash instanceof Uint8Array && contract.configHash.length === 32
-    && WORLD_SHARED_CONFIGS.includes(toHex(contract.configHash)));
+    && sharedWorld.includes(toHex(contract.configHash)));
 }
 
 /** round_seed: H(committee_seed || "world") - the committee seed of §5A.5 over the round's census root, id and beacon. */
@@ -7083,10 +6811,10 @@ function roundWorldSeed({ contract, roundId, roundRandomness }) {
  * guessing the rule would drive another world. Shared: the round seed only - no secret, key or join tick of the player's.
  * Otherwise: the per-player seed, byte for byte as before.
  */
-function worldSeedWord({ entry, roundRandomness, contract, roundId }) {
+function worldSeedWord({ entry, roundRandomness, contract, roundId, sharedWorld }) {
   if (!contract || !(contract.configHash instanceof Uint8Array))
     throw new Error('no round contract to choose the world rule by: the world is the round config\'s, not the caller\'s');
-  if (!worldIsShared(contract)) return seedWordForEntry(entry, roundRandomness);
+  if (!worldIsShared(contract, sharedWorld)) return seedWordForEntry(entry, roundRandomness);
   const id = roundId || (entry && entry.roundId);
   if (!(id instanceof Uint8Array) || id.length !== 32) throw new Error('a shared world needs the round id');
   if (!(roundRandomness instanceof Uint8Array) || roundRandomness.length !== 32) throw new Error('round_randomness is 32 bytes');
@@ -7094,8 +6822,8 @@ function worldSeedWord({ entry, roundRandomness, contract, roundId }) {
 }
 
 /** On a shared-world round the entry's secret field must be zeros (it is kept so stored entry ids hold). */
-function worldSecretFits(contract, worldSecret) {
-  if (!worldIsShared(contract)) return { ok: true };
+function worldSecretFits(contract, worldSecret, sharedWorld) {
+  if (!worldIsShared(contract, sharedWorld)) return { ok: true };
   if (!(worldSecret instanceof Uint8Array) || worldSecret.length !== 32 || worldSecret.some((b) => b !== 0))
     return { ok: false, why: 'this round shares one world among its players: an entry names no world secret (32 zero bytes)' };
   return { ok: true };
@@ -7307,6 +7035,27 @@ function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
   return { ok: true, fingerprint: refundFingerprint(playerPubkey) };
 }
 
+// ---- protocol/src/known-games.js
+// GENERATED by packages/protocol/tools/known-games.js from each game's signed manifest - do not edit by hand.
+//
+// The games this client lets a player stake on (§0A.6, §5; kanban #202), by game_id: each with the cores (sim_wasm_hash)
+// and, per core, the configs its manifest lists, and the configs the game plays as one world per round (seed.js asks
+// them through known-game.js sharedWorldOf; kanban #203). A paying round naming any other game, or a core or config its
+// game does not list, is refused by `gameIsKnownGood` (known-game.js).
+const KNOWN_GOOD_GAMES = Object.freeze({
+  '0081b8aa7776c7f3a4c15637da6a256811c87ee2299f82e6bc901f66167cf340': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+  }),
+});
+
 // ---- protocol/src/known-game.js
 // A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
 // kanban #202).
@@ -7323,6 +7072,12 @@ function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
 
 
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** The configs (hex) the round's game shares one world under, as this client knows the game - none for a game it does not. */
+function sharedWorldOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
+}
 
 function gameIsKnownGood(gameId, simCoreHash, configHash) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
@@ -8318,7 +8073,7 @@ async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } =
   const beacon = await fetchRandomness(id, nodes, { fetcher });
   return {
     // THE ONE FUNCTION (seed.js worldSeedWord, #23): the round's contract chooses the rule - one world per round, or per player
-    seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id) }),
+    seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
     randomness: beacon.randomness,
     height: beacon.height,
     agreed: beacon.agreed,
@@ -8608,7 +8363,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
     // NONE ON A SHARED-WORLD ROUND (#23): 32 zero bytes, kept so the entry's encoding and id stay the same shape
-    worldSecret: worldIsShared(round) ? new Uint8Array(32) : random(32),
+    worldSecret: worldIsShared(round, sharedWorldOf(round.gameId)) ? new Uint8Array(32) : random(32),
     // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
     // committee accepted; without one it is 32 zero bytes, and the field is in
     // the signed bytes either way - so an entry that has shares and one that
@@ -18125,7 +17880,7 @@ function playerStoreRecord({ secretKey, displayName = null }) {
 //
 // NOTHING HERE IS AN INPUT. 0.10: another player's truck is a picture, never
 // an input to my simulation. A queue of pictures is handed to a renderer and
-// to nothing else - `packages/core` is not imported, and cannot be.
+// to nothing else - `packages/nextblock` is not imported, and cannot be.
 
 
 /** How many pictures a page will hold before it starts dropping the oldest. */
@@ -19706,7 +19461,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          phraseFromSeed: phraseFromSeed, seedFromPhrase: seedFromPhrase, seedHexFromInput: seedHexFromInput, PHRASE_WORDS: PHRASE_WORDS,
          fetchRound: fetchRound, bondProvider: bondProvider,
          fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,
-         seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared,
+         seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared, sharedWorldOf: sharedWorldOf,
          tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,
          playerFor: playerFor, entryFor: entryFor,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,

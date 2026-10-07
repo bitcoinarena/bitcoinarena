@@ -1,6 +1,6 @@
 // An input batch: what a player sends while a round is running.
 //
-// THE SHAPE IS THE CORE'S, not a new one. `packages/core`'s `step` takes
+// THE SHAPE IS THE CORE'S, not a new one. `packages/nextblock`'s `step` takes
 // throttle, steer, brake, handbrake and practice, in that order, and the
 // golden vectors record exactly those five per tick. A batch carries the same
 // five in the same order, so a node's transcript and a golden vector are the

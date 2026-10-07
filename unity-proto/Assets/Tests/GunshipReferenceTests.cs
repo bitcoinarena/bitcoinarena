@@ -41,7 +41,7 @@ public class GunshipReferenceTests
 
     [Test]
     [Explicit("Measurement, not an assertion. Read the GUNREF/ARMYREF lines out " +
-              "of the log and paste them into packages/core/test/vectors/.")]
+              "of the log and paste them into packages/nextblock/test/vectors/.")]
     public void MeasureTheGunships()
     {
         var sb = new StringBuilder();
