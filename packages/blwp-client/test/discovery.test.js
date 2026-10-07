@@ -86,7 +86,7 @@ const strangerPubkey = schnorr.getPublicKey(stranger);
 
 const advertFor = (endpoint, nodePubkey = operatorPubkey) => ({
   nodePubkey, operatorId: 'somebody', protocolVersions: [1],
-  roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
   softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
   // All zero: the bond is an output of the transaction that carries this body,
   // which is the only value expressible when the txid is not knowable yet.

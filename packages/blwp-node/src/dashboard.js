@@ -26,7 +26,7 @@ const DAY = 86400000;
 const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null } = {}) {
   const db = round.db;
   const me = hex(round.pubkey);
   const first = db.prepare('SELECT MIN(opened_ms) AS t FROM rounds').get();
@@ -71,7 +71,10 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
       } catch { /* a round the table refuses earns nothing here */ }
     }
     const s = settlementOf.get(r.round_id);
-    rounds.push({ id: hex(r.round_id), startMs: Number(contract.startTimeMs), free: contract.stakeMsat === 0n,
+    // THE ROUND'S GAME (kanban #204): its id, and the name this node hosts it under (none for a game it no longer hosts)
+    const gameId = contract.gameId instanceof Uint8Array ? hex(contract.gameId) : null;
+    const hostedAs = gameId && games instanceof Map && games.get(gameId);
+    rounds.push({ id: hex(r.round_id), game: gameId, gameName: hostedAs ? hostedAs.name : null, startMs: Number(contract.startTimeMs), free: contract.stakeMsat === 0n,
       stakeMsat: String(contract.stakeMsat), entries: r.n, checked: mine.length,
       settlement: s ? { state: s.state, madeMs: Number(s.made_ms), why: String(s.why || '').slice(0, 160) } : null,
       earned: s && s.state === 'ACCEPTED', gameVerifyMsat: String(gameVerify), settlementMsat: String(settlement), guardianMsat: String(guardian) });
@@ -113,6 +116,15 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     const key = new Date(dayStart - d * DAY).toISOString().slice(0, 10);
     days.push({ day: key, ...out(daily.get(key) || zero()) });
   }
+  // EARNINGS PER GAME (kanban #204): every checked round's shares under its game - earned (settled ACCEPTED) and owed
+  const perGame = new Map();
+  for (const r of checked) {
+    const g = perGame.get(r.game) || { game: r.game, name: r.gameName, rounds: 0, earned: zero(), owed: zero() };
+    const t = r.earned ? g.earned : g.owed;
+    t.gameVerifyMsat += BigInt(r.gameVerifyMsat); t.settlementMsat += BigInt(r.settlementMsat); t.guardianMsat += BigInt(r.guardianMsat);
+    g.rounds++; perGame.set(r.game, g);
+  }
+  const byGame = [...perGame.values()].map((g) => ({ game: g.game, name: g.name, rounds: g.rounds, earned: out(g.earned), owed: out(g.owed) }));
   const settlements = db.prepare('SELECT round_id, state, why, made_ms FROM lock_settlements ORDER BY made_ms DESC LIMIT 100').all()
     .map((s) => ({ round: hex(s.round_id), state: s.state, madeMs: Number(s.made_ms), why: String(s.why || '').slice(0, 200) }));
   const byState = {};
@@ -120,7 +132,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
   return {
     node: me, nowMs, sinceMs: first && first.t ? Number(first.t) : null,
     totals: { day: out(totals.day), month: out(totals.month), year: out(totals.year), owed: out(totals.owed) },
-    days, roundsChecked: checked.length, rounds: checked.slice(0, roundsShown),
+    days, roundsChecked: checked.length, rounds: checked.slice(0, roundsShown), byGame,
     settlements, settlementsByState: byState, federations: [...federations.values()],
     notes: {
       guardian: 'the guardian third (§22A) goes to the census nodes guarding the round\'s federation; this node\'s share is shown when it guards it',
@@ -183,10 +195,11 @@ function readPlayers(id){players.set(id,{loading:true});fetch('api/round-result?
 function totals(){const T=D.totals[period];const names=[['gameVerifyMsat','Game/verify fee'],['settlementMsat','Settlement fee'],['guardianMsat','Guardian/custody fee'],['otherMsat','Other earnings'],['lightningCostMsat','Lightning costs'],['gatewayCostMsat','Gateway costs']];
 el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month',year:'This year'}[period])+' (earned: settlement ACCEPTED)</h3>'+names.map(([k,n])=>'<div class="row"><span>'+n+'</span><b>'+(k.includes('Cost')&&T[k]!=='0'?'−':'')+sat(T[k])+'</b></div>').join('')+'<div class="row profit"><span>Absolute profit</span><b>'+sat(T.profitMsat)+'</b></div></div>'
  +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div><div class="row"><span>Guardian</span><b>'+sat(D.totals.owed.guardianMsat)+'</b></div></div>'
- +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard();
+ +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard()+gamesCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
 // THE HOSTS CARD (node 1: gateway A + LND 1, node 2: gateway B + LND 2): only on a node that hosts them
+function gamesCard(){const G=D.byGame||[];if(!G.length)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="games"><h3>By game</h3>';for(const g of G){const e=g.earned,o=g.owed;s+='<div class="notes"><p><b>'+keep(String(g.name||(g.game?g.game.slice(0,16):'(no game)')).replace(/[&<>"']/g,(c)=>'&#'+c.charCodeAt(0)+';'))+'</b> - '+g.rounds+' round'+(g.rounds===1?'':'s')+'</p></div>'+r('Earned',sat(String(BigInt(e.gameVerifyMsat)+BigInt(e.settlementMsat)+BigInt(e.guardianMsat))))+r('Owed',sat(String(BigInt(o.gameVerifyMsat)+BigInt(o.settlementMsat)+BigInt(o.guardianMsat))));}return s+'</div>'}
 function hostsCard(){const H=D.hosts;if(!H)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="hosts"><h3>Hosts</h3>';
  const L=H.lnd;if(L)s+=L.error?r('LND','not read: '+esc(L.error)):r('LND',esc(L.alias))+r('Node key',esc(L.pubkey.slice(0,16))+'…')+r('Active channels',L.activeChannels)+r('Local balance',sat(L.localMsat))+r('Remote balance',sat(L.remoteMsat))+r('Routing fees, 30 days',sat(L.routingFeesMsat30d)+' · '+L.forwards30d+' forwards')+r('Fees its payments paid',sat(L.paidFeesMsat)+' · '+L.paymentsWithFee+' payments');
  const G=H.gateway;if(G)s+=G.error?r('Gateway '+esc(G.name),'not read: '+esc(G.error)):r('Gateway',esc(G.name)+' · '+esc(G.state))+(G.federations||[]).map(f=>r('E-cash in '+esc(f.name||f.id.slice(0,12)),sat(f.ecashMsat))).join('')+r('Lightning balance',sat(G.lightningMsat))+r('Inbound liquidity',sat(G.inboundMsat))+r('On-chain',G.onchainSat+' sat')+(G.payments30d?r('Payments in, 30 days',G.payments30d.incoming.success+' ok · '+G.payments30d.incoming.failure+' failed · fees '+sat(G.payments30d.incoming.feesMsat))+r('Payments out, 30 days',G.payments30d.outgoing.success+' ok · '+G.payments30d.outgoing.failure+' failed · fees '+sat(G.payments30d.outgoing.feesMsat)):'');

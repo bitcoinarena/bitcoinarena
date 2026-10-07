@@ -28,6 +28,7 @@ import { medianTimePast, beaconFromChain } from '../../protocol/src/beacon.js';
 import { deriveCensus } from '../../protocol/src/census.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const NEXTBLOCK_REGISTRATION = new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname;
 
 const MAIN = new URL('../src/main.js', import.meta.url).pathname;
@@ -203,7 +204,7 @@ function chainFixture(prefix, { committeePast = false } = {}) {
   const drafted = { ...ahead, committeeTimeMs: ahead.committeeTimeMs + shift, startTimeMs: ahead.startTimeMs + shift, entryCloseMs: ahead.entryCloseMs + shift };
   const committeeSec = Math.floor(Number(drafted.committeeTimeMs) / 1000);
   const bonds = keys.map((key, i) => bondTransaction({
-    nodePubkey: key, operatorId: `operator${i}`, protocolVersions: [1], roles: ['game', 'settlement'], endpoint: `ws://node${i}`,
+    nodePubkey: key, operatorId: `operator${i}`, protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement'], endpoint: `ws://node${i}`,
     region: 'eu-west', capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
     bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
   }, { previousTxid: b32(0xa0 + i), previousVout: 0, outputKey: bondFor(key) }));

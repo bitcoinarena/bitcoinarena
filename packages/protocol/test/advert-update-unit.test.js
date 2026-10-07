@@ -18,6 +18,7 @@ import {
 import { advertId } from '../src/advert.js';
 import { parseTransaction, hash256 } from '../src/tx.js';
 import { advertUpdateTransaction, bondTransaction, blockOf } from '../tools/bond.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -27,7 +28,7 @@ const NODE = schnorr.getPublicKey(SECRET), OTHER_NODE = schnorr.getPublicKey(OTH
 const FED = b32(0x33);
 const key = (n) => Uint8Array.from([0x02, ...b32(n)]);
 const advert = (guardianKey, timestamp = 1790000000000n, nodePubkey = NODE) => ({
-  nodePubkey, operatorId: '2of2', protocolVersions: [1], roles: ['game', 'verify', 'settlement'],
+  nodePubkey, operatorId: '2of2', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify', 'settlement'],
   endpoint: 'wss://node-1.example/', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
   bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [{ federationId: FED, guardianKey }],

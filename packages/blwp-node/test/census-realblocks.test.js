@@ -21,6 +21,7 @@ import { splitBlock } from '../../protocol/src/block.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { BOND } from './curve.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const CHAIN = JSON.parse(readFileSync(new URL('./fixtures/regtest-census.json', import.meta.url)));
 const blocks = CHAIN.blocks.map((b) => splitBlock(fromHex(b.hex)));
@@ -104,7 +105,7 @@ test('a bond marked for another network is not scanned off a real chain', () => 
 test('a list that lies about these blocks does not move the census', () => {
   const lying = ['honest', 'doomed', 'shallow'].map((who) => ({
     txid: fromHex(CHAIN.nodes[who].txid).reverse(), vout: 0, pubkey: keyOf(who),
-    bondSats: 50000000n, height: CHAIN.funded, spent: false, roles: ['game'],
+    bondSats: 50000000n, height: CHAIN.funded, spent: false, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
   }));
 
   const told = deriveCensus(view, { contract, resolve, bond: BOND, candidates: lying });

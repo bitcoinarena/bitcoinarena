@@ -28,11 +28,12 @@ import { bondTransaction } from '../../protocol/tools/bond.js';
 import {
   deriveCensus, scanCensus, commitCensus, leafHash, censusRootMatchesRound, censusInputsId,
 } from '../../protocol/src/census.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
   nodePubkey: keyFor(n), operatorId: 'operator', protocolVersions: [PROTOCOL_VERSION],
-  roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1,
   softwareHash: b32(2), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n, ...over,
@@ -55,7 +56,7 @@ const view = (at, tip = TIP, from = HEIGHT - 20) => {
   return minedChain(blocks, from);
 };
 const contract = {
-  bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
+  gameId: NEXTBLOCK_GAME_ID, bondMinSats: 50000n, protocolVersion: PROTOCOL_VERSION,
   censusHeight: HEIGHT, censusConfirmations: 6, networkId: NETWORK_ID_REGTEST,
 };
 
@@ -82,7 +83,7 @@ function rig({ claims = () => b32(0xEE), extraBlocks = {}, extraCandidates = [] 
     },
     candidates: [
       ...ns.map((n) => ({
-        txid: ids.get(n), vout: 0, pubkey: claims(n), bondSats: 60000n, roles: ['settlement'],
+        txid: ids.get(n), vout: 0, pubkey: claims(n), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['settlement'],
       })),
       ...extraCandidates,
     ],
@@ -213,7 +214,7 @@ test('the advertisement id a census carries is the one the bond committed to', (
  * point at the rule that removed a name.
  */
 test('exclusions come back from both steps, each carrying its step', () => {
-  const r = rig({ extraCandidates: [{ txid: b32(0x77), vout: 0, pubkey: b32(0x77), bondSats: 60000n, roles: ['game'] }] });
+  const r = rig({ extraCandidates: [{ txid: b32(0x77), vout: 0, pubkey: b32(0x77), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }] });
   // 0x77 is on no chain at all -> scan drops it
   // and 0x13 resolves to a body nobody can retrieve -> resolve drops it
   const gone = toHex(r.ids.get(0x13));
@@ -487,8 +488,8 @@ test('a bond spent after the census height keeps its place, its amount and its s
   const at = (place) => deriveCensus(view(place), {
     contract: round, bond: BOND,
     candidates: [
-      { txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] },
-      { txid: nb.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] },
+      { txid: tx.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] },
+      { txid: nb.txid, vout: 0, pubkey: b32(0xEE), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] },
     ],
     resolve: (e) => ({ transaction: byTxid.get(toHex(e.txid)) }),
   });
@@ -541,7 +542,7 @@ test('a census no longer counts the OP_RETURN as somebody\'s bond', () => {
   const chain = view({ [HEIGHT - 20]: [bond] });
   const at = (vout) => deriveCensus(chain, {
     contract, bond: BOND,
-    candidates: [{ txid: tx.txid, vout, pubkey: b32(0xEE), bondSats: 60000n, roles: ['game'] }],
+    candidates: [{ txid: tx.txid, vout, pubkey: b32(0xEE), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }],
     resolve: () => ({ transaction: bond }),
   });
 

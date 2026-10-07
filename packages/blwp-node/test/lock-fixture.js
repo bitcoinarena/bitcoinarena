@@ -29,6 +29,7 @@ import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
 import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
 // HARNESS KEY: a claim key the tests hand a signer node (`claimKeyFor`), to measure the
@@ -99,13 +100,15 @@ export function bondedChainSlot(port = lockPort()) {
 
 // `endpoints`: where each node is reached - a running daemon's own address (the census is where its peers learn it), a
 // placeholder for a key no daemon stands behind.
-export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [] } = {}) {
+// `hostedGames`: the games the bonded nodes' advertisements host (kanban #204) - nextblock unless a test hands others
+export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [], hostedGames = [NEXTBLOCK_GAME_ID] } = {}) {
+  const hosted = [...hostedGames].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
   slot.federationId = contract.federationId;
   slot.committeeSec = Math.floor(Number(contract.committeeTimeMs) / 1000);
   slot.views.clear();
   slot.guardianKeys = nodes.map((_, i) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x60 + i)]));
   slot.bonds = nodes.map((key, i) => bondTransaction({
-    nodePubkey: key, operatorId: `operator${i}`, protocolVersions: [1], roles: ['game', 'settlement'],
+    nodePubkey: key, operatorId: `operator${i}`, protocolVersions: [1], hostedGames: hosted, roles: ['game', 'settlement'],
     endpoint: endpoints[i] || `ws://node${i}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
     guardianOf: [{ federationId: contract.federationId, guardianKey: slot.guardianKeys[i] }], timestamp: 1788700000000n,

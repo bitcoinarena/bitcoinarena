@@ -11,6 +11,7 @@ import { splitBlock } from '../../protocol/src/block.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { BOND } from './curve.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const CHAIN = JSON.parse(readFileSync(new URL('./fixtures/regtest-census.json', import.meta.url)));
 const blocks = CHAIN.blocks.map((b) => splitBlock(fromHex(b.hex)));
@@ -38,7 +39,7 @@ test('and a node whose bond does not say so is not listed as a guardian', () => 
   // the same bonds read without a view, so the non-guardians' adverts are in the list too
   const listed = ['honest', 'doomed', 'shallow'].map((who) => ({
     txid: fromHex(CHAIN.nodes[who].txid).reverse(), vout: 0, pubkey: fromHex(CHAIN.nodes[who].pubkey),
-    bondSats: 50000000n, height: CHAIN.funded, spent: false, roles: ['game'],
+    bondSats: 50000000n, height: CHAIN.funded, spent: false, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
   }));
   const read = resolveCensus(listed, { contract, resolve, bond: BOND });
   assert.equal(read.ok, true, read.why);

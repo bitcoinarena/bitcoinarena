@@ -3,7 +3,7 @@
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG, roleByte } from './constants.js';
-import { compareEntries, meetsCensusMinimum } from './census.js';
+import { compareEntries, meetsCensusMinimum, eligibleFor } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
 
 /**
@@ -133,7 +133,8 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   const out = new Set(entries.filter((e) => excluded.has(outpointKey(e))).map(keyOf));
   const byKey = new Map();
   for (const e of entries) {
-    if (!e.roles.includes(role) || out.has(keyOf(e))) continue;
+    // the role, and for game/verify the round's game hosted (census.js eligibleFor; kanban #204)
+    if (!eligibleFor(e, contract, role) || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;

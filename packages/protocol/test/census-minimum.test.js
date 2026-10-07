@@ -22,14 +22,16 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 // because a contract carries none: 5A.5 derives it and section 6's contract
 // has no field for it.
 const SEED = b32(11);
+// THE ROUND'S GAME, which every node of these censuses hosts (kanban #204: game/verify counts only hosting nodes)
+const GAME = new Uint8Array(32).fill(0x6e);
 const round = (networkId, over = {}) => ({
-  networkId, committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', gameVerifySlots: 2, settlementSlots: 2,
+  networkId, gameId: GAME, committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', gameVerifySlots: 2, settlementSlots: 2,
   bondMinSats: 100000n, ...over,
 });
 /** `n` bonded nodes declaring `roles`. */
 const census = (n, roles = ['game']) => Array.from({ length: n }, (_, i) => ({
   txid: b32(i + 1), vout: 0, pubkey: b32(0x40 + i), bondSats: 200000n,
-  height: 900000, roles, spent: false,
+  height: 900000, roles, hostedGames: [GAME], spent: false,
 }));
 
 test('the minimum is the network\'s, and it comes from genesis', () => {

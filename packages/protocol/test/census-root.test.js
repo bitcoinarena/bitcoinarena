@@ -15,12 +15,13 @@ import { chainOf as minedChain } from '../tools/chainview.js';
 import {
   commitCensus, censusInputsId, censusRootMatchesRound, merkleRoot, leafHash,
 } from '../src/census.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const entryAt = (n, vout = 0, over = {}) => ({
   txid: b32(n), vout, pubkey: b32(n + 0x40), advertId: b32(n + 0x60), bondSats: 60000n,
   // TEN BLOCKS UNDER THE CENSUS HEIGHT: eleven deep AT the census, where depth is measured (5A.4 step 1) - not at the tip
-  height: 900000 - 10, roles: ['game'], spent: false, ...over,
+  height: 900000 - 10, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false, ...over,
 });
 const entries = [entryAt(0x11), entryAt(0x12, 1), entryAt(0x13)];
 const HEIGHT = 900000;

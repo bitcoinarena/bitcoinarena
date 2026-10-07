@@ -10,6 +10,7 @@ import { serve } from '../src/server.js';
 import { encodeAdvert, decodeAdvert, advertId } from '../../protocol/src/advert.js';
 import { standUpRound, guardianFieldsFromNode } from '../tools/round-2of2.mjs';
 import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const freePort = () => new Promise((resolve) => {
@@ -28,7 +29,7 @@ test("a guardian node's advert carries exactly what its GET /guardian answers, u
     const fields = await guardianFieldsFromNode(url);
     assert.deepEqual(fields, { guardianCapable: true, guardianEndpoint: body.endpoint }, 'the fields are the HTTP body and nothing else');
     const id = nodeIdentity(db);
-    const advert = { nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1], roles: ['game', 'settlement', 'verify'],
+    const advert = { nodePubkey: id.pubkey, operatorId: '2of2', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement', 'verify'],
       endpoint: 'wss://seat.example.com/guardian-1', region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
       settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: b32(0), bondVout: 0, bondScriptTemplateVersion: 1,
       payoutPubkey: b32(4), guardianOf: [], ...fields, timestamp: 1788700000000n };

@@ -18,6 +18,7 @@
 import { Writer } from '../src/encode.js';
 import { encodeAdvert } from '../src/advert.js';
 import { TYPE_ADVERT, PROTOCOL_VERSION, roleByte } from '../src/constants.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const SIGNATURE_BYTES = 64;
 const POLICY_LIMIT = 80;              // MAX_STANDARD_TAPSCRIPT_STACK_ITEM_SIZE
@@ -25,7 +26,7 @@ const POLICY_LIMIT = 80;              // MAX_STANDARD_TAPSCRIPT_STACK_ITEM_SIZE
 /** The advertisement the Daily's own launcher posts (tools/regtest-bond.mjs), so the numbers are its. */
 export const DAILY_ADVERT = {
   nodePubkey: new Uint8Array(32).fill(1), operatorId: '2of2', protocolVersions: [1],
-  roles: ['game', 'verify', 'settlement'], endpoint: 'ws://127.0.0.1:18080', region: 'eu-west',
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify', 'settlement'], endpoint: 'ws://127.0.0.1:18080', region: 'eu-west',
   capacityClass: 1, softwareHash: new Uint8Array(32).fill(2), settlementCapabilities: 0,
   lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0,
   bondScriptTemplateVersion: 1, payoutPubkey: new Uint8Array(32).fill(3), guardianOf: [],
