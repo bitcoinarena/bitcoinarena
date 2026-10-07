@@ -140,7 +140,9 @@ test('restart (a): killed before the late transaction is settled - after the res
 test('restart (b): killed after the late transaction is ACCEPTED - the same txid, rebuilt the same, nothing submitted again', async () => {
   const w = await settledOnDisk();
   try {
-    const got = await w.asker().settlements.settleLate(w.rid, w.late.eid);
+    // untilSettled reads node a only; the other seat can record the round's own settlement a moment later and refuse the
+    // first ask ("not accepted here yet"), so the first late settlement is driven as the sweep drives it, as restart (a)'s
+    const { got } = await asTheSweep(() => w.asker().settlements.settleLate(w.rid, w.late.eid), (x) => x.state === 'ACCEPTED');
     assert.equal(got.state, 'ACCEPTED', got.why);
     const txidBefore = w.asker().round.lateLockSettlement(w.rid, w.late.eid).txid;
     await w.restart();                                                        // the kill
