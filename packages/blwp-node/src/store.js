@@ -694,6 +694,12 @@ export function openStore(path = ':memory:') {
       why       TEXT,
       made_ms   INTEGER NOT NULL
     );
+    -- AND HOW OFTEN IT COULD NOT REBUILD ONE (#231): marked checked after BACKFILL_TRIES such passes
+    CREATE TABLE IF NOT EXISTS donation_backfill_tries (
+      round_id  BLOB PRIMARY KEY,
+      tries     INTEGER NOT NULL,
+      last_ms   INTEGER NOT NULL
+    );
 
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
