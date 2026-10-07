@@ -115,37 +115,44 @@ test('the page draws the core\'s three objective markers', { timeout: 110000 }, 
     const view = await p.evaluate('JSON.stringify(window.BLWP_UNITY_LOBBY || null)');
     assert.ok(view && view !== 'null', 'the splash published no rectangles, so SPECTATE cannot be pressed');
     const splash = JSON.parse(view);
+    // THE SPLASH'S RECTANGLES ARE IN ITS LAYOUT UNITS, NOT THE CANVAS'S PIXELS (kanban #29, measured on the test host's Retina
+    // screen: screen [1280, 713] laid out over a 2560-pixel canvas 1280 CSS px wide). Scaled by css / canvas pixels (0.5) the
+    // press landed at 441, 307 instead of SPECTATE's 883, 615, the lobby stayed up, the HUD drew no chart - and this test
+    // read "no chart line". The page reads them the same way (index.html paintMoney: canvas css / u.screen).
     const geom = JSON.parse(await p.evaluate(`(function(){var c=document.querySelector('canvas');var r=c.getBoundingClientRect();
-      return JSON.stringify({k:r.width/c.width,left:r.left,top:r.top});})()`));
+      return JSON.stringify({k:r.width/${splash.screen[0]},left:r.left,top:r.top});})()`));
     const at = { x: geom.left + (splash.spectate[0] + splash.spectate[2] / 2) * geom.k,
                  y: geom.top + (splash.spectate[1] + splash.spectate[3] / 2) * geom.k };
     for (const type of ['mousePressed', 'mouseReleased'])
       await p.send('Input.dispatchMouseEvent', { type, x: at.x, y: at.y, button: 'left', clickCount: 1, buttons: 1 });
     await wait(6000);
 
-    const raw = await p.evaluate(MARKERS);
-    assert.ok(raw && raw !== 'TIMED OUT', 'the page core did not answer for its chart view');
-    const markers = JSON.parse(raw);
-    assert.equal(markers.length, 3, 'the core publishes three objectives');
-
-    // Give the HUD a second of frames, then read what it says it drew.
-    await wait(3000);
-    const line = String(await p.evaluate(DRAWN));
-    assert.ok(line.includes('[chart]'), 'the HUD printed no chart line to read');
-
-    // WHAT COUNTS AS DRAWN, and what does not. The HUD names every box it draws in this line - priceBox, gateBox,
-    // youBox, ghostLabelBoxes, lastTagBox - so a marker it drew would be named there too. Searching the line for the
-    // WORDS "HIGH" and "LOW" is not that test: the line already carries `highLow=HIGH_$81,044 · LOW_$80,916`, the
-    // chart's own high and low price marks, and the first pass of this test counted those two as objective markers
-    // drawn. It asks for an objective box instead.
-    const onScreen = markers.filter((m) => m.onScreen !== 0);
-    const boxes = (line.match(/objBox|objectiveBox(?:es)?|objLabelBoxes/g) || []).length;
-    assert.ok(onScreen.length > 0, `the core put no objective on screen this tick: ${raw}`);
-    assert.ok(boxes > 0,
-      `the core put ${onScreen.length} objective marker(s) on the chart and the HUD's own line names no box for any `
-      + `of them. ChartHud builds them into its frame (f.Objectives, ChartHud.cs:275) and nothing consumes that list `
-      + `outside a test helper, so they are built and never drawn. Core words: ${raw}. HUD line: `
-      + `"${line.slice(0, 300)}"`);
+    // WHAT THE CORE SAYS IS ON THE CHART AND WHAT THE HUD SAYS IT DREW, read together, three times at most: the HUD prints
+    // its line every 2 s and the core re-reads its objectives on the 5 s sample tick, so a pair read across a sample may
+    // differ once.
+    const NAMES = ['HIGH', 'LOW', 'OPEN'];
+    const field = (line, key) => { const m = new RegExp(`(?:^| )${key}=([^ ]*)`).exec(line); return m ? m[1] : null; };
+    let raw = null, line = '', want = [], drawn = [], boxes = [];
+    for (let attempt = 0; attempt < 3; attempt++) {
+      raw = await p.evaluate(MARKERS);
+      assert.ok(raw && raw !== 'TIMED OUT', 'the page core did not answer for its chart view');
+      const markers = JSON.parse(raw);
+      assert.equal(markers.length, 3, 'the core publishes three objectives');
+      // §4.11: one label per candle on screen - two objectives on one candle are one marker, HIGH/LOW
+      const byT = new Map();
+      for (const m of markers) if (m.onScreen !== 0) byT.set(m.t, [...(byT.get(m.t) || []), NAMES[m.kind] || '?']);
+      want = [...byT.values()].map((n) => n.join('/')).sort();
+      await wait(2500);
+      line = String(await p.evaluate(DRAWN));
+      assert.ok(line.includes('[chart]'), 'the HUD printed no chart line to read');
+      drawn = (field(line, 'objNames') || '').split('+').filter(Boolean).sort();
+      boxes = (field(line, 'objBox') || '').split('|').filter(Boolean);
+      if (JSON.stringify(drawn) === JSON.stringify(want) && boxes.length === want.length) break;
+    }
+    assert.ok(want.length > 0, `the core put no objective on screen this tick: ${raw}`);
+    assert.deepEqual(drawn, want, `the HUD drew ${drawn.join(' + ') || 'nothing'}, the core's objectives on screen are ${want.join(' + ')} `
+      + `(core words ${raw}; HUD line "${line.slice(0, 200)}")`);
+    assert.equal(boxes.length, want.length, `the HUD placed ${boxes.length} objective box(es) for ${want.length} marker(s): objBox=${field(line, 'objBox')}`);
   } finally {
     p.close();
   }

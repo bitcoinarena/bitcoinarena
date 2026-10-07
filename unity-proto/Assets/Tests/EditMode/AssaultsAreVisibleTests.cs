@@ -31,7 +31,7 @@ public class AssaultsAreVisibleTests
     public void ADeclaredAssaultRaisesItsBannerAndAsksForASound()
     {
         var w = new AssaultWatch();
-        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_RIDGE), NOON, 10f);
+        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_HIGH), NOON, 10f);
         Assert.AreEqual("BULLS ASSAULT HIGH", w.Banner, "the banner is the one the letter asks for, word for word");
         Assert.AreEqual(1, w.Chimes, "a sound is asked for when the assault starts");
         Assert.IsTrue(w.BannerShowing(10f), "and it is on screen the moment it is raised");
@@ -44,13 +44,13 @@ public class AssaultsAreVisibleTests
     public void TakingTheObjectiveAndFailingAreBothSaid()
     {
         var won = new AssaultWatch();
-        won.Observe(View(BEARS, L.ASSAULT_PUSH, L.OBJ_HOLLOW), NOON, 1f);
-        won.Observe(View(BEARS, L.ASSAULT_CONSOLIDATE, L.OBJ_HOLLOW), NOON.AddSeconds(30), 31f);
+        won.Observe(View(BEARS, L.ASSAULT_PUSH, L.OBJ_LOW), NOON, 1f);
+        won.Observe(View(BEARS, L.ASSAULT_CONSOLIDATE, L.OBJ_LOW), NOON.AddSeconds(30), 31f);
         Assert.AreEqual("LOW TAKEN", won.Banner);
 
         var lost = new AssaultWatch();
-        lost.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_GAP), NOON, 1f);
-        lost.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_GAP), NOON.AddSeconds(30), 31f);
+        lost.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_OPEN), NOON, 1f);
+        lost.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_OPEN), NOON.AddSeconds(30), 31f);
         Assert.AreEqual("ASSAULT ON OPEN FAILS", lost.Banner);
         Assert.AreEqual(1, lost.Chimes, "the sound is for the start, not for every word");
     }
@@ -63,8 +63,8 @@ public class AssaultsAreVisibleTests
     public void TheEndingNamesTheObjectiveThatWasAttacked()
     {
         var w = new AssaultWatch();
-        w.Observe(View(BEARS, L.ASSAULT_PUSH, L.OBJ_RIDGE), NOON, 1f);
-        w.Observe(View(BEARS, L.ASSAULT_IDLE, L.OBJ_HOLLOW), NOON.AddSeconds(30), 31f);   // target word already moved on
+        w.Observe(View(BEARS, L.ASSAULT_PUSH, L.OBJ_HIGH), NOON, 1f);
+        w.Observe(View(BEARS, L.ASSAULT_IDLE, L.OBJ_LOW), NOON.AddSeconds(30), 31f);   // target word already moved on
         Assert.AreEqual("ASSAULT ON HIGH FAILS", w.Banner, "the hill that was attacked, not the one the word holds now");
     }
 
@@ -73,8 +73,8 @@ public class AssaultsAreVisibleTests
     public void TheLogCarriesTheClockAndTheSide()
     {
         var w = new AssaultWatch();
-        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_RIDGE), NOON, 1f);
-        w.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_RIDGE), NOON.AddSeconds(43), 44f);
+        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_HIGH), NOON, 1f);
+        w.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_HIGH), NOON.AddSeconds(43), 44f);
         Assert.AreEqual(2, w.Log.Count);
         Assert.AreEqual("[13:00:00] BULLS ASSAULT HIGH", w.Log[0].Text);
         Assert.AreEqual("[13:00:43] BULLS FAIL ON HIGH", w.Log[1].Text);
@@ -82,9 +82,9 @@ public class AssaultsAreVisibleTests
 
         for (int i = 0; i < AssaultWatch.Keep + 3; i++)
         {
-            w.Observe(View(BEARS, L.ASSAULT_PUSH, L.OBJ_GAP), NOON.AddSeconds(100 + i * 2), 100f + i * 2);
-            w.Observe(View(BEARS, L.ASSAULT_CONSOLIDATE, L.OBJ_GAP), NOON.AddSeconds(101 + i * 2), 101f + i * 2);
-            w.Observe(View(BEARS, L.ASSAULT_IDLE, L.OBJ_GAP), NOON.AddSeconds(101 + i * 2), 101f + i * 2);
+            w.Observe(View(BEARS, L.ASSAULT_PUSH, L.OBJ_OPEN), NOON.AddSeconds(100 + i * 2), 100f + i * 2);
+            w.Observe(View(BEARS, L.ASSAULT_CONSOLIDATE, L.OBJ_OPEN), NOON.AddSeconds(101 + i * 2), 101f + i * 2);
+            w.Observe(View(BEARS, L.ASSAULT_IDLE, L.OBJ_OPEN), NOON.AddSeconds(101 + i * 2), 101f + i * 2);
         }
         Assert.AreEqual(AssaultWatch.Keep, w.Log.Count, "the log is bounded - it is a debug line, not a transcript");
     }
@@ -94,13 +94,13 @@ public class AssaultsAreVisibleTests
     public void NothingIsSaidWhenNothingHappens()
     {
         var w = new AssaultWatch();
-        for (int i = 0; i < 5; i++) w.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_RIDGE), NOON, i);
+        for (int i = 0; i < 5; i++) w.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_HIGH), NOON, i);
         Assert.AreEqual(0, w.Log.Count);
         Assert.AreEqual(0, w.Chimes);
         Assert.IsNull(w.Banner);
 
         // the same push seen sixty times a second is ONE assault
-        for (int i = 0; i < 60; i++) w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_RIDGE), NOON, 10f + i / 60f);
+        for (int i = 0; i < 60; i++) w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_HIGH), NOON, 10f + i / 60f);
         Assert.AreEqual(1, w.Log.Count, "one line per assault, not one per frame");
         Assert.AreEqual(1, w.Chimes, "and one sound");
     }
@@ -116,7 +116,7 @@ public class AssaultsAreVisibleTests
     {
         var w = new AssaultWatch();
         Assert.AreEqual(0, w.Revision, "nothing drawn, nothing to tell");
-        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_RIDGE), NOON, 1f);
+        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_HIGH), NOON, 1f);
         string json = w.AsJson();
         StringAssert.Contains("\"banner\":\"BULLS ASSAULT HIGH\"", json);
         StringAssert.Contains("\"chimes\":1", json);
@@ -135,16 +135,16 @@ public class AssaultsAreVisibleTests
     public void ARoundThatEndsMidPushDoesNotAccuseTheNextOne()
     {
         var w = new AssaultWatch();
-        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_RIDGE), NOON, 1f, 9000);
+        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_HIGH), NOON, 1f, 9000);
         Assert.AreEqual(1, w.Log.Count);
 
         // the round ends here and the next one starts: the core's tick goes back to the beginning
-        w.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_RIDGE), NOON.AddSeconds(200), 201f, 12);
+        w.Observe(View(BULLS, L.ASSAULT_IDLE, L.OBJ_HIGH), NOON.AddSeconds(200), 201f, 12);
         Assert.AreEqual(1, w.Log.Count, "the new round said nothing - the old push is not its failure");
         Assert.AreEqual("BULLS ASSAULT HIGH", w.Banner, "and no new banner was raised over it");
 
         // and the new round's own assault is still announced normally
-        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_GAP), NOON.AddSeconds(230), 231f, 1800);
+        w.Observe(View(BULLS, L.ASSAULT_PUSH, L.OBJ_OPEN), NOON.AddSeconds(230), 231f, 1800);
         Assert.AreEqual("BULLS ASSAULT OPEN", w.Banner);
         Assert.AreEqual(2, w.Log.Count);
     }
@@ -155,8 +155,8 @@ public class AssaultsAreVisibleTests
     {
         var w = new AssaultWatch();
         var v = new int[L.CH_WORDS];
-        v[L.CH_ASSAULT] = L.ASSAULT_PUSH; v[L.CH_ASSAULT + 1] = L.OBJ_HOLLOW;
-        v[L.CH_ASSAULT + L.CH_ASSAULT_WORDS] = L.ASSAULT_PUSH; v[L.CH_ASSAULT + L.CH_ASSAULT_WORDS + 1] = L.OBJ_RIDGE;
+        v[L.CH_ASSAULT] = L.ASSAULT_PUSH; v[L.CH_ASSAULT + 1] = L.OBJ_LOW;
+        v[L.CH_ASSAULT + L.CH_ASSAULT_WORDS] = L.ASSAULT_PUSH; v[L.CH_ASSAULT + L.CH_ASSAULT_WORDS + 1] = L.OBJ_HIGH;
         w.Observe(v, NOON, 1f);
         Assert.AreEqual(2, w.Log.Count, "two sides pushing is two lines");
         Assert.AreEqual("[13:00:00] BULLS ASSAULT LOW", w.Log[0].Text);

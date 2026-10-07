@@ -9,6 +9,7 @@
 import { CORE as TRUCK_ADAPTER } from '../../core/src/adapter.js';
 import { CORE as TRUCK_2069_ADAPTER } from '../../core/frozen/2069b4c2/adapter.js';
 import { CORE as TRUCK_DE2F_ADAPTER } from '../../core/frozen/de2f263d/adapter.js';
+import { CORE as TRUCK_7E21_ADAPTER } from '../../core/frozen/7e2123d1/adapter.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { computeCurrentConfigHash, computeDe2fConfigHash, computeConfigV3Hash } from '../../protocol/src/genesis.js';
@@ -66,6 +67,24 @@ export const TRUCK_DE2F = Object.freeze({
   configs: new Map([[toHex(computeDe2fConfigHash()), {}],
     [toHex(GENESIS_CONFIG_HASH), { committeeBeforeMs: FOUNDING_CONFIG_ON_DE2F_BEFORE_MS }]]),
   replayFile: new URL('../../core/dist/blwp-replay-core-de2f263d.js', import.meta.url),
+});
+
+/**
+ * 7e2123d1 KEPT INSTALLED BESIDE THE TRUCK (kanban #29, 2026-10-07: §4.11's objectives became the chart's HIGH, LOW and
+ * OPEN, and the RIDGE cap went, in core 68e2b3d6): every round the seats published on 7e2123d1 is replayed by it, frozen in
+ * core/frozen/7e2123d1. It plays the two configs the truck carried while it was the truck: v4 (one world per round) and the
+ * per-player v3 (f51759b6) of the 10-06 series.
+ */
+export const TRUCK_7E21_HASH = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
+const FROZEN_7E21 = new URL('../../core/frozen/7e2123d1', import.meta.url).pathname;
+if (coreHashHex(FROZEN_7E21) !== TRUCK_7E21_HASH) throw new Error(`core/frozen/7e2123d1 hashes to ${coreHashHex(FROZEN_7E21)}, not the core it keeps`);
+export const TRUCK_7E21 = Object.freeze({
+  name: `${TRUCK_ADAPTER.name} (7e2123d1, objectives from the relief)`,
+  hash: TRUCK_7E21_HASH,
+  url: new URL('../../core/frozen/7e2123d1/adapter.js', import.meta.url).href,
+  adapter: TRUCK_7E21_ADAPTER,
+  configs: new Map([[TRUCK_CURRENT_CONFIG, {}], [TRUCK_V3_CONFIG, {}]]),
+  replayFile: new URL('../../core/dist/blwp-replay-core-7e2123d1.js', import.meta.url),
 });
 
 export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
@@ -137,7 +156,7 @@ export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK_2069, name: `${TRUCK.n
  * beside it (serve's `cores`) - several at once, each with its own configs (the owner 08:07).
  */
 export function installedCores(extra = []) {
-  const all = new Map([[TRUCK.hash, TRUCK], [DE2F_HASH, TRUCK_DE2F], [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
+  const all = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, TRUCK_7E21], [DE2F_HASH, TRUCK_DE2F], [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
   for (const c of extra) all.set(c.hash, c);
   return all;
 }

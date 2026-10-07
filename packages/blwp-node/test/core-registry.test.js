@@ -56,7 +56,8 @@ test('the registry resolves a round by both hashes, holds the truck always, and 
   const both = installedCores([other]);
   // THE TRUCK, 2069b4c2 KEPT BESIDE IT (path A, 2026-10-04), THE TRUCK BEFORE THE 82/90 FORK (its old hash: 2069b4c2 held
   // to 10800), and the operator's core.
-  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8', '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
+  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8', '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e',
+    '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
   // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
   const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 10800 });
   assert.equal(old.ok, true, old.why);
@@ -135,4 +136,22 @@ test('each core runs the config of its own rules; the founding config on de2f263
   assert.match(pair(DE2F, GENESIS_CONFIG_HASH, after).why, /only for rounds made before/);
   assert.match(pair(DE2F, TRUCK_CURRENT_CONFIG, before).why, /not the config/);
   assert.match(pair(TRUCK.hash, GENESIS_CONFIG_HASH, before).why, /not the config/);
+});
+
+// 7e2123d1 KEPT INSTALLED BESIDE THE TRUCK (kanban #29, 2026-10-07): the core before §4.11's objectives became the chart's -
+// every round the live seats published on it, with the shared-world v4 or the per-player v3 config, is replayed by its
+// frozen source (core/frozen/7e2123d1), not by the truck that moved on to 68e2b3d6.
+import { CORE as FROZEN_7E21 } from '../../core/frozen/7e2123d1/adapter.js';
+test('7e2123d1 rounds are replayed by the frozen 7e2123d1 core under both its configs, and not by the truck', () => {
+  const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
+  assert.notEqual(TRUCK.hash, S7E, 'the truck is still 7e2123d1');
+  for (const config of ['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']) {
+    const got = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(S7E, 'hex')), configHash: Uint8Array.from(Buffer.from(config, 'hex')), blockTicks: 4920 });
+    assert.equal(got.ok, true, `a 7e2123d1 round under ${config.slice(0, 8)}: ${got.why}`);
+    assert.equal(got.core.hash, S7E);
+    assert.equal(got.core.adapter, FROZEN_7E21, 'a 7e2123d1 round ran on another core than its frozen source');
+    assert.notEqual(got.core.adapter, NOW);
+    assert.ok(got.core.replayFile.pathname.endsWith('/core/dist/blwp-replay-core-7e2123d1.js'), 'its replay page runs another bundle');
+  }
+  assert.match(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(S7E, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 4920 }).why, /not the config/);
 });

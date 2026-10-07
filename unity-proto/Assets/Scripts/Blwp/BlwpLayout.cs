@@ -173,9 +173,10 @@ namespace Blwp
         public const int MK_SAMPLE_TICK = 6;
         public const int MK_STRENGTH = 3;
         public const int MK_TREND = 2;
-        public const int OBJ_GAP = 2;
-        public const int OBJ_HOLLOW = 1;
-        public const int OBJ_RIDGE = 0;
+        public const int OBJ_ABSENT = 255;
+        public const int OBJ_HIGH = 0;
+        public const int OBJ_LOW = 1;
+        public const int OBJ_OPEN = 2;
         public const int TAC_MARKET = 82;
 
         // §11.4 posture in TAC_COVER's high bits and §11.5's suppression word, for the renderer

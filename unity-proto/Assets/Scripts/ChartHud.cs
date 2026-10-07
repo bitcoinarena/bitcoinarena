@@ -286,11 +286,18 @@ public class ChartHud : MonoBehaviour
             foreach (var g in ghosts)
                 if (g.On != 0) f.Ghosts.Add(new Label { Text = g.Name, At = new Vector2(X(g.T), Mathf.Clamp(Y(g.P), plot.y, plot.yMax)), Colour = Ghosted });
 
+        // THE CORE'S OBJECTIVES (§4.11, kanban #29): HIGH, LOW and OPEN at their candles' points, as chartView writes them. One
+        // the core reports off this range - an absent OPEN included - is not drawn. ONE CANDLE THAT IS BOTH HIGH AND LOW IS ONE
+        // MARKER, "HIGH/LOW": the core names the same candle twice, and the chart draws it once.
+        var objT = new List<int>();
         for (int o = 0; o < 3; o++)
         {
             int b = L.CH_OBJ + o * L.CH_OBJ_WORDS;
             if (v[b + 4] == 0) continue;
+            int same = objT.IndexOf(v[b + 1]);
+            if (same >= 0) { var joined = f.Objectives[same]; joined.Text += "/" + ObjectiveName(v[b]); f.Objectives[same] = joined; continue; }
             int holder = v[b + 3];
+            objT.Add(v[b + 1]);
             f.Objectives.Add(new Label
             {
                 Text = ObjectiveName(v[b]), At = new Vector2(X(v[b + 1]), Mathf.Clamp(Y(v[b + 2]), plot.y, plot.yMax)),
@@ -407,12 +414,11 @@ public class ChartHud : MonoBehaviour
     public const string PinArrow = ">";
 
     /// <summary>
-    /// WAR_TACTICS.md §4.11 names the three objectives HIGH, LOW and OPEN - "the names are on the map" - and the
-    /// client rendered them RIDGE, HOLLOW and GAP, which are the core's own kind words, not the player's. The spec's
-    /// names win; the kinds keep theirs.
+    /// WAR_TACTICS.md §4.11 names the three objectives HIGH, LOW and OPEN - the chart's own high, low and open crossing,
+    /// which is what the core picks them from since 68e2b3d6 (kanban #29; before it they were the relief's lanes).
     /// </summary>
     public static string ObjectiveName(int kind) =>
-        kind == L.OBJ_RIDGE ? "HIGH" : kind == L.OBJ_HOLLOW ? "LOW" : kind == L.OBJ_GAP ? "OPEN" : "?";
+        kind == L.OBJ_HIGH ? "HIGH" : kind == L.OBJ_LOW ? "LOW" : kind == L.OBJ_OPEN ? "OPEN" : "?";
 
     /// <summary>
     /// Whole dollars on the chart - axis, HIGH, LOW, the last price (the owner 2026-09-17 12:40: "decimals still overlap. Remove
