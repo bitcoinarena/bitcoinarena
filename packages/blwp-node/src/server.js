@@ -16,7 +16,7 @@
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId } from '../../protocol/src/series.js';
+import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES } from '../../protocol/src/series.js';
 import { federationGatewayCount } from '../../protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -89,7 +89,7 @@ import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
-import { hostedPlugins, pluginForRound } from './plugins.js';
+import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
@@ -305,6 +305,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // core/plugin/nextblock.js), checked by plugins.js. None given hosts none; a round of a game this node does not host,
   // or naming a core or config it did not install for that game, is refused at the door.
   plugins = [],
+  // THIS NODE'S OWN ADVERTISEMENT, decoded (kanban #204): when given, the games it names are held to the games hosted above
+  // - an advertised game this node does not host refuses the start, by name (plugins.js advertisedGamesCheck).
+  ownAdvert = null,
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
@@ -322,6 +325,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
+  // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
+  // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
+  const REFUSED_GAME_ROUNDS = 50000;
+  const refusedGameOf = new Map();
+  const rememberRefusedGame = (rid, game) => {
+    refusedGameOf.set(rid, game);
+    if (refusedGameOf.size > REFUSED_GAME_ROUNDS) refusedGameOf.delete(refusedGameOf.keys().next().value);
+  };
+  // A ROUND'S GAME AS THIS NODE HOSTS IT - { id, name } - or null for a game it does not host (kanban #204)
+  const gameOfContract = (c) => {
+    const p = c && c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
+    return p ? { id: toHex(p.gameId), name: p.name } : null;
+  };
+  // A LISTING GROUPED BY GAME: each hosted game with the ids of its rounds in the listing, in listing order
+  const groupedByGame = (rows) => {
+    const by = new Map();
+    for (const r of rows) {
+      if (!r.game) continue;
+      if (!by.has(r.game.id)) by.set(r.game.id, { id: r.game.id, name: r.game.name, rounds: [] });
+      by.get(r.game.id).rounds.push(r.id);
+    }
+    return [...by.values()];
+  };
+  const unhostedRefusal = (contract) => {
+    if (contract.gameId instanceof Uint8Array && hosted.has(toHex(contract.gameId))) return null;
+    const game = contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '(none)';
+    try { rememberRefusedGame(toHex(roundIdOf(contract)), game); } catch { /* a contract with no id names nothing to remember */ }
+    return `this node does not host game ${game.slice(0, 16)}: it plays only the games it hosts (§0A.4) - not selectable for that round, it serves nothing there, and is not slashed`;
+  };
+  if (ownAdvert) {
+    const games = advertisedGamesCheck(ownAdvert, hosted);
+    if (!games.ok) throw new Error(games.why);
+    if (games.unadvertised.length)
+      console.error(`[games] hosting ${games.unadvertised.join(', ')}, which this node's advertisement does not name: not drawn for it until an advertisement update names it`);
+  }
   const replayCoreFile = (hex) => (replayCores && /^[0-9a-f]{64}$/.test(hex) ? joinPath(replayCores, `${hex}.js`) : null);
   if (replayCores) {
     try {
@@ -1871,6 +1909,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // NOT ONE NAMING A DONATION SET OTHER THAN THE ONE IN FORCE (kanban #191): not written, not held - said once, by name
   const refusedSeries = new Set();
   const refuseSeries = (t) => {
+    // A SERIES OF A GAME THIS NODE DOES NOT HOST (kanban #204): not written, said by name, and every round it derives
+    // remembered as that game's, so entries into them are refused by the game
+    if (!(t.gameId instanceof Uint8Array) || !hosted.has(toHex(t.gameId))) {
+      const id = toHex(seriesId(t));
+      const game = t.gameId instanceof Uint8Array ? toHex(t.gameId) : '(none)';
+      if (!refusedSeries.has(id)) {
+        refusedSeries.add(id);
+        console.error(`[series] ${id.slice(0, 16)} not written: this node does not host game ${game.slice(0, 16)} (BLWP_GAMES; §0A.4)`);
+        if (t.gameId instanceof Uint8Array) for (let i = 0; i < ROUNDS_PER_SERIES; i++) rememberRefusedGame(toHex(roundIdOf(seriesRound(t, i))), game);
+      }
+      return true;
+    }
     const why = donationInForceRefusal(t);
     if (!why) return false;
     const id = toHex(seriesId(t));
@@ -2190,6 +2240,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const c = kept.c, endMs = kept.listedEnd;
       if (nowMs >= endMs) continue;   // over: announced no longer
       if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
+      // ONLY THE GAMES THIS NODE HOSTS (§0A.4, kanban #204): a round stored under a game it no longer hosts is not offered
+      if (!gameOfContract(c)) continue;
       candidates.push({ held, c, endMs });
     }
     if (perSeries !== null) {
@@ -2230,6 +2282,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       listed.push({
         id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
+        // THE ROUND'S GAME (kanban #204): its id and the name this node hosts it under
+        game: gameOfContract(c),
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: (fromSet && fromSet.committees.get(id)) || committeeOf(held.roundId),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
         // THE RUN LENGTH, ANNOUNCED (the 82/90 fork, the owner 2026-10-01: "It must be part of the round announcement"):
@@ -2292,7 +2346,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, games: hosted })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
@@ -2344,6 +2398,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
+        // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
+        // round is refused by the same game rather than as a round nobody heard of
+        { const refused = unhostedRefusal(contract); if (refused) return text(res, 409, refused); }
         { const why = offerRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
         // PICK B (protocol/src/old-series.js): testnet4's id before genesis_series_start opens a round of series 3cfbe516
         // and nothing else.
@@ -2637,7 +2694,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             building = (async () => {
               const version = seriesVersion;
               const { nowMs, listed } = await announcedRounds(url);
-              const made = { at: nowReal, version, large: listed.length > 100, json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed }) };
+              const made = { at: nowReal, version, large: listed.length > 100,
+                json: JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), rounds: listed, games: groupedByGame(listed) }) };
               listingKept.set(q, made);
               if (listingKept.size > 16) listingKept.delete(listingKept.keys().next().value);
               return made;
@@ -2660,7 +2718,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const players = round.playersOf(rid);
           return { id: toHex(rid), startTime: new Date(Number(c.startTimeMs)).toISOString(), endTime: new Date(Number(endMs)).toISOString(),
             closedTime: closedMs ? new Date(Number(closedMs)).toISOString() : null, free: c.stakeMsat === 0n, stakeMsat: String(c.stakeMsat),
-            joined: players.joined, committee: committeeOf(rid) };
+            joined: players.joined, committee: committeeOf(rid), game: gameOfContract(c) };
         };
         // an open round whose end has passed is finished too, waiting for its close
         for (const roundId of openHeld()) {
@@ -2676,7 +2734,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         finished.sort((a, b) => (a.endTime < b.endTime ? 1 : -1));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), upcoming: listed, finished }));
+        // only hosted games' rounds, each tagged with its game, and grouped by game (kanban #204)
+        const finishedHosted = finished.filter((r) => r.game);
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), nowMs: String(nowMs), upcoming: listed, finished: finishedHosted,
+          games: groupedByGame([...listed, ...finishedHosted]) }));
       }
 
       // WHO WAS IN A FINISHED ROUND AND WHO WON HOW MUCH (ROUNDS-HTML-1617): each entry, its player's signed name,
@@ -2800,6 +2861,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       if (req.method === 'POST' && url.pathname === '/entry') {
         const contract = decodeEntryContract(await read(req));
+        // AN ENTRY INTO A ROUND OF A GAME THIS NODE DOES NOT HOST (kanban #204): that round was never stored, and the node
+        // says which game, from what it refused at /round or in a series of that game
+        { const game = refusedGameOf.get(toHex(contract.roundId));
+          if (game) return text(res, 409, `entry refused: this node does not host game ${game.slice(0, 16)} (§0A.4), the game that round plays`); }
         { const why = offerRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');

@@ -66,7 +66,7 @@ out.tagged = {
 {
   const mk = (n, bond, height) => ({
     txid: b32(n), vout: n % 3, pubkey: b32(200 - n), advertId: b32(n + 60),
-    bondSats: BigInt(bond), height, roles: ['game', 'verify'], spent: false,
+    bondSats: BigInt(bond), height, hostedGames: [b32(0x67)], roles: ['game', 'verify'], spent: false,
   });
   const entries = [mk(7, 100000, 800007), mk(3, 500000, 800003),
                    mk(11, 100000, 800011), mk(5, 2000000, 800005)];
@@ -88,7 +88,7 @@ out.tagged = {
 /* --------------------------------------------------------------- sortition */
 {
   const mk = (n, bond) => ({ txid: b32(n), vout: 0, pubkey: b32(n),
-                             bondSats: BigInt(bond), height: 1, roles: ['game'], spent: false });
+                             bondSats: BigInt(bond), height: 1, hostedGames: [b32(0x67)], roles: ['game'], spent: false });
   const entries = [mk(1, 5000000), mk(2, 100000), mk(3, 100000), mk(4, 300000), mk(5, 100000)];
   const seed = b32(42);
   out.sortition = {
@@ -103,7 +103,7 @@ out.tagged = {
     // The seed is the lottery's input, not a contract field: 5A.5 derives it
     // from the beacon and section 6's contract carries none.
     selected: selectCommittee({ entries, role: 'game', committeeSeed: seed,
-      contract: { networkId: NETWORK_ID_REGTEST, gameVerifySlots: 3, bondMinSats: 100000n } })
+      contract: { networkId: NETWORK_ID_REGTEST, gameId: b32(0x67), gameVerifySlots: 3, bondMinSats: 100000n } })
       .map((e) => toHex(e.txid)),
     rules: [
       'Weight is bond / bond_min, floored, minimum one. LINEAR.',
@@ -248,7 +248,7 @@ out.tagged = {
 {
   const one = {
     nodePubkey: b32(0x11), operatorId: 'example operator', protocolVersions: [1],
-    roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
+    hostedGames: [b32(0x67)], roles: ['game', 'verify'], endpoint: 'wss://node.example:443', region: 'eu-west',
     capacityClass: 2, softwareHash: b32(0x33), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: b32(0x44), bondVout: 0,
     bondScriptTemplateVersion: 1, payoutPubkey: b32(0x55), guardianOf: [],

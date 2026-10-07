@@ -20,6 +20,7 @@ import {
 import { bondTransaction, blockOf } from '../../protocol/tools/bond.js';
 import { parseTransaction } from '../../protocol/src/tx.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const secret = ed25519.utils.randomSecretKey();
@@ -28,7 +29,7 @@ const other = ed25519.utils.randomSecretKey();
 
 const advertFor = (endpoint = 'wss://node.example:443', nodePubkey = NODE) => ({
   nodePubkey, operatorId: 'somebody', protocolVersions: [1],
-  roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
   softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(4), guardianOf: [], guardianCapable: false, guardianEndpoint: '', timestamp: 1788700000000n,
@@ -233,7 +234,7 @@ test('the census takes a body signed by the key it names, and refuses one that i
   });
   const entryOf = (transaction) => ({
     txid: parseTransaction(transaction).txid, vout: 0, pubkey: NODE,
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   });
   const contract = { bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST };
 

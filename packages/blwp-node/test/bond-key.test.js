@@ -24,6 +24,7 @@ import { blockOf } from '../../protocol/tools/bond.js';
 import { chainOf } from '../../protocol/tools/chainview.js';
 import { hash256 } from '../../protocol/src/chain.js';
 import { BOND_SCRIPT_TEMPLATE_VERSION } from '../../protocol/src/bond-script.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const big = (b) => BigInt('0x' + toHex(b));
@@ -164,7 +165,7 @@ test('a mutated key, maturity or leaf fails the recompute', () => {
 test('a bond built with the template is recognised, and its key recomputes', () => {
   const built = bondOutputKey(inputs, { tweakPoint, combine });
   const advert = {
-    nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+    nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
     bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [],
@@ -354,7 +355,7 @@ test('a second node rebuilds the same output key and both control blocks from ge
 
   // WHAT THE SECOND NODE HAS: the body, and its own copy of genesis.
   const body = {
-    nodePubkey: nodeKey, operatorId: 'somebody', protocolVersions: [1], roles: ['game'],
+    nodePubkey: nodeKey, operatorId: 'somebody', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
     bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
@@ -408,7 +409,7 @@ test('recognizeBond recomputes the output key and drops it from unchecked', () =
   }, { tweakPoint, combine });
 
   const advert = {
-    nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+    nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
     bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
@@ -468,7 +469,7 @@ const BOND = {
 };
 
 const bodyFor = (nodeKey, over = {}) => ({
-  nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+  nodePubkey: nodeKey, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
   endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
   bondVout: 0, bondScriptTemplateVersion: BOND_SCRIPT_TEMPLATE_VERSION,
@@ -495,7 +496,7 @@ test('the census counts the honest bond and excludes the stranger by name', () =
   });
   const entryOf = (tx, key) => ({
     txid: parseTransaction(tx).txid, vout: 0, pubkey: key,
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   });
   const byKey = new Map([[toHex(honest), good], [toHex(liar), bad]]);
   const resolve = (e) => ({ transaction: byKey.get(toHex(e.pubkey)) });
@@ -522,7 +523,7 @@ test('a bond already mature at posting is excluded by the census, not only by th
   const cheap = bondTransaction(bodyFor(node), { outputKey: bondFor(node, { maturity: 1 }) });
   const entry = {
     txid: parseTransaction(cheap).txid, vout: 0, pubkey: node,
-    bondSats: 60000n, height: 900000, roles: ['game'], spent: false,
+    bondSats: 60000n, height: 900000, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   };
   const contract = { bondMinSats: 50000n, protocolVersion: 1, networkId: NETWORK_ID_REGTEST };
 

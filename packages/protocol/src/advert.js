@@ -106,8 +106,29 @@ export function encodeAdvert(a) {
   guardianRole(capable, guardianEndpoint);
   w.u8(capable);
   w.str(guardianEndpoint);
+  // THE GAMES THIS NODE HOSTS (§5A.1 hosted_games[], §0A.4; kanban #204), opt-in like its roles: the game ids it plays,
+  // sorted and asserted, inside the signed body the bond commits to - so a change of the list is an advertisement update
+  // (advert-update.js), never a new bond. The game/verify committee of a round is drawn only from the nodes whose list
+  // holds the round's game. [] hosts none; nothing is implied.
+  if (!Array.isArray(a.hostedGames) || !a.hostedGames.every((g) => g instanceof Uint8Array && g.length === 32))
+    throw new Error('an advertisement names the games its node hosts (hosted_games, 32-byte game ids; [] for none)');
+  for (let i = 1; i < a.hostedGames.length; i++)
+    if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
+  w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
   return w.finish();
+}
+
+/** Two game ids in byte order; equal is not an order (a game is hosted once). */
+function compareGameIds(x, y) {
+  for (let i = 0; i < 32; i++) if (x[i] !== y[i]) return x[i] - y[i];
+  return 0;
+}
+
+/** Whether an advertisement (or a census entry carrying its list) hosts this game. */
+export function hostsGame(a, gameId) {
+  return !!(a && Array.isArray(a.hostedGames) && gameId instanceof Uint8Array
+    && a.hostedGames.some((g) => compareGameIds(g, gameId) === 0));
 }
 
 export function decodeAdvert(bytes) {
@@ -143,6 +164,9 @@ export function decodeAdvert(bytes) {
   guardianRole(capable, guardianEndpoint);
   a.guardianCapable = capable === 1;
   a.guardianEndpoint = guardianEndpoint;
+  a.hostedGames = r.vec((rr) => rr.bytes32());
+  for (let i = 1; i < a.hostedGames.length; i++)
+    if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
   return a;

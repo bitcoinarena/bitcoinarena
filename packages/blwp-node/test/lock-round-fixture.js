@@ -97,7 +97,9 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
     d.stakeSecrets.peers = there;
     d.dkg.peers = there;
   }
-  return openLockRound({ a, b, nodes, port, slot, lnurl: address, close: async () => { for (const d of nodes) await d.close(); } },
+  // THE GAMES THE NODES' ADVERTISEMENTS HOST (kanban #204): the games they were handed
+  const hostedGames = (serveOpts.plugins || HOSTED).map((p) => p.gameId);
+  return openLockRound({ a, b, nodes, port, slot, lnurl: address, hostedGames, close: async () => { for (const d of nodes) await d.close(); } },
     { minScore, stakeMsat, endMs, round });
 }
 
@@ -120,7 +122,8 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   const drafted = endMs === null ? first : presentDay(first, endMs);
   // ONLY THE TWO FIELDS THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to, and a committee time
   // among its blocks. The round id follows from them.
-  const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`) });
+  const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`),
+    ...(on.hostedGames ? { hostedGames: on.hostedGames } : {}) });
   const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };
   const rid = roundId(c);
   for (const d of nodes) {

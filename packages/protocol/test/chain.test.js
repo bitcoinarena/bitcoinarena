@@ -21,6 +21,7 @@ import {
 import { parseTransaction } from '../src/tx.js';
 import { fromHex, toHex } from '../src/hash.js';
 import { bondTransaction, blockOf } from '../tools/bond.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 // There is no BLWP bond on mainnet to point at, so the bond transaction is
 // built - by `tools/bond.js`, which is not part of the protocol - and put in a
@@ -129,7 +130,7 @@ test('hash256 is the double hash Bitcoin uses everywhere', () => {
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advert = (endpoint = 'wss://node.example:443') => ({
   nodePubkey: b32(1), operatorId: 'somebody', protocolVersions: [1],
-  roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
+  hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify'], endpoint, region: 'eu-west', capacityClass: 2,
   softwareHash: b32(3), settlementCapabilities: 0, lightningCapabilities: 0,
   bondTxid: txidBytes(TX_AT_1), bondVout: 0, bondScriptTemplateVersion: 1,
   payoutPubkey: b32(4), guardianOf: [], guardianCapable: false, guardianEndpoint: '', timestamp: 1788700000000n,

@@ -28,10 +28,11 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../src/genesis-ids.js';
 import { bondTransaction } from '../tools/bond.js';
 import { scanCensus } from '../src/census.js';
 import { chainOf as minedChain } from '../tools/chainview.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const advertFor = (n, over = {}) => ({
-  nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+  nodePubkey: b32(n), operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
   endpoint: `ws://node${n}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
   settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
   bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [], timestamp: 1788700000000n,
@@ -74,7 +75,7 @@ function rig() {
     ids,
     at: { [HEIGHT - 20]: [bonds[0]], [HEIGHT - 10]: [bonds[1], bonds[2]] },
     candidates: ids.map((txid, i) => ({
-      txid, vout: 0, pubkey: b32(0x11 + i), bondSats: 60000n, roles: ['game'],
+      txid, vout: 0, pubkey: b32(0x11 + i), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
     })),
   };
 }
@@ -110,7 +111,7 @@ test('scan reads each outpoint\'s height out of the chain, not out of the entry'
 
 test('an outpoint the chain does not carry is named, not silently dropped', () => {
   const { at, candidates } = rig();
-  const invented = [...candidates, { txid: b32(0x77), vout: 0, pubkey: b32(0x77), bondSats: 1n, roles: ['game'] }];
+  const invented = [...candidates, { txid: b32(0x77), vout: 0, pubkey: b32(0x77), bondSats: 1n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }];
   const seen = scanCensus(view(at), { contract: round(), candidates: invented });
 
   assert.equal(seen.entries.length, 3);
@@ -160,7 +161,7 @@ test('a bond funded in the census block itself is in the census', () => {
 
   const seen = scanCensus(view({ ...at, [HEIGHT]: [atHeight] }, HEIGHT + 1), {
     contract: round({ censusConfirmations: 1 }),
-    candidates: [...candidates, { txid: atId, vout: 0, pubkey: b32(0x15), bondSats: 60000n, roles: ['game'] }],
+    candidates: [...candidates, { txid: atId, vout: 0, pubkey: b32(0x15), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }],
   });
   assert.equal(seen.excluded.length, 0, 'the census block itself was skipped');
   assert.equal(seen.entries.find((e) => toHex(e.txid) === toHex(atId)).height, HEIGHT);
@@ -177,7 +178,7 @@ test('an outpoint is the txid AND the vout', () => {
   // a bond transaction has two outputs: the bond and the OP_RETURN commitment
   const atOne = scanCensus(view(at), {
     contract: round(),
-    candidates: [{ txid: ids[0], vout: 1, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] }],
+    candidates: [{ txid: ids[0], vout: 1, pubkey: b32(0x11), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }],
   });
   assert.equal(atOne.entries.length, 1);
   assert.equal(atOne.entries[0].vout, 1, 'vout 1 was read as some other output');
@@ -185,7 +186,7 @@ test('an outpoint is the txid AND the vout', () => {
   // and a vout the transaction does not have is missing, not invented
   const beyond = scanCensus(view(at), {
     contract: round(),
-    candidates: [{ txid: ids[0], vout: 9, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] }],
+    candidates: [{ txid: ids[0], vout: 9, pubkey: b32(0x11), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }],
   });
   assert.equal(beyond.entries.length, 0);
   assert.equal(beyond.excluded.length, 1);
@@ -194,8 +195,8 @@ test('an outpoint is the txid AND the vout', () => {
   const both = scanCensus(view(at), {
     contract: round(),
     candidates: [
-      { txid: ids[0], vout: 0, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] },
-      { txid: ids[0], vout: 1, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] },
+      { txid: ids[0], vout: 0, pubkey: b32(0x11), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] },
+      { txid: ids[0], vout: 1, pubkey: b32(0x11), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] },
     ],
   });
   assert.equal(both.entries.length, 2, 'one outpoint swallowed the other');
@@ -209,7 +210,7 @@ test('a bond created after the census height is not in it either', () => {
 
   const seen = scanCensus(view(withLate), {
     contract: round(),
-    candidates: [...candidates, { txid: lateId, vout: 0, pubkey: b32(0x14), bondSats: 60000n, roles: ['game'] }],
+    candidates: [...candidates, { txid: lateId, vout: 0, pubkey: b32(0x14), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }],
   });
   assert.equal(seen.entries.length, 3);
   assert.equal(seen.excluded.length, 1, 'an output the census height never saw was counted');
@@ -227,7 +228,7 @@ test('a bond too shallow at the tip is not in the census', () => {
   const shallow = scanCensus(view({ ...at, [HEIGHT]: [fresh] }, HEIGHT), {
     contract: round({ censusConfirmations: 6 }),
     candidates: [...candidates,
-      { txid: freshId, vout: 0, pubkey: b32(0x16), bondSats: 60000n, roles: ['game'] }],
+      { txid: freshId, vout: 0, pubkey: b32(0x16), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] }],
   });
 
   assert.equal(shallow.entries.length, 3, 'a shallow bond was counted');
@@ -248,7 +249,7 @@ test('a bond exactly deep enough is in, and one short of it is out', () => {
   const six = bondOf(0x17);
   const five = bondOf(0x18);
   const also = (tx, n) => ({
-    txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(n), bondSats: 60000n, roles: ['game'],
+    txid: parseTransaction(tx).txid, vout: 0, pubkey: b32(n), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
   });
 
   // at a tip of HEIGHT, a bond funded at HEIGHT-5 is exactly 6 deep and one
@@ -443,8 +444,8 @@ test('a bond two blocks under the census stays shallow however far the tip has m
   const fresh = bondOf(0x17);
   const at = { [HEIGHT - 20]: [bondOf(0x11)], [HEIGHT - 1]: [fresh] };
   const candidates = [
-    { txid: parseTransaction(bondOf(0x11)).txid, vout: 0, pubkey: b32(0x11), bondSats: 60000n, roles: ['game'] },
-    { txid: parseTransaction(fresh).txid, vout: 0, pubkey: b32(0x17), bondSats: 60000n, roles: ['game'] },
+    { txid: parseTransaction(bondOf(0x11)).txid, vout: 0, pubkey: b32(0x11), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] },
+    { txid: parseTransaction(fresh).txid, vout: 0, pubkey: b32(0x17), bondSats: 60000n, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'] },
   ];
 
   for (const tip of [HEIGHT, HEIGHT + 5, HEIGHT + 50]) {

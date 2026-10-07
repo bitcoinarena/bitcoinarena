@@ -93,7 +93,7 @@ test('two nodes given the same published hash reach the same seed', () => {
 test('one seed selects one committee, and a different beacon selects another', () => {
   const entries = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => ({
     txid: b32(n), vout: 0, pubkey: b32(0xa0 + n), bondSats: 100000n,
-    height: 1, roles: ['game'], spent: false,
+    height: 1, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
   }));
   const seedOf = (randomness) => committeeSeedFrom({
     censusRootGameVerify: contract.censusRoot, censusRootSettlement: contract.censusRoot,

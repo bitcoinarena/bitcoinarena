@@ -16,6 +16,7 @@ import {
 import { genesisFor } from '../src/genesis.js';
 import { bondInternalKey } from '../src/bond-script.js';
 import { toHex, taggedHash } from '../src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);
@@ -217,7 +218,7 @@ test('the bond builder no longer writes a key derived from nothing', async () =>
   const { bondTransaction } = await import('../tools/bond.js');
   const { parseTransaction } = await import('../src/tx.js');
   const advert = {
-    nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], roles: ['game'],
+    nodePubkey: NODE, operatorId: 'operator', protocolVersions: [1], hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'],
     endpoint: 'ws://node', region: 'eu-west', capacityClass: 1, softwareHash: b32(2),
     settlementCapabilities: 0, lightningCapabilities: 0, bondTxid: new Uint8Array(32),
     bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3), guardianOf: [],

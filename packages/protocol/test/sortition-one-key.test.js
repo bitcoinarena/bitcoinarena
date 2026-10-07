@@ -8,10 +8,11 @@ import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { selectCommittee, ticketFor, weightOf } from '../src/sortition.js';
 import { compareEntries } from '../src/census.js';
 import { toHex } from '../src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-const row = (key, n, bond = 100000n) => { const txid = b32(n); txid[1] = key; return { txid, vout: n % 3, pubkey: b32(key), bondSats: bond, height: 1, roles: ['game', 'settlement'], spent: false }; };
-const contract = { gameVerifySlots: 7, settlementSlots: 7, bondMinSats: 100000n, networkId: NETWORK_ID_REGTEST };
+const row = (key, n, bond = 100000n) => { const txid = b32(n); txid[1] = key; return { txid, vout: n % 3, pubkey: b32(key), bondSats: bond, height: 1, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'settlement'], spent: false }; };
+const contract = { gameVerifySlots: 7, settlementSlots: 7, bondMinSats: 100000n, networkId: NETWORK_ID_REGTEST, gameId: NEXTBLOCK_GAME_ID };
 // THE TESTNET4 SHAPE: seven node keys, three of them holding two extra bond rows each - thirteen census entries
 const census = [];
 for (let k = 1; k <= 7; k++) census.push(row(k, 10 * k));

@@ -38,7 +38,7 @@ const COMMITTEE_TIME = 500n;
 const AFTER = 900n;
 const census = (n) => Array.from({ length: n }, (_, i) => ({
   txid: b32(i + 1), vout: 0, pubkey: b32(0x40 + i), bondSats: 100000n,
-  height: CENSUS_HEIGHT, roles: ['game'], spent: false,
+  height: CENSUS_HEIGHT, hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game'], spent: false,
 }));
 const contract = (over = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
