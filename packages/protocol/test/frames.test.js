@@ -48,7 +48,9 @@ test('one type carries no authority, and it is the ghost', () => {
   // it is the question "what does the new one decide" asked out loud.
   // 28 since the game manifest (kanban #202, §0A.3): its developer's signature decides which cores, configs, run length,
   // rank curve and min_score a round of that game may name - so it carries authority.
-  assert.equal(FRAMES.size, 28, 'a type was added without saying what it decides');
+  // 29 since the outcome attestation (kanban #206, §0A.7a): k of an attested game's attestors decide which picks win, so
+  // which entries the pari-mutuel table pays - it carries authority.
+  assert.equal(FRAMES.size, 29, 'a type was added without saying what it decides');
 });
 
 /**
