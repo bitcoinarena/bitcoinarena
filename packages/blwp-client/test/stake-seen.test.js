@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stakeSeenBy, settlementBy, roundCoreHex, stakeSeenNeeded } from '../src/join.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -89,9 +90,9 @@ test('settlementBy: a settlement answer that is not JSON, no node answering, ide
 });
 
 test('roundCoreHex: the 32-byte core a round names, as hex; anything else is empty', () => {
-  assert.equal(roundCoreHex({ simCoreHash: b32(0xab) }), 'ab'.repeat(32));
-  assert.equal(roundCoreHex({ simCoreHash: b32(0xab).subarray(0, 31) }), '');
-  assert.equal(roundCoreHex({ simCoreHash: 'ab'.repeat(32) }), '');
+  assert.equal(roundCoreHex({ gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(0xab) }), 'ab'.repeat(32));
+  assert.equal(roundCoreHex({ gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(0xab).subarray(0, 31) }), '');
+  assert.equal(roundCoreHex({ gameId: NEXTBLOCK_GAME_ID, simCoreHash: 'ab'.repeat(32) }), '');
   assert.equal(roundCoreHex(null), '');
   assert.equal(roundCoreHex(undefined), '');
 });

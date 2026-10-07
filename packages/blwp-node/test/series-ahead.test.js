@@ -9,7 +9,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { seriesWriter } from '../src/series-writer.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { decodeRoundContract, encodeRoundContract, roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -20,6 +20,8 @@ import {
   seriesTemplate, seriesId, seriesRound, seriesRoundsWithin, seriesLeadIsValid, seriesPublicationPayload, seriesIndexAt, seriesStartOf,
   ROUND_PERIOD_MS, SERIES_MAX_MS, SERIES_LEAD_MIN_MS, ROUNDS_PER_SERIES, SERIES_CLOCKS, seriesClockFor, SERIES_WRITE_AHEAD_MS,
 } from '../../protocol/src/series.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1790600000000;
@@ -27,7 +29,7 @@ const H = 3600000;
 
 const base = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
@@ -61,14 +63,14 @@ test('a series: 960 rounds 90 s apart, each closing entry at its start, and its 
 });
 
 test('the node writes every round of the next 72 hours, the one 72 h out among them, and lists it', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [node.round.pubkey];
   await node.close();
   // THE SERIES RUNNING NOW AND THE NEXT THREE, on the genesis grid: 72 h of rounds from now spans them
   const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW) - 1;
   const series = [0, 1, 2, 3].map((j) => seriesTemplate(base(nodes), k0 + j));
   const t0 = Date.now();
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series });
   const tookMs = Date.now() - t0;
   try {
     const expected = series.reduce((n, t) => n + seriesRoundsWithin(t, BigInt(NOW), BigInt(NOW) + SERIES_LEAD_MIN_MS).length, 0);
@@ -108,7 +110,7 @@ test('a series with less than the 72 h lead is refused whole, by name', async ()
   const t = seriesTemplate(base([b32(7)]), seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1);
   const short = { ...t, committeeTimeMs: t.startTimeMs - 48n * BigInt(H) };        // the 48 h this morning ruled out
   assert.match(seriesLeadIsValid(short).why, /must exist 259200000 ms \(72 h\) before its first entry/);
-  await assert.rejects(async () => serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [short] }), /series refused/);
+  await assert.rejects(async () => serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [short] }), /series refused/);
 });
 
 // TN24-1405 AND THE 36 h CENSUS (the owner 2026-09-28): testnet4's committee_time is 24 h before the start and its lead 24 h,
@@ -135,10 +137,10 @@ test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, a
   // the 3 October series keeps its 84 h lead and stays valid on testnet4
   assert.equal(seriesLeadIsValid({ ...t, committeeTimeMs: t.startTimeMs - 84n * BigInt(H) }).ok, true);
   // the writer on testnet4: 72 h of rounds ahead, not 24
-  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   const nodes = [node.round.pubkey]; await node.close();
   const series = [0, 1, 2].map((k) => seriesTemplate({ ...base(nodes), networkId: NETWORK_ID_TESTNET4 }, k));
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series });
   try {
     const sum = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
     const last = BigInt(sum.series.map((x) => x.last).filter(Boolean).sort((a, b) => (BigInt(a.startTimeMs) < BigInt(b.startTimeMs) ? -1 : 1)).at(-1).startTimeMs);
@@ -152,7 +154,7 @@ test('testnet4 runs a 24 h committee clock on a 36 h census, mainnet one 72 h, a
 // however far ahead - measured on testnet4 the same day, series 8172fffd's first round 8 h out was assigned by no node and
 // the page showed no paid row. The writer names that round: nothing within 2 h, and `soonest` is the first round.
 test('a series whose first round is 8 h out has none within the 2 h lead, and the writer names that first round as the soonest', () => {
-  const round = new Round(openStore(':memory:'), () => NOW);
+  const round = new Round(openStore(':memory:'), () => NOW, { plugins: HOSTED });
   const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1;
   const t = seriesTemplate(base([round.pubkey]), k);
   const start = seriesStartOf(NETWORK_ID_REGTEST, k);
@@ -176,7 +178,7 @@ test('a series runs at most 82 s of its 90 s slot: 4920 and 4921 ticks are taken
   assert.equal(seriesRunFits(t(4920)).runMs, 81979n);
   assert.equal(seriesRunFits(t(4921)).ok, true);
   for (const ticks of [4922, 10800]) assert.match(seriesRunFits(t(ticks)).why, new RegExp(`a run of ${ticks} ticks is \\d+ ms, and a round of a 90000 ms series runs at most 82000 ms`));
-  await assert.rejects(async () => serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [t(10800)] }), /series refused: a run of 10800 ticks/);
+  await assert.rejects(async () => serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [t(10800)] }), /series refused: a run of 10800 ticks/);
 });
 
 // A SERIES ADDED WHILE THE NODE RUNS IS TAKEN WITHOUT A RESTART (the owner 2026-10-02: "find out the reason for the restarts
@@ -185,7 +187,7 @@ test('a series runs at most 82 s of its 90 s slot: 4920 and 4921 ticks are taken
 // series is handed a second by seriesReload; on its next writer pass it writes and lists the second too, and a reload
 // answering null (the file unchanged) or failing changes nothing.
 test('a series added to the file while the node runs is written on the next pass, no restart', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [node.round.pubkey];
   await node.close();
   const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW);
@@ -194,7 +196,7 @@ test('a series added to the file while the node runs is written on the next pass
   const answers = [null, () => { throw new Error('half-written file'); }, [first, second], null];
   let asked = 0;
   const seriesReload = () => { const a = answers[Math.min(asked++, answers.length - 1)]; return typeof a === 'function' ? a() : a; };
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [first], seriesEveryMs: 100, seriesReload });
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [first], seriesEveryMs: 100, seriesReload });
   try {
     const ids = async () => (await (await fetch(`http://127.0.0.1:${s.port}/series`)).json()).series.map((x) => x.series);
     const before = await ids();
@@ -215,7 +217,7 @@ const toHexId = (b) => Buffer.from(b).toString('hex');
 // listed nowhere and a re-post of one is refused by name, while the series still in the file stays held and listed. A read
 // naming no series at all (a file caught empty mid-write) drops nothing.
 test('a series taken out of the file while the node runs is dropped: not held, its rounds not listed or re-posted; the other stays', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [node.round.pubkey];
   await node.close();
   const k = seriesIndexAt(NETWORK_ID_REGTEST, NOW) + 1;
@@ -223,7 +225,7 @@ test('a series taken out of the file while the node runs is dropped: not held, i
   const drop = { ...seriesTemplate(base(nodes), k), donationSetId: b32(9) };
   let answer = null, asked = 0;
   const seriesReload = () => { asked++; const a = answer; answer = null; return a; };
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [keep, drop], seriesEveryMs: 100, seriesReload });
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [keep, drop], seriesEveryMs: 100, seriesReload });
   try {
     const held = async () => (await (await fetch(`http://127.0.0.1:${s.port}/series`)).json()).series.map((x) => ({ id: x.series, written: x.written }));
     const listed = async () => (await (await fetch(`http://127.0.0.1:${s.port}/rounds?ahead=72h`)).json()).rounds.map((r) => r.id);

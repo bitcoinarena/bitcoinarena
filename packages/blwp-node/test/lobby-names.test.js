@@ -21,9 +21,10 @@ import { encodeRoundContract, roundId, encodeEntryContract } from '../../protoco
 import { encodeLobbyName, decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { Writer } from '../../protocol/src/encode.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 test('a signer node keeps the name its joined player signed, serves it beside the listing and at /names, and keeps nothing that player did not sign', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   const base = `http://127.0.0.1:${d.port}`;
   try {
     const now = BigInt(Date.now());

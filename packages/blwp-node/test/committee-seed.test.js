@@ -17,7 +17,7 @@
 // `randomness_rule`, `committee_time` and `entry_open_time` - and no committee
 // seed at all.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -28,6 +28,7 @@ import { committeeSeedFrom, committeeSeedFromBeacon } from '../../protocol/src/b
 import { roundId, encodeRoundContract, decodeRoundContract } from '../../protocol/src/contracts.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { taggedHash, toHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const CENSUS_HEIGHT = 900000;
@@ -41,7 +42,7 @@ const census = (n) => Array.from({ length: n }, (_, i) => ({
 }));
 const contract = (over = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: CENSUS_HEIGHT, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
@@ -78,15 +79,18 @@ test('a chosen seed can no longer choose the committee', () => {
   // because the selection does not read the field. This is the before/after -
   // the same bytes that used to decide the committee now decide nothing.
   const withGround = contract({ committeeSeed: ground });
-  const beaconSeed = committeeSeedFrom({
-    censusRootGameVerify: withGround.censusRoot, censusRootSettlement: withGround.censusRoot,
-    roundId: roundId(withGround), roundRandomness: b32(0xbe),
-  });
-  const assignedNow = selectCommittee({
-    entries: field, contract: withGround, role: 'game', committeeSeed: beaconSeed,
-  }).map((e) => toHex(e.pubkey)).sort();
-  assert.notDeepEqual(assignedNow, wanted,
-    'the ground seed still joined the pair, so grinding the contract still works');
+  const assignedUnder = (c, beacon) => selectCommittee({ entries: field, contract: c, role: 'game', committeeSeed: committeeSeedFrom({
+    censusRootGameVerify: c.censusRoot, censusRootSettlement: c.censusRoot, roundId: roundId(c), roundRandomness: beacon,
+  }) }).map((e) => toHex(e.pubkey)).sort();
+  // THE GROUND BYTES DECIDE NOTHING: under every beacon the round with them is assigned exactly as the round without them.
+  // (Asserted before kanban #202 as "this one beacon does not give the pair" - a 1 in 28 chance with eight nodes and two
+  // slots, which game_id moving the round id turned up. The property is that the bytes are not read, and that the
+  // beacon, not the author, draws the pair.)
+  const beacons = Array.from({ length: 16 }, (_, i) => b32(0xb0 + i));
+  for (const beacon of beacons)
+    assert.deepEqual(assignedUnder(withGround, beacon), assignedUnder(contract(), beacon), 'the ground seed on the contract moved the committee');
+  assert.ok(beacons.filter((beacon) => JSON.stringify(assignedUnder(withGround, beacon)) === JSON.stringify(wanted)).length < beacons.length / 2,
+    'the ground seed still joined the pair under most beacons, so grinding the contract still works');
 
   // and the lottery refuses to run at all on no seed rather than reaching for
   // the field

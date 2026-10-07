@@ -6,7 +6,7 @@
 // fetches each contract and hashes it (a mismatch gets no row), reads free or
 // paying and open or pending off that contract and its own clock, and counts
 // DISTINCT SIGNER NODES OF THE ROUND whose signed listing says open and joined.
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -27,6 +27,7 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
 import { TAG } from '../../protocol/src/constants.js';
 import { readFileSync } from 'node:fs';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const A = 'http://127.0.0.1:18581';
@@ -43,7 +44,7 @@ const keyOf = (s) => schnorr.getPublicKey(s);
 
 const contractAt = (committeeTimeMs, extra = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS, entryCloseMs: committeeTimeMs + MIN_ENTRY_WINDOW_MS + 120000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,

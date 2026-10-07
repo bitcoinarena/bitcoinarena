@@ -22,8 +22,9 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
-import { COUNTER, CONFIGS } from './cores/counter.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { COUNTER, CONFIGS, COUNTER_GAME, COUNTER_GAME_ID } from './cores/counter.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -32,12 +33,14 @@ import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../p
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const COUNTER_CORE_HASH = fromHex(COUNTER.hash);
 const [LOW, HIGH] = CONFIGS;
 
 async function twoSignerNodes() {
-  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, finality: { everyMs: 100 }, cores: [COUNTER] });
+  const mk = () => serve(openStore(':memory:'), { plugins: [NEXTBLOCK, COUNTER_GAME], port: 0, ...opts, finality: { everyMs: 100 } });
   const a = await mk();
   const b = await mk();
   for (const [d, o] of [[a, b], [b, a]]) {
@@ -57,6 +60,8 @@ async function twoSignerNodes() {
 async function open(w, simCoreHash, configHash, blockTicks = BLOCK_TICKS, startDeadlineTicks) {
   // THE ROUND ENDS NOW, NOT IN 1970 (kanban #26: a result counts only if its seat held it before the round's end + 605 s)
   const c = presentDay({ ...contractFor([w.a.round.pubkey, w.b.round.pubkey], BigInt(WINDOW_MS), [w.a, w.b].map((d) => `http://127.0.0.1:${d.port}`)),
+    // THE ROUND'S GAME (kanban #202): the counter is a game of its own, nextblock plays the truck
+    gameId: toHex(simCoreHash) === COUNTER.hash ? COUNTER_GAME_ID : NEXTBLOCK.gameId,
     stakeMsat: 0n, federationId: new Uint8Array(32), simCoreHash, configHash, blockTicks, ...(startDeadlineTicks ? { startDeadlineTicks } : {}) }, testNow() + 3000);
   const rid = roundId(c);
   for (const d of [w.a, w.b]) {
@@ -152,17 +157,18 @@ test('the truck and a second title, the second under two configs, run on the sam
   } finally { await w.close(); }
 });
 
-test('a signer node that did not install the second title refuses its round at the door, and still opens the truck\'s', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+test('a signer node that does not host the second title refuses its round at the door, and still opens the truck\'s', async () => {
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const nodes = [d.round.pubkey, rand(32)];
     const base = { ...contractFor(nodes, BigInt(WINDOW_MS)), stakeMsat: 0n, federationId: new Uint8Array(32) };
     const post = async (c) => { const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) }); return { status: r.status, why: (await r.text()).trim() }; };
-    const counter = await post({ ...base, simCoreHash: COUNTER_CORE_HASH, configHash: LOW.hash });
-    const truck = await post({ ...base, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH });
+    const counter = await post({ ...base, gameId: COUNTER_GAME_ID, simCoreHash: COUNTER_CORE_HASH, configHash: LOW.hash });
+    const truck = await post({ ...base, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH });
     console.log('  FACTS (not installed):', JSON.stringify({ counter: { ...counter, why: counter.why.slice(0, 100) }, truck: truck.status }));
     assert.equal(counter.status, 409);
-    assert.match(counter.why, /this signer node holds no core/);
+    // SINCE THE COUNTER IS A GAME (kanban #202) the round is refused as a game this node does not host
+    assert.match(counter.why, /this node does not host game/);
     assert.equal(truck.status, 201, truck.why);
   } finally { await d.close(); }
 });

@@ -17,12 +17,13 @@ import { contractFor, opts, b32, presentDay } from './window-fixture.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 // guardiansBonded's own no-port sentence (server.js): the one refusal a node with no federation gives.
 const NO_FEDERATION = 'this signer node reaches no federation to read the guardians of, so it signer nodes no round that takes a stake into one (§23.6)';
 
 async function opened({ stakeMsat, port = null, launcher = false, daily = false } = {}) {
-  const d0 = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d0 = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   const pk = d0.round.pubkey;
   await d0.close();
   const base = contractFor([pk, b32(0x33)], 3000n, ['wss://r.example']);
@@ -35,7 +36,7 @@ async function opened({ stakeMsat, port = null, launcher = false, daily = false 
   // `launcher`: the operator's rule (a paying round only when named); `daily`: the Daily's, a free round beside it.
   const funded = daily ? freeOrOperatorFunding({ named: () => [toHex(rid)] })
     : launcher ? operatorFunding({ named: () => [toHex(rid)] }) : opts.funded;
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, funded, ...(slot ? { stakeLocks: slot.port, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, funded, ...(slot ? { stakeLocks: slot.port, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) } : {}) });
   try {
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });

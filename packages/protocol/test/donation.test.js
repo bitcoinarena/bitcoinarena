@@ -17,6 +17,7 @@ import {
   encodeDonationSet, decodeDonationSet, donationSetId, canonicalLnurl, isMixedCase,
   donationSetMatchesRound, DONATION_BPS_TOTAL,
 } from '../src/donation.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const evenly = [{ lnurl: 'LNURL1', shareBps: 5000 }, { lnurl: 'LNURL2', shareBps: 5000 }];
@@ -424,7 +425,7 @@ test('bytes that are not the set\'s own encoding are refused', () => {
 // list nobody signed up to.
 
 const roundWith = (donationSetId) => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId,
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 600, exposureReference: 1000, corridorHalfWidth: 40,

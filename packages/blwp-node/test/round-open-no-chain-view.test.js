@@ -15,13 +15,14 @@ import { contractFor, opts, b32, presentDay } from './window-fixture.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const { windowChain, ...noChain } = opts;
 const CLAIM = new Uint8Array(33).fill(2);
 
 async function opened({ stakeMsat, bonded = false } = {}) {
   const slot = bonded ? bondedChainSlot(lockPort()) : null;
-  const d = await serve(openStore(':memory:'), { port: 0, ...noChain, stakeLocks: slot ? slot.port : lockPort(),
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...noChain, stakeLocks: slot ? slot.port : lockPort(),
     ...(slot ? { chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => CLAIM } : {}) });
   try {
     const drafted = presentDay({ ...contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']),

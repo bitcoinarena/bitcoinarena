@@ -32,6 +32,7 @@ import { sealShare } from '../../protocol/src/seal.js';
 import { poolOutput, poolShare } from '../../protocol/src/pool.js';
 import { scalarFrom32, scalarTo32, FIELD } from '../../protocol/src/shares.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const curve = { ...feldmanGroup, tweakPoint };
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -113,7 +114,7 @@ test('2-of-2, in the protocol: a rogue contribution made after seeing the honest
 test('2-of-2, on the daemon: the honest signer node still sends its A0 first, and the rogue deal built from it is refused', async () => {
   const log = [];
   const say = (s) => { log.push(s); };
-  const honest = await serve(openStore(':memory:'), { port: 0, funded: () => true, poolCurve: curve });
+  const honest = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, poolCurve: curve });
   const as = rand(32); const attackerPub = curve.pointX(as);
   let received = null;
   let rogueBytes = null;

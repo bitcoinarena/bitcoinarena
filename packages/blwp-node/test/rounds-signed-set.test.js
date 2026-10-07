@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -19,7 +19,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1790600000000;
 const base = (nodes) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
@@ -32,18 +32,20 @@ const base = (nodes) => ({
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { fromHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const pageChecks = (body) => body.rounds.every((x) => schnorr.verify(fromHex(x.sig), lobbyListingId({ roundId: fromHex(x.id),
   nodePubkey: fromHex(body.node), nowMs: BigInt(body.nowMs), phase: x.phase, assignedHere: !!x.assignedHere,
   joined: Number(x.joined), playing: Number(x.playing) }), fromHex(body.node)));
 
 test('a cold full GET /rounds is served from the background-signed set: under 1 s, every row, every row checks as the page checks, and a changed row is signed at once', async () => {
-  const first = await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW });
+  const first = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [first.round.pubkey];
   await first.close();
   const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW) - 1;
   const series = [0, 1, 2, 3].map((j) => seriesTemplate(base(nodes), k0 + j));
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series });
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series });
   try {
     const at = `http://127.0.0.1:${s.port}`;
     const cold = async (n) => { const t = performance.now(); const body = await (await fetch(`${at}/rounds?probe=${n}`)).json(); return { ms: performance.now() - t, body }; };

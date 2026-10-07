@@ -16,13 +16,14 @@ import { serve } from '../src/server.js';
 import { b32, contractFor, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { roundEndMs } from '../../protocol/src/first-mark.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const WINDOW = 60000n;
 
 test('a signer node with closeAtEnd closes the round that is over and keeps the one that is not; without it, neither closes', async () => {
   const now = BigInt(Date.now());
-  const withIt = await serve(openStore(':memory:'), { port: 0, funded: () => true, closeAtEnd: { everyMs: 50 } });
-  const without = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const withIt = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, closeAtEnd: { everyMs: 50 } });
+  const without = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const at = (d) => `http://127.0.0.1:${d.port}`;
     const round = (d, entryCloseMs) => ({ ...contractFor([d.round.pubkey, b32(0x33)], 3000n, [at(d)]),

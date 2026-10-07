@@ -11,7 +11,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -30,6 +30,8 @@ import { Client } from '../src/client.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 // FUNDED, because these are rounds somebody paid for. A node started without
 // being told who pays refuses everything now - disk is spent only on stakes
 // that exist - so a test that means to play a round has to say so.
@@ -72,11 +74,11 @@ function slowLink(client, ms, watch) {
 // is the second clock letter 21 forbade. The bound under test is unchanged;
 // only the number it is measured at moved.
 async function rig(ms, blockTicks = BLOCK_TICKS, joinTick = 0) {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   const watch = { inFlight: 0, worst: 0 };
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
-    networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+    networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 0n, bondMinSats: 50000n,
     blockTicks, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
@@ -350,7 +352,7 @@ test('a reconnect keeps trying with a backoff, so a restart does not end a run',
     const slept = fastSleep(client);
     const back = client.reconnect({ roundId: rid, entryId: eid });
     await wait(60);
-    const again = await serve(node.round.db, { port, ...FUNDED });
+    const again = await serve(node.round.db, { plugins: HOSTED, port, ...FUNDED });
     try {
       const r = await back;
       assert.notEqual(r, null, 'the run was abandoned instead of resumed');
@@ -477,7 +479,7 @@ test('a run that ends mid-backoff is not resumed when the node returns', async (
     assert.equal(client.sock, null, 'and it left no socket open behind it');
 
     // and the node coming back afterwards changes nothing
-    const again = await serve(node.round.db, { port, ...FUNDED });
+    const again = await serve(node.round.db, { plugins: HOSTED, port, ...FUNDED });
     try {
       assert.equal(client.reconnect({ roundId: rid, entryId: eid }), null);
       await wait(50);

@@ -3,7 +3,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -28,6 +28,8 @@ import { assumeStakeSeen } from './assignment.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../protocol/src/receipt.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 // FUNDED, because these are rounds somebody paid for. A node started without
 // being told who pays refuses everything now - disk is spent only on stakes
@@ -37,7 +39,7 @@ const FUNDED = { funded: () => true };
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
-  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -78,7 +80,7 @@ const talk = (port) => new Promise((resolve) => {
 });
 
 test('a round is opened, joined, played and closed by one process', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const c = contract();
     const opened = await post(node.port, '/round', encodeRoundContract(c));
@@ -144,7 +146,7 @@ test('a round is opened, joined, played and closed by one process', async () => 
 });
 
 test('an entry for a round the node has not got is refused with a reason', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const r = await fetch(`http://127.0.0.1:${node.port}/entry`,
       { method: 'POST', body: encodeEntryContract(entryFor(b32(99))) });
@@ -157,7 +159,7 @@ test('checkpoints cross the wire, and the refusals cross it too', async () => {
   // THE SEAM. `Round.checkpoint` was covered and the wire was not: the type
   // dispatch on /play and the GET both went untested, which is exactly where
   // an object that works can still fail to arrive.
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const c = contract();
     const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
@@ -271,7 +273,7 @@ test('the socket refuses a frame no protocol message could be', async () => {
   // vector, and 3146053 once a tick carried another eight bytes (65535 * 8 =
   // 524280 of the 524544 it moved by). The number is pinned so that a transcript
   // growing is a decision somebody writes down, not something a cap follows.
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     assert.equal(MAX_FRAME_BYTES, MAX_INPUT_BATCH_BYTES);
     assert.equal(MAX_FRAME_BYTES, 3146053);
@@ -292,7 +294,7 @@ test('a batch longer than the round it belongs to is refused by name', async () 
   // The transport refuses what cannot decode; this refuses what decodes and
   // still could not be honest. The ceiling is `blockTicks` off the contract
   // the node already stores, so it is the round's own number.
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const c = contract();
     const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;

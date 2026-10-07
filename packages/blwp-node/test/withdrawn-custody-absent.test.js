@@ -21,6 +21,7 @@ import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex, taggedHash } from '../../protocol/src/hash.js';
 import { TAG } from '../../protocol/src/constants.js';
+import { HOSTED } from './plugins/hosted.js';
 
 /** The FEDERATION round's bytes with another custody byte - the byte just before federation_id on the wire. */
 function underByte(c, byte) {
@@ -37,7 +38,7 @@ const underByteZero = (c) => underByte(c, 0);
 const count = (db) => db.prepare('SELECT COUNT(*) AS n FROM rounds').get().n;
 
 test('a byte-0 contract posted to /round is refused as bytes that do not parse, and nothing of it is stored', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const c = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
     const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: underByteZero(c) });
@@ -70,7 +71,7 @@ test('a store holding byte-0 rows from before the ruling answers them as absent 
 
     // RESTARTED ON THAT STORE under this decoder. Starting at all is part of the claim: a close-resume or
     // a listing that decoded the old rows would throw here.
-    const d = await serve(openStore(path), { port: 0, ...opts });
+    const d = await serve(openStore(path), { plugins: HOSTED, port: 0, ...opts });
     try {
       const listed = d.round.openRounds().map((r) => toHex(r.roundId));
       const closed = d.round.closedRounds().map(toHex);
@@ -99,7 +100,7 @@ test('the same contract is taken under byte 1 (201) and refused under byte 0 as 
   // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
   // key is claimKeyFor's. A node with a chain view checks every round's census; only censusRoot changes.
   const slot = bondedChainSlot(lockPort());
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`] }).censusRoot });
     const c = bonded(contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']));
@@ -136,7 +137,7 @@ test('a stored byte-0 round is never replayed, settled or counted: not in the lo
     put.run(b32(0xa2), underByteZero({ ...fed, slashMinimumServed: 23 }), OPEN, 2);
     put.run(b32(0xa3), underByteZero({ ...fed, slashMinimumServed: 24 }), CLOSED, 3);
     first.close();
-    const d = await serve(openStore(path), { port: 0, ...opts });
+    const d = await serve(openStore(path), { plugins: HOSTED, port: 0, ...opts });
     try {
       const lobby = await (await fetch(`http://127.0.0.1:${d.port}/rounds`)).text();
       const settled = await (await fetch(`http://127.0.0.1:${d.port}/settled?since=0`)).json();
@@ -156,7 +157,7 @@ test('a stored byte-0 round is never replayed, settled or counted: not in the lo
 // differently from a byte this network never had. The same contract posted under each is one refusal with only the
 // digit changed, naming nothing.
 test('a byte-0 and a byte-2 post of the same contract are one refusal, only the digit changed; nothing stored, nothing named', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const c = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);
     const post = async (b) => { const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: underByte(c, b) }); return [r.status, (await r.text()).trim()]; };
@@ -186,7 +187,7 @@ test('a restart on a store holding byte-0 and byte-2 rows answers every one the 
       rows.push({ byte, state, id });
     }
     first.close();
-    const d = await serve(openStore(path), { port: 0, ...opts });
+    const d = await serve(openStore(path), { plugins: HOSTED, port: 0, ...opts });
     try {
       const lobby = await (await fetch(`http://127.0.0.1:${d.port}/rounds`)).text();
       const settled = await (await fetch(`http://127.0.0.1:${d.port}/settled?since=0`)).json();

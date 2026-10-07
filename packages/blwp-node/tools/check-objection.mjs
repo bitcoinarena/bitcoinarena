@@ -9,7 +9,8 @@ import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
-import { coreForRound } from '../src/cores.js';
+import { coreOfGame } from '../src/plugins.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 import { verifiedFinal } from '../src/verdict.js';
 import { checkObjectionBundle } from '../src/objection-check.js';
 
@@ -36,7 +37,7 @@ export async function checkObjectionAt({ base, roundId, entryId, bundle, fetcher
   const signedResultId = seen.ok && seen.final ? bytesOf(seen.runId) : null;
   const beacon = await get(`/randomness?round=${hex(rid)}`);
   const roundRandomness = beacon.bytes.length === 32 ? beacon.bytes : bytesOf(JSON.parse(Buffer.from(beacon.bytes).toString()).hash);
-  const found = coreForRound(contract);
+  const found = coreOfGame(contract, NEXTBLOCK);
   if (!found.ok) return { holds: false, step: 'replay', why: found.why };
   const core = { ...found.core, config: found.config, runTicks: found.runTicks,
     world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: rid } };

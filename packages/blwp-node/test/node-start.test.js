@@ -11,6 +11,10 @@ import { join } from 'node:path';
 import { openStore } from '../src/store.js';
 import { startNode, holdsGuardianKey } from '../src/node-start.js';
 import { standUpRound } from '../tools/round-2of2.mjs';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202, §0A.4): nextblock, as src/main.js does.
+const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
+
 
 // a port the guardian's own ports (node + 1000 .. + 4000) also fit after
 const port = (from) => new Promise((resolve) => {
@@ -63,7 +67,7 @@ test('a node with no key, or a guardian directory without private.json, starts n
     const bare = join(dir, 'bare.db');
     assert.equal(holdsGuardianKey(bare), false);
     const p1 = await port(22811);
-    const n1 = await startNode({ db: openStore(bare), path: bare }, { port: p1 }, chain);
+    const n1 = await launchNode({ db: openStore(bare), path: bare }, { port: p1 }, chain);
     try {
       assert.deepEqual(await getGuardian(p1), { guardian: false });
       assert.equal(existsSync(`${bare}.guardian`), false, 'no directory is made');
@@ -74,7 +78,7 @@ test('a node with no key, or a guardian directory without private.json, starts n
     writeFileSync(`${half}.guardian/consensus.json`, '{}');   // a setup left behind, no private.json: no key
     assert.equal(holdsGuardianKey(half), false);
     const p2 = await port(22911);
-    const n2 = await startNode({ db: openStore(half), path: half }, { port: p2 }, chain);
+    const n2 = await launchNode({ db: openStore(half), path: half }, { port: p2 }, chain);
     try { assert.deepEqual(await getGuardian(p2), { guardian: false }); } finally { await n2.close(); }
 
     assert.equal(existsSync(started), false, 'no fedimintd was started for a node without a key');

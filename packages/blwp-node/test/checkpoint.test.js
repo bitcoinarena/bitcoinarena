@@ -5,7 +5,7 @@
 // second simulator. What it does check is the key - the same tick twice with
 // different bytes is section 13B's equivocation, and it is refused by name.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -34,9 +34,11 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
-  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -67,7 +69,7 @@ const sign = (c, key = session) =>
  * a client does.
  */
 function rig({ nodes, round } = {}) {
-  const r = round || new Round(openStore(), () => 1234);
+  const r = round || new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c = nodes ? { ...contract(), nodes } : contract();
   const rid = r.open(c);
   assumeAssigned(r, rid, c.nodes);
@@ -230,7 +232,7 @@ test('a mark naming inputs the node never saw is refused', () => {
 test('a mark taken before any batch may name the genesis', () => {
   // A client that checkpoints at tick 0 has sent nothing yet, and refusing it
   // would make the first mark impossible.
-  const r = new Round(openStore(), () => 1234);
+  const r = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c2 = contract();
   const rid = r.open(c2);
   assumeAssigned(r, rid, c2.nodes);
@@ -310,15 +312,15 @@ test('a signed mark is 231 bytes on the wire', () => {
 test('the node keeps its identity across a reopen of the same store', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'blwp-')), 'node.db');
 
-  const first = new Round(openStore(path));
+  const first = new Round(openStore(path), undefined, { plugins: HOSTED });
   const key = first.pubkey;
   assert.equal(key.length, 32);
 
-  const again = new Round(openStore(path));
+  const again = new Round(openStore(path), undefined, { plugins: HOSTED });
   assert.deepEqual(again.pubkey, key, 'the node came back as somebody else');
 
   // and a different store is a different node, or every daemon would be one
-  const elsewhere = new Round(openStore(join(mkdtempSync(join(tmpdir(), 'blwp-')), 'node.db')));
+  const elsewhere = new Round(openStore(join(mkdtempSync(join(tmpdir(), 'blwp-')), 'node.db')), undefined, { plugins: HOSTED });
   assert.notDeepEqual(elsewhere.pubkey, key, 'two separate nodes share one identity');
 });
 
@@ -420,7 +422,7 @@ test('a mark can carry a receipt from every member, and the count is what 13C as
 
   // seven: this node plus six peers
   const store = openStore();
-  const signerNode = new Round(store);
+  const signerNode = new Round(store, undefined, { plugins: HOSTED });
   const { r, send, last } = rig({ nodes: [signerNode.pubkey, ...keys], round: signerNode });
   send(60, 0x5a);
   const markId = checkpointId(last());

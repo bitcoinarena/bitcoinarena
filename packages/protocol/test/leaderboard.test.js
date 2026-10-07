@@ -23,6 +23,7 @@ import {
   leaderboard, NOT_ON_A_FINAL, SIGNATURES_NOT_VERIFIED,
 } from '../src/leaderboard.js';
 import { computePayoutTable } from '../src/payout.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));
@@ -34,7 +35,7 @@ const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));
  */
 const contract = {
   networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1),
   startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [],
   donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,

@@ -16,7 +16,7 @@ import { fromHex } from '../../protocol/src/hash.js';
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655, so `Round.open` refused the contract - "a second clock is not a shorter round" - and every
 // test here died with "this node holds no such round" before a single share was dealt. These seven tests are
@@ -65,6 +65,8 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 
@@ -101,7 +103,7 @@ const contractFor = (nodes) => {
 };
 const drafted = (nodes) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   // A WINDOW OF 1ms, NOT 0. This fixture named a zero objection window so finality was instant and the suite
   // did not have to wait; a zero window is now refused, because it erases §13A's replay veto (contracts.js).
   // The spec sets NO FLOOR - "reference: 10 minutes, contract-defined" - so the smallest legal window is 1ms,
@@ -133,7 +135,7 @@ async function committee(n = 7) {
   committeeSlot = bondedChainSlot(lockPort());
   committeePort = committeeSlot.port;
   for (let i = 0; i < n; i++)
-    nodes.push(await serve(openStore(':memory:'), {
+    nodes.push(await serve(openStore(':memory:'), { plugins: HOSTED, 
       port: 0, funded: () => true, stakeLocks: committeePort, chainFor: committeeSlot.chainFor,
       randomnessFor: committeeSlot.randomnessFor,
     }));

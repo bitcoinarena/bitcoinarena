@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_BEFORE_FORK_HASH } from '../../core/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { encodeRoundContract } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
@@ -15,12 +15,14 @@ import { TEST_DONATION_SET_TESTNET4 } from '../../protocol/src/test-donation-set
 import { donationSetId } from '../../protocol/src/donation.js';
 import { seriesTemplate, seriesIndexAt, seriesRound, seriesLeadIsValid } from '../../protocol/src/series.js';
 import { fromHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const base = (nodes) => ({
   // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
   networkId: NETWORK_ID_TESTNET4, configHash: GENESIS_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 2, settlementSlots: 2,
-  simCoreHash: fromHex(TRUCK_BEFORE_FORK_HASH), committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(TRUCK_BEFORE_FORK_HASH), committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
   federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
   donationSetId: donationSetId(TEST_DONATION_SET_TESTNET4.recipients), censusHeight: 900000, censusRoot: b32(2), stakeMsat: 0n,
@@ -29,17 +31,17 @@ const base = (nodes) => ({
 });
 
 test('a day cut at 360 and its 82 s tail: the announcement runs on 90 s with no gap across the cut, the cut rounds are refused', async () => {
-  const probe = await serve(openStore(':memory:'), { port: 0, funded: () => true });
+  const probe = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true });
   const nodes = [probe.round.pubkey, b32(8)]; await probe.close();
   const k = seriesIndexAt(NETWORK_ID_TESTNET4, Date.UTC(2026, 9, 2));
   const day = { ...seriesTemplate(base(nodes), k), seriesCutFrom: 360 };
   const first = seriesRound(day, 360).startTimeMs;
   const tail = { ...day, seriesCutFrom: undefined, seriesCount: 600, startTimeMs: first, entryCloseMs: first, committeeTimeMs: first - 12n * 3600000n,
-    simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, blockTicks: 4920 };
+    gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, blockTicks: 4920 };
   delete tail.seriesCutFrom;
   assert.equal(seriesLeadIsValid(tail).ok, true, seriesLeadIsValid(tail).why);
   const NOW = Number(first) - 20 * 60000;                       // 20 minutes before the cut
-  const s = await serve(openStore(':memory:'), { port: 0, funded: () => true, roundClock: () => NOW, series: [day, tail],
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [day, tail],
     donationSets: [TEST_DONATION_SET_TESTNET4] });
   try {
     const url = `http://127.0.0.1:${s.port}`;

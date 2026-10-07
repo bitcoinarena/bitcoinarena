@@ -8,7 +8,7 @@
 //   the entry names the outpoint; both signer nodes are handed the contract (W2).
 // And two that must be refused: an outpoint that holds no lock, and a lock to
 // a key nobody attested.
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { readFileSync } from 'node:fs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -38,6 +38,8 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { CORE_HASH } from './core-hash.mjs';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;
@@ -61,14 +63,14 @@ const claimPk = fromHex(JSON.parse(readFileSync(`${P}/keys.json`, 'utf8')).claim
 const port = stakeLockPort({ bin: env.LOCK_BIN, dataDir: `${P}/client` });
 const signerNodes = [];
 for (let i = 0; i < 2; i++)
-  signerNodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, stakeLocks: port, claimKeyFor: () => claimPk }));
+  signerNodes.push(await serve(openStore(':memory:'), { plugins: [NEXTBLOCK], port: 0, funded: () => true, stakeLocks: port, claimKeyFor: () => claimPk }));
 const nodes = signerNodes.map((d) => `http://127.0.0.1:${d.port}`);
 try {
   const STAKE = 1000000n;
   const now = BigInt(Date.now());
   const c = {
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
-    simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
+    gameId: NEXTBLOCK_GAME_ID, simCoreHash: CORE_HASH, startTimeMs: now + MIN_ENTRY_WINDOW_MS, entryCloseMs: now + MIN_ENTRY_WINDOW_MS + 600000n,
     objectionWindowMs: 3000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: fromHex(LockClient.federationIdOf(env.INVITE)),
     stakeExpiryBlocks: 144, publicationRelays: nodes, donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
     committeeTimeMs: now - 1000n, randomnessRule: 'bitcoin-block-hash', stakeMsat: STAKE, bondMinSats: 50000n, blockTicks: 9000,

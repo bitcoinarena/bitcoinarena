@@ -17,7 +17,7 @@
 // the node replaying the transcript it stored. What changed is that the ticks
 // already stepped are not stepped again.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -27,7 +27,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Ghosts, ghostForChecked, STEP_BUDGET } from '../src/ghosts.js';
 import { RunInProgress } from '../src/replay.js';
-import { TRUCK } from '../src/cores.js';
+import { TRUCK } from '../../core/plugin/nextblock.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
@@ -37,11 +37,13 @@ import { decodeEntryContract } from '../../protocol/src/contracts.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const BEACON = { hash: b32(0x9b), height: 900001, timeMs: 900n };
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
-  settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
+  settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
@@ -60,11 +62,11 @@ const CHUNK = 6;
 
 /** A round with one driver, publishing as the page does. */
 function driving(ticks, { liquidations = [], loads = [], joinTick = 0 } = {}) {
-  const round = new Round(openStore(':memory:'));
+  const round = new Round(openStore(':memory:'), undefined, { plugins: HOSTED });
   const rid = round.open(contract());
   const entry = entryFor(rid, joinTick);
   const eid = round.enter(entry);
-  const ghosts = new Ghosts(round, { randomnessFor: () => BEACON });
+  const ghosts = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let previousHash = GENESIS;
   const publish = (from, n) => {
     const rows = [];
@@ -107,7 +109,7 @@ test('the live picture is the same pose a full replay produces, at every tick', 
   const transcript = world.round.transcript(world.rid, world.eid);
   const batches = decodeTranscript(world.round.handOver(world.rid, world.eid).bytes).batches;
 
-  const cold = new Ghosts(world.round, { randomnessFor: () => BEACON });
+  const cold = new Ghosts(world.round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let compared = 0;
   for (let at = CHUNK - 1; at < 600; at += CHUNK) {
     const warm = world.ghosts.frameFor && null;   // the live path is `latest`
@@ -162,7 +164,7 @@ test('a liquidation lands before its own tick, and exactly once', () => {
   // The one piece of state a resumable run could get wrong twice: a strike
   // applied on every step-forward would be a different world from the replay.
   const withStrike = watchedWhileDriving(300, { liquidations: [[37, 3 * 65536]] });
-  const cold = new Ghosts(withStrike.round, { randomnessFor: () => BEACON });
+  const cold = new Ghosts(withStrike.round, { plugins: HOSTED, randomnessFor: () => BEACON });
 
   const live = withStrike.seen[withStrike.seen.length - 1];
   const slow = cold.frameFor(withStrike.rid, withStrike.eid, 299);
@@ -202,7 +204,7 @@ test('a run refuses to be stepped past the end of a round, and past a gap', () =
 });
 
 test('a round with no randomness shows nobody anything, in the same words as before', () => {
-  const round = new Round(openStore(':memory:'));
+  const round = new Round(openStore(':memory:'), undefined, { plugins: HOSTED });
   const rid = round.open(contract());
   const entry = entryFor(rid);
   const eid = round.enter(entry);
@@ -210,7 +212,7 @@ test('a round with no randomness shows nobody anything, in the same words as bef
     ticks: [wordsAt(0)], liquidations: [] };
   round.batch(encodeInputBatch(batch));
 
-  const blind = new Ghosts(round, { randomnessFor: () => undefined });
+  const blind = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => undefined });
   const seen = blind.latest(rid, eid);
   assert.equal(seen.ok, false);
   assert.match(seen.why, /no randomness yet/);
@@ -234,7 +236,7 @@ test('a live picture of a loaded run is the pose a full replay produces', () => 
   const batches = decodeTranscript(world.round.handOver(world.rid, world.eid).bytes).batches;
   assert.deepEqual(transcript.loads, BED, 'the node did not store the load');
 
-  const cold = new Ghosts(world.round, { randomnessFor: () => BEACON });
+  const cold = new Ghosts(world.round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let compared = 0;
   for (let at = CHUNK - 1; at < 600; at += CHUNK) {
     const slow = ghostForChecked({ core: TRUCK,
@@ -263,9 +265,9 @@ test('a live picture of a loaded run is the pose a full replay produces', () => 
 test('the load is what moves the picture, and by how much', () => {
   const loaded = driving(900, { loads: BED });
   const empty = driving(900);
-  const a = new Ghosts(loaded.round, { randomnessFor: () => BEACON })
+  const a = new Ghosts(loaded.round, { plugins: HOSTED, randomnessFor: () => BEACON })
     .frameFor(loaded.rid, loaded.eid, 899);
-  const b = new Ghosts(empty.round, { randomnessFor: () => BEACON })
+  const b = new Ghosts(empty.round, { plugins: HOSTED, randomnessFor: () => BEACON })
     .frameFor(empty.rid, empty.eid, 899);
   assert.equal(a.ok, true, a.why);
   assert.equal(b.ok, true, b.why);

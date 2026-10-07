@@ -46,6 +46,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const curve = { ...feldmanGroup, tweakPoint };
 
@@ -57,7 +58,7 @@ async function lockRound({ minScore = 1 } = {}) {
   const port = slot.port;
   // THE WINNER'S LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid, so only then is a loser's lock claimed).
   const address = lnurl(port);
-  const mk = () => serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+  const mk = () => serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
     chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, lnurlFetch: address.fetchLike });
   const a = await mk();
   const b = await mk();

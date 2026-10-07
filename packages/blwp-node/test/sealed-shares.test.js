@@ -11,7 +11,7 @@
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -32,6 +32,8 @@ import { encodeRoundContract } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sha256 = (b) => new Uint8Array(createHash('sha256').update(Buffer.from(b)).digest());
@@ -42,7 +44,7 @@ const contractFor = (node) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
   // seven settlement signer nodes: the handout is dealt 5-of-7, and the door asks the
   // round what its stakes open at (M3.3-26)
-  gameVerifySlots: 2, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 500n,
+  gameVerifySlots: 2, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 500n,
   randomnessRule: 'bitcoin-block-hash', startTimeMs: 500n + MIN_ENTRY_WINDOW_MS,
   entryCloseMs: 200000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
@@ -133,7 +135,7 @@ test('the daemon serves the handout to anyone and it is still worth nothing', as
   // ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the claim
   // key is claimKeyFor's. A node with a chain view checks every round's census; only censusRoot changes.
   const slot = bondedChainSlot(lockPort());
-  const node = await serve(openStore(':memory:'), {
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, 
     port: 0, funded: () => true, stakeLocks: slot.port, chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2),
   });
   try {
