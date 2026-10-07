@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
-import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord } from '../src/donor.js';
+import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
 const flag = (n, d) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : d; };
@@ -92,6 +92,8 @@ async function invites() {
   return out;
 }
 let routed = false;
+// ONE CLIENT PER FEDERATION, KEPT ACROSS PASSES (kanban #230): joined on the first pass, used by every later one
+const clientFor = walletClients(async (invite, fed, secret, store) => (await lockClient()).join(invite, fed, secret, store));
 
 async function pass() {
   const state = readJson(statePath, { done: [], withdrawals: [] });
@@ -104,7 +106,7 @@ async function pass() {
     const owed = donations.filter((d) => !done.has(d.outpoint));
     const invite = known[fed.toLowerCase()];
     if (!invite) { say({ step: 'federation', federation: fed.slice(0, 16), donations: donations.length, why: 'no invite to this federation is known: its funds stay there until one is' }); continue; }
-    const client = await LC.join(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
+    const client = await clientFor(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
     if (owed.length) {
       // RECORDED FOR GOOD FIRST, THEN REDEEMED, THEN THE SEATS TOLD AND THEIR COPY DELETED (kanban #156): donations.jsonl in
       // this dir is the dev's permanent record - sender key, round id, amount, time, the USD and EUR rate and their provider.
