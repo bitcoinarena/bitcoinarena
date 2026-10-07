@@ -13,5 +13,10 @@ import { NEXTBLOCK_MANIFEST_HEX } from './nextblock-manifest.js';
 export const NEXTBLOCK_MANIFEST = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
 export const NEXTBLOCK_GAME_ID = gameIdOf(NEXTBLOCK_MANIFEST);
 
-/** THE REGISTRATION a node's launcher hands serve() (blwp-node/src/plugins.js): the manifest and the cores it installed. */
-export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_MANIFEST, gameId: NEXTBLOCK_GAME_ID, cores: NEXTBLOCK_CORES });
+/**
+ * THE REGISTRATION a node's launcher hands serve() (blwp-node/src/plugins.js): the manifest, the cores it installed, and
+ * the game's own replay page (kanban #202: a page that draws the truck is nextblock's, never the engine's) - served at
+ * /replay for a round of nextblock.
+ */
+export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_MANIFEST, gameId: NEXTBLOCK_GAME_ID, cores: NEXTBLOCK_CORES,
+  replayPage: new URL('./nextblock-replay.html', import.meta.url) });

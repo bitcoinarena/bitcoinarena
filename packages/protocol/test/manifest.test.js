@@ -82,3 +82,16 @@ test('a round fits its manifest only on a listed core, a config listed for that 
   assert.match(why({ rankNumerator: 2 }), /rank curve is 2\/4; game "tally" pays 3\/4/);
   assert.match(why({ minScore: 4 }), /min_score 4 is below game "tally"'s 5/);
 });
+
+test('a round of a series fits only a game whose round_period is the network\'s 90 s grid or 0; a lone round is not asked', () => {
+  const round = { simCoreHash: b32(1), configHash: b32(0x11), blockTicks: 600, rankNumerator: 3, rankDenominator: 4, minScore: 5 };
+  const under = (roundPeriodMs, over = {}) => {
+    const m = signed({ ...BODY, roundPeriodMs }, A.key);
+    return roundFitsManifest({ ...round, gameId: gameIdOf(m), ...over }, m);
+  };
+  const series = { seriesId: b32(0x5e), roundIndex: 3 };
+  assert.deepEqual(under(90000n, series), { ok: true });
+  assert.deepEqual(under(0n, series), { ok: true });
+  assert.deepEqual(under(60000n, series), { ok: false, why: 'game "tally" runs every 60000 ms, and this network\'s series run every 90000 ms' });
+  assert.deepEqual(under(60000n), { ok: true }, 'a round outside a series was asked for a period');
+});

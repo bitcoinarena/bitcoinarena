@@ -4,7 +4,7 @@
 // and, per core, the configs its manifest lists. A paying round naming any other game, or a core or config its game does
 // not list, is refused by `gameIsKnownGood` (known-game.js).
 export const KNOWN_GOOD_GAMES = Object.freeze({
-  '89900bd86b83aa937f16768ce9a72c526140d332608303c72368b489cc9369b2': Object.freeze({
+  '0081b8aa7776c7f3a4c15637da6a256811c87ee2299f82e6bc901f66167cf340': Object.freeze({
     name: 'nextblock',
     cores: Object.freeze({
       '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),

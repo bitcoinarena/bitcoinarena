@@ -25,6 +25,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_GAME_MANIFEST, TAG } from './constants.js';
+import { ROUND_PERIOD_MS } from './series.js';
 
 /** What a game's result is. Arena v1 has one: a replayed run (§0A.7); ATTESTED is a later revision (#206). */
 export const RESULT_TYPE = Object.freeze({ REPLAY: 1 });
@@ -184,5 +185,20 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
     return { ok: false, why: `that round's rank curve is ${contract.rankNumerator}/${contract.rankDenominator}; ${name} pays ${m.rankNumerator}/${m.rankDenominator}` };
   if (!Number.isInteger(contract.minScore) || contract.minScore < m.minScore)
     return { ok: false, why: `that round's min_score ${contract.minScore} is below ${name}'s ${m.minScore}` };
+  // A ROUND OF A SERIES runs on the series' grid, and the game's round_period must be that grid (or 0: it asks none)
+  if (contract.seriesId !== undefined && contract.seriesId !== null) {
+    const period = seriesPeriodFits(m);
+    if (!period.ok) return period;
+  }
   return { ok: true };
+}
+
+/**
+ * MAY THIS GAME RUN ON A SERIES OF `periodMs` (§0A.3 round_period; kanban #202)? Every series of this network runs on
+ * the one 90 s grid (series.js ROUND_PERIOD_MS), so a game whose manifest names another period has no series here; one
+ * naming 0 asks no period and runs on any.
+ */
+export function seriesPeriodFits(m, periodMs = ROUND_PERIOD_MS) {
+  if (m.roundPeriodMs === 0n || m.roundPeriodMs === BigInt(periodMs)) return { ok: true };
+  return { ok: false, why: `game "${m.gameName}" runs every ${m.roundPeriodMs} ms, and this network's series run every ${periodMs} ms` };
 }

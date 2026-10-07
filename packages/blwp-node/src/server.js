@@ -3088,9 +3088,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A GAME REPLAY (the owner 2026-09-25 18:39): a page, not the Unity build, that fetches the transcript, the entry and
       // the round from this node - or from the round's other committee endpoints when this one has no transcript - and
       // steps the core the round names. The path is the same on every node, so the link plays on any that holds the run.
+      // THE PAGE IS THE ROUND'S GAME'S (kanban #202): its registration's replayPage - nextblock's draws the truck. The engine
+      // draws no game: a round it does not hold, or of a game with no replay page, has none here.
       if (req.method === 'GET' && url.pathname === '/replay') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'the link names no round (?round=<hex>&entry=<hex>)');
+        const row = round.get(id);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const game = hosted.get(toHex(decodeRoundContract(new Uint8Array(row.contract)).gameId));
+        if (!game) return text(res, 404, 'this node does not host that round\'s game');
+        if (!game.replayPage || !existsSync(game.replayPage)) return text(res, 404, `${game.name} serves no replay page`);
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...CORS });
-        return res.end(readFileSync(new URL('../pages/replay.html', import.meta.url)));
+        return res.end(readFileSync(game.replayPage));
       }
       // THE CORE THE ROUND NAMES, and no other: served only when that round's sim hash is a core this node installed for
       // the round's game - the core it replays it with (the registration's replayFile; nextblock's is
