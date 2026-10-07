@@ -5,7 +5,10 @@
 // the engine only compares hashes the game's manifest lists.
 import { Writer } from '../../protocol/src/encode.js';
 import { taggedHash } from '../../protocol/src/hash.js';
-import { NODE_FEE_BPS } from '../../protocol/src/fee.js';
+// THE NODE FEE THESE CONFIGS WERE PLAYED UNDER: BLWP's 2.00%, a literal (kanban #205). The engine's fee is now 5% (§0A.8),
+// but a config is the frozen bytes of rules already played - its hash is what rounds and the network id name - so the
+// fee written into them stays the one they were written with.
+const NODE_FEE_BPS = 200;
 import {
   EXPOSURE_REFERENCE, APRON_RADIUS, FRONT_SCORE_SPAN, T_FLOOR, T_CEIL,
   REFERENCE_TICKS,

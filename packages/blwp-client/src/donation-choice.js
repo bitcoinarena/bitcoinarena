@@ -29,6 +29,13 @@ import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 
 /** Above this many basis points of the stake (5%) the page asks a second time (§22A). */
 export const DONATION_CONFIRM_BPS = 500;
+/**
+ * THE DONATION A PLAYER IS OFFERED (§0A.8, RULED the owner 2026-10-06; kanban #205): one choice of 0 1 2 3 4 5 %, DEFAULT 5% -
+ * half to the protocol devs, half to the game dev (donation.js splitTwoSets). More than 5% only past §22A's second
+ * confirmation (DONATION_CONFIRM_BPS).
+ */
+export const DONATION_DEFAULT_BPS = 500;
+export const DONATION_CHOICES_BPS = Object.freeze([0, 100, 200, 300, 400, 500]);
 
 /** A typed percent - "2", "2.5", "2%", "0,5" - as whole basis points, or why it is not one. */
 function percentAsBps(typed) {

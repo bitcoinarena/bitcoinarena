@@ -88,8 +88,20 @@ export const RECIPIENT_KEY_BYTES = 33;
 export const RECIPIENT_LABEL_MAX = 48;
 export const isRecipientKey = (b) => b instanceof Uint8Array && b.length === RECIPIENT_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
 /** Does this set pay keys in the federation (FEDERATION.md, the owner 2026-10-03) rather than LNURLs? */
-export const donationSetPaysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
+const paysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
   && recipients.some((r) => r && r.recipientPk !== undefined);
+
+/**
+ * A ROUND'S TWO DONATION SETS (§0A.8, kanban #205): `{ network, game }` - the network's protocol-dev set (the one the
+ * contract names, signed by the network's authority) and the round's game's set (the one its manifest names, signed by
+ * the game's developer through the manifest). Every donation path that took one set takes this; one set alone is the
+ * walk-away's 25% (lock-settlement.js), which stays the network's (the owner 2026-10-07).
+ */
+export const isTwoSets = (r) => !!r && !Array.isArray(r) && Array.isArray(r.network) && Array.isArray(r.game);
+
+/** Whether a donation of this round pays keys in its federation - both sets of a two-set target, or the one set. */
+export const donationSetPaysKeys = (recipients) => (isTwoSets(recipients)
+  ? paysKeys(recipients.network) && paysKeys(recipients.game) : paysKeys(recipients));
 
 export function donationSetStands(recipients) {
   if (!Array.isArray(recipients) || !recipients.length)
@@ -192,6 +204,7 @@ const payeeOf = (r) => (r && r.recipientPk !== undefined ? { recipientPk: r.reci
  * `donationSetStands`, and it is a different question with a different name.
  */
 export function splitDonation({ donationMsat, recipients }) {
+  if (isTwoSets(recipients)) return splitTwoSets({ donationMsat, networkSet: recipients.network, gameSet: recipients.game });
   if (typeof donationMsat !== 'bigint')
     return { owed: false, why: 'a donation is BigInt millisatoshi' };
   if (donationMsat < 0n)
@@ -224,6 +237,39 @@ export function splitDonation({ donationMsat, recipients }) {
     throw new Error(`donation split broken: ${total} of ${donationMsat}`);
 
   return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
+}
+
+/**
+ * A DONATION SPLIT OVER A ROUND'S TWO SETS (§0A.8, RULED the owner 2026-10-06; kanban #205): HALF TO THE PROTOCOL DEVS - the
+ * network's set - and HALF TO THE GAME DEV - the game's set; the protocol half floored, the game half the rest, so the two
+ * halves are the donation to the millisatoshi. Each half is split over its own set exactly as one set is (`splitDonation`:
+ * floors by share_bps, the remainder to the first as published). Then ONE SHARE PER RECIPIENT: a recipient in both sets
+ * (nextblock's protocol dev is its game dev) is paid once, the sum of its two shares - the shares are still computed
+ * separately, so the split is the same whoever the recipients are. Order: the network set's recipients as published, then
+ * the game set's that are not in it. `protocol` and `game` are the two halves' own shares, for whoever shows them.
+ */
+export function splitTwoSets({ donationMsat, networkSet, gameSet }) {
+  if (typeof donationMsat !== 'bigint') return { owed: false, why: 'a donation is BigInt millisatoshi' };
+  if (donationMsat < 0n) return { owed: false, why: 'a donation cannot be negative' };
+  if (donationMsat > 0n && paysKeys(networkSet) !== paysKeys(gameSet))
+    return { owed: false, why: 'a round\'s two donation sets pay keys or LNURLs alike, never one of each' };
+  const protocolMsat = donationMsat / 2n;
+  const protocol = splitDonation({ donationMsat: protocolMsat, recipients: networkSet });
+  if (!protocol.owed) return { owed: false, why: `the protocol devs' set: ${protocol.why}` };
+  const game = splitDonation({ donationMsat: donationMsat - protocolMsat, recipients: gameSet });
+  if (!game.owed) return { owed: false, why: `the game dev's set: ${game.why}` };
+  const keyOf = (sh) => (sh.recipientPk instanceof Uint8Array ? `k:${toHex(sh.recipientPk)}` : `l:${canonicalLnurl(sh.lnurl)}`);
+  const merged = new Map();
+  for (const sh of [...protocol.shares, ...game.shares]) {
+    const k = keyOf(sh);
+    if (merged.has(k)) merged.get(k).amountMsat += sh.amountMsat;
+    else merged.set(k, { ...sh });
+  }
+  const shares = [...merged.values()];
+  const total = shares.reduce((t, sh) => t + sh.amountMsat, 0n);
+  if (total !== donationMsat) throw new Error(`two-set donation split broken: ${total} of ${donationMsat}`);
+  return { owed: true, shares, protocol: protocol.shares, game: game.shares, protocolMsat, gameMsat: donationMsat - protocolMsat,
+    why: `${donationMsat} msat: ${protocolMsat} to the protocol devs, ${donationMsat - protocolMsat} to the game dev, ${shares.length} recipient(s)` };
 }
 
 /**

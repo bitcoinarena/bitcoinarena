@@ -7077,6 +7077,7 @@ const KNOWN_GOOD_GAMES = Object.freeze({
       'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
     }),
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: '56cbb90ca8923f2dbe510278a35d3db430a0c1f55a0a7318fdaf464f15aede7b',
   }),
 });
 
@@ -7101,6 +7102,12 @@ const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 function sharedWorldOf(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
+}
+
+/** The id of the game dev's donation set its manifest names (§0A.8, kanban #205), as this client knows the game - or null. */
+function gameDonationSetIdOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
 }
 
 function gameIsKnownGood(gameId, simCoreHash, configHash) {
@@ -7158,9 +7165,13 @@ function gameIsKnownGood(gameId, simCoreHash, configHash) {
 
 
 
-/** 2.00%, and the 1.00% each pool takes of it. 22A fixes both. */
-const NODE_FEE_BPS = 200;
-const POOL_BPS = 100;
+/**
+ * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED the owner 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
+ * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (kanban #205,
+ * the owner 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
+ */
+const NODE_FEE_BPS = 500;
+const POOL_BPS = 250;
 
 /** The pools 22A pays, and the roles that sit in each. */
 const GAME_VERIFY = 'gameVerify';
@@ -7240,7 +7251,8 @@ function nodeFeeTable({ contract, entries, pools, eligible }) {
     const third = fee / 3n;
     shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
   } else {
-    const first = (gross * BigInt(POOL_BPS)) / 10000n;
+    // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
+    const first = fee / 2n;
     shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
   }
 
@@ -8953,8 +8965,20 @@ const RECIPIENT_KEY_BYTES = 33;
 const RECIPIENT_LABEL_MAX = 48;
 const isRecipientKey = (b) => b instanceof Uint8Array && b.length === RECIPIENT_KEY_BYTES && (b[0] === 0x02 || b[0] === 0x03);
 /** Does this set pay keys in the federation (FEDERATION.md, the owner 2026-10-03) rather than LNURLs? */
-const donationSetPaysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
+const paysKeys = (recipients) => Array.isArray(recipients) && recipients.length > 0
   && recipients.some((r) => r && r.recipientPk !== undefined);
+
+/**
+ * A ROUND'S TWO DONATION SETS (§0A.8, kanban #205): `{ network, game }` - the network's protocol-dev set (the one the
+ * contract names, signed by the network's authority) and the round's game's set (the one its manifest names, signed by
+ * the game's developer through the manifest). Every donation path that took one set takes this; one set alone is the
+ * walk-away's 25% (lock-settlement.js), which stays the network's (the owner 2026-10-07).
+ */
+const isTwoSets = (r) => !!r && !Array.isArray(r) && Array.isArray(r.network) && Array.isArray(r.game);
+
+/** Whether a donation of this round pays keys in its federation - both sets of a two-set target, or the one set. */
+const donationSetPaysKeys = (recipients) => (isTwoSets(recipients)
+  ? paysKeys(recipients.network) && paysKeys(recipients.game) : paysKeys(recipients));
 
 function donationSetStands(recipients) {
   if (!Array.isArray(recipients) || !recipients.length)
@@ -9057,6 +9081,7 @@ const payeeOf = (r) => (r && r.recipientPk !== undefined ? { recipientPk: r.reci
  * `donationSetStands`, and it is a different question with a different name.
  */
 function splitDonation({ donationMsat, recipients }) {
+  if (isTwoSets(recipients)) return splitTwoSets({ donationMsat, networkSet: recipients.network, gameSet: recipients.game });
   if (typeof donationMsat !== 'bigint')
     return { owed: false, why: 'a donation is BigInt millisatoshi' };
   if (donationMsat < 0n)
@@ -9089,6 +9114,39 @@ function splitDonation({ donationMsat, recipients }) {
     throw new Error(`donation split broken: ${total} of ${donationMsat}`);
 
   return { owed: true, shares, why: `${donationMsat} split over ${shares.length} recipients` };
+}
+
+/**
+ * A DONATION SPLIT OVER A ROUND'S TWO SETS (§0A.8, RULED the owner 2026-10-06; kanban #205): HALF TO THE PROTOCOL DEVS - the
+ * network's set - and HALF TO THE GAME DEV - the game's set; the protocol half floored, the game half the rest, so the two
+ * halves are the donation to the millisatoshi. Each half is split over its own set exactly as one set is (`splitDonation`:
+ * floors by share_bps, the remainder to the first as published). Then ONE SHARE PER RECIPIENT: a recipient in both sets
+ * (nextblock's protocol dev is its game dev) is paid once, the sum of its two shares - the shares are still computed
+ * separately, so the split is the same whoever the recipients are. Order: the network set's recipients as published, then
+ * the game set's that are not in it. `protocol` and `game` are the two halves' own shares, for whoever shows them.
+ */
+function splitTwoSets({ donationMsat, networkSet, gameSet }) {
+  if (typeof donationMsat !== 'bigint') return { owed: false, why: 'a donation is BigInt millisatoshi' };
+  if (donationMsat < 0n) return { owed: false, why: 'a donation cannot be negative' };
+  if (donationMsat > 0n && paysKeys(networkSet) !== paysKeys(gameSet))
+    return { owed: false, why: 'a round\'s two donation sets pay keys or LNURLs alike, never one of each' };
+  const protocolMsat = donationMsat / 2n;
+  const protocol = splitDonation({ donationMsat: protocolMsat, recipients: networkSet });
+  if (!protocol.owed) return { owed: false, why: `the protocol devs' set: ${protocol.why}` };
+  const game = splitDonation({ donationMsat: donationMsat - protocolMsat, recipients: gameSet });
+  if (!game.owed) return { owed: false, why: `the game dev's set: ${game.why}` };
+  const keyOf = (sh) => (sh.recipientPk instanceof Uint8Array ? `k:${toHex(sh.recipientPk)}` : `l:${canonicalLnurl(sh.lnurl)}`);
+  const merged = new Map();
+  for (const sh of [...protocol.shares, ...game.shares]) {
+    const k = keyOf(sh);
+    if (merged.has(k)) merged.get(k).amountMsat += sh.amountMsat;
+    else merged.set(k, { ...sh });
+  }
+  const shares = [...merged.values()];
+  const total = shares.reduce((t, sh) => t + sh.amountMsat, 0n);
+  if (total !== donationMsat) throw new Error(`two-set donation split broken: ${total} of ${donationMsat}`);
+  return { owed: true, shares, protocol: protocol.shares, game: game.shares, protocolMsat, gameMsat: donationMsat - protocolMsat,
+    why: `${donationMsat} msat: ${protocolMsat} to the protocol devs, ${donationMsat - protocolMsat} to the game dev, ${shares.length} recipient(s)` };
 }
 
 /**
@@ -10206,7 +10264,8 @@ async function locksForRound(round, client, donationMsat, donationRecipients = n
 function donationCostMsat(donationMsat, recipients = null) {
   const d = BigInt(donationMsat || 0n);
   if (d <= 0n) return 0n;
-  const split = Array.isArray(recipients) ? splitDonation({ donationMsat: d, recipients }) : null;
+  // one set, or a round's two (protocol devs and game dev, §0A.8; kanban #205)
+  const split = recipients ? splitDonation({ donationMsat: d, recipients }) : null;
   const shares = split && split.owed ? split.shares.map((x) => x.amountMsat) : [d];
   return shares.reduce((t, m) => t + (m > 0n ? ceilNote(m) : 0n), 0n);
 }
@@ -15196,6 +15255,7 @@ function donationSetInForce({
 
 
 
+
 /**
  * WHAT THIS TAB HAS ALREADY ASKED ITS WALLET TO DONATE, per round and player
  * key, share by share (M3.2 6e). Measured before: the page's once-only flag
@@ -15338,6 +15398,10 @@ function notedDonationForLink(search, { storage, curve } = {}) {
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
 const toHexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 function donationRecipientsLine(set) {
+  // A ROUND'S TWO SETS (kanban #205): what the fetched answer carries as `gameSet` beside the network's
+  if (set && set.set && Array.isArray(set.gameSet))
+    return `Protocol devs (half): ${donationRecipientsLine(set.set).replace(/^Recipients: /, '')}; game dev (half): `
+      + donationRecipientsLine({ recipients: set.gameSet }).replace(/^Recipients: /, '');
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';
   return 'Recipients: ' + set.recipients.map((r) => {
     // A KEY IN THE FEDERATION (the owner 2026-10-03): its label and the key's first characters
@@ -15405,8 +15469,29 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  return { ok: true, set, signerNodes: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority` };
+
+  // AND THE GAME DEV'S SET (§0A.8, kanban #205): every signer node serves the one its round's game's manifest names, and it
+  // is taken only if it hashes to the game_donation_set this page's own known-games list carries for that game - so a node
+  // cannot route the game dev's half anywhere the developer did not sign.
+  const wantGame = gameDonationSetIdOf(round.gameId);
+  if (!wantGame) return { ok: false, why: 'this page knows no donation set of the round\'s game, so it pays no donation into the round' };
+  const games = await Promise.all(nodes.map(async (node) => {
+    const base = String(node).replace(/\/+$/, '');
+    try {
+      const r = await fetcher(`${base}/game-donation-set?round=${rid}`);
+      if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
+      return { node: base, bytes: new Uint8Array(await r.arrayBuffer()) };
+    } catch (e) { return { node: base, why: e.message }; }
+  }));
+  const gameMissing = games.filter((a) => !a.bytes);
+  if (gameMissing.length)
+    return { ok: false, why: `not every signer node of this round serves its game's donation set: ${gameMissing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+  let gameSet;
+  try { gameSet = decodeDonationSet(games[0].bytes); } catch (e) { return { ok: false, why: `that is no game donation set: ${e.message}` }; }
+  if (toHex(donationSetId(gameSet)) !== wantGame)
+    return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
+  return { ok: true, set, gameSet, target: { network: set.recipients, game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
+    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 
 // ---- blwp-client/src/client.js
@@ -19234,6 +19319,13 @@ function nextRoundView({ runOverMs, nextStartMs, nowMs = Date.now(), exited = fa
 
 /** Above this many basis points of the stake (5%) the page asks a second time (§22A). */
 const DONATION_CONFIRM_BPS = 500;
+/**
+ * THE DONATION A PLAYER IS OFFERED (§0A.8, RULED the owner 2026-10-06; kanban #205): one choice of 0 1 2 3 4 5 %, DEFAULT 5% -
+ * half to the protocol devs, half to the game dev (donation.js splitTwoSets). More than 5% only past §22A's second
+ * confirmation (DONATION_CONFIRM_BPS).
+ */
+const DONATION_DEFAULT_BPS = 500;
+const DONATION_CHOICES_BPS = Object.freeze([0, 100, 200, 300, 400, 500]);
 
 /** A typed percent - "2", "2.5", "2%", "0,5" - as whole basis points, or why it is not one. */
 function percentAsBps(typed) {
@@ -19489,6 +19581,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,
          playerFor: playerFor, entryFor: entryFor,
          chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,
+         DONATION_DEFAULT_BPS: DONATION_DEFAULT_BPS, DONATION_CHOICES_BPS: DONATION_CHOICES_BPS,
          keptDonation: keptDonation, depositDonationMsat: depositDonationMsat,
          fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,
          donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,

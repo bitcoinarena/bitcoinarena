@@ -8,6 +8,7 @@ import { NEXTBLOCK_CORES, nextblockRoundWarnings } from './truck-cores.js';
 import { fromHex } from '../../protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../protocol/src/manifest.js';
 import { NEXTBLOCK_MANIFEST_HEX } from './nextblock-manifest.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../protocol/src/testnet4-donation-set-keys.js';
 
 /** THE SIGNED MANIFEST, and its id: what a round of nextblock names as its game_id (§0A.3). */
 export const NEXTBLOCK_MANIFEST = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
@@ -19,7 +20,10 @@ export const NEXTBLOCK_GAME_ID = gameIdOf(NEXTBLOCK_MANIFEST);
  * /replay for a round of nextblock.
  */
 export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_MANIFEST, gameId: NEXTBLOCK_GAME_ID, cores: NEXTBLOCK_CORES,
-  replayPage: new URL('./nextblock-replay.html', import.meta.url), roundWarnings: nextblockRoundWarnings });
+  replayPage: new URL('./nextblock-replay.html', import.meta.url), roundWarnings: nextblockRoundWarnings,
+  // ITS DEVELOPER'S DONATION SET (§0A.8, kanban #205): the one its manifest names by id - the testnet4 key set, so on
+  // testnet4 nextblock's protocol dev and game dev are the same recipients and are paid once
+  donationSet: TESTNET4_DONATION_SET_KEYS.recipients });
 
 /** What a launcher loads from this module (BLWP_GAMES, blwp-node/src/main.js): nextblock's registration. */
 export const GAME = NEXTBLOCK;

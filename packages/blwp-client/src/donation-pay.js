@@ -28,7 +28,8 @@ import {
   decodeDonationSetBody, donationSetBodyId, decodeAuthorityRotation, authorityRotationId, authorityAt,
   DONATION_SIGNATURE_BYTES,
 } from '../../protocol/src/authority.js';
-import { donationSetMatchesRound } from '../../protocol/src/donation.js';
+import { donationSetMatchesRound, donationSetId, decodeDonationSet } from '../../protocol/src/donation.js';
+import { gameDonationSetIdOf } from '../../protocol/src/known-game.js';
 import { donationKeysForNetworkId } from '../../protocol/src/donation-keys.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
 import { roundId } from '../../protocol/src/contracts.js';
@@ -177,6 +178,10 @@ export function notedDonationForLink(search, { storage, curve } = {}) {
 /** Every recipient of a set, with its share and where it is paid - what the page shows before the wallet approves. */
 const toHexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 export function donationRecipientsLine(set) {
+  // A ROUND'S TWO SETS (kanban #205): what the fetched answer carries as `gameSet` beside the network's
+  if (set && set.set && Array.isArray(set.gameSet))
+    return `Protocol devs (half): ${donationRecipientsLine(set.set).replace(/^Recipients: /, '')}; game dev (half): `
+      + donationRecipientsLine({ recipients: set.gameSet }).replace(/^Recipients: /, '');
   if (!set || !Array.isArray(set.recipients)) return 'no donation set';
   return 'Recipients: ' + set.recipients.map((r) => {
     // A KEY IN THE FEDERATION (the owner 2026-10-03): its label and the key's first characters
@@ -244,6 +249,27 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
-  return { ok: true, set, signerNodes: answers.length, rotated: inForce.rotated,
-    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority` };
+
+  // AND THE GAME DEV'S SET (§0A.8, kanban #205): every signer node serves the one its round's game's manifest names, and it
+  // is taken only if it hashes to the game_donation_set this page's own known-games list carries for that game - so a node
+  // cannot route the game dev's half anywhere the developer did not sign.
+  const wantGame = gameDonationSetIdOf(round.gameId);
+  if (!wantGame) return { ok: false, why: 'this page knows no donation set of the round\'s game, so it pays no donation into the round' };
+  const games = await Promise.all(nodes.map(async (node) => {
+    const base = String(node).replace(/\/+$/, '');
+    try {
+      const r = await fetcher(`${base}/game-donation-set?round=${rid}`);
+      if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
+      return { node: base, bytes: new Uint8Array(await r.arrayBuffer()) };
+    } catch (e) { return { node: base, why: e.message }; }
+  }));
+  const gameMissing = games.filter((a) => !a.bytes);
+  if (gameMissing.length)
+    return { ok: false, why: `not every signer node of this round serves its game's donation set: ${gameMissing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+  let gameSet;
+  try { gameSet = decodeDonationSet(games[0].bytes); } catch (e) { return { ok: false, why: `that is no game donation set: ${e.message}` }; }
+  if (toHex(donationSetId(gameSet)) !== wantGame)
+    return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
+  return { ok: true, set, gameSet, target: { network: set.recipients, game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
+    why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
