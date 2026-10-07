@@ -1696,6 +1696,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     recoveringSettlements.then(() => settlements.backfillDonationKeys()).catch((e) => console.error(`[settle] donation-key backfill: ${e.message}`));
   }, 120000);
   donationBackfillTimer.unref();
+  // AND AGAIN ON A SLOW CLOCK (kanban #231): a recovered round whose plan could not be rebuilt yet is left unmarked; this
+  // pass, every 6 h, asks only those again - no restart needed once their runs are FINAL
+  let backfillingNow = null;
+  const donationBackfillClock = setInterval(() => {
+    if (shuttingDown || backfillingNow || typeof settlements.backfillDonationKeys !== 'function') return;
+    backfillingNow = settlements.backfillDonationKeys().catch((e) => console.error(`[settle] donation-key backfill: ${e.message}`)).finally(() => { backfillingNow = null; });
+  }, 6 * 3600 * 1000);
+  donationBackfillClock.unref();
 
   // WINNINGS ARE ALWAYS SENT, WITH NO PAGE OPEN: every round holding a winning that is not PAID is visited on the same
   // clock - a send retried, an expired one re-sent through the next live gateway (winnings-send.js). Only the round's
@@ -4526,7 +4534,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
-        clearInterval(settleRecoverTimer);
+        clearInterval(settleRecoverTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         clearInterval(resignTimer);
         clearTimeout(resignFirst);
         clearInterval(winningsTimer);

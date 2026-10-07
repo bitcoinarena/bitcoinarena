@@ -2589,6 +2589,13 @@ export class Round {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
   }
 
+  /** A pass of the #152 backfill that could not rebuild this round (#231): counted, and the count answered. */
+  noteBackfillTry(roundIdBytes) {
+    this.db.prepare('INSERT INTO donation_backfill_tries (round_id, tries, last_ms) VALUES (?, 1, ?) ON CONFLICT(round_id) DO UPDATE SET tries = tries + 1, last_ms = excluded.last_ms')
+      .run(Buffer.from(roundIdBytes), this.now());
+    return this.db.prepare('SELECT tries FROM donation_backfill_tries WHERE round_id = ?').get(Buffer.from(roundIdBytes)).tries;
+  }
+
   /** The #152 backfill's marker: a recovered settlement already passed over, so it is never asked again. */
   donationBackfilled(roundIdBytes) {
     return !!this.db.prepare('SELECT 1 FROM donation_backfill WHERE round_id = ?').get(Buffer.from(roundIdBytes));

@@ -41,6 +41,8 @@ const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hidin
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const outpointOf = (s) => { const [txid, idx] = String(s).split(':'); return { txid: fromHex(txid), outIdx: BigInt(idx) }; };
 
+/** How often the #152 backfill tries a recovered round it could not rebuild before it marks it checked (#231). */
+export const BACKFILL_TRIES = 4;
 export const SUBMITTING = 'SUBMITTING';
 export const ACCEPTED = 'ACCEPTED';
 export const REFUSED = 'REFUSED';
@@ -869,11 +871,12 @@ export class LockSettlement {
   /**
    * THE BACKFILL OF #152 (the owner 2026-10-07): every settlement this seat recovered from the federation ("found in the
    * federation after this signer node was inside it") with no donation output indexed for it, once each - the same matched
-   * rebuild, only payouts the guardians still hold, a marker per round so no round is asked twice. Paced: one round per
+   * rebuild, only payouts the guardians still hold, a marker per round with a definitive outcome so none is asked twice -
+   * a round not rebuildable yet stays unmarked and is tried on the next pass (#231). Paced: one round per
    * `paceMs`, so a seat with hundreds of them is not held at a core (#229).
    */
   async backfillDonationKeys({ paceMs = 3000 } = {}) {
-    const out = { checked: 0, indexed: 0, outputs: 0, mismatched: 0, redeemed: 0, noKeys: 0, failed: 0 };
+    const out = { checked: 0, indexed: 0, outputs: 0, mismatched: 0, redeemed: 0, noKeys: 0, failed: 0, gaveUp: 0 };
     if (!this.round.lockSettlementsIn || !this.round.donationBackfilled) return out;
     for (const rid of this.round.lockSettlementsIn(ACCEPTED)) {
       const kept = this.round.lockSettlement(rid);
@@ -886,11 +889,21 @@ export class LockSettlement {
       else if (r.why === 'its plan pays no donation key') out.noKeys++;
       else if (!r.indexed && !r.redeemed) out.failed++;
       out.redeemed += r.redeemed || 0;
-      this.round.markDonationBackfilled(rid, { indexed: r.indexed || 0, why: r.why || null });
+      // ONLY A DEFINITIVE OUTCOME IS MARKED (kanban #231): a round whose plan could not be rebuilt now - a run still
+      // PROVISIONALLY_FINAL on this seat - is left unmarked, and a later pass tries it again
+      const notRebuilt = !r.indexed && !r.redeemed && !r.mismatched && r.why !== 'its plan pays no donation key';
+      // ...BUT NOT FOREVER (the owner 2026-10-07): after BACKFILL_TRIES passes that could not rebuild it - a day or more on the
+      // 6 h clock - the round is marked checked with the reason, and not asked again
+      const tries = notRebuilt && this.round.noteBackfillTry ? this.round.noteBackfillTry(rid) : 0;
+      if (!notRebuilt) this.round.markDonationBackfilled(rid, { indexed: r.indexed || 0, why: r.why || null });
+      else if (tries >= BACKFILL_TRIES) {
+        this.round.markDonationBackfilled(rid, { indexed: 0, why: `not rebuilt after ${tries} tries: ${r.why}` });
+        out.gaveUp++;
+      }
       if (paceMs) await new Promise((ok) => setTimeout(ok, paceMs));
     }
     console.log(`[settle] donation-key backfill (#152): ${out.checked} recovered settlement(s) checked - ${out.indexed} indexed `
-      + `(${out.outputs} output(s)), ${out.redeemed} payout(s) already redeemed, ${out.noKeys} paying no donation key, ${out.mismatched} not the signed plan, ${out.failed} not rebuilt`);
+      + `(${out.outputs} output(s)), ${out.redeemed} payout(s) already redeemed, ${out.noKeys} paying no donation key, ${out.mismatched} not the signed plan, ${out.failed} not rebuilt (${out.gaveUp} marked after ${BACKFILL_TRIES} tries)`);
     return out;
   }
 
