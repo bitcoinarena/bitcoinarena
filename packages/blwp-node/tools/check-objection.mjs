@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { SIGNED_RESULT_BYTES } from '../../protocol/src/result.js';
-import { coreOfGame } from '../src/plugins.js';
+import { coreOfGame, hostedPlugins } from '../src/plugins.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { verifiedFinal } from '../src/verdict.js';
 import { checkObjectionBundle } from '../src/objection-check.js';
@@ -37,10 +37,13 @@ export async function checkObjectionAt({ base, roundId, entryId, bundle, fetcher
   const signedResultId = seen.ok && seen.final ? bytesOf(seen.runId) : null;
   const beacon = await get(`/randomness?round=${hex(rid)}`);
   const roundRandomness = beacon.bytes.length === 32 ? beacon.bytes : bytesOf(JSON.parse(Buffer.from(beacon.bytes).toString()).hash);
-  const found = coreOfGame(contract, NEXTBLOCK);
+  // THE ROUND'S GAME, as a node hosts it (kanban #203): its core and config, and the configs it plays as one world per round
+  const game = hostedPlugins([NEXTBLOCK]).get(hex(contract.gameId));
+  if (!game) return { holds: false, step: 'replay', why: `this tool replays nextblock only, and that round plays game ${hex(contract.gameId).slice(0, 16)}` };
+  const found = coreOfGame(contract, game);
   if (!found.ok) return { holds: false, step: 'replay', why: found.why };
   const core = { ...found.core, config: found.config, runTicks: found.runTicks,
-    world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: rid } };
+    world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: rid, sharedWorld: [...game.sharedWorld] } };
   const checked = await checkObjectionBundle({ bundle: bytesOf(bundle), roundId: rid, entryId: eid, entry, contract, committee,
     signedResultId, core, roundRandomness, verify });
   return { ...checked, signedBy: seen.ok ? seen.signers ?? null : null, results: records.length };
