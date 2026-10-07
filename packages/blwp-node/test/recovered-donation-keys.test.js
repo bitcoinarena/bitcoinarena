@@ -21,7 +21,7 @@ const PLAN = { claims: [lockAt(1), lockAt(2)], payouts: [
 const MOVES = { txid: TXID, claims: [lockAt(2), lockAt(1)].map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`), payouts: 3 };
 
 function storeWith(rows) {
-  const out = [], marks = new Map();
+  const out = [], marks = new Map(), tries = new Map();
   const round = {
     get: () => ({ contract: fromHex(CONTRACT_HEX) }),
     lockSettlement: (rid) => rows.get(toHex(rid))?.kept || null,
@@ -32,6 +32,7 @@ function storeWith(rows) {
     settlementDonationOutputs: (rid) => out.filter((r) => toHex(r.roundId) === toHex(rid)).length,
     donationBackfilled: (rid) => marks.has(toHex(rid)),
     markDonationBackfilled: (rid, r) => marks.set(toHex(rid), r),
+    noteBackfillTry: (rid) => { const n = (tries.get(toHex(rid)) || 0) + 1; tries.set(toHex(rid), n); return n; },
   };
   return { round, out, marks };
 }
@@ -82,4 +83,42 @@ test('backfill: recovered settlements without donation outputs, the same match; 
   const r2 = await s.backfillDonationKeys({ paceMs: 0 });
   assert.equal(r2.checked, 0, 'a round already passed over was checked again');
   assert.equal(out.length, 1);
+});
+
+// A ROUND WHOSE PLAN COULD NOT BE REBUILT IS NOT MARKED (kanban #231, the #152 completeness check, comment 717): the backfill
+// marked every round it checked, so one whose run was still PROVISIONALLY_FINAL on this seat was never checked again. Only a
+// definitive outcome is marked; a later pass - the next start, or the backfill's slow clock - tries the round again.
+test('backfill: a recovered round not rebuildable now stays unmarked and is indexed on a later pass once it rebuilds', async () => {
+  const rows = new Map([[toHex(RID), { kept: { txid: TXID, state: ACCEPTED, why: RECOVERED }, moves: MOVES }]]);
+  const { round, out, marks } = storeWith(rows);
+  const s = seat(round);
+  s.planOf = async () => ({ ok: false, why: 'nothing is claimed while a run is not final with its window closed: f1059b98 is PROVISIONALLY_FINAL' });
+  const r1 = await s.backfillDonationKeys({ paceMs: 0 });
+  assert.equal(r1.checked, 1);
+  assert.equal(r1.failed, 1);
+  assert.equal(marks.size, 0, 'a round that could not be rebuilt was marked checked for good');
+  s.planOf = async () => ({ ok: true, plan: PLAN });              // its run turned FINAL
+  const r2 = await s.backfillDonationKeys({ paceMs: 0 });
+  assert.equal(r2.checked, 1, 'the round was not tried again');
+  assert.equal(r2.indexed, 1);
+  assert.deepEqual(out.map((r) => r.outpoint.outIdx), [1n, 2n]);
+  assert.equal(marks.size, 1);
+});
+
+test('backfill: a round still not rebuildable after BACKFILL_TRIES passes is marked checked with the reason, and not asked again', async () => {
+  const { BACKFILL_TRIES } = await import('../src/settlement.js');
+  const rows = new Map([[toHex(RID), { kept: { txid: TXID, state: ACCEPTED, why: RECOVERED }, moves: MOVES }]]);
+  const { round, out, marks } = storeWith(rows);
+  const s = seat(round);
+  s.planOf = async () => ({ ok: false, why: 'nothing is claimed while a run is not final with its window closed: 7c27840f is PROVISIONALLY_FINAL' });
+  for (let k = 1; k < BACKFILL_TRIES; k++) {
+    const r = await s.backfillDonationKeys({ paceMs: 0 });
+    assert.equal(r.checked, 1); assert.equal(marks.size, 0, `marked after ${k} tries`);
+  }
+  const last = await s.backfillDonationKeys({ paceMs: 0 });
+  assert.equal(last.gaveUp, 1);
+  assert.match(marks.get(toHex(RID)).why, new RegExp(`not rebuilt after ${BACKFILL_TRIES} tries: its plan was not rebuilt: nothing is claimed`));
+  const after = await s.backfillDonationKeys({ paceMs: 0 });
+  assert.equal(after.checked, 0, 'asked again after it was marked');
+  assert.equal(out.length, 0);
 });
