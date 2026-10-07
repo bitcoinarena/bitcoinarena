@@ -7,6 +7,16 @@ import { createHash } from 'node:crypto';
 import { gameDevKey, signManifest } from '../../../blwp-donor/src/manifest-sign.js';
 import { gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../../protocol/src/manifest.js';
 import { fromHex } from '../../../protocol/src/hash.js';
+import { donationSetId } from '../../../protocol/src/donation.js';
+
+/**
+ * A TEST GAME'S DONATION SET (kanban #205): one 33-byte key derived from the developer's word, all 10000 bps - a set of its
+ * own, never the network's, so a round of it pays the protocol devs and the game dev to different keys.
+ */
+export function testDonationSet(word) {
+  const x = createHash('sha256').update(`test game donation key: ${word}`).digest();
+  return [{ recipientPk: Uint8Array.from([0x02, ...x]), label: `${word} dev`, shareBps: 10000 }];
+}
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
 
@@ -21,7 +31,8 @@ export function testDevKey(word) {
  * replayFile? }, every one listed in the manifest with the configs it installs. The rest are the manifest's terms.
  */
 export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDenominator = 4, minScore = 1, version = 1,
-  parentManifestId = NO_PARENT, dev = name, clients = [], gameDonationSetId = new Uint8Array(32), roundPeriodMs = 0n }) {
+  parentManifestId = NO_PARENT, dev = name, clients = [], donationSet = testDonationSet(dev), roundPeriodMs = 0n }) {
+  const gameDonationSetId = donationSetId(donationSet);
   const devKey = testDevKey(dev);
   const pubkey = devKey.pubkey;
   const sorted = (hs) => [...hs].sort();
@@ -32,5 +43,5 @@ export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDeno
     clients, gameDonationSetId,
   };
   const manifest = signManifest(body, devKey);
-  return Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores });
+  return Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores, donationSet });
 }

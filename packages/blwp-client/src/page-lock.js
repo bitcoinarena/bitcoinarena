@@ -244,7 +244,8 @@ export async function locksForRound(round, client, donationMsat, donationRecipie
 export function donationCostMsat(donationMsat, recipients = null) {
   const d = BigInt(donationMsat || 0n);
   if (d <= 0n) return 0n;
-  const split = Array.isArray(recipients) ? splitDonation({ donationMsat: d, recipients }) : null;
+  // one set, or a round's two (protocol devs and game dev, §0A.8; kanban #205)
+  const split = recipients ? splitDonation({ donationMsat: d, recipients }) : null;
   const shares = split && split.owed ? split.shares.map((x) => x.amountMsat) : [d];
   return shares.reduce((t, m) => t + (m > 0n ? ceilNote(m) : 0n), 0n);
 }

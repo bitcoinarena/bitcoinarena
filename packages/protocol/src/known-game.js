@@ -21,6 +21,12 @@ export function sharedWorldOf(gameId) {
   return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
 }
 
+/** The id of the game dev's donation set its manifest names (§0A.8, kanban #205), as this client knows the game - or null. */
+export function gameDonationSetIdOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
+}
+
 export function gameIsKnownGood(gameId, simCoreHash, configHash) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];

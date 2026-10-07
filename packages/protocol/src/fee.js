@@ -30,9 +30,13 @@ import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG } from './constants.js';
 import { roundId } from './contracts.js';
 import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } from './payout.js';
 
-/** 2.00%, and the 1.00% each pool takes of it. 22A fixes both. */
-export const NODE_FEE_BPS = 200;
-export const POOL_BPS = 100;
+/**
+ * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED the owner 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
+ * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (kanban #205,
+ * the owner 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
+ */
+export const NODE_FEE_BPS = 500;
+export const POOL_BPS = 250;
 
 /** The pools 22A pays, and the roles that sit in each. */
 export const GAME_VERIFY = 'gameVerify';
@@ -112,7 +116,8 @@ export function nodeFeeTable({ contract, entries, pools, eligible }) {
     const third = fee / 3n;
     shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
   } else {
-    const first = (gross * BigInt(POOL_BPS)) / 10000n;
+    // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
+    const first = fee / 2n;
     shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
   }
 
