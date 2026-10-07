@@ -1689,6 +1689,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A BACKGROUND CHECK DOES NOT HOLD THE PROCESS UP: a running daemon's server does. Measured:
   // without this, a test that left a signer node open never let node --test exit.
   settleRecoverTimer.unref();
+  // THE #152 BACKFILL, ONCE PER START (the owner 2026-10-07): recovered settlements whose donation-key outputs were never
+  // indexed, by the same matched rebuild - two minutes in (after the start's catch-up and the recoveries above), paced.
+  const donationBackfillTimer = setTimeout(() => {
+    if (shuttingDown || typeof settlements.backfillDonationKeys !== 'function') return;
+    recoveringSettlements.then(() => settlements.backfillDonationKeys()).catch((e) => console.error(`[settle] donation-key backfill: ${e.message}`));
+  }, 120000);
+  donationBackfillTimer.unref();
 
   // WINNINGS ARE ALWAYS SENT, WITH NO PAGE OPEN: every round holding a winning that is not PAID is visited on the same
   // clock - a send retried, an expired one re-sent through the next live gateway (winnings-send.js). Only the round's

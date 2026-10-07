@@ -687,6 +687,14 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS donation_outputs_by_key ON donation_outputs (recipient_pk, verified_ms);
 
+    -- THE #152 BACKFILL (2026-10-07): a settlement recovered from the federation, passed over once for its donation-key outputs
+    CREATE TABLE IF NOT EXISTS donation_backfill (
+      round_id  BLOB PRIMARY KEY,
+      indexed   INTEGER NOT NULL,
+      why       TEXT,
+      made_ms   INTEGER NOT NULL
+    );
+
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
     -- A STAKE LOCKED FOR A ROUND THIS SIGNER NODE REFUSES, AND NEVER ENTERED (§23.2 row REFUSED; kanban #191, the owner

@@ -703,7 +703,9 @@ export class LockSettlement {
       if (saw.verdict === 'in') {
         const why = `found in the federation after this signer node was inside it: ${saw.why}`;
         this.round.putLockSettlement({ roundId: roundIdBytes, txid: kept.txid, message: kept.message, signature: kept.signature, state: ACCEPTED, why });
-        { const b = this.built.get(toHex(roundIdBytes)); if (b && b.ok) this.indexDonationKeys(roundIdBytes, kept.txid, b.plan); }
+        // ITS DONATION-KEY OUTPUTS, RESTART OR NOT (kanban #152): from the plan kept in memory, else rebuilt from the store
+        // and indexed only when it is the plan that was signed
+        await this.indexRecovered(roundIdBytes, kept.txid);
         return { ok: true, state: ACCEPTED, why, txid: kept.txid, signature: kept.signature, recovered: true };
       }
       if (saw.verdict === 'mixed') {
@@ -810,14 +812,86 @@ export class LockSettlement {
    * accepted settlement is a payout contract at (txid, its place among the payouts) - the out_idx a winner redeems by -
    * listed under its key like a lock transaction's donation output, so the dev's client finds it (GET /donations).
    */
-  indexDonationKeys(roundIdBytes, txid, plan) {
-    if (!plan || !Array.isArray(plan.payouts) || !this.round.putDonationOutputs || !/^[0-9a-f]{64}$/.test(String(txid))) return;
+  indexDonationKeys(roundIdBytes, txid, plan, { only = null } = {}) {
+    if (!plan || !Array.isArray(plan.payouts) || !this.round.putDonationOutputs || !/^[0-9a-f]{64}$/.test(String(txid))) return 0;
     const row = this.round.get(roundIdBytes);
     const federationId = row ? decodeRoundContract(new Uint8Array(row.contract)).federationId : new Uint8Array(32);
-    const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p }) => p.kind === 'donation key').map(({ p, i }) => ({
+    const rows = plan.payouts.map((p, i) => ({ p, i })).filter(({ p, i }) => p.kind === 'donation key' && (!only || only.has(i))).map(({ p, i }) => ({
       outpoint: { txid: fromHex(String(txid)), outIdx: BigInt(i) }, entryId: p.donation.id, roundId: roundIdBytes, federationId,
       recipientPk: p.payoutPk, amountMsat: p.msat, contractId: `settlement:${i}` }));
     if (rows.length) this.round.putDonationOutputs(rows);
+    return rows.length;
+  }
+
+  /**
+   * A RECOVERED SETTLEMENT'S DONATION-KEY OUTPUTS (kanban #152, the owner 2026-10-07): a seat restarted between submitting a
+   * walk-away's settlement and finding it in the federation had no plan in memory, so its donation-key payouts were never
+   * indexed and the donors never saw them. The plan kept in this process is used when it is the settlement's; else it is
+   * rebuilt from the store as summaryOf does (no preimage opened) and indexed ONLY when it is the signed one: the same
+   * claimed locks and the same payout count as the moves kept at signing. A plan that is not is indexed nowhere, and the log
+   * says why. `onlyStored` (the backfill) indexes only payouts the guardians still hold: one a donor already redeemed is
+   * not handed to the donors again.
+   */
+  async indexRecovered(roundIdBytes, txid, { onlyStored = false } = {}) {
+    const key = toHex(roundIdBytes);
+    const not = (why) => { console.log(`[settle] ${key.slice(0, 16)} donation keys not indexed: ${why}`); return { indexed: 0, why }; };
+    const b = this.built.get(key);
+    let plan = b && b.ok && b.txid === txid ? b.plan : null;
+    if (!plan) {
+      const moves = this.round.lockSettlementMoves(roundIdBytes);
+      if (!moves || moves.txid !== txid) return not('this signer node kept no record of what that settlement moves');
+      let got;
+      try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch (e) { return not(`its plan was not rebuilt: ${e.message}`); }
+      if (!got || !got.ok) return not(`its plan was not rebuilt: ${got ? got.why : 'no answer'}`);
+      const claims = got.plan.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`).sort();
+      const signed = [...moves.claims].sort();
+      if (claims.length !== signed.length || claims.some((c, i) => c !== signed[i]) || got.plan.payouts.length !== moves.payouts)
+        return Object.assign(not(`the rebuilt plan claims ${claims.length} lock(s) and pays ${got.plan.payouts.length}, the signed one claims `
+          + `${signed.length} and pays ${moves.payouts}: nothing is indexed from a plan that was not signed`), { mismatched: true });
+      plan = got.plan;
+    }
+    const keys = plan.payouts.map((p, i) => ({ p, i })).filter(({ p }) => p.kind === 'donation key').map(({ i }) => i);
+    if (!keys.length) return { indexed: 0, why: 'its plan pays no donation key' };
+    let only = null, redeemed = 0;
+    if (onlyStored) {
+      only = new Set();
+      for (const i of keys) {
+        let held = false;
+        try { held = !!(await this.port.status({ txid: fromHex(txid), outIdx: BigInt(i) })).stored; } catch { held = false; }
+        if (held) only.add(i); else redeemed++;
+      }
+    }
+    const indexed = this.indexDonationKeys(roundIdBytes, txid, plan, { only });
+    console.log(`[settle] ${key.slice(0, 16)} donation keys indexed: ${indexed} of ${keys.length}${redeemed ? ` (${redeemed} no longer held: redeemed already)` : ''}`);
+    return { indexed, redeemed };
+  }
+
+  /**
+   * THE BACKFILL OF #152 (the owner 2026-10-07): every settlement this seat recovered from the federation ("found in the
+   * federation after this signer node was inside it") with no donation output indexed for it, once each - the same matched
+   * rebuild, only payouts the guardians still hold, a marker per round so no round is asked twice. Paced: one round per
+   * `paceMs`, so a seat with hundreds of them is not held at a core (#229).
+   */
+  async backfillDonationKeys({ paceMs = 3000 } = {}) {
+    const out = { checked: 0, indexed: 0, outputs: 0, mismatched: 0, redeemed: 0, noKeys: 0, failed: 0 };
+    if (!this.round.lockSettlementsIn || !this.round.donationBackfilled) return out;
+    for (const rid of this.round.lockSettlementsIn(ACCEPTED)) {
+      const kept = this.round.lockSettlement(rid);
+      if (!kept || !String(kept.why || '').startsWith('found in the federation after this signer node was inside it')) continue;
+      if (this.round.donationBackfilled(rid) || this.round.settlementDonationOutputs(rid) > 0) continue;
+      out.checked++;
+      const r = await this.indexRecovered(rid, kept.txid, { onlyStored: true });
+      if (r.indexed) { out.indexed++; out.outputs += r.indexed; }
+      if (r.mismatched) out.mismatched++;
+      else if (r.why === 'its plan pays no donation key') out.noKeys++;
+      else if (!r.indexed && !r.redeemed) out.failed++;
+      out.redeemed += r.redeemed || 0;
+      this.round.markDonationBackfilled(rid, { indexed: r.indexed || 0, why: r.why || null });
+      if (paceMs) await new Promise((ok) => setTimeout(ok, paceMs));
+    }
+    console.log(`[settle] donation-key backfill (#152): ${out.checked} recovered settlement(s) checked - ${out.indexed} indexed `
+      + `(${out.outputs} output(s)), ${out.redeemed} payout(s) already redeemed, ${out.noKeys} paying no donation key, ${out.mismatched} not the signed plan, ${out.failed} not rebuilt`);
+    return out;
   }
 
   /** THE COORDINATOR'S SEND PLANS: proposed from the base plan and handed to every peer, which checks them itself. */
