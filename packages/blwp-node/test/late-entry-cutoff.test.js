@@ -5,25 +5,25 @@
 // Fixtures from run-length.test.js.
 //
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
-import { TRUCK_BEFORE_FORK_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../../nextblock/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { lastTickOfRun, runTicksForEntry, runLengthIsTheCores } from '../../protocol/src/contracts.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
@@ -52,7 +52,7 @@ const entryOn = (rid, joinTick = 0) => ({
 import { LATE_JOIN_MS, LATE_JOIN_LAST_ENTRY_MS } from '../../protocol/src/series.js';
 import { ticksForMs } from '../../protocol/src/tick.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const START = BigInt(NOW) + MIN_ENTRY_WINDOW_MS;
 const lateJoinRound = () => ({ ...contractWith(BLOCK_TICKS), seriesId: b32(0x5a), roundIndex: 3, entryCloseMs: START + LATE_JOIN_MS });

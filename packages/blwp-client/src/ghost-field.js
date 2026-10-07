@@ -14,7 +14,7 @@
 //
 // NOTHING HERE IS AN INPUT. 0.10: another player's truck is a picture, never
 // an input to my simulation. A queue of pictures is handed to a renderer and
-// to nothing else - `packages/core` is not imported, and cannot be.
+// to nothing else - `packages/nextblock` is not imported, and cannot be.
 import { toHex } from '../../protocol/src/hash.js';
 import { displayNameFromKey } from '../../protocol/src/display-name.js';
 

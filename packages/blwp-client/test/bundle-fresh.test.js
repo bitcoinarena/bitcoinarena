@@ -23,7 +23,7 @@ const TEMPLATE = ROOT + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/';
 const BUILDS = [
   ['blwp-client.js', 'packages/blwp-client/tools/bundle.js', 'packages/blwp-client/dist/blwp-client.js'],
   ['blwp-curve.js', 'packages/blwp-client/tools/bundle-curve.js', 'packages/blwp-client/dist/blwp-curve.js'],
-  ['blwp-core.js', 'packages/core/tools/bundle.js', 'packages/core/dist/blwp-core.js'],
+  ['blwp-core.js', 'packages/nextblock/tools/bundle.js', 'packages/nextblock/dist/blwp-core.js'],
 ];
 
 test('each script a page serves that decides money is the build of the source in this tree - in dist and in the WebGL template', () => {

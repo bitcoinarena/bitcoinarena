@@ -20,7 +20,7 @@ import { donationSetId } from '../../protocol/src/donation.js';
 import { blockOf } from '../../protocol/tools/bond.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const TOOL = new URL('../tools/testnet4-key-tail.mjs', import.meta.url).pathname;
 const b32 = (n) => new Uint8Array(32).fill(n);

@@ -21,15 +21,15 @@ import { watchGhosts } from '../src/ghost-field.js';
 import { fetchLobby } from '../src/lobby.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
-import { O_TRUCK, T_X, T_Z, T_HEADING, O_TICK } from '../../core/src/state.js';
+import { init as coreInit, step as coreStep } from '../../nextblock/src/sim.js';
+import { O_TRUCK, T_X, T_Z, T_HEADING, O_TICK } from '../../nextblock/src/state.js';
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : d; };
 const DAILY = arg('daily', process.env.BLWP_2OF2_DIR || '/mnt/bitcoin/blwp-2of2');
 const MINUTES = Number(arg('minutes', 6));
 const PARKED = process.argv.includes('--parked');
 const require = createRequire(import.meta.url);
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const random = (n) => crypto.getRandomValues(new Uint8Array(n));
 const storage = () => { const held = new Map(); return { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v) }; };

@@ -16,8 +16,8 @@
 // is one rule rather than a float copy that decided the game and an integer
 // copy that had no caller at all.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -26,13 +26,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { ghostForChecked } from '../src/ghosts.js';
-import { init, step, submitLoad, heatOf } from '../../core/src/sim.js';
-import { heat as heatRule } from '../../core/src/rules/cargo.js';
-import { hash, O_TRUCK, T_X, T_Z } from '../../core/src/state.js';
+import { init, step, submitLoad, heatOf } from '../../nextblock/src/sim.js';
+import { heat as heatRule } from '../../nextblock/src/rules/cargo.js';
+import { hash, O_TRUCK, T_X, T_Z } from '../../nextblock/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
 
@@ -40,7 +40,7 @@ import { GENESIS } from '../../protocol/src/transcript.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const ONE = 65536;
 const M = (w) => (w / ONE).toFixed(3);
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -211,7 +211,7 @@ test('nothing writes a heat any more, and the browser bundle offers no way to', 
   const root = new URL('../../../', import.meta.url).pathname;
   const jslib = readFileSync(root + 'unity-proto/Assets/Plugins/WebGL/blwp.jslib', 'utf8');
   const cs = readFileSync(root + 'unity-proto/Assets/Scripts/Blwp/BlwpCore.cs', 'utf8');
-  const bundle = readFileSync(root + 'packages/core/dist/blwp-core.js', 'utf8');
+  const bundle = readFileSync(root + 'packages/nextblock/dist/blwp-core.js', 'utf8');
 
   assert.equal(/BlwpSetHeat\s*:/.test(jslib), false, 'the bridge still exports a heat door');
   assert.equal(/bool\s+SetHeat\s*\(/.test(cs), false, 'BlwpCore still offers SetHeat');

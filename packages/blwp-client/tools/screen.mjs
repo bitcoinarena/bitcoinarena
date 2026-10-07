@@ -32,8 +32,8 @@ import { roundId } from '../../protocol/src/contracts.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const OUT = '/tmp/claude-1000/-tmp-btc-phase0/50a57200-8210-47c2-a393-919f0e1ea289/scratchpad/shot';
 const BUILD = '/tmp/btc-phase0/unity-proto/build/webgl';
 const CHROME = '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';

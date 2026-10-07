@@ -17,7 +17,7 @@ import {
   encodeDonationSet, decodeDonationSet, donationSetId, canonicalLnurl, isMixedCase,
   donationSetMatchesRound, DONATION_BPS_TOTAL,
 } from '../src/donation.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const evenly = [{ lnurl: 'LNURL1', shareBps: 5000 }, { lnurl: 'LNURL2', shareBps: 5000 }];

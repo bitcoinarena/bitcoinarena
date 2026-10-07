@@ -38,6 +38,7 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { worldIsShared } from '../../protocol/src/seed.js';
+import { sharedWorldOf } from '../../protocol/src/known-game.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 
 const env = process.env;
@@ -118,7 +119,7 @@ try {
     stakeCommitment: sha256(s.p), stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: 0n, joinTick: 0,
     // A SHARED-WORLD ROUND'S ENTRY NAMES NO WORLD SECRET, as the page's join writes it (join.js; found by the regtest run of
     // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
-    worldSecret: worldIsShared(c) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
+    worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
     feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref };
   const eid = entryId(entry);

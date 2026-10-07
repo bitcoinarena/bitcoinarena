@@ -17,8 +17,8 @@
 // the node replaying the transcript it stored. What changed is that the ticks
 // already stepped are not stepped again.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -27,7 +27,7 @@ import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { Ghosts, ghostForChecked, STEP_BUDGET } from '../src/ghosts.js';
 import { RunInProgress } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../protocol/src/transcript.js';
 import { decodeGhost } from '../../protocol/src/ghost.js';
@@ -38,7 +38,7 @@ import { decodeEntryContract } from '../../protocol/src/contracts.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const BEACON = { hash: b32(0x9b), height: 900001, timeMs: 900n };
 const contract = () => ({

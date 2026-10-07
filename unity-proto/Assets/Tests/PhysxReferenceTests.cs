@@ -15,7 +15,7 @@ using UnityEngine.TestTools;
 /// truck with scripted inputs, record what it does, and hold the core to that.
 ///
 /// This does not assert. It prints a table, which is then read into
-/// packages/core as a fixture.
+/// packages/nextblock as a fixture.
 /// </summary>
 public class PhysxReferenceTests
 {
@@ -105,7 +105,7 @@ public class PhysxReferenceTests
     [Explicit("Measurement, not an assertion: it drives for two minutes and " +
               "prints a table. Run it deliberately when the PhysX truck's " +
               "tuning changes, then paste the PHYSXREF lines into " +
-              "packages/core/test/vectors/physx-reference.json.")]
+              "packages/nextblock/test/vectors/physx-reference.json.")]
     public IEnumerator MeasureThePhysxTruck()
     {
         var sb = new StringBuilder();

@@ -8,8 +8,8 @@
 //
 // The fixture is guardians-bonded.test.js's: two signer nodes bonded on the chain, each advertising the guardian keys given.
 import { TWO_GATEWAYS } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -33,7 +33,7 @@ import { advertId } from '../../protocol/src/advert.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { guardiansOf, offersFrom, bondedGuardians } from '../../blwp-client/src/guardians.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const guardianKey = (n) => Uint8Array.from([0x02, ...b32(0x60 + n)]);

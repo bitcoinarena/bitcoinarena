@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openStore, nodeIdentity } from '../src/store.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { RUN_82_TICKS } from './round-2of2.mjs';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { seriesTemplate, seriesRound, seriesIndexAt, seriesId, ROUND_PERIOD_MS } from '../../protocol/src/series.js';
@@ -25,12 +25,13 @@ import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets
 import { donationSetId } from '../../protocol/src/donation.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { worldIsShared } from '../../protocol/src/seed.js';
+import { sharedWorldOf } from '../../protocol/src/known-game.js';
 import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { feldmanGroup } from '../src/curve.js';
 import { rand, secretScalar } from '../test/window-fixture.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env, RT = env.RT, RPCPORT = env.RPCPORT || '30601';
 if (!RT) throw new Error('RT=<a private regtest datadir>');
@@ -62,6 +63,8 @@ const start = (k, withSeries) => {
   // CHAIN=0: no chain view - a genuine round whose template names no census this chain has is then stored (the series
   // door is before the chain's); with the chain the same round passes the series door and meets the census check
   const e = { ...env, ...(env.CHAIN === '0' ? {} : { BLWP_BITCOIND_URL: `http://127.0.0.1:${RPCPORT}`, BLWP_BITCOIND_COOKIE: `${RT}/regtest/.cookie` }), BLWP_FUND_FREE_ROUNDS: '1',
+    // the games its nodes host (kanban #203: main.js names none): nextblock
+    BLWP_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname,
     BLWP_DONATION_NETWORK: 'regtest', ...(withSeries ? { BLWP_SERIES_FILE: join(dir, 'series.txt') } : {}) };
   delete e.BLWP_ATTACH_PROOF_DIR;
   const p = spawn(process.execPath, ['src/main.js', String(ports[k]), stores[k]], { cwd: new URL('..', import.meta.url).pathname, env: e, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -95,7 +98,7 @@ const handout = await post(0, '/handout', encodeHandout(dealt.handout));
 const entry = { roundId: roundId(genuine), playerPubkey: b32(3), sessionPubkey: b32(4), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n,
   joinTick: 0, stakeCommitment: sha256(preimage), vssSharesRef: handoutId(dealt.handout),
   // a shared-world round's entry names no world secret, as the page's join writes it (the seats refuse any other)
-  worldSecret: worldIsShared(genuine) ? b32(0) : b32(9), stakePoint: dealt.handout.commitments[0],
+  worldSecret: worldIsShared(genuine, sharedWorldOf(genuine.gameId)) ? b32(0) : b32(9), stakePoint: dealt.handout.commitments[0],
   feePreimage: b32(0), stakeLockOutpoint: { txid: b32(0), outIdx: 0n }, feeLockOutpoint: { txid: b32(0), outIdx: 0n }, claimKeyAttestationRef: b32(0) };
 out({ step: 'handout', status: handout.status });
 const eid = toHex(entryId(entry));

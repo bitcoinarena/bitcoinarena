@@ -10,7 +10,7 @@ import { bondMarker } from './constants.js';
 import {
   ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4,
   AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST,
-  AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4,
+  AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4, GENESIS_CONFIG_HASH,
 } from './genesis-ids.js';
 import { NODE_FEE_BPS } from './fee.js';
 // THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
@@ -18,132 +18,11 @@ import { NODE_FEE_BPS } from './fee.js';
 // founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
 // 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
 // core's own rules are named by its core hash, which every round carries beside this config.
-import {
-  EXPOSURE_REFERENCE, APRON_RADIUS, FRONT_SCORE_SPAN, T_FLOOR, T_CEIL,
-  REFERENCE_TICKS,
-} from '../../core/frozen/2069b4c2/rules/score.js';
-import { HALF_MOUTH, BLOCK_TICKS } from '../../core/frozen/2069b4c2/rules/gate.js';
-import {
-  HEAT_REACH_ARMOUR, HEAT_REACH_RIFLE, HEAT_OUTRANK, HEAT_SHELL,
-} from '../../core/frozen/2069b4c2/rules/army.js';
-
-// AND THE LATER CORES', for the configs their rounds name - never for the network id: de2f263d's own (frozen, v2) and the
-// current core's (v3)
-import * as liveScore from '../../core/src/rules/score.js';
-import * as liveGateM from '../../core/src/rules/gate.js';
-import * as liveArmyM from '../../core/src/rules/army.js';
-import * as liveCargoM from '../../core/src/rules/cargo.js';
-import { LEGACY_CARGO as LIVE_LEGACY_CARGO } from '../../core/src/sim.js';
-import * as de2fScore from '../../core/frozen/de2f263d/rules/score.js';
-import * as de2fGate from '../../core/frozen/de2f263d/rules/gate.js';
-import * as de2fArmy from '../../core/frozen/de2f263d/rules/army.js';
-import * as de2fCargo from '../../core/frozen/de2f263d/rules/cargo.js';
-import { LEGACY_CARGO as DE2F_LEGACY_CARGO } from '../../core/frozen/de2f263d/sim.js';
-const LIVE = { score: liveScore, gate: liveGateM, army: liveArmyM, cargo: liveCargoM, sim: { LEGACY_CARGO: LIVE_LEGACY_CARGO } };
-const DE2F = { score: de2fScore, gate: de2fGate, army: de2fArmy, cargo: de2fCargo, sim: { LEGACY_CARGO: DE2F_LEGACY_CARGO } };
-
-export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
+// THE GAME'S CONFIGS ARE THE GAME'S (kanban #203): nextblock's config encoders v1-v4 and their hashes moved to
+// packages/nextblock/config/game-config.js. The genesis parameters name the founding config only by its hash, the fixed
+// GENESIS_CONFIG_HASH (genesis-ids.js); nextblock/test/engine-shared.test.js holds the founding config to it.
 export const TAG_GENESIS = 'BLWP/v1/GenesisParameters';
 export const TAG_NETWORK_ID = 'BLWP/v1/NetworkId';
-
-/** Opening fee and difficulty as the live core plays them. */
-export function encodeGameConfig() {
-  const w = new Writer();
-  w.u32(EXPOSURE_REFERENCE);
-  w.u32(HALF_MOUTH);
-  w.u32(APRON_RADIUS);
-  w.u32(FRONT_SCORE_SPAN);
-  w.u32(T_FLOOR);
-  w.u32(T_CEIL);
-  w.u32(1);
-  w.u8(3);
-  w.u8(4);
-  w.u16(BLOCK_TICKS);
-  w.u16(NODE_FEE_BPS);
-  w.u32(HEAT_REACH_ARMOUR);
-  w.u32(HEAT_REACH_RIFLE);
-  w.u32(HEAT_OUTRANK);
-  w.u32(HEAT_SHELL);
-  w.u32(REFERENCE_TICKS);
-  return w.finish();
-}
-
-export const computeGenesisConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfig());
-
-/**
- * THE CONFIG A ROUND ON THE CURRENT CORE PLAYS (the owner 2026-10-04: fix the config hash). §27A.6: "A round is bound to the
- * config it was created under. The Round Contract carries config_hash" - so a round names the rules it is scored by. The
- * founding config above stays the network's (the network id commits to it, and it describes the rounds of the core it
- * was founded on); the rules after it - par 1800 ticks, T 1.5 to 1200 ticks and 0.25 from 7200, and C the bed fill - are a
- * second config with its own hash, which the rounds on that core name.
- *
- * VERSIONED: it opens with its version byte, where the founding encoding opens with a u32, so the two can never be read
- * as each other. Beyond the founding fields it names what the founding one could not: the time bounds, and the cargo
- * rule (1 = C is room used over the bed, from the load's room; a load that carries none is LEGACY_CARGO).
- */
-export const GAME_CONFIG_V2 = 2;
-export const CARGO_RULE_BED_FILL = 1;
-export function encodeGameConfigV2({ score: live, gate: liveGate, army: liveArmy, cargo: liveCargo, sim: liveSim } = DE2F, version = GAME_CONFIG_V2) {
-  const w = new Writer();
-  w.u8(version);
-  w.u32(live.EXPOSURE_REFERENCE);
-  w.u32(liveGate.HALF_MOUTH);
-  w.u32(live.APRON_RADIUS);
-  w.u32(live.FRONT_SCORE_SPAN);
-  w.u32(live.T_FLOOR);
-  w.u32(live.T_CEIL);
-  w.u32(1);
-  w.u8(3);
-  w.u8(4);
-  w.u16(liveGate.BLOCK_TICKS);
-  w.u16(NODE_FEE_BPS);
-  w.u32(liveArmy.HEAT_REACH_ARMOUR);
-  w.u32(liveArmy.HEAT_REACH_RIFLE);
-  w.u32(liveArmy.HEAT_OUTRANK);
-  w.u32(liveArmy.HEAT_SHELL);
-  w.u32(live.REFERENCE_TICKS);
-  w.u32(live.T_TICKS_MIN);
-  w.u32(live.T_TICKS_MAX);
-  w.u8(CARGO_RULE_BED_FILL);
-  w.u32(liveSim.LEGACY_CARGO);
-  w.u32(liveCargo.BED_ROOM);
-  return w.finish();
-}
-
-/** The config de2f263d's rounds name (dbb49344): v2, from that core's own frozen constants. */
-export const computeDe2fConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV2(DE2F));
-
-/**
- * v3 (the owner 2026-10-04, option 1 of the spec audit): the v2 fields, and the exposure weight - 1 = the load's HEAT, as
- * §18A.3 has it (rate = proximity · (1 + heat)). de2f263d weighted exposure by C, which counted a full bed twice once C
- * became the bed fill; the core after it weights by heat, and its rounds name this config.
- */
-export const GAME_CONFIG_V3 = 3;
-export const EXPOSURE_WEIGHT_HEAT = 1;
-export function encodeGameConfigV3() {
-  const v2 = encodeGameConfigV2(LIVE, GAME_CONFIG_V3);
-  const out = new Uint8Array(v2.length + 1); out.set(v2); out[v2.length] = EXPOSURE_WEIGHT_HEAT;
-  return out;
-}
-
-/** The config 7e2123d1's rounds named before the world was shared (f51759b6): v3. */
-export const computeConfigV3Hash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV3());
-
-/**
- * v4 (the owner 2026-10-04, #23 world grinding): v3's fields and the WORLD RULE - 1 = one world per round, shared by every
- * player (§5A.5 round_seed(i) = H(committee_seed(i) || "world")); the player picks nothing: no secret, no key, no join
- * tick moves it. Same core 7e2123d1; the pair 7e2123d1 + v4 names the rule.
- */
-export const GAME_CONFIG_V4 = 4;
-export const WORLD_SHARED_PER_ROUND = 1;
-export function encodeGameConfigV4() {
-  const v3 = encodeGameConfigV3();
-  const out = new Uint8Array(v3.length + 1); out.set(v3); out[0] = GAME_CONFIG_V4; out[v3.length] = WORLD_SHARED_PER_ROUND;
-  return out;
-}
-
-/** The config hash a round on the current core names: computed from the core's own constants, never typed. */
-export const computeCurrentConfigHash = () => taggedHash(TAG_GAME_CONFIG, encodeGameConfigV4());
 
 /**
  * Randomness nobody in this protocol can grind: the Bitcoin block hash at a
@@ -245,7 +124,7 @@ export function testnetShape(chain, marker, arbitrationKeys, federation, genesis
     noticePeriod: 144,
     bondMarker: marker,
     randomnessSource: RANDOMNESS_SOURCE,
-    genesisConfigHash: computeGenesisConfigHash(),
+    genesisConfigHash: GENESIS_CONFIG_HASH,
     brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
   };
 }

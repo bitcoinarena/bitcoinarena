@@ -28,7 +28,7 @@ import { randomBytes } from 'node:crypto';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
-import { TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { feldmanGroup } from '../src/curve.js';
@@ -53,9 +53,9 @@ import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { CORE_HASH } from './core-hash.mjs';
 // THE RUN LENGTH IS THE CORE'S: a contract naming another is refused at the door as a second clock.
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;

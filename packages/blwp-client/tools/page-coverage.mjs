@@ -14,7 +14,7 @@ if (!dir) { console.error('usage: node page-coverage.mjs <NODE_V8_COVERAGE dir>'
 const PAGES = [
   ['index.html', new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url)],
   ['rounds.html', new URL('../../blwp-node/pages/rounds.html', import.meta.url)],
-  ['replay.html', new URL('../../core/plugin/nextblock-replay.html', import.meta.url)],
+  ['replay.html', new URL('../../nextblock/plugin/nextblock-replay.html', import.meta.url)],
 ];
 
 // every lift's slices, by its own URL; every V8 entry of a lift

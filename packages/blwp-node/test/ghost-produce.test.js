@@ -13,8 +13,8 @@
 // same three words, from the core driven directly and from the daemon's
 // tables, at the same tick.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -22,9 +22,9 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
 import { ghostFor, ghostForChecked } from '../src/ghosts.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
-import { init, step, submitLiquidation } from '../../core/src/sim.js';
-import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
+import { init, step, submitLiquidation } from '../../nextblock/src/sim.js';
+import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../nextblock/src/state.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { decodeGhost, ghostBinds, GHOST_BYTES } from '../../protocol/src/ghost.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
@@ -34,7 +34,7 @@ import { toHex } from '../../protocol/src/hash.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,

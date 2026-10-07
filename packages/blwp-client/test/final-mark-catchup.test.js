@@ -23,10 +23,10 @@ import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { decodeInputBatch } from '../../protocol/src/batch.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
+import { init as coreInit, step as coreStep } from '../../nextblock/src/sim.js';
 
 const require = createRequire(import.meta.url);
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const random = (n) => crypto.getRandomValues(new Uint8Array(n));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));

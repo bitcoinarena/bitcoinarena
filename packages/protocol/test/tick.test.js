@@ -9,8 +9,8 @@
 // what the core exports - a second literal would be a second clock.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ONE } from '../../core/src/fixed.js';
-import { TICK_DT as CORE_TICK_DT, TICKS_PER_SECOND_NUM, TICKS_PER_SECOND_DEN } from '../../core/src/tick.js';
+import { ONE } from '../../nextblock/src/fixed.js';
+import { TICK_DT as CORE_TICK_DT, TICKS_PER_SECOND_NUM, TICKS_PER_SECOND_DEN } from '../../nextblock/src/tick.js';
 import {
   TICK_DT, MS_PER_TICK_NUM, MS_PER_TICK_DEN,
   secondsQ16ForTicks, msForTicks, ticksForMs, exactTicksForMs,

@@ -18,10 +18,10 @@ import { beaconFromChain, committeeSeedFromBeacon } from '../../protocol/src/bea
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { decodeCheckpoint, CHECKPOINT_BYTES, SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { coreOfGame } from '../src/plugins.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { replay } from '../src/replay.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 const named = async (d, rid) => {

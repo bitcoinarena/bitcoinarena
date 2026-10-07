@@ -15,10 +15,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { init, step, setSolids, HALF_X, HALF_Z } from '../../core/src/sim.js';
-import { mapSolids, MAP_BOXES } from '../../core/src/rules/map.js';
-import { BOX_WORDS } from '../../core/src/rules/solids.js';
-import { O_TRUCK, T_X, T_Z } from '../../core/src/state.js';
+import { init, step, setSolids, HALF_X, HALF_Z } from '../../nextblock/src/sim.js';
+import { mapSolids, MAP_BOXES } from '../../nextblock/src/rules/map.js';
+import { BOX_WORDS } from '../../nextblock/src/rules/solids.js';
+import { O_TRUCK, T_X, T_Z } from '../../nextblock/src/state.js';
 
 const M = (w) => (w / 65536).toFixed(3);
 const WORDS = [45875, 0, 0, 0, 0];       // full throttle, straight out of the bay

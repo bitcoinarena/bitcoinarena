@@ -12,7 +12,7 @@
 // transcript replayed, no committee needed. That is why this is the one part of
 // the no-quorum rule a single node can hold up on its own.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -41,9 +41,9 @@ import { decodeEntryContract } from '../../protocol/src/contracts.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 // THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
 // 9000, so every test here died in `played()` before a mark was ever offered (712bad8c, same fault).
-import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS as RUN_TICKS } from '../../nextblock/src/rules/gate.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);

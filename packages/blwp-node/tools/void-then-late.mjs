@@ -35,9 +35,9 @@ import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../p
 import { GENESIS } from '../../protocol/src/transcript.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash, O_SCORE, S_STATE } from '../../core/src/state.js';
-import { RUN_LIVE } from '../../core/src/rules/gate.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash, O_SCORE, S_STATE } from '../../nextblock/src/state.js';
+import { RUN_LIVE } from '../../nextblock/src/rules/gate.js';
 
 // THE STAKE FROM THE PLAYER WALLET (§24A.1, RULED 2026-09-25): the top-up into the player wallet is its own act,
 // then the stake is spent from it - the same arguments, the same tab, the same onDeposit.

@@ -20,6 +20,9 @@
 //     BLWP_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name
 //     BLWP_ATTACH_PROOF_DIR       the launcher's headers.bin and bond.json, served on GET /headers and GET /bond,
 //                                 read at every ask (the launcher writes them once the nodes are up)
+//     BLWP_GAMES                  the games this node hosts: registration modules, comma-separated, each exporting GAME
+//                                 (kanban #203, §0A.4: none given hosts none - the engine names no game;
+//                                 packages/nextblock/bin/node.mjs is the reference launcher and names nextblock)
 //     BLWP_SERIES_FILE            the series this node holds: one Round Contract template per line, hex (serve's
 //                                 `series`). Measured 2026-09-29: without it a node process could hold no series at all,
 //                                 so every series round was refused - the doors were proved only on in-process nodes.
@@ -44,7 +47,8 @@ import { lightningFromEnv } from './node-start.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { pathToFileURL } from 'node:url';
+import { resolve as resolvePath } from 'node:path';
 import { hostsFromEnv, hostsReader } from './hosts.js';
 import { statSync, readFileSync } from 'node:fs';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
@@ -76,13 +80,21 @@ if (!ln.ok) {
 }
 
 const db = openStore(path);
+// THE GAMES THIS NODE HOSTS (kanban #202/#203, §0A.4): the registration modules BLWP_GAMES names, each exporting GAME -
+// a manifest as its developer signed it with the dev client (public bytes only), the cores installed for it, its replay
+// page. The node verifies the signature and refuses a manifest that does not stand (plugins.js); it holds no developer
+// key and never signs a game. NONE BY DEFAULT: the engine names no game. nextblock's launcher
+// (packages/nextblock/bin/node.mjs) sets BLWP_GAMES to nextblock's registration.
+const games = [];
+for (const at of (process.env.BLWP_GAMES || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+  const m = await import(pathToFileURL(resolvePath(at)).href);
+  if (!m.GAME) throw new Error(`BLWP_GAMES names ${at}, which exports no GAME`);
+  games.push(m.GAME);
+}
+console.log(`[games] hosting ${games.length ? games.map((g) => g.name).join(', ') : 'none (BLWP_GAMES names no game)'}`);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
-// THE GAMES THIS NODE HOSTS (kanban #202, §0A.4): the reference launcher hands nextblock - its manifest as its developer
-// signed it with the dev client (blwp-donor/bin/sign-game-manifest.mjs, the owner 2026-10-07 15:40), public bytes only. The
-// node verifies that signature and refuses a manifest that does not stand (plugins.js); it holds no developer key and
-// never signs a game. The engine imports no game; this launcher is where one is chosen.
-const options = { port, host, funded: fundingFromEnv(process.env), plugins: [NEXTBLOCK], ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
 {
