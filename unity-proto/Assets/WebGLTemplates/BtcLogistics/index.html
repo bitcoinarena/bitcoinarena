@@ -1472,7 +1472,7 @@
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
     function marketViewLines() {
       if (!BLWPCLIENT.marketLines) return [];
-      const picks = readPicks().map((p) => Object.assign({}, p, { market: marketOfPick(p), stakeMsat: BigInt(p.stakeMsat) })).filter((p) => p.market);
+      const picks = readPicks().map((p) => Object.assign({}, p, { market: marketOfPick(p) })).filter((p) => p.market);
       try { return BLWPCLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() }); } catch (e) { return [{ kind: 'market', text: 'markets: ' + e.message }]; }
     }
     window.BLWP_MARKET_LINES = marketViewLines;
@@ -1494,7 +1494,7 @@
         }
       }
       if (!market) throw new Error('that round is not a market this page can read');
-      const sheet = BLWPCLIENT.pickSheet({ market, stakeMsat: contract.stakeMsat, donationBps: BLWPCLIENT.roundPays(contract) ? donationBps() : 0 });
+      const sheet = BLWPCLIENT.pickSheet({ market, contract, donationBps: BLWPCLIENT.roundPays(contract) ? donationBps() : 0 });
       const el = document.getElementById('blwp-pick');
       const box = el.querySelector('.sheet');
       box.textContent = '';
@@ -1536,7 +1536,6 @@
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
       // refused here by name rather than played on the wrong one
       {
-        // A MARKET'S PICK (kanban #206 slice 2) has no core: nothing of it runs in this page
         const core = window.BLWP_USE_CORE && !pickFor(named.roundIdHex) ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
         if (!core.ok) {
           window.BLWP_JOIN_REFUSED = core.why;
@@ -2059,11 +2058,10 @@
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         const sent = await BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes });
         console.log('[blwp] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
-        if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the seats refused the pick: ' + sent.why; return; }
+        if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return; }
         window.BLWP_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick };
-        rememberPick({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, gameId: chosen.gameId,
-          stakeMsat: String(named.round.stakeMsat), entryCloseMs: String(named.round.entryCloseMs), nodes: named.nodes,
-          confirmed: !!chosen.confirmed });
+        rememberPick(BLWPCLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick,
+          round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }));
         return;
       }
       if (keptEntry) window.BLWP_ENTRY = keptEntry;
@@ -3896,9 +3894,8 @@
         withdraw: withdrawAvailable(),
         // THE COLLECT'S LINES (kanban #153): another kept seed's records, a failed collect, an uncollectable record - the
         // page's words; Unity draws them under the round rows
-        collect: [...(BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.BLWP_RECORDS || [], { failed: window.BLWP_COLLECT_FAILED || new Map(), held: window.BLWP_COLLECT_HELD || new Set() }) : []),
-          // AND THE TAB'S MARKET LINES (kanban #206 slice 2): its picks, then their outcomes as this page checked them
-          ...marketViewLines()] });
+        // AND THE TAB'S MARKET LINES after them (kanban #206 slice 2): its picks, then their outcomes as this page checked them
+        collect: BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.BLWP_RECORDS || [], { failed: window.BLWP_COLLECT_FAILED || new Map(), held: window.BLWP_COLLECT_HELD || new Set() }).concat(marketViewLines()) : marketViewLines() });
       window.BLWP_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after

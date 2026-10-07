@@ -235,7 +235,7 @@ out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings,
 out += '         winningsQualify: winningsQualify,\n';
 // A MARKET (kanban #206 slice 2, §0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
 out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
-out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519,\n';
+out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
