@@ -1,6 +1,7 @@
 // THE DONATION THE PAGE SIZES MONEY BY (kanban #187 item 2, plan comment 298, Go 2026-10-05). index.html's donationBps() is
 // lifted out of the page by its text and run as it is, on a fake window and sessionStorage: Settings keeps
-// blwp.donation.settings (default 200 bps, 0-500 in steps of 100). The settings deposit sizes "1 round" with it
+// blwp.donation.settings (default 500 bps since kanban #205 - §0A.8's 5%, half protocol devs and half game dev - 0-500 in
+// steps of 100). The settings deposit sizes "1 round" with it
 // (index.html, before kanban #187: ctx.roundStake * BigInt(donationBps()) / 10000n; since: depositDonationMsat); the join asks
 // chooseDonation with the same percent
 // (index.html: ask: () => settingsPct) - and chooseDonation answers a round's KEPT choice (blwp.donation.<roundId>) first.
@@ -28,11 +29,13 @@ function pageWith(sessionStorage) {
 const ROUND = { stakeMsat: 100000n };
 const RID = 'ab'.repeat(32);
 
-test('donationBps: 200 by default; a stored 0-500 in steps of 100 is taken; anything else is 200; read once per page', () => {
-  assert.equal(pageWith(storage()).donationBps(), 200, 'nothing stored');
+// THE DEFAULT IS THE RULE'S 5% (§0A.8, kanban #205), which the page states itself
+const DEFAULT_BPS = 500;
+test('donationBps: 500 by default; a stored 0-500 in steps of 100 is taken; anything else is 500; read once per page', () => {
+  assert.equal(pageWith(storage()).donationBps(), DEFAULT_BPS, 'nothing stored');
   for (const n of [0, 100, 200, 300, 400, 500]) assert.equal(pageWith(storage({ 'blwp.donation.settings': String(n) })).donationBps(), n, `${n}`);
   for (const bad of ['50', '250', '600', '-100', 'abc', '100.5'])
-    assert.equal(pageWith(storage({ 'blwp.donation.settings': bad })).donationBps(), 200, `"${bad}"`);
+    assert.equal(pageWith(storage({ 'blwp.donation.settings': bad })).donationBps(), DEFAULT_BPS, `"${bad}"`);
   // read as a number: "1e2" is 100 and "" is 0 - neither is a value the page writes (it stores String(n))
   assert.equal(pageWith(storage({ 'blwp.donation.settings': '1e2' })).donationBps(), 100);
   assert.equal(pageWith(storage({ 'blwp.donation.settings': '' })).donationBps(), 0);
@@ -43,7 +46,7 @@ test('donationBps: 200 by default; a stored 0-500 in steps of 100 is taken; anyt
   assert.equal(p.donationBps(), 300, 'kept on window.BLWP_DONATION_BPS: the store is read once per page');
   assert.equal(p.window.BLWP_DONATION_BPS, 300);
   const throws = { getItem: () => { throw new Error('denied'); } };
-  assert.equal(pageWith(throws).donationBps(), 200, 'a store that throws: 200');
+  assert.equal(pageWith(throws).donationBps(), DEFAULT_BPS, 'a store that throws: the default');
 });
 
 // the page's own expressions, checked present in index.html, then computed

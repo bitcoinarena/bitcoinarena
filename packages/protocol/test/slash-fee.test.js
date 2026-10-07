@@ -21,7 +21,7 @@ import {
   decodeServiceRecord, serviceRecordId, feeInputsId, slashHoldsOnFeeClaim,
   slashCommitment, FEE_WITHOUT_SERVICE,
 } from '../src/slash.js';
-import { nodeFeeTable, feeTableId, feeOwed, GAME_VERIFY, SETTLEMENT } from '../src/fee.js';
+import { nodeFeeTable, feeTableId, feeOwed, GAME_VERIFY, SETTLEMENT, NODE_FEE_BPS } from '../src/fee.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -45,7 +45,7 @@ const contract = {
 };
 
 // 22A's table for this round: one activated stake of 400000 msat, so a fee of
-// 8000, 4000 to each pool, and NODE the only eligible verify signer node - 4000 owed.
+// 5% (20000, §0A.8), half to each pool, and NODE the only eligible verify signer node - that half owed.
 const feeEntries = [{ pubkey: b32(0xa1), outcome: 'DELIVERED', score: 500, stakeMsat: 400000n }];
 const feeTable = nodeFeeTable({
   contract, entries: feeEntries,
@@ -88,7 +88,7 @@ test('claiming a share without the service slashes the named bond', () => {
   assert.equal(before.slashed, false, 'a node was slashed for a share it earned');
   assert.equal(before.bond, undefined, 'and no bond may even be NAMED for one');
   assert.match(before.why, /served 20 of the 20 its role required/);
-  assert.match(before.why, /claimed the 4000 22A owes it/);
+  assert.match(before.why, new RegExp(`claimed the ${OWED} 22A owes it`));
 
   const after = ask(claimOf(), recordOf({ served: 19 }));
   assert.equal(after.slashed, true, after.why);
@@ -113,11 +113,11 @@ test('claiming a share without the service slashes the named bond', () => {
  * the round did not earn for it, so both take the bond.
  */
 test('claiming more than the table owes slashes, and claiming it exactly does not', () => {
-  assert.equal(OWED, 4000n, 'one activated stake of 400000 msat: 2% is 8000, half to each pool');
+  assert.equal(OWED, ((400000n * BigInt(NODE_FEE_BPS)) / 10000n) / 2n, 'one activated stake of 400000 msat: 5% of it, half to each pool');
 
   const exact = ask(claimOf(), recordOf());
   assert.equal(exact.slashed, false, 'a node was slashed for asking what it is owed');
-  assert.match(exact.why, /claimed the 4000 22A owes it/);
+  assert.match(exact.why, new RegExp(`claimed the ${OWED} 22A owes it`));
 
   const over = ask(claimOf({ amountMsat: OWED + 1n }), recordOf());
   assert.equal(over.slashed, true, 'one millisatoshi over is still over');
@@ -126,7 +126,7 @@ test('claiming more than the table owes slashes, and claiming it exactly does no
   assert.equal(over.owedMsat, OWED);
   assert.equal(over.claimedMsat, OWED + 1n);
   assert.equal(toHex(over.bond.txid), toHex(BOND));
-  assert.match(over.why, /claimed 4001 where 22A owes it 4000/);
+  assert.match(over.why, new RegExp(`claimed ${OWED + 1n} where 22A owes it ${OWED}`));
 
   // and under is not an offence: a node may ask for less than its due
   const under = ask(claimOf({ amountMsat: 1n }), recordOf());

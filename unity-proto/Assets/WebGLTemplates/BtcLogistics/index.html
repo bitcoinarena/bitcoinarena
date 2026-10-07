@@ -2331,7 +2331,7 @@
         let kept = null;
         try { kept = window.sessionStorage.getItem('blwp.donation.settings'); } catch { kept = null; }
         const n = Number(kept);
-        window.BLWP_DONATION_BPS = kept !== null && Number.isInteger(n) && n >= 0 && n <= 500 && n % 100 === 0 ? n : BLWPCLIENT.DONATION_DEFAULT_BPS;   // 5% by default (§0A.8): half protocol devs, half game dev
+        window.BLWP_DONATION_BPS = kept !== null && Number.isInteger(n) && n >= 0 && n <= 500 && n % 100 === 0 ? n : 500;   // 5% by default (§0A.8, kanban #205): half protocol devs, half game dev
       }
       return window.BLWP_DONATION_BPS;
     }

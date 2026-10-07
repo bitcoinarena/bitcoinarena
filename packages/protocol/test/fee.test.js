@@ -5,10 +5,10 @@
 // and no predicate contradicted it. `grep` found no fee arithmetic anywhere in
 // `packages/*/src` before this.
 //
-// 22A leaves nothing to taste: 2.00% of the gross, 1.00% to each of two
-// seven-slot pools, unearned shares redistributed inside the same pool
-// "keeping the total at 2%", and remainders floored in millisatoshi and handed
-// out in ascending H(round_id || node_pubkey).
+// 22A leaves nothing to taste: 5.00% of the gross since Bitcoin Arena (§0A.8, kanban #205; BLWP's was 2%), two halves
+// to two seven-slot pools when no guardian is named (three equal thirds when one is), unearned shares redistributed
+// inside the same pool "keeping the total", and remainders floored in millisatoshi and handed out in ascending
+// H(round_id || node_pubkey). Every figure below is computed from the rule (FEE, HALF), not written down.
 import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
@@ -47,6 +47,11 @@ const entries = [player(0xa1, 'DELIVERED'), player(0xa2, 'FAILED'),
 const table = (over = {}) =>
   nodeFeeTable({ contract, entries, pools, eligible: all, ...over });
 const paid = (t) => [...t.signerNodes.values()].reduce((a, b) => a + b, 0n);
+// THE RULE (§22A, §0A.8): the fee is NODE_FEE_BPS of the gross, floored; with no guardian, game/verify takes half of it
+// (floored) and settlement the rest
+const FEE = (gross) => (gross * BigInt(NODE_FEE_BPS)) / 10000n;
+const HALF = (fee) => fee / 2n;
+const GROSS = 400000n;                                     // the four activated stakes of 100000 below
 
 test('a role is paid from its own pool, and relay is paid by nothing', () => {
   // 22A: "An operator selected for BOTH roles earns BOTH shares, because it
@@ -67,15 +72,15 @@ test('a signer node in both pools earns both shares, and they do not merge', () 
     pools: { [GAME_VERIFY]: [both], [SETTLEMENT]: [both] },
     eligible: new Set([toHex(both)]),
   });
-  assert.equal(feeOwed(t, both, 'verify'), 4000n);
-  assert.equal(feeOwed(t, both, 'settlement'), 4000n);
+  assert.equal(feeOwed(t, both, 'verify'), HALF(FEE(GROSS)));
+  assert.equal(feeOwed(t, both, 'settlement'), FEE(GROSS) - HALF(FEE(GROSS)));
   assert.equal(feeOwed(t, both, 'relay'), 0n);
-  assert.equal(paid(t), 8000n, 'both shares, and the fee is still 2%');
+  assert.equal(paid(t), FEE(GROSS), 'both shares, and the fee is still the whole fee');
 });
 
 test('the rates are 22A\'s and are not a taste', () => {
-  assert.equal(NODE_FEE_BPS, 200, '2.00% of gross_round_volume');
-  assert.equal(POOL_BPS, 100, '1.00% to each pool when the round names no guardian (the two-pool table)');
+  assert.equal(NODE_FEE_BPS, 500, '5.00% of gross_round_volume (§0A.8, kanban #205)');
+  assert.equal(POOL_BPS, 250, '2.50% to each pool when the round names no guardian (two halves)');
   assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN]);
 });
 
@@ -85,11 +90,12 @@ test('with guardians named the fee splits in three equal thirds, and the leftove
   const nodes = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
   const t = nodeFeeTable({ contract, entries, pools: { gameVerify: nodes, settlement: nodes, guardian: nodes },
     eligible: new Set(nodes.map((k) => Buffer.from(k).toString('hex'))) });
-  assert.equal(t.fee, 8000n);
-  assert.deepEqual(t.pools, { gameVerify: 2666n, settlement: 2666n, guardian: 2668n });
+  const fee = FEE(GROSS), third = fee / 3n;
+  assert.equal(t.fee, fee);
+  assert.deepEqual(t.pools, { gameVerify: third, settlement: third, guardian: fee - 2n * third });
   const per = new Map();
   for (const [k, v] of t.signerNodes) { const key = k.split(':')[1]; per.set(key, (per.get(key) || 0n) + v); }
-  assert.deepEqual([...per.values()].sort(), [4000n, 4000n], 'each node the same total as under two pools');
+  assert.deepEqual([...per.values()].sort(), [HALF(fee), fee - HALF(fee)], 'each node the same total as under two pools');
 });
 
 /**
@@ -110,12 +116,12 @@ test('VOID and ENTRY_VOID stakes are outside the fee base', () => {
     /BigInt millisatoshi/);
 });
 
-test('the fee is two percent and the two pools are exactly it', () => {
+test('the fee is five percent and the two pools are exactly it', () => {
   const t = table();
-  assert.equal(t.gross, 400000n);
-  assert.equal(t.fee, 8000n, '2% of 400000');
-  assert.equal(t.pools[GAME_VERIFY], 4000n);
-  assert.equal(t.pools[SETTLEMENT], 4000n);
+  assert.equal(t.gross, GROSS);
+  assert.equal(t.fee, FEE(GROSS), '5% of 400000');
+  assert.equal(t.pools[GAME_VERIFY], HALF(FEE(GROSS)));
+  assert.equal(t.pools[SETTLEMENT], FEE(GROSS) - HALF(FEE(GROSS)));
   assert.equal(t.pools[GAME_VERIFY] + t.pools[SETTLEMENT], t.fee);
   assert.equal(paid(t) + t.unallocated, t.fee, 'the table hands out exactly the fee');
   assert.equal(t.unallocated, 0n);
@@ -132,29 +138,29 @@ test('the pools sum to exactly the fee however ragged the numbers are', () => {
 
     assert.equal(t.pools[GAME_VERIFY] + t.pools[SETTLEMENT], t.fee,
       `the pools lost a millisatoshi at ${stake}`);
-    assert.equal(t.fee, (t.gross * 200n) / 10000n, `the fee is not 2% at ${stake}`);
+    assert.equal(t.fee, FEE(t.gross), `the fee is not the rule's at ${stake}`);
     assert.equal(paid(t) + t.unallocated, t.fee, `the table leaked at ${stake}`);
     for (const v of t.signerNodes.values()) assert.ok(v >= 0n);
   }
 });
 
 /**
- * AND THE OPERATOR TAKES NOTHING. The fee is 2% of gross and not a
- * millisatoshi more, whoever is eligible - "keeping the total at 2%".
+ * AND THE OPERATOR TAKES NOTHING. The fee is the rule's share of gross and not a
+ * millisatoshi more, whoever is eligible - "keeping the total".
  */
 test('an unearned share stays in its own pool and never reaches the operator', () => {
   const one = new Set([toHex(game[0]), ...settle.map(toHex)]);
   const t = table({ eligible: one });
 
-  assert.equal(feeOwed(t, game[0], 'verify'), 4000n, 'the whole game/verify pool, and no more');
+  assert.equal(feeOwed(t, game[0], 'verify'), HALF(FEE(GROSS)), 'the whole game/verify pool, and no more');
   for (const k of game.slice(1)) assert.equal(feeOwed(t, k, 'verify'), 0n);
-  assert.equal(t.fee, 8000n, 'the fee did not grow because six signer nodes were idle');
-  assert.equal(paid(t) + t.unallocated, 8000n);
+  assert.equal(t.fee, FEE(GROSS), 'the fee did not grow because six signer nodes were idle');
+  assert.equal(paid(t) + t.unallocated, FEE(GROSS));
   assert.equal(t.unallocated, 0n, 'and nothing fell out of the pools');
 
   // an unearned share does not cross into the OTHER pool either
   const settleShare = settle.reduce((sum, k) => sum + feeOwed(t, k, 'settlement'), 0n);
-  assert.equal(settleShare, 4000n, 'the settlement pool is still exactly one percent');
+  assert.equal(settleShare, FEE(GROSS) - HALF(FEE(GROSS)), 'the settlement pool is still exactly its half');
 });
 
 /**
@@ -167,13 +173,13 @@ test('a pool nobody qualified for is unallocated, not handed to anybody', () => 
   const nobodyOnGame = new Set(settle.map(toHex));
   const t = table({ eligible: nobodyOnGame });
 
-  assert.equal(t.unallocated, 4000n, 'the idle pool went somewhere');
+  assert.equal(t.unallocated, HALF(FEE(GROSS)), 'the idle pool went somewhere');
   for (const k of game) assert.equal(feeOwed(t, k, 'verify'), 0n);
-  assert.equal(paid(t), 4000n);
+  assert.equal(paid(t), FEE(GROSS) - HALF(FEE(GROSS)));
   assert.equal(paid(t) + t.unallocated, t.fee);
 
   const nobodyAtAll = table({ eligible: new Set() });
-  assert.equal(nobodyAtAll.unallocated, 8000n);
+  assert.equal(nobodyAtAll.unallocated, FEE(GROSS));
   assert.equal(nobodyAtAll.signerNodes.size, 0);
 });
 
@@ -186,19 +192,20 @@ test('a pool that does not divide by seven is still handed out to the last msat'
   const t = nodeFeeTable({ contract, entries: odd, pools, eligible: all });
   assert.equal(paid(t) + t.unallocated, t.fee);
 
-  // 1% of 500001 is 5000 msat over seven signer nodes: 714 each and two over
-  assert.equal(t.pools[GAME_VERIFY], 5000n);
+  // half of the fee on 500001 (5%: 25000) is 12500 msat over seven signer nodes: 1785 each and five over
+  const pool = HALF(FEE(500001n)), each = pool / 7n, over = Number(pool - each * 7n);
+  assert.equal(t.pools[GAME_VERIFY], pool);
+  assert.ok(over > 0 && over < 7, 'this pool must not divide by seven, or it measures nothing');
   const shares = game.map((k) => feeOwed(t, k, 'verify'));
-  assert.equal(shares.reduce((a, b) => a + b, 0n), 5000n);
-  assert.equal(shares.filter((v) => v === 715n).length, 2, 'two signer nodes round up');
-  assert.equal(shares.filter((v) => v === 714n).length, 5);
+  assert.equal(shares.reduce((a, b) => a + b, 0n), pool);
+  assert.equal(shares.filter((v) => v === each + 1n).length, over, `${over} signer nodes round up`);
+  assert.equal(shares.filter((v) => v === each).length, 7 - over);
 
-  // and they are the first two in the round's own remainder order
+  // and they are the first in the round's own remainder order
   const order = remainderOrder(roundId(contract), game.map((pubkey) => ({ pubkey })));
-  assert.equal(feeOwed(t, order[0].pubkey, 'verify'), 715n);
-  assert.equal(feeOwed(t, order[1].pubkey, 'verify'), 715n);
-  assert.equal(feeOwed(t, order[2].pubkey, 'verify'), 714n,
-    'the round decides who rounds up, or the caller does');
+  for (let i = 0; i < 7; i++)
+    assert.equal(feeOwed(t, order[i].pubkey, 'verify'), i < over ? each + 1n : each,
+      'the round decides who rounds up, or the caller does');
 });
 
 test('the round decides the remainder order, not the list order', () => {
@@ -234,7 +241,7 @@ test('a round nobody staked in owes nobody anything', () => {
 //
 // "Node fees and the player-selected donation are charged ON TOP of the stake
 // at entry and therefore do not reduce the pool." So `stakeMsat` is the gross
-// stake and 2% of it is what the player was charged beside it.
+// stake and 5% of it (§0A.8; 2% under BLWP) is what the player was charged beside it.
 //
 // 22A's Collection section describes the opposite - a 100 sat commitment
 // giving a 96 sat net stake - and contradicts both 18 and 22A's own worked
@@ -242,40 +249,41 @@ test('a round nobody staked in owes nobody anything', () => {
 // 2 sat each hand over, while the net reading gives 117.12 sat and no whole
 // satoshi. Collection's 96 is the error and is not implemented.
 
-test('a fee is two percent of that entry\'s own stake, on top of it', () => {
-  assert.equal(entryFeeMsat(100000n), 2000n);
+test('a fee is five percent of that entry\'s own stake, on top of it', () => {
+  assert.equal(entryFeeMsat(100000n), FEE(100000n));
   assert.equal(entryFeeMsat(0n), 0n, 'a stake of nothing owes nothing');
 
-  // 22A's worked example, in millisatoshi: 61 players at 100 sat
+  // 22A's worked example, in millisatoshi: 61 players at 100 sat - the entries' fees are the table's fee on their gross
   const perPlayer = entryFeeMsat(100000n);
-  assert.equal(perPlayer * 61n, 122000n, '122 sat, which is 22A\'s own number');
+  assert.equal(perPlayer * 61n, FEE(61n * 100000n), '305 sat at 5% (122 under BLWP\'s 2%)');
 
   for (const bad of [100000, '100000', undefined])
     assert.throws(() => entryFeeMsat(bad), /BigInt millisatoshi/);
   assert.throws(() => entryFeeMsat(-1n), /cannot be negative/);
 });
 
-test('an honest two percent stands and anything else does not', () => {
-  const ok = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2000n, donationMsat: 0n });
+test('an honest five percent stands and anything else does not', () => {
+  const owed = FEE(100000n);
+  const ok = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: owed, donationMsat: 0n });
   assert.equal(ok.ok, true, ok.why);
-  assert.equal(ok.owed, 2000n);
+  assert.equal(ok.owed, owed);
 
-  const over = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 2001n, donationMsat: 0n });
+  const over = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: owed + 1n, donationMsat: 0n });
   assert.equal(over.ok, false, 'one millisatoshi over stood');
-  assert.equal(over.owed, 2000n);
+  assert.equal(over.owed, owed);
   assert.match(over.why, /the 1 over is money no fee table allocates/);
 
-  const under = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 1999n, donationMsat: 0n });
+  const under = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: owed - 1n, donationMsat: 0n });
   assert.equal(under.ok, false, 'one millisatoshi under stood');
 
   const none = feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 0n, donationMsat: 0n });
   assert.equal(none.ok, false, 'a positive stake with no fee stood');
-  assert.equal(none.owed, 2000n);
+  assert.equal(none.owed, owed);
 });
 
 /**
  * TOO MUCH IS THE DIRECTION THAT BECOMES INCOME. The fee table computes from
- * the stakes, so a millisatoshi over what 2% comes to is a millisatoshi the
+ * the stakes, so a millisatoshi over what 5% comes to is a millisatoshi the
  * table never allocates to anybody and that stays with whoever collected it.
  */
 test('an over-charged fee is never allocated by the table', () => {
@@ -285,9 +293,9 @@ test('an over-charged fee is never allocated by the table', () => {
 
   const t = nodeFeeTable({ contract, entries: [overcharged], pools, eligible: all });
   assert.equal(t.gross, 100000n, 'the base is the stake, and the fee rides beside it');
-  assert.equal(t.fee, 2000n, 'the table owes 2% of the stake, not what was charged');
-  assert.equal(paid(t) + t.unallocated, 2000n,
-    'the 7999 over is allocated to nobody, which is why the entry must not stand');
+  assert.equal(t.fee, FEE(100000n), 'the table owes 5% of the stake, not what was charged');
+  assert.equal(paid(t) + t.unallocated, FEE(100000n),
+    `the ${9999n - FEE(100000n)} over is allocated to nobody, which is why the entry must not stand`);
 });
 
 test('a malformed entry is answered, not thrown at the caller', () => {
@@ -303,9 +311,9 @@ test('a malformed entry is answered, not thrown at the caller', () => {
  * AND THE FLOOR DOES NOT AGGREGATE, which is measured here rather than
  * reconciled by invention.
  *
- * Each entry pays `floor(2% of its own stake)`; the table owes
- * `floor(2% of the sum)`. Those are not the same number: seven stakes of
- * 33333 msat collect 4662 and the table owes 4666, and three of 49 collect
+ * Each entry pays `floor(5% of its own stake)`; the table owes
+ * `floor(5% of the sum)`. Those are not the same number: seven stakes of
+ * 33333 msat collect 11662 and the table owes 11666, and three of 19 collect
  * nothing at all while the table owes 2. The gap is at most one millisatoshi
  * per entry and is always in the same direction - collected <= owed - so it
  * can never become income, which is why it is recorded and not patched. 22A
@@ -313,8 +321,10 @@ test('a malformed entry is answered, not thrown at the caller', () => {
  * collector uses; picking one here would be inventing a rule.
  */
 test('per-entry floors can collect less than the table owes, never more', () => {
-  const cases = [[2, 149n, 4n, 5n], [7, 33333n, 4662n, 4666n], [3, 49n, 0n, 2n],
-                 [61, 100000n, 122000n, 122000n]];
+  // each case's collected and owed from the rule: per-entry floors, and the floor of the sum
+  const cases = [[2, 59n], [7, 33333n], [3, 19n], [61, 100000n]].map(([n, stake]) => [n, stake, entryFeeMsat(stake) * BigInt(n), FEE(stake * BigInt(n))]);
+  assert.ok(cases.some(([, , collected, owed]) => collected < owed), 'no case where the floors collect less: this measures nothing');
+  assert.deepEqual(cases.find(([n]) => n === 7).slice(2), [11662n, 11666n]);
   for (const [n, stake, collected, owedOnGross] of cases) {
     const each = entryFeeMsat(stake);
     assert.equal(each * BigInt(n), collected, `${n} x ${stake} collected`);

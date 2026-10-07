@@ -11,6 +11,7 @@
 // stake_lock_outpoint, loaded no lock client and posted no /lock.
 import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
 import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
@@ -213,16 +214,16 @@ test('the page tops up the player wallet - under the seed\'s secret for this FED
   assert.deepEqual(facts, {
     federation: toHex(TEST_FEDERATION_ID), invite: INVITE, secretIsTheSeedsForThisFederation: true, secretIsNotTheRounds: true,
     secretIsNotThePlayerKey: true,
-    // THE NET STAKE AND THE STOCK ALLOWANCE (2000 + 980000 x 3000 ppm = 4940), grossed up by the gateway's fee: the
+    // THE NET STAKE AND THE STOCK ALLOWANCE (the mock's 2000 + the net x 3000 ppm), grossed up by the gateway's fee: the
     // empty wallet cannot be quoted. Into the player wallet, before the stake.
-    deposits: [['lnbcrt1page', String(lockAmountMsat(round) + 4940n + 16064n)]],
+    deposits: [['lnbcrt1page', String(lockAmountMsat(round) + ALLOWANCE(lockAmountMsat(round)) + 16064n)]],
     depositsAskedByTheStake: 0,
     lock: { point: toHex(POINT), amount: String(lockAmountMsat(round)), claim: toHex(CLAIM),
       refund: toHex(refundKeyOf(player)), delta: 144 },
     outpoint: `${'ab'.repeat(32)}:0`,
     leftTheWallet: String(lockAmountMsat(round) + 2528n),
   });
-  assert.equal(lockAmountMsat(round), 980000n, 'the net stake of 1000000 msat less the 2% fee');
+  assert.equal(lockAmountMsat(round), round.stakeMsat - entryFeeMsat(round.stakeMsat), 'the net stake of 1000000 msat less the 5% fee');
 });
 
 test('the Withdraw spends the player wallet - the same wallet the stakes left, its whole withdrawable balance to the player\'s invoice - and a wallet with nothing in it spends nothing', async () => {
@@ -300,7 +301,7 @@ test('a federation that still charges a base fee gets no stake: the page refuses
   assert.equal(locks, 0, 'something was locked into a federation that charges a base fee');
 });
 
-test('a 100 sat round under the ruled fee: its 2000 msat fee lock pays the signer nodes, so the page mints it and names it in the entry', async () => {
+test('a 100 sat round under the ruled fee: its 5000 msat fee lock (5%) pays the signer nodes, so the page mints it and names it in the entry', async () => {
   const round100 = { ...round, stakeMsat: 100000n };
   const rid100 = roundId(round100);
   const { LockClient, log } = lockClient({ feeRule: RULE });
@@ -313,7 +314,7 @@ test('a 100 sat round under the ruled fee: its 2000 msat fee lock pays the signe
   console.log(`  100 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; gate: ${got.feeGate.why}`);
   assert.equal(got.feeGate.pays, true, got.feeGate.why);
   assert.equal(minted.length, 1);
-  assert.equal(minted[0].amount, '2000');
+  assert.equal(minted[0].amount, String(entryFeeMsat(100000n)));
   const entry = entryFor(round100, { seed, curve: pageCurve, random: (n) => new Uint8Array(n).fill(7), claimKey,
     stake: { stakeCommitment: b32(0x71), vssSharesRef: new Uint8Array(32), stakePoint: POINT }, stakeLock: { outpoint: got.outpoint, fields: got.fields, feeLock: got.feeLock } });
   assert.equal(toHex(entry.feePreimage), toHex(feeSecretFor(seed, rid100)));
@@ -334,7 +335,7 @@ test('the stake and the fee lock in one transaction when the lock client has loc
     const calls = log.filter((l) => l.lock || l.lockHash || l.lockBoth);
     console.log(`  lockBoth: ${calls.length} call(s): ${calls.map((c) => Object.keys(c)[0]).join(', ')}; stake at out ${got.outpoint.outIdx}, fee at out ${got.feeLock.outpoint.outIdx}`);
     assert.deepEqual(calls.map((c) => Object.keys(c)[0]), ['lockBoth'], 'the two locks were not one transaction');
-    assert.equal(calls[0].lockBoth.feeMsat, '2000');
+    assert.equal(calls[0].lockBoth.feeMsat, String(entryFeeMsat(100000n)));
     assert.equal(calls[0].lockBoth.hash, toHex(sha256(feeSecretFor(seed, rid100))));
     assert.equal(got.outpoint.outIdx, 0n);
     assert.equal(got.feeLock.outpoint.outIdx, 1n);
@@ -343,7 +344,7 @@ test('the stake and the fee lock in one transaction when the lock client has loc
   }
 });
 
-test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F and its outpoint in the entry, and hands it to each signer node\'s /fee-lock', async () => {
+test('a 1000 sat round: the page mints one 50000 msat fee lock (5%) to H(F), names F and its outpoint in the entry, and hands it to each signer node\'s /fee-lock', async () => {
   const { LockClient, log } = lockClient({ feeRule: RULE });
   const deposits = [];
   const walletTab = tabStorage();
@@ -354,7 +355,7 @@ test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F 
   console.log(`  1000 sat: fee locks minted ${minted.length} (${minted.map((m) => `${m.amount} msat to ${m.hash.slice(0, 12)}`).join(', ')}); deposits ${deposits.map((d) => String(d.amountMsat)).join(', ')} msat; `
     + `gate: stake ${got.feeGate.stakeMsat}, lock ${got.feeGate.lockMsat}, input fees ${got.feeGate.inputFeesMsat}, output fees ${got.feeGate.outputFeesMsat}, per-signer node net [${got.feeGate.perSignerNodeNetMsat.join(', ')}]`);
   assert.equal(minted.length, 1);
-  assert.deepEqual(minted[0], { hash: toHex(sha256(F)), amount: '20000', claim: toHex(CLAIM), refund: toHex(refundKeyOf(player)), delta: 144 });
+  assert.deepEqual(minted[0], { hash: toHex(sha256(F)), amount: String(entryFeeMsat(round.stakeMsat)), claim: toHex(CLAIM), refund: toHex(refundKeyOf(player)), delta: 144 });
   assert.equal(got.feeGate.pays, true);
   assert.equal(toHex(got.feeLock.preimage), toHex(F));
   assert.equal(got.feeLock.fields.paymentImage.kind, 'hash');
@@ -362,7 +363,7 @@ test('a 1000 sat round: the page mints one 20000 msat fee lock to H(F), names F 
     stake: { stakeCommitment: b32(0x71), vssSharesRef: new Uint8Array(32), stakePoint: POINT }, stakeLock: { outpoint: got.outpoint, fields: got.fields, feeLock: got.feeLock } });
   assert.equal(toHex(entry.feePreimage), toHex(F));
   assert.equal(`${toHex(entry.feeLockOutpoint.txid)}:${entry.feeLockOutpoint.outIdx}`, `${'cd'.repeat(32)}:1`);
-  assert.equal(entry.feeMsat, 20000n);
+  assert.equal(entry.feeMsat, entryFeeMsat(round.stakeMsat));
   const asked = [];
   const handed = await handLock({ entryId: b32(0x0e), fields: got.feeLock.fields, nodes: ['http://a', 'http://b'], needed: 2, door: 'fee-lock',
     fetcher: async (url) => { asked.push(url); return { status: 201, text: async () => 'fee lock verified' }; } });
@@ -1110,14 +1111,17 @@ test('a player wallet whose lock fee the allowance does not cover is topped up a
   const deposits = [];
   const tab = tabStorage();
   await fundPlayerWallet({ round, invite: INVITE, seed, LockClient, storage: tab, onDeposit: (d) => deposits.push(String(d.creditsMsat)) });
-  // 984940 credited; the lock costs 986000, so the quote still fails on the funds held (a dry run names no
-  // shortfall) and the allowance goes in again - into the player wallet, before the stake.
-  assert.deepEqual(deposits, [String(lockAmountMsat(round) + 4940n), '4940']);
+  // the net and its allowance credited; the lock costs the net + 6000, more than the allowance, so the quote still fails on
+  // the funds held (a dry run names no shortfall) and the allowance goes in again - into the player wallet, before the stake.
+  assert.deepEqual(deposits, [String(lockAmountMsat(round) + ALLOWANCE(lockAmountMsat(round))), String(ALLOWANCE(lockAmountMsat(round)))]);
   await ask({ LockClient, storage: tab });
   assert.equal(log.filter((l) => l.lock).length, 1);
   await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed, LockClient: lockClient({ lockFee: 10n ** 12n }).LockClient }),
     /after 3 deposits the player wallet/);
 });
+
+/** The mock lock client's allowance for a lock of `msat`, as its lockAllowanceMsat says (2000 + 3000 ppm). */
+function ALLOWANCE(msat) { return 2000n + (msat * 3000n) / 1000000n; }
 
 /** The tab's storage, as the page has it (sessionStorage's shape). */
 function tabStorage() {
@@ -1146,7 +1150,7 @@ test('a tab reloaded between the top-up and the stake reopens the player wallet 
   assert.ok(joined.kept > 0, 'the reloaded page joined an empty wallet');
   assert.equal(again.log.filter((l) => l.receive).length, 0, 'the reloaded page asked the player to pay again');
   assert.ok(steps.includes('reopening the player wallet this tab keeps for this federation'));
-  assert.ok(steps.some((x) => x.startsWith(`the player wallet holds ${lockAmountMsat(round) + 4940n} msat; locking`)));
+  assert.ok(steps.some((x) => x.startsWith(`the player wallet holds ${lockAmountMsat(round) + ALLOWANCE(lockAmountMsat(round))} msat; locking`)));
   assert.equal(`${toHex(got.outpoint.txid)}:${got.outpoint.outIdx}`, `${'ab'.repeat(32)}:0`);
   // AND ANOTHER SEED IN THE SAME TAB DOES NOT OPEN THAT WALLET.
   const other = lockClient();
@@ -1216,7 +1220,9 @@ test('an answer that is not the lock asked for is refused: another contract at t
   // EACH FROM A TOPPED-UP PLAYER WALLET: the stake is spent from it, and a wallet that cannot pay is refused before any lock.
   const funded = async (c) => { const tab = tabStorage(); await fundPlayerWallet({ round, invite: INVITE, seed, LockClient: c, storage: tab }); return ask({ LockClient: c, storage: tab }); };
   await assert.rejects(() => funded(lockClient({ idsMatch: false }).LockClient), /another contract at that outpoint/);
-  await assert.rejects(() => funded(lockClient({ lockedMsat: 979999 }).LockClient), /locked 979999 msat, and this entry's net stake is 980000/);
+  // one msat short of the entry's net stake (its stake less the 5% fee)
+  const short = lockAmountMsat(round) - 1n;
+  await assert.rejects(() => funded(lockClient({ lockedMsat: Number(short) }).LockClient), new RegExp(`locked ${short} msat, and this entry's net stake is ${lockAmountMsat(round)}`));
 });
 
 test('the lock handed to a signer node that verifies it is committed; an entry naming no lock is refused, and the hand-over says so', async () => {

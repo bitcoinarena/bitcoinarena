@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { resultFinality } from '../src/finality.js';
 import { lockRound, lockAndPlay, closeRound, untilSettled, proposerOf } from './lock-round-fixture.js';
 import { b32, WINNER, LOSER, wait } from './window-fixture.js';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { lateLockSettlement } from '../../protocol/src/lock-settlement.js';
 import { netStakeMsat, FAILED, FORFEIT } from '../../protocol/src/payout.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
@@ -103,7 +104,8 @@ async function claimedLate(outcome) {
     // (C3b-1), redeemed into its federation wallet - never a send (C3b-2a withdrawn); no late send row anywhere.
     assert.deepEqual(facts.winnerPaid, want.payouts.map((p) => [toHex(refundKeyOf(won.entry.playerPubkey)), p.msat]));
     assert.deepEqual(facts.winnerSent, [false], 'the late winner was paid by a send');
-    assert.equal(want.payouts[0].msat, 98000n, 'the late payout on the zero-fee federation is not the whole net stake');
+    // the late entry's net stake - its stake less the 5% fee (kanban #205) - whole, on the zero-fee federation
+    assert.equal(want.payouts[0].msat, late.entry.stakeMsat - entryFeeMsat(late.entry.stakeMsat), 'the late payout on the zero-fee federation is not the whole net stake');
     assert.deepEqual([w.a, w.b].map((d) => d.round.lateSendScope(late.eid).sendAttemptsOf(w.rid).length), [0, 0], 'a late send was planned');
     assert.ok(facts.signerNodePayouts > 0, 'the late fee lock paid no signer node');
     assert.equal(facts.firstUnchanged, true, 'the first settlement changed');
