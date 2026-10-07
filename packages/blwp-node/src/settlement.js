@@ -22,6 +22,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
+import { pluginForRound } from './plugins.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { lockSettlement, lateLockSettlement } from '../../protocol/src/lock-settlement.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../protocol/src/payout.js';
@@ -208,6 +209,7 @@ export class LockSettlement {
    * settlement kept; the P opened as for any loser; one transaction per (round, entry), its own nonce.
    */
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
+    { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
     const kept = onlyBase ? null : this.built.get(key);
     if (kept) return kept;
@@ -292,11 +294,25 @@ export class LockSettlement {
   }
 
   /**
+   * AN ATTESTED ROUND IS NOT SETTLED HERE YET (§0A.7a, kanban #206 slice 1, the owner 2026-10-07): its payout table is built
+   * from its picks and its attested outcome (GET /outcome), and paying that table is slice 2 - nothing of it moves now,
+   * and a DISPUTED round settles on neither outcome. null for any other round.
+   */
+  #attestedHold(roundIdBytes) {
+    const row = this.round.get(roundIdBytes);
+    if (!row || !this.round.plugins) return null;
+    const found = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.round.plugins);
+    if (!found.ok || !found.attested) return null;
+    return { ok: false, state: 'HELD', why: 'an attested round: its pari-mutuel table is read at GET /outcome, and nothing of it is settled until its settlement is built (#206 slice 2)' };
+  }
+
+  /**
    * SETTLE A LATE LOSER (slice C3b-1): the round's asker combines and submits, as for the round's own settlement; a
    * second attempt on an ACCEPTED one builds nothing. A signer node whose turn it is not, holding a signature it was
    * handed, asks the federation whether it went in: every claimed lock gone and a payout of that txid stored.
    */
   async settleLate(roundIdBytes, entryIdBytes) {
+    { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
     const kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
     if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept, sent: await this.sendLate(roundIdBytes, entryIdBytes) };
     const t = await this.turn(roundIdBytes);
@@ -432,6 +448,7 @@ export class LockSettlement {
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store and the stock client - or the refusal. */
   async message(roundIdBytes) {
+    { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
     const key = toHex(roundIdBytes);
     const kept = this.built.get(key);
     if (kept) return kept;
@@ -694,6 +711,8 @@ export class LockSettlement {
    * transaction submitted, and the guardians' answer kept.
    */
   async settle(roundIdBytes) {
+    const held = this.#attestedHold(roundIdBytes);
+    if (held) return held;
     const kept = this.round.lockSettlement(roundIdBytes);
     if (kept && kept.state === ACCEPTED) {
       // WINNINGS ARE ALWAYS SENT, restart or not: a settled round whose winnings are not all PAID is sent now.

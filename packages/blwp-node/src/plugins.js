@@ -10,7 +10,7 @@
 // the round fits the manifest (run length, rank curve, min_score). Nothing here imports a game: `replay.js` drives the
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../protocol/src/hash.js';
-import { manifestStands, roundFitsManifest } from '../../protocol/src/manifest.js';
+import { manifestStands, roundFitsManifest, isAttested } from '../../protocol/src/manifest.js';
 import { donationSetId } from '../../protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 
@@ -127,6 +127,13 @@ export function pluginForRound(contract, plugins) {
   if (!plugin)
     return { ok: false, why: `this node does not host game ${toHex(contract.gameId).slice(0, 16)}: it plays only the games it hosts `
       + '(§0A.4) - not selectable for that round, it serves nothing there, and is not slashed' };
+  // AN ATTESTED GAME (§0A.7a, kanban #206): no core, no config, no run - the round's result is its attestors' signed
+  // outcome. Answered with no core at all, so nothing downstream can replay it: a replay asked for such a round finds none.
+  if (isAttested(plugin.manifest)) {
+    const fits = roundFitsManifest(contract, plugin.manifest, plugin.gameId);
+    if (!fits.ok) return { ok: false, why: fits.why };
+    return { ok: true, plugin, attested: true, core: null, config: null, runTicks: null };
+  }
   const runs = coreOfGame(contract, plugin);
   if (!runs.ok) return runs;
   // AND THE GAME'S OWN TERMS (§0A.3, §0A.5): a run no longer than its manifest allows, its rank curve, its min_score floor.

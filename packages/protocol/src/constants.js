@@ -227,6 +227,8 @@ export const TYPE_RERUN_RESULT = 0x19;
 export const TYPE_FINAL_SIGNATURE = 0x1a;
 // A GAME'S MANIFEST (§0A.3, kanban #202): a game is a plugin the engine reads through this, never through its code.
 export const TYPE_GAME_MANIFEST = 0x1c;
+// AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
+export const TYPE_OUTCOME_ATTESTATION = 0x1d;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -341,6 +343,8 @@ export const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'BLWP/v1/GameManifestBody',
   gameManifest: 'BLWP/v1/GameManifest',
+  // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
+  outcomeAttestation: 'BLWP/v1/OutcomeAttestation',
 };
 
 /**

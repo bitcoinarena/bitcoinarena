@@ -151,7 +151,8 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // `game`: { adapter, config } - the run played by that game's core, not the truck's (kanban #202), with no loads in its batch.
 // `donation`: { msat, target } - the entry donates `msat`, split over `target` (one set, or a round's { network, game }; kanban
 // #205) into one payout contract per share above 0 msat, each held by the federation at an outpoint the entry names.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null } = {}) {
+// `pick`: the outcome an entry into an attested round backs (§0A.7a, kanban #206) - such an entry plays no run, so pass noMarks.
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -171,6 +172,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
+    ...(pick !== undefined ? { pick } : {}),
   };
   // THE DONATION'S OUTPUTS (kanban #205): one payout contract per share, to its key, for exactly its amount
   const donated = [];

@@ -701,6 +701,19 @@ export function openStore(path = ':memory:') {
       last_ms   INTEGER NOT NULL
     );
 
+    -- AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): every attestation that stood for the round when it came, by the
+    -- id of what its attestors signed. One outcome is the round's result; two of different outcomes are the proof the
+    -- attestors contradicted themselves (the round settles on neither). Never deleted.
+    CREATE TABLE IF NOT EXISTS outcome_attestations (
+      body_id      BLOB PRIMARY KEY,
+      round_id     BLOB NOT NULL,
+      outcome      INTEGER NOT NULL,
+      observed_ms  INTEGER NOT NULL,
+      bytes        BLOB NOT NULL,
+      received_ms  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS outcome_attestations_round ON outcome_attestations (round_id);
+
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
     -- A STAKE LOCKED FOR A ROUND THIS SIGNER NODE REFUSES, AND NEVER ENTERED (§23.2 row REFUSED; kanban #191, the owner
