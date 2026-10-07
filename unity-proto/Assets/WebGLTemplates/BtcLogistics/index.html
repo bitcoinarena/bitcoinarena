@@ -2079,6 +2079,14 @@
       return did.length ? 'reopened ' + did.join(', ') : 'no done record of a round starting ' + want;
     };
     let payoutAskingSince = 0;
+    // A STAKE OWED BACK, BY ROUND, UNTIL IT IS COLLECTED (kanban #106, comment 583): the signer nodes' forfeit or the refund
+    // by the player's key, as the last look of a round not done saw it. The pending chip counts winnings from /standing
+    // only; a stake coming back is on no chip until WINNINGS-AUTO has collected it into the player wallet - and while that
+    // collect fails, it is counted as pending here (lookThePending). Collected or done, it leaves.
+    const stakeBack = window.BLWP_STAKE_BACK = window.BLWP_STAKE_BACK || new Map();
+    // the stake as lookOwed reads it: owed back - by forfeit or by refund - when its state is 'owed' (page-lock.js owed())
+    const noteStakeBack = (rid, lk) => { const m = lk && lk.stake && lk.stake.state === 'owed' ? BigInt(lk.stake.msat || 0n) : 0n;
+      if (m > 0n) stakeBack.set(rid, m); else stakeBack.delete(rid); };
     async function lookThePayout() {
       if (payoutAsking) {
         if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
@@ -2112,14 +2120,17 @@
           if (!ho) collectNote(older.roundIdHex.slice(0, 8), 'older round: its wallet is held by another tab of this browser');
           if (lo) collectNote(older.roundIdHex.slice(0, 8), 'older round: ' + lookSaid(lo));
           if (!lo) continue;
+          noteStakeBack(older.roundIdHex, lo);
           const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
             console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, collectSeed());
+            stakeBack.delete(older.roundIdHex);
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
             paintHistory();
           } else if (lo.final && lo.inTabMsat === 0n) {
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, collectSeed());
+            stakeBack.delete(older.roundIdHex);
             collectNote(older.roundIdHex.slice(0, 8), 'older round MARKED DONE: ' + BLWPCLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
         } catch (e) { console.error('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '): ' + e.message); }
@@ -2130,7 +2141,7 @@
         window.BLWP_ELSEWHERE = held ? null : newest.roundIdHex;
         if (!held) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: its wallet is held by another tab of this browser');
         if (look) collectNote(newest.roundIdHex.slice(0, 8), 'newest round: ' + lookSaid(look));
-        if (look) { window.BLWP_OWED = look; window.BLWP_WITHDRAWABLE = look.inTabMsat; }
+        if (look) { window.BLWP_OWED = look; window.BLWP_WITHDRAWABLE = look.inTabMsat; noteStakeBack(newest.roundIdHex, look); }
         // WINNINGS-AUTO (RULED the owner 2026-10-01): what is owed goes into the player's federation wallet by itself, the
         // moment it exists - redeemed only, never sent out; the pending line clears as the balance takes it
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
@@ -2138,6 +2149,7 @@
           if (c.collected) {
             console.log('[blwp] owed, collected into the player wallet: ' + c.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, collectSeed());
+            stakeBack.delete(newest.roundIdHex);
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
             paintHistory();
           }
@@ -2147,6 +2159,7 @@
         else if (look.final && look.inTabMsat === 0n) {
           const line = BLWPCLIENT.owedToLine(look);
           BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, collectSeed());
+          stakeBack.delete(newest.roundIdHex);
           console.log('[blwp] owed: ' + line);
           collectNote(newest.roundIdHex.slice(0, 8), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
@@ -3323,6 +3336,8 @@
         if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) closeMs = Number(one.windowCloseMs);
         if (one && one.provisional) provisional = true;
       }
+      // AND A STAKE OWED BACK ON A ROUND NOT DONE whose collect has not gone through (kanban #106, comment 583): on no other chip
+      for (const [rid, msat] of (window.BLWP_STAKE_BACK || new Map())) if (!done.has(rid)) total += msat;
       window.BLWP_PENDING_SATS = Number(total / 1000n);
       if (window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE.pending = window.BLWP_PENDING_SATS;
       // PAST THE CLOSE THE LINE SAYS WHAT HAPPENS NOW (the owner 2026-10-03, playtest d917975d: "window closes 06:43:21 UTC"
