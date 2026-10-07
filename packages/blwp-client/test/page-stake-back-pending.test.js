@@ -27,15 +27,18 @@ function page({ record, theLook, collect }) {
   const document = { getElementById: (id) => (els[id] = els[id] || { textContent: '', parentNode: { title: '' } }) };
   const window = { sessionStorage: { getItem: () => null }, BLWP_WALLET_BALANCE: { sats: 173, pending: 0 } };
   const BLWPCLIENT = {
-    savedCollects: () => [record], roundLocks: () => true, owedToLine: () => 'line',
+    savedCollects: () => [record], roundLocks: () => true, owedToLine: () => 'line', toHex: () => '00'.repeat(32),
     markCollectDone: (v, rid) => { marked.push(rid); record.done = { payout: 'line' }; },
     collectIntoPlayerWallet: collect,
   };
   const lookRound = async () => ({ look: theLook, held: true, LockClient: 'LC' });
+  // since #153 the collect walks every kept phrase's records (keptRecords) and runs each under its phrase (withRecordPhrase);
+  // this test's one record is the tab's own
+  record.own = true;
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'BLWPCLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
-    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch'], [PAYOUT, PENDING], 'return { lookThePayout, lookThePending };')(
+    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase'], [PAYOUT, PENDING], 'return { lookThePayout, lookThePending };')(
     window, document, vault, BLWPCLIENT, lookRound, () => ({}), () => record, () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
-    async () => { throw new Error('no /standing in this test'); });
+    async () => { throw new Error('no /standing in this test'); }, () => ({ collectable: [record], uncollectable: [] }), (r, fn) => fn());
   return { ...fns, window, marked };
 }
 

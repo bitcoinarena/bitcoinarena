@@ -181,6 +181,7 @@ out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutL
 out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
 // AND WHAT THE TAB STILL HAS TO COLLECT, kept per round, so a reload collects too.
 out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,\n';
+out += '         browserSeedHexes: browserSeedHexes, recordsToCollect: recordsToCollect,\n';
 // AND 6d's DESTINATION: the tab's round wallet withdrawn over Lightning to the player's own.
 out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,\n';
 out += '         invoiceQrSvg: invoiceQrSvg,\n';
