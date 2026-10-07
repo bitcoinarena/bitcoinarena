@@ -26,7 +26,7 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     const period = seriesPeriodFits(runs.plugin.manifest);
     if (!period.ok) throw new Error(`series refused: ${period.why}`);
   }
-  if (runs && runs.ok && !Number.isInteger(runs.core.fixedRunTicks)) {
+  if (runs && runs.ok && runs.core && !Number.isInteger(runs.core.fixedRunTicks)) {
     const fits = seriesRunFits(template);
     if (!fits.ok) throw new Error(`series refused: ${fits.why}`);
   }

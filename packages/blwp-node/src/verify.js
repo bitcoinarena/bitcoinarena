@@ -48,6 +48,9 @@ import {
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins } from './plugins.js';
+
+/** Why an attested round's entry is not closed, gathered or signed as a run (§0A.7a, kanban #206). */
+const ATTESTED_NO_RUN = 'that round\'s game is attested: its result is its attestors\' outcome (GET /outcome), not a run - nothing of it is replayed';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -227,6 +230,9 @@ export class Verifier {
     const row = this.round.get(roundIdBytes);
     if (!row) return [];
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // AN ATTESTED ROUND HAS NO RUN TO REPLAY (§0A.7a, kanban #206): its result is its attestors' outcome (POST /outcome),
+    // so its close queues nothing - no beacon, no receipts, no worker
+    if (this.#attested(contract)) { this.queued = []; return []; }
 
     this.queued = [];
     const work = this.round.entriesOf(roundIdBytes).map(({ entryId, entry }) => {
@@ -633,6 +639,12 @@ export class Verifier {
    * THE CORE A ROUND'S RUNS ARE REPLAYED UNDER (M3 R1): the one its contract names, as this signer node's
    * plugins.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
    */
+  /** Is this round's game attested (§0A.7a)? Then nothing of it is replayed, gathered or signed as a run here. */
+  #attested(contract) {
+    const found = pluginForRound(contract, this.plugins);
+    return found.ok && found.attested === true;
+  }
+
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
@@ -1063,6 +1075,8 @@ export class Verifier {
   }
 
   async #retryClose(roundIdBytes, entryIdBytes) {
+    { const row = this.round.get(roundIdBytes);
+      if (row && this.#attested(decodeRoundContract(new Uint8Array(row.contract)))) return { entryId: entryIdBytes, stored: false, why: ATTESTED_NO_RUN }; }
     // A RUN THIS SIGNER NODE HAS SIGNED IS NOT CLOSED AGAIN (as `retry`): one signer node, one result.
     if (this.round.hasResult(roundIdBytes, entryIdBytes, this.round.pubkey))
       return { entryId: entryIdBytes, stored: false, why: 'this signer node has already signed this run' };
@@ -1114,6 +1128,7 @@ export class Verifier {
 
   async #gather(roundIdBytes, entryIdBytes) {
     const row = this.round.get(roundIdBytes);
+    if (row && this.#attested(decodeRoundContract(new Uint8Array(row.contract)))) return { entryId: entryIdBytes, stored: false, why: ATTESTED_NO_RUN };
     if (!row) return { ok: false, why: 'no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
 

@@ -257,7 +257,7 @@ GameManifest {
   game_name                       // "nextblock"
   game_dev_pubkey                 // the developer's key; it signs this body
   version, parent_manifest_id     // 0 for the first; an update names the one it replaces
-  result_type                     // REPLAY (a replayed run) - the only one in Arena v1 (§0A.7)
+  result_type                     // REPLAY (a replayed run), or ATTESTED (an outcome its attestors sign, §0A.7a)
   cores[]                         // sim core hashes this game runs (the sim_wasm_hash of §5)
   configs[]                       // config hashes per core (§27A.7.5)
   run_ticks_max, round_period     // what a round of it may ask
@@ -265,6 +265,8 @@ GameManifest {
   min_score
   clients[]                       // client build hashes (for nextblock the WebGL build)
   game_donation_set               // recipients and shares, as §22A's donation set
+  outcomes[], attestors[],        // ATTESTED only (§0A.7a): the outcomes a round may end in, the
+    attest_threshold              //   attestor keys, and how many of them must sign (k of n)
   signature                       // by game_dev_pubkey over all of the above
 }
 game_id = H(GameManifest)
@@ -324,13 +326,113 @@ confirmation before a stake.
 
 ## 0A.7 Beyond games
 
-The engine is not only a game engine: later, contests whose result is an
-attested outcome - a price, an event - can use the same custody and
-settlement, for example **prediction markets**. In Arena v1 the only
-`result_type` is `REPLAY`; an `ATTESTED` type, its objection and its payout
-rules (binary, pari-mutuel) are a later revision (board #206). Nothing in
-Arena v1 may assume that a result is a replayed run outside the code that handles
-`REPLAY`.
+The engine is not only a game engine: contests whose result is an attested
+outcome - a price, an event - use the same custody and settlement, for
+example **prediction markets**. The `result_type` of a manifest says which
+kind a game is: `REPLAY` (a replayed run, §10) or `ATTESTED` (§0A.7a).
+Nothing in the engine may assume that a result is a replayed run outside the
+code that handles `REPLAY`.
+
+## 0A.7a Non-replay plugins: attested results *(RULED, the owner 2026-10-07, board #206)*
+
+**Result source.** A round of an `ATTESTED` game has no core, no config and
+no run: its manifest lists no cores, `run_ticks_max` 0, no rank curve and no
+`min_score`, and a round of it names 32 zero bytes as its `sim_wasm_hash`
+and `config_hash`. Its result is an **outcome**, one of the manifest's
+`outcomes[]` (2 to 16 labels), signed by its **attestors**: a set of 1 to 16
+keys named in the manifest, of which `attest_threshold` (k of n) must sign.
+**The game dev chooses the attestors** (RULED): they are in the manifest the
+game dev signs, so a player sees who decides the outcome before staking.
+They are not the round's signer nodes reading a feed.
+
+```text
+OutcomeAttestation {
+  round_id
+  outcome                         // index into the manifest's outcomes[]
+  observed_at_ms                  // when the attestors saw it
+  signatures[]                    // { attestor key, signature over H(the three fields above) }
+}
+```
+
+**The entry carries a pick, not a run.** An entry into an attested round
+backs one outcome by its index (`pick`, after the entry's other fields; an
+entry without one keeps its bytes and its id). It still locks its stake, its
+fee and its donation exactly as any paying entry (§0A.8, §23.1). It plays no
+run, sends no batch and no mark, and no worker replays it. A seat refuses an
+entry with no pick, a pick out of range, a pick into a replayed round, and
+**any pick once it holds a standing attestation for that round** - a pick made
+after the outcome is known is a copy.
+
+**What verify means without a replay.** A seat takes an attestation at
+`POST /outcome?round=<id>` and holds it only if it stands:
+- it is for that round;
+- its outcome is one the manifest names;
+- at least `attest_threshold` distinct keys **the manifest names** signed it;
+- every signature on it verifies.
+
+Each refusal is by name. Nothing else of the world is checked: the seats do
+not know the price; they know who the game dev said may say it. `GET
+/outcome?round=` answers the round's state: `OPEN` (none held), `ATTESTED`
+(one outcome) with its table, or `DISPUTED`.
+
+**What an objection is.** Two attestations for one round, each standing on
+its own, naming **different** outcomes. The seat holds both: the pair is the
+proof that the attestors contradicted themselves, the round is `DISPUTED`,
+**and it settles on neither outcome** - no table is built from it. (What a
+disputed round's stakes do then, and whether attestors post a bond the proof
+slashes, is a later ruling; until then they stay locked and expire back to
+their players under §23.1's refund path.)
+
+**The payout rule: pari-mutuel** (RULED: no counterparty - the losers pay the
+winners). Out of each entry's stake the node fee (5%) and the donation
+(0-5%, halves to the network's and the game's sets) as for every round
+(§0A.8, unchanged); the rest is its net stake in the pool. With outcome `o`:
+- every entry that picked `o` gets its own net stake back plus
+  `floor(losing_pool x its_net / winning_net)`, where `losing_pool` is the sum
+  of the other entries' net stakes and `winning_net` the sum of the winners';
+- the msats the floors leave go one each to the winners in entry-id order;
+- if nobody picked `o`, every entry's net stake goes back to it;
+- fees + donations + payouts = the gross, to the msat.
+
+The settlement seats build this table from the stored entries' picks and the
+held outcome **without running any game code**. A manifest of an attested
+game must pick `PARI_MUTUEL`; a replayed game must pick `RANK_CURVE`.
+
+**Slices.** Slice 1 (board #206): the manifest type, the pick, the
+attestation and its refusals, the dispute, and the table - all read at
+`GET /outcome` and `/api/rounds`; an attested round's settlement is **held**,
+nothing of it moves. Slice 2: the settlement transaction paying that table
+(the winners' payouts, the fee locks to the seats, as §22A), the page's pick
+UI, and a regtest round.
+
+### Sketch: a prediction market on the same custody and settlement
+
+"Where does BTC close on Friday?" A game dev publishes manifest `btc-close`:
+- outcomes `above 100k`, `between`, `below 90k`;
+- three attestor keys (say three independent price-feed operators), threshold 2;
+- `PARI_MUTUEL`;
+- its own donation set.
+
+Nodes that choose to host it list it (§0A.4) and need install nothing: there
+is no core.
+
+1. A series of rounds opens as for any game (§5A.5). Each round's entry
+   window closes before Friday's close, its `end` after it.
+2. A player picks `below 90k` and stakes 10,000 sat in the same lock
+   transaction as for nextblock:
+   - 500 sat fee lock;
+   - 500 sat donation, half to the protocol devs and half to `btc-close`'s dev;
+   - a 9,000 sat stake lock to the round's claim key.
+3. After the close, two of the three operators sign `{round_id, 2, t}` and
+   anyone posts it to the seats. Each seat checks the two signatures against
+   the manifest and holds it.
+4. The seats build the pari-mutuel table, and the round's settlement pays it
+   (slice 2): the losing stake locks are claimed into the winners' payouts,
+   and the fee locks to the seats.
+5. With three keys and k = 2, two standing attestations of different
+   outcomes need at least one key to have signed both. That key's two
+   signatures are the proof: the round is `DISPUTED`, and nothing is paid out
+   of it.
 
 ## 0A.8 The money: 10% of the gross stake
 

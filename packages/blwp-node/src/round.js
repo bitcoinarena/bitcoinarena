@@ -324,9 +324,12 @@ export class Round {
     // THE ROUND'S OWN CORE AND CONFIG say how long a run is (M3 R1 R3), not the truck's rules.
     const runs = pluginForRound(contract, this.plugins);
     if (!runs.ok) throw new Error(runs.why);
-    // THE ROUND'S RUN LENGTH ON THE CORE IT NAMES (the 82/90 fork): any the core takes - the old core only its own.
-    const runLength = runLengthFits(runs.core, runs.config, contract.blockTicks);
-    if (!runLength.ok) throw new Error(runLength.why);
+    // THE ROUND'S RUN LENGTH ON THE CORE IT NAMES (the 82/90 fork): any the core takes - the old core only its own. An
+    // attested round (§0A.7a) has no core and no run, so no length to fit.
+    if (!runs.attested) {
+      const runLength = runLengthFits(runs.core, runs.config, contract.blockTicks);
+      if (!runLength.ok) throw new Error(runLength.why);
+    }
 
     // AND IT MAY NOT SEAT MORE SIGNER NODES THAN IT HAS SLOTS (§22A: "Not seven census slots when the round
     // is 2-of-2"). A fee lock is sized for the same seats the settlement pays, so a contract that names seven
@@ -399,7 +402,20 @@ export class Round {
     // bytes - the field is kept so every stored entry keeps its id, and a secret there could only be a player picking.
     // which configs share one world is the round's game's to say (kanban #203)
     { const game = pluginForRound(asks, this.plugins);
-      const fits = worldSecretFits(asks, contract.worldSecret, game.ok ? [...game.plugin.sharedWorld] : []); if (!fits.ok) throw new Error(fits.why); }
+      const fits = worldSecretFits(asks, contract.worldSecret, game.ok ? [...game.plugin.sharedWorld] : []); if (!fits.ok) throw new Error(fits.why);
+      // THE PICK (§0A.7a, kanban #206): an entry into an attested round backs one of its game's outcomes, by index; an entry
+      // into a replayed round backs none - its result is its run
+      const picked = contract.pick !== undefined && contract.pick !== null;
+      if (game.ok && game.attested) {
+        const outcomes = game.plugin.manifest.outcomes;
+        if (!picked) throw new Error(`an entry into a round of attested game "${game.plugin.manifest.gameName}" backs one of its outcomes: it carries no pick`);
+        if (contract.pick >= outcomes.length)
+          throw new Error(`that entry picks outcome ${contract.pick}, out of range: game "${game.plugin.manifest.gameName}" has ${outcomes.length} outcomes (0 to ${outcomes.length - 1})`);
+        // AND NOT ONCE THE OUTCOME IS KNOWN HERE: a pick made after its attestation came is not a pick, it is a copy
+        if (this.outcomeAttestations(contract.roundId).length)
+          throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');
+      } else if (picked) throw new Error('that entry carries a pick, and its round is a replayed game\'s: its result is its run, not an outcome');
+    }
 
     // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
     // DONATION OUT OF IT (22A: inclusive, never on top).
@@ -2590,6 +2606,18 @@ export class Round {
   /** How many donation-key outputs of this round's settlement are indexed (kanban #152). */
   settlementDonationOutputs(roundIdBytes) {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
+  }
+
+  /** A standing outcome attestation of an attested round (§0A.7a), kept once by the id of its signed body. */
+  putOutcomeAttestation({ bodyId, roundId, outcome, observedAtMs, bytes, receivedMs = Date.now() }) {
+    return this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(bodyId), Buffer.from(roundId), outcome, Number(observedAtMs), Buffer.from(bytes), receivedMs).changes === 1;
+  }
+
+  /** Every standing attestation this seat holds for a round, oldest first. */
+  outcomeAttestations(roundIdBytes) {
+    return this.db.prepare('SELECT body_id, outcome, observed_ms, bytes, received_ms FROM outcome_attestations WHERE round_id = ? ORDER BY received_ms, body_id')
+      .all(Buffer.from(roundIdBytes));
   }
 
   /** The #152 backfill's counted tries at a round it could not rebuild (#231): { tries, lastMs }, or null. */

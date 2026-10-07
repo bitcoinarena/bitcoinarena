@@ -6,7 +6,9 @@
 //       game_name, game_dev_pubkey, version, parent_manifest_id, result_type,
 //       cores[] (each with its configs[]), run_ticks_max, round_period,
 //       payout_rule, payout_params (the rank curve's numerator and denominator), min_score,
-//       clients[], game_donation_set, signature by game_dev_pubkey
+//       clients[], game_donation_set,
+//       [ATTESTED only] outcomes[], attestors[], attest_threshold,
+//       signature by game_dev_pubkey
 //     }
 //     game_id = H(GameManifest)
 //
@@ -27,10 +29,22 @@ import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_GAME_MANIFEST, TAG } from './constants.js';
 import { ROUND_PERIOD_MS } from './series.js';
 
-/** What a game's result is. Arena v1 has one: a replayed run (§0A.7); ATTESTED is a later revision (#206). */
-export const RESULT_TYPE = Object.freeze({ REPLAY: 1 });
-/** The engine's payout rules a manifest may pick (§0A.5). Arena v1 has one: §18A's rank curve. */
-export const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1 });
+/**
+ * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
+ * event - a prediction market), with no core and no run.
+ */
+export const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2 });
+/**
+ * The engine's payout rules a manifest may pick (§0A.5): §18A's rank curve for a replayed run; pari-mutuel for an attested
+ * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks).
+ */
+export const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1, PARI_MUTUEL: 2 });
+/** An attested game names 2 to 16 outcomes and 1 to 16 attestors. */
+export const OUTCOMES_MAX = 16;
+export const ATTESTORS_MAX = 16;
+
+/** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
+export const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
 
 export const MANIFEST_SIGNATURE_BYTES = 64;
 export const NO_PARENT = new Uint8Array(32);
@@ -50,19 +64,37 @@ export function encodeManifestBody(m) {
   if (!is32(m.gameDevPubkey)) throw new Error('a game names a 32-byte developer key');
   if (!Number.isInteger(m.version) || m.version < 1) throw new Error('a manifest version is 1 or more');
   if (!is32(m.parentManifestId)) throw new Error('a manifest names a 32-byte parent (zeros for the first)');
-  if (!nameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY)`);
-  if (!Array.isArray(m.cores) || m.cores.length < 1) throw new Error('a game names at least one core');
-  for (const c of m.cores) {
-    if (!is32(c.hash)) throw new Error('a core is named by its 32-byte hash');
-    if (!Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(is32)) throw new Error(`core ${toHex(c.hash).slice(0, 16)} names no 32-byte config`);
+  if (!nameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED)`);
+  if (isAttested(m)) {
+    // AN ATTESTED GAME HAS NO CORE AND NO RUN (§0A.7a): the replay fields are written empty, so a reader of them finds
+    // nothing to replay, and its payout rule is pari-mutuel
+    if (!Array.isArray(m.cores) || m.cores.length !== 0) throw new Error('an attested game names no core: nothing of it is replayed');
+    if (m.runTicksMax !== 0) throw new Error('an attested game has no run: run_ticks_max is 0');
+    if (m.payoutRule !== PAYOUT_RULE.PARI_MUTUEL) throw new Error('an attested game pays by the pari-mutuel rule (§0A.7a)');
+    if (m.rankNumerator !== 0 || m.rankDenominator !== 0 || m.minScore !== 0) throw new Error('an attested game has no rank curve and no score: they are 0');
+    if (!Array.isArray(m.outcomes) || m.outcomes.length < 2 || m.outcomes.length > OUTCOMES_MAX
+        || !m.outcomes.every((o) => typeof o === 'string' && o.length >= 1 && o.length <= 64))
+      throw new Error(`an attested game names 2 to ${OUTCOMES_MAX} outcomes, each 1 to 64 characters`);
+    if (new Set(m.outcomes).size !== m.outcomes.length) throw new Error('an attested game names each outcome once');
+    if (!Array.isArray(m.attestors) || m.attestors.length < 1 || m.attestors.length > ATTESTORS_MAX || !m.attestors.every(is32))
+      throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
+    if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
+      throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+  } else {
+    if (!Array.isArray(m.cores) || m.cores.length < 1) throw new Error('a game names at least one core');
+    for (const c of m.cores) {
+      if (!is32(c.hash)) throw new Error('a core is named by its 32-byte hash');
+      if (!Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(is32)) throw new Error(`core ${toHex(c.hash).slice(0, 16)} names no 32-byte config`);
+    }
+    if (!Number.isInteger(m.runTicksMax) || m.runTicksMax < 1 || m.runTicksMax > 65535) throw new Error('run_ticks_max is 1 to 65535 ticks (a contract\'s blockTicks is a u16)');
+    if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) throw new Error(`a replayed game pays by the rank curve; payout rule ${m.payoutRule} is not one of the engine's for it (§0A.5)`);
+    if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
+        || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
+      throw new Error('the rank curve is a numerator below its denominator, both 1 to 255');
+    if (!Number.isInteger(m.minScore) || m.minScore < 0) throw new Error('min_score is a whole number of score units');
   }
-  if (!Number.isInteger(m.runTicksMax) || m.runTicksMax < 1 || m.runTicksMax > 65535) throw new Error('run_ticks_max is 1 to 65535 ticks (a contract\'s blockTicks is a u16)');
   if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
   if (!nameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
-  if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
-      || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
-    throw new Error('the rank curve is a numerator below its denominator, both 1 to 255');
-  if (!Number.isInteger(m.minScore) || m.minScore < 0) throw new Error('min_score is a whole number of score units');
   if (!Array.isArray(m.clients) || !m.clients.every(is32)) throw new Error('a client is named by its 32-byte hash');
   if (!is32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
 
@@ -84,6 +116,12 @@ export function encodeManifestBody(m) {
   w.u32(m.minScore);
   w.vec(m.clients, (h, ww) => ww.bytes32(h), { sortedBy: compare32 });
   w.bytes32(m.gameDonationSetId);
+  // AN ATTESTED GAME'S OWN TERMS, AFTER EVERYTHING A REPLAYED GAME WRITES: every REPLAY manifest keeps its bytes and its id
+  if (isAttested(m)) {
+    w.vec(m.outcomes, (o, ww) => ww.str(o));
+    w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: compare32 });
+    w.u8(m.attestThreshold);
+  }
   return w.finish();
 }
 
@@ -91,7 +129,7 @@ function readBody(r) {
   if (r.u8() !== TYPE_GAME_MANIFEST) throw new Error('not a game manifest');
   const version = r.u16();
   if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
-  return {
+  const body = {
     gameName: r.str(),
     gameDevPubkey: r.bytes32(),
     version: r.u32(),
@@ -107,6 +145,12 @@ function readBody(r) {
     clients: r.vec((rr) => rr.bytes32()),
     gameDonationSetId: r.bytes32(),
   };
+  if (body.resultType === RESULT_TYPE.ATTESTED) {
+    body.outcomes = r.vec((rr) => rr.str());
+    body.attestors = r.vec((rr) => rr.bytes32());
+    body.attestThreshold = r.u8();
+  }
+  return body;
 }
 
 /** The digest the developer's key signs. */
@@ -173,6 +217,12 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   const name = `game "${m.gameName}"`;
   if (!contract || !is32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game' };
   if (!same(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
+  // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
+  if (isAttested(m)) {
+    if (!is32(contract.simCoreHash) || !isZero(contract.simCoreHash) || !is32(contract.configHash) || !isZero(contract.configHash))
+      return { ok: false, why: `${name} is attested: its rounds name no core and no config (32 zero bytes each) - nothing of them is replayed` };
+    return { ok: true, attested: true };
+  }
   if (!is32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };
   const core = m.cores.find((c) => same(c.hash, contract.simCoreHash));
   if (!core) return { ok: false, why: `${name} lists no core ${toHex(contract.simCoreHash).slice(0, 16)}` };

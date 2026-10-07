@@ -90,6 +90,8 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/object
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
+import { decodeAttestation, attestationStands, attestationBodyId, outcomeStanding, pariMutuelTable } from '../../protocol/src/attested.js';
+import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
@@ -337,6 +339,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const gameOfContract = (c) => {
     const p = c && c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
     return p ? { id: toHex(p.gameId), name: p.name } : null;
+  };
+  // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): what this seat holds for it - OPEN (no attestation yet), ATTESTED (one
+  // outcome), DISPUTED (two standing attestations of different outcomes: the proof, and the round settles on neither) -
+  // and, once ATTESTED, the pari-mutuel table the settlement seats pay from (built here from the entries' picks and the
+  // outcome, no game code). null for a round of a replayed game, or of a game this node does not host.
+  const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
+  const outcomeOf = (rid, c, { table = false } = {}) => {
+    const plugin = attestedOf(c);
+    if (!plugin) return null;
+    const rows = round.outcomeAttestations(rid);
+    const held = rows.map((r) => decodeAttestation(new Uint8Array(r.bytes)));
+    const standing = outcomeStanding(held);
+    const out = { state: standing.state, outcomes: plugin.manifest.outcomes, attestThreshold: plugin.manifest.attestThreshold,
+      attestors: plugin.manifest.attestors.length };
+    if (standing.state === 'ATTESTED') {
+      Object.assign(out, { outcome: standing.outcome, label: plugin.manifest.outcomes[standing.outcome],
+        observedAtMs: String(held[0].observedAtMs) });
+      if (table) {
+        // THE ENTRIES THAT COUNT: a free round's every entry; a paying round's only those whose stake this seat has seen
+        const counted = round.entriesOf(rid).filter(({ entryId }) => c.stakeMsat === 0n || !!round.stakeSeen(entryId))
+          .map(({ entryId, entry }) => ({ entryId, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat, pick: entry.pick }));
+        const t = pariMutuelTable({ entries: counted, outcome: standing.outcome });
+        out.table = JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+      }
+    } else if (standing.state === 'DISPUTED') {
+      Object.assign(out, { outcomesNamed: standing.outcomes, why: standing.why, proof: rows.map((r) => toHex(new Uint8Array(r.bytes))) });
+    }
+    return out;
   };
   // A LISTING GROUPED BY GAME: each hosted game with the ids of its rounds in the listing, in listing order
   const groupedByGame = (rows) => {
@@ -2295,6 +2325,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
         // THE ROUND'S GAME (kanban #204): its id and the name this node hosts it under
         game: gameOfContract(c),
+        // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
+        outcome: outcomeOf(held.roundId, c),
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: (fromSet && fromSet.committees.get(id)) || committeeOf(held.roundId),
         committeeTimeMs: String(c.committeeTimeMs), startTimeMs: String(c.startTimeMs),
         // THE RUN LENGTH, ANNOUNCED (the 82/90 fork, the owner 2026-10-01: "It must be part of the round announcement"):
@@ -2729,7 +2761,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const players = round.playersOf(rid);
           return { id: toHex(rid), startTime: new Date(Number(c.startTimeMs)).toISOString(), endTime: new Date(Number(endMs)).toISOString(),
             closedTime: closedMs ? new Date(Number(closedMs)).toISOString() : null, free: c.stakeMsat === 0n, stakeMsat: String(c.stakeMsat),
-            joined: players.joined, committee: committeeOf(rid), game: gameOfContract(c) };
+            joined: players.joined, committee: committeeOf(rid), game: gameOfContract(c), outcome: outcomeOf(rid, c) };
         };
         // an open round whose end has passed is finished too, waiting for its close
         for (const roundId of openHeld()) {
@@ -3187,6 +3219,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!row) return text(res, 404, 'this node holds no such round');
         const contract = decodeRoundContract(new Uint8Array(row.contract));
         const runs = pluginForRound(contract, hosted);
+        if (runs.ok && runs.attested) return text(res, 404, `${runs.plugin.name} is attested: its rounds have no core and no replay (§0A.7a)`);
         if (!runs.ok) {
           // A CORE THIS NODE NO LONGER RUNS IS STILL SERVED FOR THE REPLAY of a round it stored: refusing it deleted the
           // replay (the morning's links 409'd on d12e7abc once the tree moved).
@@ -3337,6 +3370,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         held.forEach((p, i) => out.set(p.bytes, i * SIGNED_POSTING_BYTES));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-postings': String(held.length), ...CORS });
         return res.end(Buffer.from(out));
+      }
+
+      // AN ATTESTED ROUND'S OUTCOME IN (§0A.7a, kanban #206): the attestation's bytes. Held only if it stands for that round -
+      // its round, an outcome its game names, the game's threshold of distinct attestor keys its manifest names, each
+      // signature good - and refused by name otherwise. A second standing attestation of ANOTHER outcome is held too: it is
+      // the proof, and the round is DISPUTED.
+      // POST /outcome?round=<id>: the round the attestation is handed for is named apart from it, so one made for another
+      // round is refused as that, not filed under the round it names.
+      if (req.method === 'POST' && url.pathname === '/outcome') {
+        const target = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (target.length !== 32) return text(res, 400, 'POST /outcome?round=<the round\'s id>');
+        let a, raw;
+        try { raw = new Uint8Array(await read(req)); a = decodeAttestation(raw); } catch (e) { return text(res, 400, `that is not an outcome attestation: ${e.message}`); }
+        const row = round.get(target);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const plugin = attestedOf(c);
+        if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
+        const stands = attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 });
+        if (!stands.ok) return text(res, 409, stands.why);
+        const fresh = round.putOutcomeAttestation({ bodyId: attestationBodyId(a), roundId: a.roundId, outcome: a.outcome, observedAtMs: a.observedAtMs,
+          bytes: raw });
+        const now = outcomeOf(a.roundId, c);
+        console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
+        res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ held: true, fresh, why: stands.why, ...now }));
+      }
+      if (req.method === 'GET' && url.pathname === '/outcome') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(id);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const out = outcomeOf(new Uint8Array(id), c, { table: true });
+        if (!out) return text(res, 409, 'that round\'s game is not an attested game this node hosts: it has no outcome');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(id), ...out }));
       }
 
       // WHAT A RECIPIENT KEY WAS DONATED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): every donation
