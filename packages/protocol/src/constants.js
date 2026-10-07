@@ -226,6 +226,8 @@ export const TYPE_RERUN_RESULT = 0x19;
 // seven (the round's threshold) make the run FINAL.
 export const TYPE_FINAL_SIGNATURE = 0x1a;
 // A GAME'S MANIFEST (§0A.3, kanban #202): a game is a plugin the engine reads through this, never through its code.
+/** EVERY SERIES RUNS ON ONE 90 s GRID (series.js; §5A.5): a round of a series starts every ROUND_PERIOD_MS. */
+export const ROUND_PERIOD_MS = 90000n;
 export const TYPE_GAME_MANIFEST = 0x1c;
 // AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
 export const TYPE_OUTCOME_ATTESTATION = 0x1d;

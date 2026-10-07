@@ -411,6 +411,9 @@ export class Round {
         if (!picked) throw new Error(`an entry into a round of attested game "${game.plugin.manifest.gameName}" backs one of its outcomes: it carries no pick`);
         if (contract.pick >= outcomes.length)
           throw new Error(`that entry picks outcome ${contract.pick}, out of range: game "${game.plugin.manifest.gameName}" has ${outcomes.length} outcomes (0 to ${outcomes.length - 1})`);
+        // AND ONLY UNTIL THE ROUND'S ENTRY CLOSE (§0A.7a slice 2): the outcome may be taken from then on, so no pick after it
+        if (typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
+          throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: an attested round takes no pick after its entry close`);
         // AND NOT ONCE THE OUTCOME IS KNOWN HERE: a pick made after its attestation came is not a pick, it is a copy
         if (this.outcomeAttestations(contract.roundId).length)
           throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');

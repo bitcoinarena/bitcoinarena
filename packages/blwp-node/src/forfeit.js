@@ -32,6 +32,7 @@ import { lockFieldsFromJson } from '../../protocol/src/stake-lock.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../protocol/src/objection.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { resultFinality } from './finality.js';
+import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
@@ -126,7 +127,20 @@ export class Forfeit {
       return refuse('this signer node learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
         + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other signer nodes: it signs no refund of the lock - `
         + 'a signer node it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
-    if (!voided && !refused) {
+    // AN ATTESTED ROUND (§0A.7a, kanban #206 slice 2): no run and no result. A stake comes back by this forfeit once THIS
+    // signer node's settlement of the round is ACCEPTED and did not claim the lock - a winning pick's, or every pick's when
+    // nobody picked the outcome. Before that it waits; a claimed lock was a losing pick's, and is not the player's.
+    const attested = !voided && !refused && this.round.plugins
+      ? (() => { const f = pluginForRound(contract, this.round.plugins); return f.ok && f.attested; })() : false;
+    if (attested) {
+      const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
+      if (!s || s.state !== 'ACCEPTED')
+        return refuse('an attested round\'s stake comes back only after its settlement is ACCEPTED at this signer node: no outcome final and settled yet, so the lock waits (or expires back)');
+      const moves = this.round.lockSettlementMoves ? this.round.lockSettlementMoves(roundIdBytes) : null;
+      if (!moves) return refuse('this signer node keeps no record of what its settlement moved');
+      if ((moves.claims || []).includes(String(lock.outpoint))) return refuse('that pick lost: its lock was claimed into the winners\' payouts');
+    }
+    if (!voided && !refused && !attested) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.

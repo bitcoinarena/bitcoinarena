@@ -26,8 +26,7 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_GAME_MANIFEST, TAG } from './constants.js';
-import { ROUND_PERIOD_MS } from './series.js';
+import { PROTOCOL_VERSION, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS } from './constants.js';
 
 /**
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
@@ -49,11 +48,11 @@ export const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
 export const MANIFEST_SIGNATURE_BYTES = 64;
 export const NO_PARENT = new Uint8Array(32);
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-const isZero = (b) => b.every((x) => x === 0);
-const compare32 = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
-const nameOf = (v, r) => Object.keys(r).find((k) => r[k] === v);
+const manIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const manSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const manIsZero = (b) => b.every((x) => x === 0);
+const manCompare32 = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const manNameOf = (v, r) => Object.keys(r).find((k) => r[k] === v);
 
 /**
  * THE BYTES THE DEVELOPER SIGNS. Cores in hash order, each core's configs in hash order, clients in hash order: the
@@ -61,10 +60,10 @@ const nameOf = (v, r) => Object.keys(r).find((k) => r[k] === v);
  */
 export function encodeManifestBody(m) {
   if (typeof m.gameName !== 'string' || m.gameName.length < 1 || m.gameName.length > 64) throw new Error('a game names itself in 1 to 64 characters');
-  if (!is32(m.gameDevPubkey)) throw new Error('a game names a 32-byte developer key');
+  if (!manIs32(m.gameDevPubkey)) throw new Error('a game names a 32-byte developer key');
   if (!Number.isInteger(m.version) || m.version < 1) throw new Error('a manifest version is 1 or more');
-  if (!is32(m.parentManifestId)) throw new Error('a manifest names a 32-byte parent (zeros for the first)');
-  if (!nameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED)`);
+  if (!manIs32(m.parentManifestId)) throw new Error('a manifest names a 32-byte parent (zeros for the first)');
+  if (!manNameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED)`);
   if (isAttested(m)) {
     // AN ATTESTED GAME HAS NO CORE AND NO RUN (§0A.7a): the replay fields are written empty, so a reader of them finds
     // nothing to replay, and its payout rule is pari-mutuel
@@ -76,15 +75,15 @@ export function encodeManifestBody(m) {
         || !m.outcomes.every((o) => typeof o === 'string' && o.length >= 1 && o.length <= 64))
       throw new Error(`an attested game names 2 to ${OUTCOMES_MAX} outcomes, each 1 to 64 characters`);
     if (new Set(m.outcomes).size !== m.outcomes.length) throw new Error('an attested game names each outcome once');
-    if (!Array.isArray(m.attestors) || m.attestors.length < 1 || m.attestors.length > ATTESTORS_MAX || !m.attestors.every(is32))
+    if (!Array.isArray(m.attestors) || m.attestors.length < 1 || m.attestors.length > ATTESTORS_MAX || !m.attestors.every(manIs32))
       throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
   } else {
     if (!Array.isArray(m.cores) || m.cores.length < 1) throw new Error('a game names at least one core');
     for (const c of m.cores) {
-      if (!is32(c.hash)) throw new Error('a core is named by its 32-byte hash');
-      if (!Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(is32)) throw new Error(`core ${toHex(c.hash).slice(0, 16)} names no 32-byte config`);
+      if (!manIs32(c.hash)) throw new Error('a core is named by its 32-byte hash');
+      if (!Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(manIs32)) throw new Error(`core ${toHex(c.hash).slice(0, 16)} names no 32-byte config`);
     }
     if (!Number.isInteger(m.runTicksMax) || m.runTicksMax < 1 || m.runTicksMax > 65535) throw new Error('run_ticks_max is 1 to 65535 ticks (a contract\'s blockTicks is a u16)');
     if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) throw new Error(`a replayed game pays by the rank curve; payout rule ${m.payoutRule} is not one of the engine's for it (§0A.5)`);
@@ -94,9 +93,9 @@ export function encodeManifestBody(m) {
     if (!Number.isInteger(m.minScore) || m.minScore < 0) throw new Error('min_score is a whole number of score units');
   }
   if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
-  if (!nameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
-  if (!Array.isArray(m.clients) || !m.clients.every(is32)) throw new Error('a client is named by its 32-byte hash');
-  if (!is32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
+  if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
+  if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
+  if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
 
   const w = new Writer();
   w.u8(TYPE_GAME_MANIFEST);
@@ -106,20 +105,20 @@ export function encodeManifestBody(m) {
   w.u32(m.version);
   w.bytes32(m.parentManifestId);
   w.u8(m.resultType);
-  w.vec(m.cores, (c, ww) => { ww.bytes32(c.hash); ww.vec(c.configs, (h, w3) => w3.bytes32(h), { sortedBy: compare32 }); },
-    { sortedBy: (a, b) => compare32(a.hash, b.hash) });
+  w.vec(m.cores, (c, ww) => { ww.bytes32(c.hash); ww.vec(c.configs, (h, w3) => w3.bytes32(h), { sortedBy: manCompare32 }); },
+    { sortedBy: (a, b) => manCompare32(a.hash, b.hash) });
   w.u16(m.runTicksMax);
   w.u64(m.roundPeriodMs);
   w.u8(m.payoutRule);
   w.u8(m.rankNumerator);
   w.u8(m.rankDenominator);
   w.u32(m.minScore);
-  w.vec(m.clients, (h, ww) => ww.bytes32(h), { sortedBy: compare32 });
+  w.vec(m.clients, (h, ww) => ww.bytes32(h), { sortedBy: manCompare32 });
   w.bytes32(m.gameDonationSetId);
   // AN ATTESTED GAME'S OWN TERMS, AFTER EVERYTHING A REPLAYED GAME WRITES: every REPLAY manifest keeps its bytes and its id
   if (isAttested(m)) {
     w.vec(m.outcomes, (o, ww) => ww.str(o));
-    w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: compare32 });
+    w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
     w.u8(m.attestThreshold);
   }
   return w.finish();
@@ -195,13 +194,13 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
   try { signed = verify(m.signature, digest, m.gameDevPubkey) === true; } catch { signed = false; }
   if (!signed) return { ok: false, why: `${name}: its signature is not its developer key ${toHex(m.gameDevPubkey).slice(0, 16)}'s` };
   if (m.version === 1) {
-    if (!isZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
+    if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
     return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
   }
-  if (isZero(m.parentManifestId)) return { ok: false, why: `${name}: version ${m.version} names no parent; an update names the manifest it replaces` };
+  if (manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version ${m.version} names no parent; an update names the manifest it replaces` };
   const parent = parentOf(m.parentManifestId);
   if (!parent) return { ok: false, why: `${name}: its parent ${toHex(m.parentManifestId).slice(0, 16)} is not a manifest this node holds` };
-  if (!same(parent.gameDevPubkey, m.gameDevPubkey))
+  if (!manSame(parent.gameDevPubkey, m.gameDevPubkey))
     return { ok: false, why: `${name}: its parent is a manifest of another developer key - not a game (§0A.3)` };
   if (parent.version + 1 !== m.version)
     return { ok: false, why: `${name}: version ${m.version} after a parent of version ${parent.version}` };
@@ -215,19 +214,19 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
  */
 export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   const name = `game "${m.gameName}"`;
-  if (!contract || !is32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game' };
-  if (!same(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
+  if (!contract || !manIs32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game' };
+  if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
   // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
   if (isAttested(m)) {
-    if (!is32(contract.simCoreHash) || !isZero(contract.simCoreHash) || !is32(contract.configHash) || !isZero(contract.configHash))
+    if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))
       return { ok: false, why: `${name} is attested: its rounds name no core and no config (32 zero bytes each) - nothing of them is replayed` };
     return { ok: true, attested: true };
   }
-  if (!is32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };
-  const core = m.cores.find((c) => same(c.hash, contract.simCoreHash));
+  if (!manIs32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };
+  const core = m.cores.find((c) => manSame(c.hash, contract.simCoreHash));
   if (!core) return { ok: false, why: `${name} lists no core ${toHex(contract.simCoreHash).slice(0, 16)}` };
-  if (!is32(contract.configHash) || !core.configs.some((h) => same(h, contract.configHash)))
-    return { ok: false, why: `${name} lists no config ${is32(contract.configHash) ? toHex(contract.configHash).slice(0, 16) : '(none)'} for core ${toHex(core.hash).slice(0, 16)}` };
+  if (!manIs32(contract.configHash) || !core.configs.some((h) => manSame(h, contract.configHash)))
+    return { ok: false, why: `${name} lists no config ${manIs32(contract.configHash) ? toHex(contract.configHash).slice(0, 16) : '(none)'} for core ${toHex(core.hash).slice(0, 16)}` };
   if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1 || contract.blockTicks > m.runTicksMax)
     return { ok: false, why: `that round's run is ${contract.blockTicks} ticks; ${name} runs at most ${m.runTicksMax}` };
   if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) return { ok: false, why: `${name} picks payout rule ${m.payoutRule}, which is not the engine's` };

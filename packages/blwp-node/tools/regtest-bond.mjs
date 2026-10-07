@@ -25,6 +25,7 @@ import { splitBlock } from '../../protocol/src/block.js';
 import { bondMarker } from '../../protocol/src/constants.js';
 import { advertUpdatePayload, readAdvertUpdate } from '../../protocol/src/advert-update.js';
 import { toHex, fromHex, taggedHash } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { tweakPoint, combine } from '../src/curve.js';
 
 /** Everything a caller needs against one running regtest. */
@@ -271,8 +272,10 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { hex, advertId: toHex(id), txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
+  // `hostedGames`: the games the node's advertisement hosts (§0A.4, kanban #204) - sorted 32-byte ids; nextblock's unless given.
+  // Measured (kanban #206): with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
-    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc } = {}) {
+    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID] } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     const built = bondOutputKey({
       nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
@@ -282,7 +285,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     }, { tweakPoint, combine });
 
     const advert = {
-      nodePubkey: nodeKey, operatorId: '2of2', protocolVersions: [1], roles,
+      nodePubkey: nodeKey, operatorId: '2of2', protocolVersions: [1], roles, hostedGames,
       endpoint, region: 'eu-west', capacityClass: 1,
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
