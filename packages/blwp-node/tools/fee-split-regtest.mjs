@@ -20,7 +20,13 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { lockRound, openLockRound, closeRound, standing, nameAddress } from '../test/lock-round-fixture.js';
 import { drivenTape, b32, rand, GENESIS_HASH, playFor, warmPlay, say, secretScalar, wait, WINNER, LOSER, RANDOMNESS, loaded, bedFrom } from '../test/window-fixture.js';
-import { testGame } from '../test/plugins/sign.js';
+import { testGame, attestorSign } from '../test/plugins/sign.js';
+// A MARKET (#206 slice 2): the regtest market the client pins - three outcomes, three test attestors, two to sign
+import { MARKET } from '../test/plugins/market/index.js';
+import { encodeAttestation } from '../../protocol/src/attested.js';
+import { playerFor } from '../../blwp-client/src/join.js';
+import { pageCurve } from '../../blwp-client/src/page-curve.js';
+import { redeemPayout, returnStake } from '../../blwp-client/src/page-lock.js';
 import { TALLY, TALLY_CORE, TALLY_CORE_HASH, TALLY_CONFIG_HASH } from '../test/plugins/tally/index.js';
 import { TALLY_RUN_TICKS } from '../test/plugins/tally/core.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -87,7 +93,7 @@ const TALLY205 = testGame({ name: 'tally', dev: 'tally-205 regtest', cores: TALL
 const held = new Map();
 const memStore = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
 const lc = await LockClient.join(env.INVITE, fid, toHex(rand(32)), memStore);
-const DEPOSIT = 4n * (STAKE + 200_000n);
+const DEPOSIT = 12n * (STAKE + 200_000n);                    // 4 game entries and 8 market picks
 const rcv = JSON.parse(await lc.receive(String(DEPOSIT), env.GATEWAY));
 const paid = (await lncli('alice', 30107, 'payinvoice', '--force', rcv.invoice)).so.match(/Payment status: [A-Z_]+/)?.[0] || '?';
 out({ step: 'deposit', msat: DEPOSIT, alice: paid, final: await lc.awaitReceive(rcv.operation), balanceMsat: await lc.balanceMsat() });
@@ -107,7 +113,7 @@ for (const t = Date.now(); Date.now() - t < 300000; await wait(5000)) {
  * ONE PLAYER, AS THE PAGE LOCKS: the stake, the fee lock and the donation's payout contracts in ONE transaction
  * (`lockWithDonations`, the donation image the player's own key), then the run played and marked at both signer nodes.
  */
-async function lockAndPlayReal(w, who, { game = null, target }) {
+async function lockAndPlayReal(w, who, { game = null, target, pick = undefined }) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -138,12 +144,15 @@ async function lockAndPlayReal(w, who, { game = null, target }) {
     feeMsat, donationMsat: DONATION, joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint,
     feePreimage: feeSecret, stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee.outpoint, claimKeyAttestationRef: b32(0x9a),
     donationOutpoints: donated.map((d) => d.outpoint),
+    // AN ATTESTED ROUND'S ENTRY BACKS AN OUTCOME (#206 slice 2) and plays no run
+    ...(pick !== undefined ? { pick } : {}),
   };
   const eid = entryId(entry);
   const hashOf = (hex) => Uint8Array.from(hex.match(/../g).map((x) => parseInt(x, 16)));
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
   let msgs;
-  if (game) {
+  if (pick !== undefined) msgs = [];
+  else if (game) {
     const gs = game.adapter.start(seedWordForEntry(entry, w.randomness), game.config, { runTicks: w.c.blockTicks });
     const first = 60;
     for (let t = 0; t < first; t++) game.adapter.step(gs, play.words(t));
@@ -230,7 +239,7 @@ function winnerUnder(key, randomness) {
 
 const facts = { stakeMsat: STAKE, feePerEntry: entryFeeMsat(STAKE), donationPerEntry: DONATION, netPerEntry: netStakeMsat({ stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: DONATION }) };
 const NETWORK_ROUND = { donationSetId: donationSetId(NETWORK), federationId: fromHex(fid) };
-const w = await lockRound({ stakeMsat: STAKE, port, serveOpts: { plugins: [NEXTBLOCK, TALLY205], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] }, round: NETWORK_ROUND, endMs: testNow() + 900000 });
+const w = await lockRound({ stakeMsat: STAKE, port, serveOpts: { plugins: [NEXTBLOCK, TALLY205, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] }, round: NETWORK_ROUND, endMs: testNow() + 900000 });
 // THE ENTRY DOOR OPENS AT THE COMMITTEE TIME: the fixtures' clock goes there, the round's end ~230 s on - room for real locks
 skipTo(Number(w.c.committeeTimeMs) + 100);
 try {
@@ -278,6 +287,85 @@ try {
   const listedAfter = await Promise.all(seats.map(async (s) => (await (await fetch(`${s}/donations?key=${donorKey.recipientPkHex}`)).json()).donations.length));
   facts.collect = { listedBefore: listed.map((l) => l.length), donor: lines, gameDevOutputsAfter: after, listedAfter };
   out({ step: 'the tally dev\'s outputs after the donor pass', after, listedAfter });
+
+  // ===== #206 SLICE 2: MARKETS ON THE SAME NODES AND FEDERATION =====
+  const [A0, A1, A2] = MARKET.attestors;
+  const MARKET_ROUND = { ...NETWORK_ROUND, gameId: MARKET.registration.gameId, simCoreHash: b32(0), configHash: b32(0), entryCloseMs: 60000n };
+  const mTarget = { network: NETWORK, game: MARKET.registration.donationSet };
+  const attest = async (r, outcomeIx, by, dt = 1n) => Promise.all(r.nodes.map(async (d) => {
+    const body = { roundId: r.rid, outcome: outcomeIx, observedAtMs: r.c.entryCloseMs + dt };
+    const res = await fetch(`http://127.0.0.1:${d.port}/outcome?round=${toHex(r.rid)}`, { method: 'POST', body: encodeAttestation({ ...body, signatures: by.map((a) => attestorSign(a, body)) }) });
+    return `${res.status} ${(await res.text()).slice(0, 90)}`;
+  }));
+  const outcomeAt = async (r) => (await fetch(`http://127.0.0.1:${r.a.port}/outcome?round=${toHex(r.rid)}`)).json();
+  const lsAt = async (r) => (await fetch(`http://127.0.0.1:${r.a.port}/lock-settlement?round=${toHex(r.rid)}`)).json();
+  const untilAccepted = async (r, ms = 300000) => { let g; for (const stop = Date.now() + ms; Date.now() < stop; await wait(2000)) { g = await lsAt(r); if (g.state === 'ACCEPTED') break; } return g; };
+  /** A market round on the same two nodes: entries open (end 15 min out, the clock at its committee), the picks locked. */
+  async function marketRound(picks) {
+    const r = await openLockRound(w, { stakeMsat: STAKE, endMs: testNow() + 900000, round: MARKET_ROUND });
+    skipTo(Number(r.c.committeeTimeMs) + 100);
+    const players = [];
+    for (const [i, pick] of picks.entries()) {
+      const seed = rand(32);
+      const key = playerFor({ ...r.c, id: r.rid }, { seed, curve: pageCurve }).pubkey;
+      const played = await lockAndPlayReal(r, { name: `pick${i}:${pick}`, key, worldSecret: b32(0), ticks: 1, words: () => [0, 0, 0, 0, 0] }, { target: mTarget, pick });
+      players.push({ ...played, seed, pick });
+    }
+    return { r, players };
+  }
+  const pageAsk = (r, p) => ({ round: { ...r.c }, roundId: r.rid, invite: env.INVITE, seed: p.seed, curve: pageCurve, LockClient,
+    nodes: r.nodes.map((d) => `http://127.0.0.1:${d.port}`), client: lc });
+
+  // M1: picks 0, 0, 1, 2 - outcome 0, two winners
+  const m1 = await marketRound([0, 0, 1, 2]);
+  await closeRound(m1.r);
+  const m1Attest = await attest(m1.r, 0, [A0, A2]);
+  const o1 = await outcomeAt(m1.r);
+  skipTo(Number(o1.finalAtMs) + 100);
+  const s1 = await untilAccepted(m1.r);
+  const t1 = (await outcomeAt(m1.r)).table;
+  const collect = [];
+  for (const p of m1.players.filter((x) => x.pick === 0)) {
+    const row = t1.rows.find((x) => x.entryId === toHex(p.eid));
+    const before = BigInt(await lc.balanceMsat());
+    const pay = await redeemPayout(pageAsk(m1.r, p));
+    const mid = BigInt(await lc.balanceMsat());
+    const back = await returnStake(pageAsk(m1.r, p));
+    const after = BigInt(await lc.balanceMsat());
+    collect.push({ entry: toHex(p.eid).slice(0, 8), tableShare: String(BigInt(row.payoutMsat) - BigInt(row.netMsat)), payout: { ok: pay.ok, msat: String(pay.amountMsat), why: pay.why },
+      walletGainPayout: String(mid - before), stakeBack: { ok: back.ok, msat: String(back.amountMsat), why: back.why }, walletGainStake: String(after - mid), net: row.netMsat });
+  }
+  const loserLocks = [];
+  for (const p of m1.players.filter((x) => x.pick !== 0)) loserLocks.push(!!(await port.status(p.outpoint)).stored);
+  facts.marketWinners = { attest: m1Attest, settlement: s1.state, why: s1.why, txid: s1.txid, table: t1,
+    moved: s1.moved && { claims: s1.moved.claims.map((c) => [c.kind, String(c.msat ?? c.amountMsat)]), payouts: s1.moved.payouts.map((x) => [x.kind, String(x.pk).slice(0, 10), String(x.msat)]) },
+    collect, losersLocksStillHeld: loserLocks };
+  out({ market: 'M1 winners', ...facts.marketWinners, table: t1.rows.map((x) => [x.entryId.slice(0, 8), x.pick, x.netMsat, x.payoutMsat]) });
+
+  // M2: picks 0, 1 - outcome 2, nobody right
+  const m2 = await marketRound([0, 1]);
+  await closeRound(m2.r);
+  await attest(m2.r, 2, [A0, A1]);
+  skipTo(Number((await outcomeAt(m2.r)).finalAtMs) + 100);
+  const s2 = await untilAccepted(m2.r);
+  const back2 = [];
+  for (const p of m2.players) { const b = await returnStake(pageAsk(m2.r, p)); back2.push({ ok: b.ok, msat: String(b.amountMsat), why: b.why }); }
+  facts.marketNobody = { settlement: s2.state, why: s2.why, claims: s2.moved && s2.moved.claims.map((c) => c.kind), payouts: s2.moved && s2.moved.payouts.map((x) => x.kind), stakesBack: back2 };
+  out({ market: 'M2 nobody right', ...facts.marketNobody });
+
+  // M3: picks 0, 1 - outcome 0, then 1 inside the window: DISPUTED
+  const m3 = await marketRound([0, 1]);
+  await closeRound(m3.r);
+  await attest(m3.r, 0, [A0, A2]);
+  const contra = await attest(m3.r, 1, [A1, A2], 2n);
+  skipTo(Number(m3.r.c.entryCloseMs) + 2 * 600000);
+  await wait(15000);
+  const o3 = await outcomeAt(m3.r);
+  const s3 = await lsAt(m3.r);
+  const locks3 = [];
+  for (const p of m3.players) locks3.push(!!(await port.status(p.outpoint)).stored, !!(await port.status(p.feeOutpoint)).stored);
+  facts.marketDisputed = { contradiction: contra, state: o3.state, proof: (o3.proof || []).length, settlement: s3.state || 'none', why: s3.why, locksStillHeld: locks3 };
+  out({ market: 'M3 disputed', ...facts.marketDisputed });
 } catch (e) {
   out({ failed: e.message, stack: String(e.stack).split('\n').slice(0, 4) });
   process.exitCode = 1;

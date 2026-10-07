@@ -68,6 +68,7 @@ walk(SRC + 'donation-pay.js');
 walk(SRC + 'winnings.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
+walk(SRC + 'market.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -232,6 +233,9 @@ out += '         replayLinkFor: replayLinkFor, httpsOfEndpoint: httpsOfEndpoint,
 // and the address check the bridge's signing call makes before it signs anything.
 out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings, winningsAddressOf: winningsAddressOf,\n';
 out += '         winningsQualify: winningsQualify,\n';
+// A MARKET (kanban #206 slice 2, §0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
+out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
+out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 

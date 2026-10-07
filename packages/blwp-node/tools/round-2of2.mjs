@@ -209,6 +209,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // opens each next round of a kind at the last one's start + the period, its entry closing
                                      // at that start - the series' round shape (protocol series.js seriesRound).
                                      roundPeriodMs = null,
+                                     // THE GAMES THE SEATS HOST (kanban #206: a market beside nextblock), and fields over every round
+                                     // this tool opens (a market's game id, no core, no config) - none given: nextblock, as before
+                                     plugins = null, roundFields = null,
                                      donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
                                        ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
@@ -324,7 +327,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // node and the other a settlement node is not a 2-of-2, it is two
       // committees of one. Measured: with 'game' and 'verify' alone the census
       // carried 0 settlement nodes where regtest was born needing 2.
-      hostedGames: [NEXTBLOCK_GAME_ID], roles: ['game', 'verify', 'settlement'],
+      hostedGames: plugins ? plugins.map((p) => p.gameId).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))) : [NEXTBLOCK_GAME_ID],
+      roles: ['game', 'verify', 'settlement'],
       endpoint: process.env[`BLWP_WSS_${port}`] || `ws://${host}:${port}`,
       region: 'eu-west', capacityClass: 2, softwareHash: b32(3),
       settlementCapabilities: 0, lightningCapabilities: 0,
@@ -436,6 +440,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
         // while the advert already said BLWP_WSS_<port>; the census reads the bond.
         endpoint: process.env[`BLWP_WSS_${m.port}`] || `ws://${host}:${m.port}`,
+        // THE GAMES IT HOSTS, as its advertisement above names them (kanban #204, #206)
+        hostedGames: plugins ? plugins.map((p) => p.gameId).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))) : [NEXTBLOCK_GAME_ID],
         // AND WHICH FEDERATION THIS SIGNER NODE GUARDS, when the caller named one. Without it
         // `federationIsBonded` counts zero of the federation's threshold and every paying FEDERATION
         // round is refused on a bonded-federation check the bonds could not satisfy. Per node, so
@@ -610,7 +616,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
-  const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
+  const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
   // ATTACHED: the page's bond proof for the running nodes to serve (their BLWP_ATTACH_PROOF_DIR), and no node started -
@@ -622,7 +628,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   }
   const attached = (m) => ({ port: m.port, round: { pubkey: m.id.pubkey }, attached: true, close: async () => {} });
   let a = attach ? attached(members[0]) : await launchNode({ db: dbA, path: pathA }, optsA, guardianChain);
-  const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
+  const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
@@ -633,7 +639,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // AND THE THIRD, WHEN THERE IS ONE. Served exactly like the other two - a
   // bonded census node that is not also a running daemon would be a bond
   // vouching for a guardian nobody can reach.
-  const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded,
+  const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded, ...(plugins ? { plugins } : {}),
     donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
     ...(federation ? { federation } : {}), ...signerNode }));
@@ -717,6 +723,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 100000, rankNumerator: 3, rankDenominator: 4,   // min_score 1 point, in the score's 1e-5 points
     nodes: [a.round.pubkey, b.round.pubkey, ...rest.map((d) => d.round.pubkey)],
+    ...(roundFields || {}),
   };
   // AND A COMMITTEE THE PROTOCOL HAS A THRESHOLD FOR, said here rather than
   // discovered half an hour later. `dkg.deal` asks `receiptsNeeded(nodes.length)`

@@ -27,9 +27,33 @@ export function gameDonationSetIdOf(gameId) {
   return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
 }
 
-export function gameIsKnownGood(gameId, simCoreHash, configHash) {
+/**
+ * THE MARKET THIS CLIENT PINS FOR A GAME (§0A.7a, kanban #206 slice 2): an attested game's outcomes, attestor keys (hex),
+ * threshold, developer key and the networks it is pinned for - or null for a game it does not pin, or one that is not attested.
+ */
+export function marketOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && game.attested ? { gameId: toHex(gameId), name: game.name, known: true, ...game.attested } : null;
+}
+
+const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
+
+// `networkId`: the round's network - a pinned market is good only on the networks it is pinned for. `confirmed`: game ids
+// (hex) of ATTESTED games the player confirmed a second time on this page (§0A.6) - an unpinned market is let through only
+// then, and only with no core and no config (there is nothing of it to run).
+export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null } = {}) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];
+  // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
+  if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
+    if (!isZero32(simCoreHash) || (configHash !== undefined && !isZero32(configHash)))
+      return { ok: false, why: 'that round names a core or a config, and its game is a market: a market has nothing to run (§0A.7a)' };
+    if (!game) return { ok: true, game: 'an unpinned market the player confirmed', confirmed: true };
+    const nets = game.attested.networks || [];
+    if (nets.length && !(networkId instanceof Uint8Array && nets.includes(toHex(networkId))))
+      return { ok: false, why: `market ${game.name} is pinned only for network${nets.length === 1 ? '' : 's'} ${nets.map((n) => n.slice(0, 16)).join(', ')}: refused on this one` };
+    return { ok: true, game: game.name, market: true };
+  }
   if (!game)
     return { ok: false, why: `that round plays game ${toHex(gameId).slice(0, 16)}..., which is not on this client's known-good list `
       + 'of games: a paying round on an unknown game is refused (§5, §0A.6)' };

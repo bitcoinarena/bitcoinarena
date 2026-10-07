@@ -38,6 +38,8 @@ import { resultFinality } from './finality.js';
 import { FINAL } from '../../protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { decodeAttestation, outcomeFinality } from '../../protocol/src/attested.js';
+import { pluginForRound } from './plugins.js';
 
 /** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
 export const SEALED_ANSWER_BYTES = 2 + 32 + 48;
@@ -117,6 +119,24 @@ export class StakeSecrets {
   mayRelease(roundIdBytes, entryIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return { ok: false, why: 'no such round' };
+    // AN ATTESTED ROUND (§0A.7a, kanban #206 slice 2): no run, no result - the share of a LOSING PICK is handed out once the
+    // round's outcome is final (600 s after its first standing attestation, no contradiction), and only when somebody picked
+    // the outcome (else every stake comes back and none is claimed). A winning pick's share never: its lock is its own.
+    { const contract = decodeRoundContract(new Uint8Array(row.contract));
+      const found = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
+      if (found && found.ok && found.attested) {
+        const heldAtt = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
+          .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+        const f = outcomeFinality(heldAtt, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
+        if (!f.final) return { ok: false, why: `no share of an attested round is handed out before its outcome is final (${f.state}${f.finalAtMs ? `, final at ${new Date(f.finalAtMs).toISOString()}` : ''})` };
+        const stored = this.round.entry(entryIdBytes);
+        if (!stored) return { ok: false, why: 'this node holds no such entry' };
+        const entry = decodeEntryContract(stored);
+        if (entry.pick === f.outcome) return { ok: false, why: 'that entry picked the outcome: its lock is its own, and its stake secret stays sealed' };
+        const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (!this.round.stakeSeen || this.round.stakeSeen(entryId)));
+        if (!anyWinner) return { ok: false, why: 'nobody picked the outcome: every stake comes back, and no stake secret is handed out' };
+        return { ok: true, outcome: 'LOST_PICK' };
+      } }
     const held = this.round.results(roundIdBytes, entryIdBytes);
     // A NO-QUORUM FORFEIT (§13C; M3.3-34, ruled 2026-09-13, path 3): no run was
     // carried, so there is no result to read - this signer node's own no-quorum record,

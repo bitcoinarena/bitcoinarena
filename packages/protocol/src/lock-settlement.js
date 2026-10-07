@@ -213,6 +213,66 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
 
 const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
 
+/**
+ * AN ATTESTED ROUND'S SETTLEMENT (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): the pari-mutuel table, paid. `table` is
+ * attested.js `pariMutuelTable` over the round's counted entries and its final outcome; `entries` the same entries with
+ * their player keys (`pubkey`) and entry ids (hex). Every counted entry's fee lock is claimed and the sitting signer nodes
+ * are paid by §22A's table, as for any round (`feeSettlement`). The LOSING picks' stake locks are claimed, and each winner
+ * is paid its share of the losing pool - `payoutMsat - netMsat` of its table row - by the payout contract to its own key
+ * (the shape a nextblock qualifier is paid by, kind 'qualifier'); a winner's own stake lock is not claimed and comes back
+ * to it by the stake-return path. Nobody picked the outcome (`table.refunded`): no stake lock is claimed, only the fee
+ * locks. Under a fee rule that charges, the shares are scaled to what the claimed locks can pay, the dust to the first.
+ */
+export function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null }) {
+  if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
+  if (!table || !Array.isArray(table.rows)) return refuse('an attested round is settled from its pari-mutuel table');
+  const byId = new Map(entries.map((e) => [typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), e]));
+  // THE FEE PART: every counted entry, as for any round (none is a refund: a pick is a counted stake)
+  const counted = table.rows.map((r) => ({ ...byId.get(r.entryId), outcome: DELIVERED, score: 0 }));
+  if (counted.some((e) => !e.pubkey)) return refuse('a row of the table names an entry this signer node does not hold');
+  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees });
+  if (!feePart.ok) return feePart;
+  const empty = (why) => ({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: why });
+  if (table.refunded || !table.rows.some((r) => r.won)) {
+    if (!feePart.claims.length) return { ok: true, nothing: true, why: 'nobody picked the outcome and no fee lock pays: nothing is claimed' };
+    return finish(empty('nobody picked the outcome: no stake lock is claimed, every net stake comes back'), feePart);
+  }
+  const losers = table.rows.filter((r) => !r.won && r.netMsat > 0n);
+  const winners = table.rows.filter((r) => r.won);
+  const claims = [];
+  for (const r of losers) {
+    const e = byId.get(r.entryId);
+    const lock = locks.get(toHex(e.pubkey));
+    if (!lock) return refuse(`a losing pick's stake lock was never verified, so it cannot be claimed: ${r.entryId.slice(0, 16)}`);
+    if (lock.amountMsat !== r.netMsat) return refuse(`a losing pick's lock holds ${lock.amountMsat} msat and its net stake is ${r.netMsat}`);
+    claims.push({ pubkey: e.pubkey, outpoint: lock.outpoint, amountMsat: r.netMsat, kind: 'stake' });
+  }
+  if (!claims.length) return finish(empty('every pick won: no losing stake to claim'), feePart);
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendableMsat = poolMsat - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fees on the losing locks (${inputFeesMsat} msat) take the whole pool of ${poolMsat}`);
+  // EACH WINNER'S SHARE OF THE LOSING POOL, as the table says it, over what the claimed locks can pay after their fees
+  const shares = winners.map((r) => ({ r, owed: r.payoutMsat - r.netMsat }));
+  const owedTotal = shares.reduce((s, x) => s + x.owed, 0n);
+  if (owedTotal !== poolMsat) return refuse(`the table hands the winners ${owedTotal} msat and the losing locks hold ${poolMsat}`);
+  const split = shares.map((x) => ({ ...x, msat: largestPayoutMsat(fees, (x.owed * spendableMsat) / poolMsat) }));
+  const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
+  const dust = spendableMsat - split.reduce((s, x) => s + gross(x.msat), 0n);
+  if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
+  const payouts = [];
+  for (const x of split) {
+    if (x.msat <= 0n) continue;
+    const e = byId.get(x.r.entryId);
+    const lock = locks.get(toHex(e.pubkey));
+    const payoutPk = lock ? lock.refundPk : refundKeyOf(e.pubkey);
+    payouts.push({ pubkey: e.pubkey, payoutPk, owedMsat: x.owed, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: 'qualifier' });
+  }
+  return { ...finish({ roundId, claims, payouts, unpaid: [], forfeits: [], poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart),
+    stakeShares: split.map((x) => ({ pubkey: byId.get(x.r.entryId).pubkey, msat: x.msat })) };
+}
+
 /** THE RULED REMAINDER SPLIT (FEDERATION.md; RULED the owner 2026-09-21): 75% to the nodes, the rest to the donation set. */
 export const REMAINDER_NODES_PERCENT = 75n;
 
