@@ -33,6 +33,8 @@ import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js'
 import { toHex, sha256 } from '../../protocol/src/hash.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { HOSTED } from './plugins/hosted.js';
+import { splitDonation } from '../../protocol/src/donation.js';
+import { donationContractFields } from '../src/stake-lock-signer-node.js';
 
 // A WINNER NAMES A LIGHTNING ADDRESS (ruled 2026-09-23: only a qualifier who named one is paid; the others' shares
 // are pooled over those who did). `lnurl` is that address: it answers LUD-16/LUD-06 with real-format invoices whose
@@ -147,7 +149,9 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // working, not a failure. A test that is ABOUT that refusal builds its own entry below.
 // `address`: the entry names the fixture's Lightning address at every signer node once it has played.
 // `game`: { adapter, config } - the run played by that game's core, not the truck's (kanban #202), with no loads in its batch.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null } = {}) {
+// `donation`: { msat, target } - the entry donates `msat`, split over `target` (one set, or a round's { network, game }; kanban
+// #205) into one payout contract per share above 0 msat, each held by the federation at an outpoint the entry names.
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -163,11 +167,23 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   const play = playFor(who, w.randomness);
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat), donationMsat: 0n,
+    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat), donationMsat: donation ? donation.msat : 0n,
     joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
   };
+  // THE DONATION'S OUTPUTS (kanban #205): one payout contract per share, to its key, for exactly its amount
+  const donated = [];
+  if (donation && donation.msat > 0n) {
+    const split = splitDonation({ donationMsat: donation.msat, recipients: donation.target });
+    assert.ok(split.owed, split.why);
+    for (const sh of split.shares.filter((x) => x.amountMsat > 0n)) {
+      const outpoint = { txid: rand(32), outIdx: 0n };
+      await w.port.put(outpoint, donationContractFields({ recipientPk: sh.recipientPk, amountMsat: sh.amountMsat }));
+      donated.push({ outpoint, recipientPk: sh.recipientPk, amountMsat: sh.amountMsat });
+    }
+    entry.donationOutpoints = donated.map((d) => d.outpoint);
+  }
   const eid = entryId(entry);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
     refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
@@ -294,7 +310,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     }
   }
   // `late`: the run's batch and first mark, for a test that sends them after the start deadline (§15's same door)
-  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked };
+  const played = { eid, entry, fields, outpoint, feeOutpoint, session, late: [encodeInputBatch(input), signedMark], forked, donated };
   if (address) await nameAddress(w.nodes || [w.a, w.b], played, address === true ? ADDRESS : address);
   return played;
 }

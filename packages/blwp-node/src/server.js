@@ -79,7 +79,7 @@ import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation } from '../../protocol/src/authority.js';
-import { donationSetId, donationOutputsExpected } from '../../protocol/src/donation.js';
+import { donationSetId, donationOutputsExpected, encodeDonationSet } from '../../protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality, finalSignatureNow } from './finality.js';
@@ -405,6 +405,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (donationSetSignedBy(s, { authority: at.authority, verify: verifyDonation }).ok) return { ok: true, set: s };
     }
     return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
+  };
+  // WHAT A PLAYER'S DONATION IN THIS ROUND PAYS (§0A.8, kanban #205): half to the network's set - the protocol devs - and
+  // half to the round's game's set - its developer's, as its registration carries it, checked against its manifest. A
+  // round of a game this node does not host, or with no network set, has no target, and its entries' donations are judged
+  // by no list of this node's.
+  const donationTargetFor = (contract) => {
+    const ds = donationSetFor(contract);
+    if (!ds.ok) return ds;
+    const game = contract.gameId instanceof Uint8Array ? hosted.get(toHex(contract.gameId)) : null;
+    if (!game || !Array.isArray(game.donationSet)) return { ok: false, why: 'this node holds no donation set of that round\'s game' };
+    return { ok: true, set: ds.set, target: { network: ds.set.recipients, game: game.donationSet } };
   };
   // A PAYING ROUND THAT NAMES A SET OTHER THAN THE ONE IN FORCE, AS A REFUSAL (kanban #191, the owner 2026-10-06: series
   // d37c1ef1 named serial 2 where serial 3 was in force; its rounds were written and listed 7 of 7, a page locked a stake into
@@ -2900,9 +2911,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           // THE DONATION OUTPUTS THE ENTRY NAMES ARE ITS SET'S (the owner 2026-10-03, FEDERATION.md): as many as its donation owes
           // a set of keys, none for an LNURL set or no donation. The federation is asked when the lock is handed over (/lock).
-          const ds = donationSetFor(rc);
+          const ds = donationTargetFor(rc);
           if (ds.ok || (contract.donationOutpoints || []).length) {
-            const want = ds.ok ? donationOutputsExpected(contract, ds.set.recipients) : { ok: false, why: ds.why };
+            const want = ds.ok ? donationOutputsExpected(contract, ds.target) : { ok: false, why: ds.why };
             if (!want.ok) return text(res, 409, `entry refused: donation: ${want.why}`);
           }
         }
@@ -3382,8 +3393,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE ROUND'S DONATION SET, so the donation outputs in the same transaction are checked with the stake (the owner 2026-10-03)
         let donationRecipients = null;
         { const rr = round.get(decodeEntryContract(stored).roundId);
-          const ds = rr ? donationSetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
-          if (ds.ok) donationRecipients = ds.set.recipients; }
+          const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
+          if (ds.ok) donationRecipients = ds.target; }
         let got;
         try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
@@ -3796,6 +3807,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ rotations: held.map((r) => ({ body: toHex(encodeAuthorityRotation(r)), signature: toHex(r.signature) })) }));
       }
 
+      // THE ROUND'S GAME DEV'S DONATION SET (§0A.8, kanban #205): the recipients the game's manifest names by id, as this
+      // node hosts the game - its encoding (donation.js encodeDonationSet). A client takes it only if it hashes to the
+      // game_donation_set its own known-games list carries for the round's game.
+      if (req.method === 'GET' && url.pathname === '/game-donation-set') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const game = c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
+        if (!game || !Array.isArray(game.donationSet)) return text(res, 404, 'this node holds no donation set of that round\'s game');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(encodeDonationSet(game.donationSet)));
+      }
       if (req.method === 'GET' && url.pathname === '/donation-set') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'that is not a round id');

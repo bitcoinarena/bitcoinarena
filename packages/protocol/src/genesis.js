@@ -12,7 +12,6 @@ import {
   AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST,
   AUTHORITY_PUBKEY_TESTNET4, RECOVERY_PUBKEY_TESTNET4, GENESIS_CONFIG_HASH,
 } from './genesis-ids.js';
-import { NODE_FEE_BPS } from './fee.js';
 // THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
 // hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
 // founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to

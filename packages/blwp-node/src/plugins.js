@@ -11,6 +11,7 @@
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../protocol/src/hash.js';
 import { manifestStands, roundFitsManifest } from '../../protocol/src/manifest.js';
+import { donationSetId } from '../../protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 
 /**
@@ -29,6 +30,13 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
     if (!stands.ok) throw new Error(`that game is not one this node can host: ${stands.why}`);
     const id = toHex(stands.gameId);
     if (p.gameId !== undefined && toHex(p.gameId) !== id) throw new Error(`game "${p.manifest.gameName}" is registered as ${toHex(p.gameId).slice(0, 16)}, and its manifest is ${id.slice(0, 16)}`);
+    // THE GAME DEV'S DONATION SET (§0A.8, kanban #205): the recipients its manifest names by id - a registration whose set
+    // does not hash to the manifest's game_donation_set is refused, so no node pays a game dev a set its developer did not sign
+    let gameSetId;
+    try { gameSetId = toHex(donationSetId(p.donationSet)); }
+    catch (e) { throw new Error(`game "${p.manifest.gameName}" is handed with no donation set that stands: ${e.message}`); }
+    if (gameSetId !== toHex(p.manifest.gameDonationSetId))
+      throw new Error(`game "${p.manifest.gameName}" is handed a donation set ${gameSetId.slice(0, 16)}, and its manifest names ${toHex(p.manifest.gameDonationSetId).slice(0, 16)}`);
     for (const [hash, core] of p.cores) {
       const listed = p.manifest.cores.find((c) => toHex(c.hash) === hash);
       if (!listed) throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} is installed for it, and its manifest lists no such core`);
@@ -43,7 +51,9 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
       // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it; kanban #203)
-      roundWarnings: typeof p.roundWarnings === 'function' ? p.roundWarnings : null }));
+      roundWarnings: typeof p.roundWarnings === 'function' ? p.roundWarnings : null,
+      // the game dev's donation set, checked above against the manifest
+      donationSet: p.donationSet }));
   }
   return out;
 }

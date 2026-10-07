@@ -15,5 +15,6 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
       'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
     }),
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: '56cbb90ca8923f2dbe510278a35d3db430a0c1f55a0a7318fdaf464f15aede7b',
   }),
 });

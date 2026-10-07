@@ -424,8 +424,8 @@
     <section class="settings-card" id="blwp-set-donation">
       <h3>Donation</h3>
       <select id="blwp-donation-select" aria-label="Donation">
-        <option value="0">0%</option><option value="1">1%</option><option value="2" selected>2%</option>
-        <option value="3">3%</option><option value="4">4%</option><option value="5">5%</option>
+        <option value="0">0%</option><option value="1">1%</option><option value="2">2%</option>
+        <option value="3">3%</option><option value="4">4%</option><option value="5" selected>5%</option>
       </select>
       <div class="muted" id="blwp-donation-recipients"></div>
     </section>
@@ -1549,10 +1549,12 @@
       // lists every recipient before the wallet approves. With no set that
       // checks there is no donation to choose: it stays 0, and the page says why.
       let donationSet = null;
+      // AND THE ROUND'S TWO SETS (§0A.8, kanban #205): what the lock pays - half to the protocol devs, half to the game dev
+      let donationTarget = null, donationAnswer = null;
       if (pays) {
         const ds = await joinStep('fetchDonationSet', () => (ROUND_PREP.get(named.roundIdHex) && ROUND_PREP.get(named.roundIdHex).donation)
           || BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify }));
-        if (ds.ok) donationSet = ds.set;
+        if (ds.ok) { donationSet = ds.set; donationTarget = ds.target || null; donationAnswer = ds; }
         // A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED HERE, BEFORE ANY LOCK (kanban #191, measured live
         // 2026-10-06 05:31Z: round 49a50535 named serial 2 where serial 3 was in force; this step said "no donation" and the
         // join went on to lock 100 sat, which the session then refused - the stake back only after its expiry)
@@ -1564,6 +1566,7 @@
         else { window.BLWP_DONATION_SET_WHY = ds.why; console.error('[blwp] no donation: ' + ds.why); }
       }
       window.BLWP_DONATION_SET = donationSet;
+      window.BLWP_DONATION_TARGET = donationTarget;
       // A DONATION NOBODY CAN PAY MUST NOT STAND IN FRONT OF THE STAKE (the owner 2026-09-21).
       //
       // `window.prompt` is SYNCHRONOUS: it stops the renderer's script thread until a player answers, so
@@ -1575,7 +1578,7 @@
       // The donation is NOT removed from the protocol: the round still names its set, the client still
       // carries it, and a reachable set still asks. What is skipped is the ASKING when the answer could only
       // be nothing: every recipient on loopback, or nothing to give.
-      const recipientsLine = donationSet ? BLWPCLIENT.donationRecipientsLine(donationSet) : '';
+      const recipientsLine = donationSet ? BLWPCLIENT.donationRecipientsLine(donationAnswer || donationSet) : '';
       const onlyLoopback = /https?:\/\/(127\.0\.0\.1|localhost|\[::1\])/i.test(recipientsLine)
         && !/https?:\/\/(?!127\.0\.0\.1|localhost|\[::1\])/i.test(recipientsLine);
       // THE DONATION IS THE ONE CHOSEN IN SETTINGS (the owner 2026-09-29: "Wire in donations"; "The default donation is
@@ -1633,7 +1636,7 @@
           };
           const wallet = {
             round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient,
-            donationMsat: donation.donationMsat, donationRecipients: donationSet ? donationSet.recipients : null, storage: vault(), onStep,
+            donationMsat: donation.donationMsat, donationRecipients: donationTarget, storage: vault(), onStep,
             // A DEPOSIT ONLY THROUGH A GATEWAY THAT HOLDS E-CASH (the owner 2026-09-30 14:30): the link's (or daily.json's)
             // `gateway` list, never the lock client's random pick when one is named.
             gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
@@ -2328,7 +2331,7 @@
         let kept = null;
         try { kept = window.sessionStorage.getItem('blwp.donation.settings'); } catch { kept = null; }
         const n = Number(kept);
-        window.BLWP_DONATION_BPS = kept !== null && Number.isInteger(n) && n >= 0 && n <= 500 && n % 100 === 0 ? n : 200;
+        window.BLWP_DONATION_BPS = kept !== null && Number.isInteger(n) && n >= 0 && n <= 500 && n % 100 === 0 ? n : BLWPCLIENT.DONATION_DEFAULT_BPS;   // 5% by default (§0A.8): half protocol devs, half game dev
       }
       return window.BLWP_DONATION_BPS;
     }
@@ -2415,7 +2418,7 @@
               settingsBps: donationBps(), storage: window.sessionStorage });
             const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
               storage: vault(), gateways: ctx.gateways, donationMsat,
-              donationRecipients: window.BLWP_DONATION_SET ? window.BLWP_DONATION_SET.recipients : null, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
+              donationRecipients: window.BLWP_DONATION_TARGET || null, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           } catch (e) { why.textContent = 'No deposit: ' + (e && e.message ? e.message : e); }
         })();
