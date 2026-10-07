@@ -935,16 +935,20 @@ export class LockSettlement {
     return this.planCertificates.get(lateEntryId ? `${toHex(roundIdBytes)}:${toHex(lateEntryId)}` : toHex(roundIdBytes)) || null;
   }
 
-  retryPlan(roundIdBytes, { everyMs = 1000, most = 120 } = {}) {
+  // A SECOND, THEN TWICE AS LONG EACH TIME, UP TO A MINUTE (kanban #229, the owner 2026-10-07 08:35): offered every second, a
+  // plan no peer could take - "this signer node knows no peer to hand the send plan to yet" - was a whole settle pass a
+  // second per round, 120 times, and every code-seat29 seat sat near one core. The bound of 120 offers stays.
+  retryPlan(roundIdBytes, { everyMs = 1000, most = 120, longestMs = 60000 } = {}) {
     const key = toHex(roundIdBytes);
     const n = (this.planRetries.get(key) || 0) + 1;
     if (n > most) return;
     this.planRetries.set(key, n);
+    const waitMs = Math.min(longestMs, everyMs * 2 ** Math.min(n - 1, 30));
     const t = setTimeout(() => {
       this.retryTimers.delete(t);
       this.settle(roundIdBytes).then((got) => console.log(`[settle] ${key.slice(0, 16)} plan offered again (${n}): ${got.state || (got.ok ? 'ok' : 'refused')} - ${got.why || ''}`))
         .catch((e) => console.log(`[settle] ${key.slice(0, 16)} plan offered again (${n}): ${e.message}`));
-    }, everyMs);
+    }, waitMs);
     if (t.unref) t.unref();
     this.retryTimers.add(t);
   }
