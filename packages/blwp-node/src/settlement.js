@@ -24,7 +24,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { pluginForRound } from './plugins.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { lockSettlement, lateLockSettlement } from '../../protocol/src/lock-settlement.js';
+import { lockSettlement, lateLockSettlement, attestedLockSettlement } from '../../protocol/src/lock-settlement.js';
+import { decodeAttestation, outcomeFinality, pariMutuelTable } from '../../protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
@@ -209,7 +210,7 @@ export class LockSettlement {
    * settlement kept; the P opened as for any loser; one transaction per (round, entry), its own nonce.
    */
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
-    { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
+    if (this.#attestedOf(roundIdBytes)) return refuse('an attested round has no late entry: its picks are all in its one settlement');
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
     const kept = onlyBase ? null : this.built.get(key);
     if (kept) return kept;
@@ -294,16 +295,77 @@ export class LockSettlement {
   }
 
   /**
-   * AN ATTESTED ROUND IS NOT SETTLED HERE YET (§0A.7a, kanban #206 slice 1, the owner 2026-10-07): its payout table is built
-   * from its picks and its attested outcome (GET /outcome), and paying that table is slice 2 - nothing of it moves now,
-   * and a DISPUTED round settles on neither outcome. null for any other round.
+   * AN ATTESTED ROUND SETTLES ONLY ON A FINAL OUTCOME (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): held while it has
+   * no attestation (OPEN), while its first standing attestation is inside the objection window, and when two contradict
+   * (DISPUTED) - nothing of it moves then, and with no outcome ever every lock expires back to its player. A settlement
+   * already ACCEPTED is not held again: a contradiction after it is kept as proof and undoes nothing. null for any other
+   * round, or for an attested one whose outcome is final.
    */
   #attestedHold(roundIdBytes) {
+    const a = this.#attestedOf(roundIdBytes);
+    if (!a) return null;
+    const kept = this.round.lockSettlement(roundIdBytes);
+    if (kept && kept.state === ACCEPTED) return null;
+    if (a.finality.final) return null;
+    const f = a.finality;
+    const why = f.state === 'OPEN' ? 'an attested round with no outcome attested: nothing is settled, and its locks expire back to their players'
+      : f.state === 'DISPUTED' ? `an attested round whose attestors contradicted themselves: ${f.why}`
+        : `an attested round inside its objection window: its outcome is final at ${new Date(f.finalAtMs).toISOString()}, and a contradiction before then settles nothing`;
+    return { ok: false, state: 'HELD', why, outcome: f.state };
+  }
+
+  /** The round's attested game and the finality of its outcome on this seat's clock - or null for a replayed round. */
+  #attestedOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row || !this.round.plugins) return null;
-    const found = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), this.round.plugins);
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const found = pluginForRound(contract, this.round.plugins);
     if (!found.ok || !found.attested) return null;
-    return { ok: false, state: 'HELD', why: 'an attested round: its pari-mutuel table is read at GET /outcome, and nothing of it is settled until its settlement is built (#206 slice 2)' };
+    const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
+      .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    return { contract, plugin: found.plugin, held,
+      finality: outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() }) };
+  }
+
+  /**
+   * THE PLAN OF AN ATTESTED ROUND WHOSE OUTCOME IS FINAL (§0A.7a slice 2): its counted entries (a stake this seat saw), the
+   * pari-mutuel table over them and the outcome, and `attestedLockSettlement` - the losers' stake locks and every fee lock
+   * claimed, the winners paid their shares of the losing pool, the seats their §22A fee.
+   */
+  async #attestedPlan(roundIdBytes, a, claimPk, held) {
+    const { contract } = a;
+    const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
+      .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
+        donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId }));
+    if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed');
+    let table;
+    try { table = pariMutuelTable({ entries, outcome: a.finality.outcome }); } catch (e) { return refuse(e.message); }
+    const locks = new Map();
+    const lockEntry = new Map();
+    const feeLocks = new Map();
+    for (const e of entries) {
+      const lock = this.round.stakeLock(e.entryIdBytes);
+      if (lock) {
+        const fields = lockFieldsFromJson(lock.fields);
+        if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('a lock of this round names another claim key than the round\'s');
+        locks.set(toHex(e.pubkey), { outpoint: outpointOf(lock.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk, fields });
+        lockEntry.set(toHex(e.pubkey), e.entryIdBytes);
+      }
+      const fl = this.round.feeLock ? this.round.feeLock(e.entryIdBytes) : null;
+      if (fl) {
+        const fields = lockFieldsFromJson(fl.fields);
+        if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('a fee lock of this round names another claim key than the round\'s');
+        feeLocks.set(toHex(e.pubkey), { outpoint: outpointOf(fl.outpoint), amountMsat: fields.amountMsat, preimage: e.feePreimage });
+      }
+    }
+    const key = toHex(roundIdBytes);
+    let fees = this.fees.get(key);
+    if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    const plan = attestedLockSettlement({ roundId: roundIdBytes, table, entries, locks, fees, feeLocks,
+      signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract });
+    if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
   }
 
   /**
@@ -312,7 +374,7 @@ export class LockSettlement {
    * handed, asks the federation whether it went in: every claimed lock gone and a payout of that txid stored.
    */
   async settleLate(roundIdBytes, entryIdBytes) {
-    { const held = this.#attestedHold(roundIdBytes); if (held) return held; }
+    if (this.#attestedOf(roundIdBytes)) return { ok: false, state: 'HELD', why: 'an attested round has no late entry: its picks are all in its one settlement' };
     const kept = this.round.lateLockSettlement(roundIdBytes, entryIdBytes);
     if (kept && kept.state === ACCEPTED) return { ok: true, kept: true, ...kept, sent: await this.sendLate(roundIdBytes, entryIdBytes) };
     const t = await this.turn(roundIdBytes);
@@ -501,6 +563,12 @@ export class LockSettlement {
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
+    // AN ATTESTED ROUND (§0A.7a): its plan is its pari-mutuel table's, on a final outcome only
+    { const a = this.#attestedOf(roundIdBytes);
+      if (a) {
+        if (!a.finality.final) return refuse(this.#attestedHold(roundIdBytes)?.why || 'an attested round whose outcome is not final');
+        return this.#attestedPlan(roundIdBytes, a, claimPk, held);
+      } }
 
     const on = this.entriesOnRecord(roundIdBytes, contract);
     if (!on.ok) return on;

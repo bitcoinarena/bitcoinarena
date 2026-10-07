@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound } from './lock-round-fixture.js';
 import { b32, LOSER } from './window-fixture.js';
+import { skipTo, testNow } from './test-clock.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { testAttestedGame, attestorSign, testDevKey } from './plugins/sign.js';
 import { encodeAttestation } from '../../protocol/src/attested.js';
@@ -19,11 +20,11 @@ import { donationSetId, splitDonation } from '../../protocol/src/donation.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { toHex } from '../../protocol/src/hash.js';
 
-const OUTCOMES = ['above 100k', 'between', 'below 90k'];
-const MARKET = testAttestedGame({ name: 'btc-close', outcomes: OUTCOMES });
+import { MARKET, MARKET_OUTCOMES as OUTCOMES } from './plugins/market/index.js';
 const NETWORK = TEST_DONATION_SET_KEYS_REGTEST.recipients;
 const STAKE = 1_000_000n;
-const ROUND = { gameId: MARKET.registration.gameId, simCoreHash: b32(0), configHash: b32(0), donationSetId: donationSetId(NETWORK) };
+// ITS ENTRIES OPEN FROM THE COMMITTEE UNTIL HALF A SECOND BEFORE ITS START (the fixture's 60.5 s), so a test has time to pick
+const ROUND = { gameId: MARKET.registration.gameId, simCoreHash: b32(0), configHash: b32(0), donationSetId: donationSetId(NETWORK), entryCloseMs: 60000n };
 const [A0, A1, A2] = MARKET.attestors;
 const player = (n) => ({ ...LOSER, name: `p${n}`, key: b32(0x40 + n), worldSecret: b32(0) });
 const post = (d, rid, a) => fetch(`http://127.0.0.1:${d.port}/outcome?round=${toHex(rid)}`, { method: 'POST', body: encodeAttestation(a) });
@@ -41,7 +42,9 @@ function watchReplays(nodes) {
 }
 
 test('an attested round: picks in, no replay, the outcome\'s refusals by name, the pari-mutuel table to the msat, nothing settled; a contradiction is held as proof', async () => {
-  const w = await lockRound({ stakeMsat: STAKE, round: ROUND, serveOpts: { plugins: [NEXTBLOCK, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
+  // ITS ENTRIES OPEN: the round's end 15 min out and the clock at its committee (slice 2: no pick after the entry close)
+  const w = await lockRound({ stakeMsat: STAKE, round: ROUND, endMs: testNow() + 900000, serveOpts: { plugins: [NEXTBLOCK, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
+  skipTo(Number(w.c.committeeTimeMs) + 100);
   try {
     const jobs = watchReplays(w.nodes);
     const target = { network: NETWORK, game: MARKET.registration.donationSet };
@@ -71,7 +74,8 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal((await (await fetch(`http://127.0.0.1:${w.a.port}/replay/core.js?round=${rid}`)).status), 404);
 
     // CHECK 2: EACH REFUSAL BY NAME, AT BOTH SEATS
-    const body = { roundId: w.rid, outcome: 0, observedAtMs: 1791400000000n };
+    // seen after the round's entries closed (slice 2: an outcome observed before the last pick is refused)
+    const body = { roundId: w.rid, outcome: 0, observedAtMs: w.c.entryCloseMs + 1n };
     const stranger = testDevKey('not an attestor of btc-close');
     const cases = {
       'one signature short': signedBy(body, [A1]),
@@ -127,14 +131,19 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal((await w.a.settlements.settle(w.rid)).state, 'HELD');
 
     // CHECK 3: A SECOND ROUND, TWO STANDING ATTESTATIONS OF DIFFERENT OUTCOMES - THE PROOF, AND NEITHER SETTLES
-    const r2 = await openLockRound(w, { stakeMsat: STAKE, round: ROUND });
+    const r2 = await openLockRound(w, { stakeMsat: STAKE, round: ROUND, endMs: testNow() + 900000 });
+    skipTo(Number(r2.c.committeeTimeMs) + 100);
     const two = [];
     for (const [i, pick] of [1, 2].entries()) two.push(await lockAndPlay(r2, player(20 + i), { noMarks: true, pick }));
-    const said1 = await post(w.a, r2.rid, signedBy({ roundId: r2.rid, outcome: 1, observedAtMs: 1n }, [A0, A1]));
-    // NO PICK ONCE AN OUTCOME IS HELD, even with the entry door still open: it would be a copy, not a pick
+    // NO PICK ONCE AN OUTCOME IS HELD, even with the entry door still open: it would be a copy, not a pick (an attestation
+    // held at a seat whose clock ran ahead of the others' - put straight into its store here, as the door takes none before
+    // the entry close)
+    w.b.round.putOutcomeAttestation({ bodyId: b32(0x5e), roundId: r2.rid, outcome: 1, observedAtMs: 1n, bytes: encodeAttestation(signedBy({ roundId: r2.rid, outcome: 1, observedAtMs: 1n }, [A0, A1])) });
     await assert.rejects(lockAndPlay(r2, player(27), { noMarks: true, pick: 1 }), /outcome is already attested at this signer node: it takes no pick after it/);
     await closeRound(r2);
-    const said2 = await post(w.a, r2.rid, signedBy({ roundId: r2.rid, outcome: 2, observedAtMs: 2n }, [A1, A2]));
+    const after = r2.c.entryCloseMs + 1n;
+    const said1 = await post(w.a, r2.rid, signedBy({ roundId: r2.rid, outcome: 1, observedAtMs: after }, [A0, A1]));
+    const said2 = await post(w.a, r2.rid, signedBy({ roundId: r2.rid, outcome: 2, observedAtMs: after + 1n }, [A1, A2]));
     const disputed = await outcome(w.a, r2.rid);
     const settled2 = await w.a.settlements.settle(r2.rid);
     console.log('  CHECK 3:', JSON.stringify({ first: said1.status, second: said2.status, state: disputed.state, outcomesNamed: disputed.outcomesNamed,

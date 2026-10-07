@@ -797,8 +797,10 @@ function feeLockOf(stakeLock, round) {
   return f;
 }
 
+// `pick`: the outcome an entry into a market round backs (§0A.7a, kanban #206 slice 2) - written only when given.
+// `confirmedGames`: game ids (hex) of markets the player confirmed a second time on this page (§0A.6).
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -813,7 +815,9 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   }
   // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
   // no flag. A free round risks nothing and is joined as before.
-  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
+  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
+  // A PICK IS AN OUTCOME INDEX (§0A.7a): the seats check it against the game's outcomes; here only its shape
+  if (pick !== undefined && pick !== null && (!Number.isInteger(pick) || pick < 0 || pick > 255)) throw new Error('a pick is an outcome index, 0 to 255');
   // THE SIGNER NODE'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
   // v4.6.2, F2). A payout and a refund go to it, so a page that joined a player
   // under any other key - a bug, or a host that lies - would send the money
@@ -886,6 +890,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
     ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
       ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
+    // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
+    ...(pick !== undefined && pick !== null ? { pick } : {}),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
@@ -928,11 +934,11 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
  * reducing would change the number the payment hash already commits to, and
  * the shares would then open something the Entry Contract does not name.
  */
-export async function stakeFor(round, { signerNodes, curve, random, playerPubkey, needed: asked } = {}) {
+export async function stakeFor(round, { signerNodes, curve, random, playerPubkey, needed: asked, confirmedGames = null } = {}) {
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
   // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
   // is dealt, so a backdoored round gets no handout, no hold and no signer node.
-  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
+  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
   // other number is a stake the door refuses - so it is refused here first.

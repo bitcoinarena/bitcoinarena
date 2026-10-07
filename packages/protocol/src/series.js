@@ -27,7 +27,10 @@ import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
 import { genesisFor } from './genesis.js';
 import { networkOf } from './constants.js';
 
-export const ROUND_PERIOD_MS = 90000n;
+// THE GRID ITSELF LIVES IN constants.js (kanban #206: the manifest reads it there, so a client bundle carrying manifests
+// does not carry the series code); every series reader takes it from here as before.
+export { ROUND_PERIOD_MS } from './constants.js';
+import { ROUND_PERIOD_MS } from './constants.js';
 // LATE JOIN (the owner 2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
 // entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
 // (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.

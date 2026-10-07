@@ -31,6 +31,7 @@ import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { entryOpenUntilMs } from './late-join.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { marketOf } from '../../protocol/src/known-game.js';
 
 /** How far a signer node's signed time may be from this page's clock and still count. */
 export const LOBBY_SKEW_MS = 60000;
@@ -213,6 +214,11 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: checkedNames(counts.flatMap((c) => c.names), id, verify),
       contract,
+      // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
+      // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
+      game: contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '',
+      market: contract.gameId instanceof Uint8Array ? marketOf(contract.gameId) : null,
+      marketLike: contract.simCoreHash instanceof Uint8Array && contract.simCoreHash.every((b) => b === 0),
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
@@ -304,13 +310,15 @@ export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = fal
   // two series of that one stake - 8172fffd and the next day's - nothing but the soonest round decides: measured by the rule
   // before this, k=2's first round, joinable 2 h before its start, would have hidden 8172fffd's last two hours of rounds.
   const winningStake = new Map();
+  // ONE ROW PER GAME AND KIND (kanban #206 slice 2): a market's paying row never takes nextblock's
+  const kindOf = (r) => `${r.game || ''}:${r.free ? 'free' : 'paying'}`;
   for (const r of rows) {
     if (!series(r) || !r.joinable) continue;
-    const kind = r.free ? 'free' : 'paying';
+    const kind = kindOf(r);
     const had = winningStake.get(kind);
     if (!had || seriesStart(r) > had.start) winningStake.set(kind, { start: seriesStart(r), stake: BigInt(r.stakeMsat) });
   }
-  const ofWinningStake = (r) => { const w = winningStake.get(r.free ? 'free' : 'paying'); return !w || BigInt(r.stakeMsat) === w.stake; };
+  const ofWinningStake = (r) => { const w = winningStake.get(kindOf(r)); return !w || BigInt(r.stakeMsat) === w.stake; };
   const better = (x, y) => (ofWinningStake(x) !== ofWinningStake(y) ? ofWinningStake(x)
     : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)
@@ -319,7 +327,7 @@ export function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = fal
           : x.phase !== y.phase ? x.phase === 'open' : x.entryCloseMs > y.entryCloseMs);
   const kept = new Map();
   for (const r of rows) {
-    const kind = r.free ? 'free' : 'paying';
+    const kind = kindOf(r);
     if (!kept.has(kind) || better(r, kept.get(kind))) kept.set(kind, r);
   }
   const keep = new Set(kept.values());
@@ -351,6 +359,14 @@ const lobbyClock = (ms) => {
 
 /** One row as the page shows it; the page draws this string and adds nothing. */
 export function lobbyLine(row, nowMs = Date.now()) {
+  // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
+  if (row.market || row.marketLike) {
+    const m = row.market;
+    const what = m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
+    const money = row.free ? 'free' : `stake ${String(row.stakeMsat / 1000n)} sat`;
+    const when = row.phase === 'pending' ? `entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}` : `pick closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
+    return `${what} · ${money} · ${when}`;
+  }
   const money = row.free ? 'free - no wallet, no Lightning'
     : `stake ${String(row.stakeMsat / 1000n)} sat - a federation stake lock`;
   const when = row.phase === 'pending'

@@ -776,6 +776,8 @@ const TYPE_RERUN_RESULT = 0x19;
 // seven (the round's threshold) make the run FINAL.
 const TYPE_FINAL_SIGNATURE = 0x1a;
 // A GAME'S MANIFEST (§0A.3, kanban #202): a game is a plugin the engine reads through this, never through its code.
+/** EVERY SERIES RUNS ON ONE 90 s GRID (series.js; §5A.5): a round of a series starts every ROUND_PERIOD_MS. */
+const ROUND_PERIOD_MS = 90000n;
 const TYPE_GAME_MANIFEST = 0x1c;
 // AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
 const TYPE_OUTCOME_ATTESTATION = 0x1d;
@@ -7098,6 +7100,16 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
     gameDonationSetId: '56cbb90ca8923f2dbe510278a35d3db430a0c1f55a0a7318fdaf464f15aede7b',
   }),
+  '77ee2f5e186db588b3207090156afae5374f8160a1b64d0bbd02ed140140f022': Object.freeze({
+    name: 'btc-close',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'e95d3cbb55efa964fcff6058bda87fbe6c53a52d95a03c5c2dc7a53c16cc86ae',
+    attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
+      threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['30927357ec8945494d397ad427df5fb34702e1dd69608ac92f9b61f00b10649d']) }),
+  }),
 });
 
 // ---- protocol/src/known-game.js
@@ -7129,9 +7141,33 @@ function gameDonationSetIdOf(gameId) {
   return game && typeof game.gameDonationSetId === 'string' ? game.gameDonationSetId : null;
 }
 
-function gameIsKnownGood(gameId, simCoreHash, configHash) {
+/**
+ * THE MARKET THIS CLIENT PINS FOR A GAME (§0A.7a, kanban #206 slice 2): an attested game's outcomes, attestor keys (hex),
+ * threshold, developer key and the networks it is pinned for - or null for a game it does not pin, or one that is not attested.
+ */
+function marketOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && game.attested ? { gameId: toHex(gameId), name: game.name, known: true, ...game.attested } : null;
+}
+
+const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
+
+// `networkId`: the round's network - a pinned market is good only on the networks it is pinned for. `confirmed`: game ids
+// (hex) of ATTESTED games the player confirmed a second time on this page (§0A.6) - an unpinned market is let through only
+// then, and only with no core and no config (there is nothing of it to run).
+function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null } = {}) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];
+  // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
+  if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
+    if (!isZero32(simCoreHash) || (configHash !== undefined && !isZero32(configHash)))
+      return { ok: false, why: 'that round names a core or a config, and its game is a market: a market has nothing to run (§0A.7a)' };
+    if (!game) return { ok: true, game: 'an unpinned market the player confirmed', confirmed: true };
+    const nets = game.attested.networks || [];
+    if (nets.length && !(networkId instanceof Uint8Array && nets.includes(toHex(networkId))))
+      return { ok: false, why: `market ${game.name} is pinned only for network${nets.length === 1 ? '' : 's'} ${nets.map((n) => n.slice(0, 16)).join(', ')}: refused on this one` };
+    return { ok: true, game: game.name, market: true };
+  }
   if (!game)
     return { ok: false, why: `that round plays game ${toHex(gameId).slice(0, 16)}..., which is not on this client's known-good list `
       + 'of games: a paying round on an unknown game is refused (§5, §0A.6)' };
@@ -8359,8 +8395,10 @@ function feeLockOf(stakeLock, round) {
   return f;
 }
 
+// `pick`: the outcome an entry into a market round backs (§0A.7a, kanban #206 slice 2) - written only when given.
+// `confirmedGames`: game ids (hex) of markets the player confirmed a second time on this page (§0A.6).
 function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -8375,7 +8413,9 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   }
   // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
   // no flag. A free round risks nothing and is joined as before.
-  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
+  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
+  // A PICK IS AN OUTCOME INDEX (§0A.7a): the seats check it against the game's outcomes; here only its shape
+  if (pick !== undefined && pick !== null && (!Number.isInteger(pick) || pick < 0 || pick > 255)) throw new Error('a pick is an outcome index, 0 to 255');
   // THE SIGNER NODE'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
   // v4.6.2, F2). A payout and a refund go to it, so a page that joined a player
   // under any other key - a bug, or a host that lies - would send the money
@@ -8448,6 +8488,8 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
     ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
       ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
+    // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
+    ...(pick !== undefined && pick !== null ? { pick } : {}),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
@@ -8490,11 +8532,11 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
  * reducing would change the number the payment hash already commits to, and
  * the shares would then open something the Entry Contract does not name.
  */
-async function stakeFor(round, { signerNodes, curve, random, playerPubkey, needed: asked } = {}) {
+async function stakeFor(round, { signerNodes, curve, random, playerPubkey, needed: asked, confirmedGames = null } = {}) {
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
   // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
   // is dealt, so a backdoored round gets no handout, no hold and no signer node.
-  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
+  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
   // other number is a stake the door refuses - so it is refused here first.
@@ -9577,6 +9619,66 @@ function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks 
 }
 
 const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
+
+/**
+ * AN ATTESTED ROUND'S SETTLEMENT (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): the pari-mutuel table, paid. `table` is
+ * attested.js `pariMutuelTable` over the round's counted entries and its final outcome; `entries` the same entries with
+ * their player keys (`pubkey`) and entry ids (hex). Every counted entry's fee lock is claimed and the sitting signer nodes
+ * are paid by §22A's table, as for any round (`feeSettlement`). The LOSING picks' stake locks are claimed, and each winner
+ * is paid its share of the losing pool - `payoutMsat - netMsat` of its table row - by the payout contract to its own key
+ * (the shape a nextblock qualifier is paid by, kind 'qualifier'); a winner's own stake lock is not claimed and comes back
+ * to it by the stake-return path. Nobody picked the outcome (`table.refunded`): no stake lock is claimed, only the fee
+ * locks. Under a fee rule that charges, the shares are scaled to what the claimed locks can pay, the dust to the first.
+ */
+function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null }) {
+  if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
+  if (!table || !Array.isArray(table.rows)) return refuse('an attested round is settled from its pari-mutuel table');
+  const byId = new Map(entries.map((e) => [typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), e]));
+  // THE FEE PART: every counted entry, as for any round (none is a refund: a pick is a counted stake)
+  const counted = table.rows.map((r) => ({ ...byId.get(r.entryId), outcome: DELIVERED, score: 0 }));
+  if (counted.some((e) => !e.pubkey)) return refuse('a row of the table names an entry this signer node does not hold');
+  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees });
+  if (!feePart.ok) return feePart;
+  const empty = (why) => ({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: why });
+  if (table.refunded || !table.rows.some((r) => r.won)) {
+    if (!feePart.claims.length) return { ok: true, nothing: true, why: 'nobody picked the outcome and no fee lock pays: nothing is claimed' };
+    return finish(empty('nobody picked the outcome: no stake lock is claimed, every net stake comes back'), feePart);
+  }
+  const losers = table.rows.filter((r) => !r.won && r.netMsat > 0n);
+  const winners = table.rows.filter((r) => r.won);
+  const claims = [];
+  for (const r of losers) {
+    const e = byId.get(r.entryId);
+    const lock = locks.get(toHex(e.pubkey));
+    if (!lock) return refuse(`a losing pick's stake lock was never verified, so it cannot be claimed: ${r.entryId.slice(0, 16)}`);
+    if (lock.amountMsat !== r.netMsat) return refuse(`a losing pick's lock holds ${lock.amountMsat} msat and its net stake is ${r.netMsat}`);
+    claims.push({ pubkey: e.pubkey, outpoint: lock.outpoint, amountMsat: r.netMsat, kind: 'stake' });
+  }
+  if (!claims.length) return finish(empty('every pick won: no losing stake to claim'), feePart);
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendableMsat = poolMsat - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fees on the losing locks (${inputFeesMsat} msat) take the whole pool of ${poolMsat}`);
+  // EACH WINNER'S SHARE OF THE LOSING POOL, as the table says it, over what the claimed locks can pay after their fees
+  const shares = winners.map((r) => ({ r, owed: r.payoutMsat - r.netMsat }));
+  const owedTotal = shares.reduce((s, x) => s + x.owed, 0n);
+  if (owedTotal !== poolMsat) return refuse(`the table hands the winners ${owedTotal} msat and the losing locks hold ${poolMsat}`);
+  const split = shares.map((x) => ({ ...x, msat: largestPayoutMsat(fees, (x.owed * spendableMsat) / poolMsat) }));
+  const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
+  const dust = spendableMsat - split.reduce((s, x) => s + gross(x.msat), 0n);
+  if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
+  const payouts = [];
+  for (const x of split) {
+    if (x.msat <= 0n) continue;
+    const e = byId.get(x.r.entryId);
+    const lock = locks.get(toHex(e.pubkey));
+    const payoutPk = lock ? lock.refundPk : refundKeyOf(e.pubkey);
+    payouts.push({ pubkey: e.pubkey, payoutPk, owedMsat: x.owed, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: 'qualifier' });
+  }
+  return { ...finish({ roundId, claims, payouts, unpaid: [], forfeits: [], poolMsat, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart),
+    stakeShares: split.map((x) => ({ pubkey: byId.get(x.r.entryId).pubkey, msat: x.msat })) };
+}
 
 /** THE RULED REMAINDER SPLIT (FEDERATION.md; RULED the owner 2026-09-21): 75% to the nodes, the rest to the donation set. */
 const REMAINDER_NODES_PERCENT = 75n;
@@ -18914,6 +19016,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 
 
 
+
 /** How far a signer node's signed time may be from this page's clock and still count. */
 const LOBBY_SKEW_MS = 60000;
 
@@ -19095,6 +19198,11 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: checkedNames(counts.flatMap((c) => c.names), id, verify),
       contract,
+      // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
+      // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
+      game: contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '',
+      market: contract.gameId instanceof Uint8Array ? marketOf(contract.gameId) : null,
+      marketLike: contract.simCoreHash instanceof Uint8Array && contract.simCoreHash.every((b) => b === 0),
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
@@ -19186,13 +19294,15 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
   // two series of that one stake - 8172fffd and the next day's - nothing but the soonest round decides: measured by the rule
   // before this, k=2's first round, joinable 2 h before its start, would have hidden 8172fffd's last two hours of rounds.
   const winningStake = new Map();
+  // ONE ROW PER GAME AND KIND (kanban #206 slice 2): a market's paying row never takes nextblock's
+  const kindOf = (r) => `${r.game || ''}:${r.free ? 'free' : 'paying'}`;
   for (const r of rows) {
     if (!series(r) || !r.joinable) continue;
-    const kind = r.free ? 'free' : 'paying';
+    const kind = kindOf(r);
     const had = winningStake.get(kind);
     if (!had || seriesStart(r) > had.start) winningStake.set(kind, { start: seriesStart(r), stake: BigInt(r.stakeMsat) });
   }
-  const ofWinningStake = (r) => { const w = winningStake.get(r.free ? 'free' : 'paying'); return !w || BigInt(r.stakeMsat) === w.stake; };
+  const ofWinningStake = (r) => { const w = winningStake.get(kindOf(r)); return !w || BigInt(r.stakeMsat) === w.stake; };
   const better = (x, y) => (ofWinningStake(x) !== ofWinningStake(y) ? ofWinningStake(x)
     : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)
@@ -19201,7 +19311,7 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
           : x.phase !== y.phase ? x.phase === 'open' : x.entryCloseMs > y.entryCloseMs);
   const kept = new Map();
   for (const r of rows) {
-    const kind = r.free ? 'free' : 'paying';
+    const kind = kindOf(r);
     if (!kept.has(kind) || better(r, kept.get(kind))) kept.set(kind, r);
   }
   const keep = new Set(kept.values());
@@ -19233,6 +19343,14 @@ const lobbyClock = (ms) => {
 
 /** One row as the page shows it; the page draws this string and adds nothing. */
 function lobbyLine(row, nowMs = Date.now()) {
+  // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
+  if (row.market || row.marketLike) {
+    const m = row.market;
+    const what = m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
+    const money = row.free ? 'free' : `stake ${String(row.stakeMsat / 1000n)} sat`;
+    const when = row.phase === 'pending' ? `entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}` : `pick closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
+    return `${what} · ${money} · ${when}`;
+  }
   const money = row.free ? 'free - no wallet, no Lightning'
     : `stake ${String(row.stakeMsat / 1000n)} sat - a federation stake lock`;
   const when = row.phase === 'pending'
@@ -19578,6 +19696,609 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
   return { ok: true, host, url: `${host}/replay?round=${String(roundHex).toLowerCase()}&entry=${String(entryHex).toLowerCase()}` };
 }
 
+// ---- protocol/src/manifest.js
+// A GAME IS A MANIFEST (§0A.3, kanban #202, the owner 2026-10-06/07). The engine never imports a game's code: what it needs
+// from a game - which cores, which configs, how long a run may be, which of the engine's payout rules and with which
+// numbers - it reads from the game's manifest, and from the game's core only through the adapter a node installed.
+//
+//     GameManifest {
+//       game_name, game_dev_pubkey, version, parent_manifest_id, result_type,
+//       cores[] (each with its configs[]), run_ticks_max, round_period,
+//       payout_rule, payout_params (the rank curve's numerator and denominator), min_score,
+//       clients[], game_donation_set,
+//       [ATTESTED only] outcomes[], attestors[], attest_threshold,
+//       signature by game_dev_pubkey
+//     }
+//     game_id = H(GameManifest)
+//
+// The developer signs the BODY's id (TAG.gameManifestBody), not the bytes that carry the signature - an object whose
+// bytes held its own signature could not be signed - and game_id is the hash of body and signature together
+// (TAG.gameManifest), so two signatures over one body are two manifests, never one id for either.
+//
+// An update is a new manifest: the same key, the old id as its parent, the next version. A round names the exact
+// manifest it plays (contracts.js gameId), so an update never changes a round already written.
+//
+// WHO SIGNS (the owner 2026-10-07 15:40): the game developer's dev client (blwp-donor/src/manifest-sign.js), never a node -
+// a node only verifies, through `manifestStands`.
+//
+// NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected (Ed25519, the scheme the
+// donation authority signs with), and a manifest with no verifier to check it is not a game.
+
+
+
+/**
+ * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
+ * event - a prediction market), with no core and no run.
+ */
+const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2 });
+/**
+ * The engine's payout rules a manifest may pick (§0A.5): §18A's rank curve for a replayed run; pari-mutuel for an attested
+ * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks).
+ */
+const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1, PARI_MUTUEL: 2 });
+/** An attested game names 2 to 16 outcomes and 1 to 16 attestors. */
+const OUTCOMES_MAX = 16;
+const ATTESTORS_MAX = 16;
+
+/** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
+const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
+
+const MANIFEST_SIGNATURE_BYTES = 64;
+const NO_PARENT = new Uint8Array(32);
+
+const manIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const manSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const manIsZero = (b) => b.every((x) => x === 0);
+const manCompare32 = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+const manNameOf = (v, r) => Object.keys(r).find((k) => r[k] === v);
+
+/**
+ * THE BYTES THE DEVELOPER SIGNS. Cores in hash order, each core's configs in hash order, clients in hash order: the
+ * encoder asserts the order rather than sorting, so a manifest has one encoding.
+ */
+function encodeManifestBody(m) {
+  if (typeof m.gameName !== 'string' || m.gameName.length < 1 || m.gameName.length > 64) throw new Error('a game names itself in 1 to 64 characters');
+  if (!manIs32(m.gameDevPubkey)) throw new Error('a game names a 32-byte developer key');
+  if (!Number.isInteger(m.version) || m.version < 1) throw new Error('a manifest version is 1 or more');
+  if (!manIs32(m.parentManifestId)) throw new Error('a manifest names a 32-byte parent (zeros for the first)');
+  if (!manNameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED)`);
+  if (isAttested(m)) {
+    // AN ATTESTED GAME HAS NO CORE AND NO RUN (§0A.7a): the replay fields are written empty, so a reader of them finds
+    // nothing to replay, and its payout rule is pari-mutuel
+    if (!Array.isArray(m.cores) || m.cores.length !== 0) throw new Error('an attested game names no core: nothing of it is replayed');
+    if (m.runTicksMax !== 0) throw new Error('an attested game has no run: run_ticks_max is 0');
+    if (m.payoutRule !== PAYOUT_RULE.PARI_MUTUEL) throw new Error('an attested game pays by the pari-mutuel rule (§0A.7a)');
+    if (m.rankNumerator !== 0 || m.rankDenominator !== 0 || m.minScore !== 0) throw new Error('an attested game has no rank curve and no score: they are 0');
+    if (!Array.isArray(m.outcomes) || m.outcomes.length < 2 || m.outcomes.length > OUTCOMES_MAX
+        || !m.outcomes.every((o) => typeof o === 'string' && o.length >= 1 && o.length <= 64))
+      throw new Error(`an attested game names 2 to ${OUTCOMES_MAX} outcomes, each 1 to 64 characters`);
+    if (new Set(m.outcomes).size !== m.outcomes.length) throw new Error('an attested game names each outcome once');
+    if (!Array.isArray(m.attestors) || m.attestors.length < 1 || m.attestors.length > ATTESTORS_MAX || !m.attestors.every(manIs32))
+      throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
+    if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
+      throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+  } else {
+    if (!Array.isArray(m.cores) || m.cores.length < 1) throw new Error('a game names at least one core');
+    for (const c of m.cores) {
+      if (!manIs32(c.hash)) throw new Error('a core is named by its 32-byte hash');
+      if (!Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(manIs32)) throw new Error(`core ${toHex(c.hash).slice(0, 16)} names no 32-byte config`);
+    }
+    if (!Number.isInteger(m.runTicksMax) || m.runTicksMax < 1 || m.runTicksMax > 65535) throw new Error('run_ticks_max is 1 to 65535 ticks (a contract\'s blockTicks is a u16)');
+    if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) throw new Error(`a replayed game pays by the rank curve; payout rule ${m.payoutRule} is not one of the engine's for it (§0A.5)`);
+    if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
+        || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
+      throw new Error('the rank curve is a numerator below its denominator, both 1 to 255');
+    if (!Number.isInteger(m.minScore) || m.minScore < 0) throw new Error('min_score is a whole number of score units');
+  }
+  if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
+  if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
+  if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
+  if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
+
+  const w = new Writer();
+  w.u8(TYPE_GAME_MANIFEST);
+  w.u16(PROTOCOL_VERSION);
+  w.str(m.gameName);
+  w.bytes32(m.gameDevPubkey);
+  w.u32(m.version);
+  w.bytes32(m.parentManifestId);
+  w.u8(m.resultType);
+  w.vec(m.cores, (c, ww) => { ww.bytes32(c.hash); ww.vec(c.configs, (h, w3) => w3.bytes32(h), { sortedBy: manCompare32 }); },
+    { sortedBy: (a, b) => manCompare32(a.hash, b.hash) });
+  w.u16(m.runTicksMax);
+  w.u64(m.roundPeriodMs);
+  w.u8(m.payoutRule);
+  w.u8(m.rankNumerator);
+  w.u8(m.rankDenominator);
+  w.u32(m.minScore);
+  w.vec(m.clients, (h, ww) => ww.bytes32(h), { sortedBy: manCompare32 });
+  w.bytes32(m.gameDonationSetId);
+  // AN ATTESTED GAME'S OWN TERMS, AFTER EVERYTHING A REPLAYED GAME WRITES: every REPLAY manifest keeps its bytes and its id
+  if (isAttested(m)) {
+    w.vec(m.outcomes, (o, ww) => ww.str(o));
+    w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
+    w.u8(m.attestThreshold);
+  }
+  return w.finish();
+}
+
+function readBody(r) {
+  if (r.u8() !== TYPE_GAME_MANIFEST) throw new Error('not a game manifest');
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
+  const body = {
+    gameName: r.str(),
+    gameDevPubkey: r.bytes32(),
+    version: r.u32(),
+    parentManifestId: r.bytes32(),
+    resultType: r.u8(),
+    cores: r.vec((rr) => ({ hash: rr.bytes32(), configs: rr.vec((r3) => r3.bytes32()) })),
+    runTicksMax: r.u16(),
+    roundPeriodMs: r.u64(),
+    payoutRule: r.u8(),
+    rankNumerator: r.u8(),
+    rankDenominator: r.u8(),
+    minScore: r.u32(),
+    clients: r.vec((rr) => rr.bytes32()),
+    gameDonationSetId: r.bytes32(),
+  };
+  if (body.resultType === RESULT_TYPE.ATTESTED) {
+    body.outcomes = r.vec((rr) => rr.str());
+    body.attestors = r.vec((rr) => rr.bytes32());
+    body.attestThreshold = r.u8();
+  }
+  return body;
+}
+
+/** The digest the developer's key signs. */
+const manifestBodyId = (m) => taggedHash(TAG.gameManifestBody, encodeManifestBody(m));
+
+/** The manifest on the wire: its body, then the 64-byte signature. */
+function encodeManifest(m) {
+  if (!(m.signature instanceof Uint8Array) || m.signature.length !== MANIFEST_SIGNATURE_BYTES)
+    throw new Error(`a manifest carries its ${MANIFEST_SIGNATURE_BYTES}-byte signature`);
+  const body = encodeManifestBody(m);
+  const out = new Uint8Array(body.length + MANIFEST_SIGNATURE_BYTES);
+  out.set(body, 0); out.set(m.signature, body.length);
+  return out;
+}
+
+function decodeManifest(bytes) {
+  const r = new Reader(bytes);
+  const m = readBody(r);
+  m.signature = r.bytes(MANIFEST_SIGNATURE_BYTES);
+  r.end();
+  encodeManifestBody(m);                                    // bytes from anywhere are held to the encoder's rules
+  return m;
+}
+
+/** game_id = H(GameManifest): the body and its signature. */
+const gameIdOf = (m) => taggedHash(TAG.gameManifest, encodeManifest(m));
+
+/**
+ * IS THIS A GAME (§0A.3)? Its encoding stands, its developer's key signed its body, and its parent rule holds: the first
+ * manifest (version 1) names no parent; an update names one, and that parent is a manifest of the SAME key one version
+ * below. `parentOf(id)` hands back a manifest this node holds by id, or nothing - a parent it cannot see is refused,
+ * since nothing then says the update is the developer's. Answers, never throws: a manifest that is not a game is an
+ * ordinary refusal, by name.
+ */
+function manifestStands(m, { verify, parentOf = () => null } = {}) {
+  let digest, id;
+  try { digest = manifestBodyId(m); id = gameIdOf(m); }
+  catch (e) { return { ok: false, why: `that manifest does not encode: ${e.message}` }; }
+  const name = `game "${m.gameName}" ${toHex(id).slice(0, 16)}`;
+  if (typeof verify !== 'function') return { ok: false, why: `${name}: no verifier to check its developer's signature` };
+  let signed = false;
+  try { signed = verify(m.signature, digest, m.gameDevPubkey) === true; } catch { signed = false; }
+  if (!signed) return { ok: false, why: `${name}: its signature is not its developer key ${toHex(m.gameDevPubkey).slice(0, 16)}'s` };
+  if (m.version === 1) {
+    if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
+    return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
+  }
+  if (manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version ${m.version} names no parent; an update names the manifest it replaces` };
+  const parent = parentOf(m.parentManifestId);
+  if (!parent) return { ok: false, why: `${name}: its parent ${toHex(m.parentManifestId).slice(0, 16)} is not a manifest this node holds` };
+  if (!manSame(parent.gameDevPubkey, m.gameDevPubkey))
+    return { ok: false, why: `${name}: its parent is a manifest of another developer key - not a game (§0A.3)` };
+  if (parent.version + 1 !== m.version)
+    return { ok: false, why: `${name}: version ${m.version} after a parent of version ${parent.version}` };
+  return { ok: true, gameId: id, why: `${name} v${m.version}, an update of ${toHex(m.parentManifestId).slice(0, 16)} by the same key` };
+}
+
+/**
+ * MAY THIS ROUND BE PLAYED UNDER THIS MANIFEST (§0A.3, §0A.5; #202): it names the manifest's game, a core the manifest
+ * lists, a config the manifest lists for that core, a run no longer than run_ticks_max, the manifest's rank curve, and a
+ * min_score no lower than the manifest's (the game's floor; a round may ask more of its runs, never less).
+ */
+function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
+  const name = `game "${m.gameName}"`;
+  if (!contract || !manIs32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game' };
+  if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
+  // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
+  if (isAttested(m)) {
+    if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))
+      return { ok: false, why: `${name} is attested: its rounds name no core and no config (32 zero bytes each) - nothing of them is replayed` };
+    return { ok: true, attested: true };
+  }
+  if (!manIs32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };
+  const core = m.cores.find((c) => manSame(c.hash, contract.simCoreHash));
+  if (!core) return { ok: false, why: `${name} lists no core ${toHex(contract.simCoreHash).slice(0, 16)}` };
+  if (!manIs32(contract.configHash) || !core.configs.some((h) => manSame(h, contract.configHash)))
+    return { ok: false, why: `${name} lists no config ${manIs32(contract.configHash) ? toHex(contract.configHash).slice(0, 16) : '(none)'} for core ${toHex(core.hash).slice(0, 16)}` };
+  if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1 || contract.blockTicks > m.runTicksMax)
+    return { ok: false, why: `that round's run is ${contract.blockTicks} ticks; ${name} runs at most ${m.runTicksMax}` };
+  if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) return { ok: false, why: `${name} picks payout rule ${m.payoutRule}, which is not the engine's` };
+  if (contract.rankNumerator !== m.rankNumerator || contract.rankDenominator !== m.rankDenominator)
+    return { ok: false, why: `that round's rank curve is ${contract.rankNumerator}/${contract.rankDenominator}; ${name} pays ${m.rankNumerator}/${m.rankDenominator}` };
+  if (!Number.isInteger(contract.minScore) || contract.minScore < m.minScore)
+    return { ok: false, why: `that round's min_score ${contract.minScore} is below ${name}'s ${m.minScore}` };
+  // A ROUND OF A SERIES runs on the series' grid, and the game's round_period must be that grid (or 0: it asks none)
+  if (contract.seriesId !== undefined && contract.seriesId !== null) {
+    const period = seriesPeriodFits(m);
+    if (!period.ok) return period;
+  }
+  return { ok: true };
+}
+
+/**
+ * MAY THIS GAME RUN ON A SERIES OF `periodMs` (§0A.3 round_period; kanban #202)? Every series of this network runs on
+ * the one 90 s grid (series.js ROUND_PERIOD_MS), so a game whose manifest names another period has no series here; one
+ * naming 0 asks no period and runs on any.
+ */
+function seriesPeriodFits(m, periodMs = ROUND_PERIOD_MS) {
+  if (m.roundPeriodMs === 0n || m.roundPeriodMs === BigInt(periodMs)) return { ok: true };
+  return { ok: false, why: `game "${m.gameName}" runs every ${m.roundPeriodMs} ms, and this network's series run every ${periodMs} ms` };
+}
+
+// ---- protocol/src/attested.js
+// AN ATTESTED OUTCOME AND THE PARI-MUTUEL TABLE (§0A.7a, kanban #206, the owner 2026-10-07): the result of a round of an
+// attested game - a prediction market - is not a replayed run but the outcome its attestors sign. The game's manifest
+// names the outcomes, the attestor keys and how many of them must sign (k of n, chosen by the game dev); a round's
+// entries each back one outcome (contracts.js `pick`); and the payout is pari-mutuel: the losing picks' net stakes are
+// split over the winning picks in proportion to their net stakes. No game code runs anywhere in this.
+//
+//     OutcomeAttestation {
+//       round_id, outcome (index into the manifest's outcomes), observed_at_ms,
+//       signatures[] - each { attestor key, signature by it over the body's id }
+//     }
+//
+// The attestors sign the BODY's id (TAG.outcomeAttestation over round_id, outcome, observed_at_ms); signatures are not in
+// what they sign. NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected - Ed25519, the
+// scheme the game's own manifest is signed with.
+//
+// WHAT VERIFY MEANS WITHOUT A REPLAY: a seat checks the signatures against the manifest's attestor set and the threshold,
+// the round, and the outcome's range - nothing else of the world. WHAT AN OBJECTION IS: two attestations for one round,
+// each standing on its own, naming different outcomes. That pair is the proof; a round holding it settles on neither.
+
+
+
+
+const OUTCOME_SIGNATURE_BYTES = 64;
+
+const attIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const attSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** The bytes the attestors sign: the round, the outcome, when it was seen. */
+function encodeAttestationBody(a) {
+  if (!attIs32(a.roundId)) throw new Error('an attestation names its 32-byte round');
+  if (!Number.isInteger(a.outcome) || a.outcome < 0 || a.outcome > 255) throw new Error('an attestation names an outcome by its index, 0 to 255');
+  if (typeof a.observedAtMs !== 'bigint' || a.observedAtMs < 0n) throw new Error('observed_at_ms is a BigInt of milliseconds');
+  const w = new Writer();
+  w.u8(TYPE_OUTCOME_ATTESTATION);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(a.roundId);
+  w.u8(a.outcome);
+  w.u64(a.observedAtMs);
+  return w.finish();
+}
+
+/** The digest every attestor signs. */
+const attestationBodyId = (a) => taggedHash(TAG.outcomeAttestation, encodeAttestationBody(a));
+
+/** The attestation on the wire: its body, then its signatures (key, signature), in the order given. */
+function encodeAttestation(a) {
+  const w = new Writer();
+  w.bytes(encodeAttestationBody(a));
+  const sigs = a.signatures || [];
+  if (!Array.isArray(sigs)) throw new Error('an attestation carries a list of signatures');
+  w.vec(sigs, (s, ww) => {
+    if (!attIs32(s.key)) throw new Error('a signature names its 32-byte attestor key');
+    if (!(s.signature instanceof Uint8Array) || s.signature.length !== OUTCOME_SIGNATURE_BYTES) throw new Error(`an attestor's signature is ${OUTCOME_SIGNATURE_BYTES} bytes`);
+    ww.bytes32(s.key); ww.bytes(s.signature);
+  });
+  return w.finish();
+}
+
+function decodeAttestation(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_OUTCOME_ATTESTATION) throw new Error('not an outcome attestation');
+  const version = r.u16();
+  if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
+  const a = { roundId: r.bytes32(), outcome: r.u8(), observedAtMs: r.u64() };
+  a.signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(OUTCOME_SIGNATURE_BYTES) }));
+  r.end();
+  return a;
+}
+
+/**
+ * DOES THIS ATTESTATION STAND FOR THIS ROUND (§0A.7a)? Its round is this round; its outcome is one the manifest names; and
+ * at least the manifest's threshold of DISTINCT attestors the manifest names signed its body. Each refusal names its
+ * reason: another round's, an outcome out of range, a key the manifest does not name, a signature that does not verify,
+ * too few signatures. Answers, never throws.
+ */
+function attestationStands(a, { manifest, roundIdBytes, verify }) {
+  if (!isAttested(manifest)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
+  let digest;
+  try { digest = attestationBodyId(a); } catch (e) { return { ok: false, why: `that attestation does not encode: ${e.message}` }; }
+  if (!attIs32(roundIdBytes) || !attSame(a.roundId, roundIdBytes))
+    return { ok: false, why: `that attestation is for round ${toHex(a.roundId).slice(0, 16)}, not this round ${attIs32(roundIdBytes) ? toHex(roundIdBytes).slice(0, 16) : ''}`.trim() };
+  if (a.outcome >= manifest.outcomes.length)
+    return { ok: false, why: `that attestation names outcome ${a.outcome}, out of range: game "${manifest.gameName}" has ${manifest.outcomes.length} outcomes (0 to ${manifest.outcomes.length - 1})` };
+  if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
+  const named = new Set(manifest.attestors.map(toHex));
+  const signed = new Set();
+  for (const s of a.signatures || []) {
+    const k = toHex(s.key);
+    if (!named.has(k)) return { ok: false, why: `that attestation is signed by key ${k.slice(0, 16)}, which game "${manifest.gameName}" does not name as an attestor` };
+    let good = false;
+    try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
+    if (!good) return { ok: false, why: `attestor ${k.slice(0, 16)}'s signature on that attestation does not verify` };
+    signed.add(k);
+  }
+  if (signed.size < manifest.attestThreshold)
+    return { ok: false, why: `that attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${manifest.attestThreshold} of its ${manifest.attestors.length}` };
+  return { ok: true, outcome: a.outcome, label: manifest.outcomes[a.outcome], signers: signed.size,
+    why: `outcome ${a.outcome} "${manifest.outcomes[a.outcome]}", signed by ${signed.size} of ${manifest.attestors.length} attestors (threshold ${manifest.attestThreshold})` };
+}
+
+/**
+ * THE PARI-MUTUEL TABLE (§0A.7a; the owner 2026-10-07): out of each entry's stake the fee and the donation as for any round
+ * (§0A.8, kanban #205 - the entry's own feeMsat and donationMsat, already checked against the contract at the door), and
+ * its NET stake into the pool. The losing picks' net stakes are split over the winning picks in proportion to each
+ * winner's net stake, floored; the msats the floors leave go one each to the winners in the order of their entry ids.
+ * Nobody picked the outcome: every entry's net stake goes back to it. Every millisatoshi of the gross is in the table:
+ * fees + donations + payouts = gross. `entries`: [{ entryId (hex or bytes), stakeMsat, feeMsat, donationMsat, pick }].
+ */
+function pariMutuelTable({ entries, outcome }) {
+  if (!Number.isInteger(outcome) || outcome < 0) throw new Error('the table is built for an attested outcome index');
+  const rows = entries.map((e) => {
+    const id = typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId);
+    const net = e.stakeMsat - e.feeMsat - e.donationMsat;
+    if (net < 0n) throw new Error(`entry ${id.slice(0, 16)} pays more in fee and donation than it stakes`);
+    if (!Number.isInteger(e.pick)) throw new Error(`entry ${id.slice(0, 16)} backs no outcome`);
+    return { entryId: id, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat, netMsat: net, pick: e.pick, won: e.pick === outcome };
+  }).sort((x, y) => (x.entryId < y.entryId ? -1 : x.entryId > y.entryId ? 1 : 0));
+  const sum = (xs) => xs.reduce((t, x) => t + x, 0n);
+  const winners = rows.filter((r) => r.won);
+  const losers = rows.filter((r) => !r.won);
+  const losingPool = sum(losers.map((r) => r.netMsat));
+  const winningNet = sum(winners.map((r) => r.netMsat));
+  let refunded = false;
+  if (!winners.length) {
+    // NOBODY BACKED IT: each net stake back to its own entry
+    for (const r of rows) r.payoutMsat = r.netMsat;
+    refunded = true;
+  } else if (winningNet === 0n) {
+    // A FREE ROUND (nothing staked): somebody was right, and there is nothing to split - each net (0) is its own. Not a refund:
+    // measured live (kanban #206), calling it one told the right pick "nobody picked it".
+    for (const r of rows) r.payoutMsat = r.netMsat;
+  } else {
+    for (const r of losers) r.payoutMsat = 0n;
+    let given = 0n;
+    for (const r of winners) { r.payoutMsat = r.netMsat + (losingPool * r.netMsat) / winningNet; given += r.payoutMsat - r.netMsat; }
+    let left = losingPool - given;
+    for (let i = 0; left > 0n; i = (i + 1) % winners.length, left--) winners[i].payoutMsat += 1n;
+  }
+  const gross = sum(rows.map((r) => r.stakeMsat));
+  const fees = sum(rows.map((r) => r.feeMsat));
+  const donations = sum(rows.map((r) => r.donationMsat));
+  const paid = sum(rows.map((r) => r.payoutMsat));
+  if (fees + donations + paid !== gross) throw new Error(`the table does not balance: ${fees} + ${donations} + ${paid} is not the gross ${gross}`);
+  return { outcome, refunded, grossMsat: gross, feesMsat: fees, donationsMsat: donations, poolMsat: losingPool + winningNet,
+    losingPoolMsat: losingPool, winningNetMsat: winningNet, payoutsMsat: paid, rows };
+}
+
+/**
+ * THE ROUND'S STANDING ON ITS ATTESTATIONS: none yet (OPEN), one outcome (ATTESTED), or two standing attestations of
+ * different outcomes (DISPUTED - the pair is the proof, and the round settles on neither). `held` is every standing
+ * attestation a seat keeps for the round, decoded.
+ */
+function outcomeStanding(held) {
+  if (!held.length) return { state: 'OPEN' };
+  const outcomes = [...new Set(held.map((a) => a.outcome))];
+  if (outcomes.length === 1) return { state: 'ATTESTED', outcome: outcomes[0] };
+  return { state: 'DISPUTED', outcomes, why: `two standing attestations name outcomes ${outcomes.join(' and ')}: the pair is proof the attestors contradicted themselves, and the round settles on neither` };
+}
+
+/**
+ * THE OUTCOME IS FINAL (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): the first standing attestation, held for the
+ * round's objection window (600 s, §13A) with no contradiction. `held` is every standing attestation the seat keeps, each
+ * with the `receivedMs` it came at on the seat's clock, oldest first. Answers the standing, whether it is final, and when
+ * it is (or will be). A contradiction inside the window makes the round DISPUTED and nothing settles; one after it is
+ * still held as proof (`outcomeStanding` says DISPUTED), and a settlement already made is not undone.
+ */
+function outcomeFinality(held, { windowMs, nowMs }) {
+  const standing = outcomeStanding(held);
+  if (standing.state !== 'ATTESTED') return { ...standing, final: false };
+  const firstMs = Math.min(...held.map((a) => Number(a.receivedMs)));
+  const finalAtMs = firstMs + Number(windowMs);
+  return { ...standing, final: Number(nowMs) >= finalAtMs, firstMs, finalAtMs };
+}
+
+/**
+ * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
+ * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
+ */
+function attestationTimely(a, { entryCloseMs, nowMs }) {
+  if (BigInt(nowMs) < BigInt(entryCloseMs))
+    return { ok: false, why: `that round's entries are still open (they close at ${new Date(Number(entryCloseMs)).toISOString()}): no outcome is taken before the last pick` };
+  if (BigInt(a.observedAtMs) < BigInt(entryCloseMs))
+    return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the round's entries closed at ${new Date(Number(entryCloseMs)).toISOString()}` };
+  return { ok: true };
+}
+
+// ---- blwp-client/src/market.js
+// A MARKET IN THE PAGE (kanban #206 slice 2, §0A.7a; the owner 2026-10-07, decisions A and B of plan 777): the pick sheet's
+// model, the pick handed to the seats, the outcome checked by the page itself, and the lines the lobby draws.
+//
+// - The sheet (#blwp-pick in index.html) is drawn from `pickSheet`: one button per outcome, the stake, the 5% fee line and
+//   the 0-5% donation line. Outcome labels and attestor keys come from the page's PINNED known-games list (`marketOf`),
+//   never from a node; a market the page does not pin is read from its signed manifest (GET /game-manifest, checked to hash
+//   to the round's game id) and staked on only after the second confirmation (§0A.6) - `needsConfirm`.
+// - A pick plays no run: the page hands the entry and its locks to the seats itself (`submitPick`), no session opens, and
+//   the join ends in state `picked` - Unity does not take it over.
+// - The outcome is the seats' GET /outcome, but believed only once its attestation verifies against the attestors the page
+//   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
+
+
+
+
+
+
+
+const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
+
+/**
+ * THE MARKET A ROUND PLAYS, as this page may stake on it: pinned (`known: true`), or - for a game the page does not pin -
+ * from the manifest a seat served, only if that manifest IS the round's game (its id) and is attested; `needsConfirm` then.
+ * null for a round that is not a market.
+ */
+function marketForRound(round, { manifestBytes = null } = {}) {
+  if (!round || !(round.gameId instanceof Uint8Array)) return null;
+  const pinned = marketOf(round.gameId);
+  if (pinned) return { ...pinned, needsConfirm: false };
+  if (!manifestBytes) return null;
+  let m;
+  try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
+  if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
+  return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
+    attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [] };
+}
+
+/**
+ * THE PICK SHEET: the market's outcomes as buttons, and what a pick costs out of the stake - the fee (5%, §0A.8), the
+ * donation (0-5%, the player's own setting) and the net stake that is at risk. An unpinned market carries the second
+ * confirmation's words: its developer key and manifest id.
+ */
+function pickSheet({ market, stakeMsat, donationBps = 500 }) {
+  const stake = BigInt(stakeMsat);
+  const fee = entryFeeMsat(stake);
+  const donation = (stake * BigInt(donationBps)) / 10000n;
+  const net = stake - fee - donation;
+  return {
+    title: `${market.name} - pick one`,
+    outcomes: market.outcomes.map((label, index) => ({ index, label })),
+    lines: {
+      stake: `stake ${sats(stake)} sats`,
+      fee: `node fee 5%: ${sats(fee)} sats`,
+      donation: `donation ${(donationBps / 100).toFixed(donationBps % 100 ? 1 : 0)}%: ${sats(donation)} sats (half to the protocol devs, half to ${market.name}'s dev)`,
+      net: `at risk on your pick: ${sats(net)} sats`,
+    },
+    stakeMsat: stake, feeMsat: fee, donationMsat: donation, netMsat: net,
+    attestors: `outcome by ${market.threshold} of ${market.attestors.length} attestors named by ${market.name}'s dev`,
+    confirm: market.needsConfirm
+      ? `${market.name} is not on this page's list of known markets. Its developer key is ${market.devKey.slice(0, 16)}… and its manifest ${market.gameId.slice(0, 16)}…; `
+        + 'only its attestors decide the outcome. Stake on it anyway?'
+      : null,
+  };
+}
+
+/**
+ * HAND A PICK TO THE ROUND'S SEATS (no session, no run): the entry to every seat, then its stake lock and fee lock as the
+ * client hands them (`handLock`). Answers each seat's word and the entry id.
+ */
+async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
+  const eid = entryId(entry);
+  const bytes = encodeEntryContract(entry);
+  const entries = await Promise.all(nodes.map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes });
+      return { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
+    } catch (e) { return { node, status: 0, why: e.message }; }
+  }));
+  const took = entries.filter((x) => x.status === 201).map((x) => x.node);
+  if (!took.length) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
+  const lock = stakeLock ? await handLock({ entryId: eid, fields: stakeLock.fields, nodes: took, needed: took.length, fetcher }) : null;
+  const feeLock = stakeLock && stakeLock.feeLock ? await handLock({ entryId: eid, fields: stakeLock.feeLock.fields, nodes: took, needed: took.length, fetcher, door: 'fee-lock' }) : null;
+  return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock, feeLock };
+}
+
+/** Ed25519 through the browser's WebCrypto; null where the browser cannot (the attestation is then shown unverified). */
+async function webCryptoEd25519(signature, message, key) {
+  const subtle = globalThis.crypto && globalThis.crypto.subtle;
+  if (!subtle) return null;
+  try {
+    const k = await subtle.importKey('raw', key, { name: 'Ed25519' }, false, ['verify']);
+    return await subtle.verify({ name: 'Ed25519' }, k, signature, message);
+  } catch { return null; }
+}
+
+/**
+ * IS THE SEATS' OUTCOME THE ATTESTORS'? The attestation's own bytes (GET /outcome), checked against the market this page
+ * pinned (or confirmed): its round, an outcome in range, the threshold of distinct named attestors, every signature good.
+ * `verify(signature, digest, key)` may be async (WebCrypto); a verifier that cannot answer leaves it `unverifiable`.
+ */
+async function checkAttestation({ attestationHex, market, roundIdHex, verify = webCryptoEd25519 }) {
+  let a;
+  try { a = decodeAttestation(fromHex(String(attestationHex))); } catch (e) { return { verified: false, why: `not an attestation: ${e.message}` }; }
+  const digest = attestationBodyId(a);
+  const said = new Map();
+  for (const s of a.signatures) {
+    const v = await verify(s.signature, digest, s.key);
+    if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the outcome is shown unverified' };
+    said.set(`${toHex(s.key)}:${toHex(s.signature)}`, v === true);
+  }
+  const manifest = { gameName: market.name, resultType: RESULT_TYPE.ATTESTED, outcomes: market.outcomes,
+    attestors: market.attestors.map((k) => fromHex(k)), attestThreshold: market.threshold };
+  const stands = attestationStands(a, { manifest, roundIdBytes: fromHex(roundIdHex),
+    verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
+  return stands.ok ? { verified: true, outcome: stands.outcome, label: stands.label, why: stands.why } : { verified: false, why: stands.why };
+}
+
+/**
+ * THE LOBBY'S MARKET LINES (Unity draws them under the round rows, kind 'market'): for each pick this page made, the pick
+ * while its round is open, then the outcome as the page checked it, and what it means for this pick.
+ * `picks`: [{ roundIdHex, entryIdHex, market, pick, stakeMsat, entryCloseMs }]; `outcomes`: Map roundIdHex -> the seats'
+ * GET /outcome answer with `check` (checkAttestation's) added.
+ */
+function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
+  const lines = [];
+  const left = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+  for (const p of picks) {
+    const label = p.market.outcomes[p.pick];
+    const head = `${p.market.name} ${p.roundIdHex.slice(0, 8)}`;
+    const o = outcomes.get(p.roundIdHex);
+    if (nowMs < Number(p.entryCloseMs)) {
+      lines.push({ kind: 'market', text: `${p.market.name}: you picked '${label}' · ${sats(p.stakeMsat)} sats · closes in ${left(Number(p.entryCloseMs) - nowMs)}` });
+      continue;
+    }
+    if (!o || o.state === 'OPEN') {
+      lines.push({ kind: 'market', text: `${head}: you picked '${label}' · waiting for the outcome · ${p.market.threshold} of ${p.market.attestors.length} attestors` });
+      continue;
+    }
+    if (o.state === 'DISPUTED') {
+      lines.push({ kind: 'market', text: `${head}: the attestors contradicted themselves, nothing is paid; your stake comes back at expiry` });
+      continue;
+    }
+    const check = o.check || { verified: false, why: 'not checked yet' };
+    if (!check.verified) {
+      lines.push({ kind: 'market', text: `${head}: the seats say '${o.label}' - UNVERIFIED (${check.why})` });
+      continue;
+    }
+    const row = o.table && o.table.rows ? o.table.rows.find((r) => r.entryId === p.entryIdHex) : null;
+    const signed = `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
+    if (!row) { lines.push({ kind: 'market', text: `${head}: ${signed} · your pick is not in the seats' table` }); continue; }
+    const net = BigInt(row.netMsat);
+    const pay = BigInt(row.payoutMsat);
+    // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
+    if (BigInt(p.stakeMsat) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
+    else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
+    else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
+    else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
+  }
+  return lines;
+}
+
 return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,
          discover: discover, agreedChain: agreedChain,
@@ -19644,6 +20365,8 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          replayLinkFor: replayLinkFor, httpsOfEndpoint: httpsOfEndpoint,
          askForWinnings: askForWinnings, resendWinnings: resendWinnings, winningsAddressOf: winningsAddressOf,
          winningsQualify: winningsQualify,
+         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,
+         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;

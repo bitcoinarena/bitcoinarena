@@ -90,7 +90,8 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/object
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
-import { decodeAttestation, attestationStands, attestationBodyId, outcomeStanding, pariMutuelTable } from '../../protocol/src/attested.js';
+import { encodeManifest } from '../../protocol/src/manifest.js';
+import { decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -349,13 +350,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const plugin = attestedOf(c);
     if (!plugin) return null;
     const rows = round.outcomeAttestations(rid);
-    const held = rows.map((r) => decodeAttestation(new Uint8Array(r.bytes)));
-    const standing = outcomeStanding(held);
+    const held = rows.map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    // FINAL 600 s AFTER THE FIRST STANDING ATTESTATION, on this seat's clock (§0A.7a slice 2)
+    const standing = outcomeFinality(held, { windowMs: c.objectionWindowMs, nowMs: round.now() });
     const out = { state: standing.state, outcomes: plugin.manifest.outcomes, attestThreshold: plugin.manifest.attestThreshold,
-      attestors: plugin.manifest.attestors.length };
+      attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs) };
     if (standing.state === 'ATTESTED') {
       Object.assign(out, { outcome: standing.outcome, label: plugin.manifest.outcomes[standing.outcome],
-        observedAtMs: String(held[0].observedAtMs) });
+        observedAtMs: String(held[0].observedAtMs), final: standing.final, finalAtMs: String(standing.finalAtMs),
+        // the attestation's own bytes: a page checks its signatures against the manifest it pinned, not this seat's word
+        attestation: toHex(new Uint8Array(rows[0].bytes)) });
       if (table) {
         // THE ENTRIES THAT COUNT: a free round's every entry; a paying round's only those whose stake this seat has seen
         const counted = round.entriesOf(rid).filter(({ entryId }) => c.stakeMsat === 0n || !!round.stakeSeen(entryId))
@@ -367,6 +371,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       Object.assign(out, { outcomesNamed: standing.outcomes, why: standing.why, proof: rows.map((r) => toHex(new Uint8Array(r.bytes))) });
     }
     return out;
+  };
+  // AN ATTESTED ROUND SETTLES ONCE ITS OUTCOME IS FINAL (§0A.7a slice 2): a sweep over the rounds holding an attestation and
+  // no ACCEPTED settlement, every 5 s while any is waiting - each asked to settle; the settlement itself holds one that is
+  // not final yet, or DISPUTED, so a round is only ever settled on a final outcome. Started by the first attestation held.
+  let attestedSweep = null;
+  const settleAttestedSoon = () => {
+    if (attestedSweep || !settlements) return;
+    attestedSweep = setInterval(async () => {
+      const ids = round.db.prepare('SELECT DISTINCT round_id FROM outcome_attestations').all().map((r) => new Uint8Array(r.round_id));
+      const waiting = ids.filter((rid) => { const k = round.lockSettlement(rid); return !(k && k.state === 'ACCEPTED'); });
+      if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
+      for (const rid of waiting) {
+        const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
+        if (got && got.state && got.state !== 'HELD') console.log(`[outcome] ${toHex(rid).slice(0, 16)} settlement: ${got.state} - ${got.why || ''}`);
+      }
+    }, 5000);
+    if (attestedSweep.unref) attestedSweep.unref();
   };
   // A LISTING GROUPED BY GAME: each hosted game with the ids of its rounds in the listing, in listing order
   const groupedByGame = (rows) => {
@@ -1766,6 +1787,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return recoveringNow;
   };
   const recoveringSettlements = resumingCloses.then(() => recoverSettlements());
+  // AN ATTESTED ROUND HELD BEFORE A RESTART is settled once final by the same sweep (§0A.7a slice 2)
+  const attestedBoot = setTimeout(() => settleAttestedSoon(), 1000);
+  if (attestedBoot.unref) attestedBoot.unref();
   const settleRecoverTimer = setInterval(() => {
     if (!shuttingDown && round.lockSettlementsIn(SUBMITTING).length) recoverSettlements();
   }, finality.maxEveryMs ?? 60000);
@@ -3390,8 +3414,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
         const stands = attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 });
         if (!stands.ok) return text(res, 409, stands.why);
+        // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
+        const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now() });
+        if (!timely.ok) return text(res, 409, timely.why);
         const fresh = round.putOutcomeAttestation({ bodyId: attestationBodyId(a), roundId: a.roundId, outcome: a.outcome, observedAtMs: a.observedAtMs,
-          bytes: raw });
+          bytes: raw, receivedMs: round.now() });
+        if (fresh) settleAttestedSoon();
         const now = outcomeOf(a.roundId, c);
         console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
@@ -3890,6 +3918,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!game || !Array.isArray(game.donationSet)) return text(res, 404, 'this node holds no donation set of that round\'s game');
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(encodeDonationSet(game.donationSet)));
+      }
+      // THE ROUND'S GAME MANIFEST (§0A.3, kanban #206 slice 2): its signed bytes, as this node hosts the game. A page takes it
+      // only if it hashes to the round's game_id - for a game it does not pin (a market), shown with its developer key and
+      // manifest id and staked on only after the second confirmation (§0A.6).
+      if (req.method === 'GET' && url.pathname === '/game-manifest') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(rid);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const game = c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
+        if (!game) return text(res, 404, 'this node does not host that round\'s game');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(encodeManifest(game.manifest)));
       }
       if (req.method === 'GET' && url.pathname === '/donation-set') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -4712,6 +4754,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         shuttingDown = true;
         clearInterval(settleRecoverTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         clearInterval(resignTimer);
+        if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
+        clearTimeout(attestedBoot);
         clearTimeout(resignFirst);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);

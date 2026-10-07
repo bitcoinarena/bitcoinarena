@@ -21,14 +21,14 @@ import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
 import { isAttested } from './manifest.js';
 
-export const ATTESTATION_SIGNATURE_BYTES = 64;
+export const OUTCOME_SIGNATURE_BYTES = 64;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const attIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const attSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** The bytes the attestors sign: the round, the outcome, when it was seen. */
 export function encodeAttestationBody(a) {
-  if (!is32(a.roundId)) throw new Error('an attestation names its 32-byte round');
+  if (!attIs32(a.roundId)) throw new Error('an attestation names its 32-byte round');
   if (!Number.isInteger(a.outcome) || a.outcome < 0 || a.outcome > 255) throw new Error('an attestation names an outcome by its index, 0 to 255');
   if (typeof a.observedAtMs !== 'bigint' || a.observedAtMs < 0n) throw new Error('observed_at_ms is a BigInt of milliseconds');
   const w = new Writer();
@@ -50,8 +50,8 @@ export function encodeAttestation(a) {
   const sigs = a.signatures || [];
   if (!Array.isArray(sigs)) throw new Error('an attestation carries a list of signatures');
   w.vec(sigs, (s, ww) => {
-    if (!is32(s.key)) throw new Error('a signature names its 32-byte attestor key');
-    if (!(s.signature instanceof Uint8Array) || s.signature.length !== ATTESTATION_SIGNATURE_BYTES) throw new Error(`an attestor's signature is ${ATTESTATION_SIGNATURE_BYTES} bytes`);
+    if (!attIs32(s.key)) throw new Error('a signature names its 32-byte attestor key');
+    if (!(s.signature instanceof Uint8Array) || s.signature.length !== OUTCOME_SIGNATURE_BYTES) throw new Error(`an attestor's signature is ${OUTCOME_SIGNATURE_BYTES} bytes`);
     ww.bytes32(s.key); ww.bytes(s.signature);
   });
   return w.finish();
@@ -63,7 +63,7 @@ export function decodeAttestation(bytes) {
   const version = r.u16();
   if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
   const a = { roundId: r.bytes32(), outcome: r.u8(), observedAtMs: r.u64() };
-  a.signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(ATTESTATION_SIGNATURE_BYTES) }));
+  a.signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(OUTCOME_SIGNATURE_BYTES) }));
   r.end();
   return a;
 }
@@ -78,8 +78,8 @@ export function attestationStands(a, { manifest, roundIdBytes, verify }) {
   if (!isAttested(manifest)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
   let digest;
   try { digest = attestationBodyId(a); } catch (e) { return { ok: false, why: `that attestation does not encode: ${e.message}` }; }
-  if (!is32(roundIdBytes) || !same(a.roundId, roundIdBytes))
-    return { ok: false, why: `that attestation is for round ${toHex(a.roundId).slice(0, 16)}, not this round ${is32(roundIdBytes) ? toHex(roundIdBytes).slice(0, 16) : ''}`.trim() };
+  if (!attIs32(roundIdBytes) || !attSame(a.roundId, roundIdBytes))
+    return { ok: false, why: `that attestation is for round ${toHex(a.roundId).slice(0, 16)}, not this round ${attIs32(roundIdBytes) ? toHex(roundIdBytes).slice(0, 16) : ''}`.trim() };
   if (a.outcome >= manifest.outcomes.length)
     return { ok: false, why: `that attestation names outcome ${a.outcome}, out of range: game "${manifest.gameName}" has ${manifest.outcomes.length} outcomes (0 to ${manifest.outcomes.length - 1})` };
   if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
@@ -122,10 +122,14 @@ export function pariMutuelTable({ entries, outcome }) {
   const losingPool = sum(losers.map((r) => r.netMsat));
   const winningNet = sum(winners.map((r) => r.netMsat));
   let refunded = false;
-  if (!winners.length || winningNet === 0n) {
+  if (!winners.length) {
     // NOBODY BACKED IT: each net stake back to its own entry
     for (const r of rows) r.payoutMsat = r.netMsat;
     refunded = true;
+  } else if (winningNet === 0n) {
+    // A FREE ROUND (nothing staked): somebody was right, and there is nothing to split - each net (0) is its own. Not a refund:
+    // measured live (kanban #206), calling it one told the right pick "nobody picked it".
+    for (const r of rows) r.payoutMsat = r.netMsat;
   } else {
     for (const r of losers) r.payoutMsat = 0n;
     let given = 0n;
@@ -152,4 +156,31 @@ export function outcomeStanding(held) {
   const outcomes = [...new Set(held.map((a) => a.outcome))];
   if (outcomes.length === 1) return { state: 'ATTESTED', outcome: outcomes[0] };
   return { state: 'DISPUTED', outcomes, why: `two standing attestations name outcomes ${outcomes.join(' and ')}: the pair is proof the attestors contradicted themselves, and the round settles on neither` };
+}
+
+/**
+ * THE OUTCOME IS FINAL (§0A.7a, kanban #206 slice 2, the owner 2026-10-07): the first standing attestation, held for the
+ * round's objection window (600 s, §13A) with no contradiction. `held` is every standing attestation the seat keeps, each
+ * with the `receivedMs` it came at on the seat's clock, oldest first. Answers the standing, whether it is final, and when
+ * it is (or will be). A contradiction inside the window makes the round DISPUTED and nothing settles; one after it is
+ * still held as proof (`outcomeStanding` says DISPUTED), and a settlement already made is not undone.
+ */
+export function outcomeFinality(held, { windowMs, nowMs }) {
+  const standing = outcomeStanding(held);
+  if (standing.state !== 'ATTESTED') return { ...standing, final: false };
+  const firstMs = Math.min(...held.map((a) => Number(a.receivedMs)));
+  const finalAtMs = firstMs + Number(windowMs);
+  return { ...standing, final: Number(nowMs) >= finalAtMs, firstMs, finalAtMs };
+}
+
+/**
+ * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
+ * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
+ */
+export function attestationTimely(a, { entryCloseMs, nowMs }) {
+  if (BigInt(nowMs) < BigInt(entryCloseMs))
+    return { ok: false, why: `that round's entries are still open (they close at ${new Date(Number(entryCloseMs)).toISOString()}): no outcome is taken before the last pick` };
+  if (BigInt(a.observedAtMs) < BigInt(entryCloseMs))
+    return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the round's entries closed at ${new Date(Number(entryCloseMs)).toISOString()}` };
+  return { ok: true };
 }
