@@ -1282,6 +1282,16 @@
         if (window.BLWP_JOIN !== joinAtRunOver || Date.now() - next.runOverAt > 600000) { next.state = 'none'; return; }
         const r = BLWPCLIENT.nextRoundAfter(played, window.BLWP_LOBBY_ROWS, Date.now());
         if (!r) { setTimeout(look, 1000); return; }
+        // A NEXT PAID ROUND ONLY WITH ITS STAKE IN THE PLAYER WALLET (kanban #158, comment 592: measured on 0.0.2832, round
+        // dcd6cbb6 - the page entered the next paid round with 73 sat for a 100 sat stake, its join waited on a deposit
+        // nobody asked for, and the result card held the screen past 420 s). Nobody pressed PLAY on it, so no deposit is
+        // asked: the card lets go at its hold and the lobby comes back, where PLAY asks it.
+        const bal = window.BLWP_WALLET_BALANCE; const stakeSats = r.free ? 0 : BLWPCLIENT.lobbyStakeSats(r);
+        if (stakeSats > 0 && bal && Number.isFinite(Number(bal.sats)) && Number(bal.sats) < stakeSats) {
+          next.state = 'none';
+          console.log(`[blwp] next round ${r.id.slice(0, 16)}: not entered - its stake is ${stakeSats} sat and the player wallet holds ${bal.sats} sat`);
+          return;
+        }
         Object.assign(next, { state: 'joining', round: r.id, startMs: Number(r.startTimeMs) });
         const act = window.BLWP_LOBBY_ACT;
         const took = act && act.join(r.id, { holdUntilMs: Number(r.startTimeMs), next: true });
@@ -1316,18 +1326,35 @@
       window.BLWP_NEXT_VIEW = v;
       setTimeout(paintNext, 250);
     })();
-    document.getElementById('blwp-next-exit').addEventListener('click', () => {
-      // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
-      // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
-      window.BLWP_CONTINUE = false;
+    // THE NEXT ROUND'S JOIN DROPPED (exit game, or kanban #158: a continuing join that would need a deposit). A join still
+    // being made, or held for its start, is dropped; a stake a paying round already locked refunds by the lock's own expiry
+    // (§23.1) - nothing new is sent.
+    function cancelNextJoin(state) {
       const n = window.BLWP_NEXT; const j = window.BLWP_JOIN;
-      if (n) n.state = 'exited';
+      if (n) n.state = state;
       if (j && n && n.round && j.round === n.round && j.state === 'joining') {
         // "refused" with no reason: Unity, which took this join as its own, stops waiting and shows the plain lobby
         j.cancelled = true; j.state = 'refused'; j.why = ''; j.stage = ''; j.held = false;
         window.BLWP_ROUND = undefined; window.BLWP_ENTRY = undefined;
         history.replaceState(null, '', location.pathname + (typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : ''));
       }
+    }
+    // A DEPOSIT IS ASKED ONLY FOR A ROUND THE PLAYER PRESSED PLAY ON (kanban #158): the next round the page entered by
+    // itself is dropped instead - Unity shows the lobby, and PLAY there asks the deposit.
+    window.BLWP_ASK_JOIN_DEPOSIT = (offer, show) => {
+      const j = window.BLWP_JOIN;
+      if (j && j.next) {
+        cancelNextJoin('none');
+        console.log('[blwp] next round: not entered - it needs a deposit into the player wallet, and nobody pressed PLAY on it');
+        return Promise.reject(new Error('the next round needs a deposit; it is not entered'));
+      }
+      return show(offer);
+    };
+    document.getElementById('blwp-next-exit').addEventListener('click', () => {
+      // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
+      // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
+      window.BLWP_CONTINUE = false;
+      cancelNextJoin('exited');
       console.log('[blwp] exit game: no next round');
       document.getElementById('blwp-next').style.display = 'none';
     });
@@ -1613,7 +1640,7 @@
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
-            askDeposit: (offer) => showDepositOffer(offer, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT }),
+            askDeposit: (offer) => window.BLWP_ASK_JOIN_DEPOSIT(offer, (o) => showDepositOffer(o, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT })),
             onDeposit: (d) => {
               window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
               console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
