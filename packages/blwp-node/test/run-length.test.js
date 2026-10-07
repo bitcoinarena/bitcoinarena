@@ -12,32 +12,32 @@
 // accepted; 9600 ticks of a 9000-tick run were all stored and all replayed;
 // and `transcriptBelongsToEntry` reported the run length as unchecked.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
-import { TRUCK_BEFORE_FORK_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../../nextblock/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { lastTickOfRun, runTicksForEntry, runLengthIsTheCores } from '../../protocol/src/contracts.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NOW = 1788700000000;
 const contractWith = (blockTicks) => ({
@@ -152,7 +152,7 @@ test('replay refuses a transcript that reaches past the run, however it was got'
 // replay - the run ends at its tick 4919, the core ends it MISSED there, and one tick more is a transcript past the run.
 test('an 82 s round replays to its own 4920 ticks: a whole run replays and ends MISSED, one tick more is refused', async () => {
   const { coreOfGame } = await import('../src/plugins.js');
-  const { NEXTBLOCK } = await import('../../core/plugin/nextblock.js');
+  const { NEXTBLOCK } = await import('../../nextblock/plugin/nextblock.js');
   const found = coreOfGame(contractWith(4920), NEXTBLOCK);
   assert.equal(found.ok, true, found.why);
   const core = { ...found.core, config: found.config, runTicks: found.runTicks };
@@ -173,7 +173,7 @@ test('an 82 s round replays to its own 4920 ticks: a whole run replays and ends 
 // core's under its config, not the truck's BLOCK_TICKS - measured on the round store itself.
 test('a round\'s run length is its own core\'s under its config: the counter opens at its 120 and refuses 9000, and a store without its game opens neither', async () => {
   const { COUNTER, CONFIGS, COUNTER_GAME, COUNTER_GAME_ID } = await import('./cores/counter.js');
-  const { NEXTBLOCK } = await import('../../core/plugin/nextblock.js');
+  const { NEXTBLOCK } = await import('../../nextblock/plugin/nextblock.js');
   const { fromHex } = await import('../../protocol/src/hash.js');
   const [LOW] = CONFIGS;
   const counterRound = (blockTicks) => ({ ...contractWith(blockTicks), gameId: COUNTER_GAME_ID, simCoreHash: fromHex(COUNTER.hash), configHash: LOW.hash });

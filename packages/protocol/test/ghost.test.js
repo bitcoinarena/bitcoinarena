@@ -3,7 +3,7 @@
 // 0.9: "Other trucks are visible ghosts with no collision." 0.10: "Ghost
 // snapshots are never inputs to this calculation."
 //
-// The second sentence is guarded in `packages/core` by an argument list with
+// The second sentence is guarded in `packages/nextblock` by an argument list with
 // nowhere to put one - see `private-world.test.js` there. This file guards the
 // first: a frame that says where somebody's truck was has to be a picture of a
 // run they published inputs for, or a node fans out whatever coordinates it

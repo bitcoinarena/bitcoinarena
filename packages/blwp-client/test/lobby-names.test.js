@@ -28,7 +28,7 @@ import { playerFor, tabSeed } from '../src/join.js';
 import { playersLine } from '../src/ghost-field.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const random = (n) => crypto.getRandomValues(new Uint8Array(n));

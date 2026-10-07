@@ -19,7 +19,7 @@
 // `checkTranscript` is handed a transcript and never the entry it is for.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { toHex } from '../src/hash.js';
 import { batchId } from '../src/batch.js';
 import { entryId } from '../src/contracts.js';

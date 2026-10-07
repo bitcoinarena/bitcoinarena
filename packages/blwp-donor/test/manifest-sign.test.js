@@ -37,7 +37,7 @@ test('the dev client refuses to sign a manifest that names another developer key
 test('no file a node runs signs a game: nothing in blwp-node/src or core/plugin imports the dev client\'s signer, holds a private key, or signs', () => {
   const at = (p) => new URL(p, import.meta.url).pathname;
   const signing = [];
-  for (const dir of ['../../blwp-node/src/', '../../core/plugin/']) for (const f of readdirSync(at(dir))) {
+  for (const dir of ['../../blwp-node/src/', '../../nextblock/plugin/']) for (const f of readdirSync(at(dir))) {
     if (!/\.(m?js)$/.test(f)) continue;
     const src = readFileSync(at(dir + f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
     if (/manifest-sign|createPrivateKey|\bsign\s*\(\s*null|pkcs8|game-dev/.test(src)) signing.push(dir.replace('../../', '') + f);

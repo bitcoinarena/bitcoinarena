@@ -11,7 +11,7 @@ using Blwp;
 /// </summary>
 public class CollisionBoxViewTests
 {
-    static string Core(string rel) => File.ReadAllText(Path.Combine(Application.dataPath, "../../packages/core/src", rel));
+    static string Core(string rel) => File.ReadAllText(Path.Combine(Application.dataPath, "../../packages/nextblock/src", rel));
 
     [Test]
     public void TheBodyHeightIsTheCoresOwn()

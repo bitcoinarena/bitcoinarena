@@ -16,8 +16,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { replay, RunInProgress } from '../src/replay.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { Ghosts } from '../src/ghosts.js';
 import { Round } from '../src/round.js';
 import { openStore } from '../src/store.js';
@@ -28,7 +28,7 @@ import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const JOIN = 0;
 const TICKS = 3000;

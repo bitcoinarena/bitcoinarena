@@ -38,8 +38,8 @@ import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../p
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
 import { startDeadlineOf } from '../../protocol/src/first-mark.js';
 import { feeLockPays } from '../../protocol/src/lock-settlement.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';

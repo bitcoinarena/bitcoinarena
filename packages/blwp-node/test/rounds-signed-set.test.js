@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -33,7 +33,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { lobbyListingId } from '../../protocol/src/lobby-listing.js';
 import { fromHex } from '../../protocol/src/hash.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const pageChecks = (body) => body.rounds.every((x) => schnorr.verify(fromHex(x.sig), lobbyListingId({ roundId: fromHex(x.id),
   nodePubkey: fromHex(body.node), nowMs: BigInt(body.nowMs), phase: x.phase, assignedHere: !!x.assignedHere,

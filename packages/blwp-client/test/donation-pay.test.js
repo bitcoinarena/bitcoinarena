@@ -11,11 +11,11 @@
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 // THE RUN LENGTH IS THE CORE'S. A literal 9000 here is refused by the node as "a
 // contract disagreeing with the network it names" - 400, not 201.
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -36,7 +36,7 @@ import { serve } from '../../blwp-node/src/server.js';
 import { bech32Encode, convertBits, urlOfLnurl } from '../../protocol/src/bech32.js';
 import { decodeBolt11 } from '../../protocol/src/bolt11.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -45,7 +45,7 @@ import { donationSetId } from '../../protocol/src/donation.js';
 import { encodeDonationSetBody, donationSetBodyId, authorityRotationId, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { pageFunction } from './page-script.js';
 import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));

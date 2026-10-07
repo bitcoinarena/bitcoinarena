@@ -22,11 +22,11 @@ import { seriesTemplate, seriesRound, seriesIndexAt } from '../../protocol/src/s
 import { NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../protocol/src/donation.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { guardiansOf, offersFrom, bondedGuardians } from '../../blwp-client/src/guardians.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const home = env.BLWP_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;

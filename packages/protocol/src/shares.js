@@ -55,7 +55,7 @@
 // the refusals, and whoever has a curve brings it.
 import { taggedHash, toHex } from './hash.js';
 import { TAG } from './constants.js';
-import { sha256bytes } from '../../core/src/sha256.js';
+import { sha256bytes } from './sha256.js';
 
 /**
  * secp256k1's group order. Written out rather than imported, because this

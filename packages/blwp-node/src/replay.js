@@ -65,7 +65,7 @@ export const NO_CORE_RULE = 'no core is named to replay that run under';
  */
 function seedWordOf(entry, roundRandomness, core) {
   if (core && core.world && core.world.configHash instanceof Uint8Array)
-    return worldSeedWord({ entry, roundRandomness, contract: core.world, roundId: core.world.roundId });
+    return worldSeedWord({ entry, roundRandomness, contract: core.world, roundId: core.world.roundId, sharedWorld: core.world.sharedWorld });
   return seedWordForEntry(entry, roundRandomness);
 }
 

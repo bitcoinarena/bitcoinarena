@@ -21,7 +21,7 @@ import { serve } from '../src/server.js';
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { assumeAssigned } from '../test/assignment.js';
@@ -34,8 +34,8 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../protocol/src/receipt.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
@@ -44,7 +44,7 @@ import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { playerFor } from '../../blwp-client/src/join.js';
 import { pageCurve } from '../../blwp-client/src/page-curve.js';
 import { redeemPayout, payoutLine, returnStake, stakeBackLine, withdrawCollected, withdrawLine, tabLockWallet, refundKept, refundLine } from '../../blwp-client/src/page-lock.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;

@@ -3,25 +3,25 @@
 // world - the same seed word the page's join computes (seed.js worldSeedWord) - for every player, whatever key he brings;
 // a per-player round (v3, f51759b6) keeps each player's own. Fixtures from run-length.test.js.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH as TRUCK_CONFIG_HASH, TRUCK_SHARED_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH as TRUCK_CONFIG_HASH, TRUCK_SHARED_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import assert from 'node:assert/strict';
 
 import { openStore } from '../src/store.js';
-import { TRUCK_BEFORE_FORK_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_BEFORE_FORK_HASH } from '../../nextblock/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { fromHex as fromHexForFork } from '../../protocol/src/hash.js';
 import { Round } from '../src/round.js';
 import { replay as replayUnder } from '../src/replay.js';
-import { TRUCK } from '../../core/plugin/nextblock.js';
+import { TRUCK } from '../../nextblock/plugin/nextblock.js';
 // THE TRUCK'S RUNS, REPLAYED UNDER THE TRUCK (M3 R1): replay takes the core it runs under; these are truck runs.
 const replay = (t, e, o = {}) => replayUnder(t, e, { core: TRUCK, ...o });
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { lastTickOfRun, runTicksForEntry, runLengthIsTheCores } from '../../protocol/src/contracts.js';
 
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
@@ -49,9 +49,12 @@ const entryOn = (rid, joinTick = 0) => ({
 });
 const words = () => [45875, 0, 0, 0, 0];
 import { worldSeedWord } from '../../protocol/src/seed.js';
+import { sharedWorldOf } from '../../protocol/src/known-game.js';
+import { hostedPlugins } from '../src/plugins.js';
+import { toHex } from '../../protocol/src/hash.js';
 import { roundId as roundIdOf } from '../../protocol/src/contracts.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const shared = () => ({ ...contractWith(BLOCK_TICKS), configHash: TRUCK_SHARED_CONFIG_HASH });
 const zero = new Uint8Array(32);
@@ -78,12 +81,15 @@ test('the seats\' replay of a shared-world round derives the page\'s seed word, 
     assert.equal(r.ok, true, r.why);
     return JSON.stringify(r.pictures);
   };
-  const world = (contract) => ({ configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: roundIdOf(contract) });
+  // AS GHOSTS.JS AND VERIFY.JS RESOLVE IT: with the round's game's shared-world configs (kanban #203: the game says)
+  const game = hostedPlugins(HOSTED).get(toHex(NEXTBLOCK_GAME_ID));
+  const world = (contract) => ({ configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: roundIdOf(contract),
+    sharedWorld: [...game.sharedWorld] });
   const c4 = shared(); const c3 = contractWith(BLOCK_TICKS);
   const alice = { ...entryOn(roundIdOf(c4)), worldSecret: zero, playerPubkey: b32(0x0a) };
   const bob = { ...entryOn(roundIdOf(c4)), worldSecret: zero, playerPubkey: b32(0x0b) };
   const byRule = pics(c4, alice, { core: { ...TRUCK, world: world(c4) } });
-  const byPage = pics(c4, alice, { seedWord: worldSeedWord({ entry: alice, roundRandomness: RAND, contract: c4, roundId: roundIdOf(c4) }) });
+  const byPage = pics(c4, alice, { seedWord: worldSeedWord({ entry: alice, roundRandomness: RAND, contract: c4, roundId: roundIdOf(c4), sharedWorld: sharedWorldOf(c4.gameId) }) });
   assert.equal(byRule, byPage, 'the seats replayed another world than the page joined');
   assert.equal(pics(c4, bob, { core: { ...TRUCK, world: world(c4) } }), byRule, 'two players of one shared round drove two worlds');
   const a3 = { ...alice, roundId: roundIdOf(c3), worldSecret: b32(0x5e) }; const b3 = { ...bob, roundId: roundIdOf(c3), worldSecret: b32(0x5f) };

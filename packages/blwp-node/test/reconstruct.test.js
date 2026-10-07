@@ -16,12 +16,12 @@ import { fromHex } from '../../protocol/src/hash.js';
 import { lockPort, lockedEntry, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655, so `Round.open` refused the contract - "a second clock is not a shorter round" - and every
 // test here died with "this node holds no such round" before a single share was dealt. These seven tests are
 // the evidence that five-of-seven reconstruction works (§23.4), so a stale number was hiding the proof.
-import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS as RUN_TICKS } from '../../nextblock/src/rules/gate.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -54,8 +54,8 @@ import {
   splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId,
 } from '../../protocol/src/result.js';
 import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
@@ -66,7 +66,7 @@ import { toHex, sha256 } from '../../protocol/src/hash.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 

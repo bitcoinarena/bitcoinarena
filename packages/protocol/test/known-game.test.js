@@ -2,15 +2,15 @@
 //
 // The list is generated from each game's signed manifest (`node packages/protocol/tools/known-games.js`), and this
 // recomputes the core hash from the sources: a change to the core turns this red until a new nextblock manifest lists
-// it (its developer, with the dev client: blwp-donor/bin/sign-game-manifest.mjs) and the list is regenerated.
+// it (its developer, with the dev client: nextblock/tools/sign-manifest.mjs) and the list is regenerated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fromHex, toHex } from '../src/hash.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
 import { gameIsKnownGood } from '../src/known-game.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
-import { computeCurrentConfigHash, computeGenesisConfigHash, computeDe2fConfigHash } from '../src/genesis.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { computeCurrentConfigHash, computeGenesisConfigHash, computeDe2fConfigHash } from '../../nextblock/config/game-config.js';
 
 test('nextblock is on the known-good list with the core this tree builds under its current config, and is accepted', () => {
   const now = coreHashHex();

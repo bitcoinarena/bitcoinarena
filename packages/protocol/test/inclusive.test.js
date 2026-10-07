@@ -31,7 +31,7 @@ import {
 import { donatedMsat } from '../src/donation.js';
 import { winnings } from '../src/payout-spend.js';
 import { payoutInputsId } from '../src/slash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const game = [b32(0x21), b32(0x22), b32(0x23), b32(0x24), b32(0x25), b32(0x26), b32(0x27)];

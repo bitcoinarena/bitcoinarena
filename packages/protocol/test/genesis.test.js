@@ -2,9 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
 import { bondMarker } from '../src/constants.js';
-import {
-  computeGenesisConfigHash, computeNetworkId, genesisFor, RANDOMNESS_SOURCE,
-} from '../src/genesis.js';
+import { computeNetworkId, genesisFor, RANDOMNESS_SOURCE } from '../src/genesis.js';
+import { computeGenesisConfigHash } from '../../nextblock/config/game-config.js';
 import {
   GENESIS_CONFIG_HASH, NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4,
   AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST,
@@ -47,12 +46,12 @@ test('test nets use 2-of-2, one confirmation, 100-block maturity, bitcoin block 
 // spec audit; §27A.6 "a round is bound to the config it was created under"). The founding hash is the pinned one and the
 // network ids above do not move; the current config is versioned, hashed from the current core's own constants, and names
 // what the founding encoding cannot - par, the time bounds and the cargo rule.
-import { computeGenesisConfigHash as foundingHash, computeCurrentConfigHash, encodeGameConfigV2, encodeGameConfigV3, computeDe2fConfigHash, encodeGameConfig as founding, GAME_CONFIG_V2, GAME_CONFIG_V3, EXPOSURE_WEIGHT_HEAT, CARGO_RULE_BED_FILL } from '../src/genesis.js';
-import { REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../../core/src/rules/score.js';
-import { LEGACY_CARGO } from '../../core/src/sim.js';
+import { computeGenesisConfigHash as foundingHash, computeCurrentConfigHash, encodeGameConfigV2, encodeGameConfigV3, computeDe2fConfigHash, encodeGameConfig as founding, GAME_CONFIG_V2, GAME_CONFIG_V3, EXPOSURE_WEIGHT_HEAT, CARGO_RULE_BED_FILL } from '../../nextblock/config/game-config.js';
+import { REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../../nextblock/src/rules/score.js';
+import { LEGACY_CARGO } from '../../nextblock/src/sim.js';
 import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 
 test('the current core plays a config of its own, beside the founding one the network id commits to', () => {
   assert.equal(toHex(foundingHash()), toHex(GENESIS_CONFIG_HASH), 'the founding config moved');

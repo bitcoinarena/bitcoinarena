@@ -15,6 +15,12 @@ import { KNOWN_GOOD_GAMES } from './known-games.js';
 
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
+/** The configs (hex) the round's game shares one world under, as this client knows the game - none for a game it does not. */
+export function sharedWorldOf(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  return game && Array.isArray(game.sharedWorld) ? [...game.sharedWorld] : [];
+}
+
 export function gameIsKnownGood(gameId, simCoreHash, configHash) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];

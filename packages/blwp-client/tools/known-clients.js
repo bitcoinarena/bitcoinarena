@@ -30,7 +30,7 @@ const SOURCES = {
 };
 // EACH GAME'S OWN SCRIPTS (kanban #202: one list per game), beside the engine's above.
 const GAME_SOURCES = {
-  nextblock: { 'blwp-core.js': at('../../core/dist/blwp-core.js') },
+  nextblock: { 'blwp-core.js': at('../../nextblock/dist/blwp-core.js') },
 };
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 

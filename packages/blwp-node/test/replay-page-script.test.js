@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from '../../blwp-client/test/page-script.js';
 
-const PAGE = new URL('../../core/plugin/nextblock-replay.html', import.meta.url);
+const PAGE = new URL('../../nextblock/plugin/nextblock-replay.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const at = HTML.indexOf('(async function () {\n  const q = new URLSearchParams(location.search);');
 const SCRIPT = HTML.slice(at, HTML.lastIndexOf('})();', HTML.indexOf('</script>', at)) + '})();'.length);

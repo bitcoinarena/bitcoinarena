@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 
 const T = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/', import.meta.url);
 const html = readFileSync(new URL('index.html', T), 'utf8');
@@ -15,7 +15,7 @@ const DE2F = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
 // 7e2123d1, the core before 68e2b3d6 (kanban #29): §4.11's objectives from the relief; kept beside it for its rounds
 const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
 const NEW = coreHashHex();
-const FROZEN = new URL('../../core/frozen/2069b4c2', import.meta.url).pathname;
+const FROZEN = new URL('../../nextblock/frozen/2069b4c2', import.meta.url).pathname;
 
 function page() {
   const window = { console: { log() {} } };
@@ -33,9 +33,9 @@ function page() {
 test('the page names the current core as its default, and both bundles are the cores their hashes name', () => {
   assert.ok(html.includes(`window.BLWP_CORE_DEFAULT = '${NEW}'`), `the page's default is not the core this tree hashes to (${NEW.slice(0, 16)})`);
   assert.equal(coreHashHex(FROZEN), OLD, 'core/frozen/2069b4c2 is not 2069b4c2');
-  assert.equal(readFileSync(new URL('blwp-core.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core.js', import.meta.url), 'utf8'),
+  assert.equal(readFileSync(new URL('blwp-core.js', T), 'utf8'), readFileSync(new URL('../../nextblock/dist/blwp-core.js', import.meta.url), 'utf8'),
     'the page carries a stale current core');
-  assert.equal(readFileSync(new URL('blwp-core-2069b4c2.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core-2069b4c2.js', import.meta.url), 'utf8'),
+  assert.equal(readFileSync(new URL('blwp-core-2069b4c2.js', T), 'utf8'), readFileSync(new URL('../../nextblock/dist/blwp-core-2069b4c2.js', import.meta.url), 'utf8'),
     'the page carries another 2069b4c2 bundle than the one built from its frozen source');
 });
 
@@ -43,11 +43,11 @@ test('the round\'s hash picks its core: under Unity\'s state and as the global t
   const w = page();
   const cores = w.BLWP_CORES;
   assert.deepEqual(Object.keys(cores).sort(), [OLD, DE2F, S7E, NEW].sort());
-  assert.equal(readFileSync(new URL('blwp-core-7e2123d1.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core-7e2123d1.js', import.meta.url), 'utf8'),
+  assert.equal(readFileSync(new URL('blwp-core-7e2123d1.js', T), 'utf8'), readFileSync(new URL('../../nextblock/dist/blwp-core-7e2123d1.js', import.meta.url), 'utf8'),
     'the page carries another 7e2123d1 bundle');
-  assert.equal(coreHashHex(new URL('../../core/frozen/7e2123d1', import.meta.url).pathname), S7E, 'core/frozen/7e2123d1 is not 7e2123d1');
+  assert.equal(coreHashHex(new URL('../../nextblock/frozen/7e2123d1', import.meta.url).pathname), S7E, 'core/frozen/7e2123d1 is not 7e2123d1');
   assert.notEqual(cores[S7E], cores[NEW]);
-  assert.equal(readFileSync(new URL('blwp-core-de2f263d.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core-de2f263d.js', import.meta.url), 'utf8'),
+  assert.equal(readFileSync(new URL('blwp-core-de2f263d.js', T), 'utf8'), readFileSync(new URL('../../nextblock/dist/blwp-core-de2f263d.js', import.meta.url), 'utf8'),
     'the page carries another de2f263d bundle');
   assert.notEqual(cores[OLD], cores[NEW]);
   // the two really differ where the rule moved: an empty bed is 0 on the new core, 0.7 on 2069b4c2

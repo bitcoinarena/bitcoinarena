@@ -7,8 +7,8 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -24,7 +24,7 @@ import { donationSetId, donationSetMatchesRound, splitDonation } from '../../pro
 import { donationSetBodyId, decodeDonationSetBody, DONATION_SIGNATURE_BYTES, authorityRotationId, decodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');

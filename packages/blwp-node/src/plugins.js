@@ -37,8 +37,13 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
     }
     // `replayPage`: the game's own replay page, when it has one (kanban #202) - the engine serves it, never draws a game
+    // `sharedWorld`: the configs the game says make one world per round (a config's `worldShared`), which the engine's
+    // seed asks of the round's game (kanban #203) instead of a list of its own
+    const sharedWorld = [...new Set([...p.cores.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)))];
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
-      replayPage: p.replayPage || null }));
+      replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
+      // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it; kanban #203)
+      roundWarnings: typeof p.roundWarnings === 'function' ? p.roundWarnings : null }));
   }
   return out;
 }

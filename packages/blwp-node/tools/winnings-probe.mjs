@@ -73,9 +73,9 @@ import { dealHandout, encodeHandout, handoutId } from '../../protocol/src/handou
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash, O_SCORE, S_STATE } from '../../core/src/state.js';
-import { RUN_LIVE, RUN_DELIVERED, RUN_WRECKED } from '../../core/src/rules/gate.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash, O_SCORE, S_STATE } from '../../nextblock/src/state.js';
+import { RUN_LIVE, RUN_DELIVERED, RUN_WRECKED } from '../../nextblock/src/rules/gate.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { refundKeyOf } from '../../protocol/src/stake-lock.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
@@ -87,7 +87,7 @@ import { askerOrder } from '../src/payout.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
 import { serveDonationRecipients } from '../src/lnurl-recipients.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;

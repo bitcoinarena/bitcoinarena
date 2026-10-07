@@ -66,7 +66,9 @@ const logs = stores.map((s) => `${s}.log`);
 const kids = ports.map((port, i) => spawn(process.execPath, ['src/main.js', String(port), stores[i]], {
   cwd: new URL('..', import.meta.url).pathname,
   env: { ...env, BLWP_BITCOIND_URL: `http://127.0.0.1:${RPCPORT}`, BLWP_BITCOIND_COOKIE: `${RT}/regtest/.cookie`, BLWP_CLOSE_AT_END: '1', BLWP_FUND_FREE_ROUNDS: '1',
-    BLWP_DONATION_NETWORK: 'regtest', BLWP_ATTACH_PROOF_DIR: join(dir, 'proof'), BLWP_FUNDED_ROUNDS_FILE: join(dir, 'funded.txt') },
+    BLWP_DONATION_NETWORK: 'regtest', BLWP_ATTACH_PROOF_DIR: join(dir, 'proof'), BLWP_FUNDED_ROUNDS_FILE: join(dir, 'funded.txt'),
+    // the games its nodes host (kanban #203: main.js names none): nextblock
+    BLWP_GAMES: new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname },
   stdio: ['ignore', 'pipe', 'pipe'] }));
 const text = stores.map(() => '');
 kids.forEach((k, i) => { for (const s of [k.stdout, k.stderr]) s.on('data', (d) => { text[i] += d; }); });

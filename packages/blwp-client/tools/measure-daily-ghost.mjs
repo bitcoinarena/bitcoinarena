@@ -40,7 +40,7 @@ const RETIRE_MS = SILENT_MS;               // a truck with no picture for this l
 const FELT_MS = 600;                       // the top of what the owner reported feeling: "300-600 ms"
 
 const require = createRequire(import.meta.url);
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const random = (n) => crypto.getRandomValues(new Uint8Array(n));
 const storage = () => { const held = new Map(); return { getItem: (k) => held.get(k) ?? null, setItem: (k, v) => held.set(k, v) }; };

@@ -2859,7 +2859,7 @@ public class DriveHud : MonoBehaviour
     /// atom symbol" - so there is nothing else here. Both read the CORE: where
     /// the craters are and how wide, and whether the truck's own position is
     /// inside one. No damage is computed here and no second bowl is drawn; the
-    /// rate, the falloff and the dose stay in `packages/core`.
+    /// rate, the falloff and the dose stay in `packages/nextblock`.
     ///
     /// Built on `DrawWaypoint`'s shape below - the same camera lookup, the
     /// same `WorldToScreenPoint`, the same `Shadowed` - so the two markers

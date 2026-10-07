@@ -19,7 +19,7 @@ import { encodeRoundContract, decodeRoundContract, roundId } from '../src/contra
 import { MIN_ENTRY_WINDOW_MS } from '../src/constants.js';
 import { NETWORK_ID_REGTEST } from '../src/genesis-ids.js';
 import { toHex } from '../src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const said = (joinTick, deadlineTicks, firstMark) => firstMarkOutcome({ joinTick, deadlineTicks, firstMark }).outcome;

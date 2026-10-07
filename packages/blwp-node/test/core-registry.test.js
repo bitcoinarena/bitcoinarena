@@ -16,9 +16,9 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFrom } from '../src/verdict.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { coreOfGame, hostedPlugins, installedCoresOf } from '../src/plugins.js';
-import { TRUCK_BEFORE_FORK_HASH, NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { TRUCK_BEFORE_FORK_HASH, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { testGame } from './plugins/sign.js';
 
 // THE CORE AND CONFIG A ROUND NAMES, WITHIN ITS GAME (kanban #202): nextblock's unless another game is given.
@@ -96,9 +96,9 @@ test('a result names the core that replayed the run, and one whose replay ran an
 // 2069b4c2 KEPT INSTALLED BESIDE THE TRUCK (the owner 2026-10-04, path A): every round published before C became the bed
 // fill and T sank from 20 s names it, and is replayed by it - its frozen source, not the truck that moved on. The pre-fork
 // core d15c39bb rides on it too: 2069b4c2 is the core that ran those rounds hash for hash at 10800 ticks.
-import { TRUCK_2069, TRUCK_2069_HASH } from '../../core/plugin/nextblock.js';
-import { CORE as FROZEN_2069 } from '../../core/frozen/2069b4c2/adapter.js';
-import { CORE as NOW } from '../../core/src/adapter.js';
+import { TRUCK_2069, TRUCK_2069_HASH } from '../../nextblock/plugin/nextblock.js';
+import { CORE as FROZEN_2069 } from '../../nextblock/frozen/2069b4c2/adapter.js';
+import { CORE as NOW } from '../../nextblock/src/adapter.js';
 
 test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork core by it held to 10800, the rest by the truck', () => {
   const at = (hex) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(hex, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 4920 });
@@ -122,7 +122,7 @@ test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork cor
 
 // THE CONFIG A ROUND NAMES IS THE RULES IT PLAYS (the owner 2026-10-04, fix 1 of the spec audit): de2f263d runs its own
 // config, 2069b4c2 the founding one; de2f263d with the founding config only for a round made before the cut-over.
-import { TRUCK_CURRENT_CONFIG, FOUNDING_CONFIG_ON_DE2F_BEFORE_MS } from '../../core/plugin/nextblock.js';
+import { TRUCK_CURRENT_CONFIG, FOUNDING_CONFIG_ON_DE2F_BEFORE_MS } from '../../nextblock/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 test('each core runs the config of its own rules; the founding config on de2f263d only before the cut-over', () => {
   const pair = (core, config, committeeTimeMs) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(core, 'hex')),
@@ -149,8 +149,8 @@ test('each core runs the config of its own rules; the founding config on de2f263
 // 7e2123d1 KEPT INSTALLED BESIDE THE TRUCK (kanban #29, 2026-10-07): the core before §4.11's objectives became the chart's -
 // every round the live seats published on it, with the shared-world v4 or the per-player v3 config, is replayed by its
 // frozen source (core/frozen/7e2123d1), not by the truck that moved on to 68e2b3d6.
-import { CORE as FROZEN_7E21 } from '../../core/frozen/7e2123d1/adapter.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { CORE as FROZEN_7E21 } from '../../nextblock/frozen/7e2123d1/adapter.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { HOSTED } from './plugins/hosted.js';
 test('7e2123d1 rounds are replayed by the frozen 7e2123d1 core under both its configs, and not by the truck', () => {
   const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
@@ -161,7 +161,7 @@ test('7e2123d1 rounds are replayed by the frozen 7e2123d1 core under both its co
     assert.equal(got.core.hash, S7E);
     assert.equal(got.core.adapter, FROZEN_7E21, 'a 7e2123d1 round ran on another core than its frozen source');
     assert.notEqual(got.core.adapter, NOW);
-    assert.ok(got.core.replayFile.pathname.endsWith('/core/dist/blwp-replay-core-7e2123d1.js'), 'its replay page runs another bundle');
+    assert.ok(got.core.replayFile.pathname.endsWith('/nextblock/dist/blwp-replay-core-7e2123d1.js'), 'its replay page runs another bundle');
   }
   assert.match(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(S7E, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 4920 }).why, /not the config/);
 });

@@ -8,20 +8,20 @@ import { testNow, skipTo } from './test-clock.js';
 import { OBJECTION_WINDOW_MS } from '../../protocol/src/window.js';
 import { signFinalSig } from '../../protocol/src/final-sig.js';
 import { resultFinality } from '../src/finality.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 // THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
 // since c01cc655 ("a round is three minutes"). `Round.open` refuses a contract that disagrees with the core
 // it names, so every round built here was 400 at `POST /round` and every suite below it died before a stake
 // was dealt - twenty-three of them. A fixture must not carry its own copy of a number the core owns.
-import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS as RUN_TICKS } from '../../nextblock/src/rules/gate.js';
 import assert from 'node:assert/strict';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { randomBytes } from 'node:crypto';
 // the driver below steers at the core's own gate, in the core's own units
-import { CORE } from '../../core/src/adapter.js';
-import { GATE_X } from '../../core/src/rules/gate.js';
+import { CORE } from '../../nextblock/src/adapter.js';
+import { GATE_X } from '../../nextblock/src/rules/gate.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -45,7 +45,7 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import {
   splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId,
 } from '../../protocol/src/result.js';
-import { init, step, submitLoad } from '../../core/src/sim.js';
+import { init, step, submitLoad } from '../../nextblock/src/sim.js';
 
 // THE SCRIPTED PLAYERS' BED (C is the bed fill since 2026-10-04: an undeclared load is an empty bed, and an empty bed
 // scores 0): declared at tick 0 as a load of no fee and no BTC - heat 0, where these tapes were recorded - and 0.7 of the
@@ -53,7 +53,7 @@ import { init, step, submitLoad } from '../../core/src/sim.js';
 export const FIXTURE_ROOM = 275250;
 export const loaded = (st) => { submitLoad(st, 0, 0, FIXTURE_ROOM); return st; };
 export const bedFrom = (from) => (from === 0 ? [[0, 0, 0, FIXTURE_ROOM]] : []);
-import { hash as stateHash } from '../../core/src/state.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { encodeTranscriptPosting, transcriptPostingId, joinSignedPosting } from '../../protocol/src/posting.js';
@@ -250,7 +250,7 @@ export const LOSER = { name: 'loser', key: b32(5), worldSecret: b32(0xc0), ticks
 // plants ONE first mark at the end of its run, so the round names a deadline
 // past it (planted-marks.js says why); the omitted default is not moved.
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 export { PLANTED_FIRST_MARK_DEADLINE };
 
 /**

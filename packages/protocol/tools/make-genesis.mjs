@@ -4,7 +4,8 @@ import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { toHex } from '../src/hash.js';
-import { computeNetworkId, genesisFor, computeGenesisConfigHash } from '../src/genesis.js';
+import { computeNetworkId, genesisFor } from '../src/genesis.js';
+import { computeGenesisConfigHash } from '../../nextblock/config/game-config.js';
 
 const KEYDIR = process.env.BLWP_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
 const OUT = new URL('../src/genesis-ids.js', import.meta.url);

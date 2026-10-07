@@ -15,16 +15,16 @@ import { testNow, skipTo } from './test-clock.js';
 import { presentDay } from './window-fixture.js';
 import { windowsOf } from '../../protocol/src/window.js';
 import { test } from 'node:test';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFinality } from '../src/finality.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { COUNTER, CONFIGS, COUNTER_GAME, COUNTER_GAME_ID } from './cores/counter.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { assumeAssigned } from './assignment.js';
 import { rand, WINDOW_MS, WINNER, GENESIS_HASH, wordsAt, contractFor, say, opts, wait, RANDOMNESS } from './window-fixture.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../protocol/src/contracts.js';
@@ -33,7 +33,7 @@ import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../p
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 import { HOSTED } from './plugins/hosted.js';
 
 const COUNTER_CORE_HASH = fromHex(COUNTER.hash);

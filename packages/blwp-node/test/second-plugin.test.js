@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound, untilSettled } from './lock-round-fixture.js';
 import { b32, WINNER, LOSER } from './window-fixture.js';
-import { NEXTBLOCK, TRUCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK, TRUCK } from '../../nextblock/plugin/nextblock.js';
 import { TALLY, TALLY_CORE, TALLY_CORE_HASH, TALLY_CONFIG_HASH, TALLY_GAME_ID } from './plugins/tally/index.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';

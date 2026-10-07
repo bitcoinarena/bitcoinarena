@@ -28,7 +28,7 @@ import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handou
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { worldSeedWord, worldIsShared } from '../../protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
-import { gameIsKnownGood } from '../../protocol/src/known-game.js';
+import { gameIsKnownGood, sharedWorldOf } from '../../protocol/src/known-game.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
@@ -566,7 +566,7 @@ export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fe
   const beacon = await fetchRandomness(id, nodes, { fetcher });
   return {
     // THE ONE FUNCTION (seed.js worldSeedWord, #23): the round's contract chooses the rule - one world per round, or per player
-    seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id) }),
+    seedWord: worldSeedWord({ entry, roundRandomness: beacon.randomness, contract, roundId: fromHex(id), sharedWorld: sharedWorldOf(contract.gameId) }),
     randomness: beacon.randomness,
     height: beacon.height,
     agreed: beacon.agreed,
@@ -856,7 +856,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     playerPubkey: player.pubkey,
     stakeCommitment: stake ? stake.stakeCommitment : random(32),
     // NONE ON A SHARED-WORLD ROUND (#23): 32 zero bytes, kept so the entry's encoding and id stay the same shape
-    worldSecret: worldIsShared(round) ? new Uint8Array(32) : random(32),
+    worldSecret: worldIsShared(round, sharedWorldOf(round.gameId)) ? new Uint8Array(32) : random(32),
     // 23.1's `vss_shares_ref`. With a dealt stake it names the handout the
     // committee accepted; without one it is 32 zero bytes, and the field is in
     // the signed bytes either way - so an entry that has shares and one that

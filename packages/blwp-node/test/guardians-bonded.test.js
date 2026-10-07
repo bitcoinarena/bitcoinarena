@@ -13,8 +13,8 @@
 // The census here is two bonded signer nodes, as in signer-node-committee.test.js; the federation's size and
 // threshold are the port's, which stands in for the federation's config.
 import { TWO_GATEWAYS } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -37,7 +37,7 @@ import { advertId } from '../../protocol/src/advert.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { guardiansOf, offersFrom, bondedGuardians } from '../../blwp-client/src/guardians.js';
 import { HOSTED } from './plugins/hosted.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const guardianKey = (n) => Uint8Array.from([0x02, ...b32(0x60 + n)]);

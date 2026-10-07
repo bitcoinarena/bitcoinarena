@@ -23,7 +23,7 @@ import {
   leaderboard, NOT_ON_A_FINAL, SIGNATURES_NOT_VERIFIED,
 } from '../src/leaderboard.js';
 import { computePayoutTable } from '../src/payout.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));

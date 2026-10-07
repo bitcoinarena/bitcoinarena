@@ -25,7 +25,7 @@ import { DELIVERED, FAILED } from '../src/payout.js';
 import { OBJECTION_WINDOW_REFERENCE_MS } from '../src/constants.js';
 import { encodeRoundContract, decodeRoundContract, roundWindowsAreValid } from '../src/contracts.js';
 import { toHex } from '../src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const committee = [1, 2, 3, 4, 5, 6, 7].map(b32);

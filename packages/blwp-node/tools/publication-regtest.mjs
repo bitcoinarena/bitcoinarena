@@ -15,10 +15,10 @@ import { publicationPayload } from '../../protocol/src/publication.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { blockTimeOf } from '../../protocol/src/chain.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { toHex } from '../../protocol/src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const RT = env.RT; const PORT = env.RPCPORT || '30601';

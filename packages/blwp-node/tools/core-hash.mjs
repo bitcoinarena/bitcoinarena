@@ -6,6 +6,6 @@
 // launcher names the real one: `core/tools/hash-core.js`'s sorted-source hash
 // of this checkout, never a remembered value.
 import { fromHex } from '../../protocol/src/hash.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 
 export const CORE_HASH = fromHex(coreHashHex());

@@ -21,15 +21,15 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { standUpRound } from '../../blwp-node/tools/round-2of2.mjs';
 // #23: these are about PER-PLAYER worlds (the bridge must not fall back to the harness seed), so their rounds name the
 // per-player config v3; the shared world (v4) is world-shared.test.js and world-shared-door.test.js.
-import { TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { Client } from '../src/client.js';
 import { joinFromQuery, tabSeed, playerFor, entryFor } from '../src/join.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { watchGhosts } from '../src/ghost-field.js';
 import { roundId } from '../../protocol/src/contracts.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
-import { init as coreInit, step as coreStep } from '../../core/src/sim.js';
-import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
+import { init as coreInit, step as coreStep } from '../../nextblock/src/sim.js';
+import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../nextblock/src/state.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf } from '../../protocol/src/chain.js';
 import { hash256 } from '../../protocol/src/tx.js';
@@ -37,7 +37,7 @@ import { blockOf } from '../../protocol/tools/bond.js';
 import { toHex as hex } from '../../protocol/src/hash.js';
 
 const require = createRequire(import.meta.url);
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const storage = () => {

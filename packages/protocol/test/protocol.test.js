@@ -20,7 +20,7 @@ import {
   encodeEntryContract, decodeEntryContract, entryId, stakePointIsTheHandouts, STAKE_POINT_BYTES,
 } from '../src/contracts.js';
 import { COMMITMENT_BYTES } from '../src/handout.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 /**
  * A view spanning the census height: from it to `tip`. A view that begins
@@ -338,7 +338,8 @@ test('a flat rank curve is flagged before anyone stakes', () => {
   assert.deepEqual(contractWarnings(c), []);
   assert.ok(contractWarnings({ ...c, rankNumerator: 99, rankDenominator: 100 })
     .includes('flat_rank_curve'));
-  assert.ok(contractWarnings({ ...c, exposureReference: 0 }).includes('exposure_ignored'));
+  // the truck's fields are nextblock's to judge (kanban #203): nextblock/test/engine-shared.test.js
+  assert.deepEqual(contractWarnings({ ...c, exposureReference: 0 }), [], 'the engine judged a field only the game reads');
 });
 
 function sampleContract() {

@@ -24,14 +24,14 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { encodeInputBatch, batchId } from '../../protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../protocol/src/checkpoint.js';
 import { decodePlayerResult, splitSignedResult } from '../../protocol/src/result.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 
 const curve = { ...feldmanGroup, tweakPoint };
 const out = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v)));

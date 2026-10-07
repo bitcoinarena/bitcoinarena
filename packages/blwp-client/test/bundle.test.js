@@ -9,7 +9,7 @@
 // `@blwp/core` has exactly this test for exactly this reason. This one holds
 // the client to the same bar: the same ids, the same bytes, the same refusals.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -32,10 +32,10 @@ import { advertId, encodeAdvert, joinSignedAdvert } from '../../protocol/src/adv
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const require = createRequire(import.meta.url);
 const bundled = require('../dist/blwp-client.js');
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const key = ed25519.utils.randomSecretKey();

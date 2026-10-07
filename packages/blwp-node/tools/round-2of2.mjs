@@ -27,8 +27,8 @@
  * Bitcoin. A round played on it is a local test round. Reading a real chain is
  * the operator's own bitcoind, and no live node is touched from here.
  */
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
-import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { BLOCK_TICKS } from '../../nextblock/src/rules/gate.js';
 import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -65,8 +65,8 @@ import { genesisFor } from '../../protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../protocol/src/genesis-ids.js';
-import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../core/plugin/nextblock.js';
-// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202, §0A.4): nextblock, as src/main.js does.
+import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+// A LAUNCHER HANDS ITS NODES THE GAMES THEY HOST (kanban #202/#203, §0A.4): nextblock, as nextblock/bin/node.mjs does.
 const launchNode = (store, options, chain) => startNode(store, { plugins: [NEXTBLOCK], ...options }, chain);
 
 

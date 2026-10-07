@@ -31,7 +31,7 @@ test('the list pins the scripts the rebuilt bundle and the template carry, and n
   assert.deepEqual(Object.keys(LIST.pinned).sort(), [...SCRIPTS].sort());
   for (const [game, names] of Object.entries(GAME_SCRIPTS)) assert.deepEqual(Object.keys(LIST.games[game].pinned).sort(), [...names].sort(), game);
   for (const [name, source] of [['blwp-client.js', '../../blwp-client/dist/blwp-client.js'],
-    ['blwp-curve.js', '../../blwp-client/dist/blwp-curve.js'], ['blwp-core.js', '../../core/dist/blwp-core.js'],
+    ['blwp-curve.js', '../../blwp-client/dist/blwp-curve.js'], ['blwp-core.js', '../../nextblock/dist/blwp-core.js'],
     ['blwp_lock_client.js', '../../blwp-client/dist/blwp_lock_client.js'],
     ['blwp_lock_client_bg.wasm', '../../blwp-client/dist/blwp_lock_client_bg.wasm']]) {
     assert.ok(pinsOf(name).includes(sha(at(source))), `${name}: the built file is not on the list`);

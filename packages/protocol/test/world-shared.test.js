@@ -6,23 +6,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { worldSeedWord, worldIsShared, worldSecretFits, seedWordForEntry, roundWorldSeed } from '../src/seed.js';
-import { computeCurrentConfigHash, computeConfigV3Hash } from '../src/genesis.js';
+import { computeCurrentConfigHash, computeConfigV3Hash } from '../../nextblock/config/game-config.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const r32 = () => new Uint8Array(randomBytes(32));
 const ROUND = b32(0x31);
 const RANDOMNESS = b32(0x52);
+// WHICH CONFIGS SHARE ONE WORLD IS THE ROUND'S GAME'S TO SAY (kanban #203): nextblock's list, as its registration and the
+// client's known-games entry give it
+const SHARED = [toHex(computeCurrentConfigHash())];
 const v4 = { configHash: computeCurrentConfigHash(), censusRoot: b32(0x0c) };
 const v3 = { configHash: computeConfigV3Hash(), censusRoot: b32(0x0c) };
 const entry = (k, s, j = 0) => ({ roundId: ROUND, playerPubkey: k, worldSecret: s, joinTick: j });
-const word = (contract, e) => worldSeedWord({ entry: e, roundRandomness: RANDOMNESS, contract, roundId: ROUND });
+const word = (contract, e) => worldSeedWord({ entry: e, roundRandomness: RANDOMNESS, contract, roundId: ROUND, sharedWorld: SHARED });
 
 test('the configs: v4 (2170f250) shares one world per round, v3 (f51759b6) does not', () => {
   assert.equal(toHex(v4.configHash).slice(0, 8), '2170f250');
   assert.equal(toHex(v3.configHash).slice(0, 8), 'f51759b6');
-  assert.equal(worldIsShared(v4), true);
-  assert.equal(worldIsShared(v3), false);
+  assert.equal(worldIsShared(v4, SHARED), true);
+  assert.equal(worldIsShared(v3, SHARED), false);
 });
 
 test('on a v4 round two players with different keys, secrets and join ticks drive the same world', () => {
@@ -32,8 +35,8 @@ test('on a v4 round two players with different keys, secrets and join ticks driv
   assert.equal(a, b);
   assert.equal(a, c, 'a secret moved a shared world');
   // and it is round_seed: another round, or another beacon, is another world
-  assert.notEqual(a, worldSeedWord({ entry: entry(b32(1), b32(0)), roundRandomness: RANDOMNESS, contract: v4, roundId: b32(0x32) }));
-  assert.notEqual(a, worldSeedWord({ entry: entry(b32(1), b32(0)), roundRandomness: b32(0x53), contract: v4, roundId: ROUND }));
+  assert.notEqual(a, worldSeedWord({ entry: entry(b32(1), b32(0)), roundRandomness: RANDOMNESS, contract: v4, roundId: b32(0x32), sharedWorld: SHARED }));
+  assert.notEqual(a, worldSeedWord({ entry: entry(b32(1), b32(0)), roundRandomness: b32(0x53), contract: v4, roundId: ROUND, sharedWorld: SHARED }));
   assert.equal(roundWorldSeed({ contract: v4, roundId: ROUND, roundRandomness: RANDOMNESS }).length, 32);
 });
 
@@ -48,11 +51,11 @@ test('a caller that brings no contract is refused: the rule is the round config\
 });
 
 test('the world secret: zeros fit a v4 round, anything else is refused; any secret fits a v3 round', () => {
-  assert.equal(worldSecretFits(v4, b32(0)).ok, true);
-  assert.equal(worldSecretFits(v4, b32(1)).ok, false);
+  assert.equal(worldSecretFits(v4, b32(0), SHARED).ok, true);
+  assert.equal(worldSecretFits(v4, b32(1), SHARED).ok, false);
   const one = b32(0); one[31] = 1;
-  assert.match(worldSecretFits(v4, one).why, /shares one world among its players/);
-  assert.equal(worldSecretFits(v3, r32()).ok, true);
+  assert.match(worldSecretFits(v4, one, SHARED).why, /shares one world among its players/);
+  assert.equal(worldSecretFits(v3, r32(), SHARED).ok, true);
 });
 
 test('THE GRINDING PROBE: 10 000 keys and secrets give 1 world on a v4 round and ~10 000 on a v3 round', () => {
@@ -65,4 +68,9 @@ test('THE GRINDING PROBE: 10 000 keys and secrets give 1 world on a v4 round and
   console.log(`  grinding probe: v4 ${shared.size} distinct world(s), v3 ${own.size} of 10000`);
   assert.equal(shared.size, 1);
   assert.ok(own.size >= 9990, `only ${own.size} worlds on a per-player round`);
+});
+
+test('the engine guesses no world rule: a caller that brings no shared-world list from the round\'s game is refused', () => {
+  assert.throws(() => worldIsShared(v4), /the round's game's to say/);
+  assert.throws(() => worldSeedWord({ entry: entry(b32(1), b32(0)), roundRandomness: RANDOMNESS, contract: v4, roundId: ROUND }), /the round's game's to say/);
 });

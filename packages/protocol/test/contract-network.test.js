@@ -31,7 +31,7 @@ import {
 import {
   encodeRoundContract, decodeRoundContract, roundId, contractIsForThisBuild,
 } from '../src/contracts.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({

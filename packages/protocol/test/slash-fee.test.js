@@ -22,7 +22,7 @@ import {
   slashCommitment, FEE_WITHOUT_SERVICE,
 } from '../src/slash.js';
 import { nodeFeeTable, feeTableId, feeOwed, GAME_VERIFY, SETTLEMENT } from '../src/fee.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const NODE = b32(0x11);

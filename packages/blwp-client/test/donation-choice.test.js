@@ -14,10 +14,10 @@ import { lockAmountMsat } from '../src/page-lock.js';
 import { donationChoice, chooseDonation, DONATION_CONFIRM_BPS } from '../src/donation-choice.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { fromHex } from '../../protocol/src/hash.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { feeMatchesEntry, entryFeeMsat } from '../../protocol/src/fee.js';
 import { netStakeMsat } from '../../protocol/src/payout.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));

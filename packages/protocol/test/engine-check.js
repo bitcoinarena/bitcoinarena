@@ -4,7 +4,7 @@ import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { taggedHash, toHex } from '../src/hash.js';
 import { encodeRoundContract, roundId } from '../src/contracts.js';
 import { computePayoutTable, DELIVERED, FAILED } from '../src/payout.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const say = (m) => { if (typeof print === 'function') print(m); else console.log(m); };
 const b32 = (n) => new Uint8Array(32).fill(n);
 const c = {

@@ -23,7 +23,7 @@ import {
   seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesRound, genesisSeriesStart, ROUNDS_PER_SERIES, ROUND_PERIOD_MS,
   SERIES_MAX_MS, LATE_JOIN_MS, TAIL_COMMITTEE_LEAD_MIN_MS,
 } from '../../protocol/src/series.js';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 
 const [nodeUrl, startIso, outDir, send] = process.argv.slice(2);
 if (!nodeUrl || !startIso || !outDir) { console.error('usage: testnet4-late-tail.mjs <node url> <tail start ISO> <out dir> [--send]'); process.exit(2); }

@@ -29,7 +29,7 @@ public class BlockClockIsTheCoresTests
     /// <summary>
     /// And the clock reaches zero on the tick the core ends the run - not before it, not after it.
     ///
-    /// The seconds come from the core's own rate (65536/1092 a second, packages/core/src/tick.js), so this also
+    /// The seconds come from the core's own rate (65536/1092 a second, packages/nextblock/src/tick.js), so this also
     /// pins that a full block is the three minutes the ruling calls for.
     /// </summary>
     [Test]

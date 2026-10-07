@@ -22,7 +22,7 @@ import { leaderboard } from '../src/leaderboard.js';
 import { resultId, RESULTS_FOR_FINAL } from '../src/result.js';
 import { roundId } from '../src/contracts.js';
 import { DELIVERED, VOID } from '../src/payout.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));

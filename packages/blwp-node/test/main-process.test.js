@@ -28,6 +28,7 @@ import { medianTimePast, beaconFromChain } from '../../protocol/src/beacon.js';
 import { deriveCensus } from '../../protocol/src/census.js';
 import { bondTransaction } from '../../protocol/tools/bond.js';
 import { chainOf, publicationOf } from '../../protocol/tools/chainview.js';
+const NEXTBLOCK_REGISTRATION = new URL('../../nextblock/plugin/nextblock.js', import.meta.url).pathname;
 
 const MAIN = new URL('../src/main.js', import.meta.url).pathname;
 const CWD = new URL('..', import.meta.url).pathname;
@@ -35,7 +36,9 @@ const CWD = new URL('..', import.meta.url).pathname;
 // A node process: resolves once it prints its address, with the port it bound
 function startMain(store, env, { args } = {}) {
   const child = spawn(process.execPath, [MAIN, ...(args || ['0', store])], { cwd: CWD, env: { ...process.env, BLWP_BITCOIND_URL: '', BLWP_BITCOIND_COOKIE: '',
-    BLWP_STAKE_LOCK_BIN: '', BLWP_FEDERATION_CLIENT_DIR: '', PATH: process.env.PATH.split(':').filter((d) => !/fedimint|patched/.test(d)).join(':'), ...env },
+    BLWP_STAKE_LOCK_BIN: '', BLWP_FEDERATION_CLIENT_DIR: '',
+    // AS THE UNITS WILL RUN IT (kanban #203): main.js names no game, the launcher names nextblock in BLWP_GAMES
+    BLWP_GAMES: NEXTBLOCK_REGISTRATION, PATH: process.env.PATH.split(':').filter((d) => !/fedimint|patched/.test(d)).join(':'), ...env },
   stdio: ['ignore', 'pipe', 'pipe'] });
   child.out = ''; child.err = '';
   child.stdout.on('data', (d) => { child.out += d; });

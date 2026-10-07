@@ -8,7 +8,7 @@
 //   the entry names the outpoint; both signer nodes are handed the contract (W2).
 // And two that must be refused: an outpoint that holds no lock, and a lock to
 // a key nobody attested.
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
 import { readFileSync } from 'node:fs';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -38,8 +38,8 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { CORE_HASH } from './core-hash.mjs';
-import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 const P = env.PROBE;

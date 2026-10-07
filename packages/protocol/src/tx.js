@@ -15,7 +15,7 @@
 // NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
 // checked, no amount is summed. It parses a serialization and answers two
 // questions: what is this transaction called, and what does it commit to.
-import { sha256bytes } from '../../core/src/sha256.js';
+import { sha256bytes } from './sha256.js';
 
 /** Bitcoin hashes twice, everywhere. */
 export const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));

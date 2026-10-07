@@ -3103,7 +3103,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // THE CORE THE ROUND NAMES, and no other: served only when that round's sim hash is a core this node installed for
       // the round's game - the core it replays it with (the registration's replayFile; nextblock's is
-      // packages/core/dist/blwp-replay-core.js, the bundle of core/src's adapter).
+      // packages/nextblock/dist/blwp-replay-core.js, the bundle of core/src's adapter).
       if (req.method === 'GET' && url.pathname === '/replay/core.js') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');

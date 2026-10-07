@@ -6,7 +6,7 @@ using L = Blwp.Layout;
 
 /// <summary>
 /// WAR_TACTICS.md §4.15: the candles are drawn where the core stands everything on them. The core's words and its
-/// candle-layer heights (Tests/Fixtures/candle-words.txt, written by packages/core/tools/candle-fixture.mjs); the mesh
+/// candle-layer heights (Tests/Fixtures/candle-words.txt, written by packages/nextblock/tools/candle-fixture.mjs); the mesh
 /// built from the words must meet every height within 0.1 m ("the client's drawn height differs from candleHeight by
 /// more than 0.1 m" fails), face up on the top and out on the x sides.
 /// </summary>

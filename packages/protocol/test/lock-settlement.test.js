@@ -8,7 +8,7 @@ import { lockSettlement, lnv2FeeMsat, largestPayoutMsat, settlementNonce, feeLoc
 import { DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { refundKeyOf } from '../src/stake-lock.js';
 import { toHex } from '../src/hash.js';
-import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const pk = (n) => { const k = new Uint8Array(32); k[0] = n; k[31] = n; return k; };

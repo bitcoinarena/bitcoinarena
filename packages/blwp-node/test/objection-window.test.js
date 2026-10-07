@@ -43,8 +43,8 @@ import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import {
   splitSignedResult, decodePlayerResult, encodePlayerResult, joinSignedResult, resultId,
 } from '../../protocol/src/result.js';
-import { init, step } from '../../core/src/sim.js';
-import { hash as stateHash } from '../../core/src/state.js';
+import { init, step } from '../../nextblock/src/sim.js';
+import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';

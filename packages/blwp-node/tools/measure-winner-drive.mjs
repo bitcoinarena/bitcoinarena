@@ -10,8 +10,8 @@
 // Prints what the CORE holds: run state, score, truck x/z, hp, and the tick it stopped being live.
 // Exit 0 when the winner delivers and the loser wrecks, 1 otherwise.
 const ROOT = process.env.BLWP_ROOT || '/tmp/btc-phase0';
-const { init, step, runScore } = await import(`${ROOT}/packages/core/src/sim.js`);
-const L = await import(`${ROOT}/packages/core/src/state.js`);
+const { init, step, runScore } = await import(`${ROOT}/packages/nextblock/src/sim.js`);
+const L = await import(`${ROOT}/packages/nextblock/src/state.js`);
 const { seedWordForEntry } = await import(`${ROOT}/packages/protocol/src/seed.js`);
 const { WINNER, LOSER, RANDOMNESS, wordsAt } = await import(`${ROOT}/packages/blwp-node/test/window-fixture.js`);
 

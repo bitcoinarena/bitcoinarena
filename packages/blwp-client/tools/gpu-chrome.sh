@@ -20,7 +20,7 @@
 # attach to this browser, not to a SwiftShader one.
 #
 #   packages/blwp-client/tools/gpu-chrome.sh [port] [width] [height]
-#   node packages/core/tools/probe-timer-lobby.mjs <port> http://127.0.0.1:8191/ tag
+#   node packages/nextblock/tools/probe-timer-lobby.mjs <port> http://127.0.0.1:8191/ tag
 set -u
 PORT="${1:-9347}"
 W="${2:-1280}"

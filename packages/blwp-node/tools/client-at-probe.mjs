@@ -29,7 +29,7 @@ import { joinFromQuery } from '../../blwp-client/src/join.js';
 import { fromHex } from '../../protocol/src/hash.js';
 
 const require = createRequire(import.meta.url);
-const core = require('../../core/dist/blwp-core.js');
+const core = require('../../nextblock/dist/blwp-core.js');
 const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
 const CALLS = Number((process.argv.find((a) => a.startsWith('--calls=')) || '--calls=50').split('=')[1]);
 // --block=MS: before each ask, hold the event loop SYNCHRONOUSLY for MS ms -

@@ -397,7 +397,9 @@ export class Round {
     // AND NO WORLD OF THE PLAYER'S OWN ON A SHARED-WORLD ROUND (#23, the owner 2026-10-04: "the player chooses nothing about
     // the world"): under a config that makes one world per round (config v4) the entry's world secret must be 32 zero
     // bytes - the field is kept so every stored entry keeps its id, and a secret there could only be a player picking.
-    { const fits = worldSecretFits(asks, contract.worldSecret); if (!fits.ok) throw new Error(fits.why); }
+    // which configs share one world is the round's game's to say (kanban #203)
+    { const game = pluginForRound(asks, this.plugins);
+      const fits = worldSecretFits(asks, contract.worldSecret, game.ok ? [...game.plugin.sharedWorld] : []); if (!fits.ok) throw new Error(fits.why); }
 
     // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
     // DONATION OUT OF IT (22A: inclusive, never on top).
