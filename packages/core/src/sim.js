@@ -36,12 +36,12 @@ import {
 import { vehicleStep } from './rules/vehicle.js';
 import { flatGround, groundFromSeed, gradeAlong, heightAtWorld, DEFAULT_COLS, DEFAULT_ROWS } from './rules/ground.js';
 import { noSolids, resolveSolids, resolveArmour, BOX_WORDS } from './rules/solids.js';
-import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, initObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON, coverClaim, coverPlace, coverPosture, setCoverPosture, rifleHitAt,
+import { initTactics, postOf, scoot, onRespawn, enterInLane, pressure, partnerOf, FORWARD_LINE, rifleTeamOf, pushNear, mix, FIRE_TEAMS_PER_SIDE, TAC_SEED, firstManOf, readObjectives, objectiveHolders, clearOnEntry, holdLegs, onPost, updateCrests, crestHold, initMarket, readMarket, trendHit, supplyOf, TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_SAMPLE_TICK, MK_PREV_LO, MK_PREV_HI, MK_PREV_OLDEST, coverClaims, coverPostOf, COVER_ON, coverClaim, coverPlace, coverPosture, setCoverPosture, rifleHitAt,
   TAC_SUPP, decaySupp, addSupp, isPinned, SUPP_ROUND, SUPP_BOMB, SUPPRESS_REACH, SHELL_PIN_REACH,
   POSTURE_STAND, POSTURE_PRONE, POSTURE_COVER, COVER_BOMB_REACH, COVER_NONE } from './rules/tactics.js';
 import { mapSolids } from './rules/map.js';
 import { CANDLES, CL_WORDS, candleLayout, candleHeightAt, writeCandleView, levelled } from './rules/candles.js';
-import { scrollOf, FIELD_SLOT } from './rules/frontline.js';
+import { scrollOf, FIELD_SLOT, xAtTape } from './rules/frontline.js';
 import { ARMOUR_WEST, ARMOUR_EAST, RIFLE_STANDOFF, rifleStandoff } from './rules/army.js';
 import { heat as heatForLoad, fill as bedFill } from './rules/cargo.js';
 import { stepUnit, standingStill, separatePair, clearOfTruck, runOver, truckSpeed, threatAt, pickTarget, pickRifleTarget, riflePost, RELOAD_MIN, RELOAD_SPAN, DAMAGE_MIN, DAMAGE_SPAN, BACKOFF_RANGE, HIT_PER_MIL, ARMOUR_RANGE, RIFLE_RANGE, RIFLE_HIT_PER_MIL, RIFLE_RELOAD_TICKS, RIFLE_RELOAD_TICKS_SPAN, RIFLE_LOOK_TICKS, RIFLE_LOOK_TICKS_SPAN, RIFLE_HP, RIFLE_DAMAGE, hullDownHold, WRECK_R, COURIER_RANGE, COURIER_DAMAGE_MIN, COURIER_DAMAGE_SPAN, COURIER_RIFLE_MIN, COURIER_RIFLE_SPAN, courierReach, outranksTheFoe, shellForHeat } from './rules/army.js';
@@ -565,7 +565,29 @@ export function submitSample(st, price) {
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
   refreshCandles(st);
   readMarket(s, O_TACTICS, h);
+  readObjectives(s, O_TACTICS, groundCandles(st));      // §4.11, on the sample tick only
   return true;
+}
+
+/**
+ * THE GROUND WINDOW'S CANDLES FOR §4.11, oldest first, each [k, high, low, x]: the round candle index (candle k = samples
+ * 2k and 2k + 1), its high and low by the staircase rule the chart and the world candles draw (open = the previous
+ * candle's close where the tape - or the round's memory - still has it, close = sample 2k + 1, high and low over the
+ * three), and the ground x of its centre - where chart.js lays the seam over it. Whole candles on the ground only.
+ */
+export function groundCandles(st) {
+  const s = st.i32, count = s[O_TACTICS + TAC_MARKET + MK_SAMPLES], L = (count + 2) | 0, last = (L - 1) >> 1;
+  const at = (r) => { const back = (L - 1 - r) | 0; return back < SAMPLES ? st.tape[SAMPLES - 1 - back] : st.roundTape[r]; };
+  // on the tape (the seeded window before the open included: its candles have negative k), or in the round's memory
+  const has = (r) => { const back = (L - 1 - r) | 0; return back < SAMPLES ? back >= 0 : (r >= 0 && !!(st.roundTape && st.roundTape.length === L)); };
+  const scroll = scrollNow(st), lastQ = Math.imul(SAMPLES - 1, ONE), out = [];
+  for (let k = (L - SAMPLES + 1) >> 1; k <= last; k++) {
+    const a = Math.imul(k, 2), aq = (Math.imul(a, ONE) + (ONE >> 1) - Math.imul(L - SAMPLES, ONE)) | 0;
+    if (aq < 0 || aq > lastQ || !has(a)) continue;
+    const m0 = at(a), c = a + 1 <= L - 1 ? at(a + 1) : m0, o = has(a - 1) ? at(a - 1) : m0;
+    out.push([k, max(max(o, c), m0), min(min(o, c), m0), xAtTape(aq, count, scroll)]);
+  }
+  return out;
 }
 
 /**
@@ -589,6 +611,7 @@ export function submitTape(st, prices) {
   s[m + MK_PREV_OLDEST] = h[0];
   refreshCandles(st);
   readMarket(s, O_TACTICS, h);
+  readObjectives(s, O_TACTICS, groundCandles(st));      // §4.11, on the sample tick only
   return true;
 }
 
@@ -807,8 +830,9 @@ export function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
   // arrive at the same hills by construction rather than by agreement. Unity
   // draws what this says now; it does not say what this should be.
   st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, RELIEF_HALF_X, HALF_Z);
-  // OBJECTIVES (WAR_TACTICS.md §4.11): three lanes read from this ground, so from the seed alone - never a truck.
-  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z));
+  // OBJECTIVES (WAR_TACTICS.md §4.11): the chart's HIGH, LOW and OPEN, read from the seeded tape - never the ground, never
+  // a truck - and re-read at every sample (submitSample, submitTape).
+  readObjectives(s, O_TACTICS, groundCandles(st));
 
   // THE MAP'S OWN WALLS, AND THEY ARE THE CORE'S TOO.
   //

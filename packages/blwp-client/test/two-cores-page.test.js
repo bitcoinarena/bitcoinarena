@@ -12,6 +12,8 @@ const T = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/', im
 const html = readFileSync(new URL('index.html', T), 'utf8');
 const OLD = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const DE2F = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
+// 7e2123d1, the core before 68e2b3d6 (kanban #29): §4.11's objectives from the relief; kept beside it for its rounds
+const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
 const NEW = coreHashHex();
 const FROZEN = new URL('../../core/frozen/2069b4c2', import.meta.url).pathname;
 
@@ -21,7 +23,7 @@ function page() {
   const ctx = vm.createContext(window);
   const scripts = [...html.matchAll(/<script( src="(blwp-core[^"]*)")?>([\s\S]*?)<\/script>/g)];
   const cut = scripts.findIndex((m) => m[2] === 'blwp-core-2069b4c2.js');
-  for (const m of scripts.slice(cut, cut + 6)) {
+  for (const m of scripts.slice(cut, cut + 8)) {
     const code = m[2] ? readFileSync(new URL(m[2], T), 'utf8') : m[3];
     vm.runInContext(code + (m[2] ? '\nwindow.BLWP = BLWP;' : ''), ctx);
   }
@@ -40,7 +42,11 @@ test('the page names the current core as its default, and both bundles are the c
 test('the round\'s hash picks its core: under Unity\'s state and as the global the jslib reads; an unknown one is refused', () => {
   const w = page();
   const cores = w.BLWP_CORES;
-  assert.deepEqual(Object.keys(cores).sort(), [OLD, DE2F, NEW].sort());
+  assert.deepEqual(Object.keys(cores).sort(), [OLD, DE2F, S7E, NEW].sort());
+  assert.equal(readFileSync(new URL('blwp-core-7e2123d1.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core-7e2123d1.js', import.meta.url), 'utf8'),
+    'the page carries another 7e2123d1 bundle');
+  assert.equal(coreHashHex(new URL('../../core/frozen/7e2123d1', import.meta.url).pathname), S7E, 'core/frozen/7e2123d1 is not 7e2123d1');
+  assert.notEqual(cores[S7E], cores[NEW]);
   assert.equal(readFileSync(new URL('blwp-core-de2f263d.js', T), 'utf8'), readFileSync(new URL('../../core/dist/blwp-core-de2f263d.js', import.meta.url), 'utf8'),
     'the page carries another de2f263d bundle');
   assert.notEqual(cores[OLD], cores[NEW]);

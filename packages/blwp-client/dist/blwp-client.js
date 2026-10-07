@@ -7024,6 +7024,7 @@ const KNOWN_GOOD_CORE_HASHES = Object.freeze([
   '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e',
   'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8',
   '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20',
+  '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589',
 ]);
 
 // The configs a round on each of these cores may name (§27A.6: a round names the config of the rules it plays). A core
@@ -7032,6 +7033,7 @@ const KNOWN_GOOD_CORE_CONFIGS = Object.freeze({
   '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
   'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801', 'bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
   '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+  '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
 });
 
 // The configs whose rounds share ONE world per round (§5A.5 round_seed; #23): seed.js derives every player's world from the

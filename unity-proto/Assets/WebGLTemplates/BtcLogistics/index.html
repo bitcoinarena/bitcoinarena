@@ -798,10 +798,14 @@
   <!-- AND de2f263d (C the bed fill, exposure by C): the free rounds made on it from 08:23Z on 2026-10-04 -->
   <script src="blwp-core-de2f263d.js"></script>
   <script>window.BLWP_CORES['de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8'] = BLWP;</script>
+  <!-- AND 7e2123d1 (§4.11's objectives from the seed's relief, RIDGE capped at 16 m): every round made on it before
+       68e2b3d6 (kanban #29), kept by its hash like the two before it -->
+  <script src="blwp-core-7e2123d1.js"></script>
+  <script>window.BLWP_CORES['7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20'] = BLWP;</script>
   <script src="blwp-core.js"></script>
   <script>
-    window.BLWP_CORES['7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20'] = BLWP;
-    window.BLWP_CORE_DEFAULT = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
+    window.BLWP_CORES['68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589'] = BLWP;
+    window.BLWP_CORE_DEFAULT = '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589';
     // THE ROUND'S CORE, BY ITS HASH: the global the jslib's BlwpInit reads, and the core under Unity's running state if
     // Unity is up - its next init (the round's world) is then that core's. A hash this page carries no core for is refused.
     window.BLWP_USE_CORE = function (hash) {

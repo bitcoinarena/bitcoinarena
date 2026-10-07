@@ -2,7 +2,7 @@
 // float literals, '* / %' outside the arithmetic files, Math members off its whitelist, Date and performance, and imports
 // from outside the package - and until now it ran on core/src only, by hand, and reported 49 hits nobody had pinned.
 //
-// Every core a seat installs is checked here - core/src (7e2123d1) and the frozen cores beside it - against its own
+// Every core a seat installs is checked here - core/src (68e2b3d6) and the frozen cores beside it - against its own
 // baseline (test/determinism-baseline.json). A core's bytes are its hash, so the hits a live core carries cannot be edited
 // out of it; they are pinned by the core's own source text (file, rule, text - never a line number, so an unrelated line
 // move fails nothing). A hit not in that core's baseline fails; a baseline entry no longer found fails too, so the list only
@@ -39,10 +39,13 @@ export function guardLines(hash, tree, hits, baseline) {
   return lines;
 }
 
-test('the baseline names the three cores a seat installs, and core/src is the live core 7e2123d1', () => {
-  assert.deepEqual(Object.keys(BASELINE.cores).sort(), ['2069b4c2', '7e2123d1', 'de2f263d']);
-  assert.equal(BASELINE.cores['7e2123d1'].tree, 'src');
-  assert.ok(coreHashHex().startsWith('7e2123d1'), 'core/src is no longer 7e2123d1: a new core needs its own baseline entry');
+// 68e2b3d6 (kanban #29, 2026-10-07): §4.11's objectives from the chart, RIDGE_GOAL gone; 7e2123d1 frozen beside it in
+// core/frozen/7e2123d1 (its hash computed from its files: 7e2123d1990d1443...).
+test('the baseline names the four cores a seat installs, and core/src is the live core 68e2b3d6', () => {
+  assert.deepEqual(Object.keys(BASELINE.cores).sort(), ['2069b4c2', '68e2b3d6', '7e2123d1', 'de2f263d']);
+  assert.equal(BASELINE.cores['68e2b3d6'].tree, 'src');
+  assert.equal(BASELINE.cores['7e2123d1'].tree, 'frozen/7e2123d1');
+  assert.ok(coreHashHex().startsWith('68e2b3d6'), 'core/src is no longer 68e2b3d6: a new core needs its own baseline entry');
 });
 
 for (const [hash, { tree, hits: baseline }] of Object.entries(BASELINE.cores)) {
@@ -63,20 +66,20 @@ test('a new float or operator not in the baseline fails the new-hit line', () =>
     cpSync(treeOf('src'), dir, { recursive: true });
     appendFileSync(join(dir, 'sim.js'), '\nexport const DETERMINISM_PROBE = 3 * 0.5;\n');
     const { hits } = checkCoreTree(dir);
-    const lines = guardLines('7e2123d1', 'src', hits, BASELINE.cores['7e2123d1'].hits);
+    const lines = guardLines('68e2b3d6', 'src', hits, BASELINE.cores['68e2b3d6'].hits);
     console.log(lines.map((l) => '  ' + l).join('\n'));
     assert.equal(lines.length, 2);
-    assert.ok(lines.some((l) => /^determinism guard: core 7e2123d1 \(src\) sim\.js:\d+ operator '\*' outside an arithmetic file - not in its baseline$/.test(l)));
-    assert.ok(lines.some((l) => /^determinism guard: core 7e2123d1 \(src\) sim\.js:\d+ float literal 0\.5 - not in its baseline$/.test(l)));
+    assert.ok(lines.some((l) => /^determinism guard: core 68e2b3d6 \(src\) sim\.js:\d+ operator '\*' outside an arithmetic file - not in its baseline$/.test(l)));
+    assert.ok(lines.some((l) => /^determinism guard: core 68e2b3d6 \(src\) sim\.js:\d+ float literal 0\.5 - not in its baseline$/.test(l)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a baseline entry that is no longer found fails the shrink line', () => {
   const { hits } = checkCoreTree(treeOf('src'));
-  const baseline = BASELINE.cores['7e2123d1'].hits;
+  const baseline = BASELINE.cores['68e2b3d6'].hits;
   const dropped = baseline[0];
-  const lines = guardLines('7e2123d1', 'src', hits.filter((h) => h !== hits.find((x) => key(x) === key(dropped))), baseline);
+  const lines = guardLines('68e2b3d6', 'src', hits.filter((h) => h !== hits.find((x) => key(x) === key(dropped))), baseline);
   console.log(lines.map((l) => '  ' + l).join('\n'));
   assert.equal(lines.length, 1);
-  assert.equal(lines[0], `determinism guard: core 7e2123d1 (src) ${dropped.file} ${dropped.rule} "${dropped.text}" - in its baseline and no longer found (baseline shrank - update it on purpose)`);
+  assert.equal(lines[0], `determinism guard: core 68e2b3d6 (src) ${dropped.file} ${dropped.rule} "${dropped.text}" - in its baseline and no longer found (baseline shrank - update it on purpose)`);
 });

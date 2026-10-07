@@ -682,7 +682,14 @@ const parkedUnderFire = (seed, ticks) => {
     // untouched at 90 s to written off at 20. West of the chart the line still runs: at x -78, z 0 all three are hit
     // and alive at 10 s (hp 89.7 / 43.5 / 88.7) and all three are written off inside 90 s. Two metres further west,
     // at -80, nothing reaches the truck at all on any seed - that is the edge of the guns, not a tuning knob.
-    st.i32[O + T_X] = Math.round(-78 * Q);
+    // RE-MEASURED 2026-10-07 when §4.11's objectives became the chart's HIGH, LOW and OPEN (kanban #29): HIGH or LOW can
+    // stand on the west lanes now, where the oldest candles are, and the fight there moved. The edge of the guns came in
+    // to -78.5 (nothing reaches the truck from there west on any seed), and at -78 seed 20260901 ended 90 s at 2.13 hp.
+    // By the same two criteria, -77.5, -77 and -76.5 pass; -77.5 keeps the most room to the candle face at -75.8: hit and
+    // alive at 10 s (hp 85.2 / 68.3 / 75.5), written off by fire at 41.02 / 23.60 / 22.03 s - 20 / 20 / 18 hits, the
+    // largest single-tick drop 7.25 / 7.09 / 7.17 hp (at -78 on the core before: 21 / 17 / 21 hits, at most 7.29), so
+    // no crash. The 90 s and the seeds are unchanged.
+    st.i32[O + T_X] = Math.round(-77.5 * Q);
     st.i32[O + T_Z] = 0;
   };
   hold();
