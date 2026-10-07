@@ -235,6 +235,8 @@ export class Ghosts {
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.plugins);
+    // AN ATTESTED ROUND (§0A.7a) HAS NO CORE: nothing of it is pictured
+    if (found.ok && found.attested) return null;
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
     return found.ok ? { ...found.core, game: found.plugin.name, config: found.config, runTicks: found.runTicks,
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes),

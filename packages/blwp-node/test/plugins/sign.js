@@ -5,7 +5,9 @@
 // the same id.
 import { createHash } from 'node:crypto';
 import { gameDevKey, signManifest } from '../../../blwp-donor/src/manifest-sign.js';
+import { sign as edSign } from 'node:crypto';
 import { gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../../protocol/src/manifest.js';
+import { attestationBodyId } from '../../../protocol/src/attested.js';
 import { fromHex } from '../../../protocol/src/hash.js';
 import { donationSetId } from '../../../protocol/src/donation.js';
 
@@ -45,3 +47,26 @@ export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDeno
   const manifest = signManifest(body, devKey);
   return Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores, donationSet });
 }
+
+/**
+ * AN ATTESTED TEST GAME (§0A.7a, kanban #206): a market with `outcomes`, its attestors test keys derived from words (the
+ * same word, the same key), `threshold` of them needed - no core, no run, the pari-mutuel rule. Answers the registration
+ * and the attestors' keys, so a test can sign outcomes as they would.
+ */
+export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'attestor b', 'attestor c'], threshold = 2, dev = name,
+  donationSet = testDonationSet(dev), version = 1, parentManifestId = NO_PARENT }) {
+  const devKey = testDevKey(dev);
+  // in key order, as the manifest lists them
+  const keys = attestors.map((w) => testDevKey(`attestor: ${w}`)).sort((x, y) => Buffer.compare(Buffer.from(x.pubkey), Buffer.from(y.pubkey)));
+  const body = {
+    gameName: name, gameDevPubkey: devKey.pubkey, version, parentManifestId, resultType: RESULT_TYPE.ATTESTED,
+    cores: [], runTicksMax: 0, roundPeriodMs: 0n, payoutRule: PAYOUT_RULE.PARI_MUTUEL, rankNumerator: 0, rankDenominator: 0, minScore: 0,
+    clients: [], gameDonationSetId: donationSetId(donationSet),
+    outcomes, attestors: keys.map((k) => k.pubkey), attestThreshold: threshold,
+  };
+  const manifest = signManifest(body, devKey);
+  return { registration: Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores: new Map(), donationSet }), attestors: keys };
+}
+
+/** An attestor's signature on an outcome attestation's body: { key, signature } as the attestation carries it. */
+export const attestorSign = (attestor, body) => ({ key: attestor.pubkey, signature: new Uint8Array(edSign(null, Buffer.from(attestationBodyId(body)), attestor.key)) });
