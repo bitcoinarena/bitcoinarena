@@ -12,7 +12,7 @@ import { HALF_X, HALF_Z, frontAt, scrollNow, scaleNow } from './sim.js';
 import { SAMPLES, FRONT_DEPTH, tapeAtX, xAtTape } from './rules/frontline.js';
 import { GATE_X } from './rules/gate.js';
 import { TAC_MARKET, MK_OPEN, MK_SAMPLES, MK_TREND, MK_STRENGTH, MK_LEAD, MK_MOMENTUM, OBJECTIVES, objectiveLane,
-  objectiveHolder, assaultPhase, assaultTarget, slotX, candleColour, trendCandle, trendEnd } from './rules/tactics.js';
+  objectiveHolder, objectiveCandle, objectivePresent, assaultPhase, assaultTarget, slotX, candleColour, trendCandle, trendEnd } from './rules/tactics.js';
 
 export const CHART_GROUND = 0, CHART_ROUND = 1;
 /** Header words of `chartView`'s output. Prices are in the tape's unit (CHART_UNIT per dollar); t is Q16.16 candles
@@ -23,7 +23,8 @@ export const CH_UNIT = 14, CH_YOU_T = 15, CH_YOU_P = 16, CH_YOU_HEADING = 17, CH
 export const CH_GATE_ON = 20, CH_WINDOW_FROM = 21, CH_WINDOW_TO = 22, CH_SAMPLES = 23;
 /** The range's HIGH and LOW: the candle holding the highest high and the lowest low, t of its centre and the price. */
 export const CH_HIGH_T = 24, CH_HIGH_P = 25, CH_LOW_T = 26, CH_LOW_P = 27;
-/** Per objective (RIDGE, HOLLOW, GAP): its kind, t, price (the seam at its lane), holder, on the range. */
+/** Per objective (HIGH, LOW, OPEN, §4.11): its kind, t (its candle's centre), price (the seam over that candle), holder, on
+ *  the range - 0 when its candle is off the range, and always for an absent OPEN. */
 export const CH_OBJ = 28, CH_OBJ_WORDS = 5;
 /** Per side (bulls, then bears): the assault's phase, target objective, the target lane's t, on the range, and the
  *  lane's two edges in t (half a slot pitch either side). */
@@ -166,13 +167,20 @@ export function chartView(st, range, out) {
   out[CH_GATE_T] = p[0]; out[CH_GATE_ON] = p[2];
 
   for (let o = 0; o < OBJECTIVES; o++) {
-    const x = slotX(objectiveLane(s, O_TACTICS, o)), b = CH_OBJ + Math.imul(o, CH_OBJ_WORDS);
-    chartPoint(st, rg, x, frontAt(st, x), p);
-    out[b] = o; out[b + 1] = p[0]; out[b + 2] = p[1]; out[b + 3] = objectiveHolder(s, O_TACTICS, o); out[b + 4] = p[2];
+    const b = CH_OBJ + Math.imul(o, CH_OBJ_WORDS);
+    out[b] = o; out[b + 3] = objectiveHolder(s, O_TACTICS, o);
+    // ITS CANDLE (§4.11): the centre of the candle the objective was read from, and the seam over it where it is on the
+    // ground - the same place the marker stands in the world. Absent (OPEN with no crossing), or off this range: off.
+    const k = objectiveCandle(s, O_TACTICS, o), i = (k - r.first) | 0;
+    if (!objectivePresent(s, O_TACTICS, o) || i < 0 || i >= n) { out[b + 1] = 0; out[b + 2] = CH_NONE; out[b + 4] = 0; continue; }
+    out[b + 1] = (Math.imul(i, ONE) + (ONE >> 1)) | 0;
+    out[b + 2] = out[CH_CANDLE + Math.imul(n, 4) + i];
+    out[b + 4] = out[b + 2] === CH_NONE ? 0 : 1;
   }
   for (let si = 0; si < 2; si++) {
     const side = si === 0 ? -1 : 1, b = CH_ASSAULT + Math.imul(si, CH_ASSAULT_WORDS);
-    const target = assaultTarget(s, O_TACTICS, side), x = slotX(objectiveLane(s, O_TACTICS, min(target, OBJECTIVES - 1)));
+    const target = assaultTarget(s, O_TACTICS, side), tg = min(target, OBJECTIVES - 1);
+    const x = slotX(objectivePresent(s, O_TACTICS, tg) ? objectiveLane(s, O_TACTICS, tg) : 0);
     const half = (slotX(1) - slotX(0)) >> 1;
     chartPoint(st, rg, x, 0, p);
     out[b] = assaultPhase(s, O_TACTICS, side); out[b + 1] = target; out[b + 2] = p[0]; out[b + 3] = p[2];

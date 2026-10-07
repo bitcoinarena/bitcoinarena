@@ -3883,9 +3883,10 @@ const ASSAULT_TICKS = 1800, CONSOLIDATE_TICKS = 900;
 const ASSAULT_REST = Math.imul(16, ONE), ASSAULT_CEILING = Math.imul(40, ONE), ASSAULT_CEILING_BESIDE = Math.imul(32, ONE);
 const VERDICT_NONE = 0, VERDICT_TAKE = 1, VERDICT_GIVE = 2, VERDICT_DRIFT = 3;
 const ON_POST = (Math.imul(3, ONE) >> 1) | 0;     // §4.3, §4.10 within 1.5 m of its hold, hull-down pick included
-const OBJ_RIDGE = 0, OBJ_HOLLOW = 1, OBJ_GAP = 2, OBJECTIVES = 3;
+const OBJ_HIGH = 0, OBJ_LOW = 1, OBJ_OPEN = 2, OBJECTIVES = 3;
+/** An objective's lane byte when it is absent (§4.11: OPEN while the window holds no crossing of the open). */
+const OBJ_ABSENT = 255;
 const HOLDER_NONE = 0, HOLDER_BULL = 1, HOLDER_BEAR = 2;
-const RIDGE_GOAL = Math.imul(16, ONE);            // §4.11 a team on the crest holds the crest
 const OBJECTIVE_REST = Math.imul(8, ONE);         // §4.11 home, at an objective, is leaning in
 const ALONE = 2;
 
@@ -3961,52 +3962,49 @@ function initTactics(s, base, seedWord) {
 }
 
 // =====================================================================================================================
-// OBJECTIVES (WAR_TACTICS.md §4.11, Daniel 2026-09-16 19:02-19:05): RIDGE, HOLLOW and GAP - three inner lanes read
-// from the round's ground, which is a function of the seed alone. Nothing here reads a truck.
+// OBJECTIVES (WAR_TACTICS.md §4.11, re-ruled 2026-09-16 21:15: HIGH and LOW of the chart, and OPEN): the ground window's
+// candle with the highest high, the one with the lowest low, and the newest one the chart crossed the round's open in -
+// read from the tape, which every node replays, on the sample tick only (never between: an objective does not flicker
+// inside a sample). Nothing here reads the relief, and nothing reads a truck (§1.2).
 // =====================================================================================================================
 
-const OBJ_FIRST_LANE = 1, OBJ_LAST_LANE = 5;      // the outer lanes (+-81 m) are levelled apron and hold the bay
-const OBJ_BAND = Math.imul(40, ONE), OBJ_BAND_STEP = Math.imul(4, ONE);   // 21 samples, z = -40..+40 m
-
-/**
- * Picks the three lanes at init. `heightAt(x, z)` is the round's relief (no craters). Each objective is the best of
- * the lanes still free, in the order RIDGE (highest top), HOLLOW (lowest bottom), GAP (smallest relief), ties to the
- * lower slot; a lane next to a taken one is free only when no lane at least two away from every taken one is left.
- */
-function initObjectives(s, base, heightAt) {
-  const top = [], bottom = [], relief = [];
-  for (let lane = OBJ_FIRST_LANE; lane <= OBJ_LAST_LANE; lane++) {
-    const x = slotX(lane);
-    let hi = 0, lo = 0;
-    for (let z = -OBJ_BAND, n = 0; z <= OBJ_BAND; z += OBJ_BAND_STEP, n++) {
-      const h = heightAt(x, z) | 0;
-      if (n === 0 || h > hi) hi = h;
-      if (n === 0 || h < lo) lo = h;
-    }
-    top[lane] = hi; bottom[lane] = lo; relief[lane] = (hi - lo) | 0;
-  }
-  const taken = [];
-  const score = [(l) => -top[l], (l) => bottom[l], (l) => relief[l]];    // lower is better
-  for (let o = 0; o < OBJECTIVES; o++) {
-    let apart = false;
-    for (let lane = OBJ_FIRST_LANE; lane <= OBJ_LAST_LANE; lane++) if (freeLane(taken, lane, true)) apart = true;
-    let best = -1;
-    for (let lane = OBJ_FIRST_LANE; lane <= OBJ_LAST_LANE; lane++) {
-      if (!freeLane(taken, lane, apart)) continue;
-      if (best < 0 || score[o](lane) < score[o](best)) best = lane;
-    }
-    taken.push(best);
-    s[base + TAC_OBJ + o] = best;
-  }
+/** The slot lane (0..SLOTS_PER_SIDE-1) a ground x falls in: the nearest slot's. */
+function slotOfX(x) {
+  const lane = idiv(sub(x, FIRST_SLOT) + (SLOT_PITCH >> 1), SLOT_PITCH);
+  return lane < 0 ? 0 : lane > SLOTS_PER_SIDE - 1 ? SLOTS_PER_SIDE - 1 : lane;
 }
 
-function freeLane(taken, lane, apart) {
-  for (const t of taken) if (t === lane || (apart && (t === lane - 1 || t === lane + 1))) return false;
-  return true;
+/**
+ * Re-reads the three objectives from the ground window's candles (§4.11). `candles` is the window's whole candles on the
+ * ground, oldest first, each `[k, high, low, x]`: the round candle index, its high and low, and its centre's ground x.
+ * HIGH: the highest high, LOW: the lowest low, a tie to the older candle as chart.js's HIGH and LOW (a new, higher high
+ * at the miner's end takes the name the tick its sample lands). OPEN: the newest candle whose low..high holds the open; absent (lane OBJ_ABSENT) when none.
+ * Each word: the candle's slot lane in bits 0-7, the holder in 8-15 (kept - a name that moves to a new candle keeps its
+ * holder until the next re-read), the candle index in 16-31, signed (the seeded window before the open has k < 0).
+ */
+function readObjectives(s, base, candles) {
+  const open = s[base + TAC_MARKET + MK_OPEN];
+  let hi = -1, lo = -1, op = -1;
+  for (let i = 0; i < candles.length; i++) {
+    const c = candles[i];
+    if (hi < 0 || c[1] > candles[hi][1]) hi = i;
+    if (lo < 0 || c[2] < candles[lo][2]) lo = i;
+    if (c[2] <= open && open <= c[1]) op = i;
+  }
+  const picks = [hi, lo, op];
+  for (let o = 0; o < OBJECTIVES; o++) {
+    const holder = (s[base + TAC_OBJ + o] >> 8) & 255, i = picks[o];
+    s[base + TAC_OBJ + o] = i < 0 ? (OBJ_ABSENT | (holder << 8))
+      : (slotOfX(candles[i][3]) | (holder << 8) | Math.imul(candles[i][0] & 0xFFFF, 0x10000));
+  }
 }
 
 const objectiveLane = (s, base, o) => s[base + TAC_OBJ + o] & 255;
 const objectiveHolder = (s, base, o) => (s[base + TAC_OBJ + o] >> 8) & 255;
+/** The round candle index an objective sits on (§4.11), for the chart. */
+const objectiveCandle = (s, base, o) => s[base + TAC_OBJ + o] >> 16;     // signed: the seeded window's are < 0
+/** Whether an objective is on the ground at all: OPEN is not while the window holds no crossing (§4.11). */
+const objectivePresent = (s, base, o) => objectiveLane(s, base, o) !== OBJ_ABSENT;
 
 /** A team's objective weight (§4.11): 2 on an objective's lane, 1 beside one, else 0. */
 function objectiveWeight(s, base, slot) {
@@ -4019,8 +4017,6 @@ function objectiveWeight(s, base, slot) {
   return w;
 }
 
-/** The push ceiling on a slot (§4.11): 16 on RIDGE's lane, 24 everywhere else. */
-const goalOf = (s, base, slot) => (slot === objectiveLane(s, base, OBJ_RIDGE) ? RIDGE_GOAL : PUSH_MAX);
 
 // =====================================================================================================================
 // THE ASSAULT (WAR_TACTICS.md §4.12): a declared attempt by one side on one objective it does not hold - a start, 30 s,
@@ -4146,6 +4142,7 @@ function supplyOf(s, base, side) {
   const mine = side < 0 ? HOLDER_BULL : HOLDER_BEAR;
   let supply = 0;
   for (let o = 0; o < OBJECTIVES; o++) {
+    if (!objectivePresent(s, base, o)) continue;
     const h = objectiveHolder(s, base, o);
     if (h === mine) supply++; else if (h !== HOLDER_NONE) supply--;
   }
@@ -4170,18 +4167,18 @@ function assaultClock(s, base, tick) {
       if (trendFor(s, base, side) < 0) { s[a + 2] = (s[a + 2] + 1) | 0; continue; }
       if ((tick | 0) < s[a + 2]) continue;
       let unheld = 0;
-      for (let o = 0; o < OBJECTIVES; o++) if (objectiveHolder(s, base, o) !== mine) unheld++;
+      for (let o = 0; o < OBJECTIVES; o++) if (objectivePresent(s, base, o) && objectiveHolder(s, base, o) !== mine) unheld++;
       if (unheld === 0) { s[a + 2] = ((tick | 0) + ASSAULT_REARM) | 0; continue; }          // holds all three: defends
       let pick = mod(mix(mix(mix(hash, si === 0 ? 613 : 617), n), 1) >>> 1, unheld), chosen = 0;
       for (let o = 0; o < OBJECTIVES; o++) {
-        if (objectiveHolder(s, base, o) === mine) continue;
+        if (!objectivePresent(s, base, o) || objectiveHolder(s, base, o) === mine) continue;
         if (pick === 0) { chosen = o; break; }
         pick--;
       }
       s[a] = chosen | (ASSAULT_PUSH << 4) | Math.imul(n + 1, 256);
       s[a + 1] = tick | 0;
     } else if (phase === ASSAULT_PUSH) {
-      if (objectiveHolder(s, base, target) === mine) {                                     // success
+      if (objectivePresent(s, base, target) && objectiveHolder(s, base, target) === mine) { // success
         s[a] = target | (ASSAULT_CONSOLIDATE << 4) | Math.imul(n, 256);
         s[a + 1] = tick | 0;
       } else if ((tick | 0) - s[a + 1] >= ASSAULT_TICKS) {                                  // failure
@@ -4197,14 +4194,14 @@ function assaultClock(s, base, tick) {
 
 /**
  * A team's weight, rest and push ceiling on `slot` (§4.10-§4.12). Outside the side's assault lanes, §4.11 as before
- * (w 2 on an objective's lane, 1 beside; rest +8 there; ceiling 16 on RIDGE's lane, else 24). While it pushes: w 3, rest
- * +16, ceiling 40 on the assaulted lane (RIDGE included); w >= 2 and ceiling 32 beside it. While it consolidates: rest
+ * (w 2 on an objective's lane, 1 beside; rest +8 there; ceiling 24 everywhere). While it pushes: w 3, rest
+ * +16, ceiling 40 on the assaulted lane; w >= 2 and ceiling 32 beside it. While it consolidates: rest
  * +16 on the lane, the rest as §4.11.
  */
 function laneTerms(s, base, side, slot) {
   let weight = objectiveWeight(s, base, slot);
   let rest = weight === 2 ? OBJECTIVE_REST : 0;
-  let ceiling = goalOf(s, base, slot);
+  let ceiling = PUSH_MAX;                         // §4.11: 24 everywhere - the old RIDGE cap is gone with RIDGE
   // THE TREND (§4.14): its side w + 1 and rest + 8 on every lane, ceiling + 8 x strength; the other side rest - 8 and
   // ceiling - 8 x strength (the objective's +8 and a -8 cancel to 0).
   const t = trendFor(s, base, side), strength = trendStrength(s, base);
@@ -4234,6 +4231,7 @@ function objectiveHolders(s, base, tick, seamAt) {
   const reach = Math.imul(GUN_M, 256);
   for (let o = 0; o < OBJECTIVES; o++) {
     if (mod((tick | 0) + mod(mix(s[base + TAC_SEED], 400 + o) >>> 1, PUSH_TICKS), PUSH_TICKS) !== 0) continue;
+    if (!objectivePresent(s, base, o)) continue;
     const lane = objectiveLane(s, base, o), px = slotX(lane), pz = seamAt(px) | 0;
     let bull = 0, bear = 0;
     for (let i = 0; i < 96; i += 4) {
@@ -4244,7 +4242,7 @@ function objectiveHolders(s, base, tick, seamAt) {
       if (teamOf(i).side < 0) bull++; else bear++;
     }
     const holder = bull > bear ? HOLDER_BULL : bear > bull ? HOLDER_BEAR : objectiveHolder(s, base, o);
-    s[base + TAC_OBJ + o] = lane | (holder << 8);
+    s[base + TAC_OBJ + o] = (s[base + TAC_OBJ + o] & ~0xFF00) | (holder << 8);
   }
 }
 
@@ -5951,7 +5949,29 @@ function submitSample(st, price) {
   s[O_TACTICS + TAC_MARKET + MK_SAMPLES] = (s[O_TACTICS + TAC_MARKET + MK_SAMPLES] + 1) | 0;
   refreshCandles(st);
   readMarket(s, O_TACTICS, h);
+  readObjectives(s, O_TACTICS, groundCandles(st));      // §4.11, on the sample tick only
   return true;
+}
+
+/**
+ * THE GROUND WINDOW'S CANDLES FOR §4.11, oldest first, each [k, high, low, x]: the round candle index (candle k = samples
+ * 2k and 2k + 1), its high and low by the staircase rule the chart and the world candles draw (open = the previous
+ * candle's close where the tape - or the round's memory - still has it, close = sample 2k + 1, high and low over the
+ * three), and the ground x of its centre - where chart.js lays the seam over it. Whole candles on the ground only.
+ */
+function groundCandles(st) {
+  const s = st.i32, count = s[O_TACTICS + TAC_MARKET + MK_SAMPLES], L = (count + 2) | 0, last = (L - 1) >> 1;
+  const at = (r) => { const back = (L - 1 - r) | 0; return back < SAMPLES ? st.tape[SAMPLES - 1 - back] : st.roundTape[r]; };
+  // on the tape (the seeded window before the open included: its candles have negative k), or in the round's memory
+  const has = (r) => { const back = (L - 1 - r) | 0; return back < SAMPLES ? back >= 0 : (r >= 0 && !!(st.roundTape && st.roundTape.length === L)); };
+  const scroll = scrollNow(st), lastQ = Math.imul(SAMPLES - 1, ONE), out = [];
+  for (let k = (L - SAMPLES + 1) >> 1; k <= last; k++) {
+    const a = Math.imul(k, 2), aq = (Math.imul(a, ONE) + (ONE >> 1) - Math.imul(L - SAMPLES, ONE)) | 0;
+    if (aq < 0 || aq > lastQ || !has(a)) continue;
+    const m0 = at(a), c = a + 1 <= L - 1 ? at(a + 1) : m0, o = has(a - 1) ? at(a - 1) : m0;
+    out.push([k, max(max(o, c), m0), min(min(o, c), m0), xAtTape(aq, count, scroll)]);
+  }
+  return out;
 }
 
 /**
@@ -5975,6 +5995,7 @@ function submitTape(st, prices) {
   s[m + MK_PREV_OLDEST] = h[0];
   refreshCandles(st);
   readMarket(s, O_TACTICS, h);
+  readObjectives(s, O_TACTICS, groundCandles(st));      // §4.11, on the sample tick only
   return true;
 }
 
@@ -6193,8 +6214,9 @@ function init(seedWord, { runTicks = BLOCK_TICKS } = {}) {
   // arrive at the same hills by construction rather than by agreement. Unity
   // draws what this says now; it does not say what this should be.
   st.ground = groundFromSeed(seedWord, DEFAULT_COLS, DEFAULT_ROWS, RELIEF_HALF_X, HALF_Z);
-  // OBJECTIVES (WAR_TACTICS.md §4.11): three lanes read from this ground, so from the seed alone - never a truck.
-  initObjectives(s, O_TACTICS, (x, z) => heightAtWorld(st.ground, x, z, RELIEF_HALF_X, HALF_Z));
+  // OBJECTIVES (WAR_TACTICS.md §4.11): the chart's HIGH, LOW and OPEN, read from the seeded tape - never the ground, never
+  // a truck - and re-read at every sample (submitSample, submitTape).
+  readObjectives(s, O_TACTICS, groundCandles(st));
 
   // THE MAP'S OWN WALLS, AND THEY ARE THE CORE'S TOO.
   //
@@ -7724,7 +7746,8 @@ const CH_UNIT = 14, CH_YOU_T = 15, CH_YOU_P = 16, CH_YOU_HEADING = 17, CH_YOU_ON
 const CH_GATE_ON = 20, CH_WINDOW_FROM = 21, CH_WINDOW_TO = 22, CH_SAMPLES = 23;
 /** The range's HIGH and LOW: the candle holding the highest high and the lowest low, t of its centre and the price. */
 const CH_HIGH_T = 24, CH_HIGH_P = 25, CH_LOW_T = 26, CH_LOW_P = 27;
-/** Per objective (RIDGE, HOLLOW, GAP): its kind, t, price (the seam at its lane), holder, on the range. */
+/** Per objective (HIGH, LOW, OPEN, §4.11): its kind, t (its candle's centre), price (the seam over that candle), holder, on
+ *  the range - 0 when its candle is off the range, and always for an absent OPEN. */
 const CH_OBJ = 28, CH_OBJ_WORDS = 5;
 /** Per side (bulls, then bears): the assault's phase, target objective, the target lane's t, on the range, and the
  *  lane's two edges in t (half a slot pitch either side). */
@@ -7867,13 +7890,20 @@ function chartView(st, range, out) {
   out[CH_GATE_T] = p[0]; out[CH_GATE_ON] = p[2];
 
   for (let o = 0; o < OBJECTIVES; o++) {
-    const x = slotX(objectiveLane(s, O_TACTICS, o)), b = CH_OBJ + Math.imul(o, CH_OBJ_WORDS);
-    chartPoint(st, rg, x, frontAt(st, x), p);
-    out[b] = o; out[b + 1] = p[0]; out[b + 2] = p[1]; out[b + 3] = objectiveHolder(s, O_TACTICS, o); out[b + 4] = p[2];
+    const b = CH_OBJ + Math.imul(o, CH_OBJ_WORDS);
+    out[b] = o; out[b + 3] = objectiveHolder(s, O_TACTICS, o);
+    // ITS CANDLE (§4.11): the centre of the candle the objective was read from, and the seam over it where it is on the
+    // ground - the same place the marker stands in the world. Absent (OPEN with no crossing), or off this range: off.
+    const k = objectiveCandle(s, O_TACTICS, o), i = (k - r.first) | 0;
+    if (!objectivePresent(s, O_TACTICS, o) || i < 0 || i >= n) { out[b + 1] = 0; out[b + 2] = CH_NONE; out[b + 4] = 0; continue; }
+    out[b + 1] = (Math.imul(i, ONE) + (ONE >> 1)) | 0;
+    out[b + 2] = out[CH_CANDLE + Math.imul(n, 4) + i];
+    out[b + 4] = out[b + 2] === CH_NONE ? 0 : 1;
   }
   for (let si = 0; si < 2; si++) {
     const side = si === 0 ? -1 : 1, b = CH_ASSAULT + Math.imul(si, CH_ASSAULT_WORDS);
-    const target = assaultTarget(s, O_TACTICS, side), x = slotX(objectiveLane(s, O_TACTICS, min(target, OBJECTIVES - 1)));
+    const target = assaultTarget(s, O_TACTICS, side), tg = min(target, OBJECTIVES - 1);
+    const x = slotX(objectivePresent(s, O_TACTICS, tg) ? objectiveLane(s, O_TACTICS, tg) : 0);
     const half = (slotX(1) - slotX(0)) >> 1;
     chartPoint(st, rg, x, 0, p);
     out[b] = assaultPhase(s, O_TACTICS, side); out[b + 1] = target; out[b + 2] = p[0]; out[b + 3] = p[2];

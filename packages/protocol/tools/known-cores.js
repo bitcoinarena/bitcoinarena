@@ -11,7 +11,7 @@
 // is done.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { coreHashHex } from '../../core/tools/hash-core.js';
-import { computeCurrentConfigHash, computeGenesisConfigHash, computeDe2fConfigHash, encodeGameConfigV4, GAME_CONFIG_V4, WORLD_SHARED_PER_ROUND } from '../src/genesis.js';
+import { computeCurrentConfigHash, computeGenesisConfigHash, computeDe2fConfigHash, computeConfigV3Hash, encodeGameConfigV4, GAME_CONFIG_V4, WORLD_SHARED_PER_ROUND } from '../src/genesis.js';
 import { toHex } from '../src/hash.js';
 
 const OUT = new URL('../src/known-cores.js', import.meta.url).pathname;
@@ -34,7 +34,10 @@ const pairs = { '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774
   // for rounds made before 2026-10-04 13:00Z; the client takes the pair, the seats the date)
   'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': [toHex(computeDe2fConfigHash()), FOUNDING], ...priorPairs };
 const current = toHex(computeCurrentConfigHash());
-pairs[now] = [...new Set([current, ...(pairs[now] || [])])];
+// THE CURRENT CORE PLAYS BOTH CONFIGS THE TRUCK INSTALLS (blwp-node/src/cores.js TRUCK.configs, #23): v4, one world per round,
+// and v3 (f51759b6), the per-player world older rounds and the tests whose rounds carry a world secret name. Listed for the
+// current core as the seats install it for that core - a new core is not refused a config its seats play (kanban #29).
+pairs[now] = [...new Set([current, toHex(computeConfigV3Hash()), ...(pairs[now] || [])])];
 
 // AND THE CONFIGS WHOSE ROUNDS SHARE ONE WORLD (#23, the owner 2026-10-04): listed ones stay, the current one joins if its
 // encoding is v4 with the world rule 1 - seed.js reads this list, so the page and the seats choose by the same hash.
