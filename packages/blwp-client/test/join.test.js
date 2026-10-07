@@ -28,7 +28,7 @@ import { Client } from '../src/client.js';
 import { joinQuery, joinFromQuery, fetchRound, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSignerNodes, roundPays } from '../src/join.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
 import { coreHashHex } from '../../nextblock/tools/hash-core.js';
-import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
+import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../protocol/src/fee.js';
 import { NO_SHARES } from '../../protocol/src/handout.js';
 import { feldmanGroup } from '../../blwp-node/src/curve.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
@@ -262,7 +262,7 @@ test('the signer node a page takes carries the round\'s own amounts', () => {
   // nothing is nothing, so a round that asks no stake still carries no fee and
   // there is no branch here to get wrong.
   assert.equal(signerNode.feeMsat, entryFeeMsat(100000n));
-  assert.equal(signerNode.feeMsat, 2000n, 'a paying round is charged 2% of its stake');
+  assert.equal(signerNode.feeMsat, (100000n * BigInt(NODE_FEE_BPS)) / 10000n, 'a paying round is charged 5% of its stake (§0A.8)');
   assert.equal(feeMatchesEntry(signerNode).ok, true);
   const free = entryFor({ id: b32(0x0d), stakeMsat: 0n, blockTicks: BLOCK_TICKS }, { ...me, random });
   assert.equal(free.feeMsat, 0n, 'a round that asks no money is charged some');

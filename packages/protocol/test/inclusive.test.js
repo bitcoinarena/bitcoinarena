@@ -3,9 +3,11 @@
 // 22A, "Collection: inclusive in the stake (changed)":
 //
 //   wallet commitment                 100 sat   <- what the player chose
-//     node infrastructure fee           2 sat
-//     player-selected donation          2 sat
-//   net game stake                     96 sat   -> the pool
+//     node infrastructure fee           5 sat   (§0A.8; 2 under BLWP)
+//     player-selected donation          5 sat   (the default: 2.5 protocol devs + 2.5 game dev; 2 under BLWP)
+//   net game stake                     90 sat   -> the pool
+//
+// Every figure below comes from the rule: FEE is entryFeeMsat (5%), DONATION the default 5%, NET what is left.
 //
 // Until this letter the code read 18's older sentence - fees "charged on top of
 // the stake" - and `fee.js` called Collection the error. Measured before any of
@@ -48,7 +50,10 @@ const contract = {
 };
 
 const STAKE = 100000n;
-const FEE = entryFeeMsat(STAKE);
+const FEE = entryFeeMsat(STAKE);                      // 5% (§0A.8)
+const DONATION = (STAKE * 500n) / 10000n;             // the default 5%
+const NET = STAKE - FEE;                              // a player who donated nothing
+const DONOR_NET = NET - 5000n;                        // a player who donated 5000 msat
 const entryOf = (n, outcome, { score = 0, donationMsat = 0n } = {}) => ({
   entryId: b32(n), pubkey: b32(n), outcome, score, stakeMsat: STAKE, feeMsat: FEE, donationMsat,
 });
@@ -64,28 +69,32 @@ const entryOf = (n, outcome, { score = 0, donationMsat = 0n } = {}) => ({
  * is not a whole satoshi". That was 2% of the NET stake - a base 22A never
  * uses. The fee base is the commitments, and it is the pool that is net.
  */
-test("22A's 61-player round: 6,100 committed, 122 fee, 122 donated, 5,856 to the game", () => {
+// THE SAME ROUND UNDER BITCOIN ARENA (§0A.8 "61-player round, all at the default donation"): 6,100 sat committed, node fee
+// 5% = 305 sat, donation 5% = 305 sat, game pool 5,490 sat.
+test("the 61-player round: 6,100 committed, 305 fee, 305 donated, 5,490 to the game", () => {
   const entries = Array.from({ length: 61 }, (_, i) =>
-    entryOf(i + 1, FAILED, { donationMsat: (STAKE * 200n) / 10000n }));
+    entryOf(i + 1, FAILED, { donationMsat: DONATION }));
   for (const e of entries) assert.equal(feeMatchesEntry(e).ok, true, feeMatchesEntry(e).why);
 
   const t = nodeFeeTable({ contract, entries, pools, eligible: all });
-  assert.equal(t.gross, 6100000n, 'the fee base is the wallet commitments');
-  assert.equal(t.fee, 122000n);
-  assert.equal(t.pools[GAME_VERIFY], 61000n);
-  assert.equal(t.pools[SETTLEMENT], 61000n);
-  assert.equal(donatedMsat(entries), 122000n);
+  assert.equal(t.gross, 61n * STAKE, 'the fee base is the wallet commitments');
+  assert.equal(t.fee, 61n * FEE);
+  assert.equal(t.fee, 305000n, '305 sat, the example\'s own number');
+  assert.equal(t.pools[GAME_VERIFY], t.fee / 2n);
+  assert.equal(t.pools[SETTLEMENT], t.fee - t.fee / 2n);
+  assert.equal(donatedMsat(entries), 61n * DONATION);
 
   const toTheGame = entries.reduce((s, e) => s + netStakeMsat(e), 0n);
-  assert.equal(toTheGame, 5856000n);
+  assert.equal(toTheGame, 61n * (STAKE - FEE - DONATION));
+  assert.equal(toTheGame, 5490000n, '5,490 sat, the example\'s own number');
 
   // NOTHING ON TOP AND NOTHING LOST: the three parts are the commitment
   assert.equal(t.fee + donatedMsat(entries) + toTheGame, 61n * STAKE);
   // and what the entries were charged in fee is what the table owes the nodes
   assert.equal(entries.reduce((s, e) => s + e.feeMsat, 0n), t.fee);
 
-  // 117.12 sat is 2% of the game pool, and it was never 22A's number
-  assert.equal(entryFeeMsat(toTheGame), 117120n);
+  // the rate of the game pool (274.5 sat) was never the example's number: the base is the commitments
+  assert.equal(entryFeeMsat(toTheGame), (toTheGame * 500n) / 10000n);
   assert.notEqual(entryFeeMsat(toTheGame), t.fee);
 });
 
@@ -99,9 +108,10 @@ test("22A's 61-player round: 6,100 committed, 122 fee, 122 donated, 5,856 to the
  */
 // (The hold invoice's own check - an invoice for exactly the net stake - is deleted with the hold (cut 6b, RULED
 // 2026-09-24); the stake lock carries the net stake, which is what is left of this test.)
-test('100 committed, 2 fee, 2 donated: the stake is 96, and nothing else is', () => {
-  const entry = { stakeCommitment: b32(0x7a), stakeMsat: STAKE, feeMsat: FEE, donationMsat: 2000n };
-  assert.equal(netStakeMsat(entry), 96000n);
+test('100 committed, 5 fee, 5 donated: the stake is 90, and nothing else is', () => {
+  const entry = { stakeCommitment: b32(0x7a), stakeMsat: STAKE, feeMsat: FEE, donationMsat: DONATION };
+  assert.equal(netStakeMsat(entry), STAKE - FEE - DONATION);
+  assert.equal(netStakeMsat(entry), 90000n);
 });
 
 /**
@@ -109,20 +119,21 @@ test('100 committed, 2 fee, 2 donated: the stake is 96, and nothing else is', ()
  * their commitment; the winner's cancel hands back their net; and the pool
  * pays the winner exactly what it took in.
  */
-test('a loser settles 96 into the pool, and the winner is paid exactly that', () => {
-  const winner = entryOf(1, DELIVERED, { score: 500, donationMsat: 2000n });
-  const loser = entryOf(2, FAILED, { donationMsat: 2000n });
+test('a loser settles 90 into the pool, and the winner is paid exactly that', () => {
+  const winner = entryOf(1, DELIVERED, { score: 500, donationMsat: DONATION });
+  const loser = entryOf(2, FAILED, { donationMsat: DONATION });
+  const net = STAKE - FEE - DONATION;
 
   const s = lockActions({ roundId: b32(9), minScore: 1, entries: [winner, loser] });
   assert.deepEqual(s.actions.map((a) => a.action), [RETURN, CLAIM]);
-  assert.equal(s.poolMsat, 96000n, 'the pool took the fee or the donation with the stake');
-  assert.equal(s.refundedMsat, 96000n, 'the winner s hold is their net stake');
-  assert.equal(s.sharesMsat, 96000n);
-  assert.equal(s.table.table[0].amountMsat, 192000n, 'own net stake back plus the loser s');
+  assert.equal(s.poolMsat, net, 'the pool took the fee or the donation with the stake');
+  assert.equal(s.refundedMsat, net, 'the winner s hold is their net stake');
+  assert.equal(s.sharesMsat, net);
+  assert.equal(s.table.table[0].amountMsat, 2n * net, 'own net stake back plus the loser s');
 
   const owed = winnings({ table: s.table.table, stakes: [winner, loser] });
   assert.equal(owed.ok, true, owed.why);
-  assert.equal(owed.owedMsat, 96000n, 'the pool owes the winner something other than it holds');
+  assert.equal(owed.owedMsat, net, 'the pool owes the winner something other than it holds');
   assert.equal(owed.owedMsat, s.poolMsat);
 });
 
@@ -134,7 +145,7 @@ test('a loser settles 96 into the pool, and the winner is paid exactly that', ()
  * refused and every hold expired - one donor, and the pool got nothing.
  */
 test('qualifiers who staked different nets are paid by rank weight times net stake, the pool spent exactly', () => {
-  const donor = entryOf(1, DELIVERED, { score: 900, donationMsat: 5000n });   // net 93000
+  const donor = entryOf(1, DELIVERED, { score: 900, donationMsat: 5000n });   // net DONOR_NET
   const others = [2, 3, 4].map((n) => entryOf(n, DELIVERED, { score: 500 + n }));
   const loser = entryOf(50, FAILED);
 
@@ -142,44 +153,43 @@ test('qualifiers who staked different nets are paid by rank weight times net sta
   // whole pool whatever it donated - the donation weighs nothing against itself.
   const one = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] });
   assert.equal(one.payingRanks, 1);
-  assert.equal(one.pool, 98000n);
-  assert.equal(one.table[0].amountMsat, 93000n + 98000n, 'the sole paying rank: own net back plus the whole pool');
-  assert.deepEqual(one.table.slice(1, 4).map((r) => r.amountMsat), [98000n, 98000n, 98000n]);
+  assert.equal(one.pool, NET);
+  assert.equal(one.table[0].amountMsat, DONOR_NET + NET, 'the sole paying rank: own net back plus the whole pool');
+  assert.deepEqual(one.table.slice(1, 4).map((r) => r.amountMsat), [NET, NET, NET]);
   assert.equal(one.table[4].amountMsat, 0n);
 
   // AND THE HOLDS FOLLOW IT: the loser's net is settled into the pool, the
   // qualifiers' holds come back - no longer a refund of everybody.
   const held = lockActions({ roundId: b32(9), minScore: 1, entries: [donor, ...others, loser] });
-  assert.equal(held.poolMsat, 98000n, 'the loser s net enters the pool');
-  assert.equal(held.sharesMsat, 98000n);
+  assert.equal(held.poolMsat, NET, 'the loser s net enters the pool');
+  assert.equal(held.sharesMsat, NET);
   assert.deepEqual(held.actions.map((a) => a.action), ['RETURN', 'RETURN', 'RETURN', 'RETURN', 'CLAIM']);
 
   // TWO PAYING RANKS (five qualifiers): rank weights 4 and 3, times the nets
-  // 93000 (the donor, first) and 98000 (second) - 372000 and 294000 of 666000.
+  // DONOR_NET (the donor, first) and NET (second).
   const fifth = entryOf(5, DELIVERED, { score: 505 });
   const two = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, ...others, fifth, loser] });
   assert.equal(two.payingRanks, 2);
-  const first = (98000n * 372000n) / 666000n;                    // 54738, floored
-  const second = (98000n * 294000n) / 666000n;                   // 43261, floored
-  assert.equal(first, 54738n);
-  assert.equal(second, 43261n);
+  const w1 = 4n * DONOR_NET, w2 = 3n * NET;
+  const first = (NET * w1) / (w1 + w2);                          // floored
+  const second = (NET * w2) / (w1 + w2);                         // floored
   const shareOf = (row, own) => row.amountMsat - own;
-  const donorShare = shareOf(two.table[0], 93000n);
-  const secondShare = shareOf(two.table.find((r, i) => i > 0 && r.amountMsat > 98000n), 98000n);
-  assert.equal(donorShare + secondShare, 98000n, 'the pool is spent exactly');
+  const donorShare = shareOf(two.table[0], DONOR_NET);
+  const secondShare = shareOf(two.table.find((r, i) => i > 0 && r.amountMsat > NET), NET);
+  assert.equal(donorShare + secondShare, NET, 'the pool is spent exactly');
   assert.ok(donorShare - first <= 1n && secondShare - second <= 1n && donorShare >= first && secondShare >= second,
     `each share is its floor or one leftover msat above it: ${donorShare}, ${secondShare}`);
-  assert.ok(donorShare < 56000n, `the donor's share is scaled down from the unweighted 4/7 of the pool (56000): ${donorShare}`);
+  assert.ok(donorShare < (4n * NET) / 7n, `the donor's share is scaled down from the unweighted 4/7 of the pool: ${donorShare}`);
 
   // LOSERS MAY DIFFER: they only feed the pool, and each puts in its own net
   const giving = entryOf(51, FAILED, { donationMsat: 5000n });
   const t = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [others[0], loser, giving] });
-  assert.equal(t.pool, 98000n + 93000n);
-  assert.equal(t.table[0].amountMsat, 98000n + 191000n);
+  assert.equal(t.pool, NET + DONOR_NET);
+  assert.equal(t.table[0].amountMsat, NET + NET + DONOR_NET);
 
   // AND WITH NO POOL THERE IS NOTHING TO SCALE: each takes its own net back
   const quiet = computePayoutTable({ roundId: b32(9), minScore: 1, entries: [donor, others[0]] });
-  assert.deepEqual(quiet.table.map((r) => r.amountMsat), [93000n, 98000n]);
+  assert.deepEqual(quiet.table.map((r) => r.amountMsat), [DONOR_NET, NET]);
 });
 
 /**
@@ -188,12 +198,12 @@ test('qualifiers who staked different nets are paid by rank weight times net sta
  * and 200000 on a 100000 stake stood.
  */
 test('a fee and a donation that come to more than the stake do not stand', () => {
-  for (const donationMsat of [0n, 2000n, 98000n]) {
+  for (const donationMsat of [0n, DONATION, NET]) {
     const said = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: FEE, donationMsat });
     assert.equal(said.ok, true, `${donationMsat}: ${said.why}`);
     assert.equal(said.net, STAKE - FEE - donationMsat);
   }
-  for (const donationMsat of [98001n, 200000n]) {
+  for (const donationMsat of [NET + 1n, 200000n]) {
     const said = feeMatchesEntry({ stakeMsat: STAKE, feeMsat: FEE, donationMsat });
     assert.equal(said.ok, false, `a donation of ${donationMsat} stood on a stake of ${STAKE}`);
     assert.match(said.why, /cannot come to more than it/);
