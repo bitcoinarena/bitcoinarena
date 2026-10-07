@@ -50,7 +50,8 @@ test('test nets use 2-of-2, one confirmation, 100-block maturity, bitcoin block 
 import { computeGenesisConfigHash as foundingHash, computeCurrentConfigHash, encodeGameConfigV2, encodeGameConfigV3, computeDe2fConfigHash, encodeGameConfig as founding, GAME_CONFIG_V2, GAME_CONFIG_V3, EXPOSURE_WEIGHT_HEAT, CARGO_RULE_BED_FILL } from '../src/genesis.js';
 import { REFERENCE_TICKS, T_TICKS_MIN, T_TICKS_MAX } from '../../core/src/rules/score.js';
 import { LEGACY_CARGO } from '../../core/src/sim.js';
-import { KNOWN_GOOD_CORE_CONFIGS } from '../src/known-cores.js';
+import { KNOWN_GOOD_GAMES } from '../src/known-games.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 import { coreHashHex } from '../../core/tools/hash-core.js';
 
 test('the current core plays a config of its own, beside the founding one the network id commits to', () => {
@@ -68,8 +69,8 @@ test('the current core plays a config of its own, beside the founding one the ne
   assert.equal(v2[end - 4 - 4 - 1], CARGO_RULE_BED_FILL);
   assert.equal(dv.getUint32(end - 4 - 4), LEGACY_CARGO);
   // and the client lists the current core with the config it plays
-  assert.ok((KNOWN_GOOD_CORE_CONFIGS[coreHashHex()] || []).includes(toHex(computeCurrentConfigHash())),
-    'the current core is not listed with its config: run node packages/protocol/tools/known-cores.js');
+  assert.ok((KNOWN_GOOD_GAMES[toHex(NEXTBLOCK_GAME_ID)].cores[coreHashHex()] || []).includes(toHex(computeCurrentConfigHash())),
+    'the current core is not listed with its config: sign a new nextblock manifest and run node packages/protocol/tools/known-games.js');
 });
 
 test('de2f263d keeps dbb49344 from its frozen constants; the current core names v3, whose last field is the heat weight', () => {

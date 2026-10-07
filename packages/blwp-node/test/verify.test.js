@@ -10,7 +10,7 @@
 // on a signer node that reaches a federation now.
 import { CLOCK } from './block-clock.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -46,6 +46,8 @@ import { selectCommittee } from '../../protocol/src/sortition.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
 // The round's randomness is a future Bitcoin block hash (5A) that this daemon
@@ -85,7 +87,7 @@ const peer = ed25519.utils.randomSecretKey();          // the second committee s
 /** Two slots, so two receipts make a mark canonical - genesis.js's own rule. */
 const contractFor = (nodePubkey) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2,
-  settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
+  settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
@@ -249,7 +251,7 @@ const settle = async (node) => {
  * behind, and this test never called `submit`.
  */
 test('a round closed on a running daemon leaves a signed result nobody asked it for', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const { rid, eid, contract } = await roundThrough(node);
     await settle(node);
@@ -294,7 +296,7 @@ test('a round closed on a running daemon leaves a signed result nobody asked it 
  * than inventing a world.
  */
 test('a daemon with no beacon, or one it could have known, signs nothing and says why', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const { rid, eid } = await roundThrough(node);
     const answers = await Promise.all(node.verifier.done);
@@ -313,7 +315,7 @@ test('a daemon with no beacon, or one it could have known, signs nothing and say
  * priority rule needed to be more than an arrangement between tests.
  */
 test('an objection recorded over the wire reaches the pool as an objected job', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const { rid, eid } = await roundThrough(node, { objectFirst: true });
     assert.equal(node.round.objected(rid, eid), true, 'the node did not record the objection');
@@ -352,7 +354,7 @@ test('an objection recorded over the wire reaches the pool as an objected job', 
  * a divergence in the run rather than in what was carried.
  */
 test('a transcript no committee has carried is replayed and not signed', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const { rid, eid } = await roundThrough(node, { carried: false });
     const answers = await Promise.all(node.verifier.done);
@@ -374,8 +376,8 @@ test('a transcript no committee has carried is replayed and not signed', async (
  * `run-2of2` binds on Tailscale, over real sockets here.
  */
 test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     // ONE CONTRACT, naming both signer nodes. Neither node is the committee; the
     // contract is, and it names them by key.
@@ -464,7 +466,7 @@ test('two daemons each fetch the other\'s result and a 2-of-2 counts to two', as
  * answer away: a late receipt would leave that run permanently unsigned.
  */
 test('a receipt arriving after the close produces the result the replay could not sign', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     // Closed with the mark held by ONE of two signer nodes, so there is no canonical
     // transcript and nothing to sign over.
@@ -519,7 +521,7 @@ test('a receipt arriving after the close produces the result the replay could no
  * that decides what this node holds.
  */
 test('a peer that serves forged or foreign records adds nothing to the store', async () => {
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   let liar;
   try {
     const { rid, eid } = await roundThrough(node);
@@ -596,7 +598,7 @@ test('a beacon at or before the round\'s committee time is refused before anythi
   // "committee_time: beacon value appears -> committees selected & verified".
   // It used to be the census height, which was what the fields could prove.
   const early = { hash: RANDOMNESS, height: HEIGHT, timeMs: 500n };   // the committee time itself
-  const node = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => early });
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => early });
   try {
     const { rid, eid } = await roundThrough(node);
     const answers = await Promise.all(node.verifier.done);
@@ -626,8 +628,8 @@ test('a beacon at or before the round\'s committee time is refused before anythi
  * committee cannot survive.
  */
 test('two daemons given the same published hash and height derive the same seed and signer nodes', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   try {
     const c = { ...contractFor(a.round.pubkey), nodes: [a.round.pubkey, b.round.pubkey] };
     const signerNodeB = { secret: b.round.identity.secret, pubkey: b.round.pubkey };

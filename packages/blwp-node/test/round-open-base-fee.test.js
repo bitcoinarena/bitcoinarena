@@ -20,6 +20,7 @@ import { contractFor, opts, b32, presentDay } from './window-fixture.js';
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 // A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25: every paying-round test gets a bonded chain view): the one
 // daemon and a placeholder key, keyless, so the claim key is claimKeyFor's.
@@ -27,7 +28,7 @@ async function opened(feeRule, { noFees = false } = {}) {
   const slot = bondedChainSlot(lockPort());
   const port = slot.port;
   if (noFees) delete port.fees; else port.feeRule = feeRule;
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts, stakeLocks: port, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const base = contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']);

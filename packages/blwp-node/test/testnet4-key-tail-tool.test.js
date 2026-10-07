@@ -20,6 +20,7 @@ import { donationSetId } from '../../protocol/src/donation.js';
 import { blockOf } from '../../protocol/tools/bond.js';
 import { hash256, parseTransaction } from '../../protocol/src/tx.js';
 import { blockHashOf } from '../../protocol/src/chain.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const TOOL = new URL('../tools/testnet4-key-tail.mjs', import.meta.url).pathname;
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -41,7 +42,7 @@ async function bitcoind() {
   return { env: { BLWP_TN4_RPC: `http://127.0.0.1:${srv.address().port}`, BLWP_TN4_COOKIE: join(dir, '.cookie') }, close: () => new Promise((r) => srv.close(r)) };
 }
 const LIVE = {
-  networkId: NETWORK_ID_TESTNET4, configHash: b32(1), censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(9),
+  networkId: NETWORK_ID_TESTNET4, configHash: b32(1), censusConfirmations: 1, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(9),
   committeeTimeMs: 1000n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 100000n, entryCloseMs: 100000n, objectionWindowMs: 600000n,
   custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144,
   publicationRelays: ['wss://r.example'], donationSetId: donationSetId(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 150000, censusRoot: b32(2),

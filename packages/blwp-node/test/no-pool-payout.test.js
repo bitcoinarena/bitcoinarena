@@ -17,12 +17,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { opts } from './window-fixture.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const HERE = new URL('../', import.meta.url).pathname;
 const TOOLS = ['payout-regtest.mjs', 'payout-committee-regtest.mjs', 'settle-regtest.mjs', 'settle-crash-regtest.mjs'];
 
 test('a daemon serves no pool payout door: /payout, /pool/commit and /pool/share are no such door', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const base = `http://127.0.0.1:${d.port}`;
     const rid = '00'.repeat(32);

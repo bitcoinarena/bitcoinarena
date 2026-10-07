@@ -9,6 +9,7 @@ import { openStore, nodeIdentity } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { encodeAdvert, decodeAdvert, advertId } from '../../protocol/src/advert.js';
 import { standUpRound, guardianFieldsFromNode } from '../tools/round-2of2.mjs';
+import { HOSTED } from './plugins/hosted.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const freePort = () => new Promise((resolve) => {
@@ -19,7 +20,7 @@ const getGuardian = async (url) => (await fetch(`${url}/guardian`)).json();
 test("a guardian node's advert carries exactly what its GET /guardian answers, under the node's own signature", async () => {
   const db = openStore(':memory:');
   const endpoint = 'wss://seat.example.com/guardian-1/guardian';
-  const node = await serve(db, { port: 0, guardian: { apiPort: 1, endpoint } });
+  const node = await serve(db, { plugins: HOSTED, port: 0, guardian: { apiPort: 1, endpoint } });
   try {
     const url = `http://127.0.0.1:${node.port}`;
     const body = await getGuardian(url);

@@ -8,7 +8,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused as a contract disagreeing
 // with the network it names.
@@ -27,6 +27,8 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { decodeTranscript } from '../../protocol/src/transcript.js';
 import { toHex } from '../../protocol/src/hash.js';
 import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
@@ -36,12 +38,12 @@ const session = ed25519.utils.randomSecretKey();
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 
 async function rig() {
-  const node = await serve(openStore(), { port: 0, funded: () => true });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, funded: () => true });
   const client = new Client({
     base: `http://127.0.0.1:${node.port}`, core, sign: (id) => ed25519.sign(id, session), verify,
   });
   const c = {
-    networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
+    networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,
     censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 0n, bondMinSats: 50000n,
     blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes: [node.round.pubkey],
@@ -69,7 +71,7 @@ async function rig() {
 test('the core\'s DELIVERED finishes only a run the client has been told it is playing, and nothing else', async () => {
   // MEASURED LIVE (0.0.1342, a second PLAY in one tab): the new client existed before the page's core
   // entered the new round, the old core still said DELIVERED, and the new run finished at tick 1.
-  const node = await serve(openStore(), { port: 0, funded: () => true });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, funded: () => true });
   const early = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign: (id) => ed25519.sign(id, session), verify });
   try {
     assert.equal(early.coreWord({ state: 1, tick: 1 }), null, 'a client not yet told its round finished a run');

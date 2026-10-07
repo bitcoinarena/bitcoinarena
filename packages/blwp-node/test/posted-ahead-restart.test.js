@@ -15,6 +15,7 @@ import { b32, contractFor, wait } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 test('a free round posted before its beacon (202) is assigned by the node after a restart, once the beacon is on its chain', async () => {
   const slot = bondedChainSlot(lockPort());
@@ -29,7 +30,7 @@ test('a free round posted before its beacon (202) is assigned by the node after 
     return named.ok ? { hash: named.hash, height: named.height, timeMs: named.timeMs } : undefined;
   };
   const path = join(mkdtempSync(join(tmpdir(), 'posted-ahead-')), 'node.sqlite');
-  const start = () => serve(openStore(path), { port: 0, stakeLocks: slot.port, funded: () => true, chainFor: () => view(),
+  const start = () => serve(openStore(path), { plugins: HOSTED, port: 0, stakeLocks: slot.port, funded: () => true, chainFor: () => view(),
     randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   let d = await start();
   try {

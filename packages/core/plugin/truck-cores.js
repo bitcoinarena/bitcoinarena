@@ -1,19 +1,20 @@
-// THE CORES THIS SIGNER NODE CAN REPLAY (M3; the owner 2026-09-15 08:03: "the truck game is one use of the
-// federated consensus network, not the network"; 08:07: "several games at once, and several rule
-// sets at once. Each round names its sim_wasm_hash and its game_config/config_hash").
+// NEXTBLOCK'S CORES (kanban #202, §0A.2-0A.3; the owner 2026-10-06: the engine is Bitcoin Arena, the game is
+// "Tick Tock, Next Block" - `nextblock` in code). What was blwp-node/src/cores.js's truck half: the cores a node replays
+// nextblock's rounds with (the truck and the four it keeps installed beside it), the configs each plays, the replay
+// bundle each round's page runs, and the game's manifest - registered with a node by its launcher (blwp-node/src/main.js),
+// never imported by the engine. It lives outside core/src, so no core hash moves with it.
 //
-// The one door between a signer node and any game. Each core is its adapter module (the calls a signer node
-// replays through, core/src/adapter.js for the truck), its hash - sim_wasm_hash, computed here from
-// its own sources, never typed - and the configs it runs, by config_hash. `replay.js` imports no
-// core: it is handed one of these.
-import { CORE as TRUCK_ADAPTER } from '../../core/src/adapter.js';
-import { CORE as TRUCK_2069_ADAPTER } from '../../core/frozen/2069b4c2/adapter.js';
-import { CORE as TRUCK_DE2F_ADAPTER } from '../../core/frozen/de2f263d/adapter.js';
-import { CORE as TRUCK_7E21_ADAPTER } from '../../core/frozen/7e2123d1/adapter.js';
-import { coreHashHex } from '../../core/tools/hash-core.js';
+// The engine reads a core only through its adapter (start, eventsOf, step, stateHash, result, picture, runTicksFits) and
+// a game only through its manifest (protocol/src/manifest.js); this file is where nextblock hands it both.
+import { CORE as TRUCK_ADAPTER } from '../src/adapter.js';
+import { CORE as TRUCK_2069_ADAPTER } from '../frozen/2069b4c2/adapter.js';
+import { CORE as TRUCK_DE2F_ADAPTER } from '../frozen/de2f263d/adapter.js';
+import { CORE as TRUCK_7E21_ADAPTER } from '../frozen/7e2123d1/adapter.js';
+import { coreHashHex } from '../tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 import { computeCurrentConfigHash, computeDe2fConfigHash, computeConfigV3Hash } from '../../protocol/src/genesis.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../protocol/src/manifest.js';
 
 /**
  * THE CONFIG A ROUND ON THE TRUCK NAMES (the owner 2026-10-04, fix 1 of the spec audit; §27A.6 "a round is bound to the config
@@ -35,14 +36,14 @@ export const FOUNDING_CONFIG_ON_DE2F_BEFORE_MS = Date.parse('2026-10-04T13:00:00
 export const TRUCK = Object.freeze({
   name: TRUCK_ADAPTER.name,
   hash: coreHashHex(),
-  url: new URL('../../core/src/adapter.js', import.meta.url).href,
+  url: new URL('../src/adapter.js', import.meta.url).href,
   adapter: TRUCK_ADAPTER,
   // TWO CONFIGS ON ONE CORE (#23, the owner 2026-10-04): the current one, v4 - one world per round, shared by its players -
   // which every series published from now names; and v3 (f51759b6), the per-player world the 10-06 series was published
   // on, kept installed so its rounds open and replay exactly as published.
   configs: new Map([[TRUCK_CURRENT_CONFIG, {}], [TRUCK_V3_CONFIG, {}]]),
   // the bundle the replay page runs for this core's rounds (core/tools/bundle-replay.js)
-  replayFile: new URL('../../core/dist/blwp-replay-core.js', import.meta.url),
+  replayFile: new URL('../dist/blwp-replay-core.js', import.meta.url),
 });
 
 /**
@@ -57,16 +58,16 @@ export const TRUCK = Object.freeze({
  * free rounds the pair opened on it from 08:23Z are replayed by it, frozen in core/frozen/de2f263d. It plays its own
  * config dbb49344 (v2), and the founding config only for a round made before the 13:00Z cut-over.
  */
-const FROZEN_DE2F = new URL('../../core/frozen/de2f263d', import.meta.url).pathname;
+const FROZEN_DE2F = new URL('../frozen/de2f263d', import.meta.url).pathname;
 if (coreHashHex(FROZEN_DE2F) !== DE2F_HASH) throw new Error(`core/frozen/de2f263d hashes to ${coreHashHex(FROZEN_DE2F)}, not the core it keeps`);
 export const TRUCK_DE2F = Object.freeze({
   name: `${TRUCK_ADAPTER.name} (de2f263d, exposure by C)`,
   hash: DE2F_HASH,
-  url: new URL('../../core/frozen/de2f263d/adapter.js', import.meta.url).href,
+  url: new URL('../frozen/de2f263d/adapter.js', import.meta.url).href,
   adapter: TRUCK_DE2F_ADAPTER,
   configs: new Map([[toHex(computeDe2fConfigHash()), {}],
     [toHex(GENESIS_CONFIG_HASH), { committeeBeforeMs: FOUNDING_CONFIG_ON_DE2F_BEFORE_MS }]]),
-  replayFile: new URL('../../core/dist/blwp-replay-core-de2f263d.js', import.meta.url),
+  replayFile: new URL('../dist/blwp-replay-core-de2f263d.js', import.meta.url),
 });
 
 /**
@@ -76,59 +77,28 @@ export const TRUCK_DE2F = Object.freeze({
  * per-player v3 (f51759b6) of the 10-06 series.
  */
 export const TRUCK_7E21_HASH = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
-const FROZEN_7E21 = new URL('../../core/frozen/7e2123d1', import.meta.url).pathname;
+const FROZEN_7E21 = new URL('../frozen/7e2123d1', import.meta.url).pathname;
 if (coreHashHex(FROZEN_7E21) !== TRUCK_7E21_HASH) throw new Error(`core/frozen/7e2123d1 hashes to ${coreHashHex(FROZEN_7E21)}, not the core it keeps`);
 export const TRUCK_7E21 = Object.freeze({
   name: `${TRUCK_ADAPTER.name} (7e2123d1, objectives from the relief)`,
   hash: TRUCK_7E21_HASH,
-  url: new URL('../../core/frozen/7e2123d1/adapter.js', import.meta.url).href,
+  url: new URL('../frozen/7e2123d1/adapter.js', import.meta.url).href,
   adapter: TRUCK_7E21_ADAPTER,
   configs: new Map([[TRUCK_CURRENT_CONFIG, {}], [TRUCK_V3_CONFIG, {}]]),
-  replayFile: new URL('../../core/dist/blwp-replay-core-7e2123d1.js', import.meta.url),
+  replayFile: new URL('../dist/blwp-replay-core-7e2123d1.js', import.meta.url),
 });
 
 export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
-const FROZEN_2069 = new URL('../../core/frozen/2069b4c2', import.meta.url).pathname;
+const FROZEN_2069 = new URL('../frozen/2069b4c2', import.meta.url).pathname;
 if (coreHashHex(FROZEN_2069) !== TRUCK_2069_HASH) throw new Error(`core/frozen/2069b4c2 hashes to ${coreHashHex(FROZEN_2069)}, not the core it keeps`);
 export const TRUCK_2069 = Object.freeze({
   name: `${TRUCK_ADAPTER.name} (2069b4c2, C 0.7 and par 65 s)`,
   hash: TRUCK_2069_HASH,
-  url: new URL('../../core/frozen/2069b4c2/adapter.js', import.meta.url).href,
+  url: new URL('../frozen/2069b4c2/adapter.js', import.meta.url).href,
   adapter: TRUCK_2069_ADAPTER,
   configs: new Map([[toHex(GENESIS_CONFIG_HASH), {}]]),
-  replayFile: new URL('../../core/dist/blwp-replay-core-2069b4c2.js', import.meta.url),
+  replayFile: new URL('../dist/blwp-replay-core-2069b4c2.js', import.meta.url),
 });
-
-/**
- * A CORE'S RUN LENGTH UNDER A CONFIG (M3 R1 R3): its `runTicks(config)` where it has one, else its one RUN_TICKS (the
- * truck's BLOCK_TICKS) - the length of a run whose round names none, and, since the 82/90 fork, the longest one may.
- */
-export function runTicksOf(core, config) {
-  const a = core && core.adapter;
-  if (!a) return null;
-  return typeof a.runTicks === 'function' ? a.runTicks(config) : a.RUN_TICKS;
-}
-
-/**
- * MAY A ROUND NAME THIS RUN LENGTH ON THIS CORE (the 82/90 fork, the owner 2026-10-01: "The round length must be part of
- * the contract - not a fixed constant")? A core held to one length (the truck before the fork) takes that one; a core
- * that takes the round's length takes any it says fits (1 .. RUN_TICKS for the truck).
- */
-export function runLengthFits(core, config, blockTicks) {
-  if (!core || !core.adapter) return { ok: false, why: 'no core to check that round\'s run length against' };
-  if (!Number.isInteger(blockTicks)) return { ok: false, why: 'that round names no run length' };
-  if (Number.isInteger(core.fixedRunTicks))
-    return blockTicks === core.fixedRunTicks ? { ok: true }
-      : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${core.fixedRunTicks} (${core.name}) - a run is not replayed to a length its core does not stop at` };
-  if (typeof core.adapter.runTicksFits !== 'function') {
-    // A CORE OF ONE LENGTH UNDER ITS CONFIG (it takes none from the round): that length only.
-    const own = runTicksOf(core, config);
-    return blockTicks === own ? { ok: true }
-      : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${own}` };
-  }
-  return core.adapter.runTicksFits(blockTicks) ? { ok: true }
-    : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
-}
 
 /** The truck's hashes as a round names them: its sim_wasm_hash and the config_hash of the rules it plays. */
 export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
@@ -151,40 +121,34 @@ export const TRUCK_BEFORE_FORK_HASH = 'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944
 export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK_2069, name: `${TRUCK.name} (before the 82/90 fork)`, hash: TRUCK_BEFORE_FORK_HASH,
   fixedRunTicks: TRUCK_2069_ADAPTER.RUN_TICKS });
 
-/**
- * THE CORES A SIGNER NODE HAS INSTALLED, by hash: the truck always, and every core its operator installs
- * beside it (serve's `cores`) - several at once, each with its own configs (the owner 08:07).
- */
-export function installedCores(extra = []) {
-  const all = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, TRUCK_7E21], [DE2F_HASH, TRUCK_DE2F], [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
-  for (const c of extra) all.set(c.hash, c);
-  return all;
-}
-const INSTALLED = installedCores();
+
+/** Every core nextblock's rounds are replayed by, by hash: the truck and the four kept installed beside it. */
+export const NEXTBLOCK_CORES = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, TRUCK_7E21], [DE2F_HASH, TRUCK_DE2F],
+  [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
 
 /**
- * THE CORE A ROUND IS REPLAYED BY, AND THE CONFIG IT RUNS: the one its simCoreHash names, running
- * the config its configHash names, among the cores this signer node installed. A pair the signer node does not
- * hold is refused by name - 27A.7.5: not selectable for that round, it serves nothing there, it is
- * not ejected and not slashed. (R1 step B; step A handed every round the truck.)
+ * NEXTBLOCK'S MANIFEST BODY, from this registration (§0A.3): every core above with the configs it plays, a run of at
+ * most the truck's RUN_TICKS, §18A's rank curve at 3/4, a floor of one score unit, the client scripts the game serves
+ * (`clients`, the nextblock list in blwp-client/known-good-clients.json) and the donation set the testnet4 series name.
+ * round_period 0: the game asks no fixed period of its rounds. The signed manifest (nextblock-manifest.js) is this body
+ * signed by the game's developer with the dev client (blwp-donor/bin/sign-game-manifest.mjs); nextblock-manifest.test.js holds the two to the same bytes.
  */
-export function coreForRound(contract, installed = INSTALLED) {
-  if (!contract || !(contract.simCoreHash instanceof Uint8Array) || contract.simCoreHash.length !== 32)
-    return { ok: false, why: 'that round names no 32-byte core' };
-  const core = installed.get(toHex(contract.simCoreHash));
-  if (!core)
-    return { ok: false, why: `this signer node holds no core ${toHex(contract.simCoreHash).slice(0, 16)}: it is not selectable for `
-      + 'that round (27A.7.5) - it serves nothing there, and is not slashed' };
-  if (!(contract.configHash instanceof Uint8Array) || !core.configs.has(toHex(contract.configHash)))
-    return { ok: false, why: `this signer node runs ${core.name} but not the config `
-      + `${contract.configHash instanceof Uint8Array ? toHex(contract.configHash).slice(0, 16) : '(none)'} that round names: `
-      + 'not selectable for it (27A.7.5)' };
-  // A PAIR KEPT ONLY FOR THE ROUNDS ALREADY MADE WITH IT (de2f263d with the founding config): refused past its cut-over
-  const config = core.configs.get(toHex(contract.configHash));
-  if (config && config.committeeBeforeMs !== undefined
-      && !(typeof contract.committeeTimeMs === 'bigint' && contract.committeeTimeMs < BigInt(config.committeeBeforeMs)))
-    return { ok: false, why: `${core.name} runs the config ${toHex(contract.configHash).slice(0, 16)} only for rounds made before `
-      + `${new Date(config.committeeBeforeMs).toISOString()}: a round on this core names the config of the rules it plays (27A.6)` };
-  // AND THE ROUND'S RUN LENGTH (the 82/90 fork): its contract's blockTicks, carried with the core to every replay of it.
-  return { ok: true, core, config, runTicks: contract.blockTicks };
+export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetId }) {
+  const sorted = (hs) => [...hs].sort();
+  return {
+    gameName: 'nextblock',
+    gameDevPubkey,
+    version: 1,
+    parentManifestId: NO_PARENT,
+    resultType: RESULT_TYPE.REPLAY,
+    cores: sorted([...NEXTBLOCK_CORES.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...NEXTBLOCK_CORES.get(h).configs.keys()]).map(fromHex) })),
+    runTicksMax: TRUCK_ADAPTER.RUN_TICKS,
+    roundPeriodMs: 0n,
+    payoutRule: PAYOUT_RULE.RANK_CURVE,
+    rankNumerator: 3,
+    rankDenominator: 4,
+    minScore: 1,
+    clients: sorted(clients).map(fromHex),
+    gameDonationSetId,
+  };
 }

@@ -12,7 +12,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../blwp-node/src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 // The run length is the core's; a literal 9000 is refused by the node as a contract
 // disagreeing with the network it names (WAR_TACTICS moved a run to 10800).
@@ -43,6 +43,8 @@ import { O_TRUCK, T_X, T_Z, T_HEADING } from '../../core/src/state.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { assumeStakeSeen } from '../../blwp-node/test/assignment.js';
+import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const require = createRequire(import.meta.url);
 const core = require('../../core/dist/blwp-core.js');
 
@@ -60,13 +62,13 @@ const FUNDED = {
 const words = (t) => [45875, ((t * 986) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 
 test('two daemons, one page: the other truck arrives where its own transcript puts it', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     // ONE CONTRACT, TWO SIGNER NODES - the 2-of-2 that already runs.
     const contract = {
       networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-      gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+      gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
       committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
       startTimeMs: 500n + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
       objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,

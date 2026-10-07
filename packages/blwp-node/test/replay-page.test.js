@@ -11,7 +11,8 @@ import { lockRound, lockAndPlay } from './lock-round-fixture.js';
 import { LOSER } from './window-fixture.js';
 import { readTranscript } from '../src/transcript-read.js';
 import { replay } from '../src/replay.js';
-import { coreForRound, installedCores } from '../src/cores.js';
+import { coreOfGame } from '../src/plugins.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 import { decodeEntryContract } from '../../protocol/src/contracts.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -59,7 +60,7 @@ test('the replay doors: a page, the run as the node replays it, the round\'s own
     const st = R.CORE.start(seedWordForEntry(ent, beacon));
     const events = R.CORE.eventsOf(handed);
     for (const tick of handed.ticks) { events.before(st, tick.tick); R.CORE.step(st, tick.words); }
-    const found = coreForRound(w.c, installedCores());
+    const found = coreOfGame(w.c, NEXTBLOCK);
     const node = replay(w.a.round.transcript(w.rid, played.eid), played.entry, { core: { ...found.core, config: found.config }, roundRandomness: w.randomness });
     console.log(`  the page's stepping: ${handed.ticks.length} ticks, state ${R.CORE.stateHash(st).slice(0, 16)}; the node's replay ${String(node.stateHash).slice(0, 16)}`);
     assert.equal(node.ok, true, node.why);

@@ -32,6 +32,8 @@ import { roundId } from '../../protocol/src/contracts.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const OUT = '/tmp/claude-1000/-tmp-btc-phase0/50a57200-8210-47c2-a393-919f0e1ea289/scratchpad/shot';
 const BUILD = '/tmp/btc-phase0/unity-proto/build/webgl';
 const CHROME = '/home/arena/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome';
@@ -39,7 +41,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------- the node
-const node = await serve(openStore(), { port: 0, funded: () => true });
+const node = await serve(openStore(), { plugins: [NEXTBLOCK], port: 0, funded: () => true });
 // SIGNED BY THE NODE IT NAMES. The first run of this harness was refused for
 // exactly that - an advertisement signed by a stranger - which is the door
 // doing its job: the committee is the round's, and the key that wrote the
@@ -91,7 +93,7 @@ const bondApi = await listen((req, res) => {
 // thirty-second round. No rule is changed - the bound is still the round's
 // own length, which is the whole point of it.
 const contract = {
-  simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:1'], donationSetId: new Uint8Array(32).fill(0xd0), censusHeight: 900000,
   censusRoot: b32(2), committeeSeed: b32(3), stakeMsat: 100000n,
   bondMinSats: 50000n, blockTicks: 1800, exposureReference: 1000,
@@ -129,7 +131,7 @@ const INJECT = `
     ...contract,
     startTimeMs: '1000n', entryCloseMs: '2000n', objectionWindowMs: '600000n',
     stakeMsat: '100000n', bondMinSats: '50000n',
-    censusRoot: hex(b32(2)), committeeSeed: hex(b32(3)), simCoreHash: hex(b32(1)),
+    censusRoot: hex(b32(2)), committeeSeed: hex(b32(3)), gameId: NEXTBLOCK_GAME_ID, simCoreHash: hex(b32(1)),
     nodes: [hex(node.round.pubkey)],
   })};
   BLWP_ROUND.startTimeMs = 1000n; BLWP_ROUND.entryCloseMs = 2000n;

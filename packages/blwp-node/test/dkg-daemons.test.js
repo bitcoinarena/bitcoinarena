@@ -21,6 +21,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { randomBytes } from 'node:crypto';
 import { toHex } from '../../protocol/src/hash.js';
 import { feldmanGroup as dkgCurve } from '../src/curve.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const rand = (n) => new Uint8Array(randomBytes(n));
 const curve = { ...feldmanGroup, tweakPoint };
@@ -30,7 +31,7 @@ const FUNDED = { funded: () => true };
 async function daemons(n = SHARES_TOTAL) {
   const nodes = [];
   for (let i = 0; i < n; i++)
-    nodes.push(await serve(openStore(':memory:'), { port: 0, ...FUNDED, poolCurve: curve }));
+    nodes.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, poolCurve: curve }));
   for (const node of nodes)
     node.dkg.peers = nodes.filter((o) => o !== node).map((o) => `http://127.0.0.1:${o.port}`);
   const signerNodes = nodes.map((x) => x.round.pubkey);

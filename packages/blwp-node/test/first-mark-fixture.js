@@ -31,6 +31,7 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, sha256 } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 export const curve = { ...feldmanGroup, tweakPoint };
 export const END = WINNER.ticks;                      // 1320: the run delivers here
@@ -40,7 +41,7 @@ export async function signerNodes({ endIn = 9000, serveOpts = {} } = {}) {
   // reads the chain, and its beacon is that chain's). Both are running daemons: the claim key is their own live DKG.
   const slot = bondedChainSlot(lockPort());
   const port = slot.port;
-  const mk = (db, p = 0) => serve(db, { port: p, ...opts, ...serveOpts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
+  const mk = (db, p = 0) => serve(db, { plugins: HOSTED, port: p, ...opts, ...serveOpts, stakeLocks: port, poolCurve: curve, finality: { everyMs: 100 },
     chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');

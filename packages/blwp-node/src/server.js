@@ -89,7 +89,7 @@ import { ENTRY_VOID, netStakeMsat } from '../../protocol/src/payout.js';
 import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../protocol/src/objection.js';
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../protocol/src/posting.js';
 import { federationIsBonded } from '../../protocol/src/federation.js';
-import { installedCores, coreForRound, TRUCK } from './cores.js';
+import { hostedPlugins, pluginForRound } from './plugins.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
@@ -300,10 +300,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // §27A.4), and any authority rotations: each checked here before it is ever
   // served. None by default: a signer node with none serves no set.
   donationSets = [], donationRotations = [],
-  // THE CORES THIS SIGNER NODE RUNS BESIDE THE TRUCK (M3 R1; the owner 08:07: several games and rule sets at
-  // once): each { name, hash, url, adapter, configs } as cores.js builds the truck. The truck is
-  // always installed; a round naming a core or config this signer node does not hold is refused at the door.
-  cores = [],
+  // THE GAMES THIS NODE HOSTS (kanban #202, §0A.4; M3 R1, the owner 08:07: several games and rule sets at once): each a
+  // registration { name, manifest, gameId, cores } its launcher hands it (src/main.js hands nextblock,
+  // core/plugin/nextblock.js), checked by plugins.js. None given hosts none; a round of a game this node does not host,
+  // or naming a core or config it did not install for that game, is refused at the door.
+  plugins = [],
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
@@ -318,18 +319,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // /blwp-b, the path the page is published under"): the https bases of the nodes that hold these rounds, comma-separated
   // in BLWP_REPLAY_PUBLIC. /replay/nodes answers them first, as `stable`; the page copies from them when there are any.
   replayPublic = (process.env.BLWP_REPLAY_PUBLIC || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https:\/\//.test(u)) } = {}) {
-  // THE CORES THIS SIGNER NODE RUNS (M3 R1), made once: the round store opens only rounds on them, and the door,
-  // the replay and the ghosts resolve each round's core through the same registry.
-  const installed = installedCores(cores);
+  // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
+  // the replay and the ghosts resolve each round's game and core through the same registry.
+  const hosted = hostedPlugins(plugins);
   const replayCoreFile = (hex) => (replayCores && /^[0-9a-f]{64}$/.test(hex) ? joinPath(replayCores, `${hex}.js`) : null);
   if (replayCores) {
     try {
       mkdirSync(replayCores, { recursive: true });
-      const own = replayCoreFile(TRUCK.hash);
-      if (!existsSync(own)) writeFileSync(own, readFileSync(new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
+      // EVERY CORE IT INSTALLED, each its own game's replay bundle (kanban #202: a round's replay page is its plugin's)
+      for (const p of hosted.values()) for (const [hash, core] of p.cores) {
+        const own = replayCoreFile(hash);
+        if (core.replayFile && !existsSync(own) && existsSync(core.replayFile)) writeFileSync(own, readFileSync(core.replayFile));
+      }
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
-  const round = new Round(db, undefined, { cores: installed });
+  const round = new Round(db, undefined, { plugins: hosted });
   if (roundClock) round.now = roundClock;
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): this node's own chain view - blocks at both ends of
   // every window, and the block its own postings and re-runs name. A node given no chain decides no window.
@@ -852,7 +856,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHAT SHOWS OTHER PLAYERS' TRUCKS. Pictures only: 0.10 says a ghost is
   // never an input to anybody's simulation, and the frames it hands out came
   // out of `replay.js` like everything else that touches the core.
-  const ghosts = new Ghosts(round, { cores: installed, ...(randomnessFor ? { randomnessFor } : {}) });
+  const ghosts = new Ghosts(round, { plugins: hosted, ...(randomnessFor ? { randomnessFor } : {}) });
 
   // THE ROUND'S SETTLEMENT SIGNER NODES, OFF THE CENSUS: who holds a stake's shares
   // and who signs its payout table. The same rule the receipt pull uses, for
@@ -867,7 +871,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
 
   const verifier = new Verifier(round, {
-    cores: installed,
+    plugins: hosted,
     advertsFor: advertsFor || ((rid) => {
       const census = roster.censusFor(rid);
       return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
@@ -2358,7 +2362,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // signer node is not selectable for it - it serves nothing there, and is not slashed. Refused before
         // anything of the round exists on this signer node.
         {
-          const runs = coreForRound(contract, installed);
+          const runs = pluginForRound(contract, hosted);
           if (!runs.ok) return text(res, 409, runs.why);
         }
         // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
@@ -3088,15 +3092,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...CORS });
         return res.end(readFileSync(new URL('../pages/replay.html', import.meta.url)));
       }
-      // THE CORE THE ROUND NAMES, and no other: served only when that round's sim hash is this node's own core - the core
-      // this node replays it with (packages/core/dist/blwp-replay-core.js, the bundle of core/src's adapter).
+      // THE CORE THE ROUND NAMES, and no other: served only when that round's sim hash is a core this node installed for
+      // the round's game - the core it replays it with (the registration's replayFile; nextblock's is
+      // packages/core/dist/blwp-replay-core.js, the bundle of core/src's adapter).
       if (req.method === 'GET' && url.pathname === '/replay/core.js') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
         const row = round.get(id);
         if (!row) return text(res, 404, 'this node holds no such round');
         const contract = decodeRoundContract(new Uint8Array(row.contract));
-        const runs = coreForRound(contract, installed);
+        const runs = pluginForRound(contract, hosted);
         if (!runs.ok) {
           // A CORE THIS NODE NO LONGER RUNS IS STILL SERVED FOR THE REPLAY of a round it stored: refusing it deleted the
           // replay (the morning's links 409'd on d12e7abc once the tree moved).
@@ -3105,9 +3110,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
           return res.end(readFileSync(kept));
         }
-        // the bundle of the core that round names, among those installed (the truck's own, or 2069b4c2's beside it)
+        // the bundle of the core that round names, as its game installed it (kanban #202: each round's replay page is its
+        // own plugin's); a game whose core carries no replay bundle has no replay page
+        if (!runs.core.replayFile || !existsSync(runs.core.replayFile)) return text(res, 404, `${runs.plugin.name} serves no replay page for core ${runs.core.hash.slice(0, 16)}`);
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', ...CORS });
-        return res.end(readFileSync(runs.core.replayFile || new URL('../../core/dist/blwp-replay-core.js', import.meta.url)));
+        return res.end(readFileSync(runs.core.replayFile));
       }
       // THE PROTOCOL'S DECODERS AND SEED for the page: the client bundle, as the game page carries it.
       if (req.method === 'GET' && url.pathname === '/replay/client.js') {

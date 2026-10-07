@@ -28,7 +28,7 @@ import { NO_SHARES, dealHandout, encodeHandout } from '../../protocol/src/handou
 import { FIELD, scalarFrom32 } from '../../protocol/src/shares.js';
 import { worldSeedWord, worldIsShared } from '../../protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../protocol/src/player-key.js';
-import { coreIsKnownGood } from '../../protocol/src/known-core.js';
+import { gameIsKnownGood } from '../../protocol/src/known-game.js';
 import { entryFeeMsat, feeMatchesEntry } from '../../protocol/src/fee.js';
 import { receiptsNeeded } from '../../protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
@@ -811,9 +811,9 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
     if (!fee.ok) throw new Error(fee.why);
   }
-  // A PAYING ROUND ON AN UNKNOWN CORE IS REFUSED (§5): no override, no flag. A
-  // free round risks nothing and is joined as before.
-  if (roundPays(round)) { const core = coreIsKnownGood(round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
+  // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
+  // no flag. A free round risks nothing and is joined as before.
+  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
   // THE SIGNER NODE'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
   // v4.6.2, F2). A payout and a refund go to it, so a page that joined a player
   // under any other key - a bug, or a host that lies - would send the money
@@ -932,7 +932,7 @@ export async function stakeFor(round, { signerNodes, curve, random, playerPubkey
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
   // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
   // is dealt, so a backdoored round gets no handout, no hold and no signer node.
-  { const core = coreIsKnownGood(round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
+  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
   // other number is a stake the door refuses - so it is refused here first.

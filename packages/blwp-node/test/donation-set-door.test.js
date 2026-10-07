@@ -7,7 +7,7 @@
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
 // on a signer node that reaches a federation now.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,6 +23,8 @@ import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_EN
 import { donationSetId, donationSetMatchesRound, splitDonation } from '../../protocol/src/donation.js';
 import { donationSetBodyId, decodeDonationSetBody, DONATION_SIGNATURE_BYTES, authorityRotationId, decodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { urlOfLnurl } from '../../protocol/src/bech32.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -32,7 +34,7 @@ const SET_ID = donationSetId(SET.recipients);
 
 const contractFor = (nodes, donationSetIdOfRound) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: BigInt(NOW), randomnessRule: 'bitcoin-block-hash',
   startTimeMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS, entryCloseMs: BigInt(NOW) + MIN_ENTRY_WINDOW_MS + 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
@@ -45,7 +47,7 @@ const contractFor = (nodes, donationSetIdOfRound) => ({
 async function signerNodesWith(setsPerSignerNode, rotationsPerSignerNode = []) {
   const signerNodes = [];
   for (const [i, donationSets] of setsPerSignerNode.entries())
-    signerNodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, now: () => NOW, donationSets, donationRotations: rotationsPerSignerNode[i] || [] }));
+    signerNodes.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW, donationSets, donationRotations: rotationsPerSignerNode[i] || [] }));
   const nodes = signerNodes.map((s) => s.round.pubkey);
   const post = async (contract) => {
     for (const s of signerNodes) {

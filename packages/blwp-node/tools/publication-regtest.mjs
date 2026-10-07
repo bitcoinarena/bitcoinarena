@@ -15,9 +15,10 @@ import { publicationPayload } from '../../protocol/src/publication.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { blockTimeOf } from '../../protocol/src/chain.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
-import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const env = process.env;
 const RT = env.RT; const PORT = env.RPCPORT || '30601';
@@ -39,7 +40,7 @@ const view = async () => blocksOver(node, from, await tipHeight());
 
 function draft(committeeTimeMs, n) {
   return { networkId: NETWORK_ID_REGTEST, configHash: TRUCK_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 2, settlementSlots: 2,
-    simCoreHash: TRUCK_CORE_HASH, committeeTimeMs, randomnessRule: 'bitcoin-block-hash', startTimeMs: committeeTimeMs + 60000n,
+    gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs, randomnessRule: 'bitcoin-block-hash', startTimeMs: committeeTimeMs + 60000n,
     entryCloseMs: committeeTimeMs + 1860000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
     federationId: b32(5), stakeExpiryBlocks: 144, publicationRelays: ['http://127.0.0.1:1'], donationSetId: b32(6), censusHeight: 1,
     censusRoot: b32(n), stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS, exposureReference: 1000, corridorHalfWidth: 40,

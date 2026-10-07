@@ -48,6 +48,7 @@ import { netStakeMsat } from '../../protocol/src/payout.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { refundKeyOf, lockFieldsToJson } from '../../protocol/src/stake-lock.js';
 import { toHex, fromHex, sha256 } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const REAL_FEES = { ppm: 0n, baseMsat: 1000n };
 
@@ -132,7 +133,7 @@ async function lockRoundOnDisk() {
   const address = lnurl(port);
   const start = async (name, at = 0) => {
     const d = await serve(openStore(join(dir, `${name}.sqlite`)),
-      { port: at, ...opts, stakeLocks: dying(name), poolCurve: curve, finality: { everyMs: 100 }, lnurlFetch: address.fetchLike,
+      { plugins: HOSTED, port: at, ...opts, stakeLocks: dying(name), poolCurve: curve, finality: { everyMs: 100 }, lnurlFetch: address.fetchLike,
         chainFor: slot.chainFor, randomnessFor: slot.randomnessFor });
     d.round.chainView = CLOCK.chainView();
     return d;

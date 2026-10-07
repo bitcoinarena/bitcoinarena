@@ -24,6 +24,7 @@ import { windowsOf } from '../../protocol/src/window.js';
 import { rerunIsAgreed, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const at = (d, now) => Object.assign(Object.create(d.round), { now: () => now });
 async function until(cond, ms = 8000) {
@@ -46,7 +47,7 @@ test('a pair that reaches a holder after it decided the re-run window counts for
     const eid = w.runs.dissents.eid;
     w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
     // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A, kanban #24: an objection's bundle is replayed at each door)
-    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts,
+    b = await serve(openStore(join(dir, 'b.sqlite')), { plugins: HOSTED, port: 0, ...opts, advertsFor: () => w.adverts,
       randomnessFor: w.holder.verifier.randomnessFor, chainFor: w.holder.verifier.chainFor });
     b.round.chainView = CLOCK.chainView();
     const B = { holder: b, rid: w.rid };
@@ -94,7 +95,7 @@ test('a pair that reaches both holders before they decide the re-run window coun
     const eid = w.runs.dissents.eid;
     w.holder.round.db.exec(`VACUUM INTO '${join(dir, 'b.sqlite')}'`);
     // B REPLAYS UNDER THE ROUND'S OWN BEACON, as A does (§13A, kanban #24: an objection's bundle is replayed at each door)
-    b = await serve(openStore(join(dir, 'b.sqlite')), { port: 0, ...opts, advertsFor: () => w.adverts,
+    b = await serve(openStore(join(dir, 'b.sqlite')), { plugins: HOSTED, port: 0, ...opts, advertsFor: () => w.adverts,
       randomnessFor: w.holder.verifier.randomnessFor, chainFor: w.holder.verifier.chainFor });
     b.round.chainView = CLOCK.chainView();
     const B = { holder: b, rid: w.rid };

@@ -24,6 +24,7 @@ import { epochId, dealContribution, encodeContribution } from '../../protocol/sr
 import { poolOutput } from '../../protocol/src/pool.js';
 import { scalarFrom32, scalarTo32, FIELD } from '../../protocol/src/shares.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const curve = { ...feldmanGroup, tweakPoint };
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -33,7 +34,7 @@ const sortKeys = (ks) => [...ks].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHe
 async function equivocate({ honestCount }) {
   const honest = [];
   for (let i = 0; i < honestCount; i++)
-    honest.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, poolCurve: curve }));
+    honest.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, poolCurve: curve }));
   for (const node of honest)
     node.dkg.peers = honest.filter((o) => o !== node).map((o) => `http://127.0.0.1:${o.port}`);
   const attackerSecret = rand(32);
@@ -92,7 +93,7 @@ test('5 of 7: a dealer sending two valid contributions to two halves of the hone
 test('2 of 2 and 7 of 7 with nobody equivocating: every signer node agrees and keeps a share of one key', async () => {
   for (const n of [2, 7]) {
     const nodes = [];
-    for (let i = 0; i < n; i++) nodes.push(await serve(openStore(':memory:'), { port: 0, funded: () => true, poolCurve: curve }));
+    for (let i = 0; i < n; i++) nodes.push(await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, poolCurve: curve }));
     try {
       for (const node of nodes) node.dkg.peers = nodes.filter((o) => o !== node).map((o) => `http://127.0.0.1:${o.port}`);
       const signerNodes = nodes.map((x) => x.round.pubkey);

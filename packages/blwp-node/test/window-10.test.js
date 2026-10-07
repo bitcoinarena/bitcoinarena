@@ -24,6 +24,7 @@ import { roundEndMs } from '../../protocol/src/first-mark.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { decodeRerunResult, splitSignedRerun, runOf } from '../../protocol/src/rerun.js';
 import { splitSignedResult, decodePlayerResult } from '../../protocol/src/result.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const S = 1000n;
 const big = (o) => JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v));
@@ -47,7 +48,7 @@ const roundAhead = () => sevenSignerNodes(WINDOW_MS, undefined, { endMs: testNow
 
 test('1. a contract whose window is 0, 599999 or 600001 ms is refused at open, list and entry; 600000 opens and is listed', async () => {
   const slot = bondedChainSlot(lockPort());
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, funded: () => true, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, funded: () => true, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   const base = `http://127.0.0.1:${d.port}`;
   try {

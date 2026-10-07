@@ -12,7 +12,7 @@
 // transcript replayed, no committee needed. That is why this is the one part of
 // the no-quorum rule a single node can hold up on its own.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
@@ -42,13 +42,15 @@ import { entryFeeMsat } from '../../protocol/src/fee.js';
 // THE CORE'S OWN RUN LENGTH: `Round.open` refuses a contract naming another, and this fixture still said
 // 9000, so every test here died in `played()` before a mark was ever offered (712bad8c, same fault).
 import { BLOCK_TICKS as RUN_TICKS } from '../../core/src/rules/gate.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const session = ed25519.utils.randomSecretKey();
 const sessionPubkey = ed25519.getPublicKey(session);
 const verify = (s, m, k) => { try { return ed25519.verify(s, m, k); } catch { return false; } };
 
 const contract = (nodes) => ({
-  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: RUN_TICKS,
   exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
@@ -64,7 +66,7 @@ const signedBy = (c, key = session) =>
 
 /** A round with one mark at tick 60, and the pieces to conflict with it. */
 function played() {
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const c = contract([b32(4)]);
   const rid = round.open(c);
   const eid = round.enter(entryFor(rid));
@@ -174,8 +176,8 @@ test('the node publishes the proof it holds, and says so when it holds none', as
   const other = { ...guilty.mark, stateHash: b32(0x22) };
   assert.throws(() => guilty.round.checkpoint(signedBy(other)), /equivocation/);
 
-  const a = await serve(guilty.round.db, { port: 0, funded: () => true });
-  const b = await serve(clean.round.db, { port: 0, funded: () => true });
+  const a = await serve(guilty.round.db, { plugins: HOSTED, port: 0, funded: () => true });
+  const b = await serve(clean.round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const at = (p, r, e) =>
       fetch(`http://127.0.0.1:${p}/equivocation?round=${toHex(r)}&entry=${toHex(e)}`);
@@ -322,7 +324,7 @@ test('a stranger with the proof and the entry can check it, and without the entr
   const other = { ...guilty.mark, stateHash: b32(0x22) };
   assert.throws(() => guilty.round.checkpoint(signedBy(other)), /equivocation/);
 
-  const node = await serve(guilty.round.db, { port: 0, funded: () => true });
+  const node = await serve(guilty.round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const base = `http://127.0.0.1:${node.port}`;
 
@@ -385,7 +387,7 @@ test('a node that holds a fork proof publishes it, where it used to answer 204',
   assert.equal(held.length, 1, 'the fork proof was held and not published');
   assert.equal(held[0].how, 'two chains from one parent');
 
-  const node = await serve(round.db, { port: 0, funded: () => true });
+  const node = await serve(round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const base = `http://127.0.0.1:${node.port}`;
     const r = await fetch(`${base}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);
@@ -423,7 +425,7 @@ test('the same-tick proof still publishes, and both are served together', async 
   assert.deepEqual(held.map((h) => h.how).sort(),
     ['two chains from one parent', 'two marks at one tick']);
 
-  const node = await serve(round.db, { port: 0, funded: () => true });
+  const node = await serve(round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const r = await fetch(
       `http://127.0.0.1:${node.port}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);
@@ -468,8 +470,8 @@ test('a node publishes the receipts it holds for marks it has not got', async ()
   };
   const receipt = joinSignedReceipt(encodeCheckpointReceipt(r), schnorr.sign(receiptId(r), member));
 
-  const empty = await serve(played().round.db, { port: 0, funded: () => true });
-  const node = await serve(round.db, { port: 0, funded: () => true });
+  const empty = await serve(played().round.db, { plugins: HOSTED, port: 0, funded: () => true });
+  const node = await serve(round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     // nothing held yet
     const none = await fetch(`http://127.0.0.1:${empty.port}/foreign-receipts`);
@@ -521,7 +523,7 @@ test('a mark refused for a backwards tick is kept, and pairs as a fork later', a
   assert.equal(held.length, 1, 'two children of one parent were not paired');
   assert.equal(held[0].how, 'two chains from one parent');
 
-  const node = await serve(round.db, { port: 0, funded: () => true });
+  const node = await serve(round.db, { plugins: HOSTED, port: 0, funded: () => true });
   try {
     const base = `http://127.0.0.1:${node.port}`;
     const r = await fetch(`${base}/equivocation?round=${toHex(rid)}&entry=${toHex(eid)}`);

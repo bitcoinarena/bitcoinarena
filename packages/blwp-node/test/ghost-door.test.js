@@ -16,6 +16,7 @@ import { serve } from '../src/server.js';
 import { encodeGhost } from '../../protocol/src/ghost.js';
 import { encodeInputBatch } from '../../protocol/src/batch.js';
 import { GENESIS } from '../../protocol/src/transcript.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
@@ -35,7 +36,7 @@ const talk = (port) => new Promise((resolve) => {
 });
 
 test('a ghost offered to the play socket is refused as a picture, by name', async () => {
-  const node = await serve(openStore(), { port: 0, ...FUNDED });
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const play = await talk(node.port);
     const said = await play.say(encodeGhost({

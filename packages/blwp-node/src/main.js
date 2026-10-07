@@ -44,6 +44,7 @@ import { lightningFromEnv } from './node-start.js';
 import { stakeLocksFromEnv } from './stake-lock-port.js';
 import { fundingFromEnv } from './funding.js';
 import { startNode } from './node-start.js';
+import { NEXTBLOCK } from '../../core/plugin/nextblock.js';
 import { hostsFromEnv, hostsReader } from './hosts.js';
 import { statSync, readFileSync } from 'node:fs';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
@@ -77,7 +78,11 @@ if (!ln.ok) {
 const db = openStore(path);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
-const options = { port, host, funded: fundingFromEnv(process.env), ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+// THE GAMES THIS NODE HOSTS (kanban #202, §0A.4): the reference launcher hands nextblock - its manifest as its developer
+// signed it with the dev client (blwp-donor/bin/sign-game-manifest.mjs, the owner 2026-10-07 15:40), public bytes only. The
+// node verifies that signature and refuses a manifest that does not stand (plugins.js); it holds no developer key and
+// never signs a game. The engine imports no game; this launcher is where one is chosen.
+const options = { port, host, funded: fundingFromEnv(process.env), plugins: [NEXTBLOCK], ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.BLWP_CLOSE_AT_END === '1') options.closeAtEnd = true;
 {

@@ -10,7 +10,7 @@
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -20,6 +20,7 @@ import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 /** The named round's bytes with custody byte 0 - the byte just before federation_id on the wire. */
 function withdrawnCustody(c) {
@@ -47,7 +48,7 @@ test('the signer node door refuses a paying FEDERATION round naming no federatio
   // AND ON A CHAIN THAT BONDS THE ROUND'S TWO NODES (RULED 2026-09-25): the one daemon and a keyless placeholder, so the
   // claim key is claimKeyFor's. Only the named round's censusRoot changes.
   const slot = bondedChainSlot(lockPort());
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, ...opts, chainFor: slot.chainFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, ...opts, chainFor: slot.chainFor,
     randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
   try {
     const base = `http://127.0.0.1:${d.port}`;

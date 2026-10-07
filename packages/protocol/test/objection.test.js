@@ -25,12 +25,13 @@ import { DELIVERED, FAILED } from '../src/payout.js';
 import { OBJECTION_WINDOW_REFERENCE_MS } from '../src/constants.js';
 import { encodeRoundContract, decodeRoundContract, roundWindowsAreValid } from '../src/contracts.js';
 import { toHex } from '../src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const committee = [1, 2, 3, 4, 5, 6, 7].map(b32);
 
 const contract = (over = {}) => ({
-  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
+  networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1), startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: OBJECTION_WINDOW_REFERENCE_MS, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: [], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash',
   stakeMsat: 100000n, bondMinSats: 50000n, blockTicks: 9000,

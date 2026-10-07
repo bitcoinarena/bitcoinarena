@@ -34,9 +34,10 @@ import { init, step } from '../../core/src/sim.js';
 import { hash as stateHash } from '../../core/src/state.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 async function signerNodes({ finality = {}, endIn = null } = {}) {
-  const mk = (db, port = 0, more = {}) => serve(db, { port, ...opts, finality: { everyMs: 100, ...finality }, ...more });
+  const mk = (db, port = 0, more = {}) => serve(db, { plugins: HOSTED, port, ...opts, finality: { everyMs: 100, ...finality }, ...more });
   const dbA = openStore(':memory:');
   const dbB = openStore(':memory:');
   let a = await mk(dbA);

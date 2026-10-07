@@ -6,13 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { Round } from '../src/round.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const hex = (u) => Buffer.from(u).toString('hex');
 const RID = b32(0x11), E1 = b32(0x21), E2 = b32(0x22), D1 = b32(0x31);
 function store() {
   let now = 1_790_000_000_000;
-  const round = new Round(openStore(':memory:'), () => now);
+  const round = new Round(openStore(':memory:'), () => now, { plugins: HOSTED });
   // the round and its two entries the winnings rows name (winnings and winnings_sends reference entries; a donation send
   // names a send id, not an entry). The contract bytes are not read by these methods.
   round.db.prepare('INSERT INTO rounds (round_id, contract, state, opened_ms) VALUES (?, ?, 0, ?)').run(Buffer.from(RID), Buffer.from('round'), now);

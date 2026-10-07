@@ -14,7 +14,7 @@
 // peers' receipts at the close, and every record goes through `takeReceipt`
 // unchanged - the mark held here, the signer joined, the signature verified.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { PLANTED_FIRST_MARK_DEADLINE } from './planted-marks.js';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -53,6 +53,8 @@ import { parseTransaction } from '../../protocol/src/tx.js';
 import { bondSetFor } from '../src/curve.js';
 import { bondFor } from './curve.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const FUNDED = { funded: () => true };
@@ -68,7 +70,7 @@ const session = ed25519.utils.randomSecretKey();
 /** A free round - carrying receipts is not about money, so no Lightning. */
 const contractFor = (nodes) => ({
   startDeadlineTicks: PLANTED_FIRST_MARK_DEADLINE, networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
   entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
   slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
   censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
@@ -95,8 +97,8 @@ const say = (port, message) => new Promise((resolve, reject) => {
  * its own receipt, and nobody forwards one to the other.
  */
 async function played() {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, randomnessFor: () => BEACON });
   const c = contractFor([a.round.pubkey, b.round.pubkey]);
   const rid = roundId(c);
   const entry = entryFor(rid);
@@ -222,8 +224,8 @@ const censusContract = (nodes, censusRoot) => ({
 });
 
 test('with no peers given, a daemon\'s verifier takes the round\'s committee endpoints from the census; a given list still wins', async () => {
-  const a = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
-  const b = await serve(openStore(':memory:'), { port: 0, ...FUNDED });
+  const a = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
+  const b = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
     const keys = [a.round.pubkey, b.round.pubkey];
     const endpoints = [`ws://127.0.0.1:${a.port}`, `ws://127.0.0.1:${b.port}`];
@@ -248,7 +250,7 @@ test('with no peers given, a daemon\'s verifier takes the round\'s committee end
     // the committee is A and B, so A's peers are B's endpoint and never its own.
     const storeA = a.round.db;
     await a.close();
-    const again = await serve(storeA, { port: a.port, ...FUNDED, chainFor: () => published, randomnessFor: () => beacon });
+    const again = await serve(storeA, { plugins: HOSTED, port: a.port, ...FUNDED, chainFor: () => published, randomnessFor: () => beacon });
     try {
       const rid = again.round.open(c);
       const roster = new Roster(again.round, { chainFor: () => published, randomnessFor: () => beacon });

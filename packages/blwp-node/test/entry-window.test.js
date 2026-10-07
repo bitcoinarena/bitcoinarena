@@ -14,7 +14,7 @@
 // exists. "Selecting at start_time and allowing commitment before that is
 // impossible, not merely unwise."
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -30,11 +30,13 @@ import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const COMMITTEE_TIME = 500n;
 const contract = (over = {}) => ({
   networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-  gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH,
+  gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH,
   committeeTimeMs: COMMITTEE_TIME, randomnessRule: 'bitcoin-block-hash',
   startTimeMs: COMMITTEE_TIME + MIN_ENTRY_WINDOW_MS, entryCloseMs: 200000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
@@ -81,7 +83,7 @@ test('a round that leaves no time to enter is refused, and the boundary itself l
 });
 
 test('a node refuses to store a round nobody could join', () => {
-  const round = new Round(openStore(), () => 600);
+  const round = new Round(openStore(), () => 600, { plugins: HOSTED });
   assert.throws(() => round.open(contract({ startTimeMs: COMMITTEE_TIME + 1n })),
     /leaving 1ms to enter where this protocol asks for 60000/,
     'a round nobody can join was stored');
@@ -99,7 +101,7 @@ test('entry opens at committee_time and not one millisecond before', () => {
   // no entry button - this is the same rule at the door, where a client that
   // draws no lobby cannot skip it.
   for (const now of [0, 1, Number(COMMITTEE_TIME) - 1]) {
-    const early = new Round(openStore(), () => now);
+    const early = new Round(openStore(), () => now, { plugins: HOSTED });
     early.open(c);
     assert.throws(() => early.enter(entryFor(rid)),
       new RegExp(`committee forms at 500 and it is ${now}: entry opens then`),
@@ -108,12 +110,12 @@ test('entry opens at committee_time and not one millisecond before', () => {
 
   // AT COMMITTEE_TIME: open. The equality is the spec's - entry_open_time ==
   // committee_time - so the instant itself is inside the window, not outside.
-  const at = new Round(openStore(), () => Number(COMMITTEE_TIME));
+  const at = new Round(openStore(), () => Number(COMMITTEE_TIME), { plugins: HOSTED });
   at.open(c);
   assert.ok(at.enter(entryFor(rid)), 'the committee formed and entry was still refused');
 
   // AND AFTER, for as long as the round is open.
-  const later = new Round(openStore(), () => Number(COMMITTEE_TIME) + 10000);
+  const later = new Round(openStore(), () => Number(COMMITTEE_TIME) + 10000, { plugins: HOSTED });
   later.open(c);
   assert.ok(later.enter(entryFor(rid)));
 });

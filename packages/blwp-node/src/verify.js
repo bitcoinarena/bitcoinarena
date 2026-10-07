@@ -47,7 +47,7 @@ import {
 } from '../../protocol/src/result.js';
 import { decodeRoundContract } from '../../protocol/src/contracts.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../protocol/src/checkpoint.js';
-import { coreForRound, installedCores } from './cores.js';
+import { pluginForRound, hostedPlugins } from './plugins.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../protocol/src/beacon.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
@@ -162,10 +162,10 @@ const PEER_WAIT_MS = 2500;
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
-    peersFor = null, advertsFor = null, cores = installedCores(),
+    peersFor = null, advertsFor = null, plugins = [],
   } = {}) {
-    // THE CORES THIS SIGNER NODE INSTALLED (M3 R1): a round's runs are replayed by the core it names, or not at all.
-    this.cores = cores;
+    // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1): a round's runs are replayed by the core its game installed, or not at all.
+    this.plugins = hostedPlugins(plugins);
     /**
      * THE SIGNER NODES' OWN ADVERTISEMENTS, by round: a Map of node key (hex) to the
      * decoded advertisement, whose bond outpoint a slash proof must name. The
@@ -631,13 +631,13 @@ export class Verifier {
 
   /**
    * THE CORE A ROUND'S RUNS ARE REPLAYED UNDER (M3 R1): the one its contract names, as this signer node's
-   * cores.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
+   * plugins.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
    */
   #coreOf(roundIdBytes) {
     const row = this.round.get(roundIdBytes);
     if (!row) return null;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
-    const found = coreForRound(contract, this.cores);
+    const found = pluginForRound(contract, this.plugins);
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
     return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes) } } : null;

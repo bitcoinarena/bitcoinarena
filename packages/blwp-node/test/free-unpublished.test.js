@@ -12,6 +12,7 @@ import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { beaconFromChain } from '../../protocol/src/beacon.js';
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 test('on a chain with no publication, a free round opens and its committee is drawn; a paying round there is refused', async () => {
   const slot = bondedChainSlot(lockPort());
@@ -24,7 +25,7 @@ test('on a chain with no publication, a free round opens and its committee is dr
     const named = beaconFromChain(contract, { headers: view.blocks.map((b) => b.header), firstHeight: view.firstHeight });
     return named.ok ? { hash: named.hash, height: named.height, timeMs: named.timeMs } : undefined;
   };
-  const d = await serve(openStore(':memory:'), { port: 0, stakeLocks: slot.port, funded: () => true, chainFor, randomnessFor,
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, stakeLocks: slot.port, funded: () => true, chainFor, randomnessFor,
     claimKeyFor: () => new Uint8Array(33).fill(2) });
   const base = `http://127.0.0.1:${d.port}`;
   try {

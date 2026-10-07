@@ -14,7 +14,7 @@
 // session key is a different thing and stays where it was; it signs marks and
 // bonds nothing.
 import { TEST_FEDERATION_ID } from '../../protocol/src/test-federation.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { test } from 'node:test';
 import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets.js';
@@ -37,6 +37,8 @@ import { toHex } from '../../protocol/src/hash.js';
 // The node fee is 27A.7's 2% of the stake, and the door checks it now
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../../protocol/src/fee.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 
 test('every fresh identity is a key this node can sign a bond and a receipt under', () => {
@@ -97,7 +99,7 @@ test('an identity stored under the old curve is rotated to the key it can sign w
 });
 
 test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', () => {
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   // THE PEER IS ON THE COMMITTEE, so that what refuses its receipt is the
   // SIGNATURE and not its membership: those two refusals have to stay
   // distinct, or "the curve is checked" would be proved by a test that never
@@ -106,7 +108,7 @@ test('a receipt is BIP-340 under the node key, and an ed25519 one is refused', (
   const peerKey = schnorr.getPublicKey(peer);
   const rid = round.open({
     networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6,
-    gameVerifySlots: 2, settlementSlots: 2, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
+    gameVerifySlots: 2, settlementSlots: 2, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
     entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
     slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
     censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
@@ -172,7 +174,7 @@ test('one node signing one receipt twice is not equivocation', () => {
   // signatures. Comparing the signed BYTES called that "receipted differently"
   // - an equivocation charge against a node that said the same thing twice.
   // Equivocation is two different BODIES.
-  const round = new Round(openStore(), () => 1234);
+  const round = new Round(openStore(), () => 1234, { plugins: HOSTED });
   const secret = schnorr.utils.randomSecretKey();
   const key = schnorr.getPublicKey(secret);
   const r = { checkpointId: b32(0x21), receivedAtMs: 1234n, nodePubkey: key };

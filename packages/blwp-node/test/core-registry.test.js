@@ -4,8 +4,8 @@
 //
 // Before step B every round was replayed by the one truck core whatever it named, and a result
 // took the contract's simCoreHash as its own - a signer node could sign "core X" over a replay of core Y.
-// Now the signer node's registry (cores.js installedCores: the truck always, and every core its operator
-// installs) resolves the round's (simCoreHash, configHash); a pair it does not hold is refused at
+// Now the signer node's registry (plugins.js: each game it hosts, with the cores its operator installed for it - since
+// kanban #202 a second title is a game of its own) resolves the round's (simCoreHash, configHash); a pair it does not hold is refused at
 // the door (27A.7.5: not selectable - it serves nothing there, and is not slashed); and resultFrom
 // refuses a replay that ran another core than the round names.
 // A FREE ROUND (RULED the owner 2026-09-25): nothing this file asserts depends on the stake, and a paying round opens only
@@ -16,22 +16,27 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
 import { resultFrom } from '../src/verdict.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_CONFIG_HASH, coreForRound, installedCores } from '../src/cores.js';
-import { TRUCK_BEFORE_FORK_HASH } from '../src/cores.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, TRUCK_CONFIG_HASH } from '../../core/plugin/nextblock.js';
+import { coreOfGame, hostedPlugins, installedCoresOf } from '../src/plugins.js';
+import { TRUCK_BEFORE_FORK_HASH, NEXTBLOCK } from '../../core/plugin/nextblock.js';
+import { testGame } from './plugins/sign.js';
+
+// THE CORE AND CONFIG A ROUND NAMES, WITHIN ITS GAME (kanban #202): nextblock's unless another game is given.
+const coreForRound = (c, game = NEXTBLOCK) => coreOfGame(c, game);
 import { contractFor, opts, b32 } from './window-fixture.js';
 import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { toHex } from '../../protocol/src/hash.js';
 
 test('the signer node door opens a round on the truck\'s own core and config, and refuses an unknown core or a config it does not run - by name, nothing stored', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const nodes = [d.round.pubkey, b32(0x33)];
     const post = async (c) => {
       const r = await fetch(`http://127.0.0.1:${d.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
       return { status: r.status, why: (await r.text()).trim(), held: (await fetch(`http://127.0.0.1:${d.port}/round?id=${toHex(roundId(c))}`)).status };
     };
-    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, stakeMsat: 0n };
-    const unknownCore = await post({ ...truck, simCoreHash: b32(1) });
+    const truck = { ...contractFor(nodes, 3000n, ['wss://r.example']), gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, stakeMsat: 0n };
+    const unknownCore = await post({ ...truck, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1) });
     const otherConfig = await post({ ...truck, configHash: b32(0x43) });
     const opened = await post(truck);
     console.log('  FACTS:', JSON.stringify({ unknownCore: { ...unknownCore, why: unknownCore.why.slice(0, 110) },
@@ -47,30 +52,33 @@ test('the signer node door opens a round on the truck\'s own core and config, an
   } finally { await d.close(); }
 });
 
-test('the registry resolves a round by both hashes, holds the truck always, and takes an operator\'s cores beside it', () => {
-  const round = { simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH };
+test('the registry resolves a round by both hashes within its game, holds nextblock\'s cores, and hosts an operator\'s game beside it', () => {
+  const round = { gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH };
   const got = coreForRound(round);
   assert.equal(got.ok, true, got.why);
   assert.equal(got.core, TRUCK);
   const other = { name: 'a second title', hash: 'ab'.repeat(32), url: 'file:///nowhere', adapter: TRUCK.adapter, configs: new Map([['cd'.repeat(32), {}]]) };
-  const both = installedCores([other]);
+  // A SECOND TITLE IS A GAME OF ITS OWN (kanban #202), hosted beside nextblock - never a core installed beside the truck
+  const otherGame = testGame({ name: 'a second title', cores: new Map([[other.hash, other]]), runTicksMax: 10800 });
+  const both = hostedPlugins([NEXTBLOCK, otherGame]);
   // THE TRUCK, 2069b4c2 KEPT BESIDE IT (path A, 2026-10-04), THE TRUCK BEFORE THE 82/90 FORK (its old hash: 2069b4c2 held
-  // to 10800), and the operator's core.
-  assert.deepEqual([...both.keys()].sort(), [TRUCK.hash, 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8', '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e',
+  // to 10800), de2f263d and 7e2123d1 - nextblock's - and the operator's game's core.
+  assert.deepEqual([...installedCoresOf(both).keys()].sort(), [TRUCK.hash, 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8', '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e',
     '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20', TRUCK_BEFORE_FORK_HASH, other.hash].sort());
   // the pre-fork core's rounds name the founding config (2026-10-04: a round names the config of the rules it plays)
   const old = coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(TRUCK_BEFORE_FORK_HASH, 'hex')), configHash: GENESIS_CONFIG_HASH, blockTicks: 10800 });
   assert.equal(old.ok, true, old.why);
   assert.deepEqual([old.core.hash === TRUCK_BEFORE_FORK_HASH, old.core.fixedRunTicks, old.runTicks], [true, 10800, 10800]);
-  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: Uint8Array.from(Buffer.from('cd'.repeat(32), 'hex')) }, both).core, other);
-  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_V3_CONFIG_HASH }, both).ok, false,
+  const second = both.get(toHex(otherGame.gameId));
+  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: Uint8Array.from(Buffer.from('cd'.repeat(32), 'hex')) }, second).core, other);
+  assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_V3_CONFIG_HASH }, second).ok, false,
     'a core was run under a config it does not carry');
   assert.equal(coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(other.hash, 'hex')), configHash: TRUCK_V3_CONFIG_HASH }).ok, false,
-    'a signer node that installed no second core ran one');
+    'nextblock ran a core another game installed');
 });
 
 test('a result names the core that replayed the run, and one whose replay ran another core than the round names is refused', () => {
-  const contract = { ...contractFor([b32(4), b32(5)], 3000n), simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH };
+  const contract = { ...contractFor([b32(4), b32(5)], 3000n), gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH };
   const rid = roundId(contract);
   const entry = { roundId: rid, playerPubkey: b32(7) };
   const transcript = { roundId: rid, entryId: b32(9), hash: b32(0x11) };
@@ -88,7 +96,7 @@ test('a result names the core that replayed the run, and one whose replay ran an
 // 2069b4c2 KEPT INSTALLED BESIDE THE TRUCK (the owner 2026-10-04, path A): every round published before C became the bed
 // fill and T sank from 20 s names it, and is replayed by it - its frozen source, not the truck that moved on. The pre-fork
 // core d15c39bb rides on it too: 2069b4c2 is the core that ran those rounds hash for hash at 10800 ticks.
-import { TRUCK_2069, TRUCK_2069_HASH } from '../src/cores.js';
+import { TRUCK_2069, TRUCK_2069_HASH } from '../../core/plugin/nextblock.js';
 import { CORE as FROZEN_2069 } from '../../core/frozen/2069b4c2/adapter.js';
 import { CORE as NOW } from '../../core/src/adapter.js';
 
@@ -114,7 +122,7 @@ test('2069b4c2 rounds are replayed by the frozen 2069b4c2 core, the pre-fork cor
 
 // THE CONFIG A ROUND NAMES IS THE RULES IT PLAYS (the owner 2026-10-04, fix 1 of the spec audit): de2f263d runs its own
 // config, 2069b4c2 the founding one; de2f263d with the founding config only for a round made before the cut-over.
-import { TRUCK_CURRENT_CONFIG, FOUNDING_CONFIG_ON_DE2F_BEFORE_MS } from '../src/cores.js';
+import { TRUCK_CURRENT_CONFIG, FOUNDING_CONFIG_ON_DE2F_BEFORE_MS } from '../../core/plugin/nextblock.js';
 import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
 test('each core runs the config of its own rules; the founding config on de2f263d only before the cut-over', () => {
   const pair = (core, config, committeeTimeMs) => coreForRound({ simCoreHash: Uint8Array.from(Buffer.from(core, 'hex')),
@@ -142,6 +150,8 @@ test('each core runs the config of its own rules; the founding config on de2f263
 // every round the live seats published on it, with the shared-world v4 or the per-player v3 config, is replayed by its
 // frozen source (core/frozen/7e2123d1), not by the truck that moved on to 68e2b3d6.
 import { CORE as FROZEN_7E21 } from '../../core/frozen/7e2123d1/adapter.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
+import { HOSTED } from './plugins/hosted.js';
 test('7e2123d1 rounds are replayed by the frozen 7e2123d1 core under both its configs, and not by the truck', () => {
   const S7E = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
   assert.notEqual(TRUCK.hash, S7E, 'the truck is still 7e2123d1');

@@ -32,6 +32,7 @@ import { decodePlayerResult, splitSignedResult, resultId, joinSignedResult, enco
 import { runOf, decodeRerunResult, splitSignedRerun } from '../../protocol/src/rerun.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
 import { b32, rand, wait, sevenSignerNodes, object, objectionBundleFor, WINNER, WINDOW_MS } from './window-fixture.js';
+import { HOSTED } from './plugins/hosted.js';
 
 /** Wait until the holder has signed its own re-run of `eid`, and return it. */
 async function holdersRerun(w, eid, ms = 8000) {
@@ -332,7 +333,7 @@ test('while SUSPENDED an objection is the first again, and a missing or foreign 
     assert.equal(w.holder.round.objectedAt(w.rid, s.eid), s.filed);
     assert.equal(resultFinality(at(w, s.filed + 1), w.rid, s.eid).state, 'SUSPENDED');
     // AND NO RE-RUN SIGNER IS FILED AGAINST WHILE SUSPENDED (C2c): no re-run is agreed.
-    const none = await new Verifier(at(w, s.filed + 1), { advertsFor: () => w.adverts, pool: {} }).fileRerunSlashProofs(w.rid, s.eid);
+    const none = await new Verifier(at(w, s.filed + 1), { plugins: HOSTED, advertsFor: () => w.adverts, pool: {} }).fileRerunSlashProofs(w.rid, s.eid);
     assert.deepEqual(none.filed, []);
     assert.match(none.refused[0], /no second objection has made that entry VOID \(it is SUSPENDED\)/);
     assert.equal(rerunProofsOf(w, s.eid).length, 0);
@@ -397,7 +398,7 @@ test('re-run slash proofs are filed only on a second-objection VOID, refused by 
     w.rerunBy('dissents', 1, { keys: [rand(32)], over: { score: s.replay.score + 2 } });           // a stranger, the agreed outcome
     w.rerunBy('dissents', 1, { keys: w.others.slice(5), over: { score: s.replay.score + 3 } });    // a signer, another outcome
     const inside = s.own - 1;
-    const verifierAt = (now) => new Verifier(at(w, now), { advertsFor: () => w.adverts, pool: {} });
+    const verifierAt = (now) => new Verifier(at(w, now), { plugins: HOSTED, advertsFor: () => w.adverts, pool: {} });
     const provisional = await verifierAt(inside).fileRerunSlashProofs(w.rid, s.eid);
     assert.deepEqual(provisional.filed, []);
     assert.match(provisional.refused[0], /no second objection has made that entry VOID \(it is PROVISIONALLY_FINAL\)/);
@@ -506,7 +507,7 @@ test('first-result proofs on a second-objection VOID: refused by name, deduped, 
     w.holder.round.putResult(w.rid, s.eid, forged.nodePubkey, fid, joinSignedResult(encodePlayerResult(forged), schnorr.sign(fid, stranger)));
     assert.notEqual(toHex(runOf(mine)), toHex(w.runs.dissents.contradicted));
     const inside = s.own - 1;
-    const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
+    const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { plugins: HOSTED, advertsFor: () => w.adverts, pool: {} });
     const early = await firstFiling(verifierAt(inside), w.rid, s.eid);
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while the re-run was PROVISIONALLY_FINAL');
     assert.equal(at(w, s.agreed + 100).objectRerun(w.rid, s.eid), true);
@@ -553,7 +554,7 @@ test('§13C VOID at the re-run window\'s end files the five first-result signers
     const s = await suspended(w);
     assert.ok(await holdersRerun(w, s.eid), 'the holder never re-ran the suspended result');
     w.rerunBy('dissents', 3);                                                   // four of five: §13C at end + 1205 s
-    const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { advertsFor: () => w.adverts, pool: {} });
+    const verifierAt = (now, over = {}) => new Verifier(at(w, now, over), { plugins: HOSTED, advertsFor: () => w.adverts, pool: {} });
     const D = s.win.rerunDeadlineMs;
     const suspendedStill = await firstFiling(verifierAt(D - 1), w.rid, s.eid);
     assert.equal(w.holder.round.slashProofs(w.rid, s.eid).length, 0, 'a proof was filed while SUSPENDED');

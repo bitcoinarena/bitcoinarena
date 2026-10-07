@@ -28,6 +28,7 @@ import { playerFor, tabSeed } from '../src/join.js';
 import { playersLine } from '../src/ghost-field.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId } from '../../protocol/src/lobby-name.js';
 import { toHex, fromHex } from '../../protocol/src/hash.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const random = (n) => crypto.getRandomValues(new Uint8Array(n));
@@ -133,7 +134,7 @@ test('the board, built by leaderboard.js from signed results, is drawn with each
   const COMMITTEE = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0xc0 + n));
   const contract = {
     networkId: b32(0x4e), configHash: b32(0x43), censusConfirmations: 6,
-    gameVerifySlots: 7, settlementSlots: 7, simCoreHash: b32(1),
+    gameVerifySlots: 7, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1),
     startTimeMs: 60500n, entryCloseMs: 2000n, objectionWindowMs: 600000n,
     custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
     donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000,

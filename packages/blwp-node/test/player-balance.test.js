@@ -12,6 +12,7 @@ import { contractFor, b32, opts } from './window-fixture.js';
 import { encodeRoundContract, encodeEntryContract, roundId, entryId } from '../../protocol/src/contracts.js';
 import { encodePlayerResult, joinSignedResult } from '../../protocol/src/result.js';
 import { toHex } from '../../protocol/src/hash.js';
+import { HOSTED } from './plugins/hosted.js';
 
 const STAKE = 100000n, FEE = 2000n, DONATION = 2000n;
 const entry = (more = {}) => ({ stakeMsat: STAKE, feeMsat: FEE, donationMsat: DONATION, ...more });
@@ -59,7 +60,7 @@ test('pending until this node\'s settlement is ACCEPTED and the run has a result
 
 // /api/round-result, the same nets: a round where one player won, and a round whose settlement paid nobody
 test('/api/round-result shows each player\'s net as the settlement decided it', async () => {
-  const d = await serve(openStore(':memory:'), { port: 0, ...opts });
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
   try {
     const round = d.round, db = round.db, me = round.pubkey;
     const make = (n, outcomes, { shares, winner = null }) => {

@@ -16,7 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { replay, RunInProgress } from '../src/replay.js';
-import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../src/cores.js';
+import { TRUCK, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../core/plugin/nextblock.js';
 import { BLOCK_TICKS } from '../../core/src/rules/gate.js';
 import { Ghosts } from '../src/ghosts.js';
 import { Round } from '../src/round.js';
@@ -27,6 +27,8 @@ import { TEST_DONATION_SET_REGTEST } from '../../protocol/src/test-donation-sets
 import { donationSetId as idOfDonationSet } from '../../protocol/src/donation.js';
 import { entryFeeMsat } from '../../protocol/src/fee.js';
 import { seedWordForEntry } from '../../protocol/src/seed.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../core/plugin/nextblock.js';
 
 const JOIN = 0;
 const TICKS = 3000;
@@ -106,7 +108,7 @@ const b32 = (n) => new Uint8Array(32).fill(n);
 const BEACON = { hash: b32(0x9b), height: 900001, timeMs: 900n };
 const contract = () => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
-  settlementSlots: 7, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
+  settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n, entryCloseMs: 2000n,
   objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20,
   slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients), censusHeight: 900000, censusRoot: b32(2),
   committeeTimeMs: 500n, randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n,
@@ -125,11 +127,11 @@ const CHUNK = 6;
 
 /** A round with one driver, publishing as the page does. */
 function driving(ticks, { liquidations = [], loads = [], joinTick = 0 } = {}) {
-  const round = new Round(openStore(':memory:'));
+  const round = new Round(openStore(':memory:'), undefined, { plugins: HOSTED });
   const rid = round.open(contract());
   const entry = entryFor(rid, joinTick);
   const eid = round.enter(entry);
-  const ghosts = new Ghosts(round, { randomnessFor: () => BEACON });
+  const ghosts = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let previousHash = GENESIS;
   const publish = (from, n) => {
     const rows = [];
