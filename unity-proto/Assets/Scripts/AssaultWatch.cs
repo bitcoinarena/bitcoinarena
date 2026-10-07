@@ -73,7 +73,7 @@ public sealed class AssaultWatch
 
     /// <summary>HIGH, LOW, OPEN - the client's own names, the same three <see cref="ChartHud.ObjectiveName"/> uses.</summary>
     public static string ObjectiveName(int objective)
-        => objective == L.OBJ_RIDGE ? "HIGH" : objective == L.OBJ_HOLLOW ? "LOW" : objective == L.OBJ_GAP ? "OPEN" : "?";
+        => objective == L.OBJ_HIGH ? "HIGH" : objective == L.OBJ_LOW ? "LOW" : objective == L.OBJ_OPEN ? "OPEN" : "?";
 
     public static string SideName(int side) => side == 0 ? "BULLS" : "BEARS";
 
