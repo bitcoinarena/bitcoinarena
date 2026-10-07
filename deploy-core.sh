@@ -47,7 +47,12 @@ node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 DAILY_DIR="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 DAILY="$DAILY_DIR/daily.json"
 [ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's signerNodes (packages/blwp-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
-node - "$DAILY" <<'CHECK' || { echo "refusing: $DAILY does not name live signerNodes" >&2; exit 3; }
+# THE FREE PAIR MAY BE DOWN; THE PAID LOBBY MAY NOT (the owner 2026-10-07, kanban #29 path 2): a daily.json that names no live
+# FREE signerNode is not shipped either - its rows are left out (exit 2 below, FREE_DEAD) and the page names the testnet lobby
+# alone. A malformed file still refuses, and the testnet merge still refuses when no paid node answers.
+FREE_DEAD=0
+set +e
+node - "$DAILY" <<'CHECK'
 const d = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
 const nodes = Array.isArray(d.node) ? d.node : [];
 const bad = (why) => { console.error(`daily.json: ${why}`); process.exit(1); };
@@ -58,21 +63,26 @@ if (!/^[0-9a-f]{128}$/.test(String(d.advert))) bad('carries no signed advertisem
   for (const n of nodes) {
     // ?next=1, NOT THE WHOLE LIST (PAID-NIGHT-2155, measured: a bare /rounds is every round the node holds - 2.2 MB, 7 s,
     // up to 17 s on testnet4 seat 1's event loop, every PLAY behind it waiting); one listed round proves it answers
-    let r; try { r = await fetch(`${n}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); } catch (e) { bad(`${n}/rounds did not answer: ${e.message}`); }
-    if (r.status !== 200) bad(`${n}/rounds answered ${r.status}`);
+    const silent = (why) => { console.error(`daily.json: ${why} - the free rows are left out`); process.exit(2); };
+    let r; try { r = await fetch(`${n}/rounds?next=1`, { signal: AbortSignal.timeout(15000) }); } catch (e) { silent(`${n}/rounds did not answer: ${e.message}`); }
+    if (r.status !== 200) silent(`${n}/rounds answered ${r.status}`);
     let body; try { body = await r.json(); } catch { bad(`${n}/rounds is not JSON`); }
     if (!Array.isArray(body.rounds)) bad(`${n}/rounds lists no rounds array`);
     console.log(`daily.json signerNode ${n}: /rounds 200, ${body.rounds.length} round(s), ${body.rounds.filter((x) => x.phase === 'open').length} open`);
   }
 })();
 CHECK
+rc=$?
+set -e
+if [ $rc -eq 2 ]; then FREE_DEAD=1; elif [ $rc -ne 0 ]; then echo "refusing: $DAILY does not name live signerNodes" >&2; exit 3; fi
 cp "$DAILY" "$BUILD/daily.json"
 # THE TESTNET LOBBY BESIDE IT (the owner 2026-09-30 16:07, DEPLOY-1900: "The page he opens always shows both: a free round and a
 # live paid testnet round of series 3cfbe516"): testnet-lobby.json in the pair's directory - the testnet4 nodes, bond,
 # advert, federation and funded gateway - is merged into daily.json as `testnet`, once one of its nodes answers /rounds.
 TESTNET="$DAILY_DIR/testnet-lobby.json"
+[ $FREE_DEAD -eq 0 ] || [ -f "$TESTNET" ] || { echo "refusing: the free signerNodes are silent and there is no $TESTNET to show instead" >&2; exit 3; }
 if [ -f "$TESTNET" ]; then
-  node - "$BUILD/daily.json" "$TESTNET" <<'MERGE' || { echo "refusing: $TESTNET names no live testnet node" >&2; exit 4; }
+  FREE_DEAD=$FREE_DEAD node - "$BUILD/daily.json" "$TESTNET" <<'MERGE' || { echo "refusing: $TESTNET names no live testnet node" >&2; exit 4; }
 const fs = require('fs');
 const [daily, testnet] = process.argv.slice(2).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')));
 (async () => {
@@ -89,8 +99,12 @@ const [daily, testnet] = process.argv.slice(2).map((f) => JSON.parse(fs.readFile
     } catch {}
   }
   if (!ok) process.exit(1);
-  fs.writeFileSync(process.argv[2], JSON.stringify({ ...daily, testnet }, null, 1));
-  console.log(`daily.json: testnet lobby merged, ${(testnet.node || []).length} node(s)`);
+  // FREE PAIR SILENT: the testnet lobby is the page's first and only lobby - its own fields at the top, nothing of the pair's
+  const out = process.env.FREE_DEAD === '1' ? { ...testnet, testnet } : { ...daily, testnet };
+  fs.writeFileSync(process.argv[2], JSON.stringify(out, null, 1));
+  console.log(process.env.FREE_DEAD === '1'
+    ? `daily.json: the free signerNodes are silent - their rows left out; the testnet lobby alone, ${(testnet.node || []).length} node(s)`
+    : `daily.json: testnet lobby merged, ${(testnet.node || []).length} node(s)`);
 })();
 MERGE
 fi
