@@ -22,6 +22,9 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 const b32 = (n) => new Uint8Array(32).fill(n);
 const rand = (n) => new Uint8Array(randomBytes(n));
 const STAKE = 100000n;
+// THE NET OF A STAKE WITH NO DONATION: the stake less the node fee (5%, §0A.8; kanban #205) - every net below is this, less
+// the donation
+const NET0 = STAKE - entryFeeMsat(STAKE);
 const paying = { id: b32(0x21), stakeMsat: STAKE, settlementSlots: 7, gameId: NEXTBLOCK_GAME_ID, simCoreHash: fromHex(coreHashHex()), federationId: TEST_FEDERATION_ID };
 const free = { id: b32(0x22), stakeMsat: 0n, gameId: NEXTBLOCK_GAME_ID, simCoreHash: b32(1) };
 // A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED the owner 2026-09-24, the enum slice's fifth cut, as
@@ -41,13 +44,13 @@ test('nothing typed, a cancel or 0 donates nothing', () => {
     const c = donationChoice({ typed, stakeMsat: STAKE });
     assert.equal(c.ok, true, String(typed));
     assert.equal(c.donationMsat, 0n);
-    assert.equal(c.netMsat, 98000n);
+    assert.equal(c.netMsat, NET0);
   }
 });
 
 test('a percent of the stake, out of it and not on top', () => {
   const two = donationChoice({ typed: '2', stakeMsat: STAKE });
-  assert.deepEqual([two.bps, two.donationMsat, two.netMsat], [200, 2000n, 96000n]);
+  assert.deepEqual([two.bps, two.donationMsat, two.netMsat], [200, 2000n, NET0 - 2000n]);
   assert.equal(donationChoice({ typed: '2.5%', stakeMsat: STAKE }).donationMsat, 2500n);
   assert.equal(donationChoice({ typed: '0,5', stakeMsat: STAKE }).donationMsat, 500n);
   const five = counted(false);
@@ -78,10 +81,11 @@ test('above 5% needs a second confirmation; one answer never writes more than 5%
 });
 
 test('the fee must still fit, and a typo is not a number', () => {
-  const tooMuch = donationChoice({ typed: '99', stakeMsat: STAKE, confirm: () => true });
+  // with the 5% fee, 95% is the most a donation may be: 96% and the fee come to more than the stake
+  const tooMuch = donationChoice({ typed: '96', stakeMsat: STAKE, confirm: () => true });
   assert.equal(tooMuch.ok, false);
   assert.match(tooMuch.why, /cannot come to more than it/);
-  assert.equal(donationChoice({ typed: '98', stakeMsat: STAKE, confirm: () => true }).donationMsat, 98000n);
+  assert.equal(donationChoice({ typed: '95', stakeMsat: STAKE, confirm: () => true }).donationMsat, NET0);
   for (const typed of ['abc', '-1', '101', '2.555', '1e2']) assert.equal(donationChoice({ typed, stakeMsat: STAKE, confirm: () => true }).ok, false, typed);
 });
 
@@ -118,10 +122,10 @@ test('the entry carries the donation into the field the payout table reads, and 
   assert.equal(donor.donationMsat, 2000n);
   assert.equal(donor.feeMsat, entryFeeMsat(STAKE));
   assert.equal(feeMatchesEntry(donor).ok, true, 'the signer node s own rule takes it');
-  assert.equal(netStakeMsat(donor), 96000n);
-  assert.equal(lockAmountMsat(paying, donor.donationMsat), 96000n, 'a donor s lock holds the net the signer node wants');
-  assert.equal(lockAmountMsat(paying), 98000n);
-  assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 98001n, ...lockedFor() }), /cannot come to more than it/);
+  assert.equal(netStakeMsat(donor), NET0 - 2000n);
+  assert.equal(lockAmountMsat(paying, donor.donationMsat), NET0 - 2000n, 'a donor s lock holds the net the signer node wants');
+  assert.equal(lockAmountMsat(paying), NET0);
+  assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: NET0 + 1n, ...lockedFor() }), /cannot come to more than it/);
   assert.throws(() => entryFor(paying, { seed, curve: feldmanGroup, random: rand, donationMsat: 2000, ...lockedFor() }), /BigInt/);
   assert.throws(() => entryFor(free, { seed, curve: feldmanGroup, random: rand, donationMsat: 1n }), /cannot come to more than it/,
     'a free round has nothing to donate out of');

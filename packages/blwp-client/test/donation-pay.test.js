@@ -11,7 +11,7 @@
 // A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
 // daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
 import { lockPort, bondedChainSlot, bondedChainFor } from '../../blwp-node/test/lock-fixture.js';
-import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { test } from 'node:test';
 // THE RUN LENGTH IS THE CORE'S. A literal 9000 here is refused by the node as "a
 // contract disagreeing with the network it names" - 400, not 201.
@@ -41,7 +41,7 @@ import { encodeRoundContract, roundId } from '../../protocol/src/contracts.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../protocol/src/genesis-ids.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_ENDPOINTS } from '../../protocol/src/test-donation-sets.js';
-import { donationSetId } from '../../protocol/src/donation.js';
+import { donationSetId, encodeDonationSet } from '../../protocol/src/donation.js';
 import { encodeDonationSetBody, donationSetBodyId, authorityRotationId, encodeAuthorityRotation } from '../../protocol/src/authority.js';
 import { pageFunction } from './page-script.js';
 import { HOSTED } from '../../blwp-node/test/plugins/hosted.js';
@@ -488,10 +488,12 @@ test('the page takes the set from every signer node of the round, checked under 
 
 test('a signer node missing, a signer node serving another set, a forged set, or a set the rotated-away authority signed is refused', async () => {
   const round = contractFor([b32(1), b32(2)]);
-  const serving = (bySignerNode, rotations = []) => async (url) => {
+  // AND EACH SIGNER NODE SERVES THE ROUND'S GAME'S DONATION SET (kanban #205): nextblock's, unless a test hands another
+  const serving = (bySignerNode, rotations = [], gameSet = NEXTBLOCK.donationSet) => async (url) => {
     const u = new URL(url);
     const signerNode = u.port;
     if (u.pathname === '/donation-rotations') return new Response(JSON.stringify({ rotations }), { status: 200 });
+    if (u.pathname === '/game-donation-set') return new Response(encodeDonationSet(gameSet), { status: 200 });
     const bytes = bySignerNode[signerNode];
     return bytes ? new Response(bytes, { status: 200 }) : new Response('this signer node holds no signed donation set', { status: 404 });
   };
@@ -499,6 +501,10 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   const honest = signedBytes(SET);
   const forged = signedBytes({ ...SET, signature: ed25519.sign(donationSetBodyId(SET), ed25519.utils.randomSecretKey()) });
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }) })).ok, true);
+  // a game set its manifest does not name is no game set: the game dev's half is never routed to it
+  const strayGame = [{ recipientPk: Uint8Array.from([0x02, ...b32(0x5e)]), label: 'not the game dev', shareBps: 10000 }];
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: honest }, [], strayGame) })).why,
+    /is not the one the game's manifest names/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) })).why, /not every signer node/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest, 2: forged }) })).why, /serve different donation sets/);
   assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: forged, 2: forged }) })).why, /not signed by the network's donation authority/);

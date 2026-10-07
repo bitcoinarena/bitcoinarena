@@ -99,7 +99,13 @@ async function joinWithout(w, who, { namesFeeLock }) {
 const federationChargesItsRealFee = (w) => { w.port.feeRule = REAL_FEES; };
 const key = (o) => `${toHex(o.txid)}:${o.outIdx}`;
 
-test('after the window the loser\'s lock is claimed by one committee signature, and the winner is paid 96000 msat from it - the real guardians\' 1000 msat per input and output taken out', async () => {
+// THE RULE'S FIGURES (§22A, §0A.8; kanban #205): the entry fee is 5% of the stake (entryFeeMsat), the net what is left,
+// and the guardians' measured rule takes 1000 msat on every input and every output. Every amount below is computed.
+const IO = 1000n;
+const netOf = (stake) => stake - entryFeeMsat(stake);
+/** Each sitting signer node's net from two fee locks under the guardians' rule: its half, less its half of the two inputs' fees and its own output's fee. */
+const seatNetOfTwo = (stake) => (2n * entryFeeMsat(stake) - 2n * IO) / 2n - IO;
+test('after the window the loser\'s lock is claimed by one committee signature, and the winner is paid its net stake less the guardians\' 1000 msat per input and output - and the 100 sat round\'s fee locks (5%) pay both seats', async () => {
   const w = await lockRound();
   try {
     const won = await lockAndPlay(w, WINNER, { address: true });
@@ -115,16 +121,21 @@ test('after the window the loser\'s lock is claimed by one committee signature, 
     assert.equal(got.state, 'ACCEPTED', got.why);
     assert.equal(w.port.locks.has(key(lost.outpoint)), false, 'the loser\'s lock was not claimed');
     assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the settlement spent the winner\'s own lock - that comes back by its forfeit');
-    assert.equal(paid.length, 1, 'one payout contract, to the one qualifier');
+    // ONE PAYOUT CONTRACT TO THE ONE QUALIFIER, AND ONE TO EACH SITTING SEAT: under 5% a 100 sat round's two fee locks
+    // (5000 msat each) out-weigh the guardians' 1000 msat per input and output, so they are claimed for the seats
+    const winnerPaid = paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
+    const seatKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k)));
+    assert.equal(paid.length, 1 + seatKeys.length, 'one payout contract to the one qualifier and one to each seat');
+    assert.equal(winnerPaid.length, 1);
     // WINNINGS-AUTO (RULED the owner 2026-10-01): the winner named an address, and is paid all the same by its payout
     // contract to its own key - redeemed into its federation wallet - never by a send refunding to the committee.
-    assert.ok(!paid[0].sent, 'the qualifier was paid by a Lightning send');
-    assert.equal(toHex(paid[0].payoutPk), toHex(refundKeyOf(WINNER.key)), 'the payout contract is not to the winner\'s own key');
-    assert.equal(netStakeMsat(lost.entry), 98000n);
-    assert.equal(paid[0].msat, 96000n, '98000 in, 1000 on the input, 1000 on the output');
+    assert.ok(!winnerPaid[0].sent, 'the qualifier was paid by a Lightning send');
+    assert.equal(netStakeMsat(lost.entry), netOf(lost.entry.stakeMsat));
+    assert.equal(winnerPaid[0].msat, netStakeMsat(lost.entry) - 2n * IO, 'the net stake in, 1000 on the input, 1000 on the output');
+    assert.deepEqual(paid.filter((p) => seatKeys.includes(toHex(p.payoutPk))).map((p) => p.msat), seatKeys.map(() => seatNetOfTwo(lost.entry.stakeMsat)));
     const sent = w.port.settlements[0];
     assert.equal(schnorr.verify(sent.signature, fromHex(got.message), w.claimPk.subarray(1)), true, 'the signature is not the claim key\'s over the txid');
-    assert.deepEqual(sent.claims.map((c) => key(c.outpoint)), [key(lost.outpoint)]);
+    assert.deepEqual(sent.claims.map((c) => key(c.outpoint)).sort(), [key(lost.outpoint), key(won.feeOutpoint), key(lost.feeOutpoint)].sort());
     const atB = await standing(w.b, w);
     assert.equal(atB.txid, got.txid, 'the other signer node does not hold the same settlement');
     // AND THE WINNER'S OWN STAKE STILL COMES BACK BY ITS FORFEIT (W5b).
@@ -191,8 +202,8 @@ test('where the round mints fee locks (1000 sat, the federation\'s own rule) a s
     const paid = [...w.port.payouts.values()];
     const winner = paid.find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
     console.log(`  the round of those who brought theirs: ${got.why}; payouts ${paid.map((p) => String(p.msat)).join(', ')}`);
-    assert.equal(winner.msat, 978000n);
-    assert.deepEqual(paid.filter((p) => p !== winner).map((p) => p.msat), [18000n, 18000n]);
+    assert.equal(winner.msat, netOf(1000000n) - 2n * IO);
+    assert.deepEqual(paid.filter((p) => p !== winner).map((p) => p.msat), [seatNetOfTwo(1000000n), seatNetOfTwo(1000000n)]);
     assert.equal(w.port.locks.has(key(lost.outpoint)), false, 'the loser\'s lock was not claimed');
     assert.equal(w.port.locks.has(key(won.outpoint)), true);
     assert.equal(w.port.locks.has(key(bare.outpoint)), true, 'a lock the round never took was claimed');
@@ -240,12 +251,12 @@ test('where the round mints, a fee lock handed before its stake lock counts the 
     assert.equal(got.state, 'ACCEPTED', got.why);
     const winner = [...w.port.payouts.values()].find((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key)));
     console.log(`  fee lock first: ${got.why}; the winner ${winner && winner.msat}`);
-    assert.equal(winner.msat, 978000n);
+    assert.equal(winner.msat, netOf(1000000n) - 2n * IO);
   } finally { await w.close(); }
 });
 
 // PICK A (the owner 2026-09-14): THE FEE LOCKS INTO THE SAME SETTLEMENT, FOR THE SITTING SIGNER NODES.
-test('each player\'s fee lock is verified by both signer nodes and claimed in the round\'s one settlement: the winner paid 98000, each sitting signer node 2000 to its own key', async () => {
+test('each player\'s fee lock is verified by both signer nodes and claimed in the round\'s one settlement: the winner paid its net stake, each sitting signer node half of 5% of the gross to its own key', async () => {
   const w = await lockRound();
   w.port.feeRule = { ppm: 0n, baseMsat: 0n };
   try {
@@ -260,17 +271,20 @@ test('each player\'s fee lock is verified by both signer nodes and claimed in th
     assert.deepEqual(sent.claims.map((c) => key(c.outpoint)).sort(), [key(lost.outpoint), key(won.feeOutpoint), key(lost.feeOutpoint)].sort(),
       'the inputs are not the loser\'s stake and both fee locks');
     const signerNodeKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k))).sort();
+    // two halves of the 5% on the 2 x stake gross, each seat in both pools: the two fee locks' sum, halved
+    const seatEach = (won.entry.feeMsat + lost.entry.feeMsat) / 2n;
     assert.deepEqual(paid.filter((p) => signerNodeKeys.includes(toHex(p.payoutPk))).map((p) => [toHex(p.payoutPk), p.msat]).sort(),
-      signerNodeKeys.map((k) => [k, 2000n]), 'each sitting signer node is not paid its 2000 msat (1% + 1% of 200000, both pools)');
-    assert.deepEqual(paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat), [98000n], 'the winner is not paid its 98000 by its contract');
+      signerNodeKeys.map((k) => [k, seatEach]), 'each sitting signer node is not paid its half of the fee (2.5% + 2.5% of the gross, both pools)');
+    assert.deepEqual(paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat), [netStakeMsat(lost.entry)], 'the winner is not paid the loser\'s net stake by its contract');
     assert.equal(paid.some((p) => p.sent), false, 'something was paid by a Lightning send');
     assert.equal([won.feeOutpoint, lost.feeOutpoint, lost.outpoint].some((o) => w.port.locks.has(key(o))), false, 'a claimed lock is still held');
     assert.equal(w.port.locks.has(key(won.outpoint)), true, 'the winner\'s own stake lock was spent - it comes back by its forfeit');
   } finally { await w.close(); }
 });
 
-test('under the real guardians\' 1000 msat per input and output the 2000 msat fee locks cannot reach a signer node: none is claimed, both stay held, the winner is still paid 96000', async () => {
-  const w = await lockRound();
+// UNDER 5% THAT IS A 40 SAT ROUND: its 2000 msat fee locks are what the guardians' 4000 msat of input and output fees eat
+test('under the real guardians\' 1000 msat per input and output a 40 sat round\'s 2000 msat fee locks (5%) cannot reach a signer node: none is claimed, both stay held, the winner is still paid', async () => {
+  const w = await lockRound({ stakeMsat: 40000n });
   try {
     const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
     const lost = await lockAndPlay(w, LOSER, { feeLock: true });
@@ -282,14 +296,15 @@ test('under the real guardians\' 1000 msat per input and output the 2000 msat fe
     console.log(`  real fee rule with fee locks: ${got.state} - ${got.why}; payouts ${paid.map((p) => p.msat).join(', ')}`);
     assert.equal(got.state, 'ACCEPTED', got.why);
     assert.match(got.why, /no fee lock claimed: the fee locks hold 4000 msat and their inputs alone cost 2000/);
-    assert.deepEqual(paid.map((p) => p.msat), [96000n]);
+    assert.equal(won.entry.feeMsat, 2000n, 'a 40 sat stake\'s 5% fee lock');
+    assert.deepEqual(paid.map((p) => p.msat), [netStakeMsat(lost.entry) - 2n * IO]);
     assert.equal(w.port.locks.has(key(won.feeOutpoint)) && w.port.locks.has(key(lost.feeOutpoint)), true, 'a fee lock was claimed that pays no signer node');
   } finally { await w.close(); }
 });
 
-// PICK (b): AT THE SMALLEST BRACKET THE GATE MINTS FOR - 1000 sat - THE CLAIMED FEE LOCKS
+// PICK (b): AT THE LARGEST BRACKET - 1000 sat - THE CLAIMED FEE LOCKS
 // PAY EVERY SITTING SIGNER NODE SOMETHING UNDER THE REAL GUARDIANS' 1000 msat PER INPUT AND OUTPUT.
-test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardians\' fees and every sitting signer node nets more than nothing', async () => {
+test('a 1000 sat round\'s 50000 msat fee locks (5%) are claimed under the real guardians\' fees and every sitting signer node nets more than nothing', async () => {
   const w = await lockRound({ stakeMsat: 1000000n });
   try {
     const won = await lockAndPlay(w, WINNER, { feeLock: true, address: true });
@@ -306,7 +321,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
     console.log(`  stake 1000000 msat, fee lock ${won.entry.feeMsat} msat x ${feeIn.length}, input fees ${feeIn.length * 1000} msat, `
       + `output fees ${signerNodeNets.length * 1000} msat, per-signer node net [${signerNodeNets.join(', ')}] msat; winner paid ${paid.filter((p) => toHex(p.payoutPk) === toHex(refundKeyOf(WINNER.key))).map((p) => p.msat).join(', ')}`);
     assert.equal(got.state, 'ACCEPTED', got.why);
-    assert.equal(won.entry.feeMsat, 20000n);
+    assert.equal(won.entry.feeMsat, entryFeeMsat(1000000n));
     assert.equal(feeIn.length, 2, 'both fee locks are claimed');
     assert.equal(signerNodeNets.length, 2, 'every sitting signer node is paid');
     for (const n of signerNodeNets) assert.ok(n > 0n, `a signer node nets ${n}`);
@@ -314,7 +329,7 @@ test('a 1000 sat round\'s 20000 msat fee locks are claimed under the real guardi
   } finally { await w.close(); }
 });
 
-test('a round with a loser and no qualifier pays no stake and still pays the seats: both stake locks expire back, both fee locks settle the 2%', async () => {
+test('a round with a loser and no qualifier pays no stake and still pays the seats: both stake locks expire back, both fee locks settle the 5%', async () => {
   const w = await lockRound({ minScore: 150000001 })   // above the highest score there is (1500 points, core score.js); the delivered run scores per round - 11448150 in one, over 20000000 in another (measured 2026-10-01: both qualified at lower minimums)
   try {
     const one = await lockAndPlay(w, WINNER);
@@ -353,13 +368,14 @@ test('a round with a loser and no qualifier pays no stake and still pays the sea
     assert.equal(w.port.locks.has(key(two.outpoint)), true, 'the loser\'s stake lock was claimed, not expired back');
     assert.equal(w.port.locks.has(key(one.outpoint)), true, 'the non-qualifier\'s stake lock was claimed');
 
-    // AND THE SEATS ARE PAID THEIR 2%, measured: two players staking 100000 msat each is 200000 gross, 2% of
-    // it is 4000 msat, and this round's two sitting seats take 2000 each - 1% GAME/VERIFY and 1% SETTLEMENT,
-    // both pools. Both fee locks are claimed to pay it.
+    // AND THE SEATS ARE PAID THEIR 5%, measured: two players staking 100000 msat each is 200000 gross, 5% of it is
+    // 10000 msat, and this round's two sitting seats take half each - 2.5% GAME/VERIFY and 2.5% SETTLEMENT, both pools.
+    // Both fee locks are claimed to pay it.
     const seatKeys = w.c.nodes.map((k) => toHex(refundKeyOf(k))).sort();
+    const seatEach = (one.entry.feeMsat + two.entry.feeMsat) / 2n;
     assert.deepEqual(paidNQ.filter((x) => seatKeys.includes(toHex(x.payoutPk)))
-      .map((x) => [toHex(x.payoutPk), x.msat]).sort(), seatKeys.map((k) => [k, 2000n]),
-      'the sitting seats were not paid their 2% of the round that ran');
+      .map((x) => [toHex(x.payoutPk), x.msat]).sort(), seatKeys.map((k) => [k, seatEach]),
+      'the sitting seats were not paid their 5% of the round that ran');
     assert.equal([one, two].filter((x) => w.port.locks.has(key(x.feeOutpoint))).length, 0,
       'a fee lock was left held, so the seats were not paid from it');
   } finally { await w.close(); }

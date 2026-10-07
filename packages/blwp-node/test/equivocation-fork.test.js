@@ -10,6 +10,8 @@
 //   (c) settlement: with a qualifier the FORFEIT lock is claimed into the pool and pays the winner; with nobody qualified
 //       it is claimed like a walk-away's, into the remainder split (75% the sitting seats, 25% the donation set).
 import { test } from 'node:test';
+import { STAKE } from './window-fixture.js';
+import { entryFeeMsat } from '../../protocol/src/fee.js';
 import assert from 'node:assert/strict';
 import { lockRound, lockAndPlay, closeRound, untilSettled } from './lock-round-fixture.js';
 import { b32, WINNER, LOSER, wait } from './window-fixture.js';
@@ -95,11 +97,12 @@ test('(c) with nobody qualified, the proven equivocator\'s lock is claimed like 
     assert.equal(facts.cheatLockHeld, false);
     assert.equal(claims.includes('LOSER STAKE'), false, 'an honest loser\'s lock was claimed with nobody qualified');
     assert.equal(facts.loserLockHeld, true, 'the honest loser\'s lock does not expire back to its player');
-    // THE REMAINDER SPLIT of the equivocator's 98000 msat: 75% to the two sitting seats, 25% to the donation set
-    const net = 98000n, sum = (xs) => xs.reduce((t, x) => t + BigInt(x), 0n);
+    // THE REMAINDER SPLIT of the equivocator's net stake (its stake less the 5% fee, kanban #205): 75% to the two sitting
+    // seats, 25% to the donation set; the seats' fee shares - half of the two players' 5% fee locks each - beside it
+    const net = STAKE - entryFeeMsat(STAKE), seatFee = (2n * entryFeeMsat(STAKE)) / 2n, sum = (xs) => xs.reduce((t, x) => t + BigInt(x), 0n);
     const seats = facts.payouts.filter((x) => x === String(net * 75n / 100n / 2n));
     assert.equal(seats.length, 2, `the seats' 75% is not two shares of ${net * 75n / 100n / 2n}: ${facts.payouts}`);
-    const rest = facts.payouts.filter((x) => x !== String(net * 75n / 100n / 2n) && x !== '2000');
+    const rest = facts.payouts.filter((x) => x !== String(net * 75n / 100n / 2n) && x !== String(seatFee));
     assert.equal(sum(rest), net * 25n / 100n, `the donation set's 25% is not ${net * 25n / 100n}: ${rest}`);
   } finally { await w.close(); }
 });
@@ -237,9 +240,9 @@ test('(g) a split on a fork with nobody qualified: §13C FORFEIT, the equivocato
     assert.ok(claims.includes('CHEAT STAKE'), 'the equivocator\'s lock was left unclaimed');
     assert.equal(claims.includes('LOSER STAKE'), false);
     assert.equal(w.port.locks.has(key(lost.outpoint)), true, 'the honest loser\'s lock does not expire back');
-    const net = 98000n;
+    const net = STAKE - entryFeeMsat(STAKE), seatFee = (2n * entryFeeMsat(STAKE)) / 2n;
     assert.equal(payouts.filter((x) => x === String(net * 75n / 100n / 2n)).length, 2, `not two seat shares of the 75%: ${payouts}`);
-    const rest = payouts.filter((x) => x !== String(net * 75n / 100n / 2n) && x !== '2000').reduce((t, x) => t + BigInt(x), 0n);
+    const rest = payouts.filter((x) => x !== String(net * 75n / 100n / 2n) && x !== String(seatFee)).reduce((t, x) => t + BigInt(x), 0n);
     assert.equal(rest, net * 25n / 100n, `the donation set's 25% is not ${net * 25n / 100n}`);
   } finally { await w.close(); }
 });
