@@ -29,6 +29,10 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { standUpRound } from './round-2of2.mjs';
+// PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
+// and the market, their bonds advertise both, and the round names the market's game with no core and no config
+import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { MARKET } from '../test/plugins/market/index.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { toHex } from '../../protocol/src/hash.js';
@@ -109,7 +113,9 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
     proofDir: env.BLWP_ATTACH_PROOF_DIR || join(home, 'paid', 'attach-proof') } } : {}),
   guardianChain: { bitcoindUrl: env.BLWP_BITCOIND_URL, cookiePath: env.BLWP_BITCOIND_COOKIE, call: chainCall },
   // the signed test set names 18777, which the live Daily holds; this committee answers on its own door
-  donationRecipients: { port: Number(env.BLWP_RECIPIENT_PORT || 18787) } });
+  donationRecipients: { port: Number(env.BLWP_RECIPIENT_PORT || 18787) },
+  ...(env.PAID_MARKET === '1' ? { plugins: [NEXTBLOCK, MARKET.registration],
+    roundFields: { gameId: MARKET.registration.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32) } } : {}) });
 say({ paid: 'up', network, custody: round.contract.custody, stakeMsat: String(stakeMsat),
   federation: toHex(fed.federationId), guardians: fed.keys.length, threshold: fed.threshold,
   nodes: round.nodes, firstRound: round.id, beacon: round.beacon && round.beacon.ok ? round.beacon.height : null });

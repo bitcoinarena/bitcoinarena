@@ -13,7 +13,7 @@ import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { createHash } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { readInvite } from '../src/invite.js';
 import { regtest } from './regtest-bond.mjs';
 import { decodeRoundContract, roundId } from '../../protocol/src/contracts.js';
@@ -39,7 +39,14 @@ for (const p of [31221, 31231, 31241, 31251, 31261, 31271, 31281]) for (const d 
 const LIVE_DIRS = ['/mnt/bitcoin/tn4', '/mnt/bitcoin/lnd-testnet4', '/home/arena/blwp-testnet4/node-', '/home/arena/blwp-testnet4/paid',
   '/home/arena/blwp-testnet4/client-lock-tn4', '/home/arena/blwp-testnet4/gw-', '/home/arena/blwp-testnet4/donor',
   '/mnt/bitcoin/blwp-2of2', '/mnt/bitcoin/lnd-'];
-const real = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+// A PATH NOT MADE YET is its nearest existing parent's real path and the rest (macOS keeps /tmp under /private/tmp: a dir
+// still to be made must resolve the way its made parent does - measured on the test host, kanban #206)
+const real = (p) => {
+  try { return realpathSync(p); } catch { /* not made yet */ }
+  const abs = resolve(p);
+  const parent = dirname(abs);
+  return parent === abs ? abs : join(real(parent), basename(abs));
+};
 const portFree = (port) => new Promise((ok) => {
   const s = createConnection({ host: '127.0.0.1', port }, () => { s.destroy(); ok(false); });
   s.on('error', () => ok(true));
@@ -47,7 +54,8 @@ const portFree = (port) => new Promise((ok) => {
 });
 
 if (mode === 'safe') {
-  if (!H || !real(H).startsWith('/tmp/')) fail(`H (${H}) is not a fresh dir under /tmp`);
+  // macOS keeps /tmp under /private/tmp (measured on the test host, kanban #206): either is the fresh dir's place
+  if (!H || !(real(H).startsWith('/tmp/') || real(H).startsWith('/private/tmp/'))) fail(`H (${H}) is not a fresh dir under /tmp`);
   const ports = String(env.RUN_PORTS || '').split(',').filter(Boolean).map(Number);
   const dirs = String(env.RUN_DIRS || '').split(',').filter(Boolean);
   const macaroons = String(env.RUN_MACAROONS || '').split(',').filter(Boolean);
