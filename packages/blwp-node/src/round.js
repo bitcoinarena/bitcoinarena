@@ -2584,6 +2584,21 @@ export class Round {
         Buffer.from(r.federationId), Buffer.from(r.recipientPk).toString('hex'), String(r.amountMsat), r.contractId, this.now(), r.senderOnContract ? 1 : 0);
   }
 
+  /** How many donation-key outputs of this round's settlement are indexed (kanban #152). */
+  settlementDonationOutputs(roundIdBytes) {
+    return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
+  }
+
+  /** The #152 backfill's marker: a recovered settlement already passed over, so it is never asked again. */
+  donationBackfilled(roundIdBytes) {
+    return !!this.db.prepare('SELECT 1 FROM donation_backfill WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+  }
+
+  markDonationBackfilled(roundIdBytes, { indexed = 0, why = null } = {}) {
+    this.db.prepare('INSERT OR REPLACE INTO donation_backfill (round_id, indexed, why, made_ms) VALUES (?, ?, ?, ?)')
+      .run(Buffer.from(roundIdBytes), Number(indexed), why, this.now());
+  }
+
   /** The entry a verified donation output at this outpoint already pays for, or null: one output is one entry's. */
   donationOutputAt(outpoint) {
     const r = this.db.prepare('SELECT entry_id FROM donation_outputs WHERE outpoint = ?')
