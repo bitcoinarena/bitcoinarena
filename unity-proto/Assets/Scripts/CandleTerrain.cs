@@ -333,10 +333,13 @@ public class CandleTerrain : MonoBehaviour
             BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Blwp.BlwpCore.FrontlineZ, Surface, _seamVerts, _seamTris);
             Set(_seam, _seamVerts, _seamTris);
             Rebuilds++;
-            if (Rebuilds <= 3 || Rebuilds % 600 == 0)
+            // THE SURFACE CHECK NOT AT START (kanban #266, measured 2026-10-08 in a named profile at 10x CPU as an Android phone:
+            // SurfaceCheck - ~170 points, each against every body triangle - was 226 ms inside Unity's start, from the first
+            // rebuilds' lines). The first three lines say so; the check is logged at rebuild 30 and every 600th, as the probe reads it.
+            if (Rebuilds <= 3 || Rebuilds == 30 || Rebuilds % 600 == 0)
             {
                 int f = L.CV_FIRST;
-                Debug.Log($"[candles] rebuild={Rebuilds} count={_words[L.CV_COUNT]} shift={shift:0.000} forming={_words[L.CV_FORMING]} first={_words[f]},{_words[f + 1]},{_words[f + 2]},{_words[f + 3]},{_words[f + 4]},{_words[f + 5]} bodyVerts={p.Body.Count} ridgeTriangles={p.RidgeTriangles} formingTop={p.FormingTop.Count / 3} groundAsked={_ground.Asked} {SurfaceCheck()}");
+                Debug.Log($"[candles] rebuild={Rebuilds} count={_words[L.CV_COUNT]} shift={shift:0.000} forming={_words[L.CV_FORMING]} first={_words[f]},{_words[f + 1]},{_words[f + 2]},{_words[f + 3]},{_words[f + 4]},{_words[f + 5]} bodyVerts={p.Body.Count} ridgeTriangles={p.RidgeTriangles} formingTop={p.FormingTop.Count / 3} groundAsked={_ground.Asked} {(Rebuilds <= 3 ? "surfaceCheck=after-start" : SurfaceCheck())}");
             }
         }
         // between rebuilds the ribbon slides with the core's shift, so it glides at 0.576 m/s rather than stepping; the
