@@ -620,7 +620,17 @@
   // 15 s, so that guardian was out of reach for the tab (and with three such, a 5 of 7 consensus call fails - the
   // "2,3,5 => Transport error: WebSocket connection failed" of the 2026-10-02 playtest). Every caller now takes this one
   // promise of the initialised module; a failed load is not kept.
-  window.BLWP_LOCK_WASM = () => (window.__blwpLockWasm = window.__blwpLockWasm || import('./blwp_lock_client.js')
+  // NOT WHILE UNITY STARTS (kanban #266, measured 2026-10-08 in a named profile, test host Chrome as an Android phone at 4x):
+  // the wallet's work - the lock client's sha256, ChaCha and __multi3, the curve's mul/add - ran on the main thread inside
+  // Unity's start and the block after it. The module is loaded once Unity has been up for 3 s, at once when a join is going
+  // or the link names a round (its lock is needed now), and after 60 s whatever Unity does.
+  const unityStartSettled = () => new Promise((ok) => {
+    const ready = () => (window.unityInstance && Date.now() - (window.ARENA_UNITY_UP_AT || 0) > 3000)
+      || (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') || /(^|[?&])round=/.test(location.search)
+      || performance.now() > 60000;
+    (function look() { if (ready()) ok(); else setTimeout(look, 250); })();
+  });
+  window.BLWP_LOCK_WASM = () => (window.__blwpLockWasm = window.__blwpLockWasm || unityStartSettled().then(() => import('./blwp_lock_client.js'))
     .then(async (m) => { await m.default(); return m; })
     .catch((e) => { window.__blwpLockWasm = null; throw e; }));
   (function () {
@@ -3491,6 +3501,7 @@
       console.log('[arena] textures: ' + window.ARENA_TEXTURES);
       createUnityInstance(canvas, config, show)
         .then((instance) => {
+          window.ARENA_UNITY_UP_AT = Date.now();
           window.unityInstance = instance;
           show(1);
           // the deposit box outlives the loading screen: a signer node taken later asks there
