@@ -929,3 +929,40 @@ static class LocalWall
     public static System.DateTime Now => System.DateTime.Now;
 #endif
 }
+
+/// <summary>
+/// THE LOCAL ZONE WITHOUT THE ZONE DATA (kanban #266, measured 2026-10-08 in a named profile of production 0.0.2857 at 10x CPU as
+/// an Android phone: Unity's own GUI static constructor reads DateTime.Now at the first OnGUI, and IL2CPP then builds the local
+/// time zone from the zone data - TimeZoneInfo.CreateLocalUnity / GetTimeZoneData, Emscripten mktime and localtime over a year
+/// of hours - 294 ms inside the 90 -> 100 % block). In the browser the game's own wall clock reads the browser's offset
+/// (LocalWall), so C#'s cached local zone is set to UTC before the first scene and never built. The fields are found by type;
+/// if this runtime has none, nothing changes and the log says so.
+/// </summary>
+static class FastLocalZone
+{
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    static void UtcAsLocal()
+    {
+        const System.Reflection.BindingFlags any = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        try
+        {
+            var tz = typeof(System.TimeZoneInfo);
+            foreach (var holder in tz.GetFields(any | System.Reflection.BindingFlags.Static))
+            {
+                var cache = holder.GetValue(null);
+                if (cache == null || cache.GetType() == tz || !cache.GetType().Name.Contains("Cached")) continue;
+                foreach (var f in cache.GetType().GetFields(any | System.Reflection.BindingFlags.Instance))
+                {
+                    if (f.FieldType != tz || f.Name.IndexOf("local", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    f.SetValue(cache, System.TimeZoneInfo.Utc);
+                    Debug.Log($"[time] C#'s local zone is UTC ({holder.Name}.{f.Name}): the zone data is not built; the game's clock reads the browser's offset");
+                    return;
+                }
+            }
+            Debug.Log("[time] no cached local zone field found: C# builds the local zone as before");
+        }
+        catch (System.Exception e) { Debug.Log("[time] the local zone is built as before: " + e.Message); }
+    }
+#endif
+}
