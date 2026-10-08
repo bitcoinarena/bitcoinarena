@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Globalization;
 using UnityEngine;
 
@@ -37,6 +38,35 @@ public class DriveHud : MonoBehaviour
     static readonly Color Up = new Color(0.30f, 0.88f, 0.48f);
     static readonly Color Down = new Color(1f, 0.42f, 0.42f);
 
+
+    // THE HUD LOOKS NOTHING UP AND MEASURES NOTHING TWICE (kanban #266, comment 986, the owner 2026-10-08): in a named profile of the
+    // 7 s after 100 % (Pixel 7a profile, 10x CPU) DriveHud.OnGUI spent 25-33 ms in FindFirstObjectByType and 42-43 ms in
+    // GUIStyle.CalcSize, every frame, for objects that stay and labels that do not change. A found object is kept until it is
+    // destroyed or its GameObject goes inactive - when FindFirstObjectByType would no longer return it - and a size is kept per
+    // font, size, style, padding, rich text, wrap and text. The same objects and the same sizes, so the same pixels.
+    SpectatorCamera _spectatorFound;
+    ChaseCamera _chaseFound;
+    Blwp.CoreDrivenTruck _coreFound;
+
+    static T Found<T>(ref T cached) where T : Component
+    {
+        if (cached == null || !cached.gameObject.activeInHierarchy) cached = Object.FindFirstObjectByType<T>();
+        return cached;
+    }
+
+    static readonly Dictionary<(int, int, FontStyle, int, int, bool, bool, string), Vector2> _measured =
+        new Dictionary<(int, int, FontStyle, int, int, bool, bool, string), Vector2>();
+
+    public static Vector2 Measure(GUIStyle style, string text)
+    {
+        var key = (style.font != null ? style.font.GetInstanceID() : 0, style.fontSize, style.fontStyle,
+                   style.padding.horizontal, style.padding.vertical, style.richText, style.wordWrap, text ?? "");
+        if (_measured.TryGetValue(key, out var size)) return size;
+        if (_measured.Count > 2048) _measured.Clear();
+        size = style.CalcSize(new GUIContent(text));
+        _measured[key] = size;
+        return size;
+    }
 
     void Awake()
     {
@@ -184,10 +214,10 @@ public class DriveHud : MonoBehaviour
             string tailNow = runScore == null
                 ? $"{gate.Runs} runs delivered"
                 : $"best {CoreScoreFactors.Points(runScore.Best)}  ·  {gate.Runs} runs  ·  {gate.SatsDelivered:N0} sat";
-            float widest = Mathf.Max(under.CalcSize(new GUIContent(longest)).x,
-                                     under.CalcSize(new GUIContent(tailNow)).x);
-            widest = Mathf.Max(widest, banked.CalcSize(new GUIContent("BANKED  0,000.00000")).x);
-            widest = Mathf.Max(widest, score.CalcSize(new GUIContent("SCORE  0,000.00000")).x);
+            float widest = Mathf.Max(Measure(under, longest).x,
+                                     Measure(under, tailNow).x);
+            widest = Mathf.Max(widest, Measure(banked, "BANKED  0,000.00000").x);
+            widest = Mathf.Max(widest, Measure(score, "SCORE  0,000.00000").x);
             if (widest > width && widest > 1f)
             {
                 float k = width / widest;
@@ -433,7 +463,7 @@ public class DriveHud : MonoBehaviour
     {
         if (!GameSettings.Debug) return;
 
-        var core = Object.FindFirstObjectByType<Blwp.CoreDrivenTruck>();
+        var core = Found(ref _coreFound);
         _fps = Mathf.Lerp(_fps, 1f / Mathf.Max(0.0001f, Time.unscaledDeltaTime), 0.06f);
 
         var lines = new System.Collections.Generic.List<string>
@@ -851,7 +881,7 @@ public class DriveHud : MonoBehaviour
     /// <summary>The fold control's place: under the card's bottom edge, at its right - over none of the card's lines.</summary>
     public static Rect FoldTab(Rect card, int h, int fontSize, string label, GUIStyle style)
     {
-        float bw = style != null ? style.CalcSize(new GUIContent(label)).x + fontSize * 1.6f : fontSize * 8f;
+        float bw = style != null ? Measure(style, label).x + fontSize * 1.6f : fontSize * 8f;
         float bh = fontSize * 2.2f;
         float y = Mathf.Min(card.yMax + 4f, h - bh - 4f);
         return new Rect(card.xMax - bw, y, bw, bh);
@@ -1112,11 +1142,11 @@ public class DriveHud : MonoBehaviour
     {
         {
             var button = new GUIStyle(GUI.skin.button) { fontSize = fontSize, fontStyle = FontStyle.Bold };
-            float bw = Mathf.Min(row.width - 16f, button.CalcSize(new GUIContent(CopyReplayLabel)).x + fontSize * 2f);
+            float bw = Mathf.Min(row.width - 16f, Measure(button, CopyReplayLabel).x + fontSize * 2f);
             // BESIDE, NOT ON (SEE-AND-COPIED-1745, measured on WRECKED's narrow row: the tip covered "…ay"): while "copied!"
             // stands, the button and the tip are centred together, side by side, inside the row
             var tipStyle = new GUIStyle(line) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-            float tipW = tipStyle.CalcSize(new GUIContent(CopiedLabel)).x + line.fontSize, gap = line.fontSize * 0.5f;
+            float tipW = Measure(tipStyle, CopiedLabel).x + line.fontSize, gap = line.fontSize * 0.5f;
             bool tipUp = CopiedTooltipShows(_copiedAt, Time.unscaledTime);
             float pairW = tipUp ? Mathf.Min(row.width - 8f, bw + gap + tipW) : bw;
             if (tipUp) bw = Mathf.Max(fontSize * 4f, pairW - gap - tipW);
@@ -1506,7 +1536,7 @@ public class DriveHud : MonoBehaviour
         style.wordWrap = false;
         style.clipping = TextClipping.Overflow;
         FitInto(style, line, width, floor);
-        return style.CalcSize(new GUIContent(line)).x <= width + 0.5f;
+        return Measure(style, line).x <= width + 0.5f;
     }
 
     static void FitInto(GUIStyle style, string line, float width, int floor)
@@ -1514,7 +1544,7 @@ public class DriveHud : MonoBehaviour
         if (width <= 1f || string.IsNullOrEmpty(line)) return;
         for (int pass = 0; pass < 4; pass++)
         {
-            float need = style.CalcSize(new GUIContent(line)).x;
+            float need = Measure(style, line).x;
             if (need <= width || need <= 1f || style.fontSize <= floor) return;
             style.fontSize = Mathf.Max(floor,
                 Mathf.Min(style.fontSize - 1, Mathf.FloorToInt(style.fontSize * width / need)));
@@ -2599,9 +2629,9 @@ public class DriveHud : MonoBehaviour
             string full = stalled ? "NO SCORE FOR LAPS  ·  HEAD FOR THE DROP-OFF"
                                   : "NO SCORE OUT HERE  ·  GET CLOSER TO THE FIGHTING";
             string brief = stalled ? "NO SCORE FOR LAPS" : "NO SCORE OUT HERE";
-            string say = warn.CalcSize(new GUIContent(full)).x <= warnBox.width - 6f
+            string say = Measure(warn, full).x <= warnBox.width - 6f
                        ? full
-                       : (warn.CalcSize(new GUIContent(brief)).x <= warnBox.width - 6f
+                       : (Measure(warn, brief).x <= warnBox.width - 6f
                           ? brief : full);
             // A MARGIN, because the fit was a pixel or two short and the
             // clipping takes it off the LEFT - "SCORE OUT HERE" where "NO
@@ -2610,7 +2640,7 @@ public class DriveHud : MonoBehaviour
             float room = warnBox.width - 6f;
             for (int pass = 0; pass < 3; pass++)
             {
-                float need = warn.CalcSize(new GUIContent(say)).x;
+                float need = Measure(warn, say).x;
                 if (need <= room || need <= 1f) break;
                 int smaller = Mathf.FloorToInt(warn.fontSize * room / need);
                 warn.fontSize = Mathf.Max(9, Mathf.Min(warn.fontSize - 1, smaller));
@@ -2920,7 +2950,7 @@ public class DriveHud : MonoBehaviour
         var cam = Camera.main;
         if (cam == null)
         {
-            var chase = Object.FindFirstObjectByType<ChaseCamera>();
+            var chase = Found(ref _chaseFound);
             cam = chase != null ? chase.GetComponent<Camera>() : null;
         }
         if (cam == null) return;
@@ -2986,7 +3016,7 @@ public class DriveHud : MonoBehaviour
         var cam = Camera.main;
         if (cam == null)
         {
-            var chase = Object.FindFirstObjectByType<ChaseCamera>();
+            var chase = Found(ref _chaseFound);
             cam = chase != null ? chase.GetComponent<Camera>() : null;
         }
         if (cam == null) return;
@@ -3296,7 +3326,7 @@ public class DriveHud : MonoBehaviour
         // SPECTATE: price only (the owner 2026-09-07, a13 / a16).
         // The free camera is looking at the map; every other box is driving
         // chrome. EXIT stays on SpectatorCamera.
-        var spectator = Object.FindFirstObjectByType<SpectatorCamera>();
+        var spectator = Found(ref _spectatorFound);
         bool spectating = spectator != null && spectator.Active;
 
         /* ---------------------------------------------------- headline price */
@@ -3342,7 +3372,7 @@ public class DriveHud : MonoBehaviour
             // A phone in landscape leaves about a third of its width between
             // the two columns, and 13% of the short side is a wider number
             // than that: measured, not assumed, off the style itself.
-            float wanted = _price.CalcSize(new GUIContent(text)).x;
+            float wanted = Measure(_price, text).x;
             if (wanted > head.width && wanted > 1f)
                 _price.fontSize = Mathf.Max(14, Mathf.FloorToInt(_price.fontSize * head.width / wanted));
 
