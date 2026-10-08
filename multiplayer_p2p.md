@@ -226,7 +226,7 @@ RULED HERE, so nothing of a player's is lost in the rename:
   `blwp-*` to `arena-*`;
 - browser storage keys move from `blwp.*` to `arena.*` by **migration**: the
   client reads the old key, writes the new one, and deletes the old one only
-  once the new one reads back - a player's seed (`blwp.player.seed`) and
+  once the new one reads back - a player's seed (`arena.player.seed`) and
   wallet survive the rename;
 - player-visible text never says BLWP or BTC Logistics again.
 
@@ -729,7 +729,7 @@ round key - so every client shows the same string for one player in the lobby,
 on the board and in every round:
 `taggedHash('BLWP/v1/DISPLAY_NAME', identityPubkey)` → `adjective-animal-NNNN`
 (64 adjectives, 64 animals, four-digit number). Locked in
-`packages/protocol/src/display-name.js`, the only wordlist that names a
+`packages/arena-protocol/src/display-name.js`, the only wordlist that names a
 player. The name is **changeable**: a custom
 name lives next to the secret in the browser, may be published to the round's
 seats as a player-signed display record (the other players' pages verify it
@@ -742,7 +742,7 @@ a key set pays inside the federation, §22A) is the player **public key as
 hex**, not the display name (the owner 2026-09-08). It is omitted if
 `commentAllowed` is under 64 characters.
 
-**Browser key (M3).** The secret is stored in the browser (`blwp.player.v1`)
+**Browser key (M3).** The secret is stored in the browser (`arena.player.v1`)
 with a backup download/import the player triggers. It is never uploaded to a
 node.
 
@@ -868,13 +868,13 @@ no globally authoritative multiplayer physics server is required.
 
 # 3. The whole architecture
 
-One downloadable server package, `blwp-node`, plus the browser client.
+One downloadable server package, `arena-node`, plus the browser client.
 
 ```text
 OPEN SOURCE CLIENT
       |
       v
-blwp-node software
+arena-node software
       |
       +-- 7 selected GAME/VERIFY role slots      5-of-7 agreement
       |
@@ -913,12 +913,12 @@ operators simultaneously and forfeit five bonds to do it.
 /client-unity
 /sim-core
 /protocol
-/blwp-node
+/arena-node
 /replayer
 /test-vectors
 ```
 
-`/blwp-node` contains all server-side capabilities: entry and checkpoint
+`/arena-node` contains all server-side capabilities: entry and checkpoint
 handling, transcript storage, replay and signing, and optional Lightning
 settlement support. No proprietary daemon is required.
 
@@ -2410,7 +2410,7 @@ rewritten.
 
 # 8. One downloadable BLWP node software
 
-One open-source package, `blwp-node`. Depending on enabled roles, an
+One open-source package, `arena-node`. Depending on enabled roles, an
 installation can accept and timestamp entries, receive checkpoints and
 transcripts, store enough data for replay, replay and sign results, and
 participate in threshold Lightning settlement.
@@ -2969,8 +2969,8 @@ Past `final_after` (`finality.js resultFinality`):
   expiry (§23.2).
 
 Measured live on the free pair, for a late result, a split and a late
-posting (two test faults, off by default: `BLWP_TEST_DISSENT_FILE` with
-`<entry> first`, and `BLWP_TEST_LATE_POSTING_FILE`).
+posting (two test faults, off by default: `ARENA_TEST_DISSENT_FILE` with
+`<entry> first`, and `ARENA_TEST_LATE_POSTING_FILE`).
 
 ---
 
@@ -3303,9 +3303,9 @@ of its published inputs is slashable.
 # 21. Settlement role of the same node software
 
 ```text
-blwp-node --roles game_verify
-blwp-node --roles settlement
-blwp-node --roles game_verify,settlement
+arena-node --roles game_verify
+arena-node --roles settlement
+arena-node --roles game_verify,settlement
 ```
 
 **GAME/VERIFY role:** receives entries and checkpoints; stores transcripts;
@@ -5010,7 +5010,7 @@ in the networking sense. Nodes are reachable servers with a declared
 `endpoint`; players are browsers, which can open connections and never
 accept them. The "P2P" in this document means **no central provider**, not
 peers behind routers finding each other. A browser can never be a node,
-which is why `blwp-node` is separate software.
+which is why `arena-node` is separate software.
 
 Two consequences that are cheaper to know now than in month four:
 
@@ -6109,7 +6109,7 @@ simplification was trying to avoid. Bond-weighted stateless sortition
    deferred, not optional, not behind a flag.
 9. No central internal player balance.
 10. `FINAL` losses cannot later become refunds due to an infrastructure attack.
-11. One public `blwp-node` package for all roles.
+11. One public `arena-node` package for all roles.
 12. 5% node fee (Bitcoin Arena; 2% under BLWP) distributed deterministically to eligible selected slots and guardians.
 13. Developer donation optional at protocol level and possibly 0%.
 14. No privileged developer admin key.
@@ -6148,7 +6148,7 @@ Developer disappears tomorrow.
 Can someone download/build the client?   YES
 Can someone host the client?             YES
 Can users create rounds?                 YES
-Can anyone download/run blwp-node?       YES
+Can anyone download/run arena-node?       YES
 Can nodes enable either/both roles?      YES
 Can existing rounds finish?              YES
 Can stakes be refunded if nothing runs?  YES (stake-lock expiry, §23), while
@@ -6277,7 +6277,7 @@ committee nor outcome).
 ```text
                   GITHUB / MIRRORS
                         |
-          ONE OPEN-SOURCE blwp-node PACKAGE
+          ONE OPEN-SOURCE arena-node PACKAGE
                   (bonded operators)
                         |
           +-------------+-------------+
@@ -6309,7 +6309,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 
 # 37. Final principle
 
-> There is one open-source `blwp-node` package that anyone can download and,
+> There is one open-source `arena-node` package that anyone can download and,
 > with a bond on Bitcoin, register — and that bond output *is* the census
 > entry, so everyone derives the same eligible set from chain state.
 > Committees are selected deterministically, with weight linear in the bond,
