@@ -3683,7 +3683,37 @@
     const script = document.createElement('script');
     script.src = 'Build/{{{ LOADER_FILENAME }}}';
     script.onerror = () => fail('The loader could not be loaded.');
-    script.onload = () => {
+    // THE TEXTURES THIS GPU HAS (kanban #265, measured 2026-10-08): the build's textures were DXT only, which most Android
+    // GPUs and iPhones lack - Unity then decompressed 33 of them on the CPU, 20 before 100 %. A deploy may carry the same
+    // build's ASTC data beside it (Build/<data>-astc..., StreamingAssets-astc/ with its catalog; the code files are byte-
+    // identical): a GPU with ASTC and no S3TC (a phone) loads that. Anything else, or a deploy without it, loads DXT.
+    function astcWanted() {
+      try {
+        const g = document.createElement('canvas').getContext('webgl2');
+        if (!g) return false;
+        const ex = g.getSupportedExtensions() || [];
+        const lose = g.getExtension('WEBGL_lose_context'); if (lose) lose.loseContext();
+        return ex.includes('WEBGL_compressed_texture_astc') && !ex.some((e) => /s3tc/i.test(e));
+      } catch (e) { return false; }
+    }
+    // textures.json is written by a deploy that carries the ASTC data ({ "astc": { "data": "Build/...", "streamingAssets":
+    // "StreamingAssets-astc" } }). A host without it answers with the page itself (Pages' fallback - measured: a missing
+    // Build/ file answered 200, application/octet-stream from _headers), which is not JSON: DXT.
+    async function texturesForThisGpu() {
+      if (!astcWanted()) { window.ARENA_TEXTURES = 'dxt'; return; }
+      let t = null;
+      try { t = await (await fetch('textures.json', { cache: 'no-store' })).json(); } catch (e) { t = null; }
+      const a = t && t.astc;
+      if (!a || typeof a.data !== 'string' || !/^Build\/[\w.-]+\.data\.unityweb$/.test(a.data) || !/^[\w-]+$/.test(String(a.streamingAssets || ''))) {
+        window.ARENA_TEXTURES = 'dxt (no astc data here)'; return;
+      }
+      config.dataUrl = a.data;
+      config.streamingAssetsUrl = a.streamingAssets;
+      window.ARENA_TEXTURES = 'astc';
+    }
+    script.onload = async () => {
+      await texturesForThisGpu();
+      console.log('[arena] textures: ' + window.ARENA_TEXTURES);
       createUnityInstance(canvas, config, show)
         .then((instance) => {
           window.unityInstance = instance;
