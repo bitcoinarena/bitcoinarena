@@ -31,6 +31,8 @@ public class TerritoryMap : MonoBehaviour
     Color32[] _px;
     Material _mat;
     float _acc;
+    float[] _noise;                          // PerlinNoise per pixel: fixed, so taken once
+    readonly float[] _front = new float[Width];  // the front per column, once a repaint
 
     /// <summary>
     /// Ground colour at a distance from the frontline. Pure, so the blend can
@@ -91,18 +93,25 @@ public class TerritoryMap : MonoBehaviour
         if (terrain == null || field == null) return;
         float w = terrain.width, d = terrain.depth;
 
+        // ONE FRONT PER COLUMN AND THE NOISE ONCE (kanban #266, measured 2026-10-08 in a named profile of the production line,
+        // test host Chrome as an Android phone at 10x CPU: TerritoryMap.Repaint was 232-254 ms of the block after 100 %, every
+        // 0.35 s after it). The front depends on x alone and the noise on the pixel alone, yet both were asked per pixel -
+        // 24,576 calls into the core where 192 give the same numbers. The same values, so the same texture.
+        if (_noise == null)
+        {
+            _noise = new float[Width * Height];
+            for (int py = 0; py < Height; py++)
+                for (int px = 0; px < Width; px++)
+                    _noise[py * Width + px] = Mathf.PerlinNoise((px + 0.5f) / Width * 26f, (py + 0.5f) / Height * 18f);
+        }
+        for (int px = 0; px < Width; px++)
+            _front[px] = field.FrontlineZ(((px + 0.5f) / Width - 0.5f) * w);
         for (int py = 0; py < Height; py++)
         {
             float v = (py + 0.5f) / Height;
             float z = (v - 0.5f) * d;
             for (int px = 0; px < Width; px++)
-            {
-                float u = (px + 0.5f) / Width;
-                float x = (u - 0.5f) * w;
-                float front = field.FrontlineZ(x);
-                float n = Mathf.PerlinNoise(u * 26f, v * 18f);
-                _px[py * Width + px] = Shade(z - front, n);
-            }
+                _px[py * Width + px] = Shade(z - _front[px], _noise[py * Width + px]);
         }
         _tex.SetPixels32(_px);
         _tex.Apply(false);
