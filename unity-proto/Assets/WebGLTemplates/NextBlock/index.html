@@ -1062,12 +1062,17 @@
       const el = document.getElementById('arena-fps');
       if (!el) return;
       let last = 0, frames = 0, worst = 0, since = performance.now();
+      // WHAT THE ADDRESS SWITCHED (kanban #266): ?dpr= here, ?post=0 ?shadows=0 ?hdr=0 in Unity (GfxSwitches) - named on the readout,
+      // so a phone's screenshot carries its own setting
+      const q = new URLSearchParams(location.search);
+      const tag = [q.get('dpr') ? 'dpr ' + q.get('dpr') : '', ...['post', 'shadows', 'hdr'].filter((k) => q.get(k) === '0').map((k) => k + ' off')]
+        .filter(Boolean).join(' · ');
       const tick = (t) => {
         if (last) { frames++; worst = Math.max(worst, t - last); }
         last = t;
         if (t - since >= 500) {
           const fps = Math.round(frames * 1000 / (t - since));
-          el.textContent = fps + ' fps · worst ' + Math.round(worst) + ' ms';
+          el.textContent = fps + ' fps · worst ' + Math.round(worst) + ' ms' + (tag ? ' · ' + tag : '');
           el.className = fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
           window.ARENA_FPS = { fps, worstMs: Math.round(worst), at: Math.round(t) };
           frames = 0; worst = 0; since = t;
@@ -1239,7 +1244,9 @@
       streamingAssetsUrl: 'StreamingAssets',
       // THE 2x CAP REACHES UNITY (kanban #266): Unity's loader sizes the drawing buffer from window.devicePixelRatio, not
       // from the canvas size resize() sets below - measured on a phone profile (DPR 2.625): 1082 x 2402, 2.6 Mpx a frame.
-      devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      // `?dpr=1.5` (kanban #266): the player measures what the pixels cost on his own phone; 0.5 to 3, else the 2x cap
+      devicePixelRatio: (() => { const q = parseFloat(new URLSearchParams(location.search).get('dpr'));
+        return q >= 0.5 && q <= 3 ? q : Math.min(window.devicePixelRatio || 1, 2); })(),
       companyName: '{{{ COMPANY_NAME }}}',
       productName: '{{{ PRODUCT_NAME }}}',
       productVersion: '{{{ PRODUCT_VERSION }}}',
