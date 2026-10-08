@@ -84,7 +84,7 @@
     #arena-fps-now { white-space: nowrap; }
     #arena-fps-now.good { color: #3fb950; } #arena-fps-now.ok { color: #f0b72f; } #arena-fps-now.bad { color: #f85149; }
     /* THE FRAME-RATE TEST'S RESULT (kanban #266): a second line, wrapping on a phone */
-    #arena-fps-bench { display: block; color: #c9d1d9; font-weight: 500; white-space: normal; }
+    #arena-fps-bench { display: block; color: #c9d1d9; font-weight: 500; white-space: pre-line; text-align: left; }
     #arena-fps-bench:empty { display: none; }
     body.blwp-clean #arena-fps { display: none; }
     #creep { position: absolute; left: 90%; top: 0; height: 100%; width: 10%; transform-origin: left center; transform: scaleX(0);
@@ -1061,21 +1061,26 @@
     const boot = document.getElementById('boot');
     const bar = document.getElementById('bar');
     const pct = document.getElementById('pct');
-    // THE FRAME RATE (kanban #266): every requestAnimationFrame is a frame the page painted; twice a second the readout says how
-    // many came and the longest gap between two. window.ARENA_FPS keeps the last reading for a probe.
+    // THE FRAME RATE (kanban #266): every requestAnimationFrame is a frame the page painted. Twice a second the readout says
+    // avg, min and max fps (the owner 2026-10-08: "track min, max, avg FPS and display it as such"): avg is the frames over the
+    // time, min the slowest frame's rate (1000 / longest gap), max the fastest's. window.ARENA_FPS keeps the last reading.
+    // avg / min / max fps of `frames` frames over `ms`, the longest gap `worst` and the shortest `best` (ms); a display caps at 240
+    function fpsOf(frames, ms, worst, best) {
+      return { avg: Math.round(frames * 1000 / ms), min: Math.round(1000 / Math.max(worst, 1)), max: Math.min(240, Math.round(1000 / Math.max(best, 1))) };
+    }
     (function frameRate() {
       const el = document.getElementById('arena-fps-now');
       if (!el) return;
-      let last = 0, frames = 0, worst = 0, since = performance.now();
+      let last = 0, frames = 0, worst = 0, best = Infinity, since = performance.now();
       const tick = (t) => {
-        if (last) { frames++; worst = Math.max(worst, t - last); }
+        if (last) { frames++; worst = Math.max(worst, t - last); best = Math.min(best, t - last); }
         last = t;
-        if (t - since >= 500) {
-          const fps = Math.round(frames * 1000 / (t - since));
-          el.textContent = fps + ' fps · worst ' + Math.round(worst) + ' ms';
-          el.className = fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
-          window.ARENA_FPS = { fps, worstMs: Math.round(worst), at: Math.round(t) };
-          frames = 0; worst = 0; since = t;
+        if (t - since >= 500 && frames) {
+          const r = fpsOf(frames, t - since, worst, best);
+          el.textContent = 'avg ' + r.avg + ' · min ' + r.min + ' · max ' + r.max + ' fps';
+          el.className = r.avg >= 50 ? 'good' : r.avg >= 30 ? 'ok' : 'bad';
+          window.ARENA_FPS = { ...r, fps: r.avg, worstMs: Math.round(worst), at: Math.round(t) };
+          frames = 0; worst = 0; best = Infinity; since = t;
         }
         requestAnimationFrame(tick);
       };
@@ -1093,9 +1098,9 @@
         ['all off', { dpr: 1, post: 0, shadows: 0, hdr: 0 }]];
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const measure = (ms) => new Promise((r) => {
-        let n = 0, worst = 0, last = 0; const t0 = performance.now();
-        const f = (t) => { if (last) { n++; worst = Math.max(worst, t - last); } last = t;
-          if (t - t0 < ms) requestAnimationFrame(f); else r({ fps: Math.round(n * 1000 / (t - t0)), worst: Math.round(worst) }); };
+        let n = 0, worst = 0, best = Infinity, last = 0; const t0 = performance.now();
+        const f = (t) => { if (last) { n++; worst = Math.max(worst, t - last); best = Math.min(best, t - last); } last = t;
+          if (t - t0 < ms) requestAnimationFrame(f); else r({ ...fpsOf(Math.max(n, 1), t - t0, worst, best), worstMs: Math.round(worst) }); };
         requestAnimationFrame(f);
       });
       const buffer = () => { const c = document.getElementById('canvas'); return c ? c.width + '×' + c.height : '?'; };
@@ -1117,7 +1122,9 @@
             res.push({ name, ...r, buffer: m.dpr || name === 'as built' ? buffer() : null });
           }
         } finally { set({}); running = false; }
-        const line = res.map((r) => r.name + ' ' + r.fps + (r.buffer ? ' (' + r.buffer + ')' : '')).join(' · ') + ' · tap to rerun';
+        // ONE LINE A MODE: avg / min / max fps, and the drawing buffer of each pixel mode
+        const line = res.map((r) => r.name + ': avg ' + r.avg + ' · min ' + r.min + ' · max ' + r.max + (r.buffer ? ' · ' + r.buffer : '')).join('\n')
+          + '\ntap to rerun';
         out.textContent = line;
         window.ARENA_BENCH = { res, dpr: baseDpr, deviceDpr: window.devicePixelRatio, ua: navigator.userAgent, at: new Date().toISOString() };
         console.log('[bench] ' + line);
