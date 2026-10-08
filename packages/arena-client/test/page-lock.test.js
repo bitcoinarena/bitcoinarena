@@ -942,7 +942,7 @@ function bolt11For(amountMsat) {
 // collects, redeems, refunds or withdraws; the collect is reached from the Withdraw button only.
 test('the page withdraws nothing on a timer: its interval functions look, the payout look collects into the player wallet by itself (WINNINGS-AUTO), and collect-and-withdraw is called from the Withdraw action alone', async () => {
   const { readFileSync } = await import('node:fs');
-  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
   const spends = /redeemPayout|returnStake|refundKept|withdrawCollected|withdrawPlayerWallet|collectOwed|collectAndWithdraw|\.refund\(|\.redeem\(|\.withdraw\(/;
   const timed = [...page.matchAll(/setInterval\((\w+), \d+\)/g)].map((m) => m[1]);
   assert.ok(timed.includes('lookThePayout'), `the look is not on a timer (${timed.join(', ')})`);

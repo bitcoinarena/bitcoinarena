@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const dir = process.argv[2];
 if (!dir) { console.error('usage: node page-coverage.mjs <NODE_V8_COVERAGE dir>'); process.exit(2); }
 const PAGES = [
-  ['index.html', new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url)],
+  ['index.html', new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url)],
   ['rounds.html', new URL('../../arena-node/pages/rounds.html', import.meta.url)],
   ['replay.html', new URL('../../nextblock/plugin/nextblock-replay.html', import.meta.url)],
 ];

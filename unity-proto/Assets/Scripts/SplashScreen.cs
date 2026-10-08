@@ -622,10 +622,28 @@ public class SplashScreen : MonoBehaviour
                                  new Color(0.07f, 0.065f, 0.05f, 0.98f));
         PanelSkin.Rule(new Rect(head.x, head.yMax - 3f, head.width, 3f), PanelSkin.Gold);
 
+        // THE NAME ON ONE LINE WITH THE GAME'S MARK BESIDE IT (kanban #228): "TICK TOCK, NEXT BLOCK" is longer than the old
+        // title and wrapped to two lines on a phone, under the backup banner. The icon and the name are centred together in
+        // the bar, and set smaller until both fit on one line.
+        _title.wordWrap = false;
+        Vector2 need = _title.CalcSize(new GUIContent(Title));
+        float mark = 0f, gap = 0f;
+        for (int guard = 0; guard < 24; guard++)
+        {
+            need = _title.CalcSize(new GUIContent(Title));
+            mark = NextBlockMark.Icon != null ? Mathf.Min(head.height * 0.78f, need.y * 1.15f) : 0f;
+            gap = mark > 0f ? Mathf.Max(6f, mark * 0.25f) : 0f;
+            if ((need.x + mark + gap + 24f <= head.width && need.y <= head.height) || _title.fontSize <= 12) break;
+            _title.fontSize = Mathf.Max(12, Mathf.RoundToInt(_title.fontSize * 0.92f));
+        }
+        float shift = (mark + gap) * 0.5f;                     // the name moves right by half the mark: the pair is centred
+        var name = new Rect(head.x + shift, head.y, head.width, head.height);
         _title.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
-        GUI.Label(new Rect(head.x + 3f, head.y + 4f, head.width, head.height), Title, _title);
+        GUI.Label(new Rect(name.x + 3f, name.y + 4f, name.width, name.height), Title, _title);
         _title.normal.textColor = PanelSkin.Gold;
-        GUI.Label(head, Title, _title);
+        GUI.Label(name, Title, _title);
+        if (mark > 0f)
+            NextBlockMark.DrawIcon(new Rect(name.center.x - need.x * 0.5f - gap - mark, head.center.y - mark * 0.5f, mark, mark));
 
         // The build, right-aligned on its own row under the title bar.
         var stamp = new GUIStyle(_sub)
@@ -914,7 +932,7 @@ public class SplashScreen : MonoBehaviour
         Blwp.DailyLobby.Shown(sb.ToString());
     }
 
-    public const string Title = "BTC LOGISTICS WAR";
+    public const string Title = NextBlockMark.Name;
     public const string PlayLabel = "▶  PLAY";
     public const string SpectateLabel = "SPECTATE";
 

@@ -21,6 +21,8 @@ export const NEXTBLOCK_GAME_ID = gameIdOf(NEXTBLOCK_MANIFEST);
  */
 export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_MANIFEST, gameId: NEXTBLOCK_GAME_ID, cores: NEXTBLOCK_CORES,
   replayPage: new URL('./nextblock-replay.html', import.meta.url), roundWarnings: nextblockRoundWarnings,
+  // ITS NAME AND MARK AS A PLAYER SEES THEM (kanban #228): the node's pages show them beside its rounds
+  title: 'Tick Tock, Next Block', icon: new URL('../brand/nextblock-icon.svg', import.meta.url),
   // ITS DEVELOPER'S DONATION SET (§0A.8, kanban #205): the one its manifest names by id - the testnet4 key set, so on
   // testnet4 nextblock's protocol dev and game dev are the same recipients and are paid once
   donationSet: TESTNET4_DONATION_SET_KEYS.recipients });

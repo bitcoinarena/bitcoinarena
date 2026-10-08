@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const at = html.indexOf('    async function lookThePending() {');
 const src = html.slice(at, html.indexOf('\n    }\n', at) + 6);
 
@@ -17,7 +17,7 @@ function page({ answers, done = [] }) {
   const window = { BLWP_WALLET_BALANCE: { sats: 10, pending: 0 } };
   const fetch = async (u) => { const a = answers[new URL(u).host]; return a ? { ok: true, json: async () => a } : { ok: false }; };
   const BLWPCLIENT = { savedCollects: () => done.map((r) => ({ roundIdHex: r, done: { payout: 'x' } })) };
-  const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
+  const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
   return { go: () => run(() => store, BLWPCLIENT, fetch, { getElementById: (id) => els[id] || null }, window, () => {}), window, els, kept };
 }
 // THE WINDOW STILL OPEN (a close in the future); `closed` is one already past
@@ -92,7 +92,7 @@ test('two entries of one round in one browser: each tab asks only about its own 
   const tab = (mine) => {
     const session = new Map(mine ? [['arena.pending.mine', JSON.stringify(mine)]] : []);
     const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
-    const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
+    const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
     return run(() => store, { savedCollects: () => [] }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.BLWP_PENDING_SATS);
   };
   const winner = await tab(['arena.pending.r1.e1']);

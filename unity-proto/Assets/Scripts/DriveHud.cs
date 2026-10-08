@@ -1028,6 +1028,21 @@ public class DriveHud : MonoBehaviour
         GUI.DrawTexture(new Rect(card.x, card.yMax - 2f, card.width, 2f), _flat);
         GUI.color = Color.white;
 
+        // THE GAME'S MARK ON ITS RESULT (kanban #228): the icon in the card's top right corner, and its name beside it where
+        // the card is wide enough that the name stays clear of the centred headline
+        {
+            float s = Mathf.Clamp(rows[0].height * 0.62f, 16f, 30f);
+            var icon = new Rect(card.xMax - s - 8f, card.y + 6f, s, s);
+            NextBlockMark.DrawIcon(icon, k);
+            if (card.width >= 560f)
+            {
+                var tag = new GUIStyle(line) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Bold,
+                    fontSize = Mathf.Max(10, Mathf.RoundToInt(line.fontSize * 0.75f)) };
+                tag.normal.textColor = new Color(1f, 0.86f, 0.35f, 0.7f * k);
+                GUI.Label(new Rect(icon.x - 220f, icon.y, 214f, s), NextBlockMark.Name, tag);
+            }
+        }
+
         int r = 0;
         big.normal.textColor = missed ? new Color(1f, 0.42f, 0.36f, k) : new Color(Up.r, Up.g, Up.b, k);
         GUI.Label(Inset(rows[r++]), headline, big);

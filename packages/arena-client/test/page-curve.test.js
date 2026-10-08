@@ -26,7 +26,7 @@ test('the page curve is the daemon curve', () => {
 
 test('the page loads the curve before it joins', () => {
   const page = readFileSync(
-    new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html',
+    new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html',
       import.meta.url).pathname, 'utf8');
   const curveTag = page.indexOf('src="blwp-curve.js"');
   const joinCall = page.indexOf('joinTheRoundIfOneWasNamed');

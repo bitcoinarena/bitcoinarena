@@ -9,13 +9,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const lift = (head) => {
   const at = PAGE.indexOf(head);
   assert.ok(at > 0, `index.html has no ${head.trim()}`);
   return PAGE.slice(at, PAGE.indexOf('\n    };\n', at) + '\n    };\n'.length);
 };
-const pageWith = (window) => pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window'], [lift('    window.BLWP_REFUSED_JOIN = '), lift('    window.BLWP_JOIN_GOES_ON = ')], 'return window;')(window);
+const pageWith = (window) => pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window'], [lift('    window.BLWP_REFUSED_JOIN = '), lift('    window.BLWP_JOIN_GOES_ON = ')], 'return window;')(window);
 
 test('a join refused while it is held to its start does not go on: cancelled, refused, and no longer the join that goes on', () => {
   const w = pageWith({ BLWP_LOBBY: [] });

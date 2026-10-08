@@ -20,7 +20,7 @@ const require = createRequire(import.meta.url);
 const ROOT = new URL('../../../', import.meta.url).pathname;
 const COPIES = [
   ['dist', ROOT + 'packages/arena-client/dist/arena-client.js'],
-  ['the WebGL template', ROOT + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/arena-client.js'],
+  ['the WebGL template', ROOT + 'unity-proto/Assets/WebGLTemplates/NextBlock/arena-client.js'],
 ];
 
 /** One fixture contract with its custody byte set to 0, and the sentence the source throws for it. */

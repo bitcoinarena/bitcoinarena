@@ -102,7 +102,7 @@ test('makeInvoice: nothing to withdraw, no bolt11 in the answer, and the trimmed
   assert.deepEqual(got.said, { ok: true, invoice: 'lntbrs1pexample' });
   assert.deepEqual(got.asked[0], { method: 'make_invoice', params: { amount: 5000, description: 'round 1d5d' } });
   const defaultWords = await withWallet({ make_invoice: { invoice: 'lnbc1x' } }, async (w) => { await makeInvoice(w.where, 1000, opts); return w.asked[0].params.description; });
-  assert.equal(defaultWords, 'btc-logistics payout');
+  assert.equal(defaultWords, 'Tick Tock, Next Block payout');
   for (const answer of [{ invoice: 'not-a-bolt11' }, {}, { invoice: 7 }])
     assert.deepEqual(await withWallet({ make_invoice: answer }, (w) => makeInvoice(w.where, 1000n, opts)), { ok: false, why: 'the wallet answered make_invoice with no bolt11' });
   assert.deepEqual(await withWallet({ make_invoice: { error: { code: 'QUOTA_EXCEEDED', message: 'over' } } }, (w) => makeInvoice(w.where, 1000n, opts)),

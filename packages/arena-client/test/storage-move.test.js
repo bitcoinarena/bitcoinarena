@@ -10,7 +10,7 @@ import { tabSeed } from '../src/join.js';
 import { tabWallet } from '../src/nwc.js';
 import { walletStoreFor, lockStoreFor } from '../src/page-lock.js';
 
-const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+const PAGE = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const MOVE = /<script id="arena-storage-move">([\s\S]*?)<\/script>/.exec(PAGE);
 
 const mem = (full = () => false) => { const m = new Map(); return { get length() { return m.size; },

@@ -12,7 +12,7 @@ import { pageFunction } from './page-script.js';
 import { nextRoundAfter } from '../src/next-round.js';
 import { lobbyStakeSats } from '../src/lobby.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url);
+const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(end, a) + end.length); };
 const CONTINUE = cut('    function continueToTheNextRound(played) {', '\n      look();\n    }\n');

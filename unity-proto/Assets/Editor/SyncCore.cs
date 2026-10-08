@@ -39,7 +39,7 @@ public static class SyncCore
         UnityEngine.Debug.Log("[SyncCore] wrote " + layoutPath);
 
         string from = Path.Combine(root, "dist/blwp-core.js");
-        string to = Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/blwp-core.js");
+        string to = Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/blwp-core.js");
         File.Copy(from, to, true);
         UnityEngine.Debug.Log($"[SyncCore] copied bundle ({new FileInfo(to).Length / 1024} KB) into the template");
 
@@ -57,7 +57,7 @@ public static class SyncCore
             UnityEngine.Debug.Log("[SyncCore] " + clientOut.Trim());
             string cFrom = Path.Combine(clientRoot, "dist/arena-client.js");
             string cTo = Path.Combine(Application.dataPath,
-                                      "WebGLTemplates/BtcLogistics/arena-client.js");
+                                      "WebGLTemplates/NextBlock/arena-client.js");
             File.Copy(cFrom, cTo, true);
             UnityEngine.Debug.Log(
                 $"[SyncCore] copied client ({new FileInfo(cTo).Length / 1024} KB) into the template");
@@ -65,13 +65,13 @@ public static class SyncCore
             UnityEngine.Debug.Log("[SyncCore] " + curveOut.Trim());
             File.Copy(Path.Combine(clientRoot, "dist/blwp-curve.js"),
                       Path.Combine(Application.dataPath,
-                                   "WebGLTemplates/BtcLogistics/blwp-curve.js"), true);
+                                   "WebGLTemplates/NextBlock/blwp-curve.js"), true);
             // AND THE LOCK CLIENT (W1b), which a page joining a lock round loads
             // to make the player's stake lock. Built outside Unity (the stock
             // fedimint crates to wasm) and committed in dist; copied as it is.
             foreach (string lockFile in new[] { "blwp_lock_client.js", "blwp_lock_client_bg.wasm" })
                 File.Copy(Path.Combine(clientRoot, "dist", lockFile),
-                          Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics", lockFile), true);
+                          Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock", lockFile), true);
         }
 
         AssetDatabase.Refresh();

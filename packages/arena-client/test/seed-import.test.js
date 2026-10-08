@@ -85,7 +85,7 @@ test('5. two tabs that never imported are two players, and an import in one leav
 
 test('the page takes a pasted seed and says which kind of seed its fingerprint is for', () => {
   const page = readFileSync(
-    new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url).pathname, 'utf8');
+    new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url).pathname, 'utf8');
   // THE RESTORE IS SETTINGS' (kanban #154): restoreSeed takes the 24 words or the 64 hex and replaces this tab's seed
   for (const call of ['restoreSeed', 'seedOrigin', 'tabSeed'])
     assert.ok(new RegExp('BLWPCLIENT\\.' + call + '\\s*\\(').test(page), 'the page never calls ' + call);

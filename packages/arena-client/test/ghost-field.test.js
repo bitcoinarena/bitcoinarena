@@ -212,7 +212,7 @@ test('the page ships the client it is written against, and one consumer of onGho
   // `takeGhost` entirely, so the page could not have asked for a ghost even if
   // something had told it to. A copy that drifts is a page running a different
   // program from the one the suites measure.
-  const shipped = readFileSync(root + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/arena-client.js');
+  const shipped = readFileSync(root + 'unity-proto/Assets/WebGLTemplates/NextBlock/arena-client.js');
   const built = readFileSync(root + 'packages/arena-client/dist/arena-client.js');
   assert.equal(shipped.length, built.length,
     `the template ships ${shipped.length} bytes and the bundle is ${built.length}`);
@@ -224,7 +224,7 @@ test('the page ships the client it is written against, and one consumer of onGho
   // declaration the bundler had eaten - nine uses, no declaration, a throw on
   // the first step. Two copies of a built file drift; a test that compares
   // them does not.
-  const shippedCore = readFileSync(root + 'unity-proto/Assets/WebGLTemplates/BtcLogistics/blwp-core.js');
+  const shippedCore = readFileSync(root + 'unity-proto/Assets/WebGLTemplates/NextBlock/blwp-core.js');
   const builtCore = readFileSync(root + 'packages/nextblock/dist/blwp-core.js');
   assert.equal(Buffer.compare(shippedCore, builtCore), 0,
     `the template ships ${shippedCore.length} bytes of core and the build is ${builtCore.length}`);

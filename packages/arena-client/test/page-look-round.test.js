@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url);
+const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const at = HTML.indexOf("    const TAB_EMPTY = 'arena.tabempty.';");
 assert.ok(at > 0, 'index.html holds lookRound');

@@ -74,7 +74,7 @@ test('a live run in this tab is refused with "leave the round first", and the se
 // AND THE PAGE (kanban #154: "Move restore into Settings"): the Settings seed card has the field and "use my seed", wired to
 // restoreSeed; the round page under the refund fingerprint has no restore field any more.
 test('Settings has the restore field wired to restoreSeed; the round page has none', () => {
-  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url).pathname, 'utf8');
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url).pathname, 'utf8');
   const card = page.slice(page.indexOf('id="blwp-set-seed"'), page.indexOf('</section>', page.indexOf('id="blwp-set-seed"')));
   assert.match(card, /<input id="blwp-seed-restore" type="password"/);
   assert.match(card, /<button id="blwp-seed-use" type="button">use my seed<\/button>/);

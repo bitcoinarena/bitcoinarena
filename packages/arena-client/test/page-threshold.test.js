@@ -63,7 +63,7 @@ test('the bundle the page loads hands it that rule, and the template carries tha
   // thrown at the deal. So the built file is loaded and asked.
   const { runInThisContext } = await import('node:vm');
   const dist = new URL('../dist/arena-client.js', import.meta.url);
-  const template = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/arena-client.js', import.meta.url);
+  const template = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/arena-client.js', import.meta.url);
   const bundle = readFileSync(dist, 'utf8');
   assert.equal(readFileSync(template, 'utf8'), bundle, 'the WebGL template carries a different bundle from dist');
   const B = runInThisContext(`${bundle}\n;BLWPCLIENT`, { filename: 'arena-client.js' });
@@ -73,7 +73,7 @@ test('the bundle the page loads hands it that rule, and the template carries tha
 });
 
 test('the page deals and posts at that rule, not at its slot count or a default', () => {
-  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
   assert.ok(!/needed: named\.round\.settlementSlots/.test(page), 'the page still deals every signer node a vote on its own stake');
   assert.match(page, /needed: BLWPCLIENT\.sharesNeededFor\(named\.round\),/, 'the page does not deal at the round\'s threshold');
   assert.match(page, /postHandout\(stake, named\.nodes, \{ needed: BLWPCLIENT\.sharesNeededFor\(named\.round\) \}\)/,
