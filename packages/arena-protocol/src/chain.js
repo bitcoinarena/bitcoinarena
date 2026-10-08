@@ -19,6 +19,7 @@
 // difficulty retargeting; it answers two questions only - is this transaction
 // in this header's block, and which of these header chains carries the most
 // work. That is what discovery needs and it is deliberately not more.
+import { ancestorMarker } from './ancestor.js';
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
   bondInternalKey, bondOutputKeyMatches, BOND_SCRIPT_TEMPLATE_VERSION,
@@ -361,14 +362,19 @@ export const BOND_UNCHECKED = [
 const sameScript = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 export function paysBondMarker(tx, network = 'regtest') {
-  const program = bondMarker(network);
+  return paysMarkerProgram(tx, bondMarker(network));
+}
+
+/** Whether `tx` pays the dust output of one marker program (this network's, or its ancestor's: ancestor.js). */
+export function paysMarkerProgram(tx, program) {
+  if (!(program instanceof Uint8Array)) return false;
   return tx.outputs.some((o) =>
     isTaprootOutput(o.script)
     && sameScript(o.script.subarray(2, 34), program)
     && o.value > 0n && o.value <= 546n);
 }
 
-export function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = {}) {
+export function recognizeBond(tx, vout, advert, { network = 'regtest', bond, ancestor = false } = {}) {
   if (!tx || !Array.isArray(tx.outputs))
     return { ok: false, why: 'that is not a parsed transaction' };
   if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
@@ -380,10 +386,12 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = 
       why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
     };
 
-  if (!paysBondMarker(tx, network))
+  // AN ANCESTOR'S BOND PAID THE ANCESTOR'S MARKER (spec 0A.9, kanban #209): the census found it by that marker, and it is
+  // carried into this network only by its operator's re-affirmation (census.js deriveCensus)
+  if (ancestor ? !paysMarkerProgram(tx, ancestorMarker(network)) : !paysBondMarker(tx, network))
     return {
       ok: false,
-      why: 'that transaction has no dust output to BOND_MARKER',
+      why: ancestor ? 'that transaction has no dust output to the ancestor\'s BOND_MARKER' : 'that transaction has no dust output to BOND_MARKER',
     };
 
   // AND AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is. 5A.3:

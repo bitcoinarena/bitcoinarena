@@ -885,6 +885,9 @@ const TAG = {
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',
+  // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9; kanban #209): what the bond's
+  // node key signs to say "this bond serves network_id too". Its own tag, so a re-affirmation is never a vote or an update.
+  reaffirmation: 'ARENA/v1/Reaffirmation',
   // A JOINED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
   // round key it is joined under, so a signer node can serve it but not write it.
   lobbyName: 'ARENA/v1/LobbyName',
@@ -4191,6 +4194,64 @@ function splitSignedAdvert(bytes) {
   };
 }
 
+// ---- arena-protocol/src/ancestor.js
+// THE NETWORK BEFORE THIS ONE, AS ITS CHAIN STILL CARRIES IT (spec 0A.9, §27A.8.3; kanban #209, the owner 2026-10-08).
+//
+// Every wire tag moved from BLWP/v1/... to ARENA/v1/... (kanban #207). What was already on Bitcoin did not: testnet4's
+// seven bonds pay the BLWP bond marker's dust and commit to an advertisement under the BLWP advert tag, in the
+// advertisement layout of before hosted_games (kanban #204). 0A.9 keeps those bonds - "a confirmed bond stays the bond" -
+// by re-affirmation (reaffirm.js) and an advertisement update naming hosted_games[]. So the census must still be able to
+// FIND and READ them; these are the ancestor's facts it reads them by, frozen, never written by anything new:
+//
+//   - its bond marker:   taggedHash('BLWP/v1/BOND_MARKER', network)  (regtest; 'testnet' for testnet4)
+//   - its advert id:     taggedHash('BLWP/v1/Advert', body)
+//   - its advert layout: today's, without the hosted_games vector (a u16 count) before the timestamp
+//   - the player wallet's root: taggedHash('BLWP/v1/PlayerWalletSecret', seed || federation) - the page moves a seed's
+//     e-cash from that wallet into the Arena one (index.html combineWallets; spec 0A.9 "the e-cash carries over")
+//
+// Mainnet has no ancestor: it starts as Bitcoin Arena.
+
+
+const ANCESTOR_TAG = Object.freeze({
+  advert: 'BLWP/v1/Advert',
+  bondMarker: 'BLWP/v1/BOND_MARKER',
+  playerWalletSecret: 'BLWP/v1/PlayerWalletSecret',
+});
+
+const utf8Bytes = (s) => new TextEncoder().encode(s);
+
+/** Whether `network` had a BLWP ancestor whose bonds can be carried (regtest and testnet4; never mainnet). */
+function hasAncestor(network) {
+  return network === 'regtest' || network === 'testnet' || network === 'testnet4';
+}
+
+/** The ancestor's bond marker program for `network` (32 bytes), as its bonds paid it; null where there is no ancestor. */
+function ancestorMarker(network) {
+  if (!hasAncestor(network)) return null;
+  return taggedHash(ANCESTOR_TAG.bondMarker, utf8Bytes(network === 'regtest' ? 'regtest' : 'testnet'));
+}
+
+/** The ancestor's id of a signed advertisement body: its tagged hash, as the bond committed to it. */
+function ancestorAdvertId(body) {
+  if (!(body instanceof Uint8Array)) throw new TypeError('an advertisement body is bytes');
+  return taggedHash(ANCESTOR_TAG.advert, body);
+}
+
+/**
+ * The ancestor's advertisement layout read: the body as today's decoder would read it with an empty hosted_games
+ * (its u16 count, 0, put back before the 8-byte timestamp). Every other field and every refusal is today's decoder's
+ * own. The answer hosts no game: an ancestor advertisement never named one.
+ */
+function decodeAncestorAdvert(body) {
+  if (!(body instanceof Uint8Array) || body.length < 10) throw new Error('not an advertisement of the ancestor');
+  const withGames = new Uint8Array(body.length + 2);
+  withGames.set(body.subarray(0, body.length - 8), 0);
+  withGames.set(body.subarray(body.length - 8), body.length - 8 + 2);
+  const advert = decodeAdvert(withGames);
+  if (advert.hostedGames.length) throw new Error('not an advertisement of the ancestor');
+  return advert;
+}
+
 // ---- arena-protocol/src/bond-script.js
 // THE BOND OUTPUT KEY, AND WHY IT IS THE ONLY THING A VERIFIER CAN CHECK.
 //
@@ -4892,6 +4953,7 @@ function blockMerkleRoot(txids) {
 
 
 
+
 /** A block header is exactly this, and a shorter one is not a header. */
 const HEADER_BYTES = 80;
 
@@ -5222,14 +5284,19 @@ const BOND_UNCHECKED = [
 const sameScript = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 
 function paysBondMarker(tx, network = 'regtest') {
-  const program = bondMarker(network);
+  return paysMarkerProgram(tx, bondMarker(network));
+}
+
+/** Whether `tx` pays the dust output of one marker program (this network's, or its ancestor's: ancestor.js). */
+function paysMarkerProgram(tx, program) {
+  if (!(program instanceof Uint8Array)) return false;
   return tx.outputs.some((o) =>
     isTaprootOutput(o.script)
     && sameScript(o.script.subarray(2, 34), program)
     && o.value > 0n && o.value <= 546n);
 }
 
-function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = {}) {
+function recognizeBond(tx, vout, advert, { network = 'regtest', bond, ancestor = false } = {}) {
   if (!tx || !Array.isArray(tx.outputs))
     return { ok: false, why: 'that is not a parsed transaction' };
   if (!Number.isInteger(vout) || vout < 0 || vout >= tx.outputs.length)
@@ -5241,10 +5308,12 @@ function recognizeBond(tx, vout, advert, { network = 'regtest', bond } = {}) {
       why: 'that output is not a taproot output, so it is not the bond 5A.3B describes',
     };
 
-  if (!paysBondMarker(tx, network))
+  // AN ANCESTOR'S BOND PAID THE ANCESTOR'S MARKER (spec 0A.9, kanban #209): the census found it by that marker, and it is
+  // carried into this network only by its operator's re-affirmation (census.js deriveCensus)
+  if (ancestor ? !paysMarkerProgram(tx, ancestorMarker(network)) : !paysBondMarker(tx, network))
     return {
       ok: false,
-      why: 'that transaction has no dust output to BOND_MARKER',
+      why: ancestor ? 'that transaction has no dust output to the ancestor\'s BOND_MARKER' : 'that transaction has no dust output to BOND_MARKER',
     };
 
   // AND AN OUTPUT HOLDING NOTHING IS NOT A BOND, whatever shape it is. 5A.3:
@@ -10177,6 +10246,7 @@ function decodeBolt11(invoice) {
 
 
 
+
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 /**
@@ -10263,12 +10333,28 @@ function walletSecretFor(seed, federationId) {
 }
 
 /**
+ * THE SAME SEED'S PLAYER WALLET BEFORE THE ARENA/v1 TAGS (kanban #209, the owner 2026-10-08 pick (a); spec 0A.9 "the player
+ * wallets' e-cash carries over"): the wallet a seed had on the BLWP network, under the ancestor's tag (ancestor.js). The
+ * page opens it only to sweep its e-cash into the Arena wallet (index.html combineWallets); nothing is ever paid into it.
+ */
+function ancestorWalletSecretFor(seed, federationId) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('the player wallet\'s secret comes from the player\'s 32-byte seed, and none was given');
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32 || namesNothing(federationId))
+    throw new Error('the player wallet is per federation, and no federation id was given');
+  const msg = new Uint8Array(64);
+  msg.set(seed, 0);
+  msg.set(federationId, 32);
+  return taggedHash(ANCESTOR_TAG.playerWalletSecret, msg);
+}
+
+/**
  * HOW MUCH WALLET A KEPT PHRASE HAS IN THIS BROWSER (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a
  * tab took another kept phrase than the one that deposited: the history, kept per federation, showed the deposit and the
  * stake, the balance was the other phrase's empty wallet). For every federation this browser keeps a ledger for, the
  * entries the phrase's player wallet keeps there - 0 for a phrase that never had one. Read off the store's keys only.
  */
-function phraseWalletEntries(storage, seedHex, federationIdHex = null) {
+function phraseWalletEntries(storage, seedHex, federationIdHex = null, { ancestor = false } = {}) {
   if (!storage || !/^[0-9a-f]{64}$/i.test(String(seedHex || ''))) return 0;
   const keys = storageKeys(storage);
   // the federation asked about, when named (a wallet with money and no history row is still a wallet), and every one
@@ -10277,7 +10363,7 @@ function phraseWalletEntries(storage, seedHex, federationIdHex = null) {
   if (/^[0-9a-f]{64}$/i.test(String(federationIdHex || ''))) feds.push(String(federationIdHex).toLowerCase());
   let n = 0;
   for (const f of new Set(feds)) {
-    let secret; try { secret = walletSecretFor(fromHex(String(seedHex).toLowerCase()), fromHex(f)); } catch { continue; }
+    let secret; try { secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(fromHex(String(seedHex).toLowerCase()), fromHex(f)); } catch { continue; }
     const prefix = `arena.walletdb.${f.slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
     n += keys.filter((k) => k.startsWith(prefix)).length;
   }
@@ -10343,9 +10429,10 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
-async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000 } = {}) {
+async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
-  const secret = walletSecretFor(seed, round.federationId);
+  // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one (kanban #209)
+  const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
   const byStore = storage && (openWallets.get(LockClient) || openWallets.set(LockClient, new WeakMap()).get(LockClient));
   const open = byStore && byStore.get(storage);
@@ -10362,7 +10449,7 @@ async function playerWallet({ round, invite, seed, LockClient, storage, onStep =
   }
   const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;
-  const recover = !kept && typeof LockClient.recover === 'function' && seedRecovers(storage, seed);
+  const recover = !kept && !ancestor && typeof LockClient.recover === 'function' && seedRecovers(storage, seed);
   onStep(kept ? 'reopening the player wallet this tab keeps for this federation'
     : recover ? 'recovering the player wallet of this seed from the federation' : 'joining the federation with the player wallet');
   // AND A JOIN THAT NEVER ANSWERS IS REFUSED BY NAME after `joinWaitMs`, so PLAY can be pressed again

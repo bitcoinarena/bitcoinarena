@@ -12,6 +12,8 @@
 // the advertisement body in the witness, and hands back the raw transaction.
 // The construction question - a witness the mempool would also relay - is
 // still the letter that posts a bond for real, and is named in census-regtest.
+import { ancestorAdvertId, decodeAncestorAdvert } from '../../arena-protocol/src/ancestor.js';
+import { reaffirmationMessage, reaffirmationPayload } from '../../arena-protocol/src/reaffirm.js';
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -193,17 +195,22 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
       const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
       const commitments = commitmentsOf(tx);
       let advert = null, advertSignature = null;
+      let ancestor = false;
       for (const item of witnessRunsOf(tx)) {
         try {
           const signed = splitSignedAdvert(item);
-          const a = decodeAdvert(signed.body); const id = advertId(a);
-          if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) { advert = a; advertSignature = signed.signature; break; }
+          const commits = (id) => commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]));
+          // a bond of this network, or one the BLWP network posted (ancestor.js; kanban #209): read by its own layout and id
+          let a = null;
+          try { a = decodeAdvert(signed.body); if (!commits(advertId(a))) a = null; } catch { a = null; }
+          if (!a && commits(ancestorAdvertId(signed.body))) { a = decodeAncestorAdvert(signed.body); ancestor = true; }
+          if (a) { advert = a; advertSignature = signed.signature; break; }
         } catch { /* not a signed body */ }
       }
       if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
       out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8),
-        advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature,
+        advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
         ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
     }
     return out;
@@ -272,6 +279,38 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { hex, advertId: toHex(id), txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
+  /**
+   * A RE-AFFIRMATION OF ONE BOND FOR `networkId` (§27A.8.3, spec 0A.9; kanban #209): this network's marker dust (findable
+   * as an update is) and OP_RETURN "ARN" 'F' network_id[0:8] with the bond's node key's signature over this network and
+   * this bond (reaffirm.js). Spends a carrier funded like an update's - never the bond, which keeps its maturity - and
+   * answers the raw transaction; the caller broadcasts it. `bond` is { txid (hex as bitcoind shows it), vout }.
+   */
+  function prepareReaffirmation(nodeSecret, bond, { networkId }) {
+    const bondTxid = fromHex(bond.txid).reverse();
+    const signature = schnorr.sign(reaffirmationMessage({ networkId, bondTxid, bondVout: bond.vout }), nodeSecret);
+    const carrierSecret = schnorr.utils.randomSecretKey();
+    const carrier = carrierFor(carrierSecret, 0);
+    return { payload: reaffirmationPayload({ networkId, signature }), carrierSecret, carrier, spk: carrier.spk };
+  }
+
+  function postReaffirmation(prepared, { utxo, fundBtc = minable ? '0.001' : '0.00003', feeSats = 1000n } = {}) {
+    const { payload, carrierSecret, carrier } = prepared;
+    const funded = utxo || fund(carrier.spk, fundBtc);
+    const outputs = [
+      { value: 330n, script: fromHex('5120' + toHex(bondMarker(network))) },
+      // 76 bytes: past a direct push, so OP_PUSHDATA1 and its length
+      { value: 0n, script: Uint8Array.from([0x6a, 0x4c, payload.length, ...payload]) },
+    ];
+    const change = funded.value - 330n - feeSats;
+    if (change >= 546n) outputs.push({ value: change, script: payTo() });
+    const inputs = [{ txid: fromHex(funded.txid).reverse(), vout: funded.vout, sequence: 0xfffffffe }];
+    const sighash = tapSighash({ version: 2, locktime: 0, inputs, outputs,
+      prevouts: [{ value: funded.value, script: carrier.spk }], inputIndex: 0, leafHash: carrier.leaf });
+    const hex = toHex(serializeSpend({ version: 2, locktime: 0, inputs, outputs,
+      witnesses: [scriptPathWitness({ stack: [schnorr.sign(sighash, carrierSecret)], script: carrier.script, controlBlock: carrier.control })] }));
+    return { hex, txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
+  }
+
   // `hostedGames`: the games the node's advertisement hosts (§0A.4, kanban #204) - sorted 32-byte ids; nextblock's unless given.
   // Measured (kanban #206): with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
@@ -337,5 +376,6 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, prepareAdvertUpdate, postAdvertUpdate, newestUpdateOf, blocksFrom, genesis: g };
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, prepareAdvertUpdate, postAdvertUpdate,
+    prepareReaffirmation, postReaffirmation, newestUpdateOf, blocksFrom, genesis: g };
 }

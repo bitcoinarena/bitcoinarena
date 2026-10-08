@@ -20,7 +20,7 @@ const SEEDS = { cur: hex(1), rich: hex(2), poor: hex(3), none: hex(4), held: hex
 const FED = 'fe'.repeat(32);
 
 // a browser: storage, kept phrases, one fake wallet per phrase (e-cash notes it can send once), and the current tab's main
-function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [] } = {}) {
+function browser({ balances, receive = () => 'Success', heldLocks = [], pending = [], blwp = {} } = {}) {
   const store = new Map();
   const L = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
   const proxy = new Proxy(L, { ownKeys: () => [...store.keys()], getOwnPropertyDescriptor: (t, k) => (store.has(k) ? { enumerable: true, configurable: true, value: store.get(k) } : undefined) });
@@ -33,6 +33,14 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
     w.balanceMsat = async () => String(w.msat);
     w.sendAllEcash = async () => { log.push(`send ${name} ${w.msat}`); if (w.msat === 0n) return JSON.stringify({ ecash: '' }); const msat = w.msat; w.msat = 0n; return JSON.stringify({ ecash: `ecash:${name}:${msat}`, msat: String(msat) }); };
     wallets.set(h, w);
+  }
+  // EACH PHRASE'S BLWP-ERA WALLET (kanban #209): its own e-cash, its own store entries (none unless `blwp` names a balance)
+  const ancestors = new Map();
+  for (const [name, h] of Object.entries(SEEDS)) {
+    const w = { name: name + ' (BLWP)', msat: BigInt(blwp[name] ?? 0), entries: name in blwp ? 2 : 0 };
+    w.balanceMsat = async () => String(w.msat);
+    w.sendAllEcash = async () => { log.push(`send ${w.name} ${w.msat}`); if (w.msat === 0n) return JSON.stringify({ ecash: '' }); const msat = w.msat; w.msat = 0n; return JSON.stringify({ ecash: `ecash:${name}-blwp:${msat}`, msat: String(msat) }); };
+    ancestors.set(h, w);
   }
   const received = new Set();
   const main = { msat: 0n };
@@ -47,17 +55,19 @@ function browser({ balances, receive = () => 'Success', heldLocks = [], pending 
   const BLWPCLIENT = {
     toHex: (b) => (typeof b === 'string' ? b : Buffer.from(b).toString('hex')),
     fromHex: (h) => h,
-    phraseWalletEntries: (_L, h) => (wallets.get(h) ? wallets.get(h).entries : 0),
-    playerWallet: async ({ seed }) => { opened.push(wallets.get(seed).name); return wallets.get(seed); },
+    phraseWalletEntries: (_L, h, _f, { ancestor = false } = {}) => { const w = (ancestor ? ancestors : wallets).get(h); return w ? w.entries : 0; },
+    playerWallet: async ({ seed, ancestor }) => { const w = (ancestor ? ancestors : wallets).get(seed); opened.push(w.name); return w; },
   };
   const window = { BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }) };
-  const navigator = { locks: { request: async (name, _o, fn) => fn(heldLocks.some((h) => name === 'arena.phrase.' + h.slice(0, 16)) ? null : { name }) } };
+  const locked = [];
+  const navigator = { locks: { request: async (name, _o, fn) => { locked.push(name); return fn(heldLocks.some((h) => name === 'arena.phrase.' + h.slice(0, 16)) ? null : { name }); } } };
   const sessionStorage = { getItem: (k) => (k === 'arena.player.seed' ? SEEDS.cur : null) };
   const combineWallets = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'sessionStorage', 'BLWPCLIENT', 'window', 'navigator', 'paintMoney', 'console'],
     SRC, 'return combineWallets;')(() => proxy, sessionStorage, BLWPCLIENT, window, navigator, () => {}, { log: (s) => log.push(s) });
   const run = () => combineWallets(main, { federation: 'fed1invite' }, { federationId: FED });
   const pendingKeys = () => [...store.keys()].filter((k) => k.startsWith('arena.ecash.pending.'));
-  return { run, main, wallets, log, opened, store, pendingKeys, total: () => main.msat + [...wallets.values()].reduce((t, w) => t + w.msat, 0n) };
+  return { run, main, wallets, ancestors, log, opened, locked, store, pendingKeys,
+    total: () => main.msat + [...wallets.values(), ...ancestors.values()].reduce((t, w) => t + w.msat, 0n) };
 }
 
 test('every other wallet with e-cash is swept once into this tab\'s; the current phrase is never swept; nothing is lost or counted twice', async () => {
@@ -128,4 +138,25 @@ test('a second call while one runs is the same run - nothing swept twice; a phra
   assert.equal(held.wallets.get(SEEDS.held).msat, 80000n, 'another tab holds that phrase: left where it is');
   assert.ok(!held.opened.includes('held'));
   assert.equal(held.main.msat, 1000n);
+});
+
+test('every phrase\'s BLWP-era wallet is swept once into this tab\'s Arena wallet - this tab\'s own phrase\'s too, without its lock (kanban #209 (a))', async () => {
+  const b = browser({ balances: { rich: 1000 }, blwp: { cur: 250000, rich: 40000, poor: 0, held: 9000 }, heldLocks: [SEEDS.held] });
+  const before = b.total();
+  await b.run();
+  console.log('  FACTS:', JSON.stringify({ main: String(b.main.msat), sends: b.log.filter((l) => l.startsWith('send ')), locks: b.locked.length }));
+  assert.equal(b.main.msat, 250000n + 40000n + 1000n, 'the BLWP-era e-cash and the other phrase\'s Arena e-cash are in this tab\'s wallet');
+  assert.equal(b.ancestors.get(SEEDS.cur).msat, 0n, 'this tab\'s own phrase\'s BLWP wallet was not swept');
+  assert.equal(b.ancestors.get(SEEDS.held).msat, 9000n, 'a phrase another tab holds: its BLWP wallet left where it is');
+  assert.equal(b.total(), before, 'nothing created or lost');
+  assert.ok(!b.opened.includes('cur'), 'the current phrase\'s Arena wallet is this tab\'s own, never swept');
+  assert.ok(!b.locked.includes('arena.phrase.' + SEEDS.cur.slice(0, 16)), 'this tab took a lock on its own phrase');
+  assert.equal(b.store.get('arena.wallet.empty.blwp.' + SEEDS.poor.slice(0, 16)), '2', 'an empty BLWP wallet is noted, apart from its Arena one');
+  assert.deepEqual(b.pendingKeys(), [], 'every kept copy received');
+  // a second page sweeps nothing again: no e-cash leaves any wallet twice, nothing is counted twice
+  const paying = () => b.log.filter((l) => l.startsWith('send ') && !/ 0$/.test(l)).length;
+  const paid = paying();
+  await b.run();
+  assert.equal(paying(), paid, 'a wallet sent e-cash a second time');
+  assert.equal(b.main.msat, 291000n, 'nothing counted twice');
 });

@@ -10,6 +10,7 @@
 //
 // The dust output to BOND_MARKER is here (regtest by default; testnet has its
 // own program). the owner 2026-09-08. Mainnet still has no marker.
+import { reaffirmationPayload } from '../src/reaffirm.js';
 import { encodeAdvert, advertId, joinSignedAdvert } from '../src/advert.js';
 import { meetsTarget } from '../src/chain.js';
 import { bondMarker } from '../src/constants.js';
@@ -50,6 +51,8 @@ export function bondTransaction(advert, {
   // makes the dust output mandatory, so this builds something the census must
   // NOT find - there is no other way to write that case.
   marker = true,
+  // THE MARKER PROGRAM ITSELF, for a fixture of the ancestor network's bond (ancestor.js ancestorMarker; kanban #209)
+  markerProgram = null,
 } = {}) {
   // A P2TR output: OP_1 <32 bytes>. "A P2TR output is a 32-byte key and looks
   // like every other one" (25.1) - which is exactly why the marker is needed.
@@ -61,7 +64,7 @@ export function bondTransaction(advert, {
   // gets the old filler, which is fine for a fixture testing the marker or the
   // commitment and useless for one testing the key.
   const bondScript = [0x51, 0x20, ...outputKey];
-  const markerScript = [0x51, 0x20, ...bondMarker(network)];
+  const markerScript = [0x51, 0x20, ...(markerProgram || bondMarker(network))];
   const opReturn = [0x6a, ...push([...commitment])];
 
   const out = [
@@ -140,6 +143,35 @@ export function advertUpdateTransaction(advert, {
     ...u64(330), ...push([0x51, 0x20, ...bondMarker(network)]),
     ...u64(0), ...push([0x6a, ...push([...payload])]),
     ...varint(1), ...push([...body]),
+    ...u32(0),
+  ]);
+}
+
+/**
+ * AN ADVERTISEMENT IN THE ANCESTOR'S LAYOUT (ancestor.js; kanban #209), for fixtures of a BLWP-era bond: today's encoding
+ * with hosted_games empty, its u16 count taken out again before the 8-byte timestamp.
+ */
+export function encodeAncestorAdvert(advert) {
+  const now = encodeAdvert({ ...advert, hostedGames: [] });
+  const out = new Uint8Array(now.length - 2);
+  out.set(now.subarray(0, now.length - 10), 0);
+  out.set(now.subarray(now.length - 8), now.length - 10);
+  return out;
+}
+
+/**
+ * A RE-AFFIRMATION (§27A.8.3, reaffirm.js; kanban #209), for fixtures: this network's marker dust (so it is findable as an
+ * update is) and OP_RETURN "ARN" 'F' network_id[0:8] signature. Spends one named outpoint, no bond; a legacy transaction.
+ */
+export function reaffirmationTransaction({ networkId, signature, previousTxid = new Uint8Array(32).fill(0xad), network = 'regtest' } = {}) {
+  const payload = reaffirmationPayload({ networkId, signature });
+  return new Uint8Array([
+    ...u32(1),
+    ...varint(1), ...previousTxid, ...u32(0), ...varint(0), ...u32(0xffffffff),
+    ...varint(2),
+    ...u64(330), ...push([0x51, 0x20, ...bondMarker(network)]),
+    // 76 bytes: past a direct push (75), so OP_PUSHDATA1 and its length byte
+    ...u64(0), ...push([0x6a, 0x4c, payload.length, ...payload]),
     ...u32(0),
   ]);
 }
