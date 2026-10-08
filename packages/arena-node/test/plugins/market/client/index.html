@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>btc-close</title>
+<!-- THE TEST MARKET'S OWN CLIENT (kanban #208): one file, its SHA-256 in the market's manifest clients[]. The page loads it
+     only from bytes that hash to it, in a frame of the page's own origin, and hands it the engine as window.parent.ARENA_GAME:
+     the lobby's rows of this game, the player's identity (the tab's one seed), and join - which opens the engine's pick
+     sheet, whose stake, lock and entry are the engine's. This file holds no key, no wallet and no seed. -->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 16px; background: #0d1014; color: #e6edf3; font: 15px/1.45 system-ui, sans-serif; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub, .who { color: #8b949e; font-size: 13px; }
+  .who { margin: 6px 0 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  ul.outcomes { margin: 6px 0 14px; padding-left: 20px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin: 0 0 8px; background: #161b22;
+    border: 1px solid #30363d; border-left: 3px solid #f7931a; border-radius: 6px; }
+  .row .line { flex: 1; font-size: 14px; }
+  button { font: 600 14px/1.2 system-ui, sans-serif; padding: 8px 14px; border-radius: 4px; border: 0; cursor: pointer;
+    background: #f7931a; color: #0d1014; }
+  button.back { background: transparent; color: #8b949e; border: 1px solid #30363d; }
+  .none, .state { color: #8b949e; font-size: 13px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <button class="back" type="button" id="back">&larr; Games</button>
+  <h1 id="title">btc-close</h1>
+  <div class="sub" id="what"></div>
+  <div class="who" id="who"></div>
+  <div class="sub">Outcomes</div>
+  <ul class="outcomes" id="outcomes"></ul>
+  <div id="rows"></div>
+  <div class="state" id="state"></div>
+<script>
+  const A = window.parent && window.parent.ARENA_GAME;
+  const $ = (id) => document.getElementById(id);
+  if (!A) {
+    $('what').textContent = 'This client runs inside the Bitcoin Arena page, which hands it the game.';
+  } else {
+    window.MARKET_CLIENT = { hash: A.clientHash, game: A.game.id };
+    $('title').textContent = A.game.title;
+    $('what').textContent = 'market · ' + A.game.attestThreshold + ' of ' + A.game.attestors + ' attestors · client ' + A.clientHash.slice(0, 16)
+      + (A.game.known ? '' : ' · not pinned: developer ' + A.game.devKey.slice(0, 16));
+    for (const o of A.game.outcomes) { const li = document.createElement('li'); li.textContent = o; $('outcomes').append(li); }
+    $('back').addEventListener('click', () => A.back());
+    const paint = () => {
+      const me = A.identity();
+      $('who').textContent = me && me.name ? 'you: ' + me.name + ' · key ' + String(me.fingerprint || me.pubkey || '').slice(0, 24) : 'you: (no identity yet)';
+      const rows = A.rows();
+      const box = $('rows'); box.textContent = '';
+      if (!rows.length) { const d = document.createElement('div'); d.className = 'none'; d.textContent = 'No round of this market is open on these nodes yet.'; box.append(d); }
+      for (const r of rows) {
+        const d = document.createElement('div'); d.className = 'row'; d.dataset.round = r.id;
+        const l = document.createElement('div'); l.className = 'line'; l.textContent = r.line; d.append(l);
+        if (r.joinable) {
+          const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Pick';
+          b.addEventListener('click', () => A.join(r.id));
+          d.append(b);
+        }
+        box.append(d);
+      }
+      const st = A.state();
+      const j = st.join;
+      $('state').textContent = [j ? 'join ' + String(j.round || '').slice(0, 16) + ': ' + j.state + (j.why ? ' - ' + j.why : '') + (j.stage ? ' (' + j.stage + ')' : '') : '',
+        ...(st.picks || []).map((p) => p.text || '')].filter(Boolean).join('\n');
+    };
+    paint();
+    setInterval(paint, 1000);
+  }
+</script>
+</body>
+</html>
