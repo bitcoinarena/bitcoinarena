@@ -218,6 +218,8 @@ public class GogglesWall : MonoBehaviour
     static readonly List<float> _vsizes = new();
     static readonly List<float> _rates = new();
     static readonly List<int> _placeOrder = new();
+    // each id's Scatter hash, taken once per repack (kanban #265): the sort used to hash both txids in every comparison
+    static readonly List<uint> _scatterOf = new();
 
     /// <summary>
     /// A stable scattering key for a transaction.
@@ -270,8 +272,12 @@ public class GogglesWall : MonoBehaviour
         // same order on the next repack, or every tile would swap places with
         // a stranger each time the wall refreshes.
         _placeOrder.Clear();
-        for (int i = 0; i < _ids.Count; i++) _placeOrder.Add(i);
-        _placeOrder.Sort((a, b) => Scatter(_ids[a]).CompareTo(Scatter(_ids[b])));
+        // ONE HASH PER TILE, NOT TWO PER COMPARISON (kanban #265, measured 2026-10-08: this sort's comparator was 1.0 s of
+        // 30 s of spectate in a named profile at 4x CPU, one spike per feed update). The keys are the same numbers the
+        // comparator computed, so the comparisons - and the order - are unchanged.
+        _scatterOf.Clear();
+        for (int i = 0; i < _ids.Count; i++) { _placeOrder.Add(i); _scatterOf.Add(Scatter(_ids[i])); }
+        _placeOrder.Sort((a, b) => _scatterOf[a].CompareTo(_scatterOf[b]));
 
         foreach (int i in _placeOrder)
         {
