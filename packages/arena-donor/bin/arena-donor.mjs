@@ -103,14 +103,13 @@ async function pass() {
   const known = await invites();
   const LC = await lockClient();
   for (const [fed, donations] of got.byFederation) {
-    const owed = donations.filter((d) => !done.has(d.outpoint));
     const invite = known[fed.toLowerCase()];
     if (!invite) { say({ step: 'federation', federation: fed.slice(0, 16), donations: donations.length, why: 'no invite to this federation is known: its funds stay there until one is' }); continue; }
     const client = await clientFor(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
-    if (owed.length) {
+    if (donations.length) {
       // RECORDED FOR GOOD FIRST, THEN REDEEMED, THEN THE SEATS TOLD AND THEIR COPY DELETED (kanban #156): donations.jsonl in
       // this dir is the dev's permanent record - sender key, round id, amount, time, the USD and EUR rate and their provider.
-      const r = await settleRead({ path: join(dir, 'donations.jsonl'), donations: owed, client, key: { recipientPkHex: cfg.recipientPkHex, secretHex: key.secretHex }, seats: cfg.seats, done });
+      const r = await settleRead({ path: join(dir, 'donations.jsonl'), donations, client, key: { recipientPkHex: cfg.recipientPkHex, secretHex: key.secretHex }, seats: cfg.seats, done });
       for (const d of [...r.redeemed, ...r.spent]) done.add(d.outpoint);
       state.done = [...done];
       writeJson(statePath, state);
