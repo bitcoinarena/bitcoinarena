@@ -33,6 +33,19 @@
     #creep { position: absolute; left: 90%; top: 0; height: 100%; width: 10%; transform-origin: left center; transform: scaleX(0);
       background: linear-gradient(90deg, #ffc46b, #ffe2a8); border-radius: 0 99px 99px 0; }
     #creep.on { animation: creep90 6s cubic-bezier(0.15, 0.7, 0.3, 1) forwards; }
+    /* AND THE NUMBER (kanban #266, measured: inside Unity's one-piece start the text cannot repaint - the screencast showed
+       "90 %" for all 2.2 s at 10x CPU while the creep bar moved): "91 %" ... "99 %" are drawn in advance and shown one after
+       another by OPACITY animations, which the compositor runs while the main thread is busy; 99 % holds until Unity says 100. */
+    #pctwrap { display: grid; justify-items: center; }
+    #pctwrap > #pct, #pctwrap > #pct-steps { grid-area: 1 / 1; }
+    #pct-steps { display: grid; justify-items: center; font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; pointer-events: none; }
+    #pct-steps > span { grid-area: 1 / 1; opacity: 0; will-change: opacity; }
+    #pctwrap.on > #pct { opacity: 0; }
+    /* LINEAR keyframes, not step-start: measured, a stepped opacity animation stayed on the main thread and froze on "91 %" */
+    #pctwrap.on > #pct-steps > span { animation: pctstep 0.3s linear; }
+    #pctwrap.on > #pct-steps > span:last-child { animation: pctlast 0.3s linear forwards; }
+    @keyframes pctstep { 0% { opacity: 1; } 96% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes pctlast { 0% { opacity: 1; } 100% { opacity: 1; } }
     @keyframes creep90 { from { transform: scaleX(0); } to { transform: scaleX(0.9); } }
     #bar { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #f7931a, #ffc46b);
            transition: width .25s ease; }
@@ -790,7 +803,7 @@
       <img src="howto-3.png" alt="How to play, 3 of 4">
       <img src="howto-4.png" alt="How to play, 4 of 4">
     </div>
-    <div id="pct">0%</div>
+    <div id="pctwrap"><div id="pct">0%</div><div id="pct-steps" aria-hidden="true"><span style="animation-delay:0.0s">91 %</span><span style="animation-delay:0.3s">92 %</span><span style="animation-delay:0.6s">93 %</span><span style="animation-delay:0.9s">94 %</span><span style="animation-delay:1.2s">95 %</span><span style="animation-delay:1.5s">96 %</span><span style="animation-delay:1.8s">97 %</span><span style="animation-delay:2.1s">98 %</span><span style="animation-delay:2.4s">99 %</span></div></div>
     <div id="track"><div id="bar"></div><div id="creep"></div></div>
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
@@ -1036,8 +1049,10 @@
       if (clamped >= 0.9 && clamped < 1 && pct.dataset.unity !== '90') {
         pct.dataset.unity = '90';
         const creep = document.getElementById('creep'); if (creep) creep.classList.add('on');
+        const pw = document.getElementById('pctwrap'); if (pw) pw.classList.add('on');
       }
-      if (clamped >= 1) { pct.dataset.unity = '100'; const creep = document.getElementById('creep'); if (creep) creep.classList.remove('on'); }
+      if (clamped >= 1) { pct.dataset.unity = '100'; const creep = document.getElementById('creep'); if (creep) creep.classList.remove('on');
+        const pw = document.getElementById('pctwrap'); if (pw) pw.classList.remove('on'); }
     }
 
     // A DONATION THAT LEFT THE WALLET IS SHOWN EVEN WHEN THE ROUND CANNOT BE
