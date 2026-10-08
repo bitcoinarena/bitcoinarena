@@ -7,8 +7,9 @@
 //   node packages/nextblock/tools/sign-manifest.mjs <dev dir>
 //
 // The key is <dev dir>/game-dev.pkcs8 (Ed25519, PKCS#8 DER, mode 600). For nextblock the body is its registration's own
-// (core/plugin/truck-cores.js nextblockManifestBody): every installed core with its configs, the game's client scripts
-// as arena-client/known-good-clients.json lists them for nextblock, and the donation set the testnet4 series name. Run it
+// (core/plugin/truck-cores.js nextblockManifestBody): every installed core with its configs, the game's client files
+// (its core script and, since kanban #228, its mark: icons, wordmark, link preview) as arena-client/known-good-clients.json
+// lists them for nextblock, and the donation set the testnet4 series name. Run it
 // again whenever a core, a config or a client of nextblock changes: an update is a new manifest (§0A.3), and
 // core/test/nextblock-manifest.test.js is red until the signed bytes are the registration's.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -28,7 +29,7 @@ if (!dir) {
 }
 const dev = gameDevKey(readFileSync(join(dir, 'game-dev.pkcs8')));
 const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
-const body = nextblockManifestBody({ clients: LIST.games.nextblock.pinned['blwp-core.js'], gameDevPubkey: dev.pubkey,
+const body = nextblockManifestBody({ clients: Object.values(LIST.games.nextblock.pinned).flat(), gameDevPubkey: dev.pubkey,
   gameDonationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients) });
 const manifest = signManifest(body, dev);
 // AS A NODE WILL CHECK IT: the same verifier, the same rule

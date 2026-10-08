@@ -341,7 +341,7 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("_copiedAt < 0f && Blwp.BlwpCore.ReplayCopied", hud);
         string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
         StringAssert.Contains("c === window.BLWP_REPLAY_URL", lib);
-        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
     }
 
@@ -360,7 +360,7 @@ public class ArrivalCardWordsTests
             "the score block draws under the card");
         StringAssert.Contains("if (watch == null) return;\n        // not under the result card", hud.Replace("\r\n", "\n"));
         StringAssert.Contains("if (ArrivalShowing) return;", hud);
-        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("window.BLWP_CARD_UP = true;", page);
         // the node strip still steps aside under the card; since the console (427bab76) it also tells the Console button so
         StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);

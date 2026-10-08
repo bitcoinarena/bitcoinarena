@@ -175,8 +175,9 @@ public static class BuildWebGL
         PlayerSettings.SplashScreen.show = false;
         // Our own template: the stock one shows a bare grey bar, and at 35 MB
         // the person waiting needs to know it is working and roughly how long.
-        PlayerSettings.WebGL.template = "PROJECT:BtcLogistics";
-        PlayerSettings.productName = "BTC Logistics War - Prototype";
+        PlayerSettings.WebGL.template = "PROJECT:NextBlock";
+        PlayerSettings.productName = "Tick Tock, Next Block";
+        PlayerSettings.companyName = "Bitcoin Arena";
 
         var opts = new BuildPlayerOptions
         {

@@ -14,11 +14,13 @@ import { fileURLToPath } from 'node:url';
 const at = (p) => fileURLToPath(new URL(p, import.meta.url));
 const TOOL = at('../tools/client-hash.mjs');
 const LIST = JSON.parse(readFileSync(at('../../arena-client/known-good-clients.json'), 'utf8'));
-const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics');
+const TEMPLATE = at('../../../unity-proto/Assets/WebGLTemplates/NextBlock');
 // The lock client (W1b) makes the player's stake lock, so it is pinned too.
 const SCRIPTS = ['arena-client.js', 'blwp-curve.js', 'blwp_lock_client.js', 'blwp_lock_client_bg.wasm'];
-// AND EACH GAME'S OWN (kanban #202: one list per game): nextblock's core bundle.
-const GAME_SCRIPTS = { nextblock: ['blwp-core.js'] };
+// AND EACH GAME'S OWN (kanban #202: one list per game): nextblock's core bundle, and its mark (kanban #228)
+const MARK = ['nextblock-icon.svg', 'nextblock-wordmark.svg', 'favicon.ico', 'apple-touch-icon.png', 'nextblock-icon-192.png',
+  'nextblock-icon-512.png', 'nextblock-og.png', 'site.webmanifest'];
+const GAME_SCRIPTS = { nextblock: ['blwp-core.js', ...MARK] };
 const pinsOf = (name) => LIST.pinned[name] || Object.values(LIST.games).map((g) => g.pinned[name]).find(Boolean);
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 const run = (arg) => new Promise((done) => {
@@ -33,7 +35,8 @@ test('the list pins the scripts the rebuilt bundle and the template carry, and n
   for (const [name, source] of [['arena-client.js', '../../arena-client/dist/arena-client.js'],
     ['blwp-curve.js', '../../arena-client/dist/blwp-curve.js'], ['blwp-core.js', '../../nextblock/dist/blwp-core.js'],
     ['blwp_lock_client.js', '../../arena-client/dist/blwp_lock_client.js'],
-    ['blwp_lock_client_bg.wasm', '../../arena-client/dist/blwp_lock_client_bg.wasm']]) {
+    ['blwp_lock_client_bg.wasm', '../../arena-client/dist/blwp_lock_client_bg.wasm'],
+    ...MARK.map((f) => [f, `../../nextblock/brand/${f}`])]) {
     assert.ok(pinsOf(name).includes(sha(at(source))), `${name}: the built file is not on the list`);
     assert.equal(sha(join(TEMPLATE, name)), sha(at(source)), `${name}: the template is not the built file`);
   }

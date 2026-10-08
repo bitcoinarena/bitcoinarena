@@ -12,7 +12,7 @@ import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/s
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { pageFunction } from './page-script.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url);
+const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
 const html = readFileSync(PAGE, 'utf8');
 const kFrom = html.indexOf('function blwpSeedKeeper('), kTo = html.indexOf('\n    try {\n      window.BLWP_SEED_KEEPER', kFrom);
 globalThis.BLWPCLIENT = { phraseWalletEntries: PL.phraseWalletEntries };

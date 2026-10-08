@@ -50,6 +50,8 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
     const sharedWorld = [...new Set([...p.cores.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)))];
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
+      // the name a player knows the game by and its square icon (an SVG file), when it gives them (kanban #228)
+      title: typeof p.title === 'string' && p.title ? p.title : (p.name || p.manifest.gameName), icon: p.icon || null,
       // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it; kanban #203)
       roundWarnings: typeof p.roundWarnings === 'function' ? p.roundWarnings : null,
       // the game dev's donation set, checked above against the manifest

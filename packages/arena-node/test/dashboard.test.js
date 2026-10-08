@@ -22,7 +22,7 @@ test('an empty node: every category and period is there, at 0, with 30 days of c
 
 test('the page draws dashboard.json and names every category', () => {
   const h = dashboardHtml();
-  assert.match(h, /<title>Node Dashboard<\/title>/);
+  assert.match(h, /<title>Bitcoin Arena · Node Dashboard<\/title>/);   // kanban #228: the engine's name on its node pages
   assert.match(h, /fetch\('dashboard\.json'/);
   for (const n of ['Game/verify fee', 'Settlement fee', 'Guardian/custody fee', 'Other earnings', 'Lightning costs', 'Gateway costs', 'Absolute profit'])
     assert.ok(h.includes(n), n);

@@ -30,7 +30,11 @@ const SOURCES = {
 };
 // EACH GAME'S OWN SCRIPTS (kanban #202: one list per game), beside the engine's above.
 const GAME_SOURCES = {
-  nextblock: { 'blwp-core.js': at('../../nextblock/dist/blwp-core.js') },
+  nextblock: { 'blwp-core.js': at('../../nextblock/dist/blwp-core.js'),
+    // ITS MARK (kanban #228): the icon, the wordmark, the favicon and app icons, the link preview - served beside the page
+    ...Object.fromEntries(['nextblock-icon.svg', 'nextblock-wordmark.svg', 'favicon.ico', 'apple-touch-icon.png',
+      'nextblock-icon-192.png', 'nextblock-icon-512.png', 'nextblock-og.png', 'site.webmanifest']
+      .map((f) => [f, at(`../../nextblock/brand/${f}`)])) },
 };
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 

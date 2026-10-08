@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 import { withdrawLine } from '../src/page-lock.js';
 
-const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url);
+const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const at = HTML.indexOf('    function withdrawAvailable() {');
 assert.ok(at > 0, 'index.html hands Unity withdrawAvailable');
