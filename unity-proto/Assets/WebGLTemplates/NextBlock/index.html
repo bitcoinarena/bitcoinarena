@@ -1108,11 +1108,13 @@
       const ua = navigator.userAgent || '';
       const device = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iphone'
         : /Android/i.test(ua) ? 'android' : 'desktop';
-      const AS_BUILT = ['as built', {}], ALL_OFF = ['all off', { dpr: 1, post: 0, shadows: 0, hdr: 0 }];
+      // "½ scale" IS URP's render scale 0.5: the 3D at a quarter of the pixels (as 1x pixels), the HUD at full resolution - the
+      // page's devicePixelRatio would shrink the HUD's screen too, and the chart grew to twice its share (measured, iPhone)
+      const AS_BUILT = ['as built', {}], ALL_OFF = ['all off', { scale: 0.5, post: 0, shadows: 0, hdr: 0 }];
       const LADDER = {
-        iphone: [['shadows off', { shadows: 0 }], ['shadows off · 1x px', { shadows: 0, dpr: 1 }], ALL_OFF],
+        iphone: [['shadows off', { shadows: 0 }], ['shadows off · ½ scale', { shadows: 0, scale: 0.5 }], ALL_OFF],
         android: [['map 1024 · HDR off', { shadowres: 1024, hdr: 0 }], ['shadows off · HDR off', { shadows: 0, hdr: 0 }],
-          ['shadows off · HDR off · 1x px', { shadows: 0, hdr: 0, dpr: 1 }]],
+          ['shadows off · HDR off · ½ scale', { shadows: 0, hdr: 0, scale: 0.5 }]],
         desktop: [AS_BUILT],
       }[device];
       const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -1128,7 +1130,7 @@
         if (!u) return false;
         if (mod) { if (baseDpr === null) baseDpr = mod.devicePixelRatio || Math.min(window.devicePixelRatio || 1, 2); mod.devicePixelRatio = sw.dpr || baseDpr; }
         try { u.SendMessage('GfxSwitches', 'Set', 'post=' + (sw.post === 0 ? 0 : 1) + ';shadows=' + (sw.shadows === 0 ? 0 : 1) + ';hdr=' + (sw.hdr === 0 ? 0 : 1)
-          + ';cascades=' + (sw.cascades || 0) + ';shadowres=' + (sw.shadowres || 0) + ';shadowdist=' + (sw.shadowdist || 0)); } catch { return false; }
+          + ';cascades=' + (sw.cascades || 0) + ';shadowres=' + (sw.shadowres || 0) + ';shadowdist=' + (sw.shadowdist || 0) + ';scale=' + (sw.scale || 0)); } catch { return false; }
         return true;
       }
       const label = () => (mode === 'auto' ? 'Auto' : mode === 'high' ? 'High' : 'Low') + ' · ' + { iphone: 'iPhone', android: 'Android', desktop: 'desktop' }[device] + ': ' + current()[0];
