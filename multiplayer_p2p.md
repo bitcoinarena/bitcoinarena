@@ -5951,11 +5951,20 @@ So bonds carry. A bond created under an ancestor is valid in the census of
 network `n+1` when its operator publishes a **re-affirmation**:
 
 ```text
-OP_RETURN  "BLW"  FORK  network_id(n+1)[0:8]  schnorr_sig(bond key)
+OP_RETURN  "ARN"  FORK  network_id(n+1)[0:8]  schnorr_sig(bond key)
+           3      1     8                     64                = 76 bytes
+FORK = 0x46 ('F'); the signature is the bond's node key over
+  taggedHash("ARENA/v1/Reaffirmation", network_id(n+1) || bond_txid || bond_vout)
 ```
 
 One small transaction, the same shape as a vote (§27A.7.3). It moves no
-capital, spends no bond, and starts no new maturity clock.
+capital, spends no bond, and starts no new maturity clock. It names no
+outpoint: the signature binds it to one bond, and a census tries it against
+the ancestor bonds it found, as a tally tries a vote (kanban #209:
+`reaffirm.js`; it also pays this network's marker dust, so it is findable as
+an advertisement update is). The ancestor's bonds are found by the ancestor's
+marker and read by its advertisement layout and id (`ancestor.js`); one that
+is not re-affirmed is named in the census and not counted.
 
 **It is opt-in, per operator, and that is not a detail.** A vote decides
 what the successor *is*; it does not decide whose capital serves it.

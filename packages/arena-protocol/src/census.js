@@ -3,13 +3,15 @@
 // Two decisions here are load-bearing and both look like details.
 
 import { newestUpdates } from './advert-update.js';
+import { ancestorMarker, ancestorAdvertId, decodeAncestorAdvert } from './ancestor.js';
+import { reaffirmedBonds } from './reaffirm.js';
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './constants.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf, blockMerkleRoot } from './tx.js';
 import {
   recognizeBond, isTaprootOutput, BOND_UNCHECKED, chainWork, merkleRootOf, blockHashOf,
-  paysBondMarker,
+  paysBondMarker, paysMarkerProgram,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
@@ -624,6 +626,20 @@ export function advertInTransaction(raw) {
   try { return committedAdvertIn(raw instanceof Uint8Array ? parseTransaction(raw) : raw); } catch { return null; }
 }
 
+/** The ancestor advertisement a BLWP-era bond transaction commits to (ancestor.js), or null. */
+function committedAncestorAdvertIn(tx) {
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length) return null;
+  for (const item of witnessRunsOf(tx)) {
+    try {
+      const { body } = splitSignedAdvert(item);
+      const id = ancestorAdvertId(body);
+      if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) return decodeAncestorAdvert(body);
+    } catch { /* not a signed body */ }
+  }
+  return null;
+}
+
 function committedAdvertIn(tx) {
   const commitments = commitmentsOf(tx);
   if (!commitments.length) return null;
@@ -666,9 +682,16 @@ function candidatesIn(blocks, censusHeight, network) {
     for (const raw of block.transactions) {
       let tx;
       try { tx = parseTransaction(raw); } catch { continue; }
-      if (!paysBondMarker(tx, network)) continue;
+      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9, kanban #209): a bond the BLWP
+      // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
+      // operator re-affirmed it for this network (deriveCensus)
+      let ancestor = false;
+      if (!paysBondMarker(tx, network)) {
+        if (!paysMarkerProgram(tx, ancestorMarker(network))) continue;
+        ancestor = true;
+      }
 
-      const advert = committedAdvertIn(tx);
+      const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
       if (!advert) continue;
       // THE BODY NAMES THE OUTPOINT, and a body that names an output this
       // transaction does not have has named no outpoint at all - there is
@@ -687,6 +710,7 @@ function candidatesIn(blocks, censusHeight, network) {
         pubkey: advert.nodePubkey,
         roles: advert.roles,
         hostedGames: advert.hostedGames,
+        ...(ancestor ? { ancestor: true } : {}),
       });
     }
   }
@@ -839,6 +863,8 @@ export function scanCensus(view, { contract, candidates }) {
  * ambiguity to settle here.
  */
 function resolveBody(seen, entry, verifyAdvert) {
+  // an ancestor's bond (scan found it by the ancestor's marker) is read by the ancestor's layout and id (ancestor.js)
+  const ancestor = !!entry.ancestor;
   let tx;
   try { tx = parseTransaction(seen.transaction); }
   catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
@@ -865,14 +891,15 @@ function resolveBody(seen, entry, verifyAdvert) {
   const read = (bytes) => {
     try {
       const { body, signature } = splitSignedAdvert(bytes);
-      offered.push({ advert: decodeAdvert(body), signature });
+      const advert = ancestor ? decodeAncestorAdvert(body) : decodeAdvert(body);
+      offered.push({ advert, signature, id: ancestor ? ancestorAdvertId(body) : advertId(advert) });
     } catch { /* not a signed body; most witness items are not */ }
   };
   for (const item of witnessRunsOf(tx)) read(item);
   if (seen.signedAdvert) read(seen.signedAdvert);
 
   const taken = offered.find((o) =>
-    commitments.some((c) => c.length === 32 && advertId(o.advert).every((b, i) => b === c[i])));
+    commitments.some((c) => c.length === 32 && o.id.every((b, i) => b === c[i])));
   if (!taken)
     return { ok: false, why: 'the bond output commits to a different advertisement' };
 
@@ -895,12 +922,12 @@ function resolveBody(seen, entry, verifyAdvert) {
       return { ok: false, why: 'that advertisement names the zero key, which nobody holds' };
     if (zero(taken.signature))
       return { ok: false, why: 'that advertisement carries an empty signature' };
-    if (!verifyAdvert(taken.signature, advertId(taken.advert), taken.advert.nodePubkey))
+    if (!verifyAdvert(taken.signature, taken.id, taken.advert.nodePubkey))
       return { ok: false, why: 'that advertisement is not signed by the node it names' };
   }
 
   return {
-    ok: true, advert: taken.advert, advertId: advertId(taken.advert), tx,
+    ok: true, advert: taken.advert, advertId: taken.id, tx,
     signatureChecked: !!verifyAdvert,
   };
 }
@@ -1020,6 +1047,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     const output = recognizeBond(read.tx, e.vout, read.advert, {
       ...(bond ? { bond } : {}),
       ...(network ? { network } : {}),
+      ...(e.ancestor ? { ancestor: true } : {}),
     });
     if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
 
@@ -1232,12 +1260,38 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   // advertisement the bond committed to at creation. The census's own filters then read the updated body: an update
   // that declares no role, or not this round's version, takes the node out of this census. With no `verifyUpdate`
   // nothing is applied: an update nobody checked is not an update.
-  let eligible = resolved.eligible;
+  // A BOND OF THE ANCESTOR COUNTS ONLY ONCE ITS OPERATOR RE-AFFIRMED IT FOR THIS NETWORK (§27A.8.3, spec 0A.9; kanban
+  // #209): a re-affirmation at or below census_height, at or above the bond, signed by the bond's node key for this
+  // network id and this bond - checked with the same BIP-340 verify an update is (`verifyUpdate`). Opt-in per operator:
+  // a bond nobody re-affirmed stays the ancestor's, and is named here, not counted.
+  const reaffirmOut = [];
+  let carried = resolved.eligible;
+  const ancestors = resolved.eligible.filter((e) => e.ancestor);
+  if (ancestors.length) {
+    const said = typeof verifyUpdate === 'function'
+      ? reaffirmedBonds(chain, ancestors, { atHeight: contract.censusHeight, networkId: contract.networkId, verify: verifyUpdate })
+      : new Map();
+    carried = [];
+    for (const e of resolved.eligible) {
+      if (!e.ancestor) { carried.push(e); continue; }
+      const r = said.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+      if (!r) {
+        reaffirmOut.push({ ...e, why: typeof verifyUpdate === 'function'
+          ? 'a bond of the ancestor network that its operator has not re-affirmed for this network'
+          : 'a bond of the ancestor network, and no signature check was given to read a re-affirmation with' });
+        continue;
+      }
+      carried.push({ ...e, reaffirmedBy: r });
+    }
+  }
+
+  let eligible = carried;
   const updatedOut = [];
   if (typeof verifyUpdate === 'function') {
     const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
+    const before = eligible;
     eligible = [];
-    for (const e of resolved.eligible) {
+    for (const e of before) {
       const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
       if (!u) { eligible.push(e); continue; }
       const roles = u.advert.roles || [];
@@ -1270,6 +1324,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     excluded: [
       ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
       ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
+      ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
       ...updatedOut.map((e) => ({ ...e, step: 'update' })),
     ],
     unchecked: resolved.unchecked,
