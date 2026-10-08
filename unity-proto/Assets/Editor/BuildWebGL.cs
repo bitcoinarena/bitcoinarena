@@ -170,6 +170,10 @@ public static class BuildWebGL
         PlayerSettings.WebGL.dataCaching = false;
         PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
         PlayerSettings.runInBackground = true;
+        // FUNCTION NAMES IN THE WASM, FOR A PROFILE ONLY (kanban #265): ARENA_WEBGL_SYMBOLS=1 embeds the name section, so a CPU
+        // profile names Unity's hot functions instead of wasm-function[643]. Off by default: a shipped build stays as it was.
+        PlayerSettings.WebGL.debugSymbolMode = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_SYMBOLS") == "1"
+            ? WebGLDebugSymbolMode.Embedded : WebGLDebugSymbolMode.Off;
         // Unity Personal made this optional in Unity 6, and it is 2.7 MB of
         // texture in a build we are trying to get under thirty.
         PlayerSettings.SplashScreen.show = false;
