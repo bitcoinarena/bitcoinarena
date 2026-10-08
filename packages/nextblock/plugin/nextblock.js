@@ -1,21 +1,21 @@
 // NEXTBLOCK AS A PLUGIN (kanban #202, §0A.2-0A.3; the owner 2026-10-06: the engine is Bitcoin Arena, the game is "Tick
-// Tock, Next Block" - `nextblock` in code). The registration a node's launcher hands serve() (blwp-node/src/main.js):
+// Tock, Next Block" - `nextblock` in code). The registration a node's launcher hands serve() (arena-node/src/main.js):
 // the game's manifest as its developer signed it with the dev client (public bytes, nextblock-manifest.js), its id, and the cores the node installed for it (truck-cores.js, what was
-// blwp-node/src/cores.js's truck half). The engine imports none of this; it reads a game through its manifest
-// (protocol/src/manifest.js) and a core through its adapter, as blwp-node/src/plugins.js hands them on.
+// arena-node/src/cores.js's truck half). The engine imports none of this; it reads a game through its manifest
+// (arena-protocol/src/manifest.js) and a core through its adapter, as arena-node/src/plugins.js hands them on.
 export * from './truck-cores.js';
 import { NEXTBLOCK_CORES, nextblockRoundWarnings } from './truck-cores.js';
-import { fromHex } from '../../protocol/src/hash.js';
-import { decodeManifest, gameIdOf } from '../../protocol/src/manifest.js';
+import { fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { NEXTBLOCK_MANIFEST_HEX } from './nextblock-manifest.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../protocol/src/testnet4-donation-set-keys.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
 
 /** THE SIGNED MANIFEST, and its id: what a round of nextblock names as its game_id (§0A.3). */
 export const NEXTBLOCK_MANIFEST = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
 export const NEXTBLOCK_GAME_ID = gameIdOf(NEXTBLOCK_MANIFEST);
 
 /**
- * THE REGISTRATION a node's launcher hands serve() (blwp-node/src/plugins.js): the manifest, the cores it installed, and
+ * THE REGISTRATION a node's launcher hands serve() (arena-node/src/plugins.js): the manifest, the cores it installed, and
  * the game's own replay page (kanban #202: a page that draws the truck is nextblock's, never the engine's) - served at
  * /replay for a round of nextblock.
  */
@@ -25,5 +25,5 @@ export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_
   // testnet4 nextblock's protocol dev and game dev are the same recipients and are paid once
   donationSet: TESTNET4_DONATION_SET_KEYS.recipients });
 
-/** What a launcher loads from this module (BLWP_GAMES, blwp-node/src/main.js): nextblock's registration. */
+/** What a launcher loads from this module (ARENA_GAMES, arena-node/src/main.js): nextblock's registration. */
 export const GAME = NEXTBLOCK;

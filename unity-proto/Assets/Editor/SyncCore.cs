@@ -18,7 +18,7 @@ using UnityEngine;
 public static class SyncCore
 {
     const string CoreDir = "../packages/nextblock";
-    const string ClientDir = "../packages/blwp-client";
+    const string ClientDir = "../packages/arena-client";
 
     [MenuItem("Tools/BTC Logistics/Sync Deterministic Core")]
     public static void Run()
@@ -55,9 +55,9 @@ public static class SyncCore
         {
             if (!Node(clientRoot, "tools/bundle.js", out string clientOut)) return;
             UnityEngine.Debug.Log("[SyncCore] " + clientOut.Trim());
-            string cFrom = Path.Combine(clientRoot, "dist/blwp-client.js");
+            string cFrom = Path.Combine(clientRoot, "dist/arena-client.js");
             string cTo = Path.Combine(Application.dataPath,
-                                      "WebGLTemplates/BtcLogistics/blwp-client.js");
+                                      "WebGLTemplates/BtcLogistics/arena-client.js");
             File.Copy(cFrom, cTo, true);
             UnityEngine.Debug.Log(
                 $"[SyncCore] copied client ({new FileInfo(cTo).Length / 1024} KB) into the template");

@@ -5,7 +5,7 @@
 // with 409 ("this signer node holds no core ...") the moment the tree moved, although the round and its ticks were still
 // stored. This tool finds, in this repository's history, the commit whose core/src hashes (tools/hash-core.js's rule: the
 // .js files under src, sorted, each as its relative path, a NUL, its bytes, a NUL) to each wanted core, and bundles that
-// commit's core for the replay page (tools/bundle-replay.js, BLWP_REPLAY_SRC) into <out>/<hash>.js. The node serves a
+// commit's core for the replay page (tools/bundle-replay.js, ARENA_REPLAY_SRC) into <out>/<hash>.js. The node serves a
 // round's core from that directory when it is not the one installed (server.js, replayCoresDir).
 //
 //   node tools/archive-replay-cores.mjs <out dir> <core hash hex>...
@@ -26,7 +26,7 @@ mkdirSync(out, { recursive: true });
 let wanted = rest;
 if (rest[0] === '--stores') {
   const { DatabaseSync } = await import('node:sqlite');
-  const { decodeRoundContract } = await import('../../protocol/src/contracts.js');
+  const { decodeRoundContract } = await import('../../arena-protocol/src/contracts.js');
   const set = new Set();
   for (const f of rest.slice(1)) {
     const db = new DatabaseSync(f, { readOnly: true });
@@ -75,7 +75,7 @@ for (const h of need) {
   try {
     execFileSync('bash', ['-c', `git -C '${root}' archive ${c} packages/nextblock/src | tar -x -C '${tmp}'`]);
     execFileSync(process.execPath, [join(HERE, 'bundle-replay.js')], {
-      env: { ...process.env, BLWP_REPLAY_SRC: join(tmp, 'packages/nextblock/src'), BLWP_BUNDLE_OUT: tmp } });
+      env: { ...process.env, ARENA_REPLAY_SRC: join(tmp, 'packages/nextblock/src'), ARENA_BUNDLE_OUT: tmp } });
     const js = execFileSync('cat', [join(tmp, 'blwp-replay-core.js')]);
     writeFileSync(join(out, `${h}.js`), js);
     console.log(`${h.slice(0, 16)}  from ${c.slice(0, 8)}  ${(js.length / 1024).toFixed(1)} KB`);

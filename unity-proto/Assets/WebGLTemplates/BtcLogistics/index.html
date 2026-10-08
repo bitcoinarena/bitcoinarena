@@ -4,6 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
   <title>{{{ PRODUCT_NAME }}}</title>
+  <script id="arena-storage-move">
+    // THE ONE-TIME MOVE OF THE BROWSER'S KEYS FROM blwp.* TO arena.* (kanban #207), before any other script reads
+    // them: the seed, the kept phrases, the vault and the wallet stores were all kept under blwp.*, and every reader
+    // now asks for arena.*. Each blwp.* key is copied to its arena.* name and only then removed, so a full store keeps
+    // the old key rather than losing it; a key already under its arena.* name is never overwritten, and the old one is
+    // then left where it is. Unity's own keys (blwp.jslib writes blwp.session.key.* and blwp.cargo.*) are not moved:
+    // the jslib still reads them by those names. Once a browser has moved there are no blwp.* keys left to move.
+    (function () {
+      var UNITY = ['blwp.session.key.', 'blwp.cargo.'];
+      function move(store) {
+        var old = [], i, k;
+        for (i = 0; i < store.length; i++) {
+          k = store.key(i);
+          if (k && k.indexOf('blwp.') === 0 && !UNITY.some(function (u) { return k.indexOf(u) === 0; })) old.push(k);
+        }
+        old.forEach(function (k) {
+          var to = 'arena.' + k.slice(5);
+          if (store.getItem(to) !== null) return;
+          try { store.setItem(to, store.getItem(k)); } catch (e) { return; }
+          store.removeItem(k);
+        });
+      }
+      try { move(window.localStorage); } catch (e) { /* storage blocked: nothing to move */ }
+      try { move(window.sessionStorage); } catch (e) { /* storage blocked: nothing to move */ }
+    })();
+  </script>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -524,7 +550,7 @@
     // one-paid-run heartbeat (and a read of the kept phrases, only to cut them out of a copy). A tab's player and money are
     // vault()'s and the seed keeper's, nowhere else.
     const browserStore = window.BLWP_BROWSER_STORE = () => { try { return window.localStorage; } catch { return null; } };
-    const KEY = 'blwp.clientlog', MOST = 800, LONGEST = 400;
+    const KEY = 'arena.clientlog', MOST = 800, LONGEST = 400;
     let lines = [];
     try { lines = JSON.parse(browserStore().getItem(KEY) || '[]'); if (!Array.isArray(lines)) lines = []; } catch { lines = []; }
     let dirty = false;
@@ -546,9 +572,9 @@
     const SPAM = /Ran out of virtual channels|\[UnityCache\]|kinematic body|JS_FileSystem_Sync|world is still settling/;
     const QUIET = /^(FMOD returns error code|Ran out of virtual channels|\[render\]|\[ground\]|\[tanks\]|\[paper\]|\[bars\]|\[cloud\]|\[UnityCache\]|\[ghost\])/;
     let verbose = /[?&]verbose=1\b/.test(location.search);
-    try { verbose = verbose || browserStore().getItem('blwp.verbose') === '1'; } catch { /* storage blocked */ }
+    try { verbose = verbose || browserStore().getItem('arena.verbose') === '1'; } catch { /* storage blocked */ }
     const VERBOSE = () => verbose;
-    window.BLWP_VERBOSE = (on) => { verbose = !!on; try { browserStore().setItem('blwp.verbose', on ? '1' : '0'); } catch { /* none */ } return 'console ' + (verbose ? 'verbose' : 'quiet'); };
+    window.BLWP_VERBOSE = (on) => { verbose = !!on; try { browserStore().setItem('arena.verbose', on ? '1' : '0'); } catch { /* none */ } return 'console ' + (verbose ? 'verbose' : 'quiet'); };
     const text = (args) => Array.from(args).map((a) => (a instanceof Error ? a.message : typeof a === 'string' ? a : (() => { try { return JSON.stringify(a); } catch { return String(a); } })())).join(' ');
     for (const [name, kind] of [['log', 'log'], ['info', 'log'], ['warn', 'WARN'], ['error', 'ERROR']]) {
       const was = console[name];
@@ -572,8 +598,8 @@
     // WHAT IS CUT OUT, BY VALUE: this browser's seeds (the tab's and every kept one) and e-cash notes
     const secrets = () => {
       const s = [];
-      try { const t = sessionStorage.getItem('blwp.player.seed'); if (t) s.push(String(t)); } catch { /* none */ }
-      try { const k = JSON.parse(browserStore().getItem('blwp.seeds') || '[]'); for (const x of Array.isArray(k) ? k : []) s.push(typeof x === 'string' ? x : x && (x.seed || x.hex) || ''); } catch { /* none */ }
+      try { const t = sessionStorage.getItem('arena.player.seed'); if (t) s.push(String(t)); } catch { /* none */ }
+      try { const k = JSON.parse(browserStore().getItem('arena.seeds') || '[]'); for (const x of Array.isArray(k) ? k : []) s.push(typeof x === 'string' ? x : x && (x.seed || x.hex) || ''); } catch { /* none */ }
       const seeds = s.filter((x) => typeof x === 'string' && x.length >= 32);
       // and each seed's 24 words, as the phrase and word by word in a row is never logged - the phrase itself is
       const phrases = [];
@@ -846,7 +872,7 @@
        BLWP_ROUND is undefined here rather than filled in with something
        plausible: a round contract is agreed before anyone moves, and inventing
        one in the page would be inventing a lobby. -->
-  <script src="blwp-client.js"></script>
+  <script src="arena-client.js"></script>
   <!-- Same secp256k1 the daemons use. Without it a named round never joins. -->
   <script src="blwp-curve.js"></script>
 
@@ -862,14 +888,14 @@
     })();
     // THE PHRASE IS KEPT IN THE BROWSER (the owner 2026-10-01: "We want it to be safe even if the user closes the browser and
     // loads it again. It needs to be persisted" - this replaces the tab-only rule of 2026-09-30). Every phrase a tab
-    // holds is also kept in the browser's storage (blwp.seeds); a tab marks the one it holds with a heartbeat every 4 s. A tab
+    // holds is also kept in the browser's storage (arena.seeds); a tab marks the one it holds with a heartbeat every 4 s. A tab
     // with no phrase of its own - a new tab, a browser opened again - takes a kept phrase no open tab holds (no
     // heartbeat for 12 s); only when every kept one is held does it get a new one. Two open tabs stay two players.
     function blwpSeedKeeper({ L, T, now, every, on, random, locks = null, reload = () => {} }) {
-      const KEY = 'blwp.player.seed', FROM = 'blwp.player.seed.from', LIST = 'blwp.seeds', HELD = 'blwp.seed.held.';
+      const KEY = 'arena.player.seed', FROM = 'arena.player.seed.from', LIST = 'arena.seeds', HELD = 'arena.seed.held.';
       const read = () => { try { const l = JSON.parse(L.getItem(LIST) || '[]'); return Array.isArray(l) ? l : []; } catch { return []; } };
-      let tab = T.getItem('blwp.tab.id');
-      if (!tab) { tab = random(); T.setItem('blwp.tab.id', tab); }
+      let tab = T.getItem('arena.tab.id');
+      if (!tab) { tab = random(); T.setItem('arena.tab.id', tab); }
       const heldBy = (hex) => { try { return JSON.parse(L.getItem(HELD + hex.slice(0, 16)) || 'null'); } catch { return null; } };
       const free = (hex) => { const h = heldBy(hex); return !h || h.tab === tab || now() - h.at > 12000; };
       if (!/^[0-9a-f]{64}$/i.test(T.getItem(KEY) || '')) {
@@ -890,18 +916,18 @@
       const lockPhrase = (cur) => {
         if (!locks || lockedFor === cur) return;
         lockedFor = cur;
-        locks.request('blwp.phrase.' + cur.slice(0, 16), { ifAvailable: true }, (lock) => {
+        locks.request('arena.phrase.' + cur.slice(0, 16), { ifAvailable: true }, (lock) => {
           if (lock) return new Promise(() => {});   // held for the tab's life
           if (T.getItem(KEY) !== cur) return undefined;
           // ANOTHER TAB'S COLLECT HOLDS IT FOR A MOMENT, NOT ANOTHER PLAYER (kanban #153 (b), the owner 2026-10-07: "the seed keeper
           // must not mint"): the phrase is kept and the lock waited for - no reload, no new phrase per collision
-          let collecting = null; try { collecting = JSON.parse(L.getItem('blwp.seed.collecting.' + cur.slice(0, 16)) || 'null'); } catch { collecting = null; }
+          let collecting = null; try { collecting = JSON.parse(L.getItem('arena.seed.collecting.' + cur.slice(0, 16)) || 'null'); } catch { collecting = null; }
           if (collecting && now() - collecting.at < 30000) {
-            locks.request('blwp.phrase.' + cur.slice(0, 16), () => new Promise(() => {}));
+            locks.request('arena.phrase.' + cur.slice(0, 16), () => new Promise(() => {}));
             return undefined;
           }
           T.removeItem(KEY); T.removeItem(FROM);
-          T.setItem('blwp.tab.id', random());       // a duplicated tab copied its id too
+          T.setItem('arena.tab.id', random());       // a duplicated tab copied its id too
           reload();
           return undefined;
         });
@@ -930,8 +956,8 @@
     // joined it again - the loading screen and the status box over a new QR. The offer notes its address and the lobby
     // behind it in this tab's session; a load of that same address goes back to that lobby before anything reads it.
     try {
-      const noted = JSON.parse(sessionStorage.getItem('blwp.depositAt') || 'null');
-      sessionStorage.removeItem('blwp.depositAt');
+      const noted = JSON.parse(sessionStorage.getItem('arena.depositAt') || 'null');
+      sessionStorage.removeItem('arena.depositAt');
       if (noted && noted.at === location.search) history.replaceState(null, '', location.pathname + (noted.back || ''));
     } catch { /* no session storage: the address stays */ }
     const boot = document.getElementById('boot');
@@ -946,9 +972,9 @@
     // wallet's database live in the browser's own storage, so the next start - a reload, another tab, a
     // restarted browser - opens the same wallet under the same key. The seed a NEW round is
     // played under stays in the tab (two tabs are two players).
-    const VAULT_KEYS = ['blwp.collect.', 'blwp.lock.saved.', 'blwp.lockdb.'];
+    const VAULT_KEYS = ['arena.collect.', 'arena.lock.saved.', 'arena.lockdb.'];
     function vault() {
-      try { const s = window.localStorage; s.getItem('blwp.vault'); return s; } catch { return window.sessionStorage; }
+      try { const s = window.localStorage; s.getItem('arena.vault'); return s; } catch { return window.sessionStorage; }
     }
     // A TAB OPEN FROM A BUILD THAT KEPT THESE IN THE TAB: they move over once - a record when the
     // browser has none under its key, a wallet's database only whole and only when none of it is there.
@@ -962,7 +988,7 @@
         const dbs = new Map();
         for (const k of keys) {
           if (!k || !VAULT_KEYS.some((p) => k.startsWith(p))) continue;
-          if (k.startsWith('blwp.lockdb.')) { const d = dbOf(k); if (!dbs.has(d)) dbs.set(d, []); dbs.get(d).push(k); }
+          if (k.startsWith('arena.lockdb.')) { const d = dbOf(k); if (!dbs.has(d)) dbs.set(d, []); dbs.get(d).push(k); }
           else if (v.getItem(k) === null) v.setItem(k, t.getItem(k));
         }
         for (const [d, ks] of dbs) if (!has(d)) for (const k of ks) v.setItem(k, t.getItem(k));
@@ -1430,7 +1456,7 @@
     // an unpinned market the player confirmed a second time on the sheet (§0A.6): only that game, only for that join
     function confirmedMarkets() { const c = window.BLWP_PICK_CHOSEN; return c && c.confirmed ? new Set([c.gameId]) : null; }
     // THE TAB'S PICKS, kept with the tab's seed (sessionStorage): what the lobby's market lines are made of
-    const PICKS_KEY = 'blwp.market.picks';
+    const PICKS_KEY = 'arena.market.picks';
     function readPicks() { try { return JSON.parse(window.sessionStorage.getItem(PICKS_KEY) || '[]'); } catch { return []; } }
     function rememberPick(p) {
       try {
@@ -1578,7 +1604,7 @@
       // THE ROUND'S KEY FROM THE PLAYER'S SEED (§24, v4.6.2, F2). The tab keeps a
       // seed, not a key; each round's key is derived from it, and its refund
       // fingerprint is shown so the player can compare it OUTSIDE this page:
-      //   node packages/blwp-node/tools/refund-key.mjs <seed> <round id>
+      //   node packages/arena-node/tools/refund-key.mjs <seed> <round id>
       //
       // A SEED THE PLAYER ALREADY HOLDS is what makes the check mean anything: a
       // seed this page minted is one this page knows. So the player can paste
@@ -1720,14 +1746,14 @@
       // Lightning payment, not a 7 minute join. The slow steps ... do not sit in front of the user"). The deposit goes into
       // the PLAYER WALLET - one per seed and federation (§24A.1) - not into this round, so its invoice needs only the lock
       // client, the federation and this round's amounts. It is asked now, and the signer nodes, the claim key and the
-      // THE ENTRY THIS TAB SENT FOR A ROUND, AS THE SEATS HOLD IT (2026-10-03, 0.0.2491): the kept entry (blwp.entry.<round>)
+      // THE ENTRY THIS TAB SENT FOR A ROUND, AS THE SEATS HOLD IT (2026-10-03, 0.0.2491): the kept entry (arena.entry.<round>)
       // with the round id and the kept session key's public half the bridge puts on it (blwp.jslib sessionKeyFor). A lock
       // committed to exactly that entry is played again before the round's start instead of refused (keptLockUse).
       const keptSentEntry = (roundIdHex) => {
         try {
           const back = (k, v) => (v && typeof v === 'object' && typeof v.u8 === 'string' ? BLWPCLIENT.fromHex(v.u8)
             : v && typeof v === 'object' && typeof v.big === 'string' ? BigInt(v.big) : v);
-          const e = JSON.parse(window.sessionStorage.getItem('blwp.entry.' + roundIdHex) || 'null', back);
+          const e = JSON.parse(window.sessionStorage.getItem('arena.entry.' + roundIdHex) || 'null', back);
           const key = JSON.parse(window.sessionStorage.getItem('blwp.session.key.' + roundIdHex) || 'null');
           return e && key && key.raw ? Object.assign({}, e, { roundId: BLWPCLIENT.fromHex(roundIdHex), sessionPubkey: BLWPCLIENT.fromHex(key.raw) }) : null;
         } catch { return null; }
@@ -1903,10 +1929,10 @@
             // a second player in the same browser overwrote the first's note, and the winner's tab asked about the loser's
             // entry - pending 0 while all 7 signer nodes said 192000 msat. A tab that wrote none (a reopened browser) reads all.
             try {
-              const key = 'blwp.pending.' + named.roundIdHex + '.' + BLWPCLIENT.toHex(eid);
+              const key = 'arena.pending.' + named.roundIdHex + '.' + BLWPCLIENT.toHex(eid);
               vault().setItem(key, JSON.stringify({ roundIdHex: named.roundIdHex, entryIdHex: BLWPCLIENT.toHex(eid), nodes: named.nodes }));
-              const mine = JSON.parse(window.sessionStorage.getItem('blwp.pending.mine') || '[]');
-              if (!mine.includes(key)) { mine.push(key); window.sessionStorage.setItem('blwp.pending.mine', JSON.stringify(mine)); }
+              const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || '[]');
+              if (!mine.includes(key)) { mine.push(key); window.sessionStorage.setItem('arena.pending.mine', JSON.stringify(mine)); }
             } catch { /* no note, no line */ }
             return BLWPCLIENT.markLockCommitted(vault(), Object.assign({ entryId: eid }, whose));
           };
@@ -2018,7 +2044,7 @@
       // reload landed, sat at one seat with no stake and was signed FORFEIT there. The entry is kept per round in this tab's
       // sessionStorage and taken again when it names the very stake lock this join holds (the kept one); the bridge keeps
       // the session key the same way (blwp.jslib sessionKeyFor), so the entry the nodes are sent is byte for byte the first.
-      const entrySlot = 'blwp.entry.' + named.roundIdHex;
+      const entrySlot = 'arena.entry.' + named.roundIdHex;
       const keptEntry = (() => {
         if (!stakeLock) return null;
         try {
@@ -2138,7 +2164,7 @@
       if (heldRounds.has(id)) return Promise.resolve(true);
       if (!navigator.locks || typeof navigator.locks.request !== 'function') return Promise.resolve(true);
       return new Promise((resolve) => {
-        navigator.locks.request('blwp.round.' + id, { ifAvailable: true }, (lock) => {
+        navigator.locks.request('arena.round.' + id, { ifAvailable: true }, (lock) => {
           if (!lock) { resolve(false); return null; }
           heldRounds.add(id); resolve(true);
           return new Promise(() => {});
@@ -2162,7 +2188,7 @@
     // so the player wallet already open on the same federation answers it. The round's own wallet is joined, as before,
     // when something is owed, or while this browser has not yet read it empty (TAB_EMPTY: ecash an older build left in a
     // round wallet is still found once).
-    const TAB_EMPTY = 'blwp.tabempty.';
+    const TAB_EMPTY = 'arena.tabempty.';
     // THE NOTE GOES WHEREVER THE ROUND'S WALLET MAY HOLD ECASH (kanban #200, comment 574): a zero read through the player
     // wallet is never proof that the round's own wallet is empty
     const dropTabEmpty = (id) => { try { vault().removeItem(TAB_EMPTY + id); } catch { /* read with its wallet next time */ } };
@@ -2198,7 +2224,7 @@
     }
     // ANOTHER PHRASE'S WALLET, NEVER WHILE ANOTHER TAB HOLDS IT (the owner 2026-10-01: two clients on one wallet spent one note
     // twice): a record of another kept phrase is looked at and collected only while this tab holds that phrase's browser lock
-    // (the lock the seed keeper takes, blwp.phrase.<16>) and no other tab has beaten on it in 12 s; else it waits its turn.
+    // (the lock the seed keeper takes, arena.phrase.<16>) and no other tab has beaten on it in 12 s; else it waits its turn.
     // WHAT THE LOBBY SAYS OF THE COLLECT (kanban #153): the rounds whose last collect threw, and the other phrases' rounds
     // another tab holds - read by BLWPCLIENT.collectLines into the lobby's collect lines
     const collectFailed = window.BLWP_COLLECT_FAILED = new Map();
@@ -2206,12 +2232,12 @@
     function withRecordPhrase(r, fn) {
       if (r.own) return fn();
       const hex = BLWPCLIENT.toHex(r.seed);
-      try { const h = JSON.parse(vault().getItem('blwp.seed.held.' + hex.slice(0, 16)) || 'null'); if (h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('blwp.tab.id')) return Promise.resolve(null); } catch { /* read below */ }
+      try { const h = JSON.parse(vault().getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); if (h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('arena.tab.id')) return Promise.resolve(null); } catch { /* read below */ }
       if (!navigator.locks || typeof navigator.locks.request !== 'function') return fn();
       // WHILE IT HOLDS ANOTHER PHRASE'S LOCK, THE COLLECT SAYS SO (kanban #153 (b)): a new tab that finds that lock taken waits
       // for it (blwpSeedKeeper) instead of dropping the phrase and minting another
-      const mark = 'blwp.seed.collecting.' + hex.slice(0, 16);
-      return navigator.locks.request('blwp.phrase.' + hex.slice(0, 16), { ifAvailable: true }, async (lock) => {
+      const mark = 'arena.seed.collecting.' + hex.slice(0, 16);
+      return navigator.locks.request('arena.phrase.' + hex.slice(0, 16), { ifAvailable: true }, async (lock) => {
         if (!lock) return null;
         try { vault().setItem(mark, JSON.stringify({ at: Date.now() })); } catch { /* said or not, the lock is held */ }
         try { return await fn(); } finally { try { vault().removeItem(mark); } catch { /* it goes stale in 30 s */ } }
@@ -2290,7 +2316,7 @@
     window.BLWP_COLLECT_REOPEN = (prefix) => {
       const want = String(prefix || '').toLowerCase(); const v = vault(); const did = [];
       for (let i = 0; i < v.length; i++) {
-        const k = v.key(i); if (!k || !k.startsWith('blwp.collect.')) continue;
+        const k = v.key(i); if (!k || !k.startsWith('arena.collect.')) continue;
         let r; try { r = JSON.parse(v.getItem(k)); } catch { continue; }
         if (!r || !String(r.roundIdHex).startsWith(want) || !r.done) continue;
         v.setItem(k, JSON.stringify(Object.assign({}, r, { done: null }))); did.push(String(r.roundIdHex).slice(0, 8));
@@ -2472,7 +2498,7 @@
     function donationBps() {
       if (typeof window.BLWP_DONATION_BPS !== 'number') {
         let kept = null;
-        try { kept = window.sessionStorage.getItem('blwp.donation.settings'); } catch { kept = null; }
+        try { kept = window.sessionStorage.getItem('arena.donation.settings'); } catch { kept = null; }
         const n = Number(kept);
         window.BLWP_DONATION_BPS = kept !== null && Number.isInteger(n) && n >= 0 && n <= 500 && n % 100 === 0 ? n : 500;   // 5% by default (§0A.8, kanban #205): half protocol devs, half game dev
       }
@@ -2709,14 +2735,14 @@
       field.addEventListener('input', typed);
       // noted for a reload (the boot script above): only a join's offer - Settings' is over the lobby's own address
       if (!overSettings) {
-        try { sessionStorage.setItem('blwp.depositAt', JSON.stringify({ at: location.search,
+        try { sessionStorage.setItem('arena.depositAt', JSON.stringify({ at: location.search,
           back: typeof window.BLWP_LOBBY_BACK === 'string' ? window.BLWP_LOBBY_BACK : '' })); } catch { /* no session storage */ }
       }
       // ONLY THIS OFFER'S MODAL: a short wallet is asked again with a new offer, and this one's late close must not clear it
       const mine = el.dataset.offer = String(Number(el.dataset.offer || 0) + 1);
       const done = () => {
         if (el.dataset.offer !== mine) return;
-        el.textContent = ''; el.className = ''; try { sessionStorage.removeItem('blwp.depositAt'); } catch { /* none */ }
+        el.textContent = ''; el.className = ''; try { sessionStorage.removeItem('arena.depositAt'); } catch { /* none */ }
       };
       close.addEventListener('click', () => { active.close(); done(); });
       // THE REST, IN PLACE: the title says what is missing, the tabs keep their place unseen, the one invoice is made
@@ -2897,8 +2923,8 @@
     async function paintOtherWallets() {
       const el = document.getElementById('blwp-other-wallets');
       if (!el || otherWalletsBusy || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.phraseWalletEntries) return;
-      const L = vault(); const cur = sessionStorage.getItem('blwp.player.seed') || '';
-      let kept = []; try { kept = JSON.parse(L.getItem('blwp.seeds') || '[]'); } catch { kept = []; }
+      const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
+      let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
       const others = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex) && x.hex !== cur && BLWPCLIENT.phraseWalletEntries(L, x.hex) > 0);
       if (!others.length) { el.textContent = ''; return; }
       const named = window.BLWP_LOBBY_NAMED_FOR_WALLET; const row = (window.BLWP_LOBBY || []).find((x) => !x.free && x.raw && x.raw.contract && BLWPCLIENT.roundLocks(x.raw.contract));
@@ -2907,7 +2933,7 @@
       el.textContent = 'Reading the other wallets in this browser \u2026';
       try {
         const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
-        const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('blwp.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('blwp.tab.id'); } catch { return false; } };
+        const heldElsewhere = (hex) => { try { const h = JSON.parse(L.getItem('arena.seed.held.' + hex.slice(0, 16)) || 'null'); return !!h && Date.now() - h.at <= 12000 && h.tab !== sessionStorage.getItem('arena.tab.id'); } catch { return false; } };
         const lines = [];
         let total = 0;
         for (const x of others) {
@@ -2935,7 +2961,7 @@
           d.textContent = w.hex.slice(0, 8) + '\u2026  ' + (w.sats === null ? 'could not be read now' : w.sats + ' sat') + (w.busy ? '  (open in another tab)' : '  ');
           if (!w.busy && w.sats) {
             const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Use this wallet';
-            b.addEventListener('click', () => { sessionStorage.setItem('blwp.player.seed', w.hex); sessionStorage.setItem('blwp.player.seed.from', 'minted'); location.reload(); });
+            b.addEventListener('click', () => { sessionStorage.setItem('arena.player.seed', w.hex); sessionStorage.setItem('arena.player.seed.from', 'minted'); location.reload(); });
             d.appendChild(b);
           }
           el.appendChild(d);
@@ -2955,7 +2981,7 @@
     // THE DONATION IS A DROPDOWN, 2% UNTIL THE PLAYER PICKS (the owner 2026-09-29 12:47): six choices, no custom field (§24B).
     document.getElementById('blwp-donation-select').addEventListener('change', (e) => {
       window.BLWP_DONATION_BPS = Number(e.target.value) * 100;
-      try { window.sessionStorage.setItem('blwp.donation.settings', String(window.BLWP_DONATION_BPS)); } catch { /* kept for this page only */ }
+      try { window.sessionStorage.setItem('arena.donation.settings', String(window.BLWP_DONATION_BPS)); } catch { /* kept for this page only */ }
       paintSettings();
     });
     // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
@@ -3129,7 +3155,7 @@
     // ONE PAID RUN AT A TIME IN THIS BROWSER (the owner 2026-10-02, "Both"): a tab in a paid run - joining it, or driving it
     // until its session ends - keeps a heartbeat in the browser's own store (BLWP_BROWSER_STORE); PLAY on a paid round in another tab of this browser is
     // refused while that heartbeat is under 6 s old. Another browser is another storage and is not seen.
-    const PAID_RUN = 'blwp.paid.run', THIS_TAB = Math.random().toString(16).slice(2);
+    const PAID_RUN = 'arena.paid.run', THIS_TAB = Math.random().toString(16).slice(2);
     const paidRunHere = () => {
       const j = window.BLWP_JOIN;
       if (!j || j.free || j.cancelled || j.state === 'refused') return null;
@@ -3188,11 +3214,11 @@
       const go = document.getElementById('blwp-console-go');
       if (!go) return;
       let open = false;
-      try { open = window.BLWP_BROWSER_STORE().getItem('blwp.console.open') === '1'; } catch { open = false; }
+      try { open = window.BLWP_BROWSER_STORE().getItem('arena.console.open') === '1'; } catch { open = false; }
       const set = (o) => {
         document.body.classList.toggle('blwp-console-open', o);
         go.setAttribute('aria-expanded', o ? 'true' : 'false');
-        try { window.BLWP_BROWSER_STORE().setItem('blwp.console.open', o ? '1' : '0'); } catch { /* not kept */ }
+        try { window.BLWP_BROWSER_STORE().setItem('arena.console.open', o ? '1' : '0'); } catch { /* not kept */ }
         try { paintWallet(); paintPlayers(); } catch { /* painted on the next tick */ }
         try { if (window.BLWP_PLACE_CONSOLE) window.BLWP_PLACE_CONSOLE(); } catch { /* placed on the next slot */ }
       };
@@ -3554,8 +3580,8 @@
     // money is collected into the wallet (lookThePayout) the note goes and the balance shows it. It only looks.
     async function lookThePending() {
       let notes = [];
-      try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('blwp.pending.')) notes.push(k); } } catch { notes = []; }
-      try { const mine = JSON.parse(window.sessionStorage.getItem('blwp.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
+      try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('arena.pending.')) notes.push(k); } } catch { notes = []; }
+      try { const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
       const done = new Set((BLWPCLIENT.savedCollects ? BLWPCLIENT.savedCollects(vault(), { seed: typeof collectSeed === "function" ? collectSeed() : null }) : []).filter((r) => r.done).map((r) => r.roundIdHex));
       let total = 0n; let closeMs = null; let provisional = false;
       for (const k of notes) {
@@ -3823,9 +3849,9 @@
       function combineWallets(main, named, round) {
         if (combining) return combining;
         combining = (async () => {
-          const L = vault(); const cur = sessionStorage.getItem('blwp.player.seed') || '';
+          const L = vault(); const cur = sessionStorage.getItem('arena.player.seed') || '';
           const receiveKept = async () => {
-            for (const k of Object.keys(L).filter((x) => x.startsWith('blwp.ecash.pending.'))) {
+            for (const k of Object.keys(L).filter((x) => x.startsWith('arena.ecash.pending.'))) {
               let rec; try { rec = JSON.parse(L.getItem(k)); } catch { rec = null; }
               if (!rec || !rec.ecash) { L.removeItem(k); continue; }
               const said = JSON.parse(await main.receiveEcash(rec.ecash));
@@ -3835,9 +3861,9 @@
           };
           if (typeof main.receiveEcash !== 'function') return;
           await receiveKept();
-          let kept = []; try { kept = JSON.parse(L.getItem('blwp.seeds') || '[]'); } catch { kept = []; }
+          let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
           // a wallet found empty is not opened again until its store changes (its entry count is noted with it)
-          const emptyKey = (hex) => 'blwp.wallet.empty.' + hex.slice(0, 16);
+          const emptyKey = (hex) => 'arena.wallet.empty.' + hex.slice(0, 16);
           const fedHex = BLWPCLIENT.toHex(round.federationId);
           const entriesOf = (hex) => BLWPCLIENT.phraseWalletEntries(L, hex, fedHex);
           const others = kept.filter((x) => { if (!/^[0-9a-f]{64}$/i.test(x.hex) || x.hex === cur) return false;
@@ -3853,13 +3879,13 @@
               if (BigInt(await other.balanceMsat()) === 0n) { noteEmpty(); return; }
               const sent = JSON.parse(await other.sendAllEcash());
               if (!sent.ecash) { noteEmpty(); return; }
-              L.setItem('blwp.ecash.pending.' + Date.now() + '.' + x.hex.slice(0, 8), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: x.hex.slice(0, 8) }));
+              L.setItem('arena.ecash.pending.' + Date.now() + '.' + x.hex.slice(0, 8), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: x.hex.slice(0, 8) }));
               await receiveKept();
               if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
             };
             try {
               if (navigator.locks && navigator.locks.request) {
-                await navigator.locks.request('blwp.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
+                await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
               } else await take();
             } catch (e) { console.log('[blwp] wallet ' + x.hex.slice(0, 8) + ' not combined: ' + (e && e.message ? e.message : e)); }
           }

@@ -21,7 +21,7 @@
 //   slotX(slot) = -5308416 + slot * 1769472           so slot 3 is x 0 m and the pitch is 27 m
 //   assault word  = s[O_TACTICS + TAC_ASSAULT + 3*si] target = w & 15, phase = (w >> 4) & 15 (0 idle 1 push 2 consolidate)
 //
-// MUST RUN ON A GPU BROWSER (packages/blwp-client/tools/gpu-chrome.sh). On SwiftShader the page runs the core at
+// MUST RUN ON A GPU BROWSER (packages/arena-client/tools/gpu-chrome.sh). On SwiftShader the page runs the core at
 // 23 ticks/s against the 60 a round keeps and the round closes under it before much happens.
 //
 //   node probe-assault-push.mjs <cdp-port> <url> <tag>
