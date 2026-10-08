@@ -69,7 +69,14 @@
     #logo { width: 1.5em; height: 1.5em; flex: none; }
     #sub { color: #8b949e; font-size: 14px; margin-top: -14px; }
 
-    #track { width: min(440px, 82vw); height: 8px; border-radius: 99px; background: #222932; overflow: hidden; }
+    #track { width: min(440px, 82vw); height: 8px; border-radius: 99px; background: #222932; overflow: hidden; position: relative; }
+    /* 90 -> 100 % NEVER STANDS STILL (kanban #266, the owner 2026-10-08: "add 90-100 sub steps ... so it never feels like it
+       stalls"): Unity's own start holds the main thread for seconds in one piece, and no text can repaint inside it. This
+       layer creeps from 90 % towards 99 % by a TRANSFORM animation, which the compositor runs while the main thread is busy. */
+    #creep { position: absolute; left: 90%; top: 0; height: 100%; width: 10%; transform-origin: left center; transform: scaleX(0);
+      background: linear-gradient(90deg, #ffc46b, #ffe2a8); border-radius: 0 99px 99px 0; }
+    #creep.on { animation: creep90 6s cubic-bezier(0.15, 0.7, 0.3, 1) forwards; }
+    @keyframes creep90 { from { transform: scaleX(0); } to { transform: scaleX(0.9); } }
     #bar { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #f7931a, #ffc46b);
            transition: width .25s ease; }
 
@@ -876,7 +883,7 @@
       <img src="howto-4.png" alt="How to play, 4 of 4">
     </div>
     <div id="pct">0%</div>
-    <div id="track"><div id="bar"></div></div>
+    <div id="track"><div id="bar"></div><div id="creep"></div></div>
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
@@ -1074,9 +1081,41 @@
       [0.97, 'Almost there …'],
     ];
 
+    // THE SUB-STEPS OF 90 -> 100 % (kanban #266): Unity reports nothing between 0.9 and the instance, but it names each part of
+    // its start on the console - those lines move the number (91 ... 99) and say which part is running. A line inside one
+    // long main-thread piece shows when that piece ends; the creep bar (#creep) moves throughout.
+    const SUB_STEPS = [
+      [/memorysetup|Configuration Parameters/, 91, 'Starting the engine …'],
+      [/Loading player data/, 92, 'Loading the world …'],
+      [/Initialize engine version/, 93, 'Starting the engine …'],
+      [/Creating WebGL/, 94, 'Preparing the graphics …'],
+      [/Physics::Module\] Selected/, 95, 'Preparing physics …'],
+      [/Input Manager initialize|Input System initialize/, 96, 'Preparing the controls …'],
+      [/UnloadTime/, 97, 'Building the battlefield …'],
+      [/\[Bootstrap\]/, 98, 'Placing the truck …'],
+      [/\[strike\] theatre ready|\[blwp\] core is driving/, 99, 'Almost there …'],
+    ];
+    let subStep = 0;
+    window.ARENA_SUB_STEPS = [];
+    function takeSubStep(text) {
+      if (subStep >= 99 || pct.dataset.unity !== '90') return;
+      for (const [re, n, label] of SUB_STEPS) {
+        if (n <= subStep || !re.test(text)) continue;
+        subStep = n;
+        window.ARENA_SUB_STEPS.push([n, Math.round(performance.now())]);
+        pct.textContent = n + ' %' + (parseFloat(TOTAL_MB) ? '  ·  ' + TOTAL_MB + ' / ' + TOTAL_MB + ' MB' : '');
+        stage.textContent = label;
+      }
+    }
+    for (const k of ['log', 'warn', 'info']) {
+      const real = console[k].bind(console);
+      console[k] = (...args) => { try { if (subStep < 99 && pct.dataset.unity === '90') takeSubStep(args.map(String).join(' ')); } catch (e) { /* the line still goes out */ } real(...args); };
+    }
     function show(p) {
       const clamped = Math.max(0, Math.min(1, p));
       bar.style.width = (clamped * 100).toFixed(1) + '%';
+      // a sub-step already says more than Unity's 0.9 does: it keeps the line until 100 %
+      if (clamped < 1 && subStep >= 91) return;
       // megabytes as well as percent: a percentage alone says nothing about
       // whether the wait is ten seconds or two minutes
       const done = (parseFloat(TOTAL_MB) || 0) * clamped;
@@ -1086,6 +1125,12 @@
       for (let i = STAGES.length - 1; i >= 0; i--) {
         if (clamped >= STAGES[i][0]) { stage.textContent = STAGES[i][1]; break; }
       }
+      // AT 90 % the download is done and Unity's own start begins: the creep bar runs, the sub-steps take the number
+      if (clamped >= 0.9 && clamped < 1 && pct.dataset.unity !== '90') {
+        pct.dataset.unity = '90';
+        const creep = document.getElementById('creep'); if (creep) creep.classList.add('on');
+      }
+      if (clamped >= 1) { pct.dataset.unity = '100'; const creep = document.getElementById('creep'); if (creep) creep.classList.remove('on'); }
     }
 
     // A DONATION THAT LEFT THE WALLET IS SHOWN EVEN WHEN THE ROUND CANNOT BE
