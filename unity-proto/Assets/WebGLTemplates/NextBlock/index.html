@@ -1225,6 +1225,18 @@
       }
       window.arenaBench = run;
       box.addEventListener('click', (e) => { e.stopPropagation(); run(); });
+      // `?bench=1` (kanban #269): BENCHMARK opens by itself once the lobby is up - the lobby's own button, by its name - and the
+      // finished lines go to bitcoin-arena.io/__bench (fps, buffer, the browser's user agent; nothing else), so a phone's result
+      // reaches the card without a screenshot. Only on that address.
+      if (new URLSearchParams(location.search).get('bench') === '1') (async () => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        for (let i = 0; i < 1200 && !(window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing); i++) await sleep(250);
+        await sleep(6000);
+        try { window.unityInstance.SendMessage('Bootstrap', 'Benchmark'); } catch { return; }
+        for (let i = 0; i < 600 && !window.ARENA_BENCH; i++) await sleep(500);
+        if (!window.ARENA_BENCH) return;
+        try { await fetch('https://bitcoin-arena.io/__bench', { method: 'POST', mode: 'no-cors', body: JSON.stringify({ ...window.ARENA_BENCH, gfx: window.ARENA_GFX_STATE || null, build: (document.querySelector('#build-stamp') || {}).textContent || null }) }); } catch { /* the lines stay on the screen */ }
+      })();
     })();
     const stage = document.getElementById('stage');
     const err = document.getElementById('err');
