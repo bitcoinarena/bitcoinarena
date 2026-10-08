@@ -174,6 +174,18 @@ public static class BuildWebGL
         // profile names Unity's hot functions instead of wasm-function[643]. Off by default: a shipped build stays as it was.
         PlayerSettings.WebGL.debugSymbolMode = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_SYMBOLS") == "1"
             ? WebGLDebugSymbolMode.Embedded : WebGLDebugSymbolMode.Off;
+        // TEXTURES A PHONE CAN USE (kanban #265, measured 2026-10-08): left at Unity's default the WebGL textures are DXT, which
+        // most Android GPUs and iPhones lack - Unity then decompresses all 33 on the CPU ("DXT5|BC3 UNorm format is not supported,
+        // decompressing texture"), 20 of them before 100 %. ARENA_WEBGL_TEXTURES names the formats to build, first preferred
+        // (e.g. "ASTC,DXTC"): the loader takes the first one the GPU has. Unset: Unity's default, as before.
+        var texFormats = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_TEXTURES");
+        if (!string.IsNullOrEmpty(texFormats))
+        {
+            var list = new System.Collections.Generic.List<TextureCompressionFormat>();
+            foreach (var f in texFormats.Split(',')) list.Add((TextureCompressionFormat)System.Enum.Parse(typeof(TextureCompressionFormat), f.Trim()));
+            PlayerSettings.SetDefaultTextureCompressionFormat(BuildTargetGroup.WebGL, list.ToArray());
+            Debug.Log($"[BuildWebGL] WebGL texture formats: {string.Join(", ", list)}");
+        }
         // Unity Personal made this optional in Unity 6, and it is 2.7 MB of
         // texture in a build we are trying to get under thirty.
         PlayerSettings.SplashScreen.show = false;
