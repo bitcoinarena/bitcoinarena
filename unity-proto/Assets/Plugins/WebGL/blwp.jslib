@@ -13,6 +13,12 @@ mergeInto(LibraryManager.library, {
 
   // Returns 1 on success, 0 if the page never loaded the core. Failing loudly
   // here is better than a truck that silently never moves.
+  // THE BROWSER'S OFFSET FROM UTC, in minutes (kanban #266): ChartHud's wall clock is UTC plus this - DateTime.Now made
+  // IL2CPP load the time-zone database on the first frame (108 ms of Unity's start at 4x CPU, measured in a named profile).
+  BlwpLocalOffsetMinutes: function () {
+    return -new Date().getTimezoneOffset();
+  },
+
   BlwpInit: function (seed) {
     if (typeof BLWP === 'undefined') {
       console.error('[blwp] core bundle not loaded - check the WebGL template');
