@@ -567,6 +567,10 @@ public class SplashScreen : MonoBehaviour
 
     void OnGUI()
     {
+        // NOTHING ON THE FIRST FRAME (kanban #266, the owner 2026-10-08): the first OnGUI's text layout and font-atlas fill were
+        // 320 ms inside Unity's 2.2 s start-up hold at 10x CPU as an Android phone (named profile, DriveHud.OnGUI first draw);
+        // drawn from the next frame on, that work leaves the hold.
+        if (FirstGuiFrame.Now()) return;
         if (!Showing) return;
         _lobby = LobbyOrReading(_lobby, Blwp.DailyLobby.Compiled);     // never the title screen in a page, not even a frame
         if (!LobbyMayCover(_hud != null && _hud.ArrivalShowing)) return;   // the result card is up: not over it
