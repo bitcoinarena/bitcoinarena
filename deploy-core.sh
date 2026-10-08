@@ -110,6 +110,24 @@ MERGE
 fi
 
 
+# PHONES GET ASTC (kanban #265, 2026-10-08): BLWP_ASTC_BUILD_DIR names the same commit built with
+# ARENA_WEBGL_SUBTARGET=ASTC. Its data file goes beside the DXT one as <name>-astc.data.unityweb, its StreamingAssets (the
+# Addressables catalog) as StreamingAssets-astc, its streamed bundles into ServerData, and textures.json names them - the page
+# loads them on a GPU with ASTC and no S3TC. The code files must be byte-identical to this build's, or nothing is added.
+if [ -n "${BLWP_ASTC_BUILD_DIR:-}" ]; then
+  A="$BLWP_ASTC_BUILD_DIR"
+  N=$(basename "$(ls "$BUILD"/Build/*.data.unityweb | grep -v -- '-astc\.data' | head -1)" .data.unityweb)
+  for k in wasm framework.js; do
+    cmp -s "$(ls "$BUILD"/Build/*.$k.unityweb | head -1)" "$(ls "$A"/Build/*.$k.unityweb | head -1)" \
+      || { echo "refusing the ASTC data: its $k differs from this build's - not the same commit" >&2; exit 5; }
+  done
+  cp "$(ls "$A"/Build/*.data.unityweb | head -1)" "$BUILD/Build/$N-astc.data.unityweb"
+  rm -rf "$BUILD/StreamingAssets-astc" && cp -a "$A/StreamingAssets" "$BUILD/StreamingAssets-astc"
+  cp -n "$A"/ServerData/WebGL/* "$BUILD/ServerData/WebGL/" 2>/dev/null || true
+  printf '{"astc":{"data":"Build/%s-astc.data.unityweb","streamingAssets":"StreamingAssets-astc"}}\n' "$N" > "$BUILD/textures.json"
+  echo "ASTC data added for phones: Build/$N-astc.data.unityweb, StreamingAssets-astc, textures.json"
+fi
+
 echo "deploying $(du -sh "$BUILD" | cut -f1) to Cloudflare Pages project '$PROJECT'"
 wrangler pages deploy "$BUILD" --project-name "$PROJECT" --branch main --commit-dirty=true
 
