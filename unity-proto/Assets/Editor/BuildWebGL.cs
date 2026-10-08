@@ -191,10 +191,13 @@ public static class BuildWebGL
             bool set = false;
             foreach (var m in typeof(PlayerSettings).GetMethods(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
             {
-                if (m.Name != "SetTextureCompressionFormats") continue;
+                if (m.Name.IndexOf("TextureCompressionFormat", System.StringComparison.Ordinal) < 0) continue;
                 var ps = m.GetParameters();
+                Debug.Log($"[BuildWebGL] PlayerSettings.{m.Name}({string.Join(", ", System.Array.ConvertAll(ps, x => x.ParameterType.FullName))})");
+                if (m.Name != "SetTextureCompressionFormats" && m.Name != "SetTextureCompressionFormatsImpl") continue;
                 if (ps.Length != 2 || ps[1].ParameterType != typeof(TextureCompressionFormat[])) continue;
                 object target = ps[0].ParameterType == typeof(BuildTargetGroup) ? (object)BuildTargetGroup.WebGL
+                              : ps[0].ParameterType == typeof(BuildTarget) ? (object)BuildTarget.WebGL
                               : ps[0].ParameterType == typeof(UnityEditor.Build.NamedBuildTarget) ? (object)UnityEditor.Build.NamedBuildTarget.WebGL : null;
                 if (target == null) continue;
                 m.Invoke(null, new object[] { target, new[] { fmt } });
