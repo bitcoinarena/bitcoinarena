@@ -183,6 +183,14 @@ public static class BuildWebGL
         {
             EditorUserBuildSettings.webGLBuildSubtarget = (WebGLTextureSubtarget)System.Enum.Parse(typeof(WebGLTextureSubtarget), subtarget.Trim());
             Debug.Log($"[BuildWebGL] WebGL texture subtarget: {EditorUserBuildSettings.webGLBuildSubtarget}");
+            // THE SCENE'S TEXTURES TOO: setting the subtarget from a script does not reimport what the Library already holds,
+            // so measured on 0.0.2880 the streamed bundles came out ASTC and the 20 textures of the first scene stayed DXT.
+            // Every texture is imported again under the new subtarget before the player is built.
+            var guids = AssetDatabase.FindAssets("t:Texture", new[] { "Assets" });
+            AssetDatabase.StartAssetEditing();
+            try { foreach (var g in guids) AssetDatabase.ImportAsset(AssetDatabase.GUIDToAssetPath(g), ImportAssetOptions.ForceUpdate); }
+            finally { AssetDatabase.StopAssetEditing(); }
+            Debug.Log($"[BuildWebGL] {guids.Length} textures imported again for {EditorUserBuildSettings.webGLBuildSubtarget}");
         }
         // Unity Personal made this optional in Unity 6, and it is 2.7 MB of
         // texture in a build we are trying to get under thirty.
