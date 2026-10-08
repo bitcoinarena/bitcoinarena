@@ -170,6 +170,53 @@ public static class BuildWebGL
         PlayerSettings.WebGL.dataCaching = false;
         PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.ExplicitlyThrownExceptionsOnly;
         PlayerSettings.runInBackground = true;
+        // FUNCTION NAMES IN THE WASM, FOR A PROFILE ONLY (kanban #265): ARENA_WEBGL_SYMBOLS=1 embeds the name section, so a CPU
+        // profile names Unity's hot functions instead of wasm-function[643]. Off by default: a shipped build stays as it was.
+        PlayerSettings.WebGL.debugSymbolMode = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_SYMBOLS") == "1"
+            ? WebGLDebugSymbolMode.Embedded : WebGLDebugSymbolMode.Off;
+        // TEXTURES A PHONE CAN USE (kanban #265, measured 2026-10-08): left at Unity's default the WebGL textures are DXT, which
+        // most Android GPUs and iPhones lack - Unity then decompresses all 33 on the CPU ("DXT5|BC3 UNorm format is not supported,
+        // decompressing texture"), 20 of them before 100 %. ARENA_WEBGL_SUBTARGET (DXT, ASTC, ETC2) builds the textures - the data
+        // file and the streamed bundles - in that format; one format per build. Unset: the editor's own setting, as before.
+        var subtarget = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_SUBTARGET");
+        if (!string.IsNullOrEmpty(subtarget))
+        {
+            // a list ("ASTC,DXT") builds the player data in every format named, first preferred; the bundles take the first
+            var names = subtarget.Split(',');
+            EditorUserBuildSettings.webGLBuildSubtarget = (WebGLTextureSubtarget)System.Enum.Parse(typeof(WebGLTextureSubtarget), names[0].Trim());
+            Debug.Log($"[BuildWebGL] WebGL texture subtarget: {EditorUserBuildSettings.webGLBuildSubtarget}");
+            // AND THE PLAYER'S OWN DATA: measured on 0.0.2881, the subtarget (and a reimport) made the streamed bundles ASTC but the
+            // first scene's 20 textures stayed DXT - the player data follows the Web player setting "texture compression formats"
+            // (m_BuildTargetDefaultTextureCompressionFormat), whose setter Unity 6 keeps internal for the Web. Set by reflection.
+            var fmts = System.Array.ConvertAll(names, n => n.Trim().ToUpperInvariant() == "DXT" ? TextureCompressionFormat.DXTC
+                    : (TextureCompressionFormat)System.Enum.Parse(typeof(TextureCompressionFormat), n.Trim()));
+            bool set = false;
+            foreach (var m in typeof(PlayerSettings).GetMethods(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+            {
+                if (m.Name.IndexOf("TextureCompressionFormat", System.StringComparison.Ordinal) < 0) continue;
+                var ps = m.GetParameters();
+                Debug.Log($"[BuildWebGL] PlayerSettings.{m.Name}({string.Join(", ", System.Array.ConvertAll(ps, x => x.ParameterType.FullName))})");
+                if (m.Name != "SetTextureCompressionFormats" && m.Name != "SetTextureCompressionFormatsImpl") continue;
+                if (ps.Length != 2 || ps[1].ParameterType != typeof(TextureCompressionFormat[])) continue;
+                object target = ps[0].ParameterType == typeof(BuildTargetGroup) ? (object)BuildTargetGroup.WebGL
+                              : ps[0].ParameterType == typeof(BuildTarget) ? (object)BuildTarget.WebGL
+                              : ps[0].ParameterType == typeof(UnityEditor.Build.NamedBuildTarget) ? (object)UnityEditor.Build.NamedBuildTarget.WebGL : null;
+                if (target == null) continue;
+                m.Invoke(null, new object[] { target, fmts });
+                set = true;
+                Debug.Log($"[BuildWebGL] Web texture compression formats set to {string.Join(", ", fmts)} ({ps[0].ParameterType.Name} overload)");
+                break;
+            }
+            if (!set) Debug.LogWarning("[BuildWebGL] no SetTextureCompressionFormats(target, formats[]) found: the player data keeps its format");
+            // THE SCENE'S TEXTURES TOO: setting the subtarget from a script does not reimport what the Library already holds,
+            // so measured on 0.0.2880 the streamed bundles came out ASTC and the 20 textures of the first scene stayed DXT.
+            // Every texture is imported again under the new subtarget before the player is built.
+            var guids = AssetDatabase.FindAssets("t:Texture", new[] { "Assets" });
+            AssetDatabase.StartAssetEditing();
+            try { foreach (var g in guids) AssetDatabase.ImportAsset(AssetDatabase.GUIDToAssetPath(g), ImportAssetOptions.ForceUpdate); }
+            finally { AssetDatabase.StopAssetEditing(); }
+            Debug.Log($"[BuildWebGL] {guids.Length} textures imported again for {EditorUserBuildSettings.webGLBuildSubtarget}");
+        }
         // Unity Personal made this optional in Unity 6, and it is 2.7 MB of
         // texture in a build we are trying to get under thirty.
         PlayerSettings.SplashScreen.show = false;
