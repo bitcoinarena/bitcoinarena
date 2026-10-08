@@ -157,6 +157,35 @@ public class CombatFxTests
         Object.DestroyImmediate(fx.gameObject);
     }
 
+    // THE DEAD ARE NOT SKINNED (kanban #266): a body from a skinned prefab draws one baked mesh, shared by every body, and
+    // keeps its materials - no SkinnedMeshRenderer is left for Unity to skin each frame
+    [Test]
+    public void ABodyIsAStillMeshNotASkinnedOne()
+    {
+        var fx = Rig();
+        var prefab = new GameObject("SkinnedSoldier");
+        var part = new GameObject("Mesh"); part.transform.SetParent(prefab.transform, false);
+        var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var smr = part.AddComponent<SkinnedMeshRenderer>();
+        smr.sharedMesh = cube.GetComponent<MeshFilter>().sharedMesh;
+        smr.sharedMaterial = fx.bullMaterial;
+        fx.bodyPrefab = prefab;
+
+        fx.Body(Vector3.zero, 0f, true);
+        fx.Body(Vector3.one * 5f, 1f, false);
+        Assert.AreEqual(0, fx.GetComponentsInChildren<SkinnedMeshRenderer>(true).Length, "a body is still skinned");
+        var still = fx.GetComponentsInChildren<MeshFilter>(true);
+        Assert.AreEqual(2, still.Length, "each body draws one mesh");
+        Assert.AreSame(still[0].sharedMesh, still[1].sharedMesh, "the still pose is baked once, not per body");
+        Assert.Greater(still[0].sharedMesh.vertexCount, 0, "the baked pose is empty");
+        foreach (var mr in fx.GetComponentsInChildren<MeshRenderer>(true))
+            Assert.IsNotNull(mr.sharedMaterial, "a body lost its material");
+
+        Object.DestroyImmediate(fx.gameObject);
+        Object.DestroyImmediate(prefab);
+        Object.DestroyImmediate(cube);
+    }
+
     [Test]
     public void ADeadRiflemanTopplesBeforeHeDisappears()
     {
