@@ -220,4 +220,44 @@ public class CandleTerrainTests
         Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a new forming candle does not call for a rebuild");
     }
 
+    // THE TAIL IS THE SAME RIBBON (kanban #266, comment 980): the last two candles are their own mesh, rebuilt alone when only
+    // the forming candle moved - candles [0, n-2) followed by [n-2, n) are vertex for vertex the full build, on every fixture view
+    [Test]
+    public void TheRestAndTheTailAreTheWholeRibbon()
+    {
+        Load();
+        foreach (var kv in _views)
+        {
+            var v = kv.Value;
+            int n = Mathf.Min(v[L.CV_COUNT], L.CANDLES), k = Mathf.Max(0, n - CandleTerrain.TailCandles);
+            var full = CandleTerrain.Build(v, Ground);
+            var rest = CandleTerrain.Build(v, Ground, 0, k);
+            var tail = CandleTerrain.Build(v, Ground, k, n);
+            Assert.AreEqual(full.Body.Count, rest.Body.Count + tail.Body.Count, $"{kv.Key}: vertices");
+            for (int i = 0; i < full.Body.Count; i++)
+                Assert.AreEqual(full.Body[i], i < rest.Body.Count ? rest.Body[i] : tail.Body[i - rest.Body.Count], $"{kv.Key}: vertex {i}");
+            Assert.AreEqual(full.SideGreen.Count + full.SideRed.Count + full.TopGreen.Count + full.TopRed.Count + full.FormingTop.Count,
+                rest.SideGreen.Count + rest.SideRed.Count + rest.TopGreen.Count + rest.TopRed.Count + rest.FormingTop.Count
+                + tail.SideGreen.Count + tail.SideRed.Count + tail.TopGreen.Count + tail.TopRed.Count + tail.FormingTop.Count, $"{kv.Key}: triangles");
+            Assert.AreEqual(full.RidgeTriangles, rest.RidgeTriangles + tail.RidgeTriangles, $"{kv.Key}: ridge triangles");
+            Assert.AreEqual(full.FormingTop.Count, rest.FormingTop.Count + tail.FormingTop.Count, $"{kv.Key}: the forming top");
+        }
+    }
+
+    [Test]
+    public void OnlyTheFormingCandleMovingIsATailRebuild()
+    {
+        int n = L.CANDLES;
+        var built = new int[L.CV_TOTAL];
+        for (int i = 0; i < built.Length; i++) built[i] = i * 3;
+        var now = (int[])built.Clone();
+        now[L.CV_FIRST + (n - 1) * L.CV_WORDS + 2] += 77;      // the last candle's z
+        now[L.CV_SHIFT] += 5;
+        Assert.IsTrue(CandleTerrain.OnlyLastCandleChanged(now, built, n), "the forming candle alone is not a tail rebuild");
+        now[L.CV_FIRST + (n - 2) * L.CV_WORDS + 2] += 1;      // and its neighbour
+        Assert.IsFalse(CandleTerrain.OnlyLastCandleChanged(now, built, n), "a second candle moving is a tail rebuild");
+        now = (int[])built.Clone(); now[L.CV_FORMING] += 1;
+        Assert.IsFalse(CandleTerrain.OnlyLastCandleChanged(now, built, n), "a closed candle is a tail rebuild");
+    }
+
 }
