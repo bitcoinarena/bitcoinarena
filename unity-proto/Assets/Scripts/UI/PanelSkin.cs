@@ -46,10 +46,82 @@ public static class PanelSkin
     /// <summary>A vertical gradient, as slices. IMGUI has no such thing.</summary>
     public static void Gradient(Rect r, Color top, Color bottom, int slices = 24)
     {
+        // ONE DRAW, THE SAME PIXELS (kanban #266, comment 988, the owner 2026-10-08): the slices were one GUI.DrawTexture each -
+        // 24 a panel. They are baked into a texture one pixel wide and one texel per screen row, each row what the
+        // overlapping slices composited to on it (the 1 px seams included), and drawn once at whole rows. A rotated
+        // GUI.matrix keeps the slices.
+        var m = GUI.matrix;
+        if (Mathf.Abs(m.m01) > 1e-6f || Mathf.Abs(m.m10) > 1e-6f || m.m11 <= 0f || slices < 2) { Slices(r, top, bottom, slices); return; }
+        float sy = m.m11, ty = m.m13;
+        var tex = Baked(top, bottom, sy * r.y + ty, sy * r.height, sy, slices, out int row0, out int rows);
+        if (tex == null) return;
+        GUI.color = Color.white;
+        GUI.DrawTexture(new Rect(r.x, (row0 - ty) / sy, r.width, rows / sy), tex);
+    }
+
+    /// <summary>The gradient as it was drawn before #266: one Fill a slice, each 1 unit taller than its band.</summary>
+    public static void Slices(Rect r, Color top, Color bottom, int slices = 24)
+    {
         float h = r.height / slices;
         for (int i = 0; i < slices; i++)
             Fill(new Rect(r.x, r.y + h * i, r.width, h + 1f),
                  Color.Lerp(top, bottom, i / (float)(slices - 1)));
+    }
+
+    /// <summary>
+    /// What the slices composite to, one entry a screen row: a slice of device height `band` from pixel `y0` covers the rows
+    /// whose centre lies in [top, top + band + scale), the rasterizer's rule; where two slices cover a row the later is drawn
+    /// over the earlier (c2 over c1 is alpha 1 - (1 - a2)(1 - a1), colour (a2 c2 + (1 - a2) a1 c1) / that alpha). Gamma space,
+    /// as the project blends. Rows with no slice are clear.
+    /// </summary>
+    public static Color[] Composite(Color top, Color bottom, float y0, float height, float scale, int slices, out int row0)
+    {
+        float band = height / slices;
+        float yEnd = y0 + band * (slices - 1) + band + scale;
+        row0 = Mathf.CeilToInt(y0 - 0.5f);
+        int rowEnd = Mathf.CeilToInt(yEnd - 0.5f);            // first row whose centre is past the last slice
+        int rows = Mathf.Max(0, rowEnd - row0);
+        var outRows = new Color[rows];
+        for (int j = 0; j < rows; j++)
+        {
+            float centre = row0 + j + 0.5f;
+            float pr = 0f, pg = 0f, pb = 0f, pa = 0f;            // premultiplied
+            for (int i = 0; i < slices; i++)
+            {
+                float a = y0 + band * i, b = a + band + scale;
+                if (centre < a || centre >= b) continue;
+                var c = Color.Lerp(top, bottom, i / (float)(slices - 1));
+                pr = c.r * c.a + (1f - c.a) * pr; pg = c.g * c.a + (1f - c.a) * pg; pb = c.b * c.a + (1f - c.a) * pb;
+                pa = c.a + (1f - c.a) * pa;
+            }
+            outRows[j] = pa > 0f ? new Color(pr / pa, pg / pa, pb / pa, pa) : new Color(0f, 0f, 0f, 0f);
+        }
+        return outRows;
+    }
+
+    static readonly System.Collections.Generic.Dictionary<(Color, Color, int, int, int, int), Texture2D> _baked =
+        new System.Collections.Generic.Dictionary<(Color, Color, int, int, int, int), Texture2D>();
+
+    static Texture2D Baked(Color top, Color bottom, float y0, float height, float scale, int slices, out int row0, out int rows)
+    {
+        // the rows depend on the colours, the device height, where the first row starts inside a pixel, and the scale
+        var key = (top, bottom, Mathf.RoundToInt(height * 64f), Mathf.RoundToInt((y0 - Mathf.Floor(y0)) * 64f), Mathf.RoundToInt(scale * 64f), slices);
+        row0 = Mathf.CeilToInt(y0 - 0.5f);
+        rows = Mathf.Max(0, Mathf.CeilToInt(y0 + height + scale - 0.5f) - row0);   // as Composite counts them
+        if (rows == 0) return null;
+        if (_baked.TryGetValue(key, out var tex) && tex != null && tex.height == rows) return tex;
+        var colours = Composite(top, bottom, y0, height, scale, slices, out row0);
+        rows = colours.Length;
+        if (rows == 0) return null;
+        if (_baked.Count > 256) { foreach (var t in _baked.Values) if (t != null) Object.Destroy(t); _baked.Clear(); }
+        tex = new Texture2D(1, rows, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+        // a texture's row 0 is its bottom, and GUI.DrawTexture draws it at the rect's bottom
+        var flipped = new Color[rows];
+        for (int j = 0; j < rows; j++) flipped[j] = colours[rows - 1 - j];
+        tex.SetPixels(flipped);
+        tex.Apply(false, true);
+        _baked[key] = tex;
+        return tex;
     }
 
     /// <summary>
