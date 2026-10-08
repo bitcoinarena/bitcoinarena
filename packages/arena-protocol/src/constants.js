@@ -327,6 +327,9 @@ export const TAG = {
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',
+  // A BOND OF THE NETWORK BEFORE THIS ONE, CARRIED BY ITS OPERATOR (§27A.8.3, spec 0A.9; kanban #209): what the bond's
+  // node key signs to say "this bond serves network_id too". Its own tag, so a re-affirmation is never a vote or an update.
+  reaffirmation: 'ARENA/v1/Reaffirmation',
   // A JOINED PLAYER'S NAME FOR ONE ROUND (lobby-name.js), signed with the
   // round key it is joined under, so a signer node can serve it but not write it.
   lobbyName: 'ARENA/v1/LobbyName',

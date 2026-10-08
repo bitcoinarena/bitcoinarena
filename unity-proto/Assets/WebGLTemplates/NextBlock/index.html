@@ -3883,31 +3883,41 @@
           await receiveKept();
           let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
           // a wallet found empty is not opened again until its store changes (its entry count is noted with it)
-          const emptyKey = (hex) => 'arena.wallet.empty.' + hex.slice(0, 16);
+          // AND EVERY KEPT PHRASE'S BLWP-ERA WALLET (kanban #209, the owner 2026-10-08, pick (a); spec 0A.9 "the player wallets'
+          // e-cash carries over"): the wallet a phrase had before the ARENA/v1 tags is the one under the ancestor's tag
+          // (ancestor.js), kept here under its own store; this tab's own phrase's too. Swept the same way, once, into this tab's.
+          const emptyKey = (hex, ancestor) => 'arena.wallet.empty.' + (ancestor ? 'blwp.' : '') + hex.slice(0, 16);
           const fedHex = BLWPCLIENT.toHex(round.federationId);
-          const entriesOf = (hex) => BLWPCLIENT.phraseWalletEntries(L, hex, fedHex);
-          const others = kept.filter((x) => { if (!/^[0-9a-f]{64}$/i.test(x.hex) || x.hex === cur) return false;
-            const n = entriesOf(x.hex); return n > 0 && L.getItem(emptyKey(x.hex)) !== String(n); });
+          const entriesOf = (hex, ancestor) => BLWPCLIENT.phraseWalletEntries(L, hex, fedHex, { ancestor: !!ancestor });
+          const wanted = (x, ancestor) => { const n = entriesOf(x.hex, ancestor); return n > 0 && L.getItem(emptyKey(x.hex, ancestor)) !== String(n); };
+          const phrases = kept.filter((x) => /^[0-9a-f]{64}$/i.test(x.hex));
+          if (/^[0-9a-f]{64}$/i.test(cur) && !phrases.some((x) => x.hex === cur)) phrases.push({ hex: cur });
+          const others = [
+            ...phrases.filter((x) => x.hex !== cur && wanted(x, false)).map((x) => ({ hex: x.hex, ancestor: false })),
+            ...phrases.filter((x) => wanted(x, true)).map((x) => ({ hex: x.hex, ancestor: true })),
+          ];
           if (!others.length) return;
           const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
           for (const x of others) {
+            const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
             const take = async () => {
-              const other = await Promise.race([BLWPCLIENT.playerWallet({ round, invite: named.federation, seed: BLWPCLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L }),
+              const other = await Promise.race([BLWPCLIENT.playerWallet({ round, invite: named.federation, seed: BLWPCLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
                 new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in 30 s')), 30000))]);
               if (typeof other.sendAllEcash !== 'function') return;
-              const noteEmpty = () => L.setItem(emptyKey(x.hex), String(entriesOf(x.hex)));
+              const noteEmpty = () => L.setItem(emptyKey(x.hex, x.ancestor), String(entriesOf(x.hex, x.ancestor)));
               if (BigInt(await other.balanceMsat()) === 0n) { noteEmpty(); return; }
               const sent = JSON.parse(await other.sendAllEcash());
               if (!sent.ecash) { noteEmpty(); return; }
-              L.setItem('arena.ecash.pending.' + Date.now() + '.' + x.hex.slice(0, 8), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from: x.hex.slice(0, 8) }));
+              L.setItem('arena.ecash.pending.' + Date.now() + '.' + x.hex.slice(0, 8) + (x.ancestor ? '.blwp' : ''), JSON.stringify({ ecash: sent.ecash, msat: String(sent.msat), from }));
               await receiveKept();
               if (BigInt(await other.balanceMsat()) === 0n) noteEmpty();
             };
             try {
-              if (navigator.locks && navigator.locks.request) {
+              // this tab's own phrase is held by this tab already; any other is taken under its lock
+              if (x.hex !== cur && navigator.locks && navigator.locks.request) {
                 await navigator.locks.request('arena.phrase.' + x.hex.slice(0, 16), { ifAvailable: true }, async (lock) => { if (lock) await take(); });
               } else await take();
-            } catch (e) { console.log('[blwp] wallet ' + x.hex.slice(0, 8) + ' not combined: ' + (e && e.message ? e.message : e)); }
+            } catch (e) { console.log('[blwp] wallet ' + from + ' not combined: ' + (e && e.message ? e.message : e)); }
           }
           if (window.BLWP_READ_BALANCE) { await window.BLWP_READ_BALANCE(); if (typeof paintMoney === 'function') paintMoney(); }
         })().finally(() => { combining = null; });

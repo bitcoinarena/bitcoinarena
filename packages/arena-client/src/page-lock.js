@@ -15,6 +15,7 @@
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+import { ANCESTOR_TAG } from '../../arena-protocol/src/ancestor.js';
 import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
@@ -114,12 +115,28 @@ export function walletSecretFor(seed, federationId) {
 }
 
 /**
+ * THE SAME SEED'S PLAYER WALLET BEFORE THE ARENA/v1 TAGS (kanban #209, the owner 2026-10-08 pick (a); spec 0A.9 "the player
+ * wallets' e-cash carries over"): the wallet a seed had on the BLWP network, under the ancestor's tag (ancestor.js). The
+ * page opens it only to sweep its e-cash into the Arena wallet (index.html combineWallets); nothing is ever paid into it.
+ */
+export function ancestorWalletSecretFor(seed, federationId) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32)
+    throw new Error('the player wallet\'s secret comes from the player\'s 32-byte seed, and none was given');
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32 || namesNothing(federationId))
+    throw new Error('the player wallet is per federation, and no federation id was given');
+  const msg = new Uint8Array(64);
+  msg.set(seed, 0);
+  msg.set(federationId, 32);
+  return taggedHash(ANCESTOR_TAG.playerWalletSecret, msg);
+}
+
+/**
  * HOW MUCH WALLET A KEPT PHRASE HAS IN THIS BROWSER (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a
  * tab took another kept phrase than the one that deposited: the history, kept per federation, showed the deposit and the
  * stake, the balance was the other phrase's empty wallet). For every federation this browser keeps a ledger for, the
  * entries the phrase's player wallet keeps there - 0 for a phrase that never had one. Read off the store's keys only.
  */
-export function phraseWalletEntries(storage, seedHex, federationIdHex = null) {
+export function phraseWalletEntries(storage, seedHex, federationIdHex = null, { ancestor = false } = {}) {
   if (!storage || !/^[0-9a-f]{64}$/i.test(String(seedHex || ''))) return 0;
   const keys = storageKeys(storage);
   // the federation asked about, when named (a wallet with money and no history row is still a wallet), and every one
@@ -128,7 +145,7 @@ export function phraseWalletEntries(storage, seedHex, federationIdHex = null) {
   if (/^[0-9a-f]{64}$/i.test(String(federationIdHex || ''))) feds.push(String(federationIdHex).toLowerCase());
   let n = 0;
   for (const f of new Set(feds)) {
-    let secret; try { secret = walletSecretFor(fromHex(String(seedHex).toLowerCase()), fromHex(f)); } catch { continue; }
+    let secret; try { secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(fromHex(String(seedHex).toLowerCase()), fromHex(f)); } catch { continue; }
     const prefix = `arena.walletdb.${f.slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
     n += keys.filter((k) => k.startsWith(prefix)).length;
   }
@@ -194,9 +211,10 @@ function paysIntoALock(round, invite, LockClient) {
 // the slowest step of a paying join - and the deposit, the lock and the withdraw use that same open client rather than
 // joining again on the same store. A join that failed is not kept.
 const openWallets = new WeakMap();
-export async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000 } = {}) {
+export async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
-  const secret = walletSecretFor(seed, round.federationId);
+  // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one (kanban #209)
+  const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
   const byStore = storage && (openWallets.get(LockClient) || openWallets.set(LockClient, new WeakMap()).get(LockClient));
   const open = byStore && byStore.get(storage);
@@ -213,7 +231,7 @@ export async function playerWallet({ round, invite, seed, LockClient, storage, o
   }
   const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;
-  const recover = !kept && typeof LockClient.recover === 'function' && seedRecovers(storage, seed);
+  const recover = !kept && !ancestor && typeof LockClient.recover === 'function' && seedRecovers(storage, seed);
   onStep(kept ? 'reopening the player wallet this tab keeps for this federation'
     : recover ? 'recovering the player wallet of this seed from the federation' : 'joining the federation with the player wallet');
   // AND A JOIN THAT NEVER ANSWERS IS REFUSED BY NAME after `joinWaitMs`, so PLAY can be pressed again

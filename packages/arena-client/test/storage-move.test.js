@@ -117,3 +117,24 @@ test('storage the browser refuses does not stop the page', () => {
   assert.doesNotThrow(() => vm.runInNewContext(MOVE[1], { window: {
     get localStorage() { throw new Error('SecurityError'); }, sessionStorage: refused } }));
 });
+
+// THE SEED'S BLWP-ERA WALLET IS STILL FOUND AFTER THE MOVE (kanban #209, pick (a)): the page made it under the BLWP tag
+// (phase0's walletSecretFor: 40638580f186c452... for this seed and federation, measured against e7775f80's own code), its
+// store's keys move to arena.walletdb.* with the same secret hash, and the sweep (index.html combineWallets) counts it.
+test('a seed\'s BLWP-era wallet store moves with the browser and is found under the ancestor secret, not the Arena one', async () => {
+  const { ancestorWalletSecretFor, walletSecretFor, phraseWalletEntries } = await import('../src/page-lock.js');
+  const seed = new Uint8Array(32).fill(0x5c), fed = new Uint8Array(32).fill(0xab);
+  const old = ancestorWalletSecretFor(seed, fed);
+  assert.equal(Buffer.from(old).toString('hex').slice(0, 16), '40638580f186c452', 'not the secret the BLWP page used');
+  assert.notEqual(Buffer.from(old).toString('hex'), Buffer.from(walletSecretFor(seed, fed)).toString('hex'));
+  // the BLWP page's store of that wallet, with the ledger row that names its federation
+  const staged = mem(); const w = walletStoreFor(staged, fed, old); w.put('notes', '{"n":5}'); w.put('db.1', 'y');
+  const local = mem(), session = mem();
+  for (const [k, v] of staged.m) local.setItem(k.replace(/^arena\./, 'blwp.'), v);
+  local.setItem('blwp.ledger.' + 'ab'.repeat(32), '[]');
+  runMove(local, session);
+  const seedHex = '5c'.repeat(32), fedHex = 'ab'.repeat(32);
+  assert.equal(phraseWalletEntries(local, seedHex, fedHex, { ancestor: true }), 2, 'the BLWP wallet is not found after the move');
+  assert.equal(phraseWalletEntries(local, seedHex, fedHex), 0, 'the Arena wallet claims the BLWP wallet\'s entries');
+  assert.deepEqual(JSON.parse(walletStoreFor(local, fed, old).entries()), [['notes', '{"n":5}'], ['db.1', 'y']]);
+});
