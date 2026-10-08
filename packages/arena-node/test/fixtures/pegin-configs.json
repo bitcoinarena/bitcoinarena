@@ -1,0 +1,69 @@
+{
+ "what": "Item 5, 2026-09-29 (PEGIN-WATCH-1225): the configs of the peg-in miss. staleGateway is gateway B's client config for 337ae01a that derived tb1q05fn (paid by 9d68228c:0); currentGateway is its config after the rejoin (derived tb1qdc38, paid by 425279e9:0); federation is what the running guardians serve. Public configs, trimmed to the keys, the finality and the peg-in descriptor.",
+ "federationId": "337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e",
+ "staleAddress": "tb1q05fn3wwe3cs87h4sazfqrl4gvlkzrg36rc0elyrz44lf3yhsqraqnxtsh5",
+ "currentAddress": "tb1qdc38s9faetpjymunqr87tv9kavy0kwhq7f3upl54uxk3tvwun54qrljlfv",
+ "staleGateway": {
+  "global": {
+   "broadcast_public_keys": {
+    "0": "0383be7ef096199939f33e04dd42a0b599b192385ff47ec0b98d274d71c4e8522e",
+    "1": "0257c7aa37a25d0984831343dd7e79cf7c89b6d64924e47dc53cf3f61023b0266f",
+    "2": "02b9c4be744936d3fb1cce319b8e17769f11131e570180e83c635751119693512f",
+    "3": "033c669edc9102a76b13658ae6eb41689f825fd507e159bf2202070ee91f72b7aa",
+    "4": "031803c607839c01ad49e05900c9ad53c71b8a8dc310bfe544a338fc1efb1864d2",
+    "5": "02fdee25b6312d753c8b19a426b4d3df3abd75270b4c01e0aa16fcbaab8878a1b1",
+    "6": "02c5770501aaf816aff9d34e80f3f6649b93021693f2cd1376bd907e5b5bd708d8"
+   }
+  },
+  "modules": {
+   "wallet": {
+    "kind": "wallet",
+    "network": "testnet4",
+    "finality_delay": 2,
+    "peg_in_descriptor": "wsh(sortedmulti(5,02d3691c6ef77bf7442bd3350c5c81070445f88c493af0d546ba598a83f4229c64,02195c5806e09c41070a0c87ac10b549cce4e1672837565f37a7a933efec6801f6,02d3ce37a8e4710a057de92c699710d4dc9d4c85dfed47d25999eddc92a0cde002,0273bbf22c4df838a0642299344ec0253724d3d5aa2f26befb23ee63efed679d79,0211d1e3c1576a065848e2b654324984085124c968b73d909e1eec88a4455e3545,02277508124498ea7f33a8073d83d29b7d6d7551ac55382bae778bbe340f58de17,024b27fcc24e0ecc504a18a37a3c53d379e701e9063f4b2dce82edc44fa6ce26f4))#sw7zld4m"
+   }
+  }
+ },
+ "currentGateway": {
+  "global": {
+   "broadcast_public_keys": {
+    "0": "027acbeac63a5e1e54cd4048b2372d9c05caa7c5ffca3d0d8b59b1fc0884cf812b",
+    "1": "03610d2cdca659586689edc7de39aab459f21c5cc691d2cff2a4fb12446b2226df",
+    "2": "0332875f35309d6ef7d3b1eb782d803189e42edd6f815c9a7931e99cff06e85ee8",
+    "3": "03884c3aafcb6f2a68f4f0c2669532241dbcbb622fd5ff0c0845b758aa9894be7b",
+    "4": "02f750bda3f62018f37cd45ac03ee6e539f53a8b145cf26cf5ef2bbe9e8090375e",
+    "5": "03d5131f38a6105f69b08a393fefddec929eb16056a790647d18406035486526a8",
+    "6": "03c864c9b73c4d9b7878798a25a52b5fd695b2ff707d994c5c9a5fc3baca5eb023"
+   }
+  },
+  "modules": {
+   "wallet": {
+    "kind": "wallet",
+    "network": "testnet4",
+    "finality_delay": 100,
+    "peg_in_descriptor": "wsh(sortedmulti(5,03d0720e3bb6b0197b00c27e2e6ec558ea59758a972bb3908483bf1db33a34d368,0304d35c5f26e5ee87f6f0b037209593f320e3ad5d283f029cae173a8f43ad1fb1,03d330d7c6c58d79e438d348e55ea923776ca0477c3f3394e6d839590d97ce0595,03f057a74d597493bf9dda4ac1198197a91d6e425e58604708d8fc862254829d42,03c11969d97be67749290ecc6db82529ce609a8974d1ae74dca438b8c9fbb8fd6d,02e8e66a8ac6ff2c18e7b2c1a057f53fc2f329553dcc3fa9acc45ae3330c2d8cb4,0272976b9049d969e9e9c26073fa962b7025fcc361f0911b863a705c5a9046f13f))#tp65l47x"
+   }
+  }
+ },
+ "federation": {
+  "global": {
+   "broadcast_public_keys": {
+    "0": "027acbeac63a5e1e54cd4048b2372d9c05caa7c5ffca3d0d8b59b1fc0884cf812b",
+    "1": "03610d2cdca659586689edc7de39aab459f21c5cc691d2cff2a4fb12446b2226df",
+    "2": "0332875f35309d6ef7d3b1eb782d803189e42edd6f815c9a7931e99cff06e85ee8",
+    "3": "03884c3aafcb6f2a68f4f0c2669532241dbcbb622fd5ff0c0845b758aa9894be7b",
+    "4": "02f750bda3f62018f37cd45ac03ee6e539f53a8b145cf26cf5ef2bbe9e8090375e",
+    "5": "03d5131f38a6105f69b08a393fefddec929eb16056a790647d18406035486526a8",
+    "6": "03c864c9b73c4d9b7878798a25a52b5fd695b2ff707d994c5c9a5fc3baca5eb023"
+   }
+  },
+  "modules": {
+   "wallet": {
+    "kind": "wallet",
+    "network": "testnet4",
+    "finality_delay": 100,
+    "peg_in_descriptor": "wsh(sortedmulti(5,03d0720e3bb6b0197b00c27e2e6ec558ea59758a972bb3908483bf1db33a34d368,0304d35c5f26e5ee87f6f0b037209593f320e3ad5d283f029cae173a8f43ad1fb1,03d330d7c6c58d79e438d348e55ea923776ca0477c3f3394e6d839590d97ce0595,03f057a74d597493bf9dda4ac1198197a91d6e425e58604708d8fc862254829d42,03c11969d97be67749290ecc6db82529ce609a8974d1ae74dca438b8c9fbb8fd6d,02e8e66a8ac6ff2c18e7b2c1a057f53fc2f329553dcc3fa9acc45ae3330c2d8cb4,0272976b9049d969e9e9c26073fa962b7025fcc361f0911b863a705c5a9046f13f))#tp65l47x"
+   }
+  }
+ }
+}

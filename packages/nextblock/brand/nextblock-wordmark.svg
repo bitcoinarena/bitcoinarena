@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" width="1200" height="300">
+  <title>Tick Tock, Next Block</title>
+  <!-- the wordmark (#228): the icon beside the name, white then the bitcoin orange -->
+  <g transform="translate(20 22) scale(0.5)"><rect width="512" height="512" rx="112" fill="#0d1014"/>
+  <circle cx="256" cy="256" r="178" fill="none" stroke="#f7931a" stroke-width="44"/>
+  <g fill="#f7931a"><rect x="244" y="96" width="24" height="40" rx="6"/><rect x="244" y="376" width="24" height="40" rx="6"/><rect x="96" y="244" width="40" height="24" rx="6"/><rect x="376" y="244" width="40" height="24" rx="6"/></g>
+  <rect x="240" y="132" width="32" height="140" rx="16" fill="#ffffff"/>
+  <g transform="rotate(60 256 256)"><rect x="244" y="190" width="24" height="70" rx="12" fill="#ffffff"/><rect x="214" y="122" width="84" height="84" rx="14" fill="#f7931a" stroke="#ffffff" stroke-width="10"/></g>
+  <circle cx="256" cy="256" r="26" fill="#ffffff"/></g>
+  <g font-family="'Arial Black','Helvetica Neue',Arial,'DejaVu Sans',sans-serif" font-weight="900" letter-spacing="-2">
+    <text x="320" y="138" font-size="104" fill="#ffffff">TICK TOCK,</text>
+    <text x="320" y="252" font-size="104" fill="#f7931a">NEXT BLOCK</text>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Recorded off the PhysX truck by PhysxReferenceTests.MeasureThePhysxWall.",
+    "The truck is reversed at full throttle into the post office frontage and",
+    "left to come to rest. `gap` is the distance from the tail of the 6.4 m",
+    "chassis to the face of the wall - negative because PhysX lets a collider",
+    "settle a few centimetres into what it is resting against.",
+    "",
+    "This is the number the core's own collision has to reproduce: not that it",
+    "stops, but that it stops in the same PLACE, or a doorway the player can",
+    "see they fit through becomes one they bounce off."
+  ],
+  "wallFace": -128.5,
+  "restRearX": -128.6,
+  "gap": -0.10,
+  "halfChassis": 3.2,
+  "tolerance": { "_comment": "metres", "gap": 0.35 }
+}

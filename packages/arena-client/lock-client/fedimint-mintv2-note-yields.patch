@@ -1,0 +1,90 @@
+diff -ru na/modules/fedimint-mintv2-client/src/api.rs nb/modules/fedimint-mintv2-client/src/api.rs
+--- a/modules/fedimint-mintv2-client/src/api.rs	2026-10-06 12:01:24.574791233 +0200
++++ b/modules/fedimint-mintv2-client/src/api.rs	2026-10-06 12:01:24.601793187 +0200
+@@ -54,6 +54,31 @@
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
+         tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> BTreeMap<PeerId, Vec<BlindedSignatureShare>> {
++        // BLWP kanban #192: a threshold of well-formed answers first (no CPU work), then each note's combined blinded
++        // signature checked against the aggregate key with a real yield between notes - the checks ran as one synchronous
++        // block of ~8 pairings inside the query strategy and held the client's one thread (wasm) for ~250 ms, measured
++        // as the next lock's acceptance waiting behind it. A failed check falls back to the strategy below, as before.
++        let gathered = self
++            .request_with_strategy_retry(
++                GatherThreshold { len: issuance_requests.len(), threshold: self.all_peers().to_num_peers().threshold(), gathered: BTreeMap::new() },
++                SIGNATURE_SHARES_ENDPOINT.to_owned(),
++                ApiRequestErased::new(range),
++            )
++            .await;
++        let mut all_valid = true;
++        for (i, request) in issuance_requests.iter().enumerate() {
++            let agg = tbs::aggregate_signature_shares(
++                &gathered.iter().map(|(peer, shares)| (peer.to_usize() as u64, shares[i])).collect(),
++            );
++            if !tbs::verify_blinded_signature(request.blinded_message(), agg, tbs_agg_pks[&request.denomination]) {
++                all_valid = false;
++                break;
++            }
++            fedimint_core::runtime::sleep(Duration::from_millis(1)).await;
++        }
++        if all_valid {
++            return gathered;
++        }
+         self.request_with_strategy_retry(
+             // This query collects a threshold of 2f + 1 valid blind signature shares
+             CombinedShareThreshold::new(issuance_requests, tbs_pks, tbs_agg_pks, self.all_peers().to_num_peers()),
+@@ -132,6 +157,31 @@
+ /// fails its note's check. Only then is every gathered answer checked share by share as before, the guardians with a bad
+ /// share are dropped (and not asked again, as before), and the query waits for more answers. The result is the same as the
+ /// stock strategy's: exactly a threshold of answers whose every share is valid. The blinded messages are computed once.
++/// BLWP kanban #192: a threshold of answers of the right length, unchecked - the caller checks them note by note.
++struct GatherThreshold {
++    len: usize,
++    threshold: usize,
++    gathered: BTreeMap<PeerId, Vec<BlindedSignatureShare>>,
++}
++
++impl QueryStrategy<Vec<BlindedSignatureShare>, BTreeMap<PeerId, Vec<BlindedSignatureShare>>> for GatherThreshold {
++    fn process(
++        &mut self,
++        peer: PeerId,
++        shares: Vec<BlindedSignatureShare>,
++    ) -> QueryStep<BTreeMap<PeerId, Vec<BlindedSignatureShare>>> {
++        if shares.len() != self.len {
++            return QueryStep::Failure(ServerError::InvalidResponse(anyhow::anyhow!("Invalid number of signatures shares")));
++        }
++        self.gathered.insert(peer, shares);
++        if self.gathered.len() < self.threshold {
++            QueryStep::Continue
++        } else {
++            QueryStep::Success(std::mem::take(&mut self.gathered))
++        }
++    }
++}
++
+ struct CombinedShareThreshold {
+     requests: Vec<NoteIssuanceRequest>,
+     messages: Vec<BlindedMessage>,
+diff -ru na/modules/fedimint-mintv2-client/src/output.rs nb/modules/fedimint-mintv2-client/src/output.rs
+--- a/modules/fedimint-mintv2-client/src/output.rs	2026-10-06 12:01:24.578791523 +0200
++++ b/modules/fedimint-mintv2-client/src/output.rs	2026-10-06 12:01:24.601793187 +0200
+@@ -104,7 +104,8 @@
+             // BLWP kanban #178: one macrotask yield before this output's CPU work (each note's blinded message, the share
+             // checks, the notes). Measured on the test host: run in the same microtask drain as the acceptance, it held the
+             // lock's answer to JS back by ~100-240 ms. The work and its checks are unchanged; it only starts a turn later.
+-            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::ZERO).await;
++            // BLWP kanban #192: a real yield - sleep(ZERO) is ready at its first poll on wasm (n0_future) and yielded nothing
++            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(1)).await;
+ 
+             let shares = global_context
+                 .module_api()
+@@ -159,6 +160,9 @@
+             dbtx.module_tx()
+                 .insert_new_entry(&SpendableNoteKey(spendable_note), &())
+                 .await;
++
++            // BLWP kanban #192: a real yield after each note's check (a pairing), so another lock's answers are read between
++            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::from_millis(1)).await;
+         }
+ 
+         MintOutputStateMachine {

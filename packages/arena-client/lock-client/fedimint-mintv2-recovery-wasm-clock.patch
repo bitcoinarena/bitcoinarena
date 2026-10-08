@@ -1,0 +1,13 @@
+--- a/modules/fedimint-mintv2-client/src/api.rs	2026-10-04 19:59:09.261109527 +0200
++++ b/modules/fedimint-mintv2-client/src/api.rs	2026-10-04 19:59:09.264109744 +0200
+@@ -116,7 +116,9 @@
+         start: u64,
+         end: u64,
+     ) -> anyhow::Result<Vec<RecoveryItem>> {
+-        let result = tokio::time::timeout(
++        // BLWP: the runtime's timeout, not tokio's - tokio's reads std::time::Instant, which panics on wasm32
++        // (fedimint_core::runtime is n0_future's, web time in a browser), so recovery can run in the page.
++        let result = fedimint_core::runtime::timeout(
+             timeout,
+             self.request_single_peer::<Vec<RecoveryItem>>(
+                 RECOVERY_SLICE_ENDPOINT.to_owned(),

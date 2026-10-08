@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Measured off the ORIGINAL PhysX truck by PhysxReferenceTests in the Unity",
+    "project, which drives TruckController with scripted inputs and records what",
+    "it does. This is the definition of how the game drives; the deterministic",
+    "core is held to it.",
+    "",
+    "Recorded 2026-09-01 against unity-proto at the freeze of the single-player",
+    "build. Regenerate with: Unity -runTests -testFilter PhysxReferenceTests,",
+    "then read the PHYSXREF lines out of the log."
+  ],
+  "accel": {
+    "1": 3.811, "3": 9.594, "5": 15.634, "8": 18.695, "10": 19.986, "13": 22.478
+  },
+  "turns": [
+    { "steer": 0.5, "v": 18.10, "yaw": 35.05, "radius": 29.6, "slip": 4.24, "wheel": 10.32 },
+    { "steer": 1.0, "v": 10.77, "yaw": 56.05, "radius": 11.0, "slip": 8.11, "wheel": 26.08 }
+  ],
+  "tolerance": {
+    "_comment": "Fractions. Yaw is the tightest because it is what a player calls steering strength; the speed a hard corner scrubs off is the loosest, because the core models tyre scrub with one coefficient and PhysX with a friction curve.",
+    "accel": 0.15, "yaw": 0.10, "radius": 0.20, "slip": 0.25, "wheel": 0.10, "v": 0.20
+  }
+}

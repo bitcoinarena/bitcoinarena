@@ -1,0 +1,10 @@
+[Unit]
+Description=BLWP dev donation client "dev <x>" (the owner 2026-10-03): asks the seats what its key was given, redeems in every federation, withdraws to LND C
+[Service]
+ExecStart=/home/operator/.nvm/versions/node/v24.15.0/bin/node /home/operator/blwp-testnet4/code/packages/arena-donor/bin/arena-donor.mjs loop /home/operator/blwp-testnet4/donor-<x>
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/operator/blwp-testnet4/donor-<x>/donor.log
+StandardError=append:/home/operator/blwp-testnet4/donor-<x>/donor.log
+[Install]
+WantedBy=default.target
