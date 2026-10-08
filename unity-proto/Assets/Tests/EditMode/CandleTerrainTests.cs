@@ -203,4 +203,21 @@ public class CandleTerrainTests
         for (int i = 0; i < 120; i++) { ground += 2.75f * dt; drawn = ArmyRenderer.EaseRest(drawn, ground, dt); worst = Mathf.Max(worst, Mathf.Abs(drawn - ground)); }
         Assert.Less(worst, 1e-4f, $"the hull lagged a slope by {worst:0.0000} m");
     }
+    // THE GATE OF COMMENT 979 (kanban #266): a rebuild is due when a candle word changes, never for the shift alone - the
+    // shift is what the slide carries between rebuilds
+    [Test]
+    public void ARebuildIsDueForACandleWordButNotForTheShift()
+    {
+        var built = new int[Blwp.Layout.CV_TOTAL];
+        for (int i = 0; i < built.Length; i++) built[i] = i * 7;
+        var now = (int[])built.Clone();
+        Assert.IsFalse(CandleTerrain.WordsChanged(now, built), "the same words call for a rebuild");
+        now[Blwp.Layout.CV_SHIFT] += 123456;
+        Assert.IsFalse(CandleTerrain.WordsChanged(now, built), "the shift alone calls for a rebuild");
+        now[Blwp.Layout.CV_FIRST + 5] += 1;
+        Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a changed candle word does not call for a rebuild");
+        now = (int[])built.Clone(); now[Blwp.Layout.CV_FORMING] = -1;
+        Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a new forming candle does not call for a rebuild");
+    }
+
 }
