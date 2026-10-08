@@ -19,6 +19,12 @@ mergeInto(LibraryManager.library, {
     return -new Date().getTimezoneOffset();
   },
 
+  // BENCHMARK (kanban #266, the owner 2026-10-08: "Add a button to the main lobby next to SPECTATE, call it BENCHMARK ... basically it
+  // is spectate with benchmark"): the page's frame-rate test (index.html, arenaBench), once the free camera has settled
+  BlwpBenchmark: function () {
+    setTimeout(function () { if (typeof window.arenaBench === 'function') window.arenaBench(); }, 3000);
+  },
+
   BlwpInit: function (seed) {
     if (typeof BLWP === 'undefined') {
       console.error('[blwp] core bundle not loaded - check the WebGL template');
