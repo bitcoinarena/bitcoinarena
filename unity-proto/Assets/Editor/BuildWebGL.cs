@@ -181,13 +181,15 @@ public static class BuildWebGL
         var subtarget = System.Environment.GetEnvironmentVariable("ARENA_WEBGL_SUBTARGET");
         if (!string.IsNullOrEmpty(subtarget))
         {
-            EditorUserBuildSettings.webGLBuildSubtarget = (WebGLTextureSubtarget)System.Enum.Parse(typeof(WebGLTextureSubtarget), subtarget.Trim());
+            // a list ("ASTC,DXT") builds the player data in every format named, first preferred; the bundles take the first
+            var names = subtarget.Split(',');
+            EditorUserBuildSettings.webGLBuildSubtarget = (WebGLTextureSubtarget)System.Enum.Parse(typeof(WebGLTextureSubtarget), names[0].Trim());
             Debug.Log($"[BuildWebGL] WebGL texture subtarget: {EditorUserBuildSettings.webGLBuildSubtarget}");
             // AND THE PLAYER'S OWN DATA: measured on 0.0.2881, the subtarget (and a reimport) made the streamed bundles ASTC but the
             // first scene's 20 textures stayed DXT - the player data follows the Web player setting "texture compression formats"
             // (m_BuildTargetDefaultTextureCompressionFormat), whose setter Unity 6 keeps internal for the Web. Set by reflection.
-            var fmt = subtarget.Trim().ToUpperInvariant() == "DXT" ? TextureCompressionFormat.DXTC
-                    : (TextureCompressionFormat)System.Enum.Parse(typeof(TextureCompressionFormat), subtarget.Trim());
+            var fmts = System.Array.ConvertAll(names, n => n.Trim().ToUpperInvariant() == "DXT" ? TextureCompressionFormat.DXTC
+                    : (TextureCompressionFormat)System.Enum.Parse(typeof(TextureCompressionFormat), n.Trim()));
             bool set = false;
             foreach (var m in typeof(PlayerSettings).GetMethods(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
             {
@@ -200,9 +202,9 @@ public static class BuildWebGL
                               : ps[0].ParameterType == typeof(BuildTarget) ? (object)BuildTarget.WebGL
                               : ps[0].ParameterType == typeof(UnityEditor.Build.NamedBuildTarget) ? (object)UnityEditor.Build.NamedBuildTarget.WebGL : null;
                 if (target == null) continue;
-                m.Invoke(null, new object[] { target, new[] { fmt } });
+                m.Invoke(null, new object[] { target, fmts });
                 set = true;
-                Debug.Log($"[BuildWebGL] Web texture compression formats set to {fmt} ({ps[0].ParameterType.Name} overload)");
+                Debug.Log($"[BuildWebGL] Web texture compression formats set to {string.Join(", ", fmts)} ({ps[0].ParameterType.Name} overload)");
                 break;
             }
             if (!set) Debug.LogWarning("[BuildWebGL] no SetTextureCompressionFormats(target, formats[]) found: the player data keeps its format");
