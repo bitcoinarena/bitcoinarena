@@ -7187,6 +7187,16 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
       threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
   }),
+  'a1d5b445f5c223769a295d43e541dfedba431cd58d813f0dc75708dc5b094f8b': Object.freeze({
+    name: 'btc-close',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'd6f5a5555f9089e167d41d62cc0f09c4c3f13776e15ab29c0a18f13048d926c6',
+    attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
+      threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+  }),
 });
 
 // ---- arena-protocol/src/known-game.js
@@ -20405,6 +20415,77 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
   return lines;
 }
 
+// ---- arena-client/src/games.js
+// THE GAMES FIRST, THEN THE GAME'S CLIENT (kanban #208, the owner 2026-10-06: "the lobby lists the games the reachable nodes
+// host, then that game's rounds; the page loads the plugin's client by the manifest's hash; one wallet and one seed across
+// games").
+//
+// - `fetchGames` asks every named node GET /games and keeps a game only when the manifest a node served hashes to the game
+//   id it named (game_id = H(GameManifest), §0A.3) - a node names games, it never vouches for one. A game the page pins in
+//   its known-games list is `known`; any other is shown with its developer key and needs the second confirmation (§0A.6).
+// - `gameClientFile` fetches one file of a game's client and hands its bytes back only if their SHA-256 is one of the
+//   manifest's clients[] - the same hashes the repo's client list pins and client-hash.mjs checks from outside the page. A
+//   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
+//   (sessionStorage / localStorage) are the one the player already has.
+
+
+
+const GAMES_ANSWER_MS = 6000;
+
+/**
+ * THE GAMES THE NAMED NODES HOST: [{ id, name, title, icon, attested, known, manifest, manifestHex, nodes }], the pinned
+ * games first, then by how many nodes host each; and the nodes that did not answer or served something that is not a game.
+ */
+async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS } = {}) {
+  if (!Array.isArray(nodes) || !nodes.length) throw new Error('the games are asked of the nodes a lobby was named, and it was named none');
+  const unique = [...new Set(nodes.map((n) => String(n).replace(/\/+$/, '')))];
+  const byId = new Map();
+  const refused = [];
+  const answers = await Promise.all(unique.map((node) => fetcher(`${node}/games`, { signal: AbortSignal.timeout(answerMs) })
+    .then(async (r) => ({ r, body: r.ok ? await r.json() : null }), (e) => ({ e }))));
+  for (const [k, node] of unique.entries()) {
+    const { r, body, e } = answers[k];
+    if (e) { refused.push(`${node}: ${e.message}`); continue; }
+    if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
+    for (const g of (body && Array.isArray(body.games)) ? body.games : []) {
+      const id = String(g && g.id).toLowerCase();
+      let manifest;
+      try { manifest = decodeManifest(fromHex(String(g.manifest))); } catch (err) { refused.push(`${node}: game ${id.slice(0, 16)}: ${err.message}`); continue; }
+      if (toHex(gameIdOf(manifest)) !== id) { refused.push(`${node}: game ${id.slice(0, 16)}: its manifest is another game`); continue; }
+      if (!byId.has(id)) {
+        byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
+          icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),
+          known: Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, id), devKey: toHex(manifest.gameDevPubkey),
+          manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [] });
+      }
+      byId.get(id).nodes.push(node);
+    }
+  }
+  const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
+  return { games, refused };
+}
+
+/** The lobby's rows of one game (each row carries its contract's game id as `game`). */
+const rowsOfGame = (rows, gameIdHex) => (rows || []).filter((r) => String(r && r.game).toLowerCase() === String(gameIdHex).toLowerCase());
+
+/**
+ * ONE FILE OF A GAME'S CLIENT, BY THE MANIFEST'S HASH: its bytes and hash, or a refusal naming the file. `digest(bytes)`
+ * is SHA-256, injected (WebCrypto in the page, node:crypto in a test).
+ */
+async function gameClientFile({ game, url, digest, fetcher = fetch }) {
+  if (!game || !game.manifest) throw new Error('a client is loaded for a game whose manifest is held');
+  if (typeof digest !== 'function') throw new Error('a client file is checked against its hash, and no digest was injected');
+  const pinned = new Set((game.manifest.clients || []).map((h) => toHex(h)));
+  if (!pinned.size) return { ok: false, why: `${game.name}'s manifest names no client` };
+  let r;
+  try { r = await fetcher(url, { cache: 'no-store' }); } catch (e) { return { ok: false, why: `${url}: ${e.message}` }; }
+  if (!r.ok) return { ok: false, why: `${url}: answered ${r.status}` };
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  const hash = toHex(new Uint8Array(await digest(bytes)));
+  if (!pinned.has(hash)) return { ok: false, why: `${url} hashes to ${hash.slice(0, 16)}, which ${game.name}'s manifest does not name: not run` };
+  return { ok: true, bytes, hash };
+}
+
 return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,
          discover: discover, agreedChain: agreedChain,
@@ -20455,6 +20536,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          refundKept: refundKept, refundLine: refundLine,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
+         fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
          lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,

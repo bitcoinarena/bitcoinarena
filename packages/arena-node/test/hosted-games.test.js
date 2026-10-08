@@ -98,3 +98,15 @@ test('a node whose advertisement names a game it does not host does not start, b
     assert.ok(said.some((l) => /hosting tally, which this node's advertisement does not name/.test(l)), said.join('\n'));
   } finally { await d.close(); }
 });
+
+test('GET /games: every game this node hosts, each with the signed manifest that hashes to its id (kanban #208)', async () => {
+  const { decodeManifest, gameIdOf } = await import('../../arena-protocol/src/manifest.js');
+  const { fromHex } = await import('../../arena-protocol/src/hash.js');
+  const d = await serve(openStore(':memory:'), { port: 0, ...opts, plugins: [NEXTBLOCK, TALLY], ownAdvert: { hostedGames: [NEXTBLOCK.gameId, TALLY_GAME_ID] } });
+  try {
+    const got = await json(d, '/games');
+    assert.equal(got.node, toHex(d.round.pubkey));
+    assert.deepEqual(got.games.map((g) => [g.name, g.id, toHex(gameIdOf(decodeManifest(fromHex(g.manifest)))) === g.id, g.attested]).sort(),
+      [['nextblock', toHex(NEXTBLOCK.gameId), true, false], ['tally', toHex(TALLY_GAME_ID), true, false]]);
+  } finally { await d.close(); }
+});

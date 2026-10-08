@@ -1082,7 +1082,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const next = { ...contract,
       ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
       ...(kind.custody ? { custody: kind.custody } : {}),
-      committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start) };
+      committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start),
+      // ANOTHER GAME'S ROUND ON THE SAME SEATS (kanban #208): its fields over this one (a market's game id, no core, no config)
+      ...(kind.fields || {}) };
     censusView = await viewToTip();
     // THE KEEPER'S OWN WORK, NAMED (the owner 2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
     // name nothing but 0-20 ms of frames while this thread burns 190-250 ms, and the keeper opening a round is the

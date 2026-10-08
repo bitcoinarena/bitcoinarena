@@ -90,7 +90,7 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
-import { encodeManifest } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
@@ -2737,6 +2737,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!game || !game.icon || !existsSync(game.icon)) return text(res, 404, 'this node hosts no such game, or it has no icon');
         res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=3600', ...CORS });
         return res.end(readFileSync(game.icon));
+      }
+      // THE GAMES THIS NODE HOSTS (kanban #208): each with its signed manifest, so a lobby lists the games first and a page
+      // loads a game's client only from files whose hashes that manifest names (clients[]). A page takes a manifest only if
+      // it hashes to the game id beside it; nothing here is trusted for itself.
+      if (req.method === 'GET' && url.pathname === '/games') {
+        const games = [...hosted.values()].map((p) => ({ id: toHex(p.gameId), name: p.name, title: p.title || p.name,
+          icon: p.icon ? `game-icon?game=${toHex(p.gameId)}` : null, attested: p.manifest.resultType === RESULT_TYPE.ATTESTED,
+          manifest: toHex(encodeManifest(p.manifest)) }));
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), games }));
       }
       if (req.method === 'GET' && url.pathname === '/rounds' && /text\/html/.test(String(req.headers.accept || ''))) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...CORS });

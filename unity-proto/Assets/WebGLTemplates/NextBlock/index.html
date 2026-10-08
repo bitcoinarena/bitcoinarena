@@ -202,6 +202,21 @@
     #blwp-pick button.cancel { background: transparent; color: #8b949e; border: 1px solid #30363d; margin-top: 12px; width: 100%; }
     #blwp-pick .confirm { color: #f0b72f; font-size: 13px; margin-top: 8px; }
     #blwp-lobby .refused { margin-top: 14px; white-space: pre-wrap; }
+    /* THE GAMES FIRST (kanban #208): when the lobby's nodes host more than one game, the player picks one before anything of
+       a game loads - nextblock goes on to Unity, any other game's own client is loaded by its manifest's hashes. Above the
+       loading screen (z 40); below the pick sheet's invoice (z 38 is the sheet, which a game's client opens over itself) */
+    #arena-games { position: fixed; inset: 0; z-index: 37; display: none; align-items: center; justify-content: center;
+      background: #0d1014; font-family: system-ui, sans-serif; color: #e6edf3; padding: 16px; box-sizing: border-box; }
+    #arena-games.show { display: flex; }
+    #arena-games .box { width: min(520px, 100%); }
+    #arena-games h2 { margin: 0 0 14px; font-size: 20px; }
+    #arena-games button.game { display: flex; align-items: center; gap: 12px; width: 100%; margin: 0 0 10px; padding: 12px 14px;
+      background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-left: 3px solid #f7931a; border-radius: 6px;
+      font: 600 16px/1.3 system-ui, sans-serif; text-align: left; cursor: pointer; }
+    #arena-games button.game img { width: 40px; height: 40px; flex: none; }
+    #arena-games button.game .sub { display: block; color: #8b949e; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    #arena-games .why { color: #f0b72f; font-size: 13px; white-space: pre-wrap; }
+    #arena-client { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 36; background: #0d1014; }
 
     /* Who is in this round. Hidden until a round is named. Pointer-events none
        so it cannot steal the canvas.
@@ -824,6 +839,7 @@
   })();
   </script>
 
+  <div id="arena-games"><div class="box"><h2>Choose a game</h2><div class="list"></div><div class="why"></div></div></div>
   <div id="boot">
     <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
@@ -3704,6 +3720,97 @@
         return { search, named };
       } catch { return null; }
     }
+    // THE GAMES FIRST (kanban #208, the owner 2026-10-06: "the lobby lists the games the reachable nodes host, then that game's
+    // rounds; the page loads the plugin's client by the manifest's hash; one wallet and one seed across games"). The games are
+    // the nodes' GET /games, each kept only if its manifest hashes to its id. One game (or a link naming game=): no choice
+    // is shown. nextblock goes on to Unity; any other game's client - games/<name>/index.html - runs only if its bytes hash
+    // to one of its manifest's clients[], in a frame of this same page's origin, so the wallet and the seed are the ones this
+    // tab already holds. Answers the chosen game, or null when the nodes name none.
+    async function chooseTheGame(nodes) {
+      if (!BLWPCLIENT.fetchGames) return null;
+      let got;
+      // 2.5 s AT MOST (the owner 2026-10-02: Join to the round loaded in 2-3 s): a node slower than that is not asked to be waited
+      // for - its games are the ones the others name, and with none named the page is nextblock's, as before
+      const t0 = Date.now();
+      try { got = await BLWPCLIENT.fetchGames({ nodes, answerMs: 2500 }); } catch (e) { console.warn('[arena] games: ' + e.message); return null; }
+      console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
+      window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
+      if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));
+      const named = new URLSearchParams(location.search.replace(/^\?/, '')).get('game');
+      let game = named ? got.games.find((g) => g.id === String(named).toLowerCase() || g.name === named) : null;
+      if (!game && got.games.length === 1) game = got.games[0];
+      if (!game && got.games.length > 1) {
+        const el = document.getElementById('arena-games');
+        const list = el.querySelector('.list');
+        list.textContent = '';
+        game = await new Promise((chosen) => {
+          for (const g of got.games) {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.dataset.game = g.id;
+            if (g.icon) { const i = document.createElement('img'); i.src = g.icon; i.alt = ''; b.append(i); }
+            const t = document.createElement('span'); t.textContent = g.title;
+            const sub = document.createElement('span'); sub.className = 'sub';
+            sub.textContent = (g.attested ? 'market' : 'game') + ' \u00b7 ' + g.nodes.length + ' node' + (g.nodes.length === 1 ? '' : 's')
+              + (g.known ? '' : ' \u00b7 not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16));
+            t.append(sub); b.append(t);
+            b.addEventListener('click', () => chosen(g));
+            list.append(b);
+          }
+          el.classList.add('show');
+          console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
+        });
+        el.classList.remove('show');
+        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', game.id);
+        history.replaceState(null, '', location.pathname + '?' + q.toString());
+      }
+      if (!game) return null;
+      window.ARENA_GAME_CHOSEN = game;
+      window.ARENA_GAME_ID = game.id;
+      window.ARENA_GAME_NAME = game.name;
+      console.log('[arena] game ' + game.name + ' (' + game.id.slice(0, 16) + ')');
+      return game;
+    }
+    // ANOTHER GAME'S OWN CLIENT, BY ITS MANIFEST'S HASH (kanban #208): fetched, hashed, run from its checked bytes only
+    async function loadTheGameClient(game) {
+      const digest = (b) => crypto.subtle.digest('SHA-256', b);
+      const t0 = Date.now();
+      const file = await BLWPCLIENT.gameClientFile({ game, url: 'games/' + encodeURIComponent(game.name) + '/index.html', digest });
+      if (!file.ok) throw new Error(file.why);
+      // WHAT THE CLIENT IS HANDED: the engine's (this page's lobby, pick sheet, wallet and seed), never a second copy of them
+      window.ARENA_GAME = {
+        game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
+          outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length },
+        clientHash: file.hash,
+        rows: () => (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+          stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
+        identity: () => window.BLWP_IDENTITY || null,
+        join: (id) => (window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false),
+        state: () => ({ join: window.BLWP_JOIN || null, picks: (BLWPCLIENT.marketLines && window.BLWP_MARKET_LINES) ? window.BLWP_MARKET_LINES() : [] }),
+        back: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
+          location.search = q.toString(); },
+      };
+      const frame = document.createElement('iframe');
+      frame.id = 'arena-client';
+      frame.title = game.title;
+      frame.src = URL.createObjectURL(new Blob([file.bytes], { type: 'text/html' }));
+      document.body.appendChild(frame);
+      boot.remove();
+      console.log('[arena] ' + game.name + ' client ' + file.hash.slice(0, 16) + ' loaded by its manifest hash, ' + (Date.now() - t0) + ' ms');
+    }
+    // A GAME'S CLIENT THAT IS NOT ITS MANIFEST'S IS NOT RUN, and the player is told why, with the way back to the games
+    function gameNotLoaded(e) {
+      const el = document.getElementById('arena-games');
+      const g = window.ARENA_GAME_CHOSEN || {};
+      el.querySelector('h2').textContent = (g.title || 'That game') + ' cannot be loaded';
+      el.querySelector('.why').textContent = e.message;
+      const list = el.querySelector('.list'); list.textContent = '';
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.textContent = '\u2190 Games';
+      b.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); location.search = q.toString(); });
+      list.append(b);
+      el.classList.add('show');
+      if (boot.parentNode) boot.remove();
+      window.ARENA_GAME_REFUSED = e.message;
+      console.error('[arena] ' + e.message);
+    }
     async function showTheLobbyIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.lobbyQuery) return false;
       let search = location.search;
@@ -3720,6 +3827,9 @@
       window.BLWP_LEDGER_LOBBY = testnet ? testnet.named : named;
       window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
+      // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
+      const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
+      window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
       // WHICH LOBBY A ROW CAME FROM, so its join - PLAY, or the next round after a run - carries that lobby's own link
       const rowSearch = window.BLWP_ROW_SEARCH = new Map();
       // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
@@ -3787,6 +3897,11 @@
       };
       const draw = (got, got2) => {
         const now = Date.now();
+        // THE CHOSEN GAME'S ROWS ONLY (kanban #208)
+        if (window.ARENA_GAME_ID) {
+          got = Object.assign({}, got, { rows: BLWPCLIENT.rowsOfGame(got.rows, window.ARENA_GAME_ID) });
+          if (got2) got2 = Object.assign({}, got2, { rows: BLWPCLIENT.rowsOfGame(got2.rows, window.ARENA_GAME_ID) });
+        }
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and what the paying one
         // costs. WITH THE TESTNET LOBBY the free row is this lobby's and the paying row the testnet's: both, always.
         // A SIDE WHOSE NODES DID NOT ANSWER THIS PAINT KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25: "Do not drop free to show
@@ -4324,7 +4439,10 @@
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
       .then((lobby) => (lobby ? null : joinOrBackToTheLobby()))
-      .then(() => document.body.appendChild(script))
+      // NEXTBLOCK'S CLIENT IS UNITY; ANY OTHER GAME'S IS ITS OWN, loaded by its manifest's hash (kanban #208)
+      .then(() => (window.ARENA_UNITY === false
+        ? loadTheGameClient((BLWPCLIENT.fetchGames && window.ARENA_GAME_CHOSEN) || null).catch(gameNotLoaded)
+        : document.body.appendChild(script)))
       .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
   </script>
 </body>
