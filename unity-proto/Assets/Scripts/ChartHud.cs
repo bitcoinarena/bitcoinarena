@@ -452,7 +452,7 @@ public class ChartHud : MonoBehaviour
         if (Event.current.type == EventType.Repaint)
         {
             int said = Watch.Revision;
-            Watch.Observe(_view, System.DateTime.Now, Time.unscaledTime, Blwp.BlwpCore.Tick);
+            Watch.Observe(_view, LocalWall.Now, Time.unscaledTime, Blwp.BlwpCore.Tick);
             if (Watch.Revision != said) Blwp.DailyLobby.AssaultShown(Watch.AsJson());
         }
 
@@ -913,4 +913,19 @@ public class ChartHud : MonoBehaviour
         GUI.DrawTexture(new Rect(a.x, a.y - width * 0.5f, len, width), _flat);
         GUI.matrix = m;
     }
+}
+
+/// <summary>
+/// THE WALL CLOCK WITHOUT THE TIME-ZONE DATABASE (kanban #266): DateTime.Now made IL2CPP read and parse the time-zone file on
+/// its first call - 108 ms inside Unity's start at 4x CPU in a named profile (TimeZoneInfo.GetLocalTimeZoneFromTzFile). In the
+/// browser the local time is UTC plus the browser's own offset; elsewhere (the editor, tests) DateTime.Now as before.
+/// </summary>
+static class LocalWall
+{
+#if UNITY_WEBGL && !UNITY_EDITOR
+    [System.Runtime.InteropServices.DllImport("__Internal")] static extern int BlwpLocalOffsetMinutes();
+    public static System.DateTime Now => System.DateTime.SpecifyKind(System.DateTime.UtcNow.AddMinutes(BlwpLocalOffsetMinutes()), System.DateTimeKind.Unspecified);
+#else
+    public static System.DateTime Now => System.DateTime.Now;
+#endif
 }
