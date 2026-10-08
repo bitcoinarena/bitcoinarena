@@ -108,5 +108,16 @@ test('order: recorded first, then redeemed, then the receipt - only for what is 
     .catch((e) => ({ threw: e.message }));
   assert.ok(r3.threw || r3.receipted === 0, 'a receipt went out without a record');
   assert.equal(receipts, 0);
+  // REDEEMED IN AN EARLIER PASS, STILL LISTED: recorded if it was not, named again, never redeemed twice
+  const dir3 = mkdtempSync(join(tmpdir(), 'donor-again-'));
+  const p3 = join(dir3, 'donations.jsonl');
+  const sent3 = []; let redeems3 = 0;
+  const f3 = async (url, opts = {}) => { if (String(url).includes('coingecko')) return priceApi()(url); sent3.push(JSON.parse(opts.body).outpoints); return new Response('{"deleted":1}'); };
+  const c3 = { refund: async () => { redeems3++; return JSON.stringify({ accepted: true, txid: 'ab' }); } };
+  const r4 = await settleRead({ path: p3, donations: [D(1), D(2)], client: c3, key: dev, seats: ['http://seat-a'], fetcher: f3, now: () => AT, done: new Set([D(1).outpoint]) });
+  assert.equal(redeems3, 1, 'a donation redeemed in an earlier pass was redeemed again');
+  assert.deepEqual(readRecord(p3).map((r) => r.outpoint), [D(1).outpoint, D(2).outpoint]);
+  assert.deepEqual(sent3, [[D(2).outpoint, D(1).outpoint]]);
+  assert.equal(r4.receipted, 2);
   void readFileSync;
 });

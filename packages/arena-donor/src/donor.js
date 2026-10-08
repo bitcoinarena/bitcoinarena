@@ -212,7 +212,10 @@ export async function settleRead({ path, donations, client, key, seats, fetcher 
   recordDonations(path, fresh);
   for (const r of fresh) recorded.add(r.outpoint);
   const r = await redeemAll({ client, donations: donations.filter((d) => recorded.has(d.outpoint)), recipientPkHex: key.recipientPkHex, secretHex: key.secretHex, done });
-  const read = [...r.redeemed, ...r.spent].map((d) => d.outpoint).filter((o) => recorded.has(o));
+  // A DONATION REDEEMED IN AN EARLIER PASS THAT A SEAT STILL LISTS (kanban #209: a seat that indexed it again, or whose
+  // earlier receipt it refused) is named again - recorded first like any other - so the seats' copy goes in the end
+  const again = donations.filter((d) => done.has(d.outpoint)).map((d) => d.outpoint);
+  const read = [...r.redeemed, ...r.spent].map((d) => d.outpoint).concat(again).filter((o) => recorded.has(o));
   const answers = [];
   if (read.length) {
     const atMs = now();
