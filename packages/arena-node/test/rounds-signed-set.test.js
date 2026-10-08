@@ -1,9 +1,9 @@
-// THE FULL LISTING FROM ROW SIGNATURES SIGNED IN THE BACKGROUND (kanban #197, the owner 2026-10-06, path A of comment 496).
-// Measured live before: one fresh GET /rounds on seat 7 listed 2,291 rounds in 12.75 s, 8.0 s of it a Schnorr signature
-// per row. Now the seat signs every announced row for one time every 45 s, off the request path, and serves the full
-// listing from the last complete set: a cold GET (a query no kept listing answers) assembles rows from kept signatures.
-// Every row still checks the page's way (lobby.js: one nowMs for the listing, the row's own facts), and a row whose
-// signed facts changed is signed at once, not 45 s later.
+// THE LISTING'S ROW SIGNATURES, SIGNED ON DEMAND ONE WINDOW AT A TIME (kanban #232, the owner 2026-10-08; it was kanban #197's
+// background set). Measured live before: every ~45 s each testnet4 seat signed every announced row - 1,857, ~6.5 s of
+// BIP-340 in a new worker - about 23 of its 29 % CPU, while the lobby asks for a handful. Now a row is signed the first time
+// a listing in the window names it and served from that signature for the rest of the window; nothing asked, nothing
+// signed. Every row still checks the page's way (lobby.js: one nowMs for the listing, the row's own facts), a row whose
+// signed facts changed is signed again at once, and a new window (45 s) signs again what it is asked.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
@@ -39,38 +39,59 @@ const pageChecks = (body) => body.rounds.every((x) => schnorr.verify(fromHex(x.s
   nodePubkey: fromHex(body.node), nowMs: BigInt(body.nowMs), phase: x.phase, assignedHere: !!x.assignedHere,
   joined: Number(x.joined), playing: Number(x.playing) }), fromHex(body.node)));
 
-test('a cold full GET /rounds is served from the background-signed set: under 1 s, every row, every row checks as the page checks, and a changed row is signed at once', async () => {
+test('rows are signed when a listing asks, once a window: nothing unasked, next=1 signs its rows, a full listing the rest, a second costs nothing, a change one row, a new window again', async () => {
   const first = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, now: () => NOW });
   const nodes = [first.round.pubkey];
   await first.close();
   const k0 = seriesIndexAt(NETWORK_ID_REGTEST, NOW) - 1;
   const series = [0, 1, 2, 3].map((j) => seriesTemplate(base(nodes), k0 + j));
-  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series });
+  let clock = NOW;
+  const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => clock, series });
   try {
     const at = `http://127.0.0.1:${s.port}`;
-    const cold = async (n) => { const t = performance.now(); const body = await (await fetch(`${at}/rounds?probe=${n}`)).json(); return { ms: performance.now() - t, body }; };
-    // the first set is signed a few seconds after the start, in slices; until then a cold listing signs on the request
-    let got = null;
-    for (let i = 0; i < 120; i++) { got = await cold(`warm${i}`); if (got.ms < 500) break; await new Promise((r) => setTimeout(r, 500)); }
-    const before = await cold('a');
-    const rows = before.body.rounds.length;
-    console.log('  FACTS:', JSON.stringify({ rows, coldMs: Math.round(before.ms), nowMs: before.body.nowMs }));
+    const ask = async (q) => { const t = performance.now(); const body = await (await fetch(`${at}/rounds${q}`)).json(); return { ms: performance.now() - t, body }; };
+    // NOTHING ASKED, NOTHING SIGNED (the background set signed every row every 45 s)
+    await new Promise((r) => setTimeout(r, 4000));
+    assert.equal(s.listingSignatures(), 0, 'the node signed rows nobody asked for');
+    // THE LOBBY'S ASK: one upcoming round of each series - only those rows are signed
+    const next = await ask('?next=1');
+    const nextRows = next.body.rounds.length;
+    assert.ok(nextRows >= 1 && nextRows <= series.length, `next=1 listed ${nextRows} rows`);
+    assert.equal(s.listingSignatures(), nextRows, 'next=1 signed more than it listed');
+    assert.ok(pageChecks(next.body), 'a next=1 row does not check the page\'s way');
+    // THE FULL LISTING: every announced row, the ones next=1 signed served from the window, the rest signed now
+    const full = await ask('?probe=a');
+    const rows = full.body.rounds.length;
     assert.ok(rows > 2000, `the node lists ${rows} rounds - not a large listing`);
-    assert.ok(before.ms < 1000, `a cold full listing of ${rows} rounds took ${Math.round(before.ms)} ms`);
-    // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - the next listing says so, signed, without waiting out the cycle.
-    // Asked before the first listing's 2,880 signatures are checked: on a loaded machine that check outlasted the test
-    // server's 5 s keep-alive, and fetch reused the closed connection (ECONNRESET, measured on the test host 2026-10-06).
-    const pick = before.body.rounds[5];
+    assert.equal(full.body.nowMs, next.body.nowMs, 'two listings of one window carry different times');
+    assert.equal(s.listingSignatures(), rows, `the full listing of ${rows} rows made ${s.listingSignatures()} signatures in all`);
+    // A SECOND FULL LISTING IN THE WINDOW: no signature, the same rows, quick
+    // (asked before the first listing's signatures are checked: on a loaded machine that check outlasted the test
+    // server's 5 s keep-alive, and fetch reused the closed connection - ECONNRESET, measured on the test host 2026-10-06)
+    const again = await ask('?probe=b');
+    assert.equal(s.listingSignatures(), rows, 'a second listing in the window signed again');
+    assert.deepEqual(again.body.rounds.map((x) => x.sig), full.body.rounds.map((x) => x.sig));
+    // ONE ROW'S SIGNED FACTS CHANGE: a player joins it - signed again at once, for the same time, and nothing else
+    const pick = full.body.rounds[5];
     const own = s.round.playersOf.bind(s.round);
     s.round.playersOf = (rid) => (Buffer.from(rid).toString('hex') === pick.id ? { joined: 1, playing: 0 } : own(rid));
-    const after = await cold('b');
-    assert.ok(pageChecks(before.body), 'a row of the served set does not check the page\'s way');
+    const after = await ask('?probe=c');
     const row = after.body.rounds.find((x) => x.id === pick.id);
-    console.log('  FACTS (changed row):', JSON.stringify({ coldMs: Math.round(after.ms), joinedBefore: pick.joined, joinedAfter: row.joined, sameNowMs: after.body.nowMs === before.body.nowMs }));
     assert.equal(row.joined, 1, 'the changed row still shows its old count');
     assert.notEqual(row.sig, pick.sig, 'the changed row kept its old signature');
-    assert.equal(after.body.rounds.length, rows);
+    assert.equal(s.listingSignatures(), rows + 1, 'a change of one row signed more than that row');
+    assert.equal(after.body.nowMs, full.body.nowMs);
+    // A NEW WINDOW, 45 s on: the lobby's ask is signed for the new time, and only its rows
+    clock = NOW + 45000;
+    const later = await ask('?next=1');
+    assert.equal(BigInt(later.body.nowMs), BigInt(next.body.nowMs) + 45000n, 'the new window does not carry the new time');
+    assert.equal(s.listingSignatures(), rows + 1 + later.body.rounds.length, 'a new window signed more than it was asked');
+    assert.ok(pageChecks(later.body));
+    // the signatures checked last, every request made: checking 2,880 rows outlasts the test server's keep-alive
+    assert.ok(pageChecks(full.body), 'a row of the full listing does not check the page\'s way');
     assert.ok(pageChecks(after.body), 'after the change a row does not check the page\'s way');
-    assert.ok(after.ms < 1000);
+    console.log('  FACTS:', JSON.stringify({ rows, nextRows, fullMs: Math.round(full.ms), againMs: Math.round(again.ms), changedMs: Math.round(after.ms),
+      signatures: s.listingSignatures() }));
+    assert.ok(again.ms < 1000, `a second full listing in the window took ${Math.round(again.ms)} ms`);
   } finally { await s.close(); }
 });
