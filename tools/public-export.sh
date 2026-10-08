@@ -14,23 +14,30 @@ mkdir -p "$OUT"
 # WHAT GOES OUT: the engine and nextblock's packages, the page around the game (template: HTML, JS, icons - none of it
 # Asset Store), and the spec. Committed node_modules (symlinks to a private path) stay behind.
 git -C "$ROOT" archive --format=tar "$C" packages unity-proto/Assets/WebGLTemplates/NextBlock unity-proto/Assets/Plugins/WebGL \
-  multiplayer_p2p.md FEDERATION.md IMPLEMENTATION.md | tar -x -C "$OUT"
+  test-vectors multiplayer_p2p.md FEDERATION.md IMPLEMENTATION.md | tar -x -C "$OUT"
 find "$OUT/packages" -maxdepth 2 -name node_modules -exec rm -rf {} +
 find "$OUT" -name '*.meta' -delete
-# THE OPERATOR'S PRIVATE NAMES, replaced by placeholders (every text file; binaries untouched)
-grep -rIl -E 'example|/home/arena|/Users/arena|100\.(74\.66\.98|85\.86\.106)|[a-z]+-[a-z]+-[a-z]+(-[a-z]+)*\.trycloudflare\.com|a tester' "$OUT" \
+# THE OPERATOR'S PRIVATE NAMES, replaced by placeholders (every text file; binaries untouched). The Funnel host
+# (test-host.<tailnet>.ts.net) is NOT one: it is public - the live page names it (wallet/) - and it is encoded inside test
+# invites, where no text replace can follow it.
+grep -rIl -E '/home/arena|/Users/arena|100\.(74\.66\.98|85\.86\.106)|[a-z]+-[a-z]+-[a-z]+(-[a-z]+)*\.trycloudflare\.com|a tester' "$OUT" \
   | while read -r f; do
-    sed -i -E -e 's#test-host\.example\.ts\.net#node.example.ts.net#g' -e 's#example#example#g' \
-      -e 's#/home/arena#/home/operator#g' -e 's#/Users/arena#/Users/operator#g' \
+    sed -i -E -e 's#/home/arena#/home/operator#g' -e 's#/Users/arena#/Users/operator#g' \
       -e 's#100\.74\.66\.98#100.64.0.10#g' -e 's#100\.85\.86\.106#100.64.0.20#g' \
       -e 's#[a-z]+-[a-z]+-[a-z]+(-[a-z]+)*\.trycloudflare\.com#example-tunnel.trycloudflare.com#g' -e 's#a tester#bitcoin-arena#g' "$f"
   done
-# ONE INSTALL FOR EVERY PACKAGE: Node resolves a package's imports up to this root
+# NEXTBLOCK'S UNITY CLIENT STAYS PRIVATE, so the tests that read it (its C# scripts, models, fixtures, a built player)
+# cannot run here: they are left out, and named in TESTS-LEFT-OUT.txt
+grep -lE 'unity-proto/(Assets/(Scripts|Models|Tests)|build/)' "$OUT"/packages/*/test/*.js 2>/dev/null | sort > "$OUT/.left" || true
+{ echo "Tests of nextblock's Unity client, which is not in this tree:"; sed "s#^$OUT/##" "$OUT/.left"; } > "$OUT/TESTS-LEFT-OUT.txt"
+xargs -r rm -f < "$OUT/.left"; rm -f "$OUT/.left"
+# ONE INSTALL FOR EVERY PACKAGE: npm installs at this root, and each package reaches it through a RELATIVE node_modules
+# link - the layout the source tree has (some files import a dependency by its path under node_modules)
+for p in "$OUT"/packages/*/; do ln -s ../../node_modules "$p/node_modules"; done
 cat > "$OUT/package.json" <<'EOF'
 {
   "name": "bitcoin-arena",
   "private": true,
-  "type": "module",
   "description": "Bitcoin Arena: an engine for games and prediction markets played for bitcoin, and its first game, nextblock",
   "engines": { "node": ">=24" },
   "dependencies": { "@noble/curves": "2.4.0", "ws": "8.21.3", "acorn": "8.18.0", "qrcode-generator": "^1.4.4" }
