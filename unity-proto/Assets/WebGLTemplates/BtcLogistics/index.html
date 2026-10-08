@@ -30,6 +30,12 @@
     /* 90 -> 100 % NEVER STANDS STILL (kanban #266, the owner 2026-10-08: "add 90-100 sub steps ... so it never feels like it
        stalls"): Unity's own start holds the main thread for seconds in one piece, and no text can repaint inside it. This
        layer creeps from 90 % towards 99 % by a TRANSFORM animation, which the compositor runs while the main thread is busy. */
+    /* THE FRAME RATE, ALWAYS ON SCREEN (kanban #266, the owner 2026-10-08: "Zeige die FPS an"): frames a second and the worst frame
+       of the last half second, from the browser's own frame clock - under the gear, clear of the price and the pads */
+    #arena-fps { position: fixed; top: 48px; right: 8px; z-index: 31; pointer-events: none; padding: 2px 6px; border-radius: 4px;
+      font: 600 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(13,16,20,0.72); color: #8b949e; }
+    #arena-fps.good { color: #3fb950; } #arena-fps.ok { color: #f0b72f; } #arena-fps.bad { color: #f85149; }
+    body.blwp-clean #arena-fps { display: none; }
     #creep { position: absolute; left: 90%; top: 0; height: 100%; width: 10%; transform-origin: left center; transform: scaleX(0);
       background: linear-gradient(90deg, #ffc46b, #ffe2a8); border-radius: 0 99px 99px 0; }
     #creep.on { animation: creep90 6s cubic-bezier(0.15, 0.7, 0.3, 1) forwards; }
@@ -386,6 +392,7 @@
        Deposit, Withdraw, Move) is in Settings. THE GEAR FROM THE FIRST PAINT (kanban #200: Settings waited 2.6-5.1 s for
        Unity's lobby): shown over the loading screen and Unity's title too, hidden only while a round's own screens are up
        (paintMoney); the backup warning stays over the lobby alone. -->
+  <div id="arena-fps" aria-hidden="true">– fps</div>
   <div id="blwp-money">
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
          warning is the only thing standing between a player and losing a wallet he never wrote down. -->
@@ -953,6 +960,26 @@
     const boot = document.getElementById('boot');
     const bar = document.getElementById('bar');
     const pct = document.getElementById('pct');
+    // THE FRAME RATE (kanban #266): every requestAnimationFrame is a frame the page painted; twice a second the readout says how
+    // many came and the longest gap between two. window.ARENA_FPS keeps the last reading for a probe.
+    (function frameRate() {
+      const el = document.getElementById('arena-fps');
+      if (!el) return;
+      let last = 0, frames = 0, worst = 0, since = performance.now();
+      const tick = (t) => {
+        if (last) { frames++; worst = Math.max(worst, t - last); }
+        last = t;
+        if (t - since >= 500) {
+          const fps = Math.round(frames * 1000 / (t - since));
+          el.textContent = fps + ' fps · worst ' + Math.round(worst) + ' ms';
+          el.className = fps >= 50 ? 'good' : fps >= 30 ? 'ok' : 'bad';
+          window.ARENA_FPS = { fps, worstMs: Math.round(worst), at: Math.round(t) };
+          frames = 0; worst = 0; since = t;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    })();
     const stage = document.getElementById('stage');
     const err = document.getElementById('err');
 
