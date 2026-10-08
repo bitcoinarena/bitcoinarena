@@ -1263,7 +1263,6 @@ public class Bootstrap : MonoBehaviour
         var urp = go.AddComponent<UniversalAdditionalCameraData>();
         urp.renderPostProcessing = true;
         urp.antialiasing = AntialiasingMode.FastApproximateAntialiasing;
-        GfxSwitches.Camera(urp);
         go.AddComponent<AudioListener>();
         var chase = go.AddComponent<ChaseCamera>();
         chase.target = truck.transform;
