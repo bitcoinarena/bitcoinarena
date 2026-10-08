@@ -69,6 +69,8 @@ walk(SRC + 'winnings.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
 walk(SRC + 'market.js');
+// AND THE GAMES (kanban #208): the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
+walk(SRC + 'games.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -197,6 +199,7 @@ out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collec
 // THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
 // hold, every row checked against its own contract; Join is the join link.
 out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
+out += '         fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,\n';
 out += '         SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,\n';
 // AND ONE FREE ROUND AND ONE PAYING ROUND LISTED, NEVER TWO OF EITHER, with the paying one's stake.
 out += '         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,\n';
