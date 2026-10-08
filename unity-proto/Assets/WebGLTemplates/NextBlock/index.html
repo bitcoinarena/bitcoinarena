@@ -1087,14 +1087,17 @@
       requestAnimationFrame(tick);
     })();
     // THE FRAME-RATE TEST (kanban #266, the owner 2026-10-08: "measure it alone and display the data you need in the fps line"): what
-    // costs the frames on THIS phone. Six modes, 1.5 s to settle and 3 s measured each - as built, 1x pixels, no post-processing,
-    // no shadows, no HDR, all of them off - then back as built. The result stays under the frame rate with the drawing buffer
+    // costs the frames on THIS phone. Eleven modes, 1.5 s to settle and 3 s measured each - as built, 1x pixels, no post-processing,
+    // no shadows, no HDR, the shadow map's parts (cascades, size, reach), all of them off - then back as built. The result stays under the frame rate with the drawing buffer
     // of each pixel mode: if 1x pixels and "all off" barely move it, the frame is the CPU's, else the GPU's. The lobby's BENCHMARK
     // runs it over spectate (the owner 2026-10-08); a tap on the readout runs it again. window.ARENA_BENCH keeps it for a probe.
     (function arenaBench() {
       const box = document.getElementById('arena-fps'), out = document.getElementById('arena-fps-bench');
       if (!box || !out) return;
+      // THE SHADOW MAP'S PARTS (the owner's iPhone 16 Pro, 2026-10-08: as built 31 fps, no shadows 60): cascades, map size, reach
       const MODES = [['as built', {}], ['1x px', { dpr: 1 }], ['no post', { post: 0 }], ['no shadows', { shadows: 0 }], ['no HDR', { hdr: 0 }],
+        ['1 cascade', { cascades: 1 }], ['2 cascades', { cascades: 2 }], ['map 1024', { shadowres: 1024 }], ['reach 120 m', { shadowdist: 120 }],
+        ['1 casc · 1024 · 120 m', { cascades: 1, shadowres: 1024, shadowdist: 120 }],
         ['all off', { dpr: 1, post: 0, shadows: 0, hdr: 0 }]];
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const measure = (ms) => new Promise((r) => {
@@ -1108,7 +1111,8 @@
       function set(m) {
         const u = window.unityInstance, mod = u && u.Module;
         if (mod) { if (baseDpr === null) baseDpr = mod.devicePixelRatio || Math.min(window.devicePixelRatio || 1, 2); mod.devicePixelRatio = m.dpr || baseDpr; }
-        try { u.SendMessage('GfxSwitches', 'Set', 'post=' + (m.post === 0 ? 0 : 1) + ';shadows=' + (m.shadows === 0 ? 0 : 1) + ';hdr=' + (m.hdr === 0 ? 0 : 1)); } catch { /* no receiver: pixels only */ }
+        try { u.SendMessage('GfxSwitches', 'Set', 'post=' + (m.post === 0 ? 0 : 1) + ';shadows=' + (m.shadows === 0 ? 0 : 1) + ';hdr=' + (m.hdr === 0 ? 0 : 1)
+          + ';cascades=' + (m.cascades || 0) + ';shadowres=' + (m.shadowres || 0) + ';shadowdist=' + (m.shadowdist || 0)); } catch { /* no receiver: pixels only */ }
       }
       async function run() {
         if (running || !window.unityInstance || document.body.classList.contains('blwp-clean')) return;
