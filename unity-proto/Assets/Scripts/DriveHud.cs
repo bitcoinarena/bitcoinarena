@@ -40,6 +40,10 @@ public class DriveHud : MonoBehaviour
 
     void Awake()
     {
+        // NO LAYOUT PASS (kanban #266, comment 983, the owner 2026-10-08): this HUD uses no GUILayout, so IMGUI's Layout call of
+        // OnGUI built, measured and drew every label for nothing - 463-476 ms of the 7 s after 100 % at 10x CPU as an Android
+        // phone (named profile), the whole draw twice a frame. Its buttons are plain GUI.Button, on the input and Repaint events.
+        useGUILayout = false;
         _flat = new Texture2D(1, 1); _flat.SetPixel(0, 0, Color.white); _flat.Apply();
     }
 
