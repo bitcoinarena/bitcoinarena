@@ -50,7 +50,7 @@ public class OnlyTheLobbyTests
         string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
         StringAssert.Contains("window.BLWP_ENTRY_REFUSED(net.error)", lib);
         StringAssert.Contains("if (n && !n.client && n.state === 'error') return 1;", lib);
-        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("window.BLWP_ENTRY_REFUSED = async (why) =>", page);
     }
 
@@ -63,7 +63,7 @@ public class OnlyTheLobbyTests
         StringAssert.Contains("if (_isOpen != value) Blwp.BlwpCore.LoadoutOpen(value);", panel);
         string lib = File.ReadAllText(Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
         StringAssert.Contains("window.BLWP_LOADOUT_OPEN = open !== 0;", lib);
-        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        string page = File.ReadAllText(Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         // and the Console is told the strip is gone (427bab76, the console collapse: the strip lives behind its button)
         StringAssert.Contains("|| window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);
         int a = page.IndexOf("const nodeHealth = {};"), b = page.IndexOf("function paintPlayers()");

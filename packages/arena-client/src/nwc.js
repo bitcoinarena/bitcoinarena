@@ -525,7 +525,7 @@ export async function makeInvoice(where, amountMsat, options = {}) {
   const msat = BigInt(amountMsat);
   if (msat <= 0n) return { ok: false, why: 'there is nothing to withdraw' };
   const said = await nwcCall(where, {
-    method: 'make_invoice', params: { amount: Number(msat), description: options.description || 'btc-logistics payout' },
+    method: 'make_invoice', params: { amount: Number(msat), description: options.description || 'Tick Tock, Next Block payout' },
   }, options);
   if (!said.ok) return said;
   const invoice = said.result && said.result.invoice;

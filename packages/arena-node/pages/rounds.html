@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rounds</title>
+<title>Bitcoin Arena · Rounds</title>
 <!-- THE ROUNDS PAGE (the owner 2026-09-28 16:17, ROUNDS-HTML-1617), served by every node at /rounds. Upcoming rounds with
      their start, end and the committees drawn for them; finished rounds open an accordion with who played and who won
      how much. Its data is this node's /api/rounds and /api/round-result. -->
@@ -48,11 +48,13 @@
   @media (max-width: 640px) {
     .row { grid-template-columns: 1fr; }
   }
+  .game { font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .game img { width: 18px; height: 18px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Rounds</h1>
+  <h1>Bitcoin Arena · Rounds</h1>
   <div class="sub" id="node">reading this node…</div>
   <h2>Upcoming <span class="muted" id="upcount"></span></h2>
   <div id="upcoming"><div class="empty">reading…</div></div>
@@ -76,12 +78,14 @@
   const committee = (c) => (c && c.drawn
     ? `<span class="role">game/verify</span>${keys(c.game)}<br><span class="role">settlement</span>${keys(c.settlement)}`
     : `<span class="nodrawn">committee not drawn</span>${c && c.why ? ` <span class="muted">- ${esc(c.why)}</span>` : ''}`);
+  // THE ROUND'S GAME BY THE NAME A PLAYER KNOWS IT AND ITS MARK (kanban #228), when this node hosts it
+  const gameTag = (r) => (r.game ? `<span class="game">${r.game.icon ? `<img src="${esc(r.game.icon)}" alt="">` : ''}${esc(r.game.title || r.game.name)}</span><br>` : '');
   const times = (r) => `<div class="t"><span class="muted">start</span><br>${when(r.startTime)}</div>`
     + `<div class="t"><span class="muted">end</span><br>${when(r.endTime)}</div>`;
 
   function upcomingCard(r) {
     const kind = r.free ? 'free' : `stake ${sats(r.stakeMsat)}`;
-    return `<div class="card"><div class="row"><div class="id" title="${esc(r.id)}">${esc(short(r.id))}`
+    return `<div class="card"><div class="row"><div class="id" title="${esc(r.id)}">${gameTag(r)}${esc(short(r.id))}`
       + `<br><span class="tag${r.entryOpen ? ' open' : ''}">${r.entryOpen ? 'entry open' : r.phase === 'pending' ? 'pending' : 'entry closed'}</span>`
       + `<span class="tag">${esc(kind)}</span></div>${times(r)}`
       + `<div class="who">${committee(r.committee)}</div></div></div>`;
@@ -90,7 +94,7 @@
   function finishedCard(r) {
     const kind = r.free ? 'free' : `stake ${sats(r.stakeMsat)}`;
     return `<div class="card" data-id="${esc(r.id)}"><button class="head" aria-expanded="false">`
-      + `<div class="row"><div class="id" title="${esc(r.id)}">${esc(short(r.id))}<br><span class="tag">${esc(kind)}</span>`
+      + `<div class="row"><div class="id" title="${esc(r.id)}">${gameTag(r)}${esc(short(r.id))}<br><span class="tag">${esc(kind)}</span>`
       + `<span class="tag">${r.joined} joined</span></div>${times(r)}`
       + `<div class="who">${committee(r.committee)}</div></div></button>`
       + `<div class="acc" role="region"><div class="empty">reading…</div></div></div>`;

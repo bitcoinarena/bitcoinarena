@@ -4,6 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
   <title>{{{ PRODUCT_NAME }}}</title>
+  <!-- THE GAME'S NAME AND MARK (kanban #228): Tick Tock, Next Block - its icon in every size a browser, a phone's home
+       screen and a link preview ask for; the files are the game's client assets (nextblock's manifest lists them) -->
+  <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
+  <link rel="icon" href="nextblock-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="site.webmanifest">
+  <meta name="theme-color" content="#0d1014">
+  <meta name="description" content="Tick Tock, Next Block - on Bitcoin Arena">
+  <meta property="og:title" content="Tick Tock, Next Block">
+  <meta property="og:description" content="on Bitcoin Arena">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="nextblock-og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
   <script id="arena-storage-move">
     // THE ONE-TIME MOVE OF THE BROWSER'S KEYS FROM blwp.* TO arena.* (kanban #207), before any other script reads
     // them: the seed, the kept phrases, the vault and the wallet stores were all kept under blwp.*, and every reader
@@ -50,6 +65,8 @@
 
     #title { font-size: clamp(22px, 5vw, 40px); font-weight: 700; letter-spacing: -0.02em; }
     #title span { color: #f7931a; }               /* the one bitcoin orange */
+    #title { display: flex; align-items: center; gap: 0.45em; }
+    #logo { width: 1.5em; height: 1.5em; flex: none; }
     #sub { color: #8b949e; font-size: 14px; margin-top: -14px; }
 
     #track { width: min(440px, 82vw); height: 8px; border-radius: 99px; background: #222932; overflow: hidden; }
@@ -352,6 +369,9 @@
     #blwp-settings .settings-head { display: flex; align-items: center; justify-content: space-between; max-width: 720px;
       margin: 0 auto 14px; }
     #blwp-settings .settings-head h2 { margin: 0; font-size: 20px; color: #f7931a; letter-spacing: 0.04em; }
+    #blwp-settings .settings-head h2 { display: flex; align-items: center; gap: 10px; }
+    #blwp-settings .settings-head h2 .mark { width: 28px; height: 28px; }
+    #blwp-settings .settings-head h2 small { color: #8b949e; font-size: 13px; font-weight: 600; letter-spacing: 0; }
     #blwp-settings .settings-card { max-width: 720px; margin: 0 auto 14px; padding: 14px; box-sizing: border-box;
       background: linear-gradient(180deg, #161c24, #11161c); border: 1px solid #2f3b49; border-radius: 10px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
@@ -425,7 +445,7 @@
     <span class="bal-chip" title="pending"><span class="bal-ico pend">&#8987;</span><span class="bal-what">Pending</span><b id="blwp-lobby-pending">&ndash;</b></span>
   </div>
   <div id="blwp-settings" style="display:none">
-    <div class="settings-head"><h2>SETTINGS</h2><button id="blwp-settings-close" type="button">&#10005; Close</button></div>
+    <div class="settings-head"><h2><img class="mark" src="nextblock-icon.svg" alt="">SETTINGS <small>Tick Tock, Next Block</small></h2><button id="blwp-settings-close" type="button">&#10005; Close</button></div>
     <section class="settings-card" id="blwp-set-wallet">
       <h3>Wallet</h3>
       <div class="bal-grid">
@@ -805,7 +825,7 @@
   </script>
 
   <div id="boot">
-    <div id="title">Bitcoin <span>Logistics</span> War</div>
+    <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
     <div id="howto">
       <img src="howto-1.png" alt="How to play, 1 of 4">

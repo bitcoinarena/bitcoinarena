@@ -33,7 +33,7 @@ test('no endpoint, or ids that are not 32-byte hex, is no link, said by name', (
 });
 
 test('the page copies the link the bundle builds: its hook, and the bundle carrying replayLinkFor and decodeEntryContract', () => {
-  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+  const page = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
   assert.match(page, /window\.BLWP_COPY_REPLAY = async \(roundHex, entryHex, nodes\)/);
   assert.match(page, /BLWPCLIENT\.replayLinkFor\(/);
   assert.match(page, /navigator\.clipboard\.writeText\(link\.url\)/);

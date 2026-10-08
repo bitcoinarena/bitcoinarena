@@ -210,7 +210,8 @@
    "559b5bf9afe09a7e0f2d2a37d720e96350ba49f91215d7280bef328f9f60bd45",
    "b1ff2ba0643403498abcb95f13e4be1569601dfc949bbb7e465362f275e97ac4",
    "9ce4bfb8f22dc9eb6bfb347882b1b082f72ce7bf56130227675474d9777173e7",
-   "cf79300baa5607a22b37fb86c0a171fd0728c0fbc6d1d6c1bb22f7d1c672dc68"
+   "cf79300baa5607a22b37fb86c0a171fd0728c0fbc6d1d6c1bb22f7d1c672dc68",
+   "db9884c9ea983b96aa06c36373d537582489f7eb8918ec00c033caf62e8cf965"
   ],
   "blwp-curve.js": [
    "2492e155b859766f3502f09c7b4e8b16bbe841cde08aea5213b077f1a445c105",
@@ -316,6 +317,30 @@
      "fa6adddda7c27501bdc6545e1086b08920d6749d03c83f3219d3a3b8d0bc8383",
      "f5000b7acccdd30aa4b68b58a2e5ebe81468d64022f67c4e7be1b89a06492df8",
      "e269b2dcfac1e6b7ec997f10ffd336edf6cf9e38a14bc8ffcdbdafba865ae813"
+    ],
+    "nextblock-icon.svg": [
+     "e4d1f42d466617c172976ad8261d1df5b1f685ba42ae155ce7ecbd49ed9ba152"
+    ],
+    "nextblock-wordmark.svg": [
+     "d3c0af239ad31b1b5261a0e4b99c6bd9a524358f3824eb701612d69a0e5da62e"
+    ],
+    "favicon.ico": [
+     "704eb7107d8f3150da6bb5d6a650651112223a611954e2430bfd43198b16946b"
+    ],
+    "apple-touch-icon.png": [
+     "7fc49db0d64f86ca70395934dc2882444792525ccd73902027cb7874604950a5"
+    ],
+    "nextblock-icon-192.png": [
+     "1046a5705e2bf1aaf86d4675638bf507f9ae9e18d0b58f5f4b7eafa43a2737d7"
+    ],
+    "nextblock-icon-512.png": [
+     "74bca071f85c8b65ef4b4f0f1b172b09f6c9c7d303304ffd057ffbd32b1a9dec"
+    ],
+    "nextblock-og.png": [
+     "c06dc0334d80911bc9b4e51f81147b2e2fee90e9aabdcacea91891978a3c1baa"
+    ],
+    "site.webmanifest": [
+     "8643cd11e25859804f72bfb1498aaf9a4dd674b857edb557d50dbe0be2a77e8c"
     ]
    }
   }

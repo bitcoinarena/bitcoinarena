@@ -3683,7 +3683,7 @@ async function makeInvoice(where, amountMsat, options = {}) {
   const msat = BigInt(amountMsat);
   if (msat <= 0n) return { ok: false, why: 'there is nothing to withdraw' };
   const said = await nwcCall(where, {
-    method: 'make_invoice', params: { amount: Number(msat), description: options.description || 'btc-logistics payout' },
+    method: 'make_invoice', params: { amount: Number(msat), description: options.description || 'Tick Tock, Next Block payout' },
   }, options);
   if (!said.ok) return said;
   const invoice = said.result && said.result.invoice;
@@ -7096,7 +7096,7 @@ function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
 // them through known-game.js sharedWorldOf; kanban #203). A paying round naming any other game, or a core or config its
 // game does not list, is refused by `gameIsKnownGood` (known-game.js).
 const KNOWN_GOOD_GAMES = Object.freeze({
-  '918aea2c8e29f49853d3ebc533f6960391b3330fca664006aa4cb4ae8a0d088b': Object.freeze({
+  '495516ae59539661062cd72fd8716afbb378bd386297ab09b20aba0a2cd44150': Object.freeze({
     name: 'nextblock',
     cores: Object.freeze({
       '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),

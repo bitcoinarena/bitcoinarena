@@ -18,7 +18,7 @@ import { coreHashHex } from '../tools/hash-core.js';
 const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
 
 test('nextblock\'s signed manifest is the body its registration builds, signed by its developer key', () => {
-  const body = nextblockManifestBody({ clients: LIST.games.nextblock.pinned['blwp-core.js'], gameDevPubkey: NEXTBLOCK_MANIFEST.gameDevPubkey,
+  const body = nextblockManifestBody({ clients: Object.values(LIST.games.nextblock.pinned).flat(), gameDevPubkey: NEXTBLOCK_MANIFEST.gameDevPubkey,
     gameDonationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients) });
   assert.equal(toHex(encodeManifestBody(NEXTBLOCK_MANIFEST)), toHex(encodeManifestBody(body)),
     'the signed manifest is not the registration: its developer signs a new one with the dev client\'s signer (nextblock/tools/sign-manifest.mjs)');

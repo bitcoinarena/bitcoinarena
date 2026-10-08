@@ -7,12 +7,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const from = html.indexOf('      const donationFetch = (u) => {');
 const to = html.indexOf('      };', from) + '      };'.length;
 const make = (routes) => {
   const asked = [];
-  const f = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window', 'fetch'], html.slice(from, to), 'return donationFetch;')({ BLWP_ALT_ROUTES: routes }, (u) => { asked.push(u); return 'answer'; });
+  const f = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'fetch'], html.slice(from, to), 'return donationFetch;')({ BLWP_ALT_ROUTES: routes }, (u) => { asked.push(u); return 'answer'; });
   return { f, asked };
 };
 

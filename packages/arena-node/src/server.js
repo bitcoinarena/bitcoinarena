@@ -339,7 +339,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A ROUND'S GAME AS THIS NODE HOSTS IT - { id, name } - or null for a game it does not host (kanban #204)
   const gameOfContract = (c) => {
     const p = c && c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
-    return p ? { id: toHex(p.gameId), name: p.name } : null;
+    return p ? { id: toHex(p.gameId), name: p.name, title: p.title || p.name, icon: p.icon ? `game-icon?game=${toHex(p.gameId)}` : null } : null;
   };
   // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): what this seat holds for it - OPEN (no attestation yet), ATTESTED (one
   // outcome), DISPUTED (two standing attestations of different outcomes: the proof, and the round settles on neither) -
@@ -2731,6 +2731,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // are read off the contract this node stores; the counts are its own.
       // THE ROUNDS PAGE (ROUNDS-HTML-1617): a browser asking for /rounds gets the page; everything else - a lobby's
       // fetch, a script - gets the list as before. The page reads /api/rounds and /api/round-result beside it.
+      // A HOSTED GAME'S ICON (kanban #228): its square mark, from the file its registration names, beside its rounds
+      if (req.method === 'GET' && url.pathname === '/game-icon') {
+        const game = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
+        if (!game || !game.icon || !existsSync(game.icon)) return text(res, 404, 'this node hosts no such game, or it has no icon');
+        res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=3600', ...CORS });
+        return res.end(readFileSync(game.icon));
+      }
       if (req.method === 'GET' && url.pathname === '/rounds' && /text\/html/.test(String(req.headers.accept || ''))) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...CORS });
         return res.end(readFileSync(new URL('../pages/rounds.html', import.meta.url)));

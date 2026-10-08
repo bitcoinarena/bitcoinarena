@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
 
-const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const from = html.indexOf('// A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY');
 const to = html.indexOf("const boot = document.getElementById('boot');", from);
 const boot = html.slice(from, to);
@@ -15,7 +15,7 @@ function load(search, noted) {
   const sessionStorage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), removeItem: (k) => kept.delete(k) };
   const location = { pathname: '/', search };
   const history = { replaceState: (_s, _t, url) => { const i = url.indexOf('?'); location.search = i < 0 ? '' : url.slice(i); } };
-  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['sessionStorage', 'location', 'history'], boot)(sessionStorage, location, history);
+  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['sessionStorage', 'location', 'history'], boot)(sessionStorage, location, history);
   return { search: location.search, kept };
 }
 
@@ -46,7 +46,7 @@ test('a key typed into a field never reaches a later window listener (Unity), a 
   const code = html.slice(html.indexOf('(function () {', from2), html.indexOf('})();', from2) + 5);
   const listeners = [];
   const window = { addEventListener: (n, fn, capture) => listeners.push({ n, fn, capture }) };
-  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window'], code)(window);
+  pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window'], code)(window);
   assert.deepEqual(listeners.map((l) => [l.n, l.capture]), [['keydown', true], ['keypress', true], ['keyup', true]]);
   let unity = 0;
   listeners.push({ n: 'keydown', fn: () => { unity++; }, capture: true });   // Unity, registered after the page's guard
@@ -84,7 +84,7 @@ test('the run-end handler leaves a resumed round\'s address until that run ends,
   const runOver = (win, run) => {
     const location = { pathname: '/', search: '?round=aa&play=1' };
     const history = { replaceState: (_s, _t, url) => { const i = url.indexOf('?'); location.search = i < 0 ? '' : url.slice(i); } };
-    pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/BtcLogistics/index.html', import.meta.url), ['window', 'location', 'history', 'prefetchReplayNodes', 'URLSearchParams', 'word', 'run'], body)(
+    pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['window', 'location', 'history', 'prefetchReplayNodes', 'URLSearchParams', 'word', 'run'], body)(
       win, location, history, () => {}, URLSearchParams, 'FINISHED', run);
     return location.search;
   };
