@@ -39,7 +39,11 @@ public class CandleTerrain : MonoBehaviour
 
     const float ONE = 65536f;
     readonly int[] _words = new int[L.CV_TOTAL];
-    Mesh _body, _seam;
+    Mesh _body, _tail, _seam;
+    /// <summary>The last TailCandles candles are their own mesh: the forming candle's words move with the price every tick (kanban
+    /// #266, comment 980), and its neighbour reads its z, so a change in the forming candle alone rebuilds these two.</summary>
+    public const int TailCandles = 2;
+    float _tailShift;
     Material _formingTop;
     float _builtShift, _builtAt = -1f;
     int _builtSurface = int.MinValue;
@@ -48,7 +52,7 @@ public class CandleTerrain : MonoBehaviour
     static bool? _gate;
     static bool Gate => _gate ??= !(Application.absoluteURL ?? "").Contains("candlegate=0");
     int _countedRebuilds; float _countedAt = -1f;
-    int _bySurface, _byWords, _bySlide, _wordAt = -1;
+    int _bySurface, _byWords, _bySlide, _byTail, _wordAt = -1;
     public int Rebuilds { get; private set; }
     /// <summary>The core's candle words this frame, for what lies on the ribbon (the roads); null before the first view.</summary>
     public static int[] LiveWords { get; private set; }
@@ -133,13 +137,19 @@ public class CandleTerrain : MonoBehaviour
     /// The ribbon and its wick ridges for a view, in world space at the view's shift. <paramref name="ground"/> is the core's
     /// ground under the candle layer, in metres, asked at world x, z.
     /// </summary>
-    public static Parts Build(int[] v, Func<float, float, float> ground)
+    public static Parts Build(int[] v, Func<float, float, float> ground) => Build(v, ground, 0, int.MaxValue);
+
+    /// <summary>
+    /// Candles [from, to) only (kanban #266, comment 980): each candle's geometry reads the words and the ground and nothing
+    /// built before it, so the parts of [0, k) followed by those of [k, n) are the parts of [0, n).
+    /// </summary>
+    public static Parts Build(int[] v, Func<float, float, float> ground, int from, int to)
     {
         var p = new Parts();
         int n = Mathf.Min(v[L.CV_COUNT], L.CANDLES), forming = v[L.CV_FORMING];
         float shift = v[L.CV_SHIFT] / ONE, west = L.CANDLE_WEST / ONE, east = L.CANDLE_EAST / ONE, R = L.CANDLE_RAMP / ONE;
         var xs = new List<float>(); var zs = new List<float>();
-        for (int c = 0; c < n; c++)
+        for (int c = Mathf.Max(0, from); c < Mathf.Min(n, to); c++)
         {
             float sx0 = W(v, c, 0) - shift, sx1 = W(v, c, 1) - shift, z0 = W(v, c, 2), z1 = W(v, c, 3), H = W(v, c, 4);
             float xa = Mathf.Max(west, sx0), xb = Mathf.Min(east, sx1);
@@ -289,7 +299,7 @@ public class CandleTerrain : MonoBehaviour
         go.AddComponent<MeshFilter>().sharedMesh = mesh;
         var mr = go.AddComponent<MeshRenderer>();
         mr.sharedMaterials = mats;
-        mr.shadowCastingMode = name == "CandleBodies" ? UnityEngine.Rendering.ShadowCastingMode.On : UnityEngine.Rendering.ShadowCastingMode.Off;
+        mr.shadowCastingMode = name.StartsWith("CandleBodies") ? UnityEngine.Rendering.ShadowCastingMode.On : UnityEngine.Rendering.ShadowCastingMode.Off;
         return mesh;
     }
 
@@ -309,7 +319,9 @@ public class CandleTerrain : MonoBehaviour
     {
         if (_body != null) return;
         _formingTop = Matte(Top(Green));
-        _body = Child("CandleBodies", new[] { Matte(Green), Matte(Red), Matte(Top(Green)), Matte(Top(Red)), _formingTop });
+        var mats = new[] { Matte(Green), Matte(Red), Matte(Top(Green)), Matte(Top(Red)), _formingTop };
+        _body = Child("CandleBodies", mats);
+        _tail = Child("CandleBodiesTail", mats);
         _seam = Child("Seam", new[] { Matte(Color.white) });
     }
 
@@ -337,17 +349,27 @@ public class CandleTerrain : MonoBehaviour
         bool surfaceChanged = surfaceSig != _builtSurface;
         if (surfaceChanged) _ground.Clear();
 
+        int n = Mathf.Min(_words[L.CV_COUNT], L.CANDLES), tailFrom = Mathf.Max(0, n - TailCandles);
         bool wordsChanged = WordsChanged(_words, _builtWords), slid = Mathf.Abs(shift - _builtShift) >= SlideMetres;
-        if (Gate ? surfaceChanged || _builtAt < 0f || wordsChanged || slid
-                 : surfaceChanged || _builtAt < 0f || now - _builtAt >= RebuildSeconds)
+        bool full = Gate ? surfaceChanged || _builtAt < 0f || slid || (wordsChanged && !OnlyLastCandleChanged(_words, _builtWords, n))
+                         : surfaceChanged || _builtAt < 0f || now - _builtAt >= RebuildSeconds;
+        bool tailOnly = !full && Gate && wordsChanged;
+        if (full || tailOnly)
         {
-            // WHY (the 5 s count says it): the surface, the words (and the first word that moved), the slide
-            if (surfaceChanged) _bySurface++; else if (wordsChanged) { _byWords++; _wordAt = FirstChanged(_words, _builtWords); } else if (slid) _bySlide++;
-            _builtAt = now; _builtSurface = surfaceSig; _builtShift = shift;
+            // WHY (the 5 s count says it): the surface, the words (and the first word that moved), the slide; the forming candle alone
+            if (surfaceChanged) _bySurface++; else if (tailOnly) _byTail++; else if (wordsChanged) { _byWords++; _wordAt = FirstChanged(_words, _builtWords); } else if (slid) _bySlide++;
             System.Array.Copy(_words, _builtWords, _words.Length);
-            var p = Build(_words, _ground.Get);
-            Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed, p.FormingTop);
-            _formingGreen = p.FormingGreen;
+            var tail = Build(_words, _ground.Get, tailFrom, n);
+            Set(_tail, tail.Body, tail.SideGreen, tail.SideRed, tail.TopGreen, tail.TopRed, tail.FormingTop);
+            _tailShift = shift;
+            var p = tail;
+            if (full)
+            {
+                _builtAt = now; _builtSurface = surfaceSig; _builtShift = shift;
+                p = Build(_words, _ground.Get, 0, tailFrom);
+                Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed, p.FormingTop);
+            }
+            _formingGreen = tail.FormingGreen || p.FormingGreen;
             BuildSeam(L.CANDLE_WEST / ONE, L.CANDLE_EAST / ONE, Blwp.BlwpCore.FrontlineZ, Surface, _seamVerts, _seamTris);
             Set(_seam, _seamVerts, _seamTris);
             Rebuilds++;
@@ -357,23 +379,35 @@ public class CandleTerrain : MonoBehaviour
             if (Rebuilds <= 3 || Rebuilds == 30 || Rebuilds % 600 == 0)
             {
                 int f = L.CV_FIRST;
-                Debug.Log($"[candles] rebuild={Rebuilds} count={_words[L.CV_COUNT]} shift={shift:0.000} forming={_words[L.CV_FORMING]} first={_words[f]},{_words[f + 1]},{_words[f + 2]},{_words[f + 3]},{_words[f + 4]},{_words[f + 5]} bodyVerts={p.Body.Count} ridgeTriangles={p.RidgeTriangles} formingTop={p.FormingTop.Count / 3} groundAsked={_ground.Asked} {(Rebuilds <= 3 ? "surfaceCheck=after-start" : SurfaceCheck())}");
+                Debug.Log($"[candles] rebuild={Rebuilds} count={_words[L.CV_COUNT]} shift={shift:0.000} forming={_words[L.CV_FORMING]} first={_words[f]},{_words[f + 1]},{_words[f + 2]},{_words[f + 3]},{_words[f + 4]},{_words[f + 5]} bodyVerts={_body.vertexCount + _tail.vertexCount} ridgeTriangles={tail.RidgeTriangles + (p != tail ? p.RidgeTriangles : 0)} formingTop={(tail.FormingTop.Count + (p != tail ? p.FormingTop.Count : 0)) / 3} groundAsked={_ground.Asked} {(Rebuilds <= 3 ? "surfaceCheck=after-start" : SurfaceCheck())}");
             }
         }
         // between rebuilds the ribbon slides with the core's shift, so it glides at 0.576 m/s rather than stepping; the
         // seam line reads the core's front at world x and stays
+        // (each body mesh from the shift it was built at)
         var slide = new Vector3(_builtShift - shift, 0f, 0f);
-        foreach (Transform child in transform) if (child.name != "Seam") child.localPosition = slide;
+        foreach (Transform child in transform)
+            if (child.name == "CandleBodiesTail") child.localPosition = new Vector3(_tailShift - shift, 0f, 0f);
+            else if (child.name != "Seam") child.localPosition = slide;
 
         // HOW OFTEN IT REBUILDS, said every 5 s for the first minute (the probe of comment 979 reads it)
         if (_countedAt < 0f) { _countedAt = now; _countedRebuilds = Rebuilds; }
         else if (now - _countedAt >= 5f && now < 65f)
         {
             Debug.Log($"[candles] rebuilds={Rebuilds - _countedRebuilds} in {now - _countedAt:0.0} s gate={(Gate ? "on" : "off")} total={Rebuilds} " +
-                      $"surface={_bySurface} words={_byWords} (last word {_wordAt}) slide={_bySlide}");
-            _bySurface = _byWords = _bySlide = 0;
+                      $"surface={_bySurface} words={_byWords} (last word {_wordAt}) slide={_bySlide} formingOnly={_byTail}");
+            _bySurface = _byWords = _bySlide = _byTail = 0;
             _countedAt = now; _countedRebuilds = Rebuilds;
         }
+    }
+
+    /// <summary>Only the last candle's words changed (all but the shift): the forming candle moving with the price.</summary>
+    public static bool OnlyLastCandleChanged(int[] now, int[] built, int n)
+    {
+        int last = L.CV_FIRST + (n - 1) * L.CV_WORDS;
+        for (int i = 0; i < last && i < now.Length; i++)
+            if (i != L.CV_SHIFT && now[i] != built[i]) return false;
+        return n > 0;
     }
 
     static int FirstChanged(int[] now, int[] built)
@@ -411,9 +445,13 @@ public class CandleTerrain : MonoBehaviour
         var terrain = FindFirstObjectByType<MempoolTerrain>();
         if (terrain == null) return "surfaceCheck=no-terrain";
         float worst = 0f, worstX = 0f, worstZ = 0f; int n = 0, inBody = 0;
-        var verts = new List<Vector3>(); _body.GetVertices(verts);
-        var tris = new List<int>();
-        for (int s = 0; s < _body.subMeshCount; s++) tris.AddRange(_body.GetTriangles(s));
+        var verts = new List<Vector3>(); var tris = new List<int>();
+        foreach (var mesh in new[] { _body, _tail })
+        {
+            var mv = new List<Vector3>(); mesh.GetVertices(mv);
+            int at = verts.Count; verts.AddRange(mv);
+            for (int s = 0; s < mesh.subMeshCount; s++) foreach (int i in mesh.GetTriangles(s)) tris.Add(at + i);
+        }
         for (float x = -70f; x <= 100f; x += 14.3f)
             for (float z = -44f; z <= 44f; z += 7.3f)
             {
