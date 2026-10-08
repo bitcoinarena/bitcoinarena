@@ -36,8 +36,30 @@ public class GameAudio : MonoBehaviour
 
     AudioSource _engine, _tyres, _shots, _war, _rotor, _blast;
     float _overSince = -1f, _overLogAt, _engineGain = 1f;
-    AudioClip _impact, _explosion, _chime, _blip, _thud;
-    AudioClip _cannon, _rifle, _ricochet, _boom, _detonation, _whistle;
+    // THE ONE-SHOTS ARE MADE WHEN FIRST WANTED, NOT IN AWAKE (kanban #266, measured 2026-10-08 in a named profile of production
+    // at 10x CPU as an Android phone: GameAudio.Awake was 151 ms of the 90 -> 100 % block, synthesising every clip sample by
+    // sample). Each is made on its first use, and Start makes the rest one a frame from 3 s after the start - the same clips.
+    AudioClip _impactC, _explosionC, _chimeC, _blipC, _thudC;
+    AudioClip _cannonC, _rifleC, _ricochetC, _boomC, _detonationC, _whistleC;
+    AudioClip _impact => _impactC ??= Burst("impact", 0.35f, 9f, 900f);
+    AudioClip _explosion => _explosionC ??= Burst("explosion", 1.6f, 2.4f, 220f);
+    AudioClip _thud => _thudC ??= Burst("thud", 0.25f, 14f, 320f);
+    AudioClip _chime => _chimeC ??= Chime();
+    AudioClip _blip => _blipC ??= Blip();
+    AudioClip _cannon => _cannonC ??= Burst("cannon", 1.1f, 4.5f, 420f);
+    AudioClip _rifle => _rifleC ??= Burst("rifle", 0.16f, 26f, 3800f);
+    AudioClip _ricochet => _ricochetC ??= Burst("ricochet", 0.20f, 20f, 2600f);
+    AudioClip _boom => _boomC ??= Burst("boom", 2.0f, 1.9f, 160f);
+    AudioClip _detonation => _detonationC ??= Detonation();
+    AudioClip _whistle => _whistleC ??= Whistle();
+
+    System.Collections.IEnumerator Start()
+    {
+        yield return new WaitForSecondsRealtime(3f);
+        var made = new System.Func<AudioClip>[] { () => _impact, () => _explosion, () => _thud, () => _chime, () => _blip,
+            () => _cannon, () => _rifle, () => _ricochet, () => _boom, () => _whistle, () => _detonation };
+        foreach (var make in made) { make(); yield return null; }
+    }
     AudioSource _drone;
     float _saidDrone = -99f;
     Rigidbody _body;
@@ -84,19 +106,7 @@ public class GameAudio : MonoBehaviour
         _drone.volume = 0f;
         _drone.pitch = 1.35f;          // higher than the truck's diesel
         _drone.Play();
-        _whistle = Whistle();
-
-        _impact = Burst("impact", 0.35f, 9f, 900f);
-        _explosion = Burst("explosion", 1.6f, 2.4f, 220f);
-        _thud = Burst("thud", 0.25f, 14f, 320f);
-        _chime = Chime();
-        _blip = Blip();
-
-        _cannon = Burst("cannon", 1.1f, 4.5f, 420f);
-        _rifle = Burst("rifle", 0.16f, 26f, 3800f);
-        _ricochet = Burst("ricochet", 0.20f, 20f, 2600f);
-        _boom = Burst("boom", 2.0f, 1.9f, 160f);
-        _detonation = Detonation();
+        // the one-shots: made on first use, or by Start once the scene is running (see their fields)
     }
 
     AudioSource Make(string name, bool loop)
