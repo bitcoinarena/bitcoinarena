@@ -417,9 +417,22 @@ public class MempoolTerrain : MonoBehaviour
         _mesh.RecalculateNormals();
         _mesh.RecalculateTangents();
         _mesh.RecalculateBounds();
-        // the truck drives on this, so the collider has to follow every rebuild
-        GetComponent<MeshCollider>().sharedMesh = null;
-        GetComponent<MeshCollider>().sharedMesh = _mesh;
+        // the truck drives on this, so the collider has to follow every rebuild - ONCE A FRAME (kanban #266, measured
+        // 2026-10-08 in a named profile at 10x CPU as an Android phone: the start built the ground twice in its first frames -
+        // the flat placeholder in Awake, then the core's relief - and cooked the 43,000-triangle collider both times inside
+        // Unity's start). The newest mesh is cooked in LateUpdate, before the next physics step.
+        _colliderDirty = true;
+    }
+
+    bool _colliderDirty;
+
+    void LateUpdate()
+    {
+        if (!_colliderDirty) return;
+        _colliderDirty = false;
+        var mc = GetComponent<MeshCollider>();
+        mc.sharedMesh = null;
+        mc.sharedMesh = _mesh;
     }
 
     /// <summary>
