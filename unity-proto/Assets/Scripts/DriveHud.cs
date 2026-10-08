@@ -3260,6 +3260,10 @@ public class DriveHud : MonoBehaviour
 
     void OnGUI()
     {
+        // NOTHING ON THE FIRST FRAME (kanban #266, the owner 2026-10-08): the first OnGUI's text layout and font-atlas fill were
+        // 320 ms inside Unity's 2.2 s start-up hold at 10x CPU as an Android phone (named profile, DriveHud.OnGUI first draw);
+        // drawn from the next frame on, that work leaves the hold.
+        if (FirstGuiFrame.Now()) return;
         // THE CONSOLE BUTTON'S SLOT, to the page whenever it changes (a resize, the debug readout)
         if (Event.current.type == EventType.Repaint)
         {
@@ -3465,5 +3469,19 @@ public class DriveHud : MonoBehaviour
             Line($"Front   z={front:0}");
             Line(bull ? "Gebiet  BULLEN" : "Gebiet  BAEREN");
         }
+    }
+}
+
+/// <summary>
+/// THE FIRST FRAME THAT DRAWS ANY HUD (kanban #266): true for every OnGUI call in the frame in which the first one came, for
+/// every HUD that asks - so DriveHud and SplashScreen both begin drawing on the frame after it, outside Unity's start-up hold.
+/// </summary>
+static class FirstGuiFrame
+{
+    static int _first = -1;
+    public static bool Now()
+    {
+        if (_first < 0) _first = Time.frameCount;
+        return Time.frameCount == _first;
     }
 }
