@@ -5,17 +5,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { sha256bytes as engineSha, sha256hex as engineHex } from '../../protocol/src/sha256.js';
+import { sha256bytes as engineSha, sha256hex as engineHex } from '../../arena-protocol/src/sha256.js';
 import { sha256bytes as coreSha, sha256hex as coreHex } from '../src/sha256.js';
-import * as engineTick from '../../protocol/src/tick.js';
+import * as engineTick from '../../arena-protocol/src/tick.js';
 import * as coreTick from '../src/tick.js';
-import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
-import { genesisFor } from '../../protocol/src/genesis.js';
+import { GENESIS_CONFIG_HASH } from '../../arena-protocol/src/genesis-ids.js';
+import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { computeGenesisConfigHash } from '../config/game-config.js';
-import { contractWarnings } from '../../protocol/src/contracts.js';
+import { contractWarnings } from '../../arena-protocol/src/contracts.js';
 import { NEXTBLOCK, nextblockRoundWarnings } from '../plugin/nextblock.js';
-import { hostedPlugins } from '../../blwp-node/src/plugins.js';
-import { toHex } from '../../protocol/src/hash.js';
+import { hostedPlugins } from '../../arena-node/src/plugins.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
 
 test('the engine\'s sha256 and the core\'s give the same digests, and both are SHA-256', () => {
   const inputs = [new Uint8Array(0), new TextEncoder().encode('abc'), new Uint8Array(55).fill(7), new Uint8Array(56).fill(9),

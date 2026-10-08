@@ -11,8 +11,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # The page to deploy: the last Unity build, or - for the Daily's keeper after a reboot has emptied
-# /tmp - the copy of the last deployed page kept on persistent disk (BLWP_BUILD_DIR).
-BUILD="${BLWP_BUILD_DIR:-$ROOT/unity-proto/build/webgl}"
+# /tmp - the copy of the last deployed page kept on persistent disk (ARENA_BUILD_DIR).
+BUILD="${ARENA_BUILD_DIR:-$ROOT/unity-proto/build/webgl}"
 PROJECT="${1:-btc-logistics-core}"
 
 if [ "$PROJECT" = "btc-logistics-war" ]; then
@@ -44,9 +44,9 @@ node "$ROOT/unity-proto/tools/fill-template.mjs" --check "$BUILD"
 # with the tunnels it bonded under), and it is checked before it ships: two signer nodes, a bond door,
 # a signed advertisement, and every signer node answering /rounds. A missing file or a silent signer node
 # refuses the deploy by name - a lobby that points at silence is not shipped.
-DAILY_DIR="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+DAILY_DIR="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
 DAILY="$DAILY_DIR/daily.json"
-[ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's signerNodes (packages/blwp-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
+[ -f "$DAILY" ] || { echo "refusing: no $DAILY - the Daily's signerNodes (packages/arena-node/tools/run-2of2.mjs) write it; without it the bare root shows no lobby" >&2; exit 3; }
 node - "$DAILY" <<'CHECK' || { echo "refusing: $DAILY does not name live signerNodes" >&2; exit 3; }
 const d = JSON.parse(require('fs').readFileSync(process.argv[2], 'utf8'));
 const nodes = Array.isArray(d.node) ? d.node : [];

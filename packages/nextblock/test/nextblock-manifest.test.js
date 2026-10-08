@@ -1,21 +1,21 @@
 // NEXTBLOCK'S SIGNED MANIFEST IS ITS REGISTRATION (kanban #202, §0A.3): the manifest core/plugin/nextblock-manifest.js
 // carries is, byte for byte, the body truck-cores.js builds from the cores it installs, the client scripts
-// blwp-client/known-good-clients.json lists for nextblock and the testnet4 series' donation set - signed by nextblock's
+// arena-client/known-good-clients.json lists for nextblock and the testnet4 series' donation set - signed by nextblock's
 // developer key with the dev client. A new core, config or client turns this red until its developer signs a new manifest
 // (node packages/nextblock/tools/sign-manifest.mjs <dev dir>) - a node only verifies it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { NEXTBLOCK, NEXTBLOCK_MANIFEST, NEXTBLOCK_GAME_ID, nextblockManifestBody } from '../plugin/nextblock.js';
-import { encodeManifestBody, manifestStands, gameIdOf } from '../../protocol/src/manifest.js';
-import { donationSetId } from '../../protocol/src/donation.js';
-import { TESTNET4_DONATION_SET_KEYS } from '../../protocol/src/testnet4-donation-set-keys.js';
-import { toHex } from '../../protocol/src/hash.js';
-import { verifyEd25519 } from '../../blwp-node/src/ed25519.js';
-import { hostedPlugins } from '../../blwp-node/src/plugins.js';
+import { encodeManifestBody, manifestStands, gameIdOf } from '../../arena-protocol/src/manifest.js';
+import { donationSetId } from '../../arena-protocol/src/donation.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
+import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
+import { hostedPlugins } from '../../arena-node/src/plugins.js';
 import { coreHashHex } from '../tools/hash-core.js';
 
-const LIST = JSON.parse(readFileSync(new URL('../../blwp-client/known-good-clients.json', import.meta.url), 'utf8'));
+const LIST = JSON.parse(readFileSync(new URL('../../arena-client/known-good-clients.json', import.meta.url), 'utf8'));
 
 test('nextblock\'s signed manifest is the body its registration builds, signed by its developer key', () => {
   const body = nextblockManifestBody({ clients: LIST.games.nextblock.pinned['blwp-core.js'], gameDevPubkey: NEXTBLOCK_MANIFEST.gameDevPubkey,

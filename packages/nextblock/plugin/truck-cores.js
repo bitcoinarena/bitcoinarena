@@ -1,21 +1,21 @@
 // NEXTBLOCK'S CORES (kanban #202, §0A.2-0A.3; the owner 2026-10-06: the engine is Bitcoin Arena, the game is
-// "Tick Tock, Next Block" - `nextblock` in code). What was blwp-node/src/cores.js's truck half: the cores a node replays
+// "Tick Tock, Next Block" - `nextblock` in code). What was arena-node/src/cores.js's truck half: the cores a node replays
 // nextblock's rounds with (the truck and the four it keeps installed beside it), the configs each plays, the replay
-// bundle each round's page runs, and the game's manifest - registered with a node by its launcher (blwp-node/src/main.js),
+// bundle each round's page runs, and the game's manifest - registered with a node by its launcher (arena-node/src/main.js),
 // never imported by the engine. It lives outside core/src, so no core hash moves with it.
 //
 // The engine reads a core only through its adapter (start, eventsOf, step, stateHash, result, picture, runTicksFits) and
-// a game only through its manifest (protocol/src/manifest.js); this file is where nextblock hands it both.
+// a game only through its manifest (arena-protocol/src/manifest.js); this file is where nextblock hands it both.
 import { CORE as TRUCK_ADAPTER } from '../src/adapter.js';
 import { CORE as TRUCK_2069_ADAPTER } from '../frozen/2069b4c2/adapter.js';
 import { CORE as TRUCK_DE2F_ADAPTER } from '../frozen/de2f263d/adapter.js';
 import { CORE as TRUCK_7E21_ADAPTER } from '../frozen/7e2123d1/adapter.js';
 import { coreHashHex } from '../tools/hash-core.js';
-import { GENESIS_CONFIG_HASH } from '../../protocol/src/genesis-ids.js';
+import { GENESIS_CONFIG_HASH } from '../../arena-protocol/src/genesis-ids.js';
 import { computeCurrentConfigHash, computeDe2fConfigHash, computeConfigV3Hash } from '../config/game-config.js';
-import { toHex, fromHex } from '../../protocol/src/hash.js';
-import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../protocol/src/manifest.js';
-import { ROUND_PERIOD_MS } from '../../protocol/src/series.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../arena-protocol/src/manifest.js';
+import { ROUND_PERIOD_MS } from '../../arena-protocol/src/series.js';
 
 /**
  * THE CONFIG A ROUND ON THE TRUCK NAMES (the owner 2026-10-04, fix 1 of the spec audit; §27A.6 "a round is bound to the config
@@ -129,7 +129,7 @@ export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK_2069, name: `${TRUCK.n
 
 
 /**
- * NEXTBLOCK'S OWN CHECK OF THE ROUND FIELDS ONLY IT READS (kanban #203: moved out of protocol/src/contracts.js; the
+ * NEXTBLOCK'S OWN CHECK OF THE ROUND FIELDS ONLY IT READS (kanban #203: moved out of arena-protocol/src/contracts.js; the
  * contract layout is unchanged): a round whose exposure reference is 0 ignores exposure, and one whose time floor is not
  * below its ceiling has a degenerate time factor. The engine's contractWarnings appends these for a nextblock round.
  */
@@ -147,7 +147,7 @@ export const NEXTBLOCK_CORES = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, T
 /**
  * NEXTBLOCK'S MANIFEST BODY, from this registration (§0A.3): every core above with the configs it plays, a run of at
  * most the truck's RUN_TICKS, §18A's rank curve at 3/4, a floor of one score unit, the client scripts the game serves
- * (`clients`, the nextblock list in blwp-client/known-good-clients.json) and the donation set the testnet4 series name.
+ * (`clients`, the nextblock list in arena-client/known-good-clients.json) and the donation set the testnet4 series name.
  * round_period: the 90 s grid its series run on (series.js ROUND_PERIOD_MS). The signed manifest (nextblock-manifest.js) is this body
  * signed by the game's developer with the dev client's signer (nextblock/tools/sign-manifest.mjs); nextblock-manifest.test.js holds the two to the same bytes.
  */

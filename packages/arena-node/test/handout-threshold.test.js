@@ -1,0 +1,146 @@
+// A STAKE OPENS AT THE ROUND'S THRESHOLD, NEVER THE ONE A PLAYER DEALT (M3.3-26).
+//
+// Measured on the regtest rehearsal: both daemons reached the loser's settle,
+// each held the 2 shares of a stake dealt 2-of-2, and stopped at "2 of 5
+// shares" - the settle's `open` asked for SHARES_NEEDED = 5. And the door took
+// whatever threshold a handout named: `acceptHandout` checks a handout only
+// against ITSELF. A player who expected to lose could send a stake no committee
+// can open - a refund on the timelock every time, which 13C says a player
+// cannot arrange - or one a single signer node opens alone. So the threshold is the
+// ROUND'S (`receiptsNeeded(settlementSlots)`: 2 of 2, 5 of 7) and the door
+// refuses any other by name. An honest dealer cannot even make the bad ones
+// (`dealHandout` refuses), so the bad ones here are crafted, the way a
+// cheating player would send them.
+// A PAYING ROUND OPENS ONLY ON A SIGNER NODE THAT REACHES A FEDERATION (RULED the owner 2026-09-25): this file's paying-round
+// daemons get the lock fixture's port - the test federation, two gateways, zero base fee. Contracts unchanged.
+import { lockPort, bondedChainSlot, bondedChainFor } from './lock-fixture.js';
+import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+// THE RUN LENGTH IS THE CORE'S (2026-09-20). This fixture said 9000 and the core has ended a run at 10800
+// since c01cc655, so `Round.open` refused the contract and every test here died with "this node holds no such
+// round" before a stake was dealt. These suites are the evidence that the round's own threshold is the one
+// that signs (§23.4/§23.6), so a stale number was hiding the proof.
+import { BLOCK_TICKS as RUN_TICKS } from '../../nextblock/src/rules/gate.js';
+import { test } from 'node:test';
+import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
+import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
+import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
+import { schnorr } from '@noble/curves/secp256k1.js';
+
+import { openStore } from '../src/store.js';
+import { serve } from '../src/server.js';
+import { feldmanGroup } from '../src/curve.js';
+import { assumeAssigned } from './assignment.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
+import { dealHandout, encodeHandout } from '../../arena-protocol/src/handout.js';
+import { sealShare } from '../../arena-protocol/src/seal.js';
+import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
+
+const rand = (n) => new Uint8Array(randomBytes(n));
+const b32 = (n) => new Uint8Array(32).fill(n);
+const FUNDED = { funded: () => true };
+
+// ON A CHAIN THAT BONDS THE ROUND'S NODES (RULED 2026-09-25): the daemon under test and keyless strangers, so the claim key
+// is claimKeyFor's. Only censusRoot changes in the contract.
+async function onChain() {
+  const slot = bondedChainSlot(lockPort());
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...FUNDED, stakeLocks: slot.port, chainFor: slot.chainFor,
+    randomnessFor: slot.randomnessFor, claimKeyFor: () => new Uint8Array(33).fill(2) });
+  node.slot = slot;
+  return node;
+}
+
+const contractFor = (nodes) => ({
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1,
+  gameVerifySlots: nodes.length, settlementSlots: nodes.length, gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, startTimeMs: 60500n,
+  entryCloseMs: 2000n, objectionWindowMs: 600000n, custody: 'FEDERATION',
+  slashMinimumServed: 20, slashRemainder: 'SPLIT', federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'], donationSetId: idOfDonationSet(TEST_DONATION_SET_REGTEST.recipients),
+  censusHeight: 900000, censusRoot: b32(2), committeeTimeMs: 500n,
+  randomnessRule: 'bitcoin-block-hash', stakeMsat: 100000n, bondMinSats: 50000n,
+  blockTicks: RUN_TICKS, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
+});
+
+const secretScalar = () => { let p = rand(32); while (scalarFrom32(p) >= FIELD) p = rand(32); return p; };
+
+/** A real dealing of `needed` over `signer nodes`, the way `stakeFor` deals one. */
+async function real(signerNodes, rid, needed, preimage = secretScalar(), ephemeralSecret = rand(32)) {
+  const d = await dealHandout({
+    preimage, signerNodes, roundId: rid, playerPubkey: b32(5),
+    ephemeralSecret, ephemeralPubkey: feldmanGroup.pointX(ephemeralSecret),
+    coefficients: Array.from({ length: needed - 1 }, () => scalarFrom32(rand(32)) % FIELD),
+    needed, curve: feldmanGroup,
+  });
+  assert.equal(d.ok, true, d.why);
+  return { handout: d.handout, preimage, ephemeralSecret };
+}
+
+/** THREE-OF-TWO, crafted: a 3-of-3 dealing with the third signer node's share dropped. */
+async function threeOfTwo(signerNodes, rid) {
+  const { handout } = await real([...signerNodes, schnorr.getPublicKey(rand(32))], rid, 3);
+  return { ...handout, shares: handout.shares.slice(0, 2) };
+}
+
+/**
+ * ONE-OF-TWO, crafted: a degree-0 polynomial. The one commitment is G*a0 off a
+ * real dealing, and every signer node is sealed the constant a0 - which is exactly
+ * what such a polynomial gives, so each signer node's own Feldman check passes and
+ * any one signer node alone holds the preimage.
+ */
+async function oneOfTwo(signerNodes, rid) {
+  const { handout, preimage, ephemeralSecret } = await real(signerNodes, rid, 2);
+  const a0 = scalarFrom32(preimage);
+  const shares = [];
+  for (const s of handout.shares)
+    shares.push({ signerNode: s.signerNode, signerNodePubkey: s.signerNodePubkey,
+      sealed: await sealShare({ value: a0, signerNode: s.signerNode, signerNodePubkey: s.signerNodePubkey, ephemeralSecret, curve: feldmanGroup }) });
+  return { ...handout, needed: 1, commitments: [handout.commitments[0]], shares };
+}
+
+async function door(node, signerNodes) {
+  const drafted = contractFor(signerNodes);
+  const c = { ...drafted, censusRoot: bondedChainFor(drafted.nodes, drafted, node.slot,
+    { endpoints: [`ws://127.0.0.1:${node.port}`] }).censusRoot };
+  const rid = roundId(c);
+  await fetch(`http://127.0.0.1:${node.port}/round`, { method: 'POST', body: encodeRoundContract(c) });
+  assumeAssigned(node.round, rid, signerNodes);
+  const post = async (h) => {
+    const r = await fetch(`http://127.0.0.1:${node.port}/handout`, { method: 'POST', body: encodeHandout(h) });
+    return { status: r.status, text: (await r.text()).trim() };
+  };
+  return { rid, post };
+}
+
+test('two signer nodes: the door takes 2-of-2 and refuses a crafted 3-of-2 and a crafted 1-of-2 by name', async () => {
+  const a = await onChain();
+  try {
+    const signerNodes = [a.round.pubkey, schnorr.getPublicKey(rand(32))];
+    const { rid, post } = await door(a, signerNodes);
+    const two = await post((await real(signerNodes, rid, 2)).handout);
+    const three = await post(await threeOfTwo(signerNodes, rid));
+    const one = await post(await oneOfTwo(signerNodes, rid));
+    console.log(`  2-of-2 -> ${two.status}; 3-of-2 -> ${three.status} ${three.text.slice(0, 80)}; 1-of-2 -> ${one.status} ${one.text.slice(0, 80)}`);
+    assert.equal(two.status, 201, `a stake dealt at the round's own threshold was refused: ${two.text}`);
+    assert.notEqual(three.status, 201, 'a stake no committee can open was taken');
+    assert.equal(one.status, 409, `a stake one signer node opens alone was taken: ${one.status} ${one.text}`);
+    assert.match(one.text, /this round's stakes open at 2 of 2/);
+  } finally { await a.close(); }
+});
+
+test('seven signer nodes: the door takes 5-of-7 and refuses 7-of-7 - what the page used to deal - by name', async () => {
+  const a = await onChain();
+  try {
+    const signerNodes = [a.round.pubkey, ...Array.from({ length: 6 }, () => schnorr.getPublicKey(rand(32)))];
+    const { rid, post } = await door(a, signerNodes);
+    const five = await post((await real(signerNodes, rid, 5)).handout);
+    const seven = await post((await real(signerNodes, rid, 7)).handout);
+    console.log(`  5-of-7 -> ${five.status}; 7-of-7 -> ${seven.status} ${seven.text.slice(0, 80)}`);
+    assert.equal(five.status, 201, `a stake dealt at the round's own threshold was refused: ${five.text}`);
+    assert.equal(seven.status, 409, `a stake every signer node must open was taken: ${seven.status}`);
+    assert.match(seven.text, /this round's stakes open at 5 of 7/);
+  } finally { await a.close(); }
+});

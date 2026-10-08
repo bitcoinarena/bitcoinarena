@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SCORE_SCALE as CORE, FACTOR_SCALE } from '../src/rules/score.js';
-import { SCORE_SCALE as PROTOCOL } from '../../protocol/src/constants.js';
+import { SCORE_SCALE as PROTOCOL } from '../../arena-protocol/src/constants.js';
 
 test('the core and the protocol keep the score in the same unit', () => {
   assert.equal(CORE, PROTOCOL);

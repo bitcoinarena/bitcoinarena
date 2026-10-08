@@ -1,10 +1,10 @@
 // NEXTBLOCK'S GAME CONFIGS (kanban #203; §27A.6, §27A.7.5): the bytes each of nextblock's cores plays by, versioned and
 // hashed from the core's own constants - v1 the founding config of 2069b4c2 (its hash is GENESIS_CONFIG_HASH, which the
 // network id commits to), v2 de2f263d's, v3 the per-player config, v4 one world per round. Moved here from
-// protocol/src/genesis.js: they read the game's rules, and the engine imports no game. A round names a config by hash;
+// arena-protocol/src/genesis.js: they read the game's rules, and the engine imports no game. A round names a config by hash;
 // the engine only compares hashes the game's manifest lists.
-import { Writer } from '../../protocol/src/encode.js';
-import { taggedHash } from '../../protocol/src/hash.js';
+import { Writer } from '../../arena-protocol/src/encode.js';
+import { taggedHash } from '../../arena-protocol/src/hash.js';
 // THE NODE FEE THESE CONFIGS WERE PLAYED UNDER: BLWP's 2.00%, a literal (kanban #205). The engine's fee is now 5% (§0A.8),
 // but a config is the frozen bytes of rules already played - its hash is what rounds and the network id name - so the
 // fee written into them stays the one they were written with.

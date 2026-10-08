@@ -17,7 +17,7 @@
 #   tunnel   forward 9341/9342 from the test host to this box, so a probe here drives the browsers there
 set -euo pipefail
 
-MAC="${BLWP_MAC:-arena@192.0.2.226}"
+MAC="${ARENA_MAC:-arena@192.0.2.226}"
 LAUNCH="/Users/arena/.blwp-playtest/start.sh"
 PORT_A="${PORT_A:-9341}"
 PORT_B="${PORT_B:-9342}"

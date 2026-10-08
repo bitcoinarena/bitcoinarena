@@ -10,8 +10,8 @@
 # reached players. The checkout moves only when a commit is checked out there on purpose.
 set -euo pipefail
 COMMIT="${1:?name the pushed commit the Daily signer nodes run}"
-D="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
-REPO="${BLWP_REPO:-/home/arena/btc-logistics-war}"
+D="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+REPO="${ARENA_REPO:-/home/arena/btc-logistics-war}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$(cd "$HERE/../.." && pwd)"
 UNITS="$HOME/.config/systemd/user"
@@ -23,7 +23,7 @@ else
   git -C "$REPO" worktree add --detach "$D/code" "$COMMIT"
 fi
 # git tracks no node_modules: the four packages' own, copied from the tree that ran the suites.
-for p in blwp-client blwp-node core protocol; do
+for p in arena-client arena-node core protocol; do
   rm -rf "$D/code/packages/$p/node_modules"
   cp -a "$SRC/packages/$p/node_modules" "$D/code/packages/$p/node_modules"
 done

@@ -28,7 +28,7 @@ invoice, VSS shares) and only says *how*.
 
 | Component | Runtime | Notes |
 |---|---|---|
-| `blwp-node` daemon (all roles) | Node 24 LTS | websockets, HTTP, Bitcoin RPC, Lightning gRPC, `node:sqlite` |
+| `arena-node` daemon (all roles) | Node 24 LTS | websockets, HTTP, Bitcoin RPC, Lightning gRPC, `node:sqlite` |
 | Protocol library (encoding, hashing, contracts, census, sortition, payout, VSS, FROST) | Isomorphic JS | **The same file runs in the browser and in the node** |
 | Deterministic simulation core | Isomorphic JS | Integer/fixed-point only (§3) |
 | Browser client, Unity bridge, wallet | JS | Same protocol package |
@@ -129,7 +129,7 @@ blwp/
         census.js  sortition.js  payout.js
         vss.js     frost.js   messages.js  constants.js
       test/vectors/
-    node/                         # blwp-node — the daemon
+    node/                         # arena-node — the daemon
       src/
         index.js                  # CLI, config, role wiring
         chain/  census/  rounds/  entries/  ingest/
@@ -437,7 +437,7 @@ library upgrade must never change a `round_id`. A hand-written encoder is
 ~300 lines with no dependencies and is trivially portable.
 
 ```js
-// packages/protocol/src/encode.js — sketch
+// packages/arena-protocol/src/encode.js — sketch
 const w = new Writer();                    // growable Uint8Array
 w.u8(TYPE_ROUND_CONTRACT);
 w.u16(PROTOCOL_VERSION);
@@ -523,7 +523,7 @@ SQLite, never recompute.
 ### 6.2 Sortition
 
 ```js
-// packages/protocol/src/sortition.js — sketch
+// packages/arena-protocol/src/sortition.js — sketch
 export function selectCommittee({ entries, committeeSeed, role, slots, bondMin }) {
   const scored = entries.filter(e => e.roles.includes(role)).map(e => ({
     entry:  e,
@@ -704,7 +704,7 @@ test vectors. That changes the calculus — implementing it is following a
 specification with a conformance suite, not inventing protocol.
 
 ```
-packages/protocol/src/frost.js
+packages/arena-protocol/src/frost.js
   keygen        trusted-dealer for V1; DKG (RFC 9591 Appendix) for V2
   commit()      round 1: hiding/binding nonces + commitments
   sign()        round 2: binding factor, group commitment, share
@@ -946,7 +946,7 @@ delivering drive would read as a product failure.
 | 0 | `@blwp/core`: fixed-point, RNG, tables, state, one rule module — plus the cross-engine harness, poison tests and AST guard | Zero divergence across 4 engines × 2 architectures on a 10-minute corpus; **replay throughput measured and published** |
 | 1 | Port the remaining game rules from C# into the core | Recorded Unity sessions replay to the same score |
 | 2 | `@blwp/protocol`: encoding, hashes, contracts, census, sortition, payout + full vectors | A second implementation could be written from `test-vectors/` alone |
-| 3 | `blwp-node` skeleton: HTTP + ws, `node:sqlite`, entry receipts, checkpoint ingest, transcripts | Seven local nodes run a play-money round end to end |
+| 3 | `arena-node` skeleton: HTTP + ws, `node:sqlite`, entry receipts, checkpoint ingest, transcripts | Seven local nodes run a play-money round end to end |
 | 4 | Replay pool, result signing, 5-of-7 finality, objection window, equivocation, no-quorum | The adversarial table passes |
 | 5 | Chain integration: bond verification, census build, committee publication, timestamp receipts | A contract with a wrong census root is rejected by every node |
 | 6 | Unity bridge, `@blwp/client`, NWC wallet | A browser plays a play-money round against real nodes |
@@ -978,7 +978,7 @@ and was invisible.
 | 0 | Core foundation: fixed point, RNG, tables, state layout, AST guard, cross-engine harness | 3–5 |
 | 1 | Port the game rules from C# into the core (armies, terrain, driving, damage, gate, score) | 7–12 |
 | 2 | `@blwp/protocol`: encoding, contracts, census, sortition, payout + vectors | 3–4 |
-| 3 | `blwp-node`: HTTP/WS, `node:sqlite`, entries, checkpoints, transcripts | 4–6 |
+| 3 | `arena-node`: HTTP/WS, `node:sqlite`, entries, checkpoints, transcripts | 4–6 |
 | 4 | Replay pool, 5-of-7 finality, objection, equivocation, no-quorum | 3–5 |
 | 5 | Chain: bond verification, census build, committee publication (regtest) | 3–4 |
 | 6 | Unity bridge, `@blwp/client`, NWC wallet | 4–6 |

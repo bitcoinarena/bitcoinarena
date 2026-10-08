@@ -81,7 +81,7 @@ public class CargoBay : MonoBehaviour
     /// choose, before there is a round to ask.
     ///
     /// Its three constants are pinned against the core's by
-    /// `blwp-node/test/replay-heat.test.js`, so the preview and the rule
+    /// `arena-node/test/replay-heat.test.js`, so the preview and the rule
     /// cannot drift apart without a red test.
     ///
     /// Driven by the FEES aboard - what the run pays out - not by the value

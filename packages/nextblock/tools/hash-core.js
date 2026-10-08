@@ -5,7 +5,7 @@
 // depends on the bundler version, and nothing that pins money should have a
 // toolchain in its trust path.
 //
-// Also a function now, so the known-good list (`protocol/src/known-games.js`, from each game's manifest)
+// Also a function now, so the known-good list (`arena-protocol/src/known-games.js`, from each game's manifest)
 // and the launchers that publish a round's core take the hash from HERE rather
 // than from a value somebody remembered. Run as a command it prints what it
 // always printed.

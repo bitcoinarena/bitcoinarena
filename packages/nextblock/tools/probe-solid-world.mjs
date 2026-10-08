@@ -17,7 +17,7 @@
 //                        part drawn in bumper_guard_yellow on that facade - spans x -114.95 .. -113.94.
 //                        Before the fix it ran to x -180.22, the west map edge, out of the back of the building.
 //
-// MUST RUN ON A GPU BROWSER (packages/blwp-client/tools/gpu-chrome.sh).
+// MUST RUN ON A GPU BROWSER (packages/arena-client/tools/gpu-chrome.sh).
 //
 //   node probe-solid-world.mjs <cdp-port> <url> <tag>
 const PORT = Number(process.argv[2] || 9347);
