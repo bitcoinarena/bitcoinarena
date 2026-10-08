@@ -121,13 +121,40 @@ public class DriveHud : MonoBehaviour
     /// <summary>Drawn twice with an offset: the sky and the dirt are both bright.</summary>
     void Shadowed(Rect r, string text, GUIStyle style, Color colour)
     {
-        var prev = style.normal.textColor;
-        style.normal.textColor = new Color(0f, 0f, 0f, 0.55f);
-        GUI.Label(new Rect(r.x + 2, r.y + 3, r.width, r.height), text, style);
-        style.normal.textColor = colour;
-        GUI.Label(r, text, style);
-        style.normal.textColor = prev;
+        // ONE DRAW ONCE THE LABEL STAYS (kanban #266, comment 990): ShadowLabelCache; otherwise the two labels as always
+        if (ShadowLabelCache.TryDraw(r, text, style, colour)) return;
+        ShadowLabelCache.DrawOld(r, text, style, colour);
     }
+
+    // THE PIXEL GATE, on request (SendMessage("<DriveHud's object>", "LabelPixelTest")): run on the next Repaint, logged as
+    // "[labels] pixel test: ..." - real HUD styles, texts, colours and sub-pixel positions, old draw against the cache
+    bool _pixelTestDue;
+    public void LabelPixelTest() => _pixelTestDue = true;
+
+    void RunLabelPixelTest()
+    {
+        _pixelTestDue = false;
+        Styles();
+        var bold = new GUIStyle(_small) { fontStyle = FontStyle.Bold };
+        var samples = new List<(Rect, string, GUIStyle, Color)>();
+        var texts = new[] { "BLOCK #970520", "HEALTH 100%", "PRACTICE  ·  ON", "NO SCORE OUT HERE", "$81,397", "DROP-OFF  270 m" };
+        var colours = new[] { Color.white, new Color(1f, 0.86f, 0.35f), new Color(0.45f, 0.75f, 1f), new Color(1f, 0.45f, 0.40f, 0.8f) };
+        var fracs = new[] { 0f, 0.37f, 0.5f, 0.81f };
+        int k = 0;
+        foreach (var style in new[] { _small, bold, _price })
+            foreach (var t in texts)
+            {
+                float fx = fracs[k % fracs.Length], fy = fracs[(k / 2) % fracs.Length];
+                float lh = Mathf.Max(18f, style.fontSize * 1.4f);
+                samples.Add((new Rect(40f + fx, 60f + (k % 12) * (lh + 8f) + fy, Mathf.Min(Screen.width - 80f, 360f), lh), t, style, colours[k % colours.Length]));
+                k++;
+            }
+        string said = ShadowLabelCache.PixelTest(samples, out bool pass);
+        Debug.Log($"[labels] pixel test: {said}");
+        LabelPixelTestResult = said;
+    }
+    public static string LabelPixelTestResult;
+    float _labelsToldAt = -1f;
 
     /// <summary>
     /// What is aboard and what has been banked, plus the flash on arrival.
@@ -3313,6 +3340,13 @@ public class DriveHud : MonoBehaviour
         // 320 ms inside Unity's 2.2 s start-up hold at 10x CPU as an Android phone (named profile, DriveHud.OnGUI first draw);
         // drawn from the next frame on, that work leaves the hold.
         if (FirstGuiFrame.Now()) return;
+        if (_pixelTestDue && Event.current.type == EventType.Repaint) RunLabelPixelTest();
+        // HOW OFTEN THE LABEL CACHE IS USED, every 5 s for the first minute
+        if (Event.current.type == EventType.Repaint && Time.unscaledTime < 65f && Time.unscaledTime - _labelsToldAt >= 5f)
+        {
+            _labelsToldAt = Time.unscaledTime;
+            Debug.Log($"[labels] bakes={ShadowLabelCache.Bakes} hits={ShadowLabelCache.Hits}");
+        }
         // THE CONSOLE BUTTON'S SLOT, to the page whenever it changes (a resize, the debug readout)
         if (Event.current.type == EventType.Repaint)
         {
