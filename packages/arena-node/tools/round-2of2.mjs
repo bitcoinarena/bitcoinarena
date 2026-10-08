@@ -766,6 +766,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const census = deriveCensus(censusView, {
     contract: asSeen,
     bond: bondSetFor(network),
+    // AS THE SEATS DERIVE IT (roster.js): updates and re-affirmed ancestor bonds checked with BIP-340 (kanban #209)
+    verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     // RESOLVED FROM THE VIEW ITSELF, the way `roster.censusFor` does it: 5A.2
     // puts the advertisement body in the witness of the funding transaction,
     // so a holder of the blocks needs nobody to serve it one. Doing it the same

@@ -12,6 +12,8 @@
 //
 // Env: SEAT_PORTS (seven), SEAT_DIR (node-<i>.db), BITCOIN_CLI_ARGS (bitcoin-cli args, the wallet's), CLIENT_DIR (the lock
 // port's joined client), LOCK_BIN, STAKE_MSAT, OUT (the series file). Never testnet4: regtest only, no other bond.
+import { TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { regtest } from './regtest-bond.mjs';
@@ -48,7 +50,8 @@ async function guardianOfAll() {
   const fed = await lock.guardians();
   if (fed.keys.length !== 7) throw new Error(`the federation has ${fed.keys.length} guardians, not 7`);
   const of = ports.map((_, i) => {
-    const dir = `${storeOf(i)}.guardian`;
+    // GUARDIAN_BASE (kanban #209 rehearsal): the guardians' own dirs, beside another set of stores than the seats'
+    const dir = env.GUARDIAN_BASE ? `${env.GUARDIAN_BASE}/node-${i + 1}.db.guardian` : `${storeOf(i)}.guardian`;
     const id = JSON.parse(readFileSync(`${dir}/local.json`, 'utf8')).identity;
     const own = JSON.parse(readFileSync(`${dir}/consensus.json`, 'utf8')).broadcast_public_keys[String(id)];
     const key = fed.keys.find((k) => toHex(k) === own);
@@ -78,10 +81,12 @@ if (mode === 'bonds') {
   const nodes = ports.map((_, i) => keyOf(i).pubkey);
   // TODAY'S SERIES: the one whose 24 h holds now (its rounds every 90 s), committee_time 72 h before its start
   const g = genesisSeriesStart(NETWORK_ID_REGTEST);
-  const k = Number((BigInt(Date.now()) - g) / SERIES_MAX_MS);
+  // SERIES_K_AHEAD (kanban #209 rehearsal): a series that many days on, so a chain at the present can publish it below its beacon
+  const k = Number((BigInt(Date.now()) - g) / SERIES_MAX_MS) + Number(env.SERIES_K_AHEAD || 0);
   const contract = {
     networkId: NETWORK_ID_REGTEST, configHash: new Uint8Array(32), censusConfirmations: 1,
     gameVerifySlots: 7, settlementSlots: 7, gameId: MARKET.registration.gameId, simCoreHash: new Uint8Array(32),
+    // SERIES_GAME=nextblock (kanban #209 rehearsal): nextblock's own series - its current core and config
     committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
     objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
     federationId: fed.federationId, stakeExpiryBlocks: 144,
@@ -90,6 +95,7 @@ if (mode === 'bonds') {
     stakeMsat: BigInt(env.STAKE_MSAT || 1000000), bondMinSats: 50000n, blockTicks: 4920,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
     minScore: 0, rankNumerator: 3, rankDenominator: 4, nodes,
+    ...(env.SERIES_GAME === 'nextblock' ? { gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, minScore: 1 } : {}),
   };
   const template = seriesTemplate(contract, k);
   const lead = seriesLeadIsValid(template);
@@ -98,7 +104,9 @@ if (mode === 'bonds') {
   const view = rt.blocksFrom(Math.max(0, H - 60), H);
   const byTxid = new Map();
   for (const block of view.blocks) for (const raw of block.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
+  // AS THE SEATS DERIVE IT (roster.js): advertisement updates and re-affirmed ancestor bonds checked with BIP-340 (kanban #209)
   const census = deriveCensus(view, { contract: decodeRoundContract(encodeRoundContract(template)), bond: bondSetFor('regtest'),
+    verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
   if (!census.ok) throw new Error(`no census at ${H}: ${census.why}`);
   template.censusRoot = census.root;
