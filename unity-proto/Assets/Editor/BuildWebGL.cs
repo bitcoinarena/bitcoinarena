@@ -183,6 +183,26 @@ public static class BuildWebGL
         {
             EditorUserBuildSettings.webGLBuildSubtarget = (WebGLTextureSubtarget)System.Enum.Parse(typeof(WebGLTextureSubtarget), subtarget.Trim());
             Debug.Log($"[BuildWebGL] WebGL texture subtarget: {EditorUserBuildSettings.webGLBuildSubtarget}");
+            // AND THE PLAYER'S OWN DATA: measured on 0.0.2881, the subtarget (and a reimport) made the streamed bundles ASTC but the
+            // first scene's 20 textures stayed DXT - the player data follows the Web player setting "texture compression formats"
+            // (m_BuildTargetDefaultTextureCompressionFormat), whose setter Unity 6 keeps internal for the Web. Set by reflection.
+            var fmt = subtarget.Trim().ToUpperInvariant() == "DXT" ? TextureCompressionFormat.DXTC
+                    : (TextureCompressionFormat)System.Enum.Parse(typeof(TextureCompressionFormat), subtarget.Trim());
+            bool set = false;
+            foreach (var m in typeof(PlayerSettings).GetMethods(System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+            {
+                if (m.Name != "SetTextureCompressionFormats") continue;
+                var ps = m.GetParameters();
+                if (ps.Length != 2 || ps[1].ParameterType != typeof(TextureCompressionFormat[])) continue;
+                object target = ps[0].ParameterType == typeof(BuildTargetGroup) ? (object)BuildTargetGroup.WebGL
+                              : ps[0].ParameterType == typeof(UnityEditor.Build.NamedBuildTarget) ? (object)UnityEditor.Build.NamedBuildTarget.WebGL : null;
+                if (target == null) continue;
+                m.Invoke(null, new object[] { target, new[] { fmt } });
+                set = true;
+                Debug.Log($"[BuildWebGL] Web texture compression formats set to {fmt} ({ps[0].ParameterType.Name} overload)");
+                break;
+            }
+            if (!set) Debug.LogWarning("[BuildWebGL] no SetTextureCompressionFormats(target, formats[]) found: the player data keeps its format");
             // THE SCENE'S TEXTURES TOO: setting the subtarget from a script does not reimport what the Library already holds,
             // so measured on 0.0.2880 the streamed bundles came out ASTC and the 20 textures of the first scene stayed DXT.
             // Every texture is imported again under the new subtarget before the player is built.
