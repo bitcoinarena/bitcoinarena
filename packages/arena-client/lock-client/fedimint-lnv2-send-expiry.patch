@@ -1,0 +1,13 @@
+--- a/modules/fedimint-lnv2-client/src/lib.rs
++++ b/modules/fedimint-lnv2-client/src/lib.rs
+@@ -546,7 +546,9 @@
+             .amount_milli_satoshis()
+             .ok_or(SendPaymentError::InvoiceMissingAmount)?;
+ 
+-        if invoice.is_expired() {
++        // BLWP: `is_expired` reads std's clock, which panics on wasm32-unknown-unknown;
++        // the same check against fedimint's own clock (JS Date on wasm).
++        if invoice.would_expire(duration_since_epoch()) {
+             return Err(SendPaymentError::InvoiceExpired);
+         }
+ 

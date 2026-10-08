@@ -1,0 +1,170 @@
+--- a/modules/fedimint-lnv2-server/src/db.rs
++++ b/modules/fedimint-lnv2-server/src/db.rs
+@@ -30,6 +30,7 @@
+     IncomingContractStreamIndex = 0x09,
+     IncomingContractStream = 0x10,
+     IncomingContractIndex = 0x11,
++    IncomingContractFundedAt = 0x12,
+ }
+ 
+ impl std::fmt::Display for DbKeyPrefix {
+@@ -227,6 +228,31 @@
+     query_prefix = IncomingContractIndexPrefix
+ );
+ 
++/// WHEN THIS GUARDIAN SAW AN INCOMING CONTRACT FUNDED, in unix milliseconds by
++/// its own clock, AND THE CONTRACT. Its decryption share is made and served
++/// only `FM_LNV2_INCOMING_HOLD_SECS` after this - a round's objection window -
++/// so the gateway cannot settle the payer's HTLC before the window has closed.
++/// The contract is kept here because a receiver's claim removes it from
++/// `IncomingContractKey`: measured, a claim inside the hold left the share
++/// endpoint nothing to make a share from, and the gateway never settled.
++#[derive(Debug, Clone, Eq, PartialEq, Hash, Deserialize, Serialize, Encodable, Decodable)]
++pub struct IncomingContractFundedAtKey(pub OutPoint);
++
++#[derive(Debug, Encodable, Decodable)]
++pub struct IncomingContractFundedAtPrefix;
++
++impl_db_record!(
++    key = IncomingContractFundedAtKey,
++    value = (u64, IncomingContract),
++    db_prefix = DbKeyPrefix::IncomingContractFundedAt,
++    notify_on_modify = true
++);
++
++impl_db_lookup!(
++    key = IncomingContractFundedAtKey,
++    query_prefix = IncomingContractFundedAtPrefix
++);
++
+ pub(crate) async fn migrate_to_v1(
+     mut ctx: ServerModuleDbMigrationFnContext<'_, Lightning>,
+ ) -> Result<(), anyhow::Error> {
+--- a/modules/fedimint-lnv2-server/src/lib.rs
++++ b/modules/fedimint-lnv2-server/src/lib.rs
+@@ -72,8 +72,21 @@
+     IncomingContractOutpointPrefix, IncomingContractPrefix, IncomingContractStreamIndexKey,
+     IncomingContractStreamKey, IncomingContractStreamPrefix, OutgoingContractKey,
+     OutgoingContractPrefix, PreimageKey, PreimagePrefix, UnixTimeVoteKey, UnixTimeVotePrefix,
++    IncomingContractFundedAtKey, IncomingContractFundedAtPrefix,
+ };
+ 
++/// HOW LONG A GUARDIAN HOLDS ITS DECRYPTION SHARE AFTER AN INCOMING CONTRACT
++/// IS FUNDED, in seconds: a round's objection window. 0 (the default) serves
++/// it at once, as upstream does.
++pub const FM_LNV2_INCOMING_HOLD_SECS_ENV: &str = "FM_LNV2_INCOMING_HOLD_SECS";
++
++fn incoming_hold_secs() -> u64 {
++    std::env::var(FM_LNV2_INCOMING_HOLD_SECS_ENV)
++        .ok()
++        .and_then(|v| v.trim().parse().ok())
++        .unwrap_or(0)
++}
++
+ /// Maximum number of incoming contracts a single `await_incoming_contracts`
+ /// request may ask for. The endpoint is public and unauthenticated, so the
+ /// batch size is untrusted input; without a cap it flows straight into
+@@ -213,6 +226,16 @@
+                         "Lightning Incoming Contract Index"
+                     );
+                 }
++                DbKeyPrefix::IncomingContractFundedAt => {
++                    push_db_pair_items!(
++                        dbtx,
++                        IncomingContractFundedAtPrefix,
++                        IncomingContractFundedAtKey,
++                        (u64, IncomingContract),
++                        lightning,
++                        "Lightning Incoming Contract Funded At"
++                    );
++                }
+             }
+         }
+ 
+@@ -233,10 +256,16 @@
+     }
+ 
+     fn get_documented_env_vars(&self) -> Vec<EnvVarDoc> {
+-        vec![EnvVarDoc {
+-            name: FM_ENABLE_MODULE_LNV2_ENV,
+-            description: "Set to 0/false to disable the LNv2 Lightning module. Enabled by default.",
+-        }]
++        vec![
++            EnvVarDoc {
++                name: FM_ENABLE_MODULE_LNV2_ENV,
++                description: "Set to 0/false to disable the LNv2 Lightning module. Enabled by default.",
++            },
++            EnvVarDoc {
++                name: FM_LNV2_INCOMING_HOLD_SECS_ENV,
++                description: "Seconds this guardian holds its decryption share after an incoming contract is funded (a round's objection window). 0 by default: served at once.",
++            },
++        ]
+     }
+ 
+     async fn init(&self, args: &ServerModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
+@@ -583,10 +612,24 @@
+                 dbtx.insert_entry(&IncomingContractStreamIndexKey, &(stream_index + 1))
+                     .await;
+ 
+-                let dk_share = contract.create_decryption_key_share(&self.cfg.private.sk);
++                // THE SHARE IS NOT MADE AT FUNDING. Upstream made and stored
++                // it here, and the endpoint below handed it out the moment it
++                // existed: the gateway settled the payer's HTLC 2.3-2.7 s
++                // after payment. Funding now only records WHEN it happened;
++                // the share is made and served once the hold has passed.
++                //
++                // BY THIS GUARDIAN'S OWN CLOCK, in milliseconds - not the
++                // consensus unix time, which is voted in whole minutes
++                // (`60 * (now / 60)` above) and so lags by up to 60 s:
++                // counted from it, a 30 s hold released after 9 s (measured).
++                // A guardian that processes the funding late only holds longer.
++                let funded_at_ms = u64::try_from(duration_since_epoch().as_millis()).unwrap_or(u64::MAX);
+ 
+-                dbtx.insert_entry(&DecryptionKeyShareKey(outpoint), &dk_share)
+-                    .await;
++                dbtx.insert_entry(
++                    &IncomingContractFundedAtKey(outpoint),
++                    &(funded_at_ms, contract.clone()),
++                )
++                .await;
+ 
+                 contract.commitment.amount
+             }
+@@ -666,16 +709,28 @@
+             public_api_endpoint! {
+                 DECRYPTION_KEY_SHARE_ENDPOINT,
+                 ApiVersion::new(0, 0),
+-                async |_module: &Lightning, context, params: OutPoint| -> DecryptionKeyShare {
+-                    // Long-poll until the decryption key share exists. The share is written
+-                    // atomically when the funding transaction output is accepted, so blocking
+-                    // here lets a client request the share before acceptance and receive it the
+-                    // instant it becomes available, rather than polling and backing off. This
+-                    // mirrors the AWAIT_INCOMING_CONTRACT and AWAIT_PREIMAGE endpoints.
+-                    Ok(context
++                async |module: &Lightning, context, params: OutPoint| -> DecryptionKeyShare {
++                    // Long-poll until the contract is funded, as upstream did for the
++                    // share - and then HOLD: nothing is served until
++                    // `FM_LNV2_INCOMING_HOLD_SECS` after this guardian saw it funded,
++                    // counted from the funding and not from the request, so a retried
++                    // request neither waits again nor gets it sooner.
++                    let (funded_at_ms, contract) = context
+                         .db()
+-                        .wait_key_exists(&DecryptionKeyShareKey(params))
+-                        .await)
++                        .wait_key_exists(&IncomingContractFundedAtKey(params))
++                        .await;
++                    let release_at_ms =
++                        funded_at_ms.saturating_add(incoming_hold_secs().saturating_mul(1000));
++                    loop {
++                        let now_ms = u64::try_from(duration_since_epoch().as_millis()).unwrap_or(u64::MAX);
++                        if now_ms >= release_at_ms {
++                            break;
++                        }
++                        fedimint_core::runtime::sleep(Duration::from_millis(release_at_ms - now_ms)).await;
++                    }
++                    // The contract as it was funded - not `IncomingContractKey`, which a
++                    // receiver's claim removes.
++                    Ok(contract.create_decryption_key_share(&module.cfg.private.sk))
+                 }
+             },
+             public_api_endpoint! {

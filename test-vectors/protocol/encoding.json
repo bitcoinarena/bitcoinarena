@@ -1,0 +1,17 @@
+{
+ "what": "Fixed-width big-endian primitives, then a u16-prefixed UTF-8 string, then 32 raw bytes.",
+ "sequence": [
+  "u8 1",
+  "u16 513",
+  "u32 70000",
+  "u64 1099511627776",
+  "str \"mempool\"",
+  "bytes32 0x07*32"
+ ],
+ "hex": "01020100011170000001000000000000076d656d706f6f6c0707070707070707070707070707070707070707070707070707070707070707",
+ "rules": [
+  "u64 takes a BigInt only; a Number must be refused even when it would fit.",
+  "str rejects unpaired surrogates rather than substituting U+FFFD.",
+  "A vec is u16 count then items, and where the protocol says sorted the encoder asserts it."
+ ]
+}

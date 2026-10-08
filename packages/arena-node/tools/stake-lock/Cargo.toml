@@ -1,0 +1,37 @@
+# THE STAKE LOCK, BUILT BY THE PLAYER'S OWN CLIENT (FEDERATION.md, rehearsal
+# step 1). It builds only as a member of a fedimint v0.12.0 source tree, whose
+# workspace pins every dependency; nothing here does that for you. As built
+# for the measurement (2026-09-11):
+#
+#   ln -s <this directory> <fedimint-0.12.0>/blwp-stake-lock
+#   add "blwp-stake-lock" to <fedimint-0.12.0>/Cargo.toml [workspace] members
+#   cargo build --release -p blwp-stake-lock      (rocksdb needs libclang:
+#     LIBCLANG_PATH, and BINDGEN_EXTRA_CLANG_ARGS=-I<llvm>/lib/clang/<v>/include)
+#
+# then hand the binary to tools/stake-lock-step1.sh as LOCK_BIN. Client code
+# only, on the stock client crates - fedimintd is the released, unpatched build.
+[package]
+name = "blwp-stake-lock"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true }
+fedimint-api-client = { workspace = true }
+fedimint-bip39 = { workspace = true }
+fedimint-client = { workspace = true }
+fedimint-connectors = { workspace = true }
+fedimint-core = { workspace = true }
+fedimint-ln-client = { workspace = true }
+fedimint-lnv2-client = { workspace = true }
+fedimint-lnv2-common = { workspace = true }
+lightning-invoice = { workspace = true }
+fedimint-meta-client = { workspace = true }
+fedimint-mint-client = { workspace = true }
+fedimint-mintv2-client = { workspace = true }
+fedimint-rocksdb = { workspace = true }
+fedimint-wallet-client = { workspace = true }
+fedimint-walletv2-client = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["full"] }

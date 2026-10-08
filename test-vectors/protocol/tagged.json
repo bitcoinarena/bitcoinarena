@@ -1,0 +1,21 @@
+{
+ "what": "Tagged hash. H_tag(x) = sha256(sha256(tag) || sha256(tag) || x).",
+ "cases": [
+  {
+   "tag": "ARENA/v1/RoundContract",
+   "message": "",
+   "digest": "1f9c5a0edb8d59e5076b64540d2aa2e3073cc35ec0b3e678e68d4b85ece80396"
+  },
+  {
+   "tag": "ARENA/v1/RoundContract",
+   "message": "010203",
+   "digest": "2714ed720cb1e144925f036e59e4db3064651c14f13b6dd005bd1d795a560579"
+  },
+  {
+   "tag": "ARENA/v1/EntryContract",
+   "message": "010203",
+   "digest": "a9ba927bd576c91da61d076fcd6a17c7e49956bcd3366e6314859c5f36c3221f"
+  }
+ ],
+ "note": "The last two share a body and differ only by tag. Any implementation that produces one digest for both has dropped the tag."
+}

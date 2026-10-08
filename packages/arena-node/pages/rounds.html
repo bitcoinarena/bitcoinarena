@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena · Rounds</title>
+<!-- THE ROUNDS PAGE (the owner 2026-09-28 16:17, ROUNDS-HTML-1617), served by every node at /rounds. Upcoming rounds with
+     their start, end and the committees drawn for them; finished rounds open an accordion with who played and who won
+     how much. Its data is this node's /api/rounds and /api/round-result. -->
+<style>
+  :root { --bg: #0e1116; --panel: #161b22; --line: #2a313c; --text: #e6edf3; --dim: #8b949e; --gold: #e3b341;
+          --ok: #3fb950; --warn: #d29922; --bad: #f85149; --link: #58a6ff; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f8fa; --panel: #ffffff; --line: #d0d7de; --text: #1f2328; --dim: #656d76; --gold: #9a6700;
+            --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e; --link: #0969da; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 17px; margin: 24px 0 8px; color: var(--gold); }
+  .sub { color: var(--dim); font-size: 13px; margin-bottom: 8px; word-break: break-all; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; overflow: hidden; }
+  .row { display: grid; grid-template-columns: 9.5em 1fr 1fr; gap: 4px 16px; padding: 10px 12px; align-items: start; }
+  .row .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .row .t { font-variant-numeric: tabular-nums; }
+  .row .t small, .muted { color: var(--dim); }
+  .who { grid-column: 1 / -1; font-size: 13px; }
+  .who .k { font-family: ui-monospace, Menlo, monospace; display: inline-block; margin: 1px 6px 1px 0; padding: 0 5px;
+            border: 1px solid var(--line); border-radius: 4px; }
+  .who .role { color: var(--dim); margin-right: 6px; }
+  .nodrawn { color: var(--warn); }
+  .tag { font-size: 12px; padding: 1px 6px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); margin-left: 6px; }
+  .tag.open { color: var(--ok); border-color: var(--ok); }
+  button.head { all: unset; display: block; width: 100%; cursor: pointer; }
+  button.head:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+  button.head .row { position: relative; padding-right: 32px; }
+  button.head .row::after { content: "▸"; color: var(--dim); position: absolute; right: 12px; top: 10px; }
+  .card.open button.head .row::after { content: "▾"; }
+  .acc { border-top: 1px solid var(--line); padding: 8px 12px 12px; display: none; overflow-x: auto; }
+  .card.open .acc { display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--dim); font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .won { color: var(--ok); font-weight: 600; }
+  .empty { color: var(--dim); padding: 10px 2px; }
+  @media (max-width: 640px) {
+    .row { grid-template-columns: 1fr; }
+  }
+  .game { font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .game img { width: 18px; height: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bitcoin Arena · Rounds</h1>
+  <div class="sub" id="node">reading this node…</div>
+  <h2>Upcoming <span class="muted" id="upcount"></span></h2>
+  <div id="upcoming"><div class="empty">reading…</div></div>
+  <h2>Finished <span class="muted" id="fincount"></span></h2>
+  <div id="finished"><div class="empty">reading…</div></div>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const short = (hex) => `${hex.slice(0, 8)}…${hex.slice(-4)}`;
+  // ABSOLUTE AND READABLE: the viewer's own clock, with the UTC instant beside it
+  const when = (iso) => {
+    const d = new Date(iso);
+    const local = d.toLocaleString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return `${esc(local)}<br><small>${esc(iso.replace('T', ' ').replace(/\.\d+Z$/, ' UTC'))}</small>`;
+  };
+  const sats = (msat) => { const n = BigInt(msat || '0'); return `${(n / 1000n).toLocaleString()} sat`; };
+  const keys = (list) => list.map((k) => `<span class="k" title="${esc(k)}">${esc(short(k))}</span>`).join('');
+  const committee = (c) => (c && c.drawn
+    ? `<span class="role">game/verify</span>${keys(c.game)}<br><span class="role">settlement</span>${keys(c.settlement)}`
+    : `<span class="nodrawn">committee not drawn</span>${c && c.why ? ` <span class="muted">- ${esc(c.why)}</span>` : ''}`);
+  // THE ROUND'S GAME BY THE NAME A PLAYER KNOWS IT AND ITS MARK (kanban #228), when this node hosts it
+  const gameTag = (r) => (r.game ? `<span class="game">${r.game.icon ? `<img src="${esc(r.game.icon)}" alt="">` : ''}${esc(r.game.title || r.game.name)}</span><br>` : '');
+  const times = (r) => `<div class="t"><span class="muted">start</span><br>${when(r.startTime)}</div>`
+    + `<div class="t"><span class="muted">end</span><br>${when(r.endTime)}</div>`;
+
+  function upcomingCard(r) {
+    const kind = r.free ? 'free' : `stake ${sats(r.stakeMsat)}`;
+    return `<div class="card"><div class="row"><div class="id" title="${esc(r.id)}">${gameTag(r)}${esc(short(r.id))}`
+      + `<br><span class="tag${r.entryOpen ? ' open' : ''}">${r.entryOpen ? 'entry open' : r.phase === 'pending' ? 'pending' : 'entry closed'}</span>`
+      + `<span class="tag">${esc(kind)}</span></div>${times(r)}`
+      + `<div class="who">${committee(r.committee)}</div></div></div>`;
+  }
+
+  function finishedCard(r) {
+    const kind = r.free ? 'free' : `stake ${sats(r.stakeMsat)}`;
+    return `<div class="card" data-id="${esc(r.id)}"><button class="head" aria-expanded="false">`
+      + `<div class="row"><div class="id" title="${esc(r.id)}">${gameTag(r)}${esc(short(r.id))}<br><span class="tag">${esc(kind)}</span>`
+      + `<span class="tag">${r.joined} joined</span></div>${times(r)}`
+      + `<div class="who">${committee(r.committee)}</div></div></button>`
+      + `<div class="acc" role="region"><div class="empty">reading…</div></div></div>`;
+  }
+
+  async function openResult(card) {
+    const acc = card.querySelector('.acc');
+    const btn = card.querySelector('button.head');
+    const open = !card.classList.contains('open');
+    card.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', String(open));
+    if (!open || card.dataset.loaded) return;
+    try {
+      const r = await fetch(`api/round-result?round=${encodeURIComponent(card.dataset.id)}`);
+      if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`);
+      const res = await r.json();
+      card.dataset.loaded = '1';
+      if (!res.players.length) { acc.innerHTML = '<div class="empty">nobody played this round</div>'; return; }
+      const rows = [...res.players].sort((a, b) => (BigInt(b.wonMsat) > BigInt(a.wonMsat) ? 1 : BigInt(b.wonMsat) < BigInt(a.wonMsat) ? -1 : (b.score || 0) - (a.score || 0)));
+      acc.innerHTML = '<table><thead><tr><th>player</th><th>outcome</th><th class="num">score</th><th class="num">won</th><th>payout</th></tr></thead><tbody>'
+        + rows.map((p) => `<tr><td>${p.name ? `${esc(p.name)} ` : ''}<span class="muted" title="${esc(p.player)}">${esc(short(p.player))}</span></td>`
+          + `<td>${esc(p.outcome || 'no result')}${p.signedBy ? ` <span class="muted">(${p.signedBy} signed)</span>` : ''}</td>`
+          + `<td class="num">${p.score === null ? '-' : esc(p.score)}</td>`
+          + `<td class="num${BigInt(p.wonMsat) > 0n ? ' won' : ''}">${res.free ? '-' : esc(sats(p.wonMsat))}</td>`
+          + `<td class="muted">${esc(res.free ? 'free round' : p.winningsState)}</td></tr>`).join('')
+        + '</tbody></table>';
+    } catch (e) { acc.innerHTML = `<div class="empty">could not read this round: ${esc(e.message)}</div>`; }
+  }
+
+  let openIds = new Set();
+  async function load() {
+    try {
+      const r = await fetch('api/rounds');
+      if (!r.ok) throw new Error(`${r.status}`);
+      const d = await r.json();
+      $('node').textContent = `node ${d.node} · read ${new Date(Number(d.nowMs)).toLocaleString()}`;
+      const up = [...d.upcoming].sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
+      $('upcount').textContent = `(${up.length})`;
+      $('upcoming').innerHTML = up.length ? up.map(upcomingCard).join('') : '<div class="empty">no round announced</div>';
+      openIds = new Set([...document.querySelectorAll('#finished .card.open')].map((c) => c.dataset.id));
+      $('fincount').textContent = `(${d.finished.length})`;
+      $('finished').innerHTML = d.finished.length ? d.finished.map(finishedCard).join('') : '<div class="empty">no round finished yet</div>';
+      for (const card of document.querySelectorAll('#finished .card')) {
+        card.querySelector('button.head').addEventListener('click', () => openResult(card));
+        if (openIds.has(card.dataset.id)) openResult(card);
+      }
+    } catch (e) { $('node').textContent = `could not read this node's rounds: ${e.message}`; }
+  }
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, 30000);
+})();
+</script>
+</body>
+</html>
