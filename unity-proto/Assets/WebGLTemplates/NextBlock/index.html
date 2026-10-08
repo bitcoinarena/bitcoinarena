@@ -216,6 +216,10 @@
     #arena-games button.game img { width: 40px; height: 40px; flex: none; }
     #arena-games button.game .sub { display: block; color: #8b949e; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
     #arena-games .why { color: #f0b72f; font-size: 13px; white-space: pre-wrap; }
+    #arena-games .more { margin-top: 14px; font-size: 14px; }
+    #arena-games .more a, #arena-platform a { color: #f7931a; }
+    /* THE PLATFORM PAGE'S LINK ON THE LOADING SCREEN (kanban #208, the owner 2026-10-08 11:38) */
+    #arena-platform { margin-top: 10px; font: 13px/1.4 system-ui, sans-serif; text-align: center; padding: 0 16px; }
     #arena-client { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 36; background: #0d1014; }
 
     /* Who is in this round. Hidden until a round is named. Pointer-events none
@@ -344,6 +348,11 @@
       font-size:13px; font-weight:600; line-height:1.25; }
     #blwp-backup-cta { flex:none; font-size:13px; font-weight:700; padding:6px 10px; cursor:pointer;
       background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
+    #arena-platform-go { flex: none; font: 600 13px/1 system-ui, sans-serif; padding: 9px 10px; text-decoration: none;
+      background: rgba(13,16,20,0.9); color: #f7931a; border: 1px solid #3a4452; border-radius: 6px; white-space: nowrap; }
+    #arena-set-platform a { color: #f7931a; font-weight: 600; }
+    /* A PHONE: the backup warning keeps the strip's width; the platform page is in Settings */
+    @media (max-width: 560px) { #arena-platform-go { display: none; } }
     #blwp-settings-go { flex: none; font-size: 20px; line-height: 1; padding: 6px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; }
     /* THE LOBBY'S BALANCE (the owner 2026-09-29 12:47, SETTINGS-1254): confirmed and pending, each with its icon. */
@@ -447,6 +456,8 @@
       <span id="blwp-backup-notice"></span>
       <button id="blwp-backup-cta" type="button">Back up now</button>
     </div>
+    <!-- BUILD ON BITCOIN ARENA, RUN A NODE (kanban #208, the owner 2026-10-08 11:38): the platform page, beside the gear -->
+    <a id="arena-platform-go" href="platform/" title="Build a game or a market on Bitcoin Arena, or run a node and earn">Build &amp; earn</a>
     <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -502,6 +513,11 @@
         <option value="3">3%</option><option value="4">4%</option><option value="5" selected>5%</option>
       </select>
       <div class="muted" id="blwp-donation-recipients"></div>
+    </section>
+    <section class="settings-card" id="arena-set-platform">
+      <h3>Build on Bitcoin Arena</h3>
+      <div class="muted">Bitcoin Arena runs games and prediction markets for bitcoin. Build your own and earn half of every donation, or run a node and earn from every paid entry.</div>
+      <a class="primary" href="platform/">How it works &rarr;</a>
     </section>
     <section class="settings-card" id="blwp-set-logs">
       <h3>Client logs</h3>
@@ -839,7 +855,7 @@
   })();
   </script>
 
-  <div id="arena-games"><div class="box"><h2>Choose a game</h2><div class="list"></div><div class="why"></div></div></div>
+  <div id="arena-games"><div class="box"><h2>Choose a game</h2><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div></div></div>
   <div id="boot">
     <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
@@ -854,6 +870,7 @@
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
+    <div id="arena-platform"><a href="platform/">Build a game or a market on Bitcoin Arena, or run a node and earn &rarr;</a></div>
     <div id="blwp-deposit"></div>
     <div id="err"></div>
     <div id="blwp-donation-noted"></div>

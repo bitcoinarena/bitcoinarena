@@ -5,6 +5,9 @@
 //   arena-donor once <dir>      one pass: ask the seats, redeem in every federation, withdraw to the dev's LND
 //   arena-donor loop <dir>      a pass every donor.json intervalSec
 //   arena-donor status <dir>    the key, what the seats list for it, what each federation wallet holds
+//   arena-donor game-key <dir>  makes the game developer's Ed25519 key (game-dev.pkcs8, 0600) and prints its public key
+//   arena-donor sign <dir> <body.mjs>  signs the manifest body the module exports as BODY with <dir>/game-dev.pkcs8, checks it
+//                               as a node does, and writes <dir>/<game>-manifest.hex; prints the game id (kanban #208)
 //
 // The federation is the page's own wasm lock client (donor.json wasmPkg), run in Node; each federation's wallet state is
 // kept in <dir>/wallet-<federation id 16>.json. The LND is the dev's own, through lncli. Invites: donor.json `invites`
@@ -13,6 +16,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { gameDevKey, signManifest } from '../src/manifest-sign.js';
+import { manifestStands, encodeManifest } from '../../arena-protocol/src/manifest.js';
+import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
 import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
@@ -20,7 +29,33 @@ const flag = (n, d) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const readJson = (p, d) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : d);
 const writeJson = (p, v) => { writeFileSync(`${p}.tmp`, JSON.stringify(v, null, 1)); renameSync(`${p}.tmp`, p); };
-if (!cmd || !dir) { console.error('arena-donor init|once|loop|status <dir>'); process.exit(2); }
+if (!cmd || !dir) { console.error('arena-donor init|once|loop|status|game-key <dir>  |  arena-donor sign <dir> <body.mjs>'); process.exit(2); }
+
+// THE GAME DEVELOPER'S KEY AND SIGNATURE (kanban #202, #208): held by the developer's own client, never by a node
+if (cmd === 'game-key') {
+  mkdirSync(dir, { recursive: true });
+  const keyPath = join(dir, 'game-dev.pkcs8');
+  if (existsSync(keyPath)) { console.error(`${keyPath} exists: a key is never replaced (an update of a game is signed by the same key)`); process.exit(1); }
+  const { privateKey } = generateKeyPairSync('ed25519');
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'der' }), { mode: 0o600 });
+  chmodSync(keyPath, 0o600);
+  say({ step: 'game-key', file: keyPath, gameDevPubkey: Buffer.from(gameDevKey(readFileSync(keyPath)).pubkey).toString('hex') });
+  process.exit(0);
+}
+if (cmd === 'sign') {
+  const bodyPath = rest[0];
+  if (!bodyPath) { console.error('arena-donor sign <dir> <body.mjs>: the module exporting the manifest BODY'); process.exit(2); }
+  const dev = gameDevKey(readFileSync(join(dir, 'game-dev.pkcs8')));
+  const { BODY } = await import(pathToFileURL(resolve(bodyPath)).href);
+  if (!BODY) { console.error(`${bodyPath} exports no BODY`); process.exit(2); }
+  const manifest = signManifest({ ...BODY, gameDevPubkey: BODY.gameDevPubkey || dev.pubkey }, dev);
+  const stands = manifestStands(manifest, { verify: verifyEd25519 });
+  if (!stands.ok) { console.error(`that manifest is not a game: ${stands.why}`); process.exit(1); }
+  const out = join(dir, `${manifest.gameName}-manifest.hex`);
+  writeFileSync(out, Buffer.from(encodeManifest(manifest)).toString('hex') + '\n');
+  say({ step: 'signed', game: manifest.gameName, version: manifest.version, gameId: Buffer.from(stands.gameId).toString('hex'), file: out });
+  process.exit(0);
+}
 
 if (cmd === 'init') {
   mkdirSync(dir, { recursive: true });
