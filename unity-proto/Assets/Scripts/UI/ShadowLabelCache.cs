@@ -18,10 +18,35 @@ public static class ShadowLabelCache
     public static bool Enabled = true;
     public static int Bakes, Hits;
 
-    struct Entry { public Texture2D Tex; public RectInt Area; public int UsedAt; }
+    struct Entry { public Texture Tex; public RectInt Area; public int UsedAt; }
 
-    static readonly Dictionary<string, Entry> _cache = new Dictionary<string, Entry>();
-    static readonly Dictionary<string, int> _seen = new Dictionary<string, int>();
+    // THE KEY IS A STRUCT (comment 991: the string key cost 60-68 ms of the window): everything that decides the label's pixels
+    readonly struct Key : System.IEquatable<Key>
+    {
+        readonly string _text; readonly int _font, _size, _flags, _pad, _w, _h, _fx, _fy, _screen, _hash; readonly Color32 _colour; readonly Vector2 _offset;
+        public Key(Rect r, string text, GUIStyle style, Color colour)
+        {
+            _text = text; _font = style.font != null ? style.font.GetInstanceID() : 0; _size = style.fontSize;
+            _flags = (int)style.fontStyle | ((int)style.alignment << 4) | ((int)style.clipping << 9) | (style.wordWrap ? 1 << 11 : 0) | (style.richText ? 1 << 12 : 0);
+            var p = style.padding; _pad = p.left | (p.right << 8) | (p.top << 16) | (p.bottom << 24); _offset = style.contentOffset;
+            _w = Mathf.RoundToInt(r.width * 1000f); _h = Mathf.RoundToInt(r.height * 1000f);
+            _fx = Mathf.RoundToInt((r.x - Mathf.Floor(r.x)) * 1000f); _fy = Mathf.RoundToInt((r.y - Mathf.Floor(r.y)) * 1000f);
+            _screen = Screen.width * 65536 + Screen.height; _colour = colour;
+            _hash = System.HashCode.Combine(text.GetHashCode(), _font, _size, _flags, _pad, System.HashCode.Combine(_w, _h, _fx, _fy, _screen, _colour.r | (_colour.g << 8) | (_colour.b << 16) | (_colour.a << 24), _offset));
+        }
+        public bool Equals(Key o) => _hash == o._hash && _font == o._font && _size == o._size && _flags == o._flags && _pad == o._pad && _w == o._w && _h == o._h
+            && _fx == o._fx && _fy == o._fy && _screen == o._screen && _colour.r == o._colour.r && _colour.g == o._colour.g && _colour.b == o._colour.b
+            && _colour.a == o._colour.a && _offset == o._offset && string.Equals(_text, o._text);
+        public override bool Equals(object o) => o is Key k && Equals(k);
+        public override int GetHashCode() => _hash;
+    }
+
+    static readonly Dictionary<Key, Entry> _cache = new Dictionary<Key, Entry>();
+    static readonly Dictionary<Key, int> _seen = new Dictionary<Key, int>();
+    // AT MOST TWO BAKES A FRAME, so the labels that all appear in the first seconds are spread out rather than piled into one
+    public const int BakesPerFrame = 2;
+    static int _bakeFrame = -1, _bakesThisFrame;
+    static Material _compose;
     static RenderTexture _rt;
     static Texture2D _read;
     const int MaxEntries = 160;
@@ -44,18 +69,12 @@ public static class ShadowLabelCache
         && GUI.matrix == Matrix4x4.identity && GUI.color == Color.white && GUI.contentColor == Color.white
         && style.normal.background == null && SystemInfo.supportsRenderTextures;
 
-    static string Key(Rect r, string text, GUIStyle style, Color colour) =>
-        string.Concat(text, "\u0001", (style.font != null ? style.font.GetInstanceID() : 0).ToString(), ",", style.fontSize.ToString(), ",",
-            ((int)style.fontStyle).ToString(), ",", ((int)style.alignment).ToString(), ",", style.wordWrap ? "w" : "-", style.richText ? "r" : "-", ",",
-            ((int)style.clipping).ToString(), ",", style.padding.ToString(), ",", style.contentOffset.ToString("F3"), ",",
-            r.width.ToString("F3"), "x", r.height.ToString("F3"), "@", (r.x - Mathf.Floor(r.x)).ToString("F3"), ",", (r.y - Mathf.Floor(r.y)).ToString("F3"),
-            ",", ((Color32)colour).ToString(), ",", Screen.width.ToString(), "x", Screen.height.ToString());
 
     /// <summary>Draws the label from the cache and answers true; false when the caller must draw it as before.</summary>
     public static bool TryDraw(Rect r, string text, GUIStyle style, Color colour)
     {
         if (string.IsNullOrEmpty(text) || !Cacheable(style)) return false;
-        string key = Key(r, text, style, colour);
+        var key = new Key(r, text, style, colour);
         int frame = Time.frameCount;
         if (!_cache.TryGetValue(key, out var e))
         {
@@ -64,6 +83,9 @@ public static class ShadowLabelCache
             _seen[key] = frame;
             if (_seen.Count > 2048) _seen.Clear();
             if (!stays) return false;
+            if (_bakeFrame != frame) { _bakeFrame = frame; _bakesThisFrame = 0; }
+            if (_bakesThisFrame >= BakesPerFrame) { _seen[key] = frame; return false; }   // asked again next frame
+            _bakesThisFrame++;
             if (!Bake(r, text, style, colour, out e)) return false;
             if (_cache.Count >= MaxEntries) Evict();
             _cache[key] = e;
@@ -82,10 +104,10 @@ public static class ShadowLabelCache
 
     static void Evict()
     {
-        string oldest = null; int at = int.MaxValue;
-        foreach (var kv in _cache) if (kv.Value.UsedAt < at) { at = kv.Value.UsedAt; oldest = kv.Key; }
-        if (oldest == null) return;
-        Object.Destroy(_cache[oldest].Tex);
+        Key oldest = default; int at = int.MaxValue; bool any = false;
+        foreach (var kv in _cache) if (kv.Value.UsedAt < at) { at = kv.Value.UsedAt; oldest = kv.Key; any = true; }
+        if (!any) return;
+        Release(_cache[oldest].Tex);
         _cache.Remove(oldest);
     }
 
@@ -105,7 +127,7 @@ public static class ShadowLabelCache
             if (_rt != null) _rt.Release();
             // HALF FLOAT WHERE THE GPU HAS IT: an 8-bit target rounds the coverage, and that rounding plus the 8-bit texel put the
             // first pixel test 2/255 off (comment 990 gate); the old draw rounds only in the framebuffer
-            _rt = new RenderTexture(Screen.width, Screen.height, 0, Half ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32) { name = "ShadowLabelMask" };
+            _rt = new RenderTexture(Screen.width, Screen.height, 0, Half ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32) { name = "ShadowLabelMask", filterMode = FilterMode.Point };
             _rt.Create();
         }
         if (_read == null) _read = new Texture2D(4, 4, Half ? TextureFormat.RGBAHalf : TextureFormat.RGBA32, false);
@@ -139,27 +161,50 @@ public static class ShadowLabelCache
         return outPx;
     }
 
+    static void Release(Texture t)
+    {
+        if (t is RenderTexture rt) rt.Release();
+        if (t != null) Object.Destroy(t);
+    }
+
+    /// <summary>
+    /// THE BAKE, ON THE GPU (comment 991: the read-back bake cost 97-125 ms of the window): the label's coverage is rendered
+    /// into the mask target at its screen position, then one blit through Hidden/ShadowLabelCompose writes text over shadow
+    /// into the label's own render texture. Nothing comes back to the CPU.
+    /// </summary>
     static bool Bake(Rect r, string text, GUIStyle style, Color colour, out Entry e)
     {
         e = default;
+        if (_compose == null)
+        {
+            var sh = Shader.Find("Hidden/ShadowLabelCompose");
+            if (sh == null || !sh.isSupported) { Enabled = false; return false; }
+            _compose = new Material(sh) { hideFlags = HideFlags.HideAndDontSave };
+        }
+        EnsureTargets();
         var rel = AreaOf(r, style);
         var area = new RectInt(Mathf.FloorToInt(r.x) + rel.x, Mathf.FloorToInt(r.y) + rel.y, rel.width, rel.height);
-        // the glyph coverage: the text in white over opaque black, at its own position
-        var mask = Capture(area, Color.black, () =>
-        {
-            var prev = style.normal.textColor;
-            style.normal.textColor = Color.white;
-            GUI.Label(r, text, style);
-            style.normal.textColor = prev;
-        });
-        var px = Compose(mask, rel.width, rel.height, colour, ShadowColour, ShadowOffset);
-        var tex = new Texture2D(rel.width, rel.height, Half ? TextureFormat.RGBAHalf : TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp, name = "ShadowLabel" };
-        // a texture's row 0 is its bottom: flip the top-first rows
-        var flipped = new Color[px.Length];
-        for (int y = 0; y < rel.height; y++) System.Array.Copy(px, y * rel.width, flipped, (rel.height - 1 - y) * rel.width, rel.width);
-        tex.SetPixels(flipped);
-        tex.Apply(false, true);
-        e = new Entry { Tex = tex, Area = rel };
+        var prev = RenderTexture.active;
+        RenderTexture.active = _rt;
+        GL.Clear(false, true, Color.black);
+        var was = style.normal.textColor;
+        style.normal.textColor = Color.white;
+        GUI.Label(r, text, style);
+        style.normal.textColor = was;
+        var dest = new RenderTexture(rel.width, rel.height, 0, Half ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32)
+            { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp, name = "ShadowLabel" };
+        dest.Create();
+        // the area in the mask's UV: a target's rows count up from its bottom, the GUI's down from its top
+        _compose.SetVector("_Area", new Vector4(area.x / (float)_rt.width, (_rt.height - area.yMax) / (float)_rt.height,
+                                                area.width / (float)_rt.width, area.height / (float)_rt.height));
+        _compose.SetVector("_Text", colour);
+        _compose.SetVector("_Shadow", ShadowColour);
+        _compose.SetVector("_Offset", new Vector4(ShadowOffset.x, ShadowOffset.y, 0f, 0f));
+        GL.PushMatrix();
+        Graphics.Blit(_rt, dest, _compose);
+        GL.PopMatrix();
+        RenderTexture.active = prev;
+        e = new Entry { Tex = dest, Area = rel };
         return true;
     }
 
@@ -210,7 +255,7 @@ public static class ShadowLabelCache
                 if (bg == Color.black) worstB = Mathf.Max(worstB, worst); else worstW = Mathf.Max(worstW, worst);
                 px += old.Length;
             }
-            Object.Destroy(e.Tex);
+            Release(e.Tex);
             n++;
         }
         pass = n > 0 && worstB <= 1 && worstW <= 1;
