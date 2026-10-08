@@ -1234,6 +1234,9 @@
       frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
       codeUrl: 'Build/{{{ CODE_FILENAME }}}',
       streamingAssetsUrl: 'StreamingAssets',
+      // THE 2x CAP REACHES UNITY (kanban #266): Unity's loader sizes the drawing buffer from window.devicePixelRatio, not
+      // from the canvas size resize() sets below - measured on a phone profile (DPR 2.625): 1082 x 2402, 2.6 Mpx a frame.
+      devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2),
       companyName: '{{{ COMPANY_NAME }}}',
       productName: '{{{ PRODUCT_NAME }}}',
       productVersion: '{{{ PRODUCT_VERSION }}}',
