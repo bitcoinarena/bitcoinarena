@@ -1,0 +1,17 @@
+{
+ "what": "Zcash Foundation FROST(secp256k1, SHA-256) taproot ciphersuite test vectors, copied byte for byte",
+ "repository": "https://github.com/ZcashFoundation/frost",
+ "tag": "frost-secp256k1-tr/v3.0.0",
+ "contextString": "FROST-secp256k1-SHA256-TR-v1",
+ "files": {
+  "vectors.json": {
+   "url": "https://raw.githubusercontent.com/ZcashFoundation/frost/frost-secp256k1-tr/v3.0.0/frost-secp256k1-tr/tests/helpers/vectors.json",
+   "sha256": "0ac120db0ae51143b04e74edfc90cf62e29e58f5980308e5efb0da039bfdc3ff"
+  },
+  "vectors_dkg.json": {
+   "url": "https://raw.githubusercontent.com/ZcashFoundation/frost/frost-secp256k1-tr/v3.0.0/frost-secp256k1-tr/tests/helpers/vectors_dkg.json",
+   "sha256": "912c8f8a50760351349463550c3ea99c4f8bc1a6c3d7852510194196bfabbf30"
+  }
+ },
+ "note": "vectors-big-identifier.json at this tag is byte-identical to vectors.json (same sha256), so it is not copied twice."
+}

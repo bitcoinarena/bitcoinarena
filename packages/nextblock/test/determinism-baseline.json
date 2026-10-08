@@ -1,0 +1,1010 @@
+{
+ "_comment": [
+  "THE DETERMINISM BASELINE (kanban #28): every hit tools/check-determinism.js finds in each core a seat installs, pinned by",
+  "the core's own source text - file, rule and text, never a line number. A core's bytes are its hash, so these cannot be",
+  "edited out of a live core; test/determinism-guard.test.js fails on any hit not listed here and on any entry no longer",
+  "found, so this list only changes on purpose. Nothing here is taken from the old C#/PhysX engine: every text is the core's own."
+ ],
+ "cores": {
+  "68e2b3d6": {
+   "tree": "src",
+   "hits": [
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y0 * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y1 * ONE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "(2 * n + d) / (2 * d)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * n"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * d"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(exposure, 0, EXPOSURE_REFERENCE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "REFERENCE_TICKS * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(cargo, 0, ONE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks) * cargo5(cargo)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks)"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "FIRE_TEAMS_PER_SIDE * 2"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "k % FIRE_TEAMS_PER_SIDE"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "POSTURE_STEP * POSTURE_STEP"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdx * sdx"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdz * sdz"
+    }
+   ]
+  },
+  "7e2123d1": {
+   "tree": "frozen/7e2123d1",
+   "hits": [
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y0 * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y1 * ONE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "(2 * n + d) / (2 * d)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * n"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * d"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(exposure, 0, EXPOSURE_REFERENCE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "REFERENCE_TICKS * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(cargo, 0, ONE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks) * cargo5(cargo)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks)"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "FIRE_TEAMS_PER_SIDE * 2"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "k % FIRE_TEAMS_PER_SIDE"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "POSTURE_STEP * POSTURE_STEP"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdx * sdx"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdz * sdz"
+    }
+   ]
+  },
+  "2069b4c2": {
+   "tree": "frozen/2069b4c2",
+   "hits": [
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y0 * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y1 * ONE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "(2 * n + d) / (2 * d)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * n"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * d"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(exposure, 0, EXPOSURE_REFERENCE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "REFERENCE_TICKS * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(cargo, 0, ONE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks) * cargo5(cargo)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks)"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "FIRE_TEAMS_PER_SIDE * 2"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "k % FIRE_TEAMS_PER_SIDE"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "POSTURE_STEP * POSTURE_STEP"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdx * sdx"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdz * sdz"
+    }
+   ]
+  },
+  "de2f263d": {
+   "tree": "frozen/de2f263d",
+   "hits": [
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "9.40"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.02"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "1.42"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "155.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "50.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "7.00"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "0.12"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "float literal",
+     "text": "6.82"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "cz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hx * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "hz * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y0 * ONE"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "Math",
+     "text": "Math.round"
+    },
+    {
+     "file": "rules/map.js",
+     "rule": "operator",
+     "text": "y1 * ONE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "(2 * n + d) / (2 * d)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * n"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "2 * d"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(exposure, 0, EXPOSURE_REFERENCE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "REFERENCE_TICKS * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "clamp(cargo, 0, ONE) * FACTOR_SCALE"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks) * cargo5(cargo)"
+    },
+    {
+     "file": "rules/score.js",
+     "rule": "operator",
+     "text": "exposure5(exposure) * time5(ticks)"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "FIRE_TEAMS_PER_SIDE * 2"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "k % FIRE_TEAMS_PER_SIDE"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "POSTURE_STEP * POSTURE_STEP"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdx * sdx"
+    },
+    {
+     "file": "sim.js",
+     "rule": "operator",
+     "text": "sdz * sdz"
+    }
+   ]
+  }
+ }
+}

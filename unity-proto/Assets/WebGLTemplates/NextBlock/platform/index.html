@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build on Bitcoin Arena</title>
+<meta name="description" content="Build games and prediction markets on Bitcoin Arena, or run a node and earn from every paid entry.">
+<link rel="icon" href="../favicon.ico">
+<!-- THE PLATFORM PAGE (kanban #208, the owner 2026-10-08 11:38): that games and prediction markets can be built on Bitcoin
+     Arena, what a developer and a node operator gain, a guide to programming and signing a game, and how a node works and
+     is run. Every number here is the code's: the 5% node fee (arena-protocol fee.js NODE_FEE_BPS), the 0-5% donation split
+     half and half (donation.js splitTwoSets, arena-client donation-choice.js), the 3/4 rank curve (payout.js), the census
+     minimums (§5A.10). What is not built yet says so. -->
+<style>
+  :root { --bg: #0d1014; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --orange: #f7931a; --green: #3fb950; --blue: #58a6ff; --violet: #bc8cff; --warn: #f0b72f; }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--orange); }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 16px 64px; }
+  header { padding: 40px 0 8px; }
+  .brand { color: var(--dim); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; font-size: 13px; }
+  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.1; margin: 8px 0 12px; }
+  h1 span { color: var(--orange); }
+  h2 { font-size: clamp(22px, 4vw, 30px); margin: 56px 0 8px; padding-top: 8px; }
+  h3 { font-size: 18px; margin: 28px 0 6px; }
+  p.lead { font-size: 19px; color: #c9d1d9; max-width: 720px; }
+  .dim { color: var(--dim); }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 8px; }
+  nav.toc a { text-decoration: none; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 14px; }
+  nav.toc a:hover { border-color: var(--orange); }
+  .status { border: 1px solid var(--warn); background: rgba(240, 183, 47, .08); border-radius: 8px; padding: 12px 14px; margin: 18px 0; font-size: 15px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin: 16px 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .card h4 { margin: 0 0 4px; font-size: 16px; }
+  .card p { margin: 0; color: #c9d1d9; font-size: 15px; }
+  .card .k { font-size: 26px; font-weight: 700; color: var(--orange); line-height: 1.2; }
+  .bar { display: flex; height: 44px; border-radius: 6px; overflow: hidden; margin: 14px 0 8px; font-size: 13px; font-weight: 600; }
+  .bar div { display: flex; align-items: center; justify-content: center; color: #0d1014; white-space: nowrap; overflow: hidden; padding: 0 4px; }
+  .legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 6px 16px; font-size: 14px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+  .tablewrap { overflow-x: auto; }
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 16px 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding: 0 0 18px 48px; }
+  ol.steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%; background: var(--orange); color: #0d1014; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  ol.steps > li > b:first-child { display: block; font-size: 17px; margin-bottom: 2px; }
+  pre { background: #0a0d11; border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #d2dae3; }
+  code { font: 14px ui-monospace, SFMono-Regular, Menlo, monospace; background: #0a0d11; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 16px 0; }
+  .flow .box { flex: 1 1 150px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .flow .box b { display: block; color: var(--orange); font-size: 15px; }
+  .flow .arrow { align-self: center; color: var(--dim); font-size: 22px; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .note { border-left: 3px solid var(--blue); padding: 4px 0 4px 12px; color: #c9d1d9; margin: 12px 0; font-size: 15px; }
+  footer { margin-top: 56px; color: var(--dim); font-size: 14px; border-top: 1px solid var(--line); padding-top: 16px; }
+  @media (max-width: 700px) { .bar div.s { font-size: 0; } }
+  @media (max-width: 520px) { ol.steps > li { padding-left: 42px; } .flow .arrow { display: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand">Bitcoin Arena</div>
+  <h1>Build a game. Run a market.<br><span>Get paid in bitcoin.</span></h1>
+  <p class="lead">Bitcoin Arena is an open engine for games and prediction markets played for real bitcoin. It holds the
+    stakes, checks every result and pays the winners. You bring the game. <a href="../">Tick Tock, Next Block</a> is the
+    first one, and yours can be next.</p>
+  <nav class="toc">
+    <a href="#why">Why build here</a><a href="#money">Who earns what</a><a href="#kinds">Games and markets</a>
+    <a href="#guide">Guide: program and sign a game</a><a href="#market">A market</a><a href="#node">Run a node</a><a href="#today">What works today</a>
+  </nav>
+  <div class="status"><b>Test coins only.</b> Bitcoin Arena runs on <b>testnet4</b> and on private <b>regtest</b> chains today.
+    Mainnet is not live, and nothing here asks for real bitcoin.</div>
+</header>
+
+<section id="why">
+  <h2>Why build here</h2>
+  <p>A game that pays real money usually needs a company: a server, a wallet to hold players' money, a way to stop
+    cheaters and someone to pay out. Bitcoin Arena does all of that for every game on it, so a developer writes only the
+    game.</p>
+  <div class="grid">
+    <div class="card"><h4>You never hold players' money</h4><p>Stakes are locked in a federation of independent
+      nodes (Fedimint). No single node can take them, and neither can you.</p></div>
+    <div class="card"><h4>Cheating does not pay</h4><p>Your game's rules run as a deterministic core. Independent nodes
+      replay every run from the player's inputs. A run that does not replay to the same score is not paid.</p></div>
+    <div class="card"><h4>Payouts are already built</h4><p>Pick a payout rule in your manifest: the rank curve for games,
+      pari-mutuel for markets. The nodes compute the table, and every node gets the same answer to the millisatoshi.</p></div>
+    <div class="card"><h4>No server, no approval</h4><p>A game exists once its developer signs its manifest. Nobody has to
+      approve it. Each node chooses which games it hosts and runs them for you.</p></div>
+    <div class="card"><h4>Players arrive with a wallet</h4><p>One seed and one wallet work across every game. A player
+      who has played Tick Tock, Next Block can stake on your game without a new sign-up.</p></div>
+    <div class="card"><h4>You earn on every paid entry</h4><p>Half of every player donation goes to the game's developer,
+      on every node that hosts it, for as long as people play.</p></div>
+  </div>
+</section>
+
+<section id="money">
+  <h2>Who earns what</h2>
+  <p>Every paid entry is split the same way. The rates are fixed in the protocol, the same for everyone. Here is a
+    10,000 sat stake with the default donation:</p>
+  <div class="bar" role="img" aria-label="10,000 sats: 9,000 in play, 500 node fee, 250 to the game developer, 250 to the protocol developers">
+    <div style="flex: 90; background: var(--green)">9,000 in play</div>
+    <div class="s" style="flex: 5; background: var(--orange)">500</div>
+    <div class="s" style="flex: 2.5; background: var(--violet)">250</div>
+    <div class="s" style="flex: 2.5; background: var(--blue)">250</div>
+  </div>
+  <div class="legend">
+    <div><i style="background: var(--green)"></i><b>90% in play</b>: what the round is won or lost with</div>
+    <div><i style="background: var(--orange)"></i><b>5% node fee</b>: to the nodes that ran the round</div>
+    <div><i style="background: var(--violet)"></i><b>2.5% to the game developer</b>: half the donation</div>
+    <div><i style="background: var(--blue)"></i><b>2.5% to the protocol developers</b>: the other half</div>
+  </div>
+  <div class="grid">
+    <div class="card"><div class="k">5%</div><h4>Node fee, always</h4><p>Taken from every paid stake and split three
+      ways: the nodes that replay the runs, the nodes that sign the payouts, and the guardians that hold the money.
+      Free rounds pay no fee.</p></div>
+    <div class="card"><div class="k">0–5%</div><h4>Donation, the player's choice</h4><p>The default is 5%, and the
+      player can lower it to 0. It is always split half to the game's developer and half to the protocol developers.</p></div>
+    <div class="card"><div class="k">The rest</div><h4>Decides the round</h4><p>In a game, the best runs win the stakes
+      of the runs that failed. In a market, the right picks win the stakes of the wrong ones.</p></div>
+  </div>
+  <h3>The incentives, in one line each</h3>
+  <ul>
+    <li><b>Game developers</b> earn half of every donation in every round of their game, paid out by the federation to
+      their own key. The more people play, the more they earn. They run no server.</li>
+    <li><b>Node operators</b> earn the 5% fee for the work their node does in each round, and choose which games to host.</li>
+    <li><b>Players</b> get results that nobody can fake. They never hand their stake to a company, and they keep one
+      wallet for every game.</li>
+    <li><b>Protocol developers</b> earn the other half of the donations, which pays for keeping the engine safe.</li>
+  </ul>
+</section>
+
+<section id="kinds">
+  <h2>Two kinds: games and prediction markets</h2>
+  <div class="two">
+    <div class="card"><h4>A game (replayed)</h4><p>Players play a run, for example a 90-second drive. Your
+      <b>core</b> computes the score from the player's inputs. The nodes replay each run with the same core and sign
+      the score.<br><br><b>Payout: the rank curve.</b> A run that delivers and reaches the minimum score gets its stake
+      back. The best quarter of those runs share the stakes of the runs that failed. Each rank down gets 3/4 of the
+      rank above.</p></div>
+    <div class="card"><h4>A prediction market (attested)</h4><p>Players pick one outcome, for example "the bitcoin
+      price closes above 100k". There is no core. The outcome is signed by <b>attestors</b> that you name in the
+      manifest: k of n of their keys, for example 2 of 3.<br><br><b>Payout: pari-mutuel.</b> The stakes of the wrong
+      picks are shared among the right picks, in proportion to what each staked. There is no house and no
+      counterparty.</p></div>
+  </div>
+  <p class="note">Your game and its rules are fixed by a <b>manifest</b>, a short signed record. Its hash is the game's id,
+    and every round names the exact manifest it plays, so an update never changes a round already written.</p>
+</section>
+
+<section id="guide">
+  <h2>Guide: program a game and sign it</h2>
+  <p>Below, a whole game called <b>coin-count</b>: each tick the player presses a number, and the score is the sum.
+    Real games are bigger, but they have exactly these parts.</p>
+
+  <ol class="steps">
+    <li><b>Write the core: your rules as pure arithmetic</b>
+      The core is the referee. Nodes on different machines must reach the same result bit for bit, so it may use only
+      integers (or fixed-point), the round's seed and the player's inputs. It must not read a clock, use
+      <code>Math.random</code>, the network or files. Every core has the same small interface:
+<pre><code>// core.js - coin-count
+export const CORE = {
+  name: 'coin-count',
+  RUN_TICKS: 600,                                   // the longest run a round may ask
+  runTicksFits: (t) =&gt; Number.isInteger(t) &amp;&amp; t &gt;= 1 &amp;&amp; t &lt;= 600,
+  INPUT_WORDS: 5,                                   // a tick carries five input numbers
+  start: (seedWord, config, { runTicks }) =&gt; ({ seed: seedWord | 0, sum: 0, ticks: 0, length: runTicks }),
+  eventsOf: () =&gt; ({ count: { liquidations: 0, loads: 0, samples: 0, tapes: 0 }, before() {} }),
+  step(st, words) { if (st.ticks &lt; st.length) { st.sum += words[0] | 0; st.ticks++; } },
+  stateHash: (st) =&gt; sha256(`coin-count:${st.seed}:${st.sum}:${st.ticks}:${st.length}`),
+  result: (st) =&gt; ({ outcome: st.ticks &lt; st.length ? null : 'DELIVERED', score: st.sum }),
+};</code></pre>
+      The core's id is the SHA-256 of its source file. A <b>config</b> (a set of rule numbers) is named by its hash too.</li>
+
+    <li><b>Write the client: what the player sees</b>
+      Your client is a web page. Put it at <code>games/&lt;game name&gt;/index.html</code> beside the Bitcoin Arena page.
+      The page loads it only if its SHA-256 is listed in your manifest (<code>clients[]</code>). A client changed by
+      one byte is refused and does not run. Your client runs inside the page and gets the engine as
+      <code>window.parent.ARENA_GAME</code>: your game's rounds, the player's identity and <code>join</code>. Stakes,
+      locks, the wallet and the seed stay the engine's, so your client never touches a key.
+<pre><code>const A = window.parent.ARENA_GAME;
+A.rows();          // this game's open rounds: id, line, joinable, entry close
+A.identity();      // the player's name and key fingerprint (the same in every game)
+A.join(roundId);   // join, through the engine's own join and stake
+A.back();          // back to the list of games</code></pre></li>
+
+    <li><b>Make your donation key: this is where you get paid</b>
+      The dev client <code>arena-donor</code> makes the key that receives your half of the donations. It also collects
+      them from the federation and pays them to your own Lightning node.
+<pre><code>node packages/arena-donor/bin/arena-donor.mjs init ./my-game-dev --label "coin-count dev"
+# prints recipientPk: the key your game's donation set names</code></pre></li>
+
+    <li><b>Make your developer key</b>
+      One Ed25519 key signs your game and every later version of it. Keep it safe: whoever holds it can publish
+      updates of your game. A node never sees it.
+<pre><code>node packages/arena-donor/bin/arena-donor.mjs game-key ./my-game-dev
+# writes ./my-game-dev/game-dev.pkcs8 (readable only by you) and prints your public key</code></pre></li>
+
+    <li><b>Write the manifest</b>
+      The manifest names everything a node and a player check: your cores and configs, the longest run, the payout
+      rule, the minimum score, your client files and your donation set. Write it as a small module:
+<pre><code>// body.mjs - coin-count, version 1
+import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from './packages/arena-protocol/src/manifest.js';
+import { donationSetId } from './packages/arena-protocol/src/donation.js';
+const hex = (h) =&gt; Uint8Array.from(Buffer.from(h, 'hex'));
+export const DONATION_SET = [{ recipientPk: hex('02…your recipientPk…'), label: 'coin-count dev', shareBps: 10000 }];
+export const BODY = {
+  gameName: 'coin-count', version: 1, parentManifestId: NO_PARENT,
+  resultType: RESULT_TYPE.REPLAY, payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4,
+  minScore: 1, runTicksMax: 600, roundPeriodMs: 0n,
+  cores: [{ hash: hex('…sha256 of core.js…'), configs: [hex('…sha256 of your config…')] }],
+  clients: [hex('…sha256 of games/coin-count/index.html…')],
+  gameDonationSetId: donationSetId(DONATION_SET),
+};</code></pre></li>
+
+    <li><b>Sign it</b>
+      The dev client signs the body with your key, checks the result exactly as a node will, and prints the game id.
+<pre><code>node packages/arena-donor/bin/arena-donor.mjs sign ./my-game-dev body.mjs
+# {"step":"signed","game":"coin-count","version":1,"gameId":"…","file":"./my-game-dev/coin-count-manifest.hex"}</code></pre>
+      That id <b>is</b> your game. Change one byte of the manifest and the id changes too.</li>
+
+    <li><b>Hand it to the nodes</b>
+      A node loads a game from a module that exports <code>GAME</code>: the signed manifest, your core with its configs,
+      and your donation set. A node checks all of it at start and refuses a game whose pieces do not match its
+      manifest.
+<pre><code>// coin-count/game.js - what a node operator adds to ARENA_GAMES
+export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
+  cores: new Map([[CORE_HASH, { name: 'coin-count', hash: CORE_HASH, url: CORE_URL, adapter: CORE,
+    configs: new Map([[CONFIG_HASH, {}]]) }]]),
+  donationSet: DONATION_SET };</code></pre>
+      Then ask node operators to host it. Each operator decides alone, and the game appears in the lobby of every page
+      whose nodes host it.</li>
+
+    <li><b>Test it on your own machine</b>
+      <code>packages/arena-node/tools/games-regtest.mjs</code> starts a private test chain with two nodes that host two
+      games, keeps a free round of each open and serves the page, so you see the game picker, your client and a join.
+      No coins are real there.</li>
+
+    <li><b>Ship updates</b>
+      An update is a new manifest: the same key, <code>version</code> + 1 and the old game id as
+      <code>parentManifestId</code>. Rounds already written keep the manifest they named.</li>
+  </ol>
+  <p class="note"><b>Real stakes need the page's list.</b> A page lets players stake on a replayed game only if the
+    game is on its list of known games, with its cores and configs. That list ships with the page, so a game you have
+    just signed plays for free first. Markets work differently, as the next section shows.</p>
+</section>
+
+<section id="market">
+  <h2>A prediction market instead</h2>
+  <p>A market is the same manifest with <code>resultType: RESULT_TYPE.ATTESTED</code> and
+    <code>payoutRule: PAYOUT_RULE.PARI_MUTUEL</code>. It has no core and no run. Instead it names:</p>
+  <ul>
+    <li><b>outcomes</b>: 2 to 16 labels, for example <code>['above 100k', 'between', 'below 90k']</code>;</li>
+    <li><b>attestors</b>: 1 to 16 Ed25519 keys of the people or services that report the outcome;</li>
+    <li><b>attestThreshold</b>: how many of them must sign the same outcome.</li>
+  </ul>
+  <p>The round settles once the threshold has signed one outcome and the objection window has passed. If two valid
+    reports disagree, the round settles on neither. A market that is not on the page's list can still take stakes:
+    the page shows its developer key and manifest id, and the player must confirm a second time. Bitcoin Arena's own
+    test market <b>btc-close</b> has its own client, loaded by its hash, exactly as described in step 2.</p>
+</section>
+
+<section id="node">
+  <h2>Run a node and earn</h2>
+  <p>A node is a small server program, <code>arena-node</code>. Together, the nodes are Bitcoin Arena: there is no
+    central server. Every paid round is run by a committee of nodes drawn by lot from all bonded nodes, and those
+    nodes share the round's 5% fee.</p>
+
+  <h3>How a node works</h3>
+  <div class="flow">
+    <div class="box"><b>1. Bond</b>Locks a bond on the Bitcoin chain and publishes an advertisement: its address, its
+      roles and the games it hosts.</div>
+    <div class="arrow">→</div>
+    <div class="box"><b>2. Census</b>Every bond that is old enough counts. Committees are drawn by lot from the census,
+      using the hash of a Bitcoin block.</div>
+    <div class="arrow">→</div>
+    <div class="box"><b>3. Work</b>Lists rounds, takes entries, replays runs, signs results and payouts, and holds the
+      stakes as a guardian.</div>
+    <div class="arrow">→</div>
+    <div class="box"><b>4. Paid</b>Its share of the fee is in the round's settlement, paid by the federation to its key.</div>
+  </div>
+  <div class="tablewrap"><table>
+    <tr><th>Role</th><th>What the node does</th><th>Share of the 5% fee</th></tr>
+    <tr><td><b>Game / verify</b></td><td>Replays every run of the round with the game's core and signs the score. It is
+      drawn only from nodes that host that game.</td><td>one third, split among the seats</td></tr>
+    <tr><td><b>Settlement</b></td><td>Computes the payout table and signs it, so the federation pays it.</td><td>one
+      third, split among the seats</td></tr>
+    <tr><td><b>Guardian</b></td><td>Holds a key of the Fedimint federation that keeps the stakes (for example 5 of 7).</td>
+      <td>one third, split among the round's guardians</td></tr>
+  </table></div>
+  <p><b>An example:</b> in a round with 7 seats in each role and 100,000 sats staked, the fee is 5,000 sats. Each pool
+    gets about 1,667 sats, so one seat earns about 238 sats per role, or about 714 sats for a node that sits in all
+    three. A node earns this in every round it serves, around the clock, and its dashboard
+    (<code>/dashboard</code>) shows what it earned per day, month, year and game.</p>
+
+  <h3>The bond: what keeps nodes honest</h3>
+  <ul>
+    <li>A bond is bitcoin the operator locks on chain. It never expires, and the operator can take it back after it
+      matures (30 days for reference).</li>
+    <li>A node that cheats, for example by signing two different results for one run, can lose its whole bond. Half goes
+      to the affected players, and the rest to the honest nodes and the developers.</li>
+  </ul>
+
+  <h3>What you need</h3>
+  <ul>
+    <li>A computer that is always on, with a public HTTPS address (a tunnel works).</li>
+    <li>Node.js 24 and the Bitcoin Arena source.</li>
+    <li>A Bitcoin node (bitcoind) of the same network, testnet4 today, so your node reads the chain itself and trusts
+      nobody's word for it.</li>
+    <li>For the guardian role: <code>fedimintd</code> and a seat in the federation.</li>
+    <li>A bond: 50,000 test sats is the practical floor on testnet4.</li>
+  </ul>
+
+  <h3>Start it</h3>
+<pre><code># a node hosting Tick Tock, Next Block, on port 31221, with its store in node.db
+ARENA_BITCOIND_URL=http://127.0.0.1:48332 \
+ARENA_BITCOIND_COOKIE=$HOME/.bitcoin/testnet4/.cookie \
+ARENA_BIND=0.0.0.0 \
+ARENA_GAMES=packages/nextblock/plugin/nextblock.js \
+node packages/arena-node/src/main.js 31221 node.db</code></pre>
+  <ul>
+    <li><code>ARENA_GAMES</code>: the games you host, as a comma-separated list of modules. Add a game here, and remove one
+      here.</li>
+    <li><code>ARENA_SERIES_FILE</code>: the published round series your node holds. It is read again without a restart.</li>
+    <li><code>ARENA_PEERS</code>: other nodes' addresses, comma-separated.</li>
+    <li><code>ARENA_STAKE_LOCK_BIN</code> and <code>ARENA_FEDERATION_CLIENT_DIR</code>: the federation client your node
+      verifies stakes with (paid rounds).</li>
+  </ul>
+  <p>The node keeps its key in its store (<code>node.db</code>). Back the store up: it is your node's identity and what
+    its bond is tied to.</p>
+</section>
+
+<section id="today">
+  <h2>What works today, and what comes next</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Works today</th><th>Not built yet</th></tr>
+    <tr><td>
+      <ul>
+        <li>Seven bonded testnet4 nodes with a 5-of-7 federation, running paid test rounds</li>
+        <li>Games and markets as signed manifests; nodes choose what they host</li>
+        <li>The lobby lists the games, and each game loads its own client by hash</li>
+        <li>The 5% fee and the donation split, computed by every node alike</li>
+        <li>The dev client: donation key, collect, withdraw to Lightning, developer key, signing</li>
+        <li>A private two-game test chain for developers</li>
+      </ul>
+    </td><td>
+      <ul>
+        <li>Mainnet: not live</li>
+        <li>Publishing a manifest on the Bitcoin chain: today nodes load it from the game's module</li>
+        <li>A tool for a new operator to post a testnet4 bond: the seven bonds were posted by the project</li>
+        <li>Automatic slashing: offences are recorded today, the payout from a bond comes before mainnet</li>
+        <li>A tool for an operator to withdraw node fees: the dashboard shows them</li>
+        <li>A sandbox that isolates a core's process: today a node runs only cores its operator installed, in a worker</li>
+      </ul>
+    </td></tr>
+  </table></div>
+  <p class="note"><b>Get the code:</b> the Bitcoin Arena source is not public yet. This page will link to it when it is.</p>
+</section>
+
+<footer>Bitcoin Arena · games and prediction markets for bitcoin · <a href="../">Play Tick Tock, Next Block</a></footer>
+</div>
+</body>
+</html>

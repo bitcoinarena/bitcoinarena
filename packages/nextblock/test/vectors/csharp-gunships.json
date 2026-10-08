@@ -1,0 +1,2253 @@
+{
+  "_comment": [
+    "What the C# air arm actually does, recorded so 2d's second half is ported",
+    "against a measurement instead of against the code read out loud.",
+    "",
+    "Produced by GunshipReferenceTests.MeasureTheGunships (Explicit, PlayMode):",
+    "  Unity -batchmode -runTests -testPlatform PlayMode \\",
+    "    -testFilter GunshipReferenceTests.MeasureTheGunships \\",
+    "    -projectPath unity-proto -testResults /tmp/gunref-results.xml \\",
+    "    -logFile /tmp/gunref.log",
+    "Four seeds, each run twice - once with no air at all - because bombs draw",
+    "on Army's own _rng, so an air pass and a no-air pass on one seed do NOT",
+    "share a ground battle and the difference cannot be read off one run.",
+    "",
+    "The control is the point of the no-air passes: noair-20260901 is",
+    "config-identical to passes.core-size-reinforce in csharp-army.json, and",
+    "reproduces all nineteen of its rows to the digit (n, z and spread, four",
+    "groups a row). The harness is therefore the same harness, and the air",
+    "numbers below are measured against a ground fight already accepted."
+  ],
+  "setup": {
+    "seed_note": "four seeds; the first is the recording's own",
+    "seeds": [
+      20260901,
+      20260902,
+      20260903,
+      20260904
+    ],
+    "seam": 0,
+    "flat": true,
+    "courier": null,
+    "dt": "1/60",
+    "durationSeconds": 90,
+    "armourPerSide": 12,
+    "infantryPerSide": 36,
+    "reinforce": true,
+    "sortieSeconds": 17,
+    "sortieJitter": [
+      0.7,
+      1.4
+    ],
+    "order": "Army.Update, then LaunchSorties",
+    "airCorridorX": 104,
+    "dropGateX": 92,
+    "bombRadius": 16,
+    "armourHp": [
+      6,
+      10
+    ],
+    "bombDamage": "12 * (1 - d/16)",
+    "entryHeight": 19,
+    "bombVx": 30,
+    "bombVz": [
+      10,
+      22
+    ],
+    "sortieClockRng": "UnityEngine.Random (NOT Army._rng)"
+  },
+  "_findings": [
+    "1. AIR IS NOT AN EVENT, IT IS WEATHER. Battlefield's comment says one",
+    "   sortie every twenty-odd seconds per side is 'an event you look up",
+    "   for'. Measured: at least one gunship is airborne for 69-93% of the",
+    "   round, two at a time on every seed, because both sides' clocks start",
+    "   at zero and 17 s of cadence against a ~17 s transit is continuous",
+    "   cover, not a visit.",
+    "2. A THIRD OF EVERY BOMB LOAD LANDS OFF THE FIELD, and all of it in x,",
+    "   none in z. A bomb is released while |x| < 92, inherits 30 m/s along",
+    "   the gunship's own track and falls from 19 m, so it is thrown 56-62 m",
+    "   downrange: measured landings reach |x| = 148-154 against a field that",
+    "   ends at 92. 9-16 bombs a round, 26-42%, land on nobody by",
+    "   construction - the gate is on the release point and the bomb is not",
+    "   released where it lands.",
+    "3. THE FIRST SORTIE OF EVERY ROUND IS WASTED. Both armies spawn at",
+    "   |z| = 77 and the gunships fly the seam at |z| = 17-35; first killing",
+    "   bomb is t = 16.7-26.4 s, and 13-15 bombs are spent before t=30 for",
+    "   5-15 riflemen between them. Air only bites once the lines meet.",
+    "4. BOMBS ARE THE PRIMARY INFANTRY KILLER, by a distance. 60-76 riflemen",
+    "   a round to bombs against 16-37 to rifles, one bomb worth 11-23 men at",
+    "   its best because squads clump inside a 16 m circle. Against armour it",
+    "   is the opposite: 9-12 tanks of 55-63 lost, a 15-22% share.",
+    "5. AIR KILLS ITS OWN. 11-29 of the riflemen a bomb kills are the",
+    "   dropper's side - 18-42% of them - because the blast circle does not",
+    "   ask whose men are inside it and the lines meet at the seam.",
+    "6. THE GROUND FIGHT ABSORBS ALL OF IT. Armour lost rises 54-60 to 55-63",
+    "   and the exit headcounts are unchanged (8-11 of 12 a side, 32-36",
+    "   infantry of 36): replacement covers 60-76 dead riflemen a round",
+    "   without the establishment moving. Air changes who dies, not how the",
+    "   round ends.",
+    "7. TWO DEFECTS THE PORT MUST NOT COPY BLIND. Detonate has no hp check on",
+    "   the armour loop and RemoveAll only runs at the end of Update, so a",
+    "   tank killed earlier in the same frame can fire Destroyed twice;",
+    "   measured over 4 x 90 s it never happened (doubleFire 0/0 on every",
+    "   seed), so it is a latent defect, not a live one. And SendHelicopter's",
+    "   direction is drawn from UnityEngine.Random rather than Army._rng: in",
+    "   the C# the air arm is not reproducible from an Army seed at all."
+  ],
+  "passes": {
+    "noair-20260901": {
+      "exit": {
+        "seed": 20260901,
+        "air": "off",
+        "armour": [
+          10,
+          10
+        ],
+        "infantry": [
+          34,
+          35
+        ],
+        "armourLost": 59,
+        "replacementsArrived": 55,
+        "riflemenKilledByRifle": 28
+      },
+      "summary": {
+        "sorties": {
+          "total": 0,
+          "bull": 0,
+          "bear": 0,
+          "onStationSeconds": 0,
+          "onStationShare": 0,
+          "peakAirborne": 0,
+          "bombsInAirSeconds": 0
+        },
+        "bombs": {
+          "detonated": 0,
+          "stillFlyingAtEnd": 0,
+          "perSortie": 0,
+          "effective": 0,
+          "dud": 0,
+          "offField": 0,
+          "ownGround": 0,
+          "enemyGround": 0
+        },
+        "infantry": {
+          "killedByBombs": 0,
+          "bull": 0,
+          "bear": 0,
+          "friendlyFire": 0,
+          "insideRadius": 0,
+          "perBomb": 0,
+          "perEffectiveBomb": 0,
+          "killedByRifle": 28
+        },
+        "armour": {
+          "insideRadius": 0,
+          "destroyedByBombs": 0,
+          "bombsThatKilledArmour": 0,
+          "destroyedByShell": 59,
+          "totalLost": 59,
+          "bombShare": 0
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 15,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 4
+        },
+        {
+          "t": 20,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 9
+        },
+        {
+          "t": 25,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 13
+        },
+        {
+          "t": 30,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 16
+        },
+        {
+          "t": 35,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 20
+        },
+        {
+          "t": 40,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 24
+        },
+        {
+          "t": 45,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 28
+        },
+        {
+          "t": 50,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 32
+        },
+        {
+          "t": 55,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 34
+        },
+        {
+          "t": 60,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 37
+        },
+        {
+          "t": 65,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 42
+        },
+        {
+          "t": 70,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 45
+        },
+        {
+          "t": 75,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 49
+        },
+        {
+          "t": 80,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 51
+        },
+        {
+          "t": 85,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 55
+        },
+        {
+          "t": 90,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 59
+        }
+      ]
+    },
+    "gunships-20260901": {
+      "exit": {
+        "seed": 20260901,
+        "air": "on",
+        "armour": [
+          10,
+          8
+        ],
+        "infantry": [
+          35,
+          36
+        ],
+        "armourLost": 62,
+        "replacementsArrived": 56,
+        "riflemenKilledByRifle": 16
+      },
+      "summary": {
+        "sorties": {
+          "total": 12,
+          "bull": 6,
+          "bear": 6,
+          "onStationSeconds": 67.1,
+          "onStationShare": 0.75,
+          "peakAirborne": 2,
+          "bombsInAirSeconds": 51.2
+        },
+        "bombs": {
+          "detonated": 38,
+          "stillFlyingAtEnd": 1,
+          "perSortie": 3.17,
+          "effective": 16,
+          "dud": 22,
+          "offField": 16,
+          "ownGround": 5,
+          "enemyGround": 17
+        },
+        "infantry": {
+          "killedByBombs": 76,
+          "bull": 41,
+          "bear": 35,
+          "friendlyFire": 28,
+          "insideRadius": 76,
+          "perBomb": 2,
+          "perEffectiveBomb": 4.75,
+          "killedByRifle": 16
+        },
+        "armour": {
+          "insideRadius": 19,
+          "destroyedByBombs": 10,
+          "bombsThatKilledArmour": 6,
+          "destroyedByShell": 52,
+          "totalLost": 62,
+          "bombShare": 0.16
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        },
+        "landings": {
+          "maxAbsX": 152.0,
+          "beyondFieldX": 16,
+          "meanAbsZ": 11.1,
+          "maxAbsZ": 25.2,
+          "firstKillingBombAt": 25.1,
+          "bombsBefore30s": 13,
+          "infantryKilledBefore30s": 12,
+          "armourKilledBefore30s": 4,
+          "biggestBombInfantry": 15,
+          "biggestBombArmour": 2
+        },
+        "sortieIntervals": {
+          "observed": [
+            21.8,
+            20.2,
+            13.5,
+            13.4,
+            12.5,
+            16.9,
+            23.1,
+            14.8,
+            20.6,
+            16.9,
+            17.6,
+            23.3
+          ],
+          "range": [
+            12.5,
+            23.3
+          ]
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 2,
+          "bombsInAir": 3,
+          "sorties": 2,
+          "bombs": 1,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 2,
+          "bombs": 6,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 15,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 2,
+          "bombs": 8,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 3
+        },
+        {
+          "t": 20,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 2,
+          "bombs": 8,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 7
+        },
+        {
+          "t": 25,
+          "helis": 2,
+          "bombsInAir": 3,
+          "sorties": 4,
+          "bombs": 8,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 9
+        },
+        {
+          "t": 30,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 4,
+          "bombs": 13,
+          "bombKills": 12,
+          "bombArmour": 4,
+          "lost": 16
+        },
+        {
+          "t": 35,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 5,
+          "bombs": 16,
+          "bombKills": 12,
+          "bombArmour": 4,
+          "lost": 21
+        },
+        {
+          "t": 40,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 6,
+          "bombs": 17,
+          "bombKills": 27,
+          "bombArmour": 4,
+          "lost": 22
+        },
+        {
+          "t": 45,
+          "helis": 1,
+          "bombsInAir": 2,
+          "sorties": 6,
+          "bombs": 22,
+          "bombKills": 40,
+          "bombArmour": 8,
+          "lost": 30
+        },
+        {
+          "t": 50,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 7,
+          "bombs": 24,
+          "bombKills": 40,
+          "bombArmour": 8,
+          "lost": 32
+        },
+        {
+          "t": 55,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 8,
+          "bombs": 26,
+          "bombKills": 44,
+          "bombArmour": 8,
+          "lost": 35
+        },
+        {
+          "t": 60,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 8,
+          "bombs": 30,
+          "bombKills": 51,
+          "bombArmour": 9,
+          "lost": 39
+        },
+        {
+          "t": 65,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 8,
+          "bombs": 31,
+          "bombKills": 51,
+          "bombArmour": 9,
+          "lost": 43
+        },
+        {
+          "t": 70,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 10,
+          "bombs": 31,
+          "bombKills": 51,
+          "bombArmour": 9,
+          "lost": 45
+        },
+        {
+          "t": 75,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 10,
+          "bombs": 33,
+          "bombKills": 59,
+          "bombArmour": 10,
+          "lost": 51
+        },
+        {
+          "t": 80,
+          "helis": 0,
+          "bombsInAir": 1,
+          "sorties": 10,
+          "bombs": 37,
+          "bombKills": 76,
+          "bombArmour": 10,
+          "lost": 55
+        },
+        {
+          "t": 85,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 10,
+          "bombs": 38,
+          "bombKills": 76,
+          "bombArmour": 10,
+          "lost": 57
+        },
+        {
+          "t": 90,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 12,
+          "bombs": 38,
+          "bombKills": 76,
+          "bombArmour": 10,
+          "lost": 62
+        }
+      ]
+    },
+    "noair-20260902": {
+      "exit": {
+        "seed": 20260902,
+        "air": "off",
+        "armour": [
+          9,
+          11
+        ],
+        "infantry": [
+          36,
+          36
+        ],
+        "armourLost": 54,
+        "replacementsArrived": 50,
+        "riflemenKilledByRifle": 38
+      },
+      "summary": {
+        "sorties": {
+          "total": 0,
+          "bull": 0,
+          "bear": 0,
+          "onStationSeconds": 0,
+          "onStationShare": 0,
+          "peakAirborne": 0,
+          "bombsInAirSeconds": 0
+        },
+        "bombs": {
+          "detonated": 0,
+          "stillFlyingAtEnd": 0,
+          "perSortie": 0,
+          "effective": 0,
+          "dud": 0,
+          "offField": 0,
+          "ownGround": 0,
+          "enemyGround": 0
+        },
+        "infantry": {
+          "killedByBombs": 0,
+          "bull": 0,
+          "bear": 0,
+          "friendlyFire": 0,
+          "insideRadius": 0,
+          "perBomb": 0,
+          "perEffectiveBomb": 0,
+          "killedByRifle": 38
+        },
+        "armour": {
+          "insideRadius": 0,
+          "destroyedByBombs": 0,
+          "bombsThatKilledArmour": 0,
+          "destroyedByShell": 54,
+          "totalLost": 54,
+          "bombShare": 0
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 2
+        },
+        {
+          "t": 15,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 7
+        },
+        {
+          "t": 20,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 8
+        },
+        {
+          "t": 25,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 14
+        },
+        {
+          "t": 30,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 17
+        },
+        {
+          "t": 35,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 18
+        },
+        {
+          "t": 40,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 21
+        },
+        {
+          "t": 45,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 23
+        },
+        {
+          "t": 50,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 25
+        },
+        {
+          "t": 55,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 29
+        },
+        {
+          "t": 60,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 33
+        },
+        {
+          "t": 65,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 38
+        },
+        {
+          "t": 70,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 39
+        },
+        {
+          "t": 75,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 41
+        },
+        {
+          "t": 80,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 47
+        },
+        {
+          "t": 85,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 51
+        },
+        {
+          "t": 90,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 54
+        }
+      ]
+    },
+    "gunships-20260902": {
+      "exit": {
+        "seed": 20260902,
+        "air": "on",
+        "armour": [
+          11,
+          12
+        ],
+        "infantry": [
+          35,
+          35
+        ],
+        "armourLost": 55,
+        "replacementsArrived": 54,
+        "riflemenKilledByRifle": 37
+      },
+      "summary": {
+        "sorties": {
+          "total": 11,
+          "bull": 5,
+          "bear": 6,
+          "onStationSeconds": 62.5,
+          "onStationShare": 0.69,
+          "peakAirborne": 2,
+          "bombsInAirSeconds": 48
+        },
+        "bombs": {
+          "detonated": 35,
+          "stillFlyingAtEnd": 1,
+          "perSortie": 3.18,
+          "effective": 16,
+          "dud": 19,
+          "offField": 9,
+          "ownGround": 9,
+          "enemyGround": 17
+        },
+        "infantry": {
+          "killedByBombs": 60,
+          "bull": 28,
+          "bear": 32,
+          "friendlyFire": 11,
+          "insideRadius": 60,
+          "perBomb": 1.71,
+          "perEffectiveBomb": 3.75,
+          "killedByRifle": 37
+        },
+        "armour": {
+          "insideRadius": 26,
+          "destroyedByBombs": 12,
+          "bombsThatKilledArmour": 9,
+          "destroyedByShell": 43,
+          "totalLost": 55,
+          "bombShare": 0.22
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        },
+        "landings": {
+          "maxAbsX": 148.0,
+          "beyondFieldX": 9,
+          "meanAbsZ": 8.7,
+          "maxAbsZ": 21.2,
+          "firstKillingBombAt": 26.4,
+          "bombsBefore30s": 13,
+          "infantryKilledBefore30s": 5,
+          "armourKilledBefore30s": 2,
+          "biggestBombInfantry": 23,
+          "biggestBombArmour": 2
+        },
+        "sortieIntervals": {
+          "observed": [
+            20.6,
+            20,
+            18.7,
+            18.2,
+            15.7,
+            14.8,
+            22.5,
+            14.9,
+            18.5,
+            15.1,
+            19
+          ],
+          "range": [
+            14.8,
+            22.5
+          ]
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 2,
+          "bombs": 2,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 2,
+          "bombsInAir": 0,
+          "sorties": 2,
+          "bombs": 8,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 1
+        },
+        {
+          "t": 15,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 2,
+          "bombs": 8,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 5
+        },
+        {
+          "t": 20,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 2,
+          "bombs": 8,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 8
+        },
+        {
+          "t": 25,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 4,
+          "bombs": 9,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 11
+        },
+        {
+          "t": 30,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 4,
+          "bombs": 13,
+          "bombKills": 5,
+          "bombArmour": 2,
+          "lost": 17
+        },
+        {
+          "t": 35,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 4,
+          "bombs": 14,
+          "bombKills": 5,
+          "bombArmour": 2,
+          "lost": 19
+        },
+        {
+          "t": 40,
+          "helis": 2,
+          "bombsInAir": 0,
+          "sorties": 6,
+          "bombs": 14,
+          "bombKills": 5,
+          "bombArmour": 2,
+          "lost": 22
+        },
+        {
+          "t": 45,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 6,
+          "bombs": 16,
+          "bombKills": 6,
+          "bombArmour": 4,
+          "lost": 25
+        },
+        {
+          "t": 50,
+          "helis": 0,
+          "bombsInAir": 1,
+          "sorties": 6,
+          "bombs": 21,
+          "bombKills": 12,
+          "bombArmour": 7,
+          "lost": 30
+        },
+        {
+          "t": 55,
+          "helis": 2,
+          "bombsInAir": 0,
+          "sorties": 8,
+          "bombs": 22,
+          "bombKills": 12,
+          "bombArmour": 7,
+          "lost": 32
+        },
+        {
+          "t": 60,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 8,
+          "bombs": 24,
+          "bombKills": 14,
+          "bombArmour": 8,
+          "lost": 39
+        },
+        {
+          "t": 65,
+          "helis": 0,
+          "bombsInAir": 1,
+          "sorties": 8,
+          "bombs": 27,
+          "bombKills": 15,
+          "bombArmour": 8,
+          "lost": 42
+        },
+        {
+          "t": 70,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 9,
+          "bombs": 28,
+          "bombKills": 15,
+          "bombArmour": 8,
+          "lost": 44
+        },
+        {
+          "t": 75,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 9,
+          "bombs": 30,
+          "bombKills": 26,
+          "bombArmour": 8,
+          "lost": 46
+        },
+        {
+          "t": 80,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 10,
+          "bombs": 32,
+          "bombKills": 36,
+          "bombArmour": 10,
+          "lost": 52
+        },
+        {
+          "t": 85,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 10,
+          "bombs": 34,
+          "bombKills": 60,
+          "bombArmour": 12,
+          "lost": 55
+        },
+        {
+          "t": 90,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 11,
+          "bombs": 35,
+          "bombKills": 60,
+          "bombArmour": 12,
+          "lost": 55
+        }
+      ]
+    },
+    "noair-20260903": {
+      "exit": {
+        "seed": 20260903,
+        "air": "off",
+        "armour": [
+          10,
+          10
+        ],
+        "infantry": [
+          34,
+          36
+        ],
+        "armourLost": 54,
+        "replacementsArrived": 50,
+        "riflemenKilledByRifle": 51
+      },
+      "summary": {
+        "sorties": {
+          "total": 0,
+          "bull": 0,
+          "bear": 0,
+          "onStationSeconds": 0,
+          "onStationShare": 0,
+          "peakAirborne": 0,
+          "bombsInAirSeconds": 0
+        },
+        "bombs": {
+          "detonated": 0,
+          "stillFlyingAtEnd": 0,
+          "perSortie": 0,
+          "effective": 0,
+          "dud": 0,
+          "offField": 0,
+          "ownGround": 0,
+          "enemyGround": 0
+        },
+        "infantry": {
+          "killedByBombs": 0,
+          "bull": 0,
+          "bear": 0,
+          "friendlyFire": 0,
+          "insideRadius": 0,
+          "perBomb": 0,
+          "perEffectiveBomb": 0,
+          "killedByRifle": 51
+        },
+        "armour": {
+          "insideRadius": 0,
+          "destroyedByBombs": 0,
+          "bombsThatKilledArmour": 0,
+          "destroyedByShell": 54,
+          "totalLost": 54,
+          "bombShare": 0
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 1
+        },
+        {
+          "t": 15,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 2
+        },
+        {
+          "t": 20,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 10
+        },
+        {
+          "t": 25,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 12
+        },
+        {
+          "t": 30,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 16
+        },
+        {
+          "t": 35,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 18
+        },
+        {
+          "t": 40,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 21
+        },
+        {
+          "t": 45,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 23
+        },
+        {
+          "t": 50,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 28
+        },
+        {
+          "t": 55,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 31
+        },
+        {
+          "t": 60,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 35
+        },
+        {
+          "t": 65,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 37
+        },
+        {
+          "t": 70,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 40
+        },
+        {
+          "t": 75,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 45
+        },
+        {
+          "t": 80,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 49
+        },
+        {
+          "t": 85,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 51
+        },
+        {
+          "t": 90,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 54
+        }
+      ]
+    },
+    "gunships-20260903": {
+      "exit": {
+        "seed": 20260903,
+        "air": "on",
+        "armour": [
+          11,
+          10
+        ],
+        "infantry": [
+          36,
+          36
+        ],
+        "armourLost": 63,
+        "replacementsArrived": 60,
+        "riflemenKilledByRifle": 29
+      },
+      "summary": {
+        "sorties": {
+          "total": 12,
+          "bull": 6,
+          "bear": 6,
+          "onStationSeconds": 79.7,
+          "onStationShare": 0.89,
+          "peakAirborne": 2,
+          "bombsInAirSeconds": 53.7
+        },
+        "bombs": {
+          "detonated": 36,
+          "stillFlyingAtEnd": 1,
+          "perSortie": 3,
+          "effective": 18,
+          "dud": 18,
+          "offField": 12,
+          "ownGround": 8,
+          "enemyGround": 16
+        },
+        "infantry": {
+          "killedByBombs": 72,
+          "bull": 33,
+          "bear": 39,
+          "friendlyFire": 29,
+          "insideRadius": 72,
+          "perBomb": 2,
+          "perEffectiveBomb": 4,
+          "killedByRifle": 29
+        },
+        "armour": {
+          "insideRadius": 25,
+          "destroyedByBombs": 11,
+          "bombsThatKilledArmour": 8,
+          "destroyedByShell": 52,
+          "totalLost": 63,
+          "bombShare": 0.17
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        },
+        "landings": {
+          "maxAbsX": 153.8,
+          "beyondFieldX": 12,
+          "meanAbsZ": 9.9,
+          "maxAbsZ": 23.7,
+          "firstKillingBombAt": 16.7,
+          "bombsBefore30s": 14,
+          "infantryKilledBefore30s": 15,
+          "armourKilledBefore30s": 4,
+          "biggestBombInfantry": 13,
+          "biggestBombArmour": 3
+        },
+        "sortieIntervals": {
+          "observed": [
+            13.4,
+            12.2,
+            21.5,
+            12,
+            15.7,
+            21.6,
+            17.9,
+            16.4,
+            15.5,
+            14.2,
+            17.5,
+            16.7
+          ],
+          "range": [
+            12.0,
+            21.6
+          ]
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 2,
+          "bombs": 1,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 2,
+          "bombs": 5,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 1
+        },
+        {
+          "t": 15,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 4,
+          "bombs": 7,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 4
+        },
+        {
+          "t": 20,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 4,
+          "bombs": 11,
+          "bombKills": 2,
+          "bombArmour": 4,
+          "lost": 12
+        },
+        {
+          "t": 25,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 4,
+          "bombs": 14,
+          "bombKills": 15,
+          "bombArmour": 4,
+          "lost": 15
+        },
+        {
+          "t": 30,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 5,
+          "bombs": 14,
+          "bombKills": 15,
+          "bombArmour": 4,
+          "lost": 18
+        },
+        {
+          "t": 35,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 6,
+          "bombs": 16,
+          "bombKills": 16,
+          "bombArmour": 4,
+          "lost": 23
+        },
+        {
+          "t": 40,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 6,
+          "bombs": 18,
+          "bombKills": 16,
+          "bombArmour": 4,
+          "lost": 26
+        },
+        {
+          "t": 45,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 7,
+          "bombs": 20,
+          "bombKills": 16,
+          "bombArmour": 7,
+          "lost": 32
+        },
+        {
+          "t": 50,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 7,
+          "bombs": 22,
+          "bombKills": 39,
+          "bombArmour": 8,
+          "lost": 37
+        },
+        {
+          "t": 55,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 7,
+          "bombs": 23,
+          "bombKills": 39,
+          "bombArmour": 8,
+          "lost": 41
+        },
+        {
+          "t": 60,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 9,
+          "bombs": 23,
+          "bombKills": 39,
+          "bombArmour": 8,
+          "lost": 41
+        },
+        {
+          "t": 65,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 9,
+          "bombs": 26,
+          "bombKills": 44,
+          "bombArmour": 10,
+          "lost": 48
+        },
+        {
+          "t": 70,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 9,
+          "bombs": 29,
+          "bombKills": 56,
+          "bombArmour": 10,
+          "lost": 52
+        },
+        {
+          "t": 75,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 11,
+          "bombs": 29,
+          "bombKills": 56,
+          "bombArmour": 10,
+          "lost": 54
+        },
+        {
+          "t": 80,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 11,
+          "bombs": 32,
+          "bombKills": 62,
+          "bombArmour": 11,
+          "lost": 58
+        },
+        {
+          "t": 85,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 11,
+          "bombs": 36,
+          "bombKills": 72,
+          "bombArmour": 11,
+          "lost": 61
+        },
+        {
+          "t": 90,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 12,
+          "bombs": 36,
+          "bombKills": 72,
+          "bombArmour": 11,
+          "lost": 63
+        }
+      ]
+    },
+    "noair-20260904": {
+      "exit": {
+        "seed": 20260904,
+        "air": "off",
+        "armour": [
+          9,
+          10
+        ],
+        "infantry": [
+          35,
+          35
+        ],
+        "armourLost": 60,
+        "replacementsArrived": 55,
+        "riflemenKilledByRifle": 38
+      },
+      "summary": {
+        "sorties": {
+          "total": 0,
+          "bull": 0,
+          "bear": 0,
+          "onStationSeconds": 0,
+          "onStationShare": 0,
+          "peakAirborne": 0,
+          "bombsInAirSeconds": 0
+        },
+        "bombs": {
+          "detonated": 0,
+          "stillFlyingAtEnd": 0,
+          "perSortie": 0,
+          "effective": 0,
+          "dud": 0,
+          "offField": 0,
+          "ownGround": 0,
+          "enemyGround": 0
+        },
+        "infantry": {
+          "killedByBombs": 0,
+          "bull": 0,
+          "bear": 0,
+          "friendlyFire": 0,
+          "insideRadius": 0,
+          "perBomb": 0,
+          "perEffectiveBomb": 0,
+          "killedByRifle": 38
+        },
+        "armour": {
+          "insideRadius": 0,
+          "destroyedByBombs": 0,
+          "bombsThatKilledArmour": 0,
+          "destroyedByShell": 60,
+          "totalLost": 60,
+          "bombShare": 0
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 15,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 3
+        },
+        {
+          "t": 20,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 7
+        },
+        {
+          "t": 25,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 11
+        },
+        {
+          "t": 30,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 16
+        },
+        {
+          "t": 35,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 20
+        },
+        {
+          "t": 40,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 24
+        },
+        {
+          "t": 45,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 26
+        },
+        {
+          "t": 50,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 29
+        },
+        {
+          "t": 55,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 32
+        },
+        {
+          "t": 60,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 37
+        },
+        {
+          "t": 65,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 41
+        },
+        {
+          "t": 70,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 47
+        },
+        {
+          "t": 75,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 49
+        },
+        {
+          "t": 80,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 54
+        },
+        {
+          "t": 85,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 55
+        },
+        {
+          "t": 90,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 0,
+          "bombs": 0,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 60
+        }
+      ]
+    },
+    "gunships-20260904": {
+      "exit": {
+        "seed": 20260904,
+        "air": "on",
+        "armour": [
+          8,
+          9
+        ],
+        "infantry": [
+          32,
+          35
+        ],
+        "armourLost": 61,
+        "replacementsArrived": 54,
+        "riflemenKilledByRifle": 21
+      },
+      "summary": {
+        "sorties": {
+          "total": 12,
+          "bull": 6,
+          "bear": 6,
+          "onStationSeconds": 83.3,
+          "onStationShare": 0.93,
+          "peakAirborne": 2,
+          "bombsInAirSeconds": 61.4
+        },
+        "bombs": {
+          "detonated": 37,
+          "stillFlyingAtEnd": 1,
+          "perSortie": 3.08,
+          "effective": 18,
+          "dud": 19,
+          "offField": 12,
+          "ownGround": 11,
+          "enemyGround": 14
+        },
+        "infantry": {
+          "killedByBombs": 66,
+          "bull": 47,
+          "bear": 19,
+          "friendlyFire": 23,
+          "insideRadius": 66,
+          "perBomb": 1.78,
+          "perEffectiveBomb": 3.67,
+          "killedByRifle": 21
+        },
+        "armour": {
+          "insideRadius": 32,
+          "destroyedByBombs": 9,
+          "bombsThatKilledArmour": 5,
+          "destroyedByShell": 52,
+          "totalLost": 61,
+          "bombShare": 0.15
+        },
+        "doubleFire": {
+          "armour": 0,
+          "infantry": 0,
+          "ambiguousBombMatch": 0
+        },
+        "landings": {
+          "maxAbsX": 149.3,
+          "beyondFieldX": 12,
+          "meanAbsZ": 10.5,
+          "maxAbsZ": 27.6,
+          "firstKillingBombAt": 20.4,
+          "bombsBefore30s": 15,
+          "infantryKilledBefore30s": 5,
+          "armourKilledBefore30s": 4,
+          "biggestBombInfantry": 11,
+          "biggestBombArmour": 3
+        },
+        "sortieIntervals": {
+          "observed": [
+            18.9,
+            13,
+            18.2,
+            22.5,
+            14.7,
+            15.1,
+            23.1,
+            18.5,
+            14.5,
+            13.8,
+            12.1,
+            13.6
+          ],
+          "range": [
+            12.1,
+            23.1
+          ]
+        }
+      },
+      "air": [
+        {
+          "t": 5,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 2,
+          "bombs": 2,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 10,
+          "helis": 2,
+          "bombsInAir": 2,
+          "sorties": 2,
+          "bombs": 5,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 0
+        },
+        {
+          "t": 15,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 3,
+          "bombs": 7,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 3
+        },
+        {
+          "t": 20,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 4,
+          "bombs": 9,
+          "bombKills": 0,
+          "bombArmour": 0,
+          "lost": 10
+        },
+        {
+          "t": 25,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 4,
+          "bombs": 13,
+          "bombKills": 5,
+          "bombArmour": 4,
+          "lost": 16
+        },
+        {
+          "t": 30,
+          "helis": 0,
+          "bombsInAir": 0,
+          "sorties": 4,
+          "bombs": 15,
+          "bombKills": 5,
+          "bombArmour": 4,
+          "lost": 17
+        },
+        {
+          "t": 35,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 5,
+          "bombs": 15,
+          "bombKills": 5,
+          "bombArmour": 4,
+          "lost": 21
+        },
+        {
+          "t": 40,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 5,
+          "bombs": 17,
+          "bombKills": 21,
+          "bombArmour": 6,
+          "lost": 24
+        },
+        {
+          "t": 45,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 6,
+          "bombs": 19,
+          "bombKills": 21,
+          "bombArmour": 6,
+          "lost": 27
+        },
+        {
+          "t": 50,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 7,
+          "bombs": 21,
+          "bombKills": 28,
+          "bombArmour": 6,
+          "lost": 31
+        },
+        {
+          "t": 55,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 7,
+          "bombs": 24,
+          "bombKills": 39,
+          "bombArmour": 6,
+          "lost": 33
+        },
+        {
+          "t": 60,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 8,
+          "bombs": 25,
+          "bombKills": 39,
+          "bombArmour": 6,
+          "lost": 37
+        },
+        {
+          "t": 65,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 8,
+          "bombs": 28,
+          "bombKills": 47,
+          "bombArmour": 9,
+          "lost": 42
+        },
+        {
+          "t": 70,
+          "helis": 1,
+          "bombsInAir": 0,
+          "sorties": 9,
+          "bombs": 29,
+          "bombKills": 47,
+          "bombArmour": 9,
+          "lost": 46
+        },
+        {
+          "t": 75,
+          "helis": 1,
+          "bombsInAir": 1,
+          "sorties": 9,
+          "bombs": 30,
+          "bombKills": 47,
+          "bombArmour": 9,
+          "lost": 50
+        },
+        {
+          "t": 80,
+          "helis": 1,
+          "bombsInAir": 2,
+          "sorties": 10,
+          "bombs": 32,
+          "bombKills": 50,
+          "bombArmour": 9,
+          "lost": 54
+        },
+        {
+          "t": 85,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 11,
+          "bombs": 35,
+          "bombKills": 62,
+          "bombArmour": 9,
+          "lost": 55
+        },
+        {
+          "t": 90,
+          "helis": 2,
+          "bombsInAir": 1,
+          "sorties": 12,
+          "bombs": 37,
+          "bombKills": 66,
+          "bombArmour": 9,
+          "lost": 61
+        }
+      ]
+    }
+  },
+  "envelope": {
+    "_comment": [
+      "Across the four seeds. A port matching inside these is the air",
+      "arm; matching one seed to the digit is not asked for and is not",
+      "possible - the C# sortie clock is not on the army's seed."
+    ],
+    "sortiesPerRound": [
+      11,
+      12
+    ],
+    "sortiesPerSide": [
+      5,
+      6
+    ],
+    "onStationShare": [
+      0.69,
+      0.93
+    ],
+    "peakAirborne": [
+      2,
+      2
+    ],
+    "bombsPerRound": [
+      35,
+      38
+    ],
+    "bombsPerSortie": [
+      3,
+      3.18
+    ],
+    "offFieldShare": [
+      0.26,
+      0.42
+    ],
+    "dudShare": [
+      0.5,
+      0.58
+    ],
+    "infantryKilledByBombs": [
+      60,
+      76
+    ],
+    "infantryFriendlyFire": [
+      11,
+      29
+    ],
+    "infantryPerEffectiveBomb": [
+      3.67,
+      4.75
+    ],
+    "armourDestroyedByBombs": [
+      9,
+      12
+    ],
+    "armourBombShare": [
+      0.15,
+      0.22
+    ],
+    "firstKillingBombAt": [
+      16.7,
+      26.4
+    ],
+    "maxAbsLandingX": [
+      148.0,
+      153.8
+    ],
+    "armourLostWithAir": [
+      55,
+      63
+    ],
+    "armourLostWithoutAir": [
+      54,
+      60
+    ],
+    "infantryAliveWithAir": [
+      32,
+      36
+    ],
+    "infantryAliveWithoutAir": [
+      34,
+      36
+    ]
+  }
+}

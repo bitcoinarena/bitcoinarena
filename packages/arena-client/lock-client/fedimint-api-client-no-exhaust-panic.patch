@@ -1,0 +1,22 @@
+--- a/fedimint-api-client/src/api/mod.rs	2026-10-06 14:41:38.971605581 +0200
++++ b/fedimint-api-client/src/api/mod.rs	2026-10-06 14:41:45.327065646 +0200
+@@ -205,10 +205,15 @@
+         let peer_error_threshold = self.all_peers().to_num_peers().one_honest();
+ 
+         loop {
+-            let (peer, result) = futures
+-                .next()
+-                .await
+-                .expect("Query strategy ran out of peers to query without returning a result");
++            // BLWP (kanban #196): every peer answered or failed and the strategy decided nothing - an error to the caller,
++            // not a panic: a read that waits for all n answers met a guardian whose request failed (fewer than f + 1 failed)
++            let Some((peer, result)) = futures.next().await else {
++                return Err(FederationError::peer_errors(
++                    method.clone(),
++                    params.params.clone(),
++                    peer_errors,
++                ));
++            };
+ 
+             match result {
+                 Ok(response) => match strategy.process(peer, response) {

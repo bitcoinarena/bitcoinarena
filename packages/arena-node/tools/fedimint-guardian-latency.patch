@@ -1,0 +1,165 @@
+From fa9a7669fdae07e5a08f95450b2a4762f57ab7b2 Mon Sep 17 00:00:00 2001
+From: claude <you@example.com>
+Date: Tue, 6 Oct 2026 01:49:34 +0200
+Subject: [PATCH] BLWP: a stake lock accepted in ~78 ms (kanban #178): round
+ delay 5 ms, the 10-year bound kept, send before count
+
+Measured on a private 7-guardian regtest federation (5 of 7) on the test host, 20 locks: submit until the client knows
+the federation accepted the lock p50 78 ms, p95 141 (with the lock client's changes in the BLWP repo).
+
+- engine.rs: the exponential slowdown after a session's last round is the fewest rounds (at least 1000, as before) that
+  still take 10 years at this guardian's round delay - the same sum aleph_bft checks. At 50 ms it stays 1000. The RAM
+  bound grows by those few rounds. aleph_bft's member tick is a quarter of the round delay, 1-10 ms.
+- api.rs submit_transaction: the transaction goes to consensus before the session's accepted items are counted (the
+  count walks every item of the session; measured ~15-20 ms a lock). The session index is still read first, so the
+  session-boundary resubmit is unchanged; after the count an already-accepted transaction is answered at once, so no
+  acceptance is missed. Debug timing lines: validated, sent, counted.
+- data_provider.rs: a debug line naming each transaction put into a unit.
+- config: DEFAULT_BROADCAST_ROUND_DELAY_MS 50 -> 5. Only new local configs take it; running guardians keep theirs.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01FBa6xHgUpC65ky7yRpZgCQ
+---
+ fedimint-server/src/config/mod.rs             |  5 ++-
+ .../src/consensus/aleph_bft/data_provider.rs  |  7 +++++
+ fedimint-server/src/consensus/api.rs          | 20 ++++++++++--
+ fedimint-server/src/consensus/engine.rs       | 31 +++++++++++++++++--
+ 4 files changed, 57 insertions(+), 6 deletions(-)
+
+diff --git a/fedimint-server/src/config/mod.rs b/fedimint-server/src/config/mod.rs
+index e377f2b0a2f..3dab9ee0b96 100644
+--- a/fedimint-server/src/config/mod.rs
++++ b/fedimint-server/src/config/mod.rs
+@@ -51,7 +51,10 @@
+ pub const DEFAULT_MAX_CLIENT_CONNECTIONS: u32 = 1000;
+ 
+ /// Consensus broadcast settings that result in 3 minutes session time
+-const DEFAULT_BROADCAST_ROUND_DELAY_MS: u16 = 50;
++/// BLWP kanban #178 (the owner 2026-10-05): 5 ms, measured on a 7-guardian regtest federation: a stake lock from submit until
++/// the client knows the federation accepted it p50 78 ms (50 ms: several hundred). With 3600 rounds a session closes
++/// about every 18 s. Only a new guardian's local config takes this default; a running one keeps its own local.json.
++const DEFAULT_BROADCAST_ROUND_DELAY_MS: u16 = 5;
+ const DEFAULT_BROADCAST_ROUNDS_PER_SESSION: u16 = 3600;
+ 
+ fn default_broadcast_rounds_per_session() -> u16 {
+diff --git a/fedimint-server/src/consensus/aleph_bft/data_provider.rs b/fedimint-server/src/consensus/aleph_bft/data_provider.rs
+index 071f831460a..3519429f86c 100644
+--- a/fedimint-server/src/consensus/aleph_bft/data_provider.rs
++++ b/fedimint-server/src/consensus/aleph_bft/data_provider.rs
+@@ -103,6 +103,13 @@ async fn get_data(&mut self) -> Option<UnitData> {
+             return None;
+         }
+ 
++        // BLWP kanban #178 (timing only): which transactions this unit carries
++        for item in &items {
++            if let ConsensusItem::Transaction(transaction) = item {
++                tracing::debug!(target: LOG_CONSENSUS, txid = %transaction.tx_hash(), "Transaction put into a unit");
++            }
++        }
++
+         if !self.is_recovery {
+             self.timestamp_sender.send(Instant::now()).await.ok();
+         }
+diff --git a/fedimint-server/src/consensus/api.rs b/fedimint-server/src/consensus/api.rs
+index 5e3a32944f4..13427fa5786 100644
+--- a/fedimint-server/src/consensus/api.rs
++++ b/fedimint-server/src/consensus/api.rs
+@@ -195,12 +195,17 @@ pub async fn submit_transaction(
+             debug!(target: LOG_NET_API, %txid, err = %err.fmt_compact(), "Transaction rejected");
+         })?;
+ 
+-        let mut session_index = get_finished_session_count_static(&mut dbtx).await;
++        // BLWP kanban #178 (timing only): validated against this guardian's state, about to go to consensus
++        debug!(target: LOG_NET_API, %txid, "Transaction validated");
+ 
+-        let mut item_index = dbtx.find_by_prefix(&AcceptedItemPrefix).await.count().await as u64;
++        let mut session_index = get_finished_session_count_static(&mut dbtx).await;
+ 
+         drop(dbtx);
+ 
++        // BLWP kanban #178: the transaction goes to consensus BEFORE the session's accepted items are counted. That count
++        // walks every item accepted so far in the session (it grows through a 3600-round session) and, measured on the
++        // test host at a 10 ms round delay, held each lock ~15-20 ms before it reached the next unit. The session index is
++        // still read first (one key), so the session-boundary resubmit below is unchanged.
+         let _ = self
+             .submission_sender
+             .send(ConsensusItem::Transaction(transaction.clone()))
+@@ -208,6 +213,17 @@ pub async fn submit_transaction(
+             .inspect_err(|err| {
+                 warn!(target: LOG_NET_API, %txid, err = %err.fmt_compact(), "Unable to submit the tx into consensus");
+             });
++        debug!(target: LOG_NET_API, %txid, "Transaction sent to consensus");
++
++        let mut dbtx = self.db.begin_transaction_nc().await;
++        let mut item_index = dbtx.find_by_prefix(&AcceptedItemPrefix).await.count().await as u64;
++        // checked AFTER the count: accepted before this check -> answered here; accepted after it -> its item index is at
++        // least the count, so the wait below sees it
++        if dbtx.get_value(&AcceptedTransactionKey(txid)).await.is_some() {
++            return Ok(txid);
++        }
++        drop(dbtx);
++        debug!(target: LOG_NET_API, %txid, item_index, "Transaction items counted");
+ 
+         loop {
+             let accepted_item_key = AcceptedItemKey(item_index);
+diff --git a/fedimint-server/src/consensus/engine.rs b/fedimint-server/src/consensus/engine.rs
+index a82f78317ef..125b2686c95 100644
+--- a/fedimint-server/src/consensus/engine.rs
++++ b/fedimint-server/src/consensus/engine.rs
+@@ -237,7 +237,12 @@ pub async fn run_session(
+         //      * (broadcast_rounds_per_session + EXP_SLOWDOWN_ROUNDS)
+         //      * ALEPH_BFT_UNIT_BYTE_LIMIT
+ 
+-        const EXP_SLOWDOWN_ROUNDS: u16 = 1000;
++        // BLWP kanban #178 (the owner 2026-10-05, Go on consensus speed): the slowdown rounds are the fewest (at least 1000,
++        // as before) that still make the session's end take at least 10 years at THIS guardian's round delay - the same
++        // sum aleph_bft checks. At the 50 ms default it stays 1000; at 10 ms it is ~1035. The RAM bound above grows by
++        // those few rounds; the 10-year guarantee is unchanged.
++        const MIN_EXP_SLOWDOWN_ROUNDS: u16 = 1000;
++        const MAX_EXP_SLOWDOWN_ROUNDS: u16 = 1400;
+         const BASE: f64 = 1.02;
+ 
+         let rounds_per_session = self.cfg.consensus.broadcast_rounds_per_session;
+@@ -266,6 +271,26 @@ pub async fn run_session(
+             Duration::from_millis(delay.round() as u64)
+         });
+ 
++        // BLWP kanban #178: aleph_bft's member ticks every 10 ms by default, which alone would stretch rounds shorter than
++        // ~20 ms; a quarter of the round delay, 1-10 ms (10 ms at the 50 ms default). Internal scheduling only.
++        delay_config.tick_interval = Duration::from_millis((self.cfg.local.broadcast_round_delay_ms / 4).clamp(1, 10).into());
++
++        let ten_years = Duration::from_hours(87600);
++        let exp_slowdown_rounds = {
++            let delay = delay_config.unit_creation_delay.clone();
++            let rounds = usize::from(rounds_per_session);
++            let mut total = Duration::ZERO;
++            let mut found = MAX_EXP_SLOWDOWN_ROUNDS;
++            for round in 0..rounds + usize::from(MAX_EXP_SLOWDOWN_ROUNDS) {
++                total += delay(round);
++                if round + 1 >= rounds + usize::from(MIN_EXP_SLOWDOWN_ROUNDS) && total >= ten_years {
++                    found = u16::try_from(round + 1 - rounds).unwrap_or(MAX_EXP_SLOWDOWN_ROUNDS);
++                    break;
++                }
++            }
++            found
++        };
++
+         let config = aleph_bft::create_config(
+             self.num_peers().total().into(),
+             self.identity().to_usize().into(),
+@@ -273,10 +298,10 @@ pub async fn run_session(
+             self.cfg
+                 .consensus
+                 .broadcast_rounds_per_session
+-                .checked_add(EXP_SLOWDOWN_ROUNDS)
++                .checked_add(exp_slowdown_rounds)
+                 .expect("Rounds per session exceed maximum of u16::Max - EXP_SLOWDOWN_ROUNDS"),
+             delay_config,
+-            Duration::from_hours(87600),
++            ten_years,
+         )
+         .expect("The exponential slowdown exceeds 10 years");
+ 
+-- 
+2.34.1
+

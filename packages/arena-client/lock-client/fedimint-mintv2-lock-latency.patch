@@ -1,0 +1,557 @@
+--- a/modules/fedimint-mintv2-client/src/api.rs
++++ b/modules/fedimint-mintv2-client/src/api.rs
+@@ -3,7 +3,7 @@
+ 
+ use bitcoin_hashes::sha256;
+ use fedimint_api_client::api::{DynModuleApi, FederationApiExt, ServerError};
+-use fedimint_api_client::query::FilterMapThreshold;
++use fedimint_api_client::query::{QueryStep, QueryStrategy};
+ use fedimint_core::module::ApiRequestErased;
+ use fedimint_core::{NumPeersExt, OutPointRange, PeerId, apply, async_trait_maybe_send};
+ use fedimint_mintv2_common::endpoint_constants::{
+@@ -11,10 +11,9 @@
+     SIGNATURE_SHARES_ENDPOINT, SIGNATURE_SHARES_RECOVERY_ENDPOINT,
+ };
+ use fedimint_mintv2_common::{Denomination, RecoveryItem};
+-use tbs::{BlindedMessage, BlindedSignatureShare, PublicKeyShare};
++use tbs::{AggregatePublicKey, BlindedMessage, BlindedSignatureShare, PublicKeyShare};
+ 
+ use crate::NoteIssuanceRequest;
+-use crate::output::verify_blind_shares;
+ 
+ #[apply(async_trait_maybe_send!)]
+ pub trait MintV2ModuleApi {
+@@ -23,12 +22,14 @@
+         range: OutPointRange,
+         issuance_requests: Vec<NoteIssuanceRequest>,
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++        tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> BTreeMap<PeerId, Vec<BlindedSignatureShare>>;
+ 
+     async fn fetch_signature_shares_recovery(
+         &self,
+         issuance_requests: Vec<NoteIssuanceRequest>,
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++        tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> BTreeMap<PeerId, Vec<BlindedSignatureShare>>;
+ 
+     async fn fetch_recovery_count(&self) -> anyhow::Result<u64>;
+@@ -51,16 +52,11 @@
+         range: OutPointRange,
+         issuance_requests: Vec<NoteIssuanceRequest>,
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++        tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> BTreeMap<PeerId, Vec<BlindedSignatureShare>> {
+         self.request_with_strategy_retry(
+             // This query collects a threshold of 2f + 1 valid blind signature shares
+-            FilterMapThreshold::new(
+-                move |peer, signature_shares| {
+-                    verify_blind_shares(peer, signature_shares, &issuance_requests, &tbs_pks)
+-                        .map_err(ServerError::InvalidResponse)
+-                },
+-                self.all_peers().to_num_peers(),
+-            ),
++            CombinedShareThreshold::new(issuance_requests, tbs_pks, tbs_agg_pks, self.all_peers().to_num_peers()),
+             SIGNATURE_SHARES_ENDPOINT.to_owned(),
+             ApiRequestErased::new(range),
+         )
+@@ -71,6 +67,7 @@
+         &self,
+         issuance_requests: Vec<NoteIssuanceRequest>,
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++        tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> BTreeMap<PeerId, Vec<BlindedSignatureShare>> {
+         let blinded_messages: Vec<BlindedMessage> = issuance_requests
+             .iter()
+@@ -79,13 +76,7 @@
+ 
+         self.request_with_strategy_retry(
+             // This query collects a threshold of 2f + 1 valid blind signature shares
+-            FilterMapThreshold::new(
+-                move |peer, signature_shares| {
+-                    verify_blind_shares(peer, signature_shares, &issuance_requests, &tbs_pks)
+-                        .map_err(ServerError::InvalidResponse)
+-                },
+-                self.all_peers().to_num_peers(),
+-            ),
++            CombinedShareThreshold::new(issuance_requests, tbs_pks, tbs_agg_pks, self.all_peers().to_num_peers()),
+             SIGNATURE_SHARES_RECOVERY_ENDPOINT.to_owned(),
+             ApiRequestErased::new(blinded_messages),
+         )
+@@ -131,3 +122,182 @@
+         Ok(result)
+     }
+ }
++
++/// A THRESHOLD OF VALID BLIND SIGNATURE SHARES, CHECKED ONCE PER NOTE (BLWP kanban #178, the owner 2026-10-05 option 1).
++///
++/// The stock strategy (FilterMapThreshold + verify_blind_shares) checks every share of every guardian with its own
++/// pairing as it arrives: threshold x notes share checks. This one gathers a threshold of answers (each of the right
++/// length), combines the threshold's shares of each note and checks that ONE blinded signature against the federation's
++/// aggregate key. The combination is valid only if the shares are (Lagrange over exactly the threshold), so a bad share
++/// fails its note's check. Only then is every gathered answer checked share by share as before, the guardians with a bad
++/// share are dropped (and not asked again, as before), and the query waits for more answers. The result is the same as the
++/// stock strategy's: exactly a threshold of answers whose every share is valid. The blinded messages are computed once.
++struct CombinedShareThreshold {
++    requests: Vec<NoteIssuanceRequest>,
++    messages: Vec<BlindedMessage>,
++    tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++    agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
++    gathered: BTreeMap<PeerId, Vec<BlindedSignatureShare>>,
++    threshold: usize,
++}
++
++impl CombinedShareThreshold {
++    /// `agg_pks`: the federation's aggregate key per denomination from the client's config (the key the notes are checked
++    /// against in the output state machine), not rebuilt from the key shares here.
++    fn new(
++        requests: Vec<NoteIssuanceRequest>,
++        tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++        agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
++        num_peers: fedimint_core::NumPeers,
++    ) -> Self {
++        let messages = requests.iter().map(NoteIssuanceRequest::blinded_message).collect();
++        Self { requests, messages, tbs_pks, agg_pks, gathered: BTreeMap::new(), threshold: num_peers.threshold() }
++    }
++
++    /// Every note's combined signature over exactly these answers is valid.
++    fn combined_valid(&self, chosen: &BTreeMap<PeerId, Vec<BlindedSignatureShare>>) -> bool {
++        self.requests.iter().enumerate().all(|(i, request)| {
++            let agg = tbs::aggregate_signature_shares(
++                &chosen.iter().map(|(peer, shares)| (peer.to_usize() as u64, shares[i])).collect(),
++            );
++            tbs::verify_blinded_signature(self.messages[i], agg, self.agg_pks[&request.denomination])
++        })
++    }
++
++    /// The stock check of one guardian's answer: each share against its key share.
++    fn shares_valid(&self, peer: PeerId, shares: &[BlindedSignatureShare]) -> bool {
++        self.requests.iter().zip(self.messages.iter()).zip(shares.iter()).all(|((request, message), share)| {
++            let pk = self
++                .tbs_pks
++                .get(&request.denomination)
++                .expect("No pk shares found for denomination")
++                .get(&peer)
++                .expect("No pk share found for peer");
++            tbs::verify_signature_share(*message, *share, *pk)
++        })
++    }
++}
++
++impl QueryStrategy<Vec<BlindedSignatureShare>, BTreeMap<PeerId, Vec<BlindedSignatureShare>>> for CombinedShareThreshold {
++    fn process(
++        &mut self,
++        peer: PeerId,
++        shares: Vec<BlindedSignatureShare>,
++    ) -> QueryStep<BTreeMap<PeerId, Vec<BlindedSignatureShare>>> {
++        if shares.len() != self.requests.len() {
++            return QueryStep::Failure(ServerError::InvalidResponse(anyhow::anyhow!("Invalid number of signatures shares")));
++        }
++        self.gathered.insert(peer, shares);
++        if self.gathered.len() < self.threshold {
++            return QueryStep::Continue;
++        }
++        let chosen: BTreeMap<_, _> = self.gathered.iter().take(self.threshold).map(|(p, s)| (*p, s.clone())).collect();
++        if self.combined_valid(&chosen) {
++            return QueryStep::Success(chosen);
++        }
++        // a bad share among them: the stock check, answer by answer; the bad ones are dropped for good
++        let bad: Vec<PeerId> = self.gathered.iter().filter(|(p, s)| !self.shares_valid(**p, s)).map(|(p, _)| *p).collect();
++        for p in &bad {
++            self.gathered.remove(p);
++        }
++        if self.gathered.len() >= self.threshold {
++            QueryStep::Success(self.gathered.iter().take(self.threshold).map(|(p, s)| (*p, s.clone())).collect())
++        } else {
++            QueryStep::Continue
++        }
++    }
++}
++
++#[cfg(test)]
++mod combined_share_tests {
++    use std::collections::{BTreeMap, BTreeSet};
++
++    use bls12_381::{G2Affine, G2Projective, Scalar};
++    use fedimint_api_client::query::{QueryStep, QueryStrategy};
++    use fedimint_core::{NumPeersExt, PeerId};
++    use fedimint_derive_secret::DerivableSecret;
++    use fedimint_mintv2_common::{Denomination, verify_note};
++    use tbs::{AggregatePublicKey, BlindedSignatureShare, PublicKeyShare, SecretKeyShare, derive_pk_share, sign_message};
++
++    use super::CombinedShareThreshold;
++    use crate::NoteIssuanceRequest;
++
++    // a 5-of-7 key from a fixed polynomial, as a dealer would split it
++    const POLY: [u64; 5] = [11, 22, 33, 44, 55];
++    fn sk(peer: u16) -> SecretKeyShare {
++        let x = Scalar::from(u64::from(peer) + 1);
++        SecretKeyShare(POLY.iter().map(|c| Scalar::from(*c)).rev().reduce(|acc, c| acc * x + c).unwrap())
++    }
++    fn agg_pk() -> AggregatePublicKey {
++        AggregatePublicKey(G2Affine::from(G2Projective::generator() * Scalar::from(POLY[0])))
++    }
++    fn peers() -> BTreeSet<PeerId> {
++        (0..7u16).map(PeerId::from).collect()
++    }
++    fn requests() -> Vec<NoteIssuanceRequest> {
++        let root = DerivableSecret::new_root(b"blwp #178", b"combined share check");
++        (0..3u8).map(|i| NoteIssuanceRequest::new(Denomination(i), [i; 16], &root)).collect()
++    }
++    fn pks(reqs: &[NoteIssuanceRequest]) -> BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>> {
++        reqs.iter().map(|r| (r.denomination, peers().into_iter().map(|p| (p, derive_pk_share(&sk(p.to_usize() as u16)))).collect())).collect()
++    }
++    fn honest(reqs: &[NoteIssuanceRequest], peer: u16) -> Vec<BlindedSignatureShare> {
++        reqs.iter().map(|r| sign_message(r.blinded_message(), sk(peer))).collect()
++    }
++    fn strategy(reqs: &[NoteIssuanceRequest]) -> CombinedShareThreshold {
++        CombinedShareThreshold::new(reqs.to_vec(), pks(reqs), reqs.iter().map(|r| (r.denomination, agg_pk())).collect(), peers().to_num_peers())
++    }
++    // what the output state machine does with the result: combine, unblind, check against the aggregate key
++    fn notes_valid(reqs: &[NoteIssuanceRequest], got: &BTreeMap<PeerId, Vec<BlindedSignatureShare>>) -> bool {
++        reqs.iter().enumerate().all(|(i, r)| {
++            let agg = tbs::aggregate_signature_shares(&got.iter().map(|(p, s)| (p.to_usize() as u64, s[i])).collect());
++            verify_note(r.finalize(agg).note(), agg_pk())
++        })
++    }
++
++    #[test]
++    fn five_honest_answers_are_taken_and_make_valid_notes() {
++        let reqs = requests();
++        let mut s = strategy(&reqs);
++        for p in 0..4u16 {
++            assert!(matches!(s.process(PeerId::from(p), honest(&reqs, p)), QueryStep::Continue));
++        }
++        let QueryStep::Success(got) = s.process(PeerId::from(4), honest(&reqs, 4)) else { panic!("no success at the fifth") };
++        assert_eq!(got.keys().copied().collect::<Vec<_>>(), (0..5u16).map(PeerId::from).collect::<Vec<_>>());
++        assert!(notes_valid(&reqs, &got));
++    }
++
++    #[test]
++    fn a_bad_share_fails_its_note_and_its_guardian_is_dropped() {
++        let reqs = requests();
++        // guardian 2 answers note 1 with a share signed under guardian 6's key: a bad share
++        let mut bad = honest(&reqs, 2);
++        bad[1] = sign_message(reqs[1].blinded_message(), sk(6));
++        let mut chosen: BTreeMap<PeerId, Vec<BlindedSignatureShare>> = (0..5u16).filter(|p| *p != 2).map(|p| (PeerId::from(p), honest(&reqs, p))).collect();
++        chosen.insert(PeerId::from(2), bad.clone());
++        let s = strategy(&reqs);
++        assert!(!s.combined_valid(&chosen), "the combined check fails with the bad share in it");
++        assert!(!notes_valid(&reqs, &chosen), "and the note it would make is invalid");
++
++        let mut s = strategy(&reqs);
++        for p in [0u16, 1, 3] {
++            assert!(matches!(s.process(PeerId::from(p), honest(&reqs, p)), QueryStep::Continue));
++        }
++        assert!(matches!(s.process(PeerId::from(2), bad), QueryStep::Continue));
++        // the fifth answer: the combined check fails, guardian 2 is found and dropped, four valid are left - wait
++        assert!(matches!(s.process(PeerId::from(4), honest(&reqs, 4)), QueryStep::Continue));
++        let QueryStep::Success(got) = s.process(PeerId::from(5), honest(&reqs, 5)) else { panic!("no success at the sixth") };
++        assert!(!got.contains_key(&PeerId::from(2)), "the bad guardian is not in the result");
++        assert_eq!(got.len(), 5);
++        assert!(notes_valid(&reqs, &got));
++    }
++
++    #[test]
++    fn an_answer_of_the_wrong_length_is_refused() {
++        let reqs = requests();
++        let mut s = strategy(&reqs);
++        let mut short = honest(&reqs, 0);
++        short.pop();
++        assert!(matches!(s.process(PeerId::from(0), short), QueryStep::Failure(_)));
++    }
++}
+--- a/modules/fedimint-mintv2-client/src/output.rs
++++ b/modules/fedimint-mintv2-client/src/output.rs
+@@ -62,6 +62,7 @@
+                         self.common.range,
+                         self.common.issuance_requests.clone(),
+                         context.tbs_pks.clone(),
++                        context.tbs_agg_pks.clone(),
+                     ),
+                     move |dbtx, signature_shares, old_state| {
+                         let balance_update_sender = context.balance_update_sender.clone();
+@@ -95,20 +96,26 @@
+         range: Option<OutPointRange>,
+         issuance_requests: Vec<NoteIssuanceRequest>,
+         tbs_pks: BTreeMap<Denomination, BTreeMap<PeerId, PublicKeyShare>>,
++        tbs_agg_pks: BTreeMap<Denomination, AggregatePublicKey>,
+     ) -> Result<BTreeMap<PeerId, Vec<BlindedSignatureShare>>, String> {
+         if let Some(range) = range {
+             global_context.await_tx_accepted(range.txid).await?;
+ 
++            // BLWP kanban #178: one macrotask yield before this output's CPU work (each note's blinded message, the share
++            // checks, the notes). Measured on the test host: run in the same microtask drain as the acceptance, it held the
++            // lock's answer to JS back by ~100-240 ms. The work and its checks are unchanged; it only starts a turn later.
++            fedimint_core::runtime::sleep(fedimint_core::runtime::Duration::ZERO).await;
++
+             let shares = global_context
+                 .module_api()
+-                .fetch_signature_shares(range, issuance_requests, tbs_pks)
++                .fetch_signature_shares(range, issuance_requests, tbs_pks, tbs_agg_pks)
+                 .await;
+ 
+             Ok(shares)
+         } else {
+             let shares = global_context
+                 .module_api()
+-                .fetch_signature_shares_recovery(issuance_requests, tbs_pks)
++                .fetch_signature_shares_recovery(issuance_requests, tbs_pks, tbs_agg_pks)
+                 .await;
+ 
+             Ok(shares)
+--- a/modules/fedimint-mintv2-client/src/lib.rs
++++ b/modules/fedimint-mintv2-client/src/lib.rs
+@@ -49,7 +49,7 @@
+ use fedimint_core::base32::{self, FEDIMINT_PREFIX};
+ use fedimint_core::config::FederationId;
+ use fedimint_core::core::{IntoDynInstance, ModuleInstanceId, ModuleKind, OperationId};
+-use fedimint_core::db::{DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped};
++use fedimint_core::db::{DatabaseKeyPrefix, DatabaseTransaction, DatabaseVersion, IDatabaseTransactionOpsCoreTyped};
+ use fedimint_core::encoding::{Decodable, Encodable};
+ use fedimint_core::module::{
+     AmountUnit, Amounts, ApiVersion, CommonModuleInit, ModuleCommon, ModuleInit, MultiApiVersion,
+@@ -364,7 +364,9 @@
+     }
+ 
+     async fn init(&self, args: &ClientModuleInitArgs<Self>) -> anyhow::Result<Self::Module> {
+-        let (tweak_sender, tweak_receiver) = async_channel::bounded(50);
++        // BLWP kanban #178 (the owner 2026-10-05, plan 348 step 2): a queue of 200 tweaks, ground while the lobby waits, so a
++        // lock's change notes (4-11 measured) never wait for grinding. Same filter, same recovery format.
++        let (tweak_sender, tweak_receiver) = async_channel::bounded(200);
+ 
+         let filter = issuance::tweak_filter(args.module_root_secret());
+ 
+@@ -375,10 +377,19 @@
+         // to keep single-threaded (wasm) runtimes responsive while the channel
+         // still has space.
+         fedimint_core::task::spawn("mintv2-tweak-grinder", async move {
++            // BLWP kanban #178: also yield every 4096 tries (~10-20 ms of hashing on wasm), not only on a found tweak. One tweak takes ~65536 tries, and
++            // on wasm's single thread that ran as one unbroken block of SHA-256 right after a spend took tweaks - measured
++            // on the private regtest it held the client's acceptance and its reads for hundreds of ms. Same tweaks, same
++            // filter; only the yields are more often.
++            let mut tries: u32 = 0;
+             loop {
+                 let tweak: [u8; 16] = thread_rng().r#gen();
+ 
+                 if !issuance::check_tweak(tweak, filter) {
++                    tries = tries.wrapping_add(1);
++                    if tries % 4096 == 0 {
++                        fedimint_core::task::sleep(Duration::ZERO).await;
++                    }
+                     continue;
+                 }
+ 
+@@ -406,6 +417,37 @@
+     }
+ }
+ 
++/// BLWP kanban #178: the spendable notes under a key prefix as (denomination, raw key), unsorted (ascending as the store
++/// keeps them) or descending - exactly the order the typed reads give. A note key is the record prefix byte, then the
++/// note's consensus encoding, whose first field is the denomination as one plain byte; nothing else is decoded here.
++async fn blwp_raw_notes(dbtx: &mut DatabaseTransaction<'_>, prefix: &[u8], descending: bool) -> Vec<(Denomination, Vec<u8>)> {
++    use fedimint_core::db::IDatabaseTransactionOpsCore;
++    let stream = if descending {
++        dbtx.raw_find_by_prefix_sorted_descending(prefix).await
++    } else {
++        dbtx.raw_find_by_prefix(prefix).await
++    }
++    .expect("reading the client's own notes");
++    stream.map(|(key, _)| (Denomination(key[1]), key)).collect::<Vec<_>>().await
++}
++
++/// BLWP kanban #178: one chosen note decoded in full, with every check of the typed read (the signature point's
++/// subgroup check, the keypair).
++fn blwp_decode_note(raw: &[u8]) -> SpendableNote {
++    let note = <SpendableNoteKey as fedimint_core::db::DatabaseKey>::from_bytes(
++        raw,
++        &fedimint_core::module::registry::ModuleDecoderRegistry::default(),
++    )
++    .expect("a spendable note key this client wrote")
++    .0;
++    debug_assert_eq!(note.denomination, Denomination(raw[1]));
++    note
++}
++
++/// BLWP kanban #178 step 1 (timing only): per output bundle made - (notes asked for, tweaks ready before, ms until
++/// every note had its tweak). The BLWP lock client takes these after each lock.
++pub static BLWP_OUTPUT_TIMING: std::sync::Mutex<Vec<(usize, usize, f64)>> = std::sync::Mutex::new(Vec::new());
++
+ #[derive(Debug)]
+ pub struct MintClientModule {
+     federation_id: FederationId,
+@@ -597,37 +639,39 @@
+ }
+ 
+ impl MintClientModule {
++    /// BLWP kanban #178: how many ground tweaks wait in the queue (a lock takes one per change note).
++    pub fn blwp_tweaks_ready(&self) -> usize {
++        self.tweak_receiver.len()
++    }
++
+     async fn select_funding_input(
+         &self,
+         dbtx: &mut DatabaseTransaction<'_>,
+         mut excess_output: Amount,
+     ) -> Option<Vec<SpendableNote>> {
++        // BLWP kanban #178: the same choice, made on (denomination, raw key) in the same order; only the notes chosen are
++        // decoded (each wallet note used to be decoded here and in the count: ~78% of a lock's finalize, measured)
+         let mut selected_notes = Vec::new();
+         let mut target_notes = Vec::new();
+         let mut excess_notes = Vec::new();
+ 
+         for amount in client_denominations().rev() {
+-            let notes_amount = dbtx
+-                .find_by_prefix(&SpendableNoteAmountPrefix(amount))
+-                .await
+-                .map(|entry| entry.0.0)
+-                .collect::<Vec<SpendableNote>>()
+-                .await;
++            let notes_amount = blwp_raw_notes(dbtx, &SpendableNoteAmountPrefix(amount).to_bytes(), false).await;
+ 
+             target_notes.extend(notes_amount.iter().take(TARGET_PER_DENOMINATION).cloned());
+ 
+             if notes_amount.len() > 2 * TARGET_PER_DENOMINATION {
+-                for note in notes_amount.into_iter().skip(TARGET_PER_DENOMINATION) {
+-                    let note_fee = self.cfg.fee_consensus.fee(note.amount());
++                for (note_d, raw) in notes_amount.into_iter().skip(TARGET_PER_DENOMINATION) {
++                    let note_fee = self.cfg.fee_consensus.fee(note_d.amount());
+ 
+-                    let note_value = note
++                    let note_value = note_d
+                         .amount()
+                         .checked_sub(note_fee)
+                         .expect("All our notes are economical");
+ 
+                     excess_output = excess_output.saturating_sub(note_value);
+ 
+-                    selected_notes.push(note);
++                    selected_notes.push(blwp_decode_note(&raw));
+                 }
+             } else {
+                 excess_notes.extend(notes_amount.into_iter().skip(TARGET_PER_DENOMINATION));
+@@ -638,15 +682,15 @@
+             return Some(selected_notes);
+         }
+ 
+-        for note in excess_notes.into_iter().chain(target_notes) {
+-            let note_amount = note.amount();
++        for (note_d, raw) in excess_notes.into_iter().chain(target_notes) {
++            let note_amount = note_d.amount();
+             let note_value = note_amount
+                 .checked_sub(self.cfg.fee_consensus.fee(note_amount))
+                 .expect("All our notes are economical");
+ 
+             excess_output = excess_output.saturating_sub(note_value);
+ 
+-            selected_notes.push(note);
++            selected_notes.push(blwp_decode_note(&raw));
+ 
+             if excess_output == Amount::ZERO {
+                 return Some(selected_notes);
+@@ -664,11 +708,8 @@
+     ) -> (Vec<SpendableNote>, Vec<Denomination>) {
+         let n_denominations = self.get_count_by_denomination_dbtx(dbtx).await;
+ 
+-        let mut notes = dbtx
+-            .find_by_prefix_sorted_descending(&SpendableNotePrefix)
+-            .await
+-            .map(|entry| entry.0.0)
+-            .fuse();
++        // BLWP kanban #178: the same descending order (the keys' raw bytes), each note decoded only when it is taken
++        let mut notes = blwp_raw_notes(dbtx, &SpendableNotePrefix.to_bytes(), true).await.into_iter();
+ 
+         let mut input_notes = Vec::new();
+         let mut output_denominations = Vec::new();
+@@ -681,15 +722,15 @@
+             for _ in 0..n_missing {
+                 match excess_input.checked_sub(d.amount() + fee.fee(d.amount())) {
+                     Some(remaining_excess) => excess_input = remaining_excess,
+-                    None => match notes.next().await {
+-                        Some(note) => {
+-                            if note.amount() <= d.amount() + fee.fee(d.amount()) {
++                    None => match notes.next() {
++                        Some((note_d, raw)) => {
++                            if note_d.amount() <= d.amount() + fee.fee(d.amount()) {
+                                 break;
+                             }
+ 
+-                            excess_input += note.amount() - (d.amount() + fee.fee(d.amount()));
++                            excess_input += note_d.amount() - (d.amount() + fee.fee(d.amount()));
+ 
+-                            input_notes.push(note);
++                            input_notes.push(blwp_decode_note(&raw));
+                         }
+                         None => break,
+                     },
+@@ -750,11 +791,19 @@
+         operation_id: OperationId,
+         requested_denominations: Vec<Denomination>,
+     ) -> ClientOutputBundle<MintOutput, MintClientStateMachines> {
++        // BLWP kanban #178 step 1 (timing only): notes asked for, tweaks ready, time until every note had its tweak
++        let blwp_asked = requested_denominations.len();
++        let blwp_ready = self.tweak_receiver.len();
++        let blwp_t0 = fedimint_core::time::now();
+         let issuance_requests = futures::stream::iter(requested_denominations)
+             .zip(self.tweak_receiver.clone())
+             .map(|(d, tweak)| NoteIssuanceRequest::new(d, tweak, &self.root_secret))
+             .collect::<Vec<NoteIssuanceRequest>>()
+             .await;
++        let blwp_wait = fedimint_core::time::now().duration_since(blwp_t0).unwrap_or_default().as_secs_f64() * 1000.0;
++        if let Ok(mut g) = BLWP_OUTPUT_TIMING.lock() {
++            g.push((blwp_asked, blwp_ready, blwp_wait));
++        }
+ 
+         let amount_unit = self.cfg.amount_unit;
+         let outputs = issuance_requests
+@@ -824,16 +873,12 @@
+         &self,
+         dbtx: &mut DatabaseTransaction<'_>,
+     ) -> BTreeMap<Denomination, u64> {
+-        dbtx.find_by_prefix(&SpendableNotePrefix)
+-            .await
+-            .fold(BTreeMap::new(), |mut acc, entry| async move {
+-                acc.entry(entry.0.0.denomination)
+-                    .and_modify(|count| *count += 1)
+-                    .or_insert(1);
+-
+-                acc
+-            })
+-            .await
++        // BLWP kanban #178: by each key's denomination byte, without decoding every note
++        let mut acc = BTreeMap::new();
++        for (d, _) in blwp_raw_notes(dbtx, &SpendableNotePrefix.to_bytes(), false).await {
++            acc.entry(d).and_modify(|count| *count += 1).or_insert(1);
++        }
++        acc
+     }
+ 
+     /// Send `ECash` for the given amount and return the send operation ID. The
+@@ -1426,3 +1471,27 @@
+ 
+     denominations
+ }
++
++#[cfg(test)]
++mod blwp_raw_note_tests {
++    use fedimint_core::db::DatabaseKeyPrefix;
++    use fedimint_core::secp256k1::{Keypair, SECP256K1};
++    use fedimint_mintv2_common::Denomination;
++
++    use super::{SpendableNote, blwp_decode_note};
++    use crate::client_db::{SpendableNoteAmountPrefix, SpendableNoteKey, SpendableNotePrefix};
++
++    // a note key's second byte is its denomination, for every denomination, and the chosen note decodes to itself
++    #[test]
++    fn a_note_keys_second_byte_is_its_denomination_and_it_decodes_whole() {
++        let sig = tbs::Signature(bls12_381::G1Affine::generator());
++        for d in 0..42u8 {
++            let note = SpendableNote { denomination: Denomination(d), keypair: Keypair::new(SECP256K1, &mut rand::thread_rng()), signature: sig };
++            let raw = SpendableNoteKey(note.clone()).to_bytes();
++            assert_eq!(raw[0], SpendableNotePrefix.to_bytes()[0]);
++            assert_eq!(&raw[..2], &SpendableNoteAmountPrefix(Denomination(d)).to_bytes()[..], "the amount prefix is the key's first two bytes");
++            assert_eq!(raw[1], d);
++            assert_eq!(blwp_decode_note(&raw), note);
++        }
++    }
++}

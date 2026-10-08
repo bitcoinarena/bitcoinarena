@@ -1,0 +1,46 @@
+{
+ "core": "blwp-core",
+ "produced": "tools/make-vectors.js",
+ "vectors": [
+  {
+   "name": "straight",
+   "ticks": 3600,
+   "final": "44de9d2ae1a571b451ef45697938eff5cbbad19b28fc24b6f12ddb3f6a8f0cff"
+  },
+  {
+   "name": "slalom",
+   "ticks": 3600,
+   "final": "a3a20f0516d08eb7dc5322eeac05bd50702be3b9d212c969583a32808280b31f"
+  },
+  {
+   "name": "handbrake",
+   "ticks": 3600,
+   "final": "6217d892e46d1aafde52e37914f562e5293db5c192d1e4635e9be43ed643e574"
+  },
+  {
+   "name": "reverse",
+   "ticks": 3600,
+   "final": "b24cf8cebe5aa6895e5eff5b9338bc542b5d6267265999b8fb2b398ca3cee6bb"
+  },
+  {
+   "name": "idle",
+   "ticks": 3600,
+   "final": "626e2f467f49ec171942c2d33af47f34b0990c4ea649cf23536531a059571014"
+  },
+  {
+   "name": "practice",
+   "ticks": 3600,
+   "final": "b4100dae5576566bc3cb5962c7cc590a9e7b921cbb47a26017e819eccefc2a84"
+  },
+  {
+   "name": "liquidation",
+   "ticks": 3600,
+   "final": "c4f03867263d159cf79d4f23a19d54eb29813ef54f9d91da8e961a5837fc538c"
+  },
+  {
+   "name": "fallout",
+   "ticks": 3600,
+   "final": "ee42c19dc7e9366b89056fb6373d754c78d5904229306064ca27284ae56c3af9"
+  }
+ ]
+}

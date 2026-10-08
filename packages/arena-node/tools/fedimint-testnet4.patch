@@ -1,0 +1,43 @@
+--- a/fedimint-server-core/src/bitcoin_rpc.rs
++++ b/fedimint-server-core/src/bitcoin_rpc.rs
+@@ -21,6 +21,9 @@
+ // <https://blockstream.info/testnet/api/block-height/1>
+ const TESTNET_CHAIN_ID_STR: &str =
+     "00000000b873e79784647a6c82962c70d228557d24a747ea4d1b8bbe878e1206";
++// <https://mempool.space/testnet4/api/block-height/1> (BLWP: testnet4 was missing, so it read as Regtest)
++const TESTNET4_CHAIN_ID_STR: &str =
++    "0000000012982b6d5f621229286b880e909984df669c2afabb102ce311b13f28";
+ // <https://mempool.space/signet/api/block-height/1>
+ const SIGNET_4_CHAIN_ID_STR: &str =
+     "00000086d6b2636cb2a392d45edc4ec544a10024d30141c9adf4bfd9de533b53";
+@@ -36,6 +39,7 @@
+     match chain_id.to_string().as_str() {
+         MAINNET_CHAIN_ID_STR => Network::Bitcoin,
+         TESTNET_CHAIN_ID_STR => Network::Testnet,
++        TESTNET4_CHAIN_ID_STR => Network::Testnet4,
+         SIGNET_4_CHAIN_ID_STR => Network::Signet,
+         MUTINYNET_CHAIN_ID_STR => Network::Signet,
+         _ => {
+@@ -104,6 +108,9 @@
+ 
+         let fee_rate = if network == Network::Regtest {
+             Feerate { sats_per_kvb: 1000 }
++        } else if network == Network::Testnet4 {
++            // BLWP: a testnet4 bitcoind often has no estimate ("Insufficient data"); the Regtest label had 1 sat/vB
++            rpc.get_feerate().await?.unwrap_or(Feerate { sats_per_kvb: 1000 })
+         } else {
+             rpc.get_feerate().await?.context("Feerate not available")?
+         };
+--- a/modules/fedimint-wallet-server/src/lib.rs
++++ b/modules/fedimint-wallet-server/src/lib.rs
+@@ -294,7 +294,9 @@
+ fn default_finality_delay(network: Network) -> u32 {
+     match network {
+         Network::Bitcoin | Network::Regtest => 10,
+-        Network::Testnet | Network::Signet | Network::Testnet4 => 2,
++        // BLWP: testnet4 reorgs deeper than 2 (withheld branches of 11-14 blocks) and a guardian panics on one
++        Network::Testnet4 => 100,
++        Network::Testnet | Network::Signet => 2,
+     }
+ }
+ 

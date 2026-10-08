@@ -1,0 +1,3226 @@
+{
+ "_comment": [
+  "How the C# army behaves, recorded by ArmyReferenceTests.MeasureTheArmy.",
+  "Flat world, seam at z=0, no trade flow, no truck: everything that moves",
+  "here is the army's own doing. Seeded 20260901, sampled every five seconds",
+  "for ninety.",
+  "",
+  "Four passes, because the top-level one cannot be compared to the core on",
+  "its own. The army REPLACES its dead - Army.Reinforce, one tank a side",
+  "every six seconds and faster the further behind it is - so `n` in the rows",
+  "is an establishment being held up, not a count of survivors. Over ninety",
+  "seconds it loses 125 tanks and lands 115 replacements to stay at ~40 of",
+  "48. Read `lost` and `arrived` in the density series before reading `n`.",
+  "",
+  "The shape to reproduce, read off these rows:",
+  "  - both sides enter at |z| ~ 77.5, tightly grouped (spread ~0.9)",
+  "  - armour closes at about 6.8 m/s, infantry at about 2.6",
+  "  - they are in contact by t=15 and the first armour losses are at t=10-15",
+  "  - from t=30 it is a steady grind: armour |z| ~ 25 with a spread near 20,",
+  "    infantry |z| ~ 15-20, both sides holding roughly 70 of 72 infantry",
+  "  - neither side breaks through: the means oscillate, they do not cross",
+  "",
+  "passes.attrition and passes.core-size are the SAME army with replacement",
+  "switched off - what the core was held to for firing and death, before it",
+  "had reinforcement. passes.core-size-reinforce is the establishment AND the",
+  "replacement the core actually fields, and is the one its army is accepted",
+  "against now."
+ ],
+ "seed": 20260901,
+ "armourPerSide": 24,
+ "infantryPerSide": 72,
+ "dt": 0.016666,
+ "sampleSeconds": 5,
+ "tolerance": {
+  "_comment": "metres on the mean, and units on the count",
+  "meanZ": 6,
+  "spread": 8,
+  "alive": 6
+ },
+ "rows": [
+  {
+   "t": 0,
+   "bullArmour": {
+    "n": 24,
+    "z": -77.32,
+    "spread": 0.96
+   },
+   "bearArmour": {
+    "n": 24,
+    "z": 77.59,
+    "spread": 0.85
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -77.58,
+    "spread": 0.92
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 77.48,
+    "spread": 0.87
+   }
+  },
+  {
+   "t": 5,
+   "bullArmour": {
+    "n": 24,
+    "z": -43.51,
+    "spread": 4.34
+   },
+   "bearArmour": {
+    "n": 24,
+    "z": 43.65,
+    "spread": 4.53
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -64.58,
+    "spread": 2.16
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 64.83,
+    "spread": 2.31
+   }
+  },
+  {
+   "t": 10,
+   "bullArmour": {
+    "n": 24,
+    "z": -18.7,
+    "spread": 12.72
+   },
+   "bearArmour": {
+    "n": 24,
+    "z": 16.08,
+    "spread": 4.38
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -53.4,
+    "spread": 2.89
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 53.46,
+    "spread": 2.87
+   }
+  },
+  {
+   "t": 15,
+   "bullArmour": {
+    "n": 19,
+    "z": -19.2,
+    "spread": 18.22
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 19.71,
+    "spread": 18.41
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -40.85,
+    "spread": 4.44
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 41.32,
+    "spread": 4.17
+   }
+  },
+  {
+   "t": 20,
+   "bullArmour": {
+    "n": 19,
+    "z": -21.61,
+    "spread": 17.48
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 21.85,
+    "spread": 18.91
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -29.31,
+    "spread": 5.71
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 29.5,
+    "spread": 5.59
+   }
+  },
+  {
+   "t": 25,
+   "bullArmour": {
+    "n": 19,
+    "z": -24.41,
+    "spread": 18.6
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 21.98,
+    "spread": 20.39
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -17.7,
+    "spread": 6.48
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 17.96,
+    "spread": 5.93
+   }
+  },
+  {
+   "t": 30,
+   "bullArmour": {
+    "n": 17,
+    "z": -26.59,
+    "spread": 20.86
+   },
+   "bearArmour": {
+    "n": 18,
+    "z": 25.73,
+    "spread": 22.07
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -12.93,
+    "spread": 10.79
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 14.59,
+    "spread": 14.97
+   }
+  },
+  {
+   "t": 35,
+   "bullArmour": {
+    "n": 18,
+    "z": -30.51,
+    "spread": 20.48
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 24.96,
+    "spread": 20.58
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -13.23,
+    "spread": 15.08
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 15.57,
+    "spread": 18.27
+   }
+  },
+  {
+   "t": 40,
+   "bullArmour": {
+    "n": 19,
+    "z": -29.43,
+    "spread": 21.18
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.84,
+    "spread": 18.84
+   },
+   "bullInf": {
+    "n": 69,
+    "z": -15.95,
+    "spread": 18.3
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 17.61,
+    "spread": 19.53
+   }
+  },
+  {
+   "t": 45,
+   "bullArmour": {
+    "n": 18,
+    "z": -30.84,
+    "spread": 21.59
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 22.41,
+    "spread": 18.09
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -19.79,
+    "spread": 21.05
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 18.45,
+    "spread": 18.85
+   }
+  },
+  {
+   "t": 50,
+   "bullArmour": {
+    "n": 20,
+    "z": -26.89,
+    "spread": 18.34
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.37,
+    "spread": 20.91
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -20.87,
+    "spread": 20.65
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 18.18,
+    "spread": 17.48
+   }
+  },
+  {
+   "t": 55,
+   "bullArmour": {
+    "n": 21,
+    "z": -22.41,
+    "spread": 16.99
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 23.73,
+    "spread": 18.91
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -20.69,
+    "spread": 19.34
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 16.44,
+    "spread": 15.19
+   }
+  },
+  {
+   "t": 60,
+   "bullArmour": {
+    "n": 19,
+    "z": -20.86,
+    "spread": 14.56
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.55,
+    "spread": 19.58
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -19.96,
+    "spread": 18.35
+   },
+   "bearInf": {
+    "n": 71,
+    "z": 17.43,
+    "spread": 17.43
+   }
+  },
+  {
+   "t": 65,
+   "bullArmour": {
+    "n": 21,
+    "z": -23.39,
+    "spread": 18.6
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 22.34,
+    "spread": 19.16
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -21.07,
+    "spread": 19.54
+   },
+   "bearInf": {
+    "n": 72,
+    "z": 16.41,
+    "spread": 16.65
+   }
+  },
+  {
+   "t": 70,
+   "bullArmour": {
+    "n": 21,
+    "z": -23.29,
+    "spread": 16.97
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 20.67,
+    "spread": 18.37
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -18.43,
+    "spread": 16.42
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 18.38,
+    "spread": 18.67
+   }
+  },
+  {
+   "t": 75,
+   "bullArmour": {
+    "n": 21,
+    "z": -22.2,
+    "spread": 17.32
+   },
+   "bearArmour": {
+    "n": 19,
+    "z": 22,
+    "spread": 18.8
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -17.86,
+    "spread": 16.78
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 20.26,
+    "spread": 19.66
+   }
+  },
+  {
+   "t": 80,
+   "bullArmour": {
+    "n": 20,
+    "z": -22.26,
+    "spread": 18.8
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 24.67,
+    "spread": 20.11
+   },
+   "bullInf": {
+    "n": 72,
+    "z": -16.97,
+    "spread": 15.99
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 21.18,
+    "spread": 19.6
+   }
+  },
+  {
+   "t": 85,
+   "bullArmour": {
+    "n": 17,
+    "z": -27.78,
+    "spread": 20.32
+   },
+   "bearArmour": {
+    "n": 21,
+    "z": 23.29,
+    "spread": 18.76
+   },
+   "bullInf": {
+    "n": 70,
+    "z": -18.54,
+    "spread": 18.06
+   },
+   "bearInf": {
+    "n": 70,
+    "z": 20.25,
+    "spread": 18.61
+   }
+  },
+  {
+   "t": 90,
+   "bullArmour": {
+    "n": 18,
+    "z": -33.48,
+    "spread": 20.47
+   },
+   "bearArmour": {
+    "n": 20,
+    "z": 21.96,
+    "spread": 19.94
+   },
+   "bullInf": {
+    "n": 71,
+    "z": -18.46,
+    "spread": 18.18
+   },
+   "bearInf": {
+    "n": 71,
+    "z": 20.45,
+    "spread": 18.8
+   }
+  }
+ ],
+ "density": {
+  "_comment": [
+   "Enemies inside the 46 m gun range per living tank, how far the armour is",
+   "spread along x, how many tanks have a target at all, how many died, and",
+   "how many replacements walked on. Same run as the rows above.",
+   "",
+   "The earlier reading of these numbers - \"the C# army keeps 71-83% of its",
+   "armour, so the core must be too lethal per shot\" - was wrong, and the",
+   "lost/arrived columns are why: the C# army does not keep its armour, it",
+   "buys new armour. 125 lost, 115 arrived, 90 seconds. Per-shot lethality",
+   "in the core already matches C# exactly (reload 1.4-3.2 s, 0.55 to",
+   "connect, damage 11-24 against 60-99 hit points, which is C# 1.1-2.4",
+   "against 6-10 at the ten-fold scale).",
+   "",
+   "The series now runs the full ninety seconds. It stopped at t=35 before,",
+   "which is why the core could be reported as \"shooters fall to zero by",
+   "t=60\" against a reference that had nothing to say at t=60."
+  ],
+  "sampleSeconds": 5,
+  "inRangePerTank": [
+   0,
+   0,
+   7.92,
+   6.35,
+   5.3,
+   4.89,
+   4.46,
+   3.95,
+   4.6,
+   4.32,
+   4.93,
+   5.75,
+   5.5,
+   5.07,
+   5.86,
+   6.2,
+   5.55,
+   5.53,
+   4.74
+  ],
+  "xSpread": [
+   45.3,
+   45.3,
+   45.1,
+   43.3,
+   42.1,
+   38.8,
+   36.2,
+   38.1,
+   41.6,
+   42.4,
+   39.1,
+   42.5,
+   42.8,
+   40,
+   39.2,
+   40.3,
+   40.4,
+   37.3,
+   39.2
+  ],
+  "shooters": [
+   0,
+   0,
+   47,
+   34,
+   32,
+   29,
+   24,
+   22,
+   27,
+   27,
+   30,
+   31,
+   31,
+   33,
+   34,
+   33,
+   31,
+   28,
+   28
+  ],
+  "perTarget": [
+   0,
+   0,
+   3.13,
+   2,
+   1.6,
+   2.07,
+   2.18,
+   1.57,
+   1.93,
+   2.45,
+   2.31,
+   2.58,
+   2.21,
+   1.94,
+   2,
+   2.06,
+   2.58,
+   2.8,
+   3.5
+  ],
+  "worst": [
+   0,
+   0,
+   5,
+   5,
+   5,
+   5,
+   4,
+   5,
+   4,
+   5,
+   6,
+   5,
+   5,
+   6,
+   3,
+   7,
+   5,
+   5,
+   11
+  ],
+  "tanksAlive": [
+   48,
+   48,
+   48,
+   40,
+   40,
+   38,
+   35,
+   37,
+   40,
+   38,
+   41,
+   40,
+   40,
+   41,
+   42,
+   40,
+   40,
+   38,
+   38
+  ],
+  "lost": [
+   0,
+   0,
+   1,
+   14,
+   20,
+   29,
+   40,
+   47,
+   53,
+   63,
+   68,
+   75,
+   81,
+   87,
+   92,
+   100,
+   107,
+   116,
+   125
+  ],
+  "arrived": [
+   0,
+   0,
+   1,
+   6,
+   12,
+   19,
+   27,
+   36,
+   45,
+   53,
+   61,
+   67,
+   73,
+   80,
+   86,
+   92,
+   99,
+   106,
+   115
+  ]
+ },
+ "passes": {
+  "_comment": [
+   "The first two have reinforcement off (ReinforceSeconds pushed past the",
+   "run). Two arrivals still get through, because the first tick of a deficit",
+   "fires before the cadence is reset - one per side. Everything after that",
+   "is attrition and nothing else. The third has it on.",
+   "",
+   "attrition: the recording establishment, 24 armour and 72 infantry a side.",
+   "core-size: 12 and 36 a side, which is what the core fields - UNITS is 96",
+   "  and every fourth index is a tank - so a comparison against this one is",
+   "  not also a comparison of two differently sized armies.",
+   "",
+   "Both collapse the way the core does: one side is ground down, the",
+   "survivors end up with nothing inside the 46 m gun, and the shooting stops",
+   "for good. That is the answer to whether the core fires and dies like C#.",
+   "It does. What it does not have is Army.Reinforce."
+  ],
+  "attrition": {
+   "armourPerSide": 24,
+   "infantryPerSide": 72,
+   "rows": [
+    {
+     "t": 0,
+     "bullArmour": {
+      "n": 24,
+      "z": -77.32,
+      "spread": 0.96
+     },
+     "bearArmour": {
+      "n": 24,
+      "z": 77.59,
+      "spread": 0.85
+     },
+     "bullInf": {
+      "n": 72,
+      "z": -77.58,
+      "spread": 0.92
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 77.48,
+      "spread": 0.87
+     }
+    },
+    {
+     "t": 5,
+     "bullArmour": {
+      "n": 24,
+      "z": -43.51,
+      "spread": 4.34
+     },
+     "bearArmour": {
+      "n": 24,
+      "z": 43.65,
+      "spread": 4.53
+     },
+     "bullInf": {
+      "n": 72,
+      "z": -64.58,
+      "spread": 2.16
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 64.83,
+      "spread": 2.31
+     }
+    },
+    {
+     "t": 10,
+     "bullArmour": {
+      "n": 24,
+      "z": -18.7,
+      "spread": 12.72
+     },
+     "bearArmour": {
+      "n": 24,
+      "z": 16.08,
+      "spread": 4.38
+     },
+     "bullInf": {
+      "n": 72,
+      "z": -53.4,
+      "spread": 2.89
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 53.46,
+      "spread": 2.87
+     }
+    },
+    {
+     "t": 15,
+     "bullArmour": {
+      "n": 20,
+      "z": -12.35,
+      "spread": 8.01
+     },
+     "bearArmour": {
+      "n": 19,
+      "z": 16,
+      "spread": 8
+     },
+     "bullInf": {
+      "n": 72,
+      "z": -40.86,
+      "spread": 4.31
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 41.3,
+      "spread": 4.16
+     }
+    },
+    {
+     "t": 20,
+     "bullArmour": {
+      "n": 14,
+      "z": -11.35,
+      "spread": 1.65
+     },
+     "bearArmour": {
+      "n": 16,
+      "z": 12.86,
+      "spread": 2.09
+     },
+     "bullInf": {
+      "n": 72,
+      "z": -29.14,
+      "spread": 5.6
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 29.56,
+      "spread": 5.57
+     }
+    },
+    {
+     "t": 25,
+     "bullArmour": {
+      "n": 11,
+      "z": -12.31,
+      "spread": 2.57
+     },
+     "bearArmour": {
+      "n": 13,
+      "z": 10.8,
+      "spread": 2.54
+     },
+     "bullInf": {
+      "n": 72,
+      "z": -18.58,
+      "spread": 8.74
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 18.93,
+      "spread": 8.54
+     }
+    },
+    {
+     "t": 30,
+     "bullArmour": {
+      "n": 6,
+      "z": -11.28,
+      "spread": 2.11
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 9.71,
+      "spread": 2.56
+     },
+     "bullInf": {
+      "n": 68,
+      "z": -11.81,
+      "spread": 7.54
+     },
+     "bearInf": {
+      "n": 72,
+      "z": 11.66,
+      "spread": 7.12
+     }
+    },
+    {
+     "t": 35,
+     "bullArmour": {
+      "n": 4,
+      "z": -9.79,
+      "spread": 1.58
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.94,
+      "spread": 2.98
+     },
+     "bullInf": {
+      "n": 62,
+      "z": -9.67,
+      "spread": 6.31
+     },
+     "bearInf": {
+      "n": 69,
+      "z": 9.55,
+      "spread": 5.74
+     }
+    },
+    {
+     "t": 40,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 8.96,
+      "spread": 3.36
+     },
+     "bullInf": {
+      "n": 59,
+      "z": -9.41,
+      "spread": 5.46
+     },
+     "bearInf": {
+      "n": 65,
+      "z": 9.43,
+      "spread": 5.06
+     }
+    },
+    {
+     "t": 45,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.29,
+      "spread": 2.81
+     },
+     "bullInf": {
+      "n": 53,
+      "z": -9.75,
+      "spread": 4.1
+     },
+     "bearInf": {
+      "n": 60,
+      "z": 9.45,
+      "spread": 4.04
+     }
+    },
+    {
+     "t": 50,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.21,
+      "spread": 2.81
+     },
+     "bullInf": {
+      "n": 51,
+      "z": -9.71,
+      "spread": 3.37
+     },
+     "bearInf": {
+      "n": 60,
+      "z": 9.27,
+      "spread": 3.37
+     }
+    },
+    {
+     "t": 55,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.19,
+      "spread": 2.68
+     },
+     "bullInf": {
+      "n": 50,
+      "z": -9.58,
+      "spread": 3.11
+     },
+     "bearInf": {
+      "n": 55,
+      "z": 9.68,
+      "spread": 2.57
+     }
+    },
+    {
+     "t": 60,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.09,
+      "spread": 2.08
+     },
+     "bullInf": {
+      "n": 49,
+      "z": -9.58,
+      "spread": 3.18
+     },
+     "bearInf": {
+      "n": 52,
+      "z": 9.91,
+      "spread": 2.43
+     }
+    },
+    {
+     "t": 65,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.09,
+      "spread": 1.76
+     },
+     "bullInf": {
+      "n": 47,
+      "z": -9.77,
+      "spread": 3.07
+     },
+     "bearInf": {
+      "n": 50,
+      "z": 10.03,
+      "spread": 2.37
+     }
+    },
+    {
+     "t": 70,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9.01,
+      "spread": 0.7
+     },
+     "bullInf": {
+      "n": 41,
+      "z": -10.36,
+      "spread": 2.79
+     },
+     "bearInf": {
+      "n": 48,
+      "z": 10.13,
+      "spread": 2.34
+     }
+    },
+    {
+     "t": 75,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 8.98,
+      "spread": 0.13
+     },
+     "bullInf": {
+      "n": 38,
+      "z": -10.53,
+      "spread": 2.82
+     },
+     "bearInf": {
+      "n": 46,
+      "z": 10.18,
+      "spread": 2.37
+     }
+    },
+    {
+     "t": 80,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9,
+      "spread": 0.03
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -10.74,
+      "spread": 2.76
+     },
+     "bearInf": {
+      "n": 43,
+      "z": 10.33,
+      "spread": 2.29
+     }
+    },
+    {
+     "t": 85,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 34,
+      "z": -10.81,
+      "spread": 2.78
+     },
+     "bearInf": {
+      "n": 41,
+      "z": 10.45,
+      "spread": 2.24
+     }
+    },
+    {
+     "t": 90,
+     "bullArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 9,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 33,
+      "z": -10.73,
+      "spread": 2.78
+     },
+     "bearInf": {
+      "n": 40,
+      "z": 10.49,
+      "spread": 2.26
+     }
+    }
+   ],
+   "density": [
+    {
+     "t": 0,
+     "inRange": 0,
+     "xSpread": 45.3,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 48,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 8,
+      "<20": 5,
+      "<31": 8,
+      "<45": 10,
+      "<60": 4,
+      "<80": 12,
+      "80+": 1
+     },
+     "xBandsOf": 48
+    },
+    {
+     "t": 5,
+     "inRange": 0,
+     "xSpread": 45.3,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 48,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 6,
+      "<20": 7,
+      "<31": 7,
+      "<45": 8,
+      "<60": 7,
+      "<80": 12,
+      "80+": 1
+     },
+     "xBandsOf": 48
+    },
+    {
+     "t": 10,
+     "inRange": 7.92,
+     "xSpread": 45.1,
+     "shooters": 47,
+     "perTarget": 3.13,
+     "worst": 5,
+     "tanksAlive": 48,
+     "lost": 1,
+     "arrived": 1,
+     "xBands": {
+      "<10": 9,
+      "<20": 2,
+      "<31": 10,
+      "<45": 9,
+      "<60": 5,
+      "<80": 13,
+      "80+": 0
+     },
+     "xBandsOf": 48
+    },
+    {
+     "t": 15,
+     "inRange": 7.23,
+     "xSpread": 45.7,
+     "shooters": 37,
+     "perTarget": 2.18,
+     "worst": 4,
+     "tanksAlive": 39,
+     "lost": 11,
+     "arrived": 2,
+     "xBands": {
+      "<10": 4,
+      "<20": 6,
+      "<31": 7,
+      "<45": 9,
+      "<60": 2,
+      "<80": 10,
+      "80+": 1
+     },
+     "xBandsOf": 39
+    },
+    {
+     "t": 20,
+     "inRange": 6.4,
+     "xSpread": 45.7,
+     "shooters": 30,
+     "perTarget": 1.2,
+     "worst": 3,
+     "tanksAlive": 30,
+     "lost": 20,
+     "arrived": 2,
+     "xBands": {
+      "<10": 4,
+      "<20": 4,
+      "<31": 5,
+      "<45": 6,
+      "<60": 2,
+      "<80": 7,
+      "80+": 2
+     },
+     "xBandsOf": 30
+    },
+    {
+     "t": 25,
+     "inRange": 5.58,
+     "xSpread": 39.6,
+     "shooters": 24,
+     "perTarget": 1.33,
+     "worst": 3,
+     "tanksAlive": 24,
+     "lost": 26,
+     "arrived": 2,
+     "xBands": {
+      "<10": 4,
+      "<20": 4,
+      "<31": 4,
+      "<45": 4,
+      "<60": 5,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 30,
+     "inRange": 3.56,
+     "xSpread": 37.3,
+     "shooters": 17,
+     "perTarget": 1.7,
+     "worst": 6,
+     "tanksAlive": 18,
+     "lost": 32,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 3,
+      "<31": 3,
+      "<45": 5,
+      "<60": 2,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 18
+    },
+    {
+     "t": 35,
+     "inRange": 3.23,
+     "xSpread": 28.3,
+     "shooters": 12,
+     "perTarget": 2.4,
+     "worst": 6,
+     "tanksAlive": 13,
+     "lost": 37,
+     "arrived": 2,
+     "xBands": {
+      "<10": 4,
+      "<20": 2,
+      "<31": 2,
+      "<45": 3,
+      "<60": 2,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 13
+    },
+    {
+     "t": 40,
+     "inRange": 0,
+     "xSpread": 28.7,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 2,
+      "<31": 3,
+      "<45": 2,
+      "<60": 2,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 45,
+     "inRange": 0,
+     "xSpread": 29,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 1,
+      "<20": 2,
+      "<31": 1,
+      "<45": 3,
+      "<60": 2,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 50,
+     "inRange": 0,
+     "xSpread": 29.4,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 1,
+      "<20": 2,
+      "<31": 3,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 55,
+     "inRange": 0,
+     "xSpread": 29.7,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 1,
+      "<20": 3,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 60,
+     "inRange": 0,
+     "xSpread": 30.2,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 65,
+     "inRange": 0,
+     "xSpread": 31.1,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 1,
+      "<45": 2,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 70,
+     "inRange": 0,
+     "xSpread": 32.3,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 1,
+      "<45": 2,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 75,
+     "inRange": 0,
+     "xSpread": 33.9,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 1,
+      "<45": 2,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 80,
+     "inRange": 0,
+     "xSpread": 35.5,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 1,
+      "<45": 2,
+      "<60": 1,
+      "<80": 0,
+      "80+": 1
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 85,
+     "inRange": 0,
+     "xSpread": 36.3,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 3,
+      "<20": 1,
+      "<31": 1,
+      "<45": 2,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    },
+    {
+     "t": 90,
+     "inRange": 0,
+     "xSpread": 36.5,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 9,
+     "lost": 41,
+     "arrived": 2,
+     "xBands": {
+      "<10": 3,
+      "<20": 1,
+      "<31": 1,
+      "<45": 0,
+      "<60": 3,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 9
+    }
+   ]
+  },
+  "core-size": {
+   "armourPerSide": 12,
+   "infantryPerSide": 36,
+   "rows": [
+    {
+     "t": 0,
+     "bullArmour": {
+      "n": 12,
+      "z": -77.27,
+      "spread": 1.04
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 77.75,
+      "spread": 0.76
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -77.43,
+      "spread": 0.87
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 77.47,
+      "spread": 0.94
+     }
+    },
+    {
+     "t": 5,
+     "bullArmour": {
+      "n": 12,
+      "z": -43.77,
+      "spread": 3.32
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 44.28,
+      "spread": 2.94
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -64.31,
+      "spread": 2.17
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 64.62,
+      "spread": 2.31
+     }
+    },
+    {
+     "t": 10,
+     "bullArmour": {
+      "n": 12,
+      "z": -16.25,
+      "spread": 3.59
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 16.24,
+      "spread": 3.38
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -53,
+      "spread": 3.17
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 53.61,
+      "spread": 3.06
+     }
+    },
+    {
+     "t": 15,
+     "bullArmour": {
+      "n": 11,
+      "z": -15.51,
+      "spread": 11.87
+     },
+     "bearArmour": {
+      "n": 11,
+      "z": 16.54,
+      "spread": 12.17
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -40.16,
+      "spread": 4.33
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 41.44,
+      "spread": 4.44
+     }
+    },
+    {
+     "t": 20,
+     "bullArmour": {
+      "n": 9,
+      "z": -12.8,
+      "spread": 5.64
+     },
+     "bearArmour": {
+      "n": 9,
+      "z": 10.96,
+      "spread": 5.94
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -28.59,
+      "spread": 5.6
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 29.72,
+      "spread": 5.13
+     }
+    },
+    {
+     "t": 25,
+     "bullArmour": {
+      "n": 8,
+      "z": -11.71,
+      "spread": 3.41
+     },
+     "bearArmour": {
+      "n": 7,
+      "z": 12,
+      "spread": 4.34
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -16.48,
+      "spread": 6.75
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 19.86,
+      "spread": 11.23
+     }
+    },
+    {
+     "t": 30,
+     "bullArmour": {
+      "n": 6,
+      "z": -9.53,
+      "spread": 2.55
+     },
+     "bearArmour": {
+      "n": 4,
+      "z": 10.84,
+      "spread": 4.2
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -11.56,
+      "spread": 10.19
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 12.77,
+      "spread": 9.59
+     }
+    },
+    {
+     "t": 35,
+     "bullArmour": {
+      "n": 5,
+      "z": -9.8,
+      "spread": 4.62
+     },
+     "bearArmour": {
+      "n": 2,
+      "z": 15.71,
+      "spread": 4.56
+     },
+     "bullInf": {
+      "n": 33,
+      "z": -9.2,
+      "spread": 8.68
+     },
+     "bearInf": {
+      "n": 34,
+      "z": 10.4,
+      "spread": 7.75
+     }
+    },
+    {
+     "t": 40,
+     "bullArmour": {
+      "n": 5,
+      "z": -9.01,
+      "spread": 2.98
+     },
+     "bearArmour": {
+      "n": 1,
+      "z": 9.87,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 29,
+      "z": -9.3,
+      "spread": 7.04
+     },
+     "bearInf": {
+      "n": 34,
+      "z": 9.92,
+      "spread": 6.37
+     }
+    },
+    {
+     "t": 45,
+     "bullArmour": {
+      "n": 5,
+      "z": -10.17,
+      "spread": 2.83
+     },
+     "bearArmour": {
+      "n": 1,
+      "z": 9.99,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 29,
+      "z": -8.81,
+      "spread": 4.85
+     },
+     "bearInf": {
+      "n": 34,
+      "z": 9.53,
+      "spread": 4.71
+     }
+    },
+    {
+     "t": 50,
+     "bullArmour": {
+      "n": 5,
+      "z": -9.91,
+      "spread": 2.91
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 27,
+      "z": -8.52,
+      "spread": 3.84
+     },
+     "bearInf": {
+      "n": 32,
+      "z": 9.64,
+      "spread": 3.68
+     }
+    },
+    {
+     "t": 55,
+     "bullArmour": {
+      "n": 5,
+      "z": -9.01,
+      "spread": 1.35
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 26,
+      "z": -7.97,
+      "spread": 3.4
+     },
+     "bearInf": {
+      "n": 29,
+      "z": 9.35,
+      "spread": 3.52
+     }
+    },
+    {
+     "t": 60,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0.12
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 26,
+      "z": -7.92,
+      "spread": 3.45
+     },
+     "bearInf": {
+      "n": 28,
+      "z": 9.53,
+      "spread": 3.44
+     }
+    },
+    {
+     "t": 65,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0.01
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 25,
+      "z": -7.84,
+      "spread": 3.49
+     },
+     "bearInf": {
+      "n": 27,
+      "z": 9.61,
+      "spread": 3.48
+     }
+    },
+    {
+     "t": 70,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 24,
+      "z": -7.83,
+      "spread": 3.56
+     },
+     "bearInf": {
+      "n": 27,
+      "z": 9.61,
+      "spread": 3.48
+     }
+    },
+    {
+     "t": 75,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 23,
+      "z": -7.78,
+      "spread": 3.63
+     },
+     "bearInf": {
+      "n": 26,
+      "z": 9.61,
+      "spread": 3.55
+     }
+    },
+    {
+     "t": 80,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 23,
+      "z": -7.78,
+      "spread": 3.63
+     },
+     "bearInf": {
+      "n": 26,
+      "z": 9.61,
+      "spread": 3.55
+     }
+    },
+    {
+     "t": 85,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 23,
+      "z": -7.78,
+      "spread": 3.63
+     },
+     "bearInf": {
+      "n": 26,
+      "z": 9.61,
+      "spread": 3.55
+     }
+    },
+    {
+     "t": 90,
+     "bullArmour": {
+      "n": 5,
+      "z": -9,
+      "spread": 0
+     },
+     "bearArmour": {
+      "n": 0,
+      "z": 0,
+      "spread": 0
+     },
+     "bullInf": {
+      "n": 23,
+      "z": -7.78,
+      "spread": 3.63
+     },
+     "bearInf": {
+      "n": 26,
+      "z": 9.61,
+      "spread": 3.55
+     }
+    }
+   ],
+   "density": [
+    {
+     "t": 0,
+     "inRange": 0,
+     "xSpread": 43.8,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 24,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 4,
+      "<45": 9,
+      "<60": 0,
+      "<80": 7,
+      "80+": 0
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 5,
+     "inRange": 0,
+     "xSpread": 44,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 24,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 3,
+      "<20": 2,
+      "<31": 5,
+      "<45": 6,
+      "<60": 2,
+      "<80": 5,
+      "80+": 1
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 10,
+     "inRange": 4.08,
+     "xSpread": 44.3,
+     "shooters": 24,
+     "perTarget": 2.67,
+     "worst": 5,
+     "tanksAlive": 24,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 1,
+      "<20": 2,
+      "<31": 5,
+      "<45": 9,
+      "<60": 0,
+      "<80": 7,
+      "80+": 0
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 15,
+     "inRange": 3.91,
+     "xSpread": 39,
+     "shooters": 20,
+     "perTarget": 2.5,
+     "worst": 4,
+     "tanksAlive": 22,
+     "lost": 4,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 5,
+      "<31": 3,
+      "<45": 4,
+      "<60": 5,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 22
+    },
+    {
+     "t": 20,
+     "inRange": 4.33,
+     "xSpread": 36.3,
+     "shooters": 18,
+     "perTarget": 2.25,
+     "worst": 5,
+     "tanksAlive": 18,
+     "lost": 8,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 3,
+      "<31": 3,
+      "<45": 3,
+      "<60": 7,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 18
+    },
+    {
+     "t": 25,
+     "inRange": 3.47,
+     "xSpread": 37.6,
+     "shooters": 15,
+     "perTarget": 1.67,
+     "worst": 3,
+     "tanksAlive": 15,
+     "lost": 11,
+     "arrived": 2,
+     "xBands": {
+      "<10": 3,
+      "<20": 2,
+      "<31": 1,
+      "<45": 3,
+      "<60": 6,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 15
+    },
+    {
+     "t": 30,
+     "inRange": 2.4,
+     "xSpread": 33.1,
+     "shooters": 10,
+     "perTarget": 1.67,
+     "worst": 3,
+     "tanksAlive": 10,
+     "lost": 16,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 2,
+      "<31": 1,
+      "<45": 5,
+      "<60": 2,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 10
+    },
+    {
+     "t": 35,
+     "inRange": 1.43,
+     "xSpread": 33.1,
+     "shooters": 7,
+     "perTarget": 1.75,
+     "worst": 4,
+     "tanksAlive": 7,
+     "lost": 19,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 2,
+      "<45": 4,
+      "<60": 1,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 7
+    },
+    {
+     "t": 40,
+     "inRange": 0.33,
+     "xSpread": 35.8,
+     "shooters": 2,
+     "perTarget": 1,
+     "worst": 1,
+     "tanksAlive": 6,
+     "lost": 20,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 3,
+      "<45": 1,
+      "<60": 2,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 6
+    },
+    {
+     "t": 45,
+     "inRange": 0.33,
+     "xSpread": 36.4,
+     "shooters": 2,
+     "perTarget": 1,
+     "worst": 1,
+     "tanksAlive": 6,
+     "lost": 20,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 3,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 6
+    },
+    {
+     "t": 50,
+     "inRange": 0,
+     "xSpread": 33.2,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 1,
+      "<45": 2,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 55,
+     "inRange": 0,
+     "xSpread": 33.2,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 60,
+     "inRange": 0,
+     "xSpread": 33,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 65,
+     "inRange": 0,
+     "xSpread": 32.3,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 70,
+     "inRange": 0,
+     "xSpread": 31.4,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 75,
+     "inRange": 0,
+     "xSpread": 30.5,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 0,
+      "<31": 2,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 80,
+     "inRange": 0,
+     "xSpread": 30.1,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 1,
+      "<31": 1,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 85,
+     "inRange": 0,
+     "xSpread": 30,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 1,
+      "<31": 1,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    },
+    {
+     "t": 90,
+     "inRange": 0,
+     "xSpread": 30.2,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 5,
+     "lost": 21,
+     "arrived": 2,
+     "xBands": {
+      "<10": 0,
+      "<20": 2,
+      "<31": 0,
+      "<45": 1,
+      "<60": 1,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 5
+    }
+   ]
+  },
+  "core-size-reinforce": {
+   "_comment": [
+    "The core's establishment WITH replacement, and the only pass its own",
+    "reinforcement is to be accepted against. Steady state from t=15: 19-22",
+    "tanks of 24 alive, 59 lost and 55 arrived over ninety seconds, and",
+    "between 12 and 17 tanks with a target at every single sample - the",
+    "shooter count never reaches zero, which is the failure replacement",
+    "exists to prevent.",
+    "xBands is the armour's |x| in the bands the core is measured in, added because xSpread is a standard deviation and cannot tell a peak with stragglers from a flat spread. Counters that read Armour and draw nothing: every field that existed before was recorded again and came back identical."
+   ],
+   "armourPerSide": 12,
+   "infantryPerSide": 36,
+   "rows": [
+    {
+     "t": 0,
+     "bullArmour": {
+      "n": 12,
+      "z": -77.27,
+      "spread": 1.04
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 77.75,
+      "spread": 0.76
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -77.43,
+      "spread": 0.87
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 77.47,
+      "spread": 0.94
+     }
+    },
+    {
+     "t": 5,
+     "bullArmour": {
+      "n": 12,
+      "z": -43.77,
+      "spread": 3.32
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 44.28,
+      "spread": 2.94
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -64.31,
+      "spread": 2.17
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 64.62,
+      "spread": 2.31
+     }
+    },
+    {
+     "t": 10,
+     "bullArmour": {
+      "n": 12,
+      "z": -16.25,
+      "spread": 3.59
+     },
+     "bearArmour": {
+      "n": 12,
+      "z": 16.24,
+      "spread": 3.38
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -53,
+      "spread": 3.17
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 53.61,
+      "spread": 3.06
+     }
+    },
+    {
+     "t": 15,
+     "bullArmour": {
+      "n": 11,
+      "z": -15.51,
+      "spread": 11.87
+     },
+     "bearArmour": {
+      "n": 11,
+      "z": 16.54,
+      "spread": 12.17
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -40.16,
+      "spread": 4.33
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 41.44,
+      "spread": 4.44
+     }
+    },
+    {
+     "t": 20,
+     "bullArmour": {
+      "n": 9,
+      "z": -20.23,
+      "spread": 18.39
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 16.67,
+      "spread": 18.17
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -28.59,
+      "spread": 5.6
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 29.72,
+      "spread": 5.13
+     }
+    },
+    {
+     "t": 25,
+     "bullArmour": {
+      "n": 9,
+      "z": -26.19,
+      "spread": 19.03
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 23.1,
+      "spread": 23.3
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -16.75,
+      "spread": 6.51
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 20,
+      "spread": 11.36
+     }
+    },
+    {
+     "t": 30,
+     "bullArmour": {
+      "n": 9,
+      "z": -25.91,
+      "spread": 16.88
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 20.35,
+      "spread": 17.81
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -11.58,
+      "spread": 11.66
+     },
+     "bearInf": {
+      "n": 35,
+      "z": 14.74,
+      "spread": 13.7
+     }
+    },
+    {
+     "t": 35,
+     "bullArmour": {
+      "n": 9,
+      "z": -31.38,
+      "spread": 23.19
+     },
+     "bearArmour": {
+      "n": 11,
+      "z": 22.39,
+      "spread": 21.3
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -9.22,
+      "spread": 10.29
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 17.22,
+      "spread": 19.84
+     }
+    },
+    {
+     "t": 40,
+     "bullArmour": {
+      "n": 9,
+      "z": -30.64,
+      "spread": 20.36
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 21.14,
+      "spread": 16.39
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -10.76,
+      "spread": 13.96
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 19.19,
+      "spread": 20.87
+     }
+    },
+    {
+     "t": 45,
+     "bullArmour": {
+      "n": 9,
+      "z": -26.76,
+      "spread": 20.86
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 24.7,
+      "spread": 19.66
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -10.31,
+      "spread": 11.33
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 17.04,
+      "spread": 16.78
+     }
+    },
+    {
+     "t": 50,
+     "bullArmour": {
+      "n": 11,
+      "z": -23.42,
+      "spread": 20.1
+     },
+     "bearArmour": {
+      "n": 8,
+      "z": 29.02,
+      "spread": 21.8
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -15.55,
+      "spread": 19.73
+     },
+     "bearInf": {
+      "n": 35,
+      "z": 15.1,
+      "spread": 13
+     }
+    },
+    {
+     "t": 55,
+     "bullArmour": {
+      "n": 11,
+      "z": -17.55,
+      "spread": 16.61
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 32.78,
+      "spread": 17.89
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -15.26,
+      "spread": 17.65
+     },
+     "bearInf": {
+      "n": 35,
+      "z": 14.49,
+      "spread": 13.04
+     }
+    },
+    {
+     "t": 60,
+     "bullArmour": {
+      "n": 10,
+      "z": -18.09,
+      "spread": 16.7
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 22.13,
+      "spread": 13.77
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -13.55,
+      "spread": 14.22
+     },
+     "bearInf": {
+      "n": 35,
+      "z": 14.34,
+      "spread": 13.61
+     }
+    },
+    {
+     "t": 65,
+     "bullArmour": {
+      "n": 10,
+      "z": -29.59,
+      "spread": 23.57
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 22.63,
+      "spread": 20.92
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -13.64,
+      "spread": 15.2
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 13.83,
+      "spread": 13.16
+     }
+    },
+    {
+     "t": 70,
+     "bullArmour": {
+      "n": 11,
+      "z": -27.59,
+      "spread": 21.56
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 25.74,
+      "spread": 23.33
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -13.59,
+      "spread": 15.24
+     },
+     "bearInf": {
+      "n": 35,
+      "z": 14.31,
+      "spread": 14.32
+     }
+    },
+    {
+     "t": 75,
+     "bullArmour": {
+      "n": 10,
+      "z": -23.49,
+      "spread": 18.94
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 27.22,
+      "spread": 22.58
+     },
+     "bullInf": {
+      "n": 36,
+      "z": -11.59,
+      "spread": 11.84
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 14.1,
+      "spread": 14.04
+     }
+    },
+    {
+     "t": 80,
+     "bullArmour": {
+      "n": 10,
+      "z": -27.07,
+      "spread": 22.43
+     },
+     "bearArmour": {
+      "n": 11,
+      "z": 20.33,
+      "spread": 16.41
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -10.76,
+      "spread": 9.41
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 12.66,
+      "spread": 11.3
+     }
+    },
+    {
+     "t": 85,
+     "bullArmour": {
+      "n": 10,
+      "z": -26.25,
+      "spread": 20.66
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 18.29,
+      "spread": 15.28
+     },
+     "bullInf": {
+      "n": 35,
+      "z": -13.34,
+      "spread": 15.55
+     },
+     "bearInf": {
+      "n": 36,
+      "z": 11.4,
+      "spread": 8.74
+     }
+    },
+    {
+     "t": 90,
+     "bullArmour": {
+      "n": 10,
+      "z": -25.07,
+      "spread": 23.16
+     },
+     "bearArmour": {
+      "n": 10,
+      "z": 22.98,
+      "spread": 19.83
+     },
+     "bullInf": {
+      "n": 34,
+      "z": -17.85,
+      "spread": 20.55
+     },
+     "bearInf": {
+      "n": 35,
+      "z": 11,
+      "spread": 6.65
+     }
+    }
+   ],
+   "density": [
+    {
+     "t": 0,
+     "inRange": 0,
+     "xSpread": 43.8,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 24,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 4,
+      "<45": 9,
+      "<60": 0,
+      "<80": 7,
+      "80+": 0
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 5,
+     "inRange": 0,
+     "xSpread": 44,
+     "shooters": 0,
+     "perTarget": 0,
+     "worst": 0,
+     "tanksAlive": 24,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 3,
+      "<20": 2,
+      "<31": 5,
+      "<45": 6,
+      "<60": 2,
+      "<80": 5,
+      "80+": 1
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 10,
+     "inRange": 4.08,
+     "xSpread": 44.3,
+     "shooters": 24,
+     "perTarget": 2.67,
+     "worst": 5,
+     "tanksAlive": 24,
+     "lost": 0,
+     "arrived": 0,
+     "xBands": {
+      "<10": 1,
+      "<20": 2,
+      "<31": 5,
+      "<45": 9,
+      "<60": 0,
+      "<80": 7,
+      "80+": 0
+     },
+     "xBandsOf": 24
+    },
+    {
+     "t": 15,
+     "inRange": 3.91,
+     "xSpread": 39,
+     "shooters": 20,
+     "perTarget": 2.5,
+     "worst": 4,
+     "tanksAlive": 22,
+     "lost": 4,
+     "arrived": 2,
+     "xBands": {
+      "<10": 2,
+      "<20": 5,
+      "<31": 3,
+      "<45": 4,
+      "<60": 5,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 22
+    },
+    {
+     "t": 20,
+     "inRange": 3.68,
+     "xSpread": 38.7,
+     "shooters": 17,
+     "perTarget": 2.13,
+     "worst": 5,
+     "tanksAlive": 19,
+     "lost": 9,
+     "arrived": 4,
+     "xBands": {
+      "<10": 2,
+      "<20": 2,
+      "<31": 3,
+      "<45": 4,
+      "<60": 8,
+      "<80": 0,
+      "80+": 0
+     },
+     "xBandsOf": 19
+    },
+    {
+     "t": 25,
+     "inRange": 2.42,
+     "xSpread": 41.3,
+     "shooters": 14,
+     "perTarget": 1.4,
+     "worst": 2,
+     "tanksAlive": 19,
+     "lost": 13,
+     "arrived": 8,
+     "xBands": {
+      "<10": 1,
+      "<20": 3,
+      "<31": 4,
+      "<45": 2,
+      "<60": 8,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 19
+    },
+    {
+     "t": 30,
+     "inRange": 2.84,
+     "xSpread": 38.9,
+     "shooters": 15,
+     "perTarget": 1.67,
+     "worst": 3,
+     "tanksAlive": 19,
+     "lost": 16,
+     "arrived": 11,
+     "xBands": {
+      "<10": 2,
+      "<20": 3,
+      "<31": 3,
+      "<45": 2,
+      "<60": 7,
+      "<80": 2,
+      "80+": 0
+     },
+     "xBandsOf": 19
+    },
+    {
+     "t": 35,
+     "inRange": 2,
+     "xSpread": 42,
+     "shooters": 14,
+     "perTarget": 2,
+     "worst": 4,
+     "tanksAlive": 20,
+     "lost": 20,
+     "arrived": 16,
+     "xBands": {
+      "<10": 3,
+      "<20": 4,
+      "<31": 0,
+      "<45": 5,
+      "<60": 5,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 20
+    },
+    {
+     "t": 40,
+     "inRange": 1.58,
+     "xSpread": 43.4,
+     "shooters": 12,
+     "perTarget": 2.4,
+     "worst": 4,
+     "tanksAlive": 19,
+     "lost": 24,
+     "arrived": 19,
+     "xBands": {
+      "<10": 2,
+      "<20": 1,
+      "<31": 4,
+      "<45": 3,
+      "<60": 6,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 19
+    },
+    {
+     "t": 45,
+     "inRange": 2,
+     "xSpread": 41.6,
+     "shooters": 13,
+     "perTarget": 1.63,
+     "worst": 3,
+     "tanksAlive": 19,
+     "lost": 28,
+     "arrived": 23,
+     "xBands": {
+      "<10": 4,
+      "<20": 0,
+      "<31": 3,
+      "<45": 7,
+      "<60": 2,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 19
+    },
+    {
+     "t": 50,
+     "inRange": 2.21,
+     "xSpread": 38.9,
+     "shooters": 14,
+     "perTarget": 2.33,
+     "worst": 5,
+     "tanksAlive": 19,
+     "lost": 32,
+     "arrived": 27,
+     "xBands": {
+      "<10": 3,
+      "<20": 3,
+      "<31": 2,
+      "<45": 5,
+      "<60": 4,
+      "<80": 2,
+      "80+": 0
+     },
+     "xBandsOf": 19
+    },
+    {
+     "t": 55,
+     "inRange": 2.19,
+     "xSpread": 39,
+     "shooters": 15,
+     "perTarget": 3,
+     "worst": 4,
+     "tanksAlive": 21,
+     "lost": 34,
+     "arrived": 31,
+     "xBands": {
+      "<10": 4,
+      "<20": 5,
+      "<31": 1,
+      "<45": 4,
+      "<60": 4,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 21
+    },
+    {
+     "t": 60,
+     "inRange": 2.7,
+     "xSpread": 38.8,
+     "shooters": 17,
+     "perTarget": 2.43,
+     "worst": 4,
+     "tanksAlive": 20,
+     "lost": 37,
+     "arrived": 33,
+     "xBands": {
+      "<10": 2,
+      "<20": 5,
+      "<31": 4,
+      "<45": 3,
+      "<60": 3,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 20
+    },
+    {
+     "t": 65,
+     "inRange": 2.1,
+     "xSpread": 41.1,
+     "shooters": 14,
+     "perTarget": 1.4,
+     "worst": 2,
+     "tanksAlive": 20,
+     "lost": 42,
+     "arrived": 38,
+     "xBands": {
+      "<10": 1,
+      "<20": 4,
+      "<31": 2,
+      "<45": 7,
+      "<60": 3,
+      "<80": 3,
+      "80+": 0
+     },
+     "xBandsOf": 20
+    },
+    {
+     "t": 70,
+     "inRange": 2.48,
+     "xSpread": 38.1,
+     "shooters": 15,
+     "perTarget": 1.67,
+     "worst": 4,
+     "tanksAlive": 21,
+     "lost": 45,
+     "arrived": 42,
+     "xBands": {
+      "<10": 1,
+      "<20": 4,
+      "<31": 4,
+      "<45": 6,
+      "<60": 5,
+      "<80": 1,
+      "80+": 0
+     },
+     "xBandsOf": 21
+    },
+    {
+     "t": 75,
+     "inRange": 2,
+     "xSpread": 40.7,
+     "shooters": 14,
+     "perTarget": 2,
+     "worst": 3,
+     "tanksAlive": 20,
+     "lost": 49,
+     "arrived": 45,
+     "xBands": {
+      "<10": 1,
+      "<20": 3,
+      "<31": 5,
+      "<45": 6,
+      "<60": 1,
+      "<80": 4,
+      "80+": 0
+     },
+     "xBandsOf": 20
+    },
+    {
+     "t": 80,
+     "inRange": 2.48,
+     "xSpread": 36.3,
+     "shooters": 15,
+     "perTarget": 1.88,
+     "worst": 4,
+     "tanksAlive": 21,
+     "lost": 51,
+     "arrived": 48,
+     "xBands": {
+      "<10": 4,
+      "<20": 2,
+      "<31": 5,
+      "<45": 6,
+      "<60": 2,
+      "<80": 2,
+      "80+": 0
+     },
+     "xBandsOf": 21
+    },
+    {
+     "t": 85,
+     "inRange": 3,
+     "xSpread": 34.1,
+     "shooters": 14,
+     "perTarget": 2.8,
+     "worst": 4,
+     "tanksAlive": 20,
+     "lost": 55,
+     "arrived": 51,
+     "xBands": {
+      "<10": 3,
+      "<20": 5,
+      "<31": 2,
+      "<45": 7,
+      "<60": 1,
+      "<80": 2,
+      "80+": 0
+     },
+     "xBandsOf": 20
+    },
+    {
+     "t": 90,
+     "inRange": 1.7,
+     "xSpread": 34.8,
+     "shooters": 12,
+     "perTarget": 2,
+     "worst": 4,
+     "tanksAlive": 20,
+     "lost": 59,
+     "arrived": 55,
+     "xBands": {
+      "<10": 1,
+      "<20": 5,
+      "<31": 5,
+      "<45": 5,
+      "<60": 2,
+      "<80": 2,
+      "80+": 0
+     },
+     "xBandsOf": 20
+    }
+   ]
+  }
+ }
+}
