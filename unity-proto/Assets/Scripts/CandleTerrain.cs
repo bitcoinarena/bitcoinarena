@@ -28,6 +28,13 @@ public class CandleTerrain : MonoBehaviour
     public static Color Top(Color c) => Color.Lerp(c, Color.white, 0.2f);
     public const float Station = 0.5f, XStation = 1f, Lift = 0.03f, SeamHalf = 0.25f;
     public const float RebuildSeconds = 0.1f, GroundSeconds = 2f;
+    /// <summary>
+    /// THE RIBBON IS REBUILT WHEN SOMETHING ON IT CHANGED (kanban #266, the owner 2026-10-08, comment 979): every RebuildSeconds it
+    /// was rebuilt whatever changed - in a named profile of the 7 s after 100 % (Pixel 7a profile, 10x CPU) LateUpdate was
+    /// 522-623 ms, ~70 rebuilds. Now a rebuild needs the core's candle words to change (all but the shift), the surface
+    /// signature to change, or the ribbon to have slid SlideMetres since it was built; between, it slides as it always did.
+    /// </summary>
+    public const float SlideMetres = 0.25f;
 
 
     const float ONE = 65536f;
@@ -36,6 +43,12 @@ public class CandleTerrain : MonoBehaviour
     Material _formingTop;
     float _builtShift, _builtAt = -1f;
     int _builtSurface = int.MinValue;
+    readonly int[] _builtWords = new int[L.CV_TOTAL];
+    // `?candlegate=0` on the page's address: the old rule (every RebuildSeconds), in the same build - the A/B of comment 979
+    static bool? _gate;
+    static bool Gate => _gate ??= !(Application.absoluteURL ?? "").Contains("candlegate=0");
+    int _countedRebuilds; float _countedAt = -1f;
+    int _bySurface, _byWords, _bySlide, _wordAt = -1;
     public int Rebuilds { get; private set; }
     /// <summary>The core's candle words this frame, for what lies on the ribbon (the roads); null before the first view.</summary>
     public static int[] LiveWords { get; private set; }
@@ -324,9 +337,14 @@ public class CandleTerrain : MonoBehaviour
         bool surfaceChanged = surfaceSig != _builtSurface;
         if (surfaceChanged) _ground.Clear();
 
-        if (surfaceChanged || _builtAt < 0f || now - _builtAt >= RebuildSeconds)
+        bool wordsChanged = WordsChanged(_words, _builtWords), slid = Mathf.Abs(shift - _builtShift) >= SlideMetres;
+        if (Gate ? surfaceChanged || _builtAt < 0f || wordsChanged || slid
+                 : surfaceChanged || _builtAt < 0f || now - _builtAt >= RebuildSeconds)
         {
+            // WHY (the 5 s count says it): the surface, the words (and the first word that moved), the slide
+            if (surfaceChanged) _bySurface++; else if (wordsChanged) { _byWords++; _wordAt = FirstChanged(_words, _builtWords); } else if (slid) _bySlide++;
             _builtAt = now; _builtSurface = surfaceSig; _builtShift = shift;
+            System.Array.Copy(_words, _builtWords, _words.Length);
             var p = Build(_words, _ground.Get);
             Set(_body, p.Body, p.SideGreen, p.SideRed, p.TopGreen, p.TopRed, p.FormingTop);
             _formingGreen = p.FormingGreen;
@@ -346,6 +364,30 @@ public class CandleTerrain : MonoBehaviour
         // seam line reads the core's front at world x and stays
         var slide = new Vector3(_builtShift - shift, 0f, 0f);
         foreach (Transform child in transform) if (child.name != "Seam") child.localPosition = slide;
+
+        // HOW OFTEN IT REBUILDS, said every 5 s for the first minute (the probe of comment 979 reads it)
+        if (_countedAt < 0f) { _countedAt = now; _countedRebuilds = Rebuilds; }
+        else if (now - _countedAt >= 5f && now < 65f)
+        {
+            Debug.Log($"[candles] rebuilds={Rebuilds - _countedRebuilds} in {now - _countedAt:0.0} s gate={(Gate ? "on" : "off")} total={Rebuilds} " +
+                      $"surface={_bySurface} words={_byWords} (last word {_wordAt}) slide={_bySlide}");
+            _bySurface = _byWords = _bySlide = 0;
+            _countedAt = now; _countedRebuilds = Rebuilds;
+        }
+    }
+
+    static int FirstChanged(int[] now, int[] built)
+    {
+        for (int i = 0; i < now.Length; i++) if (i != L.CV_SHIFT && now[i] != built[i]) return i;
+        return -1;
+    }
+
+    /// <summary>Did the core's candle words change since the build - every word but the shift, which the slide carries.</summary>
+    public static bool WordsChanged(int[] now, int[] built)
+    {
+        for (int i = 0; i < now.Length; i++)
+            if (i != L.CV_SHIFT && now[i] != built[i]) return true;
+        return false;
     }
 
     float Surface(float x, float z) => _ground.Get(x, z) + LayerAt(_words, x, z);
