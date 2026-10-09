@@ -177,10 +177,41 @@ export function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-export function attestationTimely(a, { entryCloseMs, nowMs }) {
+export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
+  // A MARKET WITH TERMS (kanban #235) DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
+  // the outcome the market asked for (the price at 18:00 is not the price at 17:59)
+  if (terms) {
+    const t = marketTimes({ entryCloseMs, terms });
+    if (BigInt(a.observedAtMs) < t.resolveAtMs)
+      return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+  }
   if (BigInt(nowMs) < BigInt(entryCloseMs))
     return { ok: false, why: `that round's entries are still open (they close at ${new Date(Number(entryCloseMs)).toISOString()}): no outcome is taken before the last pick` };
   if (BigInt(a.observedAtMs) < BigInt(entryCloseMs))
     return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the round's entries closed at ${new Date(Number(entryCloseMs)).toISOString()}` };
   return { ok: true };
+}
+
+/**
+ * A MARKET ROUND'S TIMES (kanban #235): its resolution time - `resolveAfterCloseMs` after its entry close - and the deadline
+ * its attestors have, `deadlineAfterResolveMs` after that.
+ */
+export function marketTimes({ entryCloseMs, terms }) {
+  const resolveAtMs = BigInt(entryCloseMs) + BigInt(terms.resolveAfterCloseMs);
+  return { resolveAtMs, deadlineMs: resolveAtMs + BigInt(terms.deadlineAfterResolveMs) };
+}
+
+/**
+ * REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market round with no standing outcome at its deadline, or whose
+ * attestors contradicted themselves, is not settled on any outcome - it is VOID, and every stake goes back, its fee too.
+ * Answers { voided, why } on the seat's clock; a round inside its deadline with no outcome yet is not decided here.
+ */
+export function marketVoided(held, { entryCloseMs, terms, nowMs }) {
+  if (!terms) return { voided: false };
+  const standing = outcomeStanding(held);
+  if (standing.state === 'DISPUTED') return { voided: true, why: `the attestors contradicted themselves: ${standing.why}` };
+  const { deadlineMs } = marketTimes({ entryCloseMs, terms });
+  if (standing.state === 'OPEN' && BigInt(nowMs) >= deadlineMs)
+    return { voided: true, why: `no outcome was attested by the market's deadline ${new Date(Number(deadlineMs)).toISOString()}: every stake goes back` };
+  return { voided: false };
 }
