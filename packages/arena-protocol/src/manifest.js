@@ -9,6 +9,8 @@
 //       clients[], game_donation_set,
 //       [ATTESTED only] outcomes[], attestors[], attest_threshold,
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
+//       [ATTESTED, optional] market terms: node_fee_bps, donation_bps, question, resolve_after_close, deadline_after_resolve,
+//         source_rule (kanban #235),
 //       signature by game_dev_pubkey
 //     }
 //     game_id = H(GameManifest)
@@ -42,6 +44,34 @@ export const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1, PARI_MUTUEL: 2 });
 /** An attested game names 2 to 16 outcomes and 1 to 16 attestors. */
 export const OUTCOMES_MAX = 16;
 export const ATTESTORS_MAX = 16;
+
+/**
+ * A MARKET'S OWN TERMS (kanban #235, the owner 2026-10-09: the market's fee "per market in manifest"; "refund at deadline"):
+ * its fee - the node share and the donation, each in basis points of the stake, within the network's (NODE_FEE_BPS 500,
+ * donations up to 500) - its question, when its outcome is decided (`resolveAfterCloseMs` after a round's entry close),
+ * the deadline its attestors have after that, and the rule its attestors read the outcome by (sources and aggregation, as
+ * text). Optional: an attested manifest without them keeps the network's fee and today's rules, and its bytes.
+ */
+export const MARKET_TERMS_MARKER = 0x01;
+export const MARKET_FEE_BPS_MAX = 500;
+export const MARKET_DONATION_BPS_MAX = 500;
+export const MARKET_TOTAL_FEE_BPS_MAX = 500;
+export const MARKET_RESOLVE_MAX_MS = 30n * 24n * 3600000n;
+export const MARKET_DEADLINE_MIN_MS = 60000n;
+export const MARKET_DEADLINE_MAX_MS = 7n * 24n * 3600000n;
+export function marketTermsFit(t) {
+  if (!t || typeof t !== 'object') return { ok: false, why: 'a market\'s terms are an object' };
+  if (!Number.isInteger(t.nodeFeeBps) || t.nodeFeeBps < 0 || t.nodeFeeBps > MARKET_FEE_BPS_MAX) return { ok: false, why: `a market's node fee is 0 to ${MARKET_FEE_BPS_MAX} bps` };
+  if (!Number.isInteger(t.donationBps) || t.donationBps < 0 || t.donationBps > MARKET_DONATION_BPS_MAX) return { ok: false, why: `a market's donation is 0 to ${MARKET_DONATION_BPS_MAX} bps` };
+  // AT MOST 5 % IN ALL (the owner 2026-10-09: "fees per market can't be more than 5% to prevent malicious markets"): the node
+  // fee and the donation together - a market cannot take more of a stake than the network's own games do in node fee
+  if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (5 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
+  if (typeof t.question !== 'string' || t.question.length < 1 || t.question.length > 256) return { ok: false, why: 'a market asks its question in 1 to 256 characters' };
+  if (typeof t.resolveAfterCloseMs !== 'bigint' || t.resolveAfterCloseMs < 0n || t.resolveAfterCloseMs > MARKET_RESOLVE_MAX_MS) return { ok: false, why: 'a market resolves 0 to 30 days after its entry close' };
+  if (typeof t.deadlineAfterResolveMs !== 'bigint' || t.deadlineAfterResolveMs < MARKET_DEADLINE_MIN_MS || t.deadlineAfterResolveMs > MARKET_DEADLINE_MAX_MS) return { ok: false, why: 'a market gives its attestors 1 minute to 7 days after its resolution time' };
+  if (typeof t.sourceRule !== 'string' || t.sourceRule.length < 1 || t.sourceRule.length > 1024) return { ok: false, why: 'a market names the rule its attestors read the outcome by, in 1 to 1024 characters' };
+  return { ok: true };
+}
 
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 export const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
@@ -95,6 +125,7 @@ export function encodeManifestBody(m) {
       throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+    if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
   } else if (isHeadToHead(m)) {
     // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
     if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
@@ -152,6 +183,12 @@ export function encodeManifestBody(m) {
     w.vec(m.outcomes, (o, ww) => ww.str(o));
     w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
     w.u8(m.attestThreshold);
+    // ITS MARKET TERMS (kanban #235), after a marker and only when it names them: every attested manifest before keeps its bytes
+    if (m.marketTerms) {
+      const t = m.marketTerms;
+      w.u8(MARKET_TERMS_MARKER); w.u16(t.nodeFeeBps); w.u16(t.donationBps); w.str(t.question);
+      w.u64(t.resolveAfterCloseMs); w.u64(t.deadlineAfterResolveMs); w.str(t.sourceRule);
+    }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -186,6 +223,11 @@ function readBody(r) {
     body.outcomes = r.vec((rr) => rr.str());
     body.attestors = r.vec((rr) => rr.bytes32());
     body.attestThreshold = r.u8();
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_TERMS_MARKER) {
+      r.u8();
+      body.marketTerms = { nodeFeeBps: r.u16(), donationBps: r.u16(), question: r.str(),
+        resolveAfterCloseMs: r.u64(), deadlineAfterResolveMs: r.u64(), sourceRule: r.str() };
+    }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
     body.players = r.u8();
