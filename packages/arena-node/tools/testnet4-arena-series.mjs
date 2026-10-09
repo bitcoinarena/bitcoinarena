@@ -33,6 +33,7 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { seriesTemplate, seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesClockFor, genesisSeriesStart, SERIES_MAX_MS } from '../../arena-protocol/src/series.js';
 import { bondSetFor } from '../src/curve.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 
 const [outDir, send] = process.argv.slice(2);
 if (!outDir) { console.error('usage: testnet4-arena-series.mjs <out dir> [--send]'); process.exit(2); }
@@ -87,6 +88,19 @@ const census = deriveCensus(view, { contract: decodeRoundContract(encodeRoundCon
   resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
   verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
 if (!census.ok) throw new Error(`no census at ${H}: ${census.why}`);
+// THE SEATS WILL TAKE ITS PAID ROUNDS (kanban #209, 2026-10-09): §23.6 refuses a paying round on a federation whose
+// guardians are not bonded census nodes - series ab069055 was published with 0 of 7 and every seat refused every paid
+// round. ARENA_FEDERATION_READ_DIR names the federation's client directory; its guardians are counted in this census as
+// the seats count them (server.js guardiansBonded), and below its threshold nothing is published.
+if (env.ARENA_FEDERATION_READ_DIR) {
+  const j = JSON.parse(execFileSync(env.ARENA_STAKE_LOCK_BIN || '/home/arena/blwp-testnet4/patched/bin/blwp-stake-lock',
+    ['--mode', 'guardians', '--data-dir', env.ARENA_FEDERATION_READ_DIR], { encoding: 'utf8', timeout: 120000 }).trim().split('\n').pop());
+  if (String(j.federation_id) !== toHex(base.federationId)) throw new Error(`that client directory reaches federation ${String(j.federation_id).slice(0, 16)}, the series names ${toHex(base.federationId).slice(0, 16)}`);
+  const bonded = federationIsBonded({ federationId: base.federationId, guardianKeys: (j.keys || []).map((x) => fromHex(String(x.key))),
+    threshold: Number(j.threshold), census: census.entries, bondMinSats: base.bondMinSats });
+  say({ step: 'guardians', federation: String(j.federation_id).slice(0, 16), threshold: Number(j.threshold), ok: bonded.ok, bonded: bonded.bonded ?? null, why: bonded.why || null });
+  if (!bonded.ok) throw new Error(`the seats would refuse every paid round of this series (§23.6): ${bonded.why}`);
+}
 const template = seriesTemplate({ ...contract, censusRoot: census.root }, k);
 const lead = seriesLeadIsValid(template);
 if (!lead.ok) throw new Error(lead.why);
