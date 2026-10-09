@@ -354,6 +354,8 @@ export const TAG = {
   marketOrder: 'ARENA/v1/MarketOrder',
   // a player's cancel of a market entry before its entry close (kanban #278)
   marketCancel: 'ARENA/v1/MarketCancel',
+  // one batch of a market's order book, the set its seats agreed and signed (kanban #278 step 4, order-book.js)
+  marketBatch: 'ARENA/v1/MarketBatch',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };

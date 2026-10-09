@@ -34,7 +34,8 @@ import { roundEndMs, startDeadlineOf } from '../../arena-protocol/src/first-mark
 import { OBJECTION_WINDOW_MS, windowsOf } from '../../arena-protocol/src/window.js';
 import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
-import { cancelId } from '../../arena-protocol/src/order-book.js';
+import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
+import { OrderBook } from './order-batch.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -263,6 +264,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // its own clock once it is over (protocol roundEndMs). `true`, or
   // `{ everyMs }`. Off by default: a harness closes its rounds when it says so.
   closeAtEnd = false,
+  // THE MARKET ORDER BOOK'S BATCHES (kanban #278 step 4): the interval - 0.5 s, measured to hold (order-book.js BATCH_MS) -
+  // and whether this seat leads its batches on its own clock: on by default; a test that drives `orderBook.lead` turns it off
+  orderBatchMs = Number(BATCH_MS), orderBatchTimer = true,
   // §15 AT THE DOOR (ALL-BUT-MIN-1727): how often the walk-away door is swept; on wherever the node closes its own rounds.
   doorSweepMs = closeAtEnd ? 5000 : 0,
   // THE SERIES THIS NODE WRITES AHEAD (NODE72-1131): series templates (arena-protocol/src/series.js `seriesTemplate`), each
@@ -910,6 +914,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const winnings = stakeLocks ? new WinningsSend({ round, port: stakeLocks, curve: poolCurve,
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
+  // THE MARKET ORDER BOOK (kanban #278 step 4): orders taken here, each batch's set agreed with the round's other seats
+  const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(),
+    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+  // AT EVERY CUTOFF: the batch whose cutoff just passed, for each round holding orders not in a batch, if this seat leads it.
+  // A little after the cutoff (orderBatchGraceMs), so an order a page posted just before it has landed at every seat.
+  let orderBatchTimeout = null;
+  const orderBatchGraceMs = Math.min(100, Math.floor(orderBatchMs / 5));
+  const orderBatchTick = async () => {
+    const at = round.now();
+    const k = Math.floor((at - orderBatchGraceMs) / orderBatchMs) - 1;
+    const rounds = round.db.prepare('SELECT DISTINCT round_id FROM market_orders WHERE batch IS NULL').all().map((r) => new Uint8Array(r.round_id));
+    for (const rid of rounds) {
+      if (!orderBook.leads(rid, k)) continue;
+      const got = await orderBook.lead(rid, k).catch((e) => ({ ok: false, why: e.message }));
+      if (got.ok) console.log(`[orders] ${toHex(rid).slice(0, 16)} batch ${k}: ${got.orderIds.length} order(s), held by ${got.heldBy} of ${got.of} seats in ${got.timings.agreedMs} ms`);
+    }
+  };
+  const scheduleOrderBatch = () => {
+    const at = Date.now();
+    orderBatchTimeout = setTimeout(async () => { await orderBatchTick().catch(() => {}); if (orderBatchTimeout) scheduleOrderBatch(); },
+      orderBatchMs - (at % orderBatchMs) + orderBatchGraceMs);
+    if (orderBatchTimeout.unref) orderBatchTimeout.unref();
+  };
+  if (orderBatchTimer) scheduleOrderBatch();
   const settlements = new LockSettlement(round, {
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor,
     peersFor: (rid) => {
@@ -3482,6 +3510,42 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh }));
       }
+      // THE MARKET ORDER BOOK (kanban #278 step 4): a player's signed limit order (POST /order, JSON, posted to every seat);
+      // a seat's unbatched orders before batch k's cutoff (GET /batch-proposal, for that batch's leader); the leader's set for
+      // batch k (POST /batch: held and signed, or refused by name); every agreed batch as this seat clears it (GET /book).
+      if (req.method === 'POST' && url.pathname === '/order') {
+        let body;
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an order is JSON'); }
+        const got = orderBook.ingest(body);
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ id: got.id, fresh: got.fresh, batchAfterMs: got.batchAfterMs }));
+      }
+      if (req.method === 'GET' && url.pathname === '/batch-proposal') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        const k = url.searchParams.get('k') || '';
+        if (id.length !== 32 || !/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'GET /batch-proposal?round=<id>&k=<batch>');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ k, orders: orderBook.proposal(new Uint8Array(id), Number(k)) }));
+      }
+      if (req.method === 'POST' && url.pathname === '/batch') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'POST /batch?round=<id> with { k, orders, leader, leaderSig }');
+        let body;
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a batch is JSON'); }
+        const got = orderBook.accept(new Uint8Array(id), body);
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ seat: got.seat, signature: got.signature, storedAtMs: got.storedAtMs }));
+      }
+      if (req.method === 'GET' && url.pathname === '/book') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const got = orderBook.cleared(new Uint8Array(id));
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got, (key, v) => (typeof v === 'bigint' ? String(v) : v)));
+      }
       // A MARKET ENTRY CANCELLED BY ITS PLAYER (kanban #278, the owner 2026-10-09: "until then the orders can be cancelled at no
       // cost"): POST /cancel?entry=<id> with the 64-byte Ed25519 signature of the entry's session key over cancelId - taken
       // only for a market (an attested round this node hosts) and only before its entry close, when nothing has filled yet.
@@ -4833,7 +4897,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   return new Promise((resolve) => {
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
-      dkg, settlements, winnings,
+      dkg, settlements, winnings, orderBook,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,
@@ -4852,6 +4916,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         shuttingDown = true;
         clearInterval(settleRecoverTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
+        if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(winningsTimer);

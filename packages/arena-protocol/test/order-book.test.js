@@ -80,8 +80,8 @@ test('a VOID market gives every cost and every fee back; an order is its player\
   assert.equal(toHex(orderId(order)).length, 64);
 });
 
-test('standing orders: what has not filled stands into the next batch (every second) until it fills, is cancelled or expires; one order over several batches is one position', () => {
-  assert.equal(BATCH_MS, 1000n);
+test('standing orders: what has not filled stands into the next batch (every half second) until it fills, is cancelled or expires; one order over several batches is one position', () => {
+  assert.equal(BATCH_MS, 500n);
   const t0 = 1791598500000n;
   // BATCH 1: Up 10 sat at 0.60 meets only Down 2 sat at 0.45 - Up fills a little, the rest stands
   const up = o('a', YES, 60000, 10);
