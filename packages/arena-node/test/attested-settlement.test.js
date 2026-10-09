@@ -132,7 +132,7 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
   } finally { await w.close(); }
 });
 
-test('nobody right: only the fee locks are claimed; a contradiction inside the window: DISPUTED, nothing settles; no attestation: nothing claimed', async () => {
+test('nobody right: nothing is claimed, the fees neither, every stake back at once; a contradiction: VOID, every stake back at once; no attestation: nothing claimed', async () => {
   const w = await lockRound({ stakeMsat: STAKE, round: ROUND, endMs: testNow() + 900000, serveOpts: { plugins: [NEXTBLOCK, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
   skipTo(Number(w.c.committeeTimeMs) + 100);
   try {
@@ -141,21 +141,28 @@ test('nobody right: only the fee locks are claimed; a contradiction inside the w
     await closeRound(w);
     await attestBoth(w, 2);
     skipTo(Number((await outcome(w.a, w.rid)).finalAtMs) + 100);
-    const got = await settledBySweep(w);
-    const moved = got.moved || {};
-    const nobody = { state: got.state, claims: (moved.claims || []).map((c) => c.kind), payouts: (moved.payouts || []).map((p) => p.kind), refunded: (await outcome(w.a, w.rid)).table.refunded };
+    // REFUND THE FEES TOO (kanban #235, the owner 2026-10-09): nothing is claimed - no stake lock, no fee lock - and every stake
+    // comes back by the return door at once, with no settlement to wait for; every fee lock at its expiry
+    await wait(6000);                                         // a sweep has passed
+    const nothing = await w.a.settlements.settle(w.rid);
+    const back = await Promise.all(played.map((e) => fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(e.eid)}`).then(async (r) => `${r.status}`)));
+    const nobody = { settle: nothing.state || (nothing.ok ? 'ok' : 'refused'), why: nothing.why, refunded: (await outcome(w.a, w.rid)).table.refunded, stakeBack: back };
     console.log('  NOBODY RIGHT:', JSON.stringify(nobody));
-    assert.equal(got.state, 'ACCEPTED', got.why);
-    assert.deepEqual(nobody.claims, ['fee', 'fee']);
-    assert.ok(nobody.payouts.every((k) => k === 'signer node'));
+    assert.notEqual(nothing.state, 'ACCEPTED', 'a settlement moved money when nobody was right');
     assert.equal(nobody.refunded, true);
-    for (const e of played) assert.ok((await w.port.status(e.outpoint)).stored, 'a stake lock was claimed when nobody was right');
+    for (const e of played) {
+      assert.ok((await w.port.status(e.outpoint)).stored, 'a stake lock was claimed when nobody was right');
+      if (e.feeOutpoint) assert.ok((await w.port.status(e.feeOutpoint)).stored, 'a fee lock was claimed when nobody was right');
+    }
+    assert.deepEqual(back, played.map(() => '200'), 'a stake did not come back at once when nobody was right');
 
     // A CONTRADICTION INSIDE THE WINDOW
-    const { r: r2 } = await marketRound(w, [0, 1], { open: true });
+    const { r: r2, played: r2Played } = await marketRound(w, [0, 1], { open: true });
     await closeRound(r2);
     await attestBoth(r2, 0);
     const contra = await post(r2.a, r2.rid, signedBy({ roundId: r2.rid, outcome: 1, observedAtMs: r2.c.entryCloseMs + 2n }, [A1, A2]));
+    // AN ATTESTOR POSTS TO EVERY SEAT: each seat decides the refund on its own record
+    await post(r2.b, r2.rid, signedBy({ roundId: r2.rid, outcome: 1, observedAtMs: r2.c.entryCloseMs + 2n }, [A1, A2]));
     skipTo(Number(r2.c.entryCloseMs) + 2 * WINDOW_MS);
     await wait(6000);                                         // a sweep has passed
     const disputed = await outcome(r2.a, r2.rid);
@@ -163,9 +170,13 @@ test('nobody right: only the fee locks are claimed; a contradiction inside the w
     const s2 = await standing(r2.a, r2);
     console.log('  DISPUTED:', JSON.stringify({ contradiction: contra.slice(0, 3), state: disputed.state, settle: held2.state, why: held2.why, settlement: s2.state || 'none' }));
     assert.equal(disputed.state, 'DISPUTED');
-    assert.equal(held2.state, 'HELD');
+    // A CONTRADICTION VOIDS THE ROUND (kanban #235): nothing settles, every stake comes back at once
+    assert.equal(held2.state, 'VOID');
     assert.match(held2.why, /contradicted themselves/);
     assert.notEqual(s2.state, 'ACCEPTED');
+    const back2 = await Promise.all(r2Played.map((e) => fetch(`http://127.0.0.1:${r2.a.port}/forfeit?round=${toHex(r2.rid)}&entry=${toHex(e.eid)}`).then(async (r) => (r.status === 200 ? '200' : `${r.status} ${(await r.text()).slice(0, 200)}`))));
+    console.log('  CONTRADICTION BACK:', JSON.stringify(back2));
+    assert.deepEqual(back2, r2Played.map(() => '200'), 'a stake did not come back at once on a contradiction');
 
     // NO ATTESTATION AT ALL
     const { r: r3 } = await marketRound(w, [0, 2], { open: true });
@@ -174,5 +185,37 @@ test('nobody right: only the fee locks are claimed; a contradiction inside the w
     console.log('  NO OUTCOME:', JSON.stringify({ settle: held3.state, why: held3.why }));
     assert.equal(held3.state, 'HELD');
     assert.match(held3.why, /no outcome attested: nothing is settled, and its locks expire back to their players/);
+  } finally { await w.close(); }
+});
+
+// REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market whose manifest names a resolution time and a deadline -
+// here 1 minute after entry close and 1 minute for its attestors - and no attestation by then: the round is VOID, nothing
+// is claimed, and every stake comes back at once. Before the deadline it is only held.
+const TERMS_MARKET = testAttestedGame({ name: 'btc-close-terms', outcomes: OUTCOMES, marketTerms: { nodeFeeBps: 50, donationBps: 50,
+  question: 'Where does BTC/USD close?', resolveAfterCloseMs: 60000n, deadlineAfterResolveMs: 60000n, sourceRule: 'median of three test feeds' } });
+test('a market with terms and no outcome by its deadline: VOID, nothing claimed, every stake back at once; held before it', async () => {
+  const round = { ...ROUND, gameId: TERMS_MARKET.registration.gameId };
+  const w = await lockRound({ stakeMsat: STAKE, round, endMs: testNow() + 900000,
+    serveOpts: { plugins: [NEXTBLOCK, TERMS_MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
+  skipTo(Number(w.c.committeeTimeMs) + 100);
+  try {
+    const target = { network: NETWORK, game: TERMS_MARKET.registration.donationSet };
+    const played = [];
+    for (const [i, pick] of [0, 1].entries()) played.push(await lockAndPlay(w, player(i + 50), { noMarks: true, pick, donation: { msat: STAKE * 50n / 10000n, target } }));
+    await closeRound(w, { window: false });                   // the round's own close only: its deadline is 2 min after entry close
+    const deadlineMs = Number(w.c.entryCloseMs) + 120000;
+    skipTo(deadlineMs - 1000);
+    const before = await w.a.settlements.settle(w.rid);
+    const backBefore = await fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(played[0].eid)}`).then((r) => r.status);
+    skipTo(deadlineMs + 1000);
+    const after = await w.a.settlements.settle(w.rid);
+    const back = await Promise.all(played.map((e) => fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(e.eid)}`).then((r) => r.status)));
+    console.log('  DEADLINE:', JSON.stringify({ before: before.state, backBefore, after: after.state, why: after.why, back }));
+    assert.equal(before.state, 'HELD');
+    assert.notEqual(backBefore, 200, 'a stake came back before the deadline');
+    assert.equal(after.state, 'VOID');
+    assert.match(after.why, /no outcome was attested by the market's deadline/);
+    assert.deepEqual(back, [200, 200]);
+    for (const e of played) assert.ok((await w.port.status(e.outpoint)).stored, 'a stake lock was claimed in a VOID market round');
   } finally { await w.close(); }
 });

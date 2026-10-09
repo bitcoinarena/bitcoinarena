@@ -82,4 +82,5 @@ test('refund at the deadline: no outcome by then, or a contradiction, makes the 
   assert.equal(marketVoided([{ outcome: 0 }], { ...at, nowMs: 9e9 }).voided, false, 'an attested outcome stands past the deadline');
   assert.match(marketVoided([{ outcome: 0 }, { outcome: 1 }], { ...at, nowMs: 2000000n }).why, /contradicted themselves/);
   assert.equal(marketVoided([], { entryCloseMs: 1000000n, terms: null, nowMs: 9e9 }).voided, false, 'a market without terms has no deadline');
+  assert.match(marketVoided([{ outcome: 0 }, { outcome: 2 }], { entryCloseMs: 1000000n, terms: null, nowMs: 0 }).why, /contradicted themselves/, 'a contradiction voids a market without terms too');
 });

@@ -24,6 +24,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { pluginForRound } from './plugins.js';
+import { marketVoided } from '../../arena-protocol/src/attested.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
 import { decodeAttestation, outcomeFinality, pariMutuelTable } from '../../arena-protocol/src/attested.js';
@@ -307,6 +308,10 @@ export class LockSettlement {
     if (!a) return null;
     const kept = this.round.lockSettlement(roundIdBytes);
     if (kept && kept.state === ACCEPTED) return null;
+    // REFUND AT THE DEADLINE (kanban #235): a market round with no standing outcome by its deadline, or whose attestors
+    // contradicted themselves, is VOID - nothing is claimed, every stake comes back by the return door (forfeit.js)
+    const voided = marketVoided(a.held, { entryCloseMs: a.contract.entryCloseMs, terms: a.plugin.manifest.marketTerms || null, nowMs: this.round.now ? this.round.now() : Date.now() });
+    if (voided.voided) return { ok: false, state: 'VOID', why: `a market round that is not settled on any outcome: ${voided.why}`, outcome: 'VOID' };
     if (a.finality.final) return null;
     const f = a.finality;
     const why = f.state === 'OPEN' ? 'an attested round with no outcome attested: nothing is settled, and its locks expire back to their players'
