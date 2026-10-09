@@ -45,6 +45,29 @@
       try { move(window.sessionStorage); } catch (e) { /* storage blocked: nothing to move */ }
     })();
   </script>
+  <!-- THIS SITE'S OWN GAME (kanban #279, the owner 2026-10-09: "The Rock Paper Scissors page must not show Tick Tock, Next Block
+       while connecting"): a deploy for one game names it here (unity-proto/tools/fill-template.mjs --game <name>), or a link
+       names it (?game=<name>). A site whose game is not nextblock never shows nextblock's title, pictures or loading bar: its
+       own splash from the first paint, and that game is the one the page opens. Empty: nextblock's page, as before. -->
+  <meta name="arena-site-game" content="">
+  <script>
+    (function () {
+      try {
+        var q = new URLSearchParams(location.search).get('game');
+        var m = document.querySelector('meta[name="arena-site-game"]');
+        // a game named by its 64-hex manifest id (the page writes one after a choice) is not a name: nextblock's page as before
+        var g = (q && !/^[0-9a-f]{64}$/i.test(q) ? q : (m && m.content) || '').trim();
+        window.ARENA_SITE_GAME = g || null;
+        if (g && g !== 'nextblock') {
+          document.documentElement.classList.add('other-game');
+          var titles = { 'rock-paper-scissors': ['Rock Paper Scissors', '\u270A\u270B\u270C\uFE0F'] };
+          var t = titles[g] || [g.replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }), ''];
+          window.ARENA_SITE_TITLE = t;
+          document.title = t[0];
+        }
+      } catch (e) { window.ARENA_SITE_GAME = null; }
+    })();
+  </script>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -55,6 +78,18 @@
 
     /* The loading screen sits ON TOP of the canvas rather than beside it, so
        there is never a moment of blank page between the two. */
+    /* ANOTHER GAME'S SITE (kanban #279): none of nextblock's loading screen - its own splash only */
+    html.other-game #title, html.other-game #sub, html.other-game #howto, html.other-game #pctwrap, html.other-game #track,
+    html.other-game #note, html.other-game #arena-platform { display: none !important; }
+    #site-splash { display: none; }
+    html.other-game #site-splash { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 18vh; }
+    #site-splash .icons { font-size: 64px; letter-spacing: 0.1em; animation: site-bob 1.4s ease-in-out infinite; }
+    #site-splash .name { font: 700 clamp(24px, 6vw, 38px)/1.1 system-ui, sans-serif; letter-spacing: -0.02em; }
+    #site-splash .dots { display: flex; gap: 8px; } #site-splash .dots i { width: 9px; height: 9px; border-radius: 50%; background: #f7931a; animation: site-dot 1s ease-in-out infinite; }
+    #site-splash .dots i:nth-child(2) { animation-delay: 0.15s; } #site-splash .dots i:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes site-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+    @keyframes site-dot { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+    html.other-game #stage { font-size: 13px; opacity: 0.7; }
     #boot {
       position: absolute; inset: 0; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 22px; padding: 24px;
@@ -909,6 +944,10 @@
 
   <div id="arena-games"><div class="box"><h2>Choose a game</h2><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div></div></div>
   <div id="boot">
+    <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div><div class="dots"><i></i><i></i><i></i></div></div>
+    <script>
+      if (window.ARENA_SITE_TITLE) { document.getElementById('site-name').textContent = window.ARENA_SITE_TITLE[0]; document.getElementById('site-icons').textContent = window.ARENA_SITE_TITLE[1]; }
+    </script>
     <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
     <div id="howto">
@@ -4099,7 +4138,8 @@
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
       window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
       if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));
-      const named = new URLSearchParams(location.search.replace(/^\?/, '')).get('game');
+      // the link's game, else this site's own (kanban #279: the Rock Paper Scissors site opens on Rock Paper Scissors)
+      const named = new URLSearchParams(location.search.replace(/^\?/, '')).get('game') || window.ARENA_SITE_GAME;
       let game = named ? got.games.find((g) => g.id === String(named).toLowerCase() || g.name === named) : null;
       if (!game && got.games.length === 1) game = got.games[0];
       if (!game && got.games.length > 1) {
@@ -4145,6 +4185,11 @@
         clientHash: file.hash,
         rows: () => (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
+        // EVERY LISTED ROUND OF THIS GAME (kanban #279): rows() is the lobby's one per kind (the free one with the most entry
+        // left); a game of short rounds - Rock Paper Scissors' 15 s - picks its own among all of them, e.g. the soonest to close
+        allRows: () => (window.BLWP_LOBBY_ROWS || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+          stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
+          startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.BLWP_IDENTITY || null,
         join: (id) => (window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false),
         // A HEAD-TO-HEAD GAME (kanban #233): enter a round hiding `move`; reveal it once entries are closed; read what the seats
@@ -4834,7 +4879,10 @@
       // NEXTBLOCK'S CLIENT IS UNITY; ANY OTHER GAME'S IS ITS OWN, loaded by its manifest's hash (kanban #208)
       .then(() => (window.ARENA_UNITY === false
         ? loadTheGameClient((BLWPCLIENT.fetchGames && window.ARENA_GAME_CHOSEN) || null).catch(gameNotLoaded)
-        : document.body.appendChild(script)))
+        // ANOTHER GAME'S SITE NEVER FALLS BACK TO NEXTBLOCK (kanban #279): no Unity - its splash says the nodes are not reached
+        : window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock'
+          ? (document.getElementById('stage').textContent = 'The game\'s nodes are not reachable right now - try again in a moment.')
+          : document.body.appendChild(script)))
       .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
   </script>
 </body>

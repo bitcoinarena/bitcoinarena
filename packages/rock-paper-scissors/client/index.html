@@ -8,110 +8,209 @@
      loads it only from bytes that hash to that, in a frame of its own origin, and hands it the engine as
      window.parent.ARENA_GAME: the lobby's rows of this game, the player's identity, and a head-to-head round's three acts -
      hide(round, move), reveal(round), reveals(round). The stake, the lock, the entry and the hidden move's salt are the
-     engine's; this file holds no key, no wallet and no seed. What beats what is this game's (plugin/decide.js), shown here. -->
+     engine's; this file holds no key, no wallet and no seed. What beats what is this game's (plugin/decide.js), shown here.
+     SEEN, NOT READ (kanban #279, the owner 2026-10-09: "No text wall. More graphical"; "the page refreshes constantly"): the
+     round is a picture - the steps, the two seats, a face-down card, a countdown ring, the reveal - drawn once per change of
+     state; each second only the countdown moves. -->
 <style>
-  :root { color-scheme: dark; --bg: #0d1014; --panel: #161b22; --line: #30363d; --dim: #8b949e; --btc: #f7931a; --win: #2fd38a; --loss: #ff5d5d; }
+  :root { color-scheme: dark; --bg: #0b0e13; --panel: #141922; --panel2: #1a2130; --line: #2a3242; --dim: #8b95a5; --btc: #f7931a;
+    --win: #2fd38a; --loss: #ff5d5d; --draw: #9aa7ff; }
   * { box-sizing: border-box; }
-  body { margin: 0; padding: 16px; background: var(--bg); color: #e6edf3; font: 15px/1.45 system-ui, sans-serif; }
-  h1 { margin: 4px 0 2px; font-size: 24px; }
-  .sub { color: var(--dim); font-size: 13px; }
-  .round { margin: 14px 0; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--btc); border-radius: 8px; }
-  .round .line { font-size: 13px; color: var(--dim); margin-bottom: 10px; }
-  .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-  .moves button { font: 700 17px/1.2 system-ui, sans-serif; padding: 16px 8px; border-radius: 8px; border: 1px solid var(--line); background: #0f141b; color: #e6edf3; cursor: pointer; }
-  .moves button:hover { border-color: var(--btc); }
-  .moves button span { display: block; font-size: 30px; margin-bottom: 4px; }
-  .state { margin-top: 10px; font-size: 14px; white-space: pre-wrap; }
-  .vs { display: flex; gap: 14px; align-items: center; justify-content: center; margin-top: 10px; font-size: 34px; }
-  .vs small { display: block; font-size: 12px; color: var(--dim); text-align: center; }
-  .verdict { text-align: center; font: 700 20px/1.3 system-ui, sans-serif; margin-top: 6px; }
-  .verdict.win { color: var(--win); } .verdict.loss { color: var(--loss); }
-  button.back { font: 600 13px system-ui; background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; cursor: pointer; }
-  .none { color: var(--dim); font-size: 14px; margin-top: 14px; }
+  body { margin: 0; padding: 14px 16px 28px; background: radial-gradient(120% 80% at 50% 0%, #182131 0%, var(--bg) 60%); color: #e6edf3;
+    font: 15px/1.4 system-ui, -apple-system, sans-serif; min-height: 100vh; }
+  button.back { font: 600 13px system-ui; background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 14px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  h1 .icons { margin-left: 6px; font-size: 20px; }
+  .chip { font: 700 11px/1 system-ui; letter-spacing: 0.06em; padding: 6px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .chip.free { color: var(--win); border-color: #1f5a43; background: #0f2a20; }
+  .chip.paid { color: var(--btc); border-color: #6b4310; background: #2a1c0a; }
+  .card { background: linear-gradient(180deg, var(--panel2), var(--panel)); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+  /* THE STEPS: where the round is, at a glance */
+  .steps { display: flex; justify-content: space-between; margin: 0 4px 16px; position: relative; }
+  .steps::before { content: ''; position: absolute; left: 16px; right: 16px; top: 15px; height: 2px; background: var(--line); }
+  .step { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 64px; font-size: 11px; color: var(--dim); }
+  .step b { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--bg); border: 2px solid var(--line); font-size: 15px; }
+  .step.done b { border-color: var(--win); color: var(--win); }
+  .step.now b { border-color: var(--btc); color: var(--btc); box-shadow: 0 0 0 4px rgba(247,147,26,0.15); }
+  .step.now { color: #e6edf3; }
+  /* THE TABLE: the two seats and the clock between them */
+  .table { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+  .seat { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .seat .who { font-size: 12px; color: var(--dim); }
+  .slot { width: 96px; height: 128px; border-radius: 14px; display: grid; place-items: center; font-size: 54px; border: 2px dashed var(--line); background: rgba(255,255,255,0.02); }
+  .slot.facedown { border: 2px solid #6b4310; background: repeating-linear-gradient(45deg, #2a1c0a 0 10px, #33230e 10px 20px); font-size: 34px; }
+  .slot.in { border: 2px solid #1f5a43; background: repeating-linear-gradient(45deg, #0f2a20 0 10px, #133325 10px 20px); font-size: 34px; }
+  .slot.empty { animation: pulse 1.6s ease-in-out infinite; color: var(--dim); font-size: 40px; }
+  .slot.shown { border: 2px solid var(--line); background: var(--bg); animation: flip 0.45s ease-out; }
+  .slot.win { border-color: var(--win); box-shadow: 0 0 24px rgba(47,211,138,0.35); }
+  .slot.loss { border-color: var(--loss); opacity: 0.8; }
+  @keyframes pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+  @keyframes flip { from { transform: rotateY(90deg); } to { transform: rotateY(0); } }
+  .clock { position: relative; width: 84px; height: 84px; }
+  .clock svg { width: 84px; height: 84px; transform: rotate(-90deg); }
+  .clock .t { position: absolute; inset: 0; display: grid; place-items: center; font: 700 17px/1 ui-monospace, monospace; }
+  .vs { font: 800 14px/1 system-ui; color: var(--dim); text-align: center; }
+  /* THE MOVES */
+  .pick { margin-top: 16px; text-align: center; color: var(--dim); font-size: 13px; }
+  .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+  .moves button { font: 700 14px/1.2 system-ui; padding: 14px 6px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); color: #e6edf3; cursor: pointer; transition: transform 0.08s, border-color 0.15s; }
+  .moves button span { display: block; font-size: 42px; margin-bottom: 6px; }
+  .moves button:hover { border-color: var(--btc); } .moves button:active { transform: scale(0.96); }
+  .moves button:disabled { opacity: 0.4; }
+  .verdict { margin-top: 16px; text-align: center; font: 800 26px/1.2 system-ui; }
+  .verdict.win { color: var(--win); } .verdict.loss { color: var(--loss); } .verdict.draw { color: var(--draw); }
+  .foot { margin-top: 12px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+  .none { text-align: center; color: var(--dim); padding: 28px 8px; }
+  .none .big { font-size: 44px; display: block; margin-bottom: 8px; animation: pulse 1.6s ease-in-out infinite; }
+  .last { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 12px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; color: var(--dim); }
+  .last b { font-size: 26px; font-weight: 400; } .last i { font-style: normal; font-size: 11px; } .last em { font: 800 13px system-ui; text-transform: uppercase; letter-spacing: 0.05em; font-style: normal; }
+  .last.win em { color: var(--win); } .last.loss em { color: var(--loss); } .last.draw em { color: var(--draw); }
 </style>
 </head>
 <body>
   <button class="back" type="button" id="back">&larr; Games</button>
-  <h1>Rock Paper Scissors</h1>
-  <div class="sub" id="what">Two players. Each hides a move; both are revealed after entries close; the seats decide.</div>
-  <div id="rounds"></div>
+  <header><h1>Rock Paper Scissors<span class="icons">✊✋✌️</span></h1><span class="chip" id="kind" hidden></span></header>
+  <div id="view"></div>
 <script>
   const A = window.parent && window.parent.ARENA_GAME;
   const $ = (id) => document.getElementById(id);
   const MOVES = [['Rock', '✊'], ['Paper', '✋'], ['Scissors', '✌️']];
+  const R = 36, C = 2 * Math.PI * R;
   const revealing = new Set();
+  const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+  // THE STEPS: 0 pick, 1 wait for entry close, 2 reveal, 3 result
+  const steps = (at) => {
+    const s = el('div', 'steps');
+    [['✋', 'Pick'], ['⏳', 'Wait'], ['👁', 'Reveal'], ['🏁', 'Result']].forEach(([icon, name], i) => {
+      const x = el('div', 'step' + (i < at ? ' done' : i === at ? ' now' : ''), '<b>' + (i < at ? '✓' : icon) + '</b>' + name);
+      s.append(x);
+    });
+    return s;
+  };
+  // THE CLOCK: a ring that empties towards entry close; only its arc and digits move each second
+  const clock = () => {
+    const c = el('div', 'clock', '<svg viewBox="0 0 84 84"><circle cx="42" cy="42" r="' + R + '" fill="none" stroke="#2a3242" stroke-width="6"/>'
+      + '<circle class="arc" cx="42" cy="42" r="' + R + '" fill="none" stroke="#f7931a" stroke-width="6" stroke-linecap="round" stroke-dasharray="' + C + '"/></svg><div class="t"></div>');
+    return c;
+  };
+  const tickClock = (c, closeMs, openMs) => {
+    if (!c) return;
+    const left = Math.max(0, closeMs - Date.now());
+    const span = Math.max(1, closeMs - openMs);
+    c.querySelector('.t').textContent = mmss(left);
+    c.querySelector('.arc').setAttribute('stroke-dashoffset', String(C * (1 - Math.min(1, left / span))));
+  };
+  const seat = (who, cls, face) => { const s = el('div', 'seat'); s.append(el('div', 'slot ' + cls, face), el('div', 'who', who)); return s; };
+
   if (!A || !A.headToHead) {
-    $('what').textContent = 'This client runs inside the Bitcoin Arena page, which hands it the game.';
+    $('view').append(el('div', 'none', '<span class="big">✊✋✌️</span>This client runs inside the Bitcoin Arena page, which hands it the game.'));
   } else {
     window.RPS_CLIENT = { hash: A.clientHash, game: A.game.id };
     $('back').addEventListener('click', () => A.back());
-    const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+    let drawnKey = null;
+    let live = null;            // what the countdown needs between redraws: { clock, closeMs, openMs }
+    const WINDOW_MS = 15000;    // a round takes picks for 15 s (the owner 2026-10-09 15:00: "rounds are 15 seconds")
+    const joinedOf = (line) => { const m = String(line || '').match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
+    // THE ROUND TO PLAY: the open one that closes soonest with a few seconds left - every player's page offers the same one
+    const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > 2500)
+      .sort((x, y) => x.entryCloseMs - y.entryCloseMs)[0] || null;
+    // WHAT THE TABLE LOOKS LIKE NOW, as a key: the view is redrawn only when it changes (never a full rebuild each second)
     const paint = async () => {
-      const rows = A.rows();
-      const box = $('rounds');
-      // THIS TAB'S OWN ROUNDS FROM ITS HIDDEN MOVES, not from the lobby's rows: a round leaves the rows at its entry close,
-      // and its reveal and verdict come after that. The last 15 minutes of them, then one open round to play next.
-      const mine = A.hiddenAll().filter((h) => Date.now() < Number(h.entryCloseMs) + 900000)
-        .map((h) => rows.find((r) => r.id === h.roundIdHex) || { id: h.roundIdHex, line: 'round ' + h.roundIdHex.slice(0, 8) });
-      const pending = mine.some((r) => Date.now() < Number(A.hidden(r.id).entryCloseMs));
-      const open = rows.filter((r) => r.joinable && !A.hidden(r.id));
-      const shown = [...mine.slice(-1), ...(pending ? [] : open.slice(0, 1))];
-      box.textContent = '';
-      if (!shown.length) { const d = document.createElement('div'); d.className = 'none'; d.textContent = 'No round is open on these nodes right now - the next one appears here.'; box.append(d); }
-      for (const r of shown) {
-        const d = document.createElement('div'); d.className = 'round';
-        const l = document.createElement('div'); l.className = 'line'; l.textContent = r.line; d.append(l);
-        const h = A.hidden(r.id);
-        if (!h) {
-          const g = document.createElement('div'); g.className = 'moves';
-          MOVES.forEach(([name, icon], i) => {
-            const b = document.createElement('button'); b.type = 'button'; b.dataset.move = String(i);
-            b.innerHTML = '<span>' + icon + '</span>' + name;
-            b.addEventListener('click', () => { b.disabled = true; A.hide(r.id, i); });
-            g.append(b);
-          });
-          d.append(g);
-        } else {
-          const closeMs = Number(h.entryCloseMs);
-          const st = document.createElement('div'); st.className = 'state';
-          // THE ROUND AS THE SEATS HOLD IT: how many entered, and - once decided - each entry's signed outcome
-          const held = await A.result(r.id);
-          const entries = held ? held.entries : [];
-          const players = (A.headToHead && A.headToHead.players) || 2;
-          if (Date.now() < closeMs) {
-            st.textContent = 'You hid ' + MOVES[h.move][0] + '. ' + (entries.length < players
-              ? 'Waiting for an opponent (' + entries.length + ' of ' + players + ') - '
-              : 'Both players are in - ') + 'entries close in ' + mmss(closeMs - Date.now()) + '.';
-          } else if (entries.length && entries.length < players) {
-            // THERE MUST BE TWO BEFORE THE GAME STARTS (the owner 2026-10-09): one alone is not played, and nothing is revealed
-            const v = document.createElement('div'); v.className = 'verdict'; v.textContent = 'No opponent joined - the round is not played';
-            d.append(v);
-            st.textContent = 'Your entry is void: your stake comes back.';
-          } else {
-            if (!revealing.has(r.id)) { revealing.add(r.id); A.reveal(r.id).then((x) => { if (!x.ok) revealing.delete(r.id); }); }
-            const all = await A.reveals(r.id);
-            const theirs = Object.entries(all).filter(([e]) => e !== h.entryIdHex).map(([, m]) => m);
-            const vs = document.createElement('div'); vs.className = 'vs';
-            vs.innerHTML = '<div>' + MOVES[h.move][1] + '<small>you</small></div><div style="font-size:16px;color:#8b949e">vs</div>'
-              + '<div>' + (theirs.length ? MOVES[theirs[0]][1] : '…') + '<small>' + (theirs.length ? 'them' : 'waiting for their reveal') + '</small></div>';
-            d.append(vs);
-            // THE RESULT IS THE SEATS' SIGNED ONE, not this page's: shown once a seat signed this entry's outcome
-            const mine = entries.find((e) => e.entry === h.entryIdHex);
-            const v = document.createElement('div');
-            if (mine && mine.outcome && mine.signedBy > 0) {
-              const word = mine.outcome === 'DELIVERED' && mine.score >= 2 ? ['win', 'You win']
-                : mine.outcome === 'DELIVERED' ? ['', 'Draw - both keep their stake']
-                : mine.outcome === 'VOID' ? ['', 'Not played - your stake comes back']
-                : ['loss', mine.outcome === 'FORFEIT' ? 'You did not reveal - you lose' : 'You lose'];
-              v.className = 'verdict ' + word[0]; v.textContent = word[1];
-              d.append(v);
-              st.textContent = 'Signed by ' + mine.signedBy + ' seat' + (mine.signedBy === 1 ? '' : 's') + '.';
-            } else st.textContent = 'Revealed - the seats sign the result at the round\'s end.';
-          }
-          d.append(st);
+      // every listed round of this game (the page's allRows), so the soonest to close is the one offered
+      const rows = A.allRows ? A.allRows() : A.rows();
+      const players = (A.headToHead && A.headToHead.players) || 2;
+      const mine = A.hiddenAll().filter((h) => Date.now() < Number(h.entryCloseMs) + 120000);
+      const h = mine.length ? mine[mine.length - 1] : null;
+      // THE LAST ROUND THIS TAB PLAYED, as the seats hold it
+      let last = null;
+      if (h) {
+        const held = await A.result(h.roundIdHex);
+        const entries = held ? held.entries : [];
+        const closeMs = Number(h.entryCloseMs);
+        const row = rows.find((r) => r.id === h.roundIdHex);
+        last = { id: h.roundIdHex, move: h.move, closeMs, free: row ? !!row.free : true, them: Math.max(0, entries.length - 1) };
+        if (Date.now() < closeMs) last.phase = 'wait';
+        else if (entries.length && entries.length < players) last.phase = 'alone';
+        else {
+          if (!revealing.has(h.roundIdHex)) { revealing.add(h.roundIdHex); A.reveal(h.roundIdHex).then((x) => { if (!x.ok) revealing.delete(h.roundIdHex); }); }
+          const all = await A.reveals(h.roundIdHex);
+          const theirs = Object.entries(all).filter(([e]) => e !== h.entryIdHex).map(([, m]) => m);
+          const me = entries.find((e) => e.entry === h.entryIdHex);
+          last.theirs = theirs.length ? theirs[0] : null;
+          last.verdict = me && me.outcome && me.signedBy > 0
+            ? (me.outcome === 'DELIVERED' && me.score >= 2 ? 'win' : me.outcome === 'DELIVERED' ? 'draw' : me.outcome === 'VOID' ? 'void' : me.outcome === 'FORFEIT' ? 'forfeit' : 'loss') : null;
+          last.phase = last.verdict ? 'result' : 'reveal';
         }
-        box.append(d);
       }
+      // WHILE A ROUND OF THIS TAB IS STILL BEING PLAYED (picked, waiting, revealing), that round is the table; once it is
+      // decided (or not played), the next open round is, with the last result beside it
+      let state;
+      if (last && (last.phase === 'wait' || last.phase === 'reveal')) state = { ...last, openMs: last.closeMs - WINDOW_MS };
+      else {
+        const row = openRound(rows);
+        const prev = last ? { phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null } : null;
+        state = row ? { phase: 'pick', id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev }
+          : { phase: 'none', prev };
+      }
+      const key = JSON.stringify(state);
+      if (key !== drawnKey) { drawnKey = key; draw(state); }
+      if (live) tickClock(live.clock, live.closeMs, live.openMs);
+    };
+    const draw = (s) => {
+      const view = $('view');
+      view.textContent = '';
+      live = null;
+      const kind = $('kind');
+      kind.hidden = s.phase === 'none';
+      kind.className = 'chip ' + (s.free ? 'free' : 'paid');
+      kind.textContent = s.free ? 'FREE' : 'PAID';
+      // THE LAST RESULT, as a strip above the next table: your move, theirs, and how it went
+      if (s.prev && (s.prev.phase === 'result' || s.prev.phase === 'alone')) {
+        const p = s.prev;
+        const words = p.phase === 'alone' ? ['draw', 'not played'] : ({ win: ['win', 'won'], loss: ['loss', 'lost'], forfeit: ['loss', 'lost'], draw: ['draw', 'draw'], void: ['draw', 'not played'] }[p.verdict] || ['draw', '']);
+        view.append(el('div', 'last ' + words[0], '<span>last round</span><b>' + MOVES[p.move][1] + '</b><i>vs</i><b>' + (p.theirs === null || p.theirs === undefined ? '∅' : MOVES[p.theirs][1]) + '</b><em>' + words[1] + '</em>'));
+      }
+      if (s.phase === 'none') { view.append(el('div', 'card none', '<span class="big">⏳</span>The next round opens in a moment.')); return; }
+      const card = el('div', 'card');
+      const at = { pick: 0, wait: 1, alone: 3, reveal: 2, result: 3 }[s.phase];
+      card.append(steps(at));
+      const table = el('div', 'table');
+      const middle = el('div');
+      if (s.phase === 'pick' || s.phase === 'wait') {
+        const c = clock(); middle.append(c);
+        live = { clock: c, closeMs: s.closeMs, openMs: s.openMs };
+      } else middle.append(el('div', 'vs', 'VS'));
+      if (s.phase === 'pick') {
+        table.append(seat('you', 'empty', '?'), middle, seat(s.joined ? 'opponent in' : 'opponent', s.joined ? 'in' : 'empty', s.joined ? '✓' : '?'));
+        card.append(table);
+        card.append(el('div', 'pick', 'Pick - your move stays hidden'));
+        const g = el('div', 'moves');
+        MOVES.forEach(([name, icon], i) => {
+          const b = el('button', '', '<span>' + icon + '</span>' + name); b.type = 'button';
+          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; A.hide(s.id, i); });
+          g.append(b);
+        });
+        card.append(g);
+      } else if (s.phase === 'wait') {
+        table.append(seat('you · ' + MOVES[s.move][0], 'facedown', '🔒'), middle,
+          seat(s.them ? 'opponent in' : 'waiting…', s.them ? 'in' : 'empty', s.them ? '🔒' : '?'));
+        card.append(table);
+      } else if (s.phase === 'alone') {
+        table.append(seat('you', 'facedown', '🔒'), middle, seat('nobody came', 'empty', '∅'));
+        card.append(table, el('div', 'verdict draw', 'Not played · stake back'));
+      } else {
+        const win = s.verdict === 'win', loss = s.verdict === 'loss' || s.verdict === 'forfeit';
+        table.append(seat('you', 'shown' + (win ? ' win' : loss ? ' loss' : ''), MOVES[s.move][1]), middle,
+          seat('them', s.theirs === null ? 'empty' : 'shown' + (loss ? ' win' : win ? ' loss' : ''), s.theirs === null ? '…' : MOVES[s.theirs][1]));
+        card.append(table);
+        if (s.verdict) {
+          const words = { win: ['win', 'You win 🏆'], loss: ['loss', 'You lose'], forfeit: ['loss', 'Not revealed · you lose'], draw: ['draw', 'Draw · stakes back'], void: ['draw', 'Not played · stake back'] }[s.verdict];
+          card.append(el('div', 'verdict ' + words[0], words[1]));
+        }
+      }
+      view.append(card);
     };
     paint();
     setInterval(paint, 1000);
