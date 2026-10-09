@@ -69,6 +69,8 @@ walk(SRC + 'winnings.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
 walk(SRC + 'market.js');
+// AND A HEAD-TO-HEAD ROUND'S HIDDEN MOVE AND ITS REVEAL (kanban #233)
+walk(SRC + 'head-to-head.js');
 // AND THE GAMES (kanban #208): the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
 walk(SRC + 'games.js');
 
@@ -239,6 +241,8 @@ out += '         winningsQualify: winningsQualify,\n';
 // A MARKET (kanban #206 slice 2, §0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
 out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
 out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
+// A HEAD-TO-HEAD ROUND (kanban #233): the hidden move, its commitment, its reveal, and the reveals the seats hold
+out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 

@@ -906,6 +906,8 @@ const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
+  // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.
+  headToHeadCommit: 'ARENA/v1/HeadToHeadCommit',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };
@@ -1831,11 +1833,22 @@ function encodeEntryContract(e) {
     w.u8(PICK_MARKER);
     w.u8(e.pick);
   }
+  // THE HIDDEN MOVE (kanban #233): on a round of a head-to-head game the entry names H(round_id || session key || move ||
+  // salt) (head-to-head.js), revealed after entry close. WRITTEN ONLY WHEN THERE IS ONE, after its own marker: every
+  // other entry keeps exactly its bytes and its id. An entry backs a pick or hides a move, never both.
+  if (e.commit !== undefined && e.commit !== null) {
+    if (e.pick !== undefined && e.pick !== null) throw new Error('an entry backs an outcome or hides a move, not both');
+    if (!(e.commit instanceof Uint8Array) || e.commit.length !== 32) throw new Error('a move commitment is 32 bytes');
+    w.u8(COMMIT_MARKER);
+    w.bytes32(e.commit);
+  }
   return w.finish();
 }
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
 const PICK_MARKER = 0xa7;
+/** The byte before an entry's move commitment (head-to-head), likewise never a donation list's first byte. */
+const COMMIT_MARKER = 0xa8;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 const STAKE_POINT_BYTES = 33;
@@ -1870,13 +1883,15 @@ function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER) {
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
   }
   if (r.at < bytes.length) {
-    if (r.u8() !== PICK_MARKER) throw new Error('these bytes carry something after the entry that is not a pick');
-    e.pick = r.u8();
+    const marker = r.u8();
+    if (marker === PICK_MARKER) e.pick = r.u8();
+    else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
+    else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
   }
   r.end();
   return e;
@@ -19812,6 +19827,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 //       payout_rule, payout_params (the rank curve's numerator and denominator), min_score,
 //       clients[], game_donation_set,
 //       [ATTESTED only] outcomes[], attestors[], attest_threshold,
+//       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       signature by game_dev_pubkey
 //     }
 //     game_id = H(GameManifest)
@@ -19835,7 +19851,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
  * event - a prediction market), with no core and no run.
  */
-const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2 });
+const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2, HEAD_TO_HEAD: 3 });
 /**
  * The engine's payout rules a manifest may pick (§0A.5): §18A's rank curve for a replayed run; pari-mutuel for an attested
  * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks).
@@ -19847,6 +19863,21 @@ const ATTESTORS_MAX = 16;
 
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
+/**
+ * IS THIS A HEAD-TO-HEAD GAME (kanban #233, the owner 2026-10-09)? Each player commits a hidden move at entry and reveals
+ * it after entry close; the round's nodes decide every entry's result from all the reveals together, with the game's
+ * decide adapter - named in cores[] by its hash like a replay core, so a node installs and checks it the same way. No
+ * run (run_ticks_max 0); paid by the rank curve with the game's min_score (head-to-head.js maps win/draw/loss onto it).
+ */
+const isHeadToHead = (m) => !!m && m.resultType === RESULT_TYPE.HEAD_TO_HEAD;
+/** A head-to-head game seats 2 to 16 players, offers 2 to 32 moves, and gives its reveals 10 s to 1 h after entry close. */
+const H2H_PLAYERS_MAX = 16;
+const H2H_MOVES_MAX = 32;
+const H2H_REVEAL_MIN_MS = 10000n;
+const H2H_REVEAL_MAX_MS = 3600000n;
+/** What the engine scores a head-to-head win and a draw: a win qualifies (min_score), a draw keeps its stake (§18). */
+const H2H_WIN_SCORE = 2;
+const H2H_DRAW_SCORE = 1;
 
 const MANIFEST_SIGNATURE_BYTES = 64;
 const NO_PARENT = new Uint8Array(32);
@@ -19866,7 +19897,7 @@ function encodeManifestBody(m) {
   if (!manIs32(m.gameDevPubkey)) throw new Error('a game names a 32-byte developer key');
   if (!Number.isInteger(m.version) || m.version < 1) throw new Error('a manifest version is 1 or more');
   if (!manIs32(m.parentManifestId)) throw new Error('a manifest names a 32-byte parent (zeros for the first)');
-  if (!manNameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED)`);
+  if (!manNameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED, HEAD_TO_HEAD)`);
   if (isAttested(m)) {
     // AN ATTESTED GAME HAS NO CORE AND NO RUN (§0A.7a): the replay fields are written empty, so a reader of them finds
     // nothing to replay, and its payout rule is pari-mutuel
@@ -19882,6 +19913,22 @@ function encodeManifestBody(m) {
       throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+  } else if (isHeadToHead(m)) {
+    // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
+    if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
+    const c = m.cores[0];
+    if (!manIs32(c.hash) || !Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(manIs32))
+      throw new Error('a head-to-head game\'s decide adapter is named by its 32-byte hash with at least one 32-byte config');
+    if (m.runTicksMax !== 0) throw new Error('a head-to-head game has no run: run_ticks_max is 0');
+    if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) throw new Error('a head-to-head game pays by the rank curve');
+    if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
+        || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
+      throw new Error('the rank curve is a numerator below its denominator, both 1 to 255');
+    if (m.minScore !== H2H_WIN_SCORE) throw new Error(`a head-to-head game's min_score is ${H2H_WIN_SCORE}: a win scores ${H2H_WIN_SCORE}, a draw ${H2H_DRAW_SCORE} (head-to-head.js)`);
+    if (!Number.isInteger(m.players) || m.players < 2 || m.players > H2H_PLAYERS_MAX) throw new Error(`a head-to-head game seats 2 to ${H2H_PLAYERS_MAX} players`);
+    if (!Number.isInteger(m.moveCount) || m.moveCount < 2 || m.moveCount > H2H_MOVES_MAX) throw new Error(`a head-to-head game offers 2 to ${H2H_MOVES_MAX} moves`);
+    if (typeof m.revealWindowMs !== 'bigint' || m.revealWindowMs < H2H_REVEAL_MIN_MS || m.revealWindowMs > H2H_REVEAL_MAX_MS)
+      throw new Error(`a head-to-head game's reveal window is ${H2H_REVEAL_MIN_MS} to ${H2H_REVEAL_MAX_MS} ms`);
   } else {
     if (!Array.isArray(m.cores) || m.cores.length < 1) throw new Error('a game names at least one core');
     for (const c of m.cores) {
@@ -19924,6 +19971,12 @@ function encodeManifestBody(m) {
     w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
     w.u8(m.attestThreshold);
   }
+  // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
+  if (isHeadToHead(m)) {
+    w.u8(m.players);
+    w.u8(m.moveCount);
+    w.u64(m.revealWindowMs);
+  }
   return w.finish();
 }
 
@@ -19951,6 +20004,11 @@ function readBody(r) {
     body.outcomes = r.vec((rr) => rr.str());
     body.attestors = r.vec((rr) => rr.bytes32());
     body.attestThreshold = r.u8();
+  }
+  if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
+    body.players = r.u8();
+    body.moveCount = r.u8();
+    body.revealWindowMs = r.u64();
   }
   return body;
 }
@@ -20030,6 +20088,14 @@ function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   if (!core) return { ok: false, why: `${name} lists no core ${toHex(contract.simCoreHash).slice(0, 16)}` };
   if (!manIs32(contract.configHash) || !core.configs.some((h) => manSame(h, contract.configHash)))
     return { ok: false, why: `${name} lists no config ${manIs32(contract.configHash) ? toHex(contract.configHash).slice(0, 16) : '(none)'} for core ${toHex(core.hash).slice(0, 16)}` };
+  // A HEAD-TO-HEAD ROUND HAS NO RUN: its blockTicks is left as any u16 says nothing; the curve and min_score still bind
+  if (isHeadToHead(m)) {
+    if (contract.rankNumerator !== m.rankNumerator || contract.rankDenominator !== m.rankDenominator)
+      return { ok: false, why: `that round's rank curve is ${contract.rankNumerator}/${contract.rankDenominator}; ${name} pays ${m.rankNumerator}/${m.rankDenominator}` };
+    if (!Number.isInteger(contract.minScore) || contract.minScore < m.minScore)
+      return { ok: false, why: `that round's min_score ${contract.minScore} is below ${name}'s ${m.minScore}` };
+    return { ok: true, headToHead: true };
+  }
   if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1 || contract.blockTicks > m.runTicksMax)
     return { ok: false, why: `that round's run is ${contract.blockTicks} ticks; ${name} runs at most ${m.runTicksMax}` };
   if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) return { ok: false, why: `${name} picks payout rule ${m.payoutRule}, which is not the engine's` };
@@ -20415,6 +20481,127 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
   return lines;
 }
 
+// ---- arena-protocol/src/head-to-head.js
+// HEAD-TO-HEAD ROUNDS (kanban #233, the owner 2026-10-09: "Head-to-head in engine"). A replayed round runs each entry alone, so
+// no entry's result can depend on another player's move; a head-to-head round is decided over all of them at once.
+//
+//   1. COMMIT. At entry each player names commit = H(round_id || entry_key || move || salt) - the move hidden until it is
+//      revealed, bound to this round and this entry so nobody can copy another's commitment and its reveal.
+//   2. REVEAL. After entry close, and before entry close + the game's reveal window, each player hands its (move, salt) to
+//      the round's nodes; a reveal stands only if it hashes to that entry's commitment and names a move the game offers.
+//   3. DECIDE. After the window every node hands the stood reveals to the game's decide adapter (a plugin, named in the
+//      manifest's cores[] by hash) and maps its verdict onto the engine's own payout rule, so settlement is unchanged:
+//        WIN  -> DELIVERED, score 2 (a qualifier: min_score is 2)       net stake back + the pool
+//        DRAW -> DELIVERED, score 1 (below min_score: keeps its stake)   net stake back
+//        LOSS -> FAILED                                                   net stake into the pool
+//        no stood reveal -> FORFEIT                                       net stake into the pool
+//      A lone revealer wins; with no reveal at all every entry forfeits. Every node decides the same from the same reveals,
+//      so their results agree the way two replays of one transcript agree.
+
+
+
+
+
+const SALT_BYTES = 32;
+const VERDICT = Object.freeze({ WIN: 'WIN', DRAW: 'DRAW', LOSS: 'LOSS' });
+
+const h2hIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const h2hSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** The commitment a player names at entry. */
+function headToHeadCommit({ roundId, entryKey, move, salt }) {
+  if (!h2hIs32(roundId)) throw new Error('a commitment names its 32-byte round');
+  if (!h2hIs32(entryKey)) throw new Error('a commitment names its 32-byte entry key');
+  if (!Number.isInteger(move) || move < 0 || move > 255) throw new Error('a move is a byte');
+  if (!(salt instanceof Uint8Array) || salt.length !== SALT_BYTES) throw new Error(`a salt is ${SALT_BYTES} bytes`);
+  const w = new Writer();
+  w.bytes32(roundId); w.bytes32(entryKey); w.u8(move); w.bytes(salt);
+  return taggedHash(TAG.headToHeadCommit, w.finish());
+}
+
+/** Does this reveal stand for that entry: in the window, a move the game offers, and the commitment it named? */
+function revealStands({ roundId, entryKey, commit, move, salt, moveCount, atMs, entryCloseMs, revealWindowMs }) {
+  if (!h2hIs32(commit)) return { ok: false, why: 'that entry named no 32-byte commitment' };
+  if (typeof atMs !== 'bigint' || typeof entryCloseMs !== 'bigint' || typeof revealWindowMs !== 'bigint')
+    return { ok: false, why: 'a reveal is judged against the round\'s clock' };
+  if (atMs < entryCloseMs) return { ok: false, why: 'a move is revealed only after entry close: before it, the others could still answer it' };
+  if (atMs > entryCloseMs + revealWindowMs) return { ok: false, why: `the reveal window closed at ${entryCloseMs + revealWindowMs}` };
+  if (!Number.isInteger(move) || move < 0 || move >= moveCount) return { ok: false, why: `move ${move} is not one of the game's ${moveCount}` };
+  let h;
+  try { h = headToHeadCommit({ roundId, entryKey, move, salt }); } catch (e) { return { ok: false, why: e.message }; }
+  if (!h2hSame(h, commit)) return { ok: false, why: 'that move and salt are not what this entry committed to' };
+  return { ok: true };
+}
+
+/**
+ * EVERY ENTRY'S RESULT, from the stood reveals. `entries` is [{ key (hex), move (an integer, or null for no stood
+ * reveal) }]; `decide(moves, config)` is the game's adapter: it gets [{ key, move }] of the revealers only and answers
+ * { [key]: 'WIN' | 'DRAW' | 'LOSS' } for each of them. Answers { [key]: { outcome, score } } for every entry.
+ */
+function headToHeadResults(entries, decide, config) {
+  const out = {};
+  const revealed = entries.filter((e) => Number.isInteger(e.move));
+  for (const e of entries) if (!Number.isInteger(e.move)) out[e.key] = { outcome: FORFEIT, score: 0 };
+  if (revealed.length === 1) out[revealed[0].key] = { outcome: DELIVERED, score: H2H_WIN_SCORE };
+  if (revealed.length >= 2) {
+    const verdict = decide(revealed.map((e) => ({ key: e.key, move: e.move })), config);
+    for (const e of revealed) {
+      const v = verdict && verdict[e.key];
+      if (v === VERDICT.WIN) out[e.key] = { outcome: DELIVERED, score: H2H_WIN_SCORE };
+      else if (v === VERDICT.DRAW) out[e.key] = { outcome: DELIVERED, score: H2H_DRAW_SCORE };
+      else if (v === VERDICT.LOSS) out[e.key] = { outcome: FAILED, score: 0 };
+      else throw new Error(`the game's decide gave entry ${e.key.slice(0, 16)} no verdict (${v})`);
+    }
+  }
+  return out;
+}
+
+const commitHex = (c) => toHex(c);
+
+// ---- arena-client/src/head-to-head.js
+// A HEAD-TO-HEAD ROUND, FROM THE PAGE (kanban #233): the player's hidden move, its reveal to the round's seats after entry
+// close, and the reveals the seats hold - for any head-to-head game; which moves a game has, and what beats what, are the
+// game's own (its client and its decide adapter). The commitment is the protocol's (arena-protocol head-to-head.js); the
+// entry itself is built and handed over as a market pick's is (join.js entryFor, market.js submitPick), with `commit` set.
+
+const h2hHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+
+/** A move and a fresh 32-byte salt to hide it with; `random(n)` is the page's CSPRNG. */
+function hiddenMove(move, random) {
+  if (!Number.isInteger(move) || move < 0 || move > 255) throw new Error('a move is a byte');
+  return { move, salt: random(32) };
+}
+
+/** The commitment an entry into `roundId` under session key `sessionPubkey` names for that hidden move. */
+function moveCommitment({ roundId, sessionPubkey, move, salt }) {
+  return headToHeadCommit({ roundId, entryKey: sessionPubkey, move, salt });
+}
+
+/** The reveal to every seat: POST /reveal?entry= { move, salt }. Answers each seat's status. */
+async function revealMove({ entryIdHex, move, salt, nodes, fetcher = fetch }) {
+  const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt) });
+  return Promise.all(nodes.map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveal?entry=${entryIdHex}`, { method: 'POST', body });
+      return { node, status: r.status, why: r.status === 200 || r.status === 201 ? null : (await r.text()).trim() };
+    } catch (e) { return { node, status: 0, why: e.message }; }
+  }));
+}
+
+/** Every reveal the round's seats hold, merged by entry: { [entryIdHex]: move }. */
+async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch }) {
+  const out = {};
+  await Promise.all(nodes.map(async (node) => {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveals?round=${roundIdHex}`);
+      if (!r.ok) return;
+      const j = await r.json();
+      for (const x of (j && Array.isArray(j.reveals) ? j.reveals : [])) if (Number.isInteger(x.move)) out[x.entry] = x.move;
+    } catch { /* a seat that is down says nothing */ }
+  }));
+  return out;
+}
+
 // ---- arena-client/src/games.js
 // THE GAMES FIRST, THEN THE GAME'S CLIENT (kanban #208, the owner 2026-10-06: "the lobby lists the games the reachable nodes
 // host, then that game's rounds; the page loads the plugin's client by the manifest's hash; one wallet and one seed across
@@ -20555,6 +20742,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          winningsQualify: winningsQualify,
          marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,
          marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,
+         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;

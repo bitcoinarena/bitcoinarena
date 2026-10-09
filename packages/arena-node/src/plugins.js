@@ -10,7 +10,7 @@
 // the round fits the manifest (run length, rank curve, min_score). Nothing here imports a game: `replay.js` drives the
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { manifestStands, roundFitsManifest, isAttested } from '../../arena-protocol/src/manifest.js';
+import { manifestStands, roundFitsManifest, isAttested, isHeadToHead } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 
@@ -141,6 +141,9 @@ export function pluginForRound(contract, plugins) {
   // AND THE GAME'S OWN TERMS (§0A.3, §0A.5): a run no longer than its manifest allows, its rank curve, its min_score floor.
   const fits = roundFitsManifest(contract, plugin.manifest, plugin.gameId);
   if (!fits.ok) return { ok: false, why: fits.why };
+  // A HEAD-TO-HEAD GAME (kanban #233): its core is its decide adapter - nothing is replayed, the round's end is its reveal
+  // deadline, and its results are decided over all the round's reveals at once (verify.js)
+  if (isHeadToHead(plugin.manifest)) return { ok: true, plugin, ...runs, headToHead: true, runTicks: null };
   return { ok: true, plugin, ...runs };
 }
 

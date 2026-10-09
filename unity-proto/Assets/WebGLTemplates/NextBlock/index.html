@@ -1775,6 +1775,18 @@
     function pickFor(roundIdHex) { const c = window.BLWP_PICK_CHOSEN; return c && c.round === roundIdHex ? c : null; }
     // an unpinned market the player confirmed a second time on the sheet (§0A.6): only that game, only for that join
     function confirmedMarkets() { const c = window.BLWP_PICK_CHOSEN; return c && c.confirmed ? new Set([c.gameId]) : null; }
+    // A HEAD-TO-HEAD MOVE (kanban #233): the move a head-to-head game's client chose, read by the join it starts: { round, move }
+    window.ARENA_HIDDEN_CHOSEN = null;
+    function hiddenFor(roundIdHex) { const c = window.ARENA_HIDDEN_CHOSEN; return c && c.round === roundIdHex ? c : null; }
+    // THE TAB'S HIDDEN MOVES, kept with the tab's seed (sessionStorage): the move and its salt until they are revealed - a
+    // reload between entry and reveal must not lose the salt, or the move could never be shown and the entry forfeits
+    const HIDDEN_KEY = 'arena.h2h.moves';
+    function readHidden() { try { return JSON.parse(window.sessionStorage.getItem(HIDDEN_KEY) || '[]'); } catch { return []; } }
+    function rememberHidden(h) {
+      try { const all = readHidden().filter((x) => x.roundIdHex !== h.roundIdHex); all.push(h); window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-50))); }
+      catch { /* kept for this page only */ }
+    }
+    window.ARENA_HIDDEN_MOVES = readHidden;
     // THE TAB'S PICKS, kept with the tab's seed (sessionStorage): what the lobby's market lines are made of
     const PICKS_KEY = 'arena.market.picks';
     function readPicks() { try { return JSON.parse(window.sessionStorage.getItem(PICKS_KEY) || '[]'); } catch { return []; } }
@@ -2387,6 +2399,32 @@
       // A MARKET'S PICK (kanban #206 slice 2, §0A.7a): the entry backs the outcome the player chose on the pick sheet, and
       // this page hands it and its locks to the seats itself - no session, no run, nothing for Unity to open. Kept in the
       // tab's picks for the lobby's market lines; the join ends 'picked'.
+      // A HEAD-TO-HEAD MOVE (kanban #233): the entry hides the move the game's client chose - H(round || session key || move ||
+      // salt) - and this page hands it and its locks to the seats as a pick's (no session, no run). The move and its salt
+      // are kept in the tab until the reveal after entry close (ARENA_GAME.reveal); the join ends 'hidden'.
+      const hiding = hiddenFor(named.roundIdHex);
+      if (hiding) {
+        let sessionPubkey = random(32);
+        try {
+          const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+          sessionPubkey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+        } catch { /* a browser without WebCrypto Ed25519: random bytes, as no mark is ever checked against them */ }
+        const hidden = BLWPCLIENT.hiddenMove(hiding.move, random);
+        const entry = Object.assign(BLWPCLIENT.entryFor(
+          Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
+            seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
+            ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
+            donationMsat: donation.donationMsat, joinTick: 0,
+          }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
+        entry.commit = BLWPCLIENT.moveCommitment({ roundId: entry.roundId, sessionPubkey, move: hidden.move, salt: hidden.salt });
+        const sent = await BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes });
+        console.log('[blwp] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
+        if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
+        rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: BLWPCLIENT.toHex(hidden.salt),
+          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs) });
+        window.BLWP_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
+        return;
+      }
       const chosen = pickFor(named.roundIdHex);
       if (chosen) {
         // THE ENTRY IN FULL HERE (the session completes a run's entry with its round id and session key; a pick opens none):
@@ -4099,6 +4137,18 @@
           stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
         identity: () => window.BLWP_IDENTITY || null,
         join: (id) => (window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false),
+        // A HEAD-TO-HEAD GAME (kanban #233): enter a round hiding `move`; reveal it once entries are closed; read what the seats
+        // hold. Which moves there are and what beats what is the game client's own; these only carry a move, never judge one.
+        headToHead: game.manifest.resultType === 3 ? { players: game.manifest.players, moveCount: game.manifest.moveCount } : null,
+        hide: (id, move) => { window.ARENA_HIDDEN_CHOSEN = { round: id, move }; return window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false; },
+        hidden: (id) => readHidden().find((x) => x.roundIdHex === id) || null,
+        reveal: async (id) => {
+          const h = readHidden().find((x) => x.roundIdHex === id);
+          if (!h) return { ok: false, why: 'this tab hid no move in that round' };
+          const seats = await BLWPCLIENT.revealMove({ entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes });
+          return { ok: seats.some((x) => x.status === 201 || x.status === 200), seats };
+        },
+        reveals: (id) => { const h = readHidden().find((x) => x.roundIdHex === id); return h ? BLWPCLIENT.revealsOfRound({ roundIdHex: id, nodes: h.nodes }) : Promise.resolve({}); },
         state: () => ({ join: window.BLWP_JOIN || null, picks: (BLWPCLIENT.marketLines && window.BLWP_MARKET_LINES) ? window.BLWP_MARKET_LINES() : [] }),
         back: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
           location.search = q.toString(); },

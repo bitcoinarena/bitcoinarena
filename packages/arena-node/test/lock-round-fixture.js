@@ -1,6 +1,7 @@
 // A PAYING FEDERATION ROUND ON TWO SIGNER NODES AND A FAKE LOCK PORT, PLAYED TO ITS CLOSE (moved out of
 // lock-settlement.test.js so the winnings test drives the very same round): `lockRound` stands it, `lockAndPlay`
 // locks a player's stake and fee and plays their run, `closeRound`, `standing` and `untilSettled` watch it settle.
+import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { CLOCK } from './block-clock.js';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -152,7 +153,9 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // `donation`: { msat, target } - the entry donates `msat`, split over `target` (one set, or a round's { network, game }; kanban
 // #205) into one payout contract per share above 0 msat, each held by the federation at an outpoint the entry names.
 // `pick`: the outcome an entry into an attested round backs (§0A.7a, kanban #206) - such an entry plays no run, so pass noMarks.
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined } = {}) {
+// `hidden`: { move, salt } - an entry into a head-to-head round (kanban #233) names H(round || session key || move || salt); such
+// an entry plays no run either (noMarks), and reveals after entry close (POST /reveal).
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -174,6 +177,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     claimKeyAttestationRef: b32(0x9a),
     ...(pick !== undefined ? { pick } : {}),
   };
+  if (hidden) entry.commit = headToHeadCommit({ roundId: w.rid, entryKey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
   // THE DONATION'S OUTPUTS (kanban #205): one payout contract per share, to its key, for exactly its amount
   const donated = [];
   if (donation && donation.msat > 0n) {

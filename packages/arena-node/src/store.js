@@ -714,6 +714,18 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS outcome_attestations_round ON outcome_attestations (round_id);
 
+    -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE (kanban #233): the (move, salt) that hashed to the commitment its entry named,
+    -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
+    -- deleted - it is what the round's results were decided from.
+    CREATE TABLE IF NOT EXISTS head_to_head_reveals (
+      round_id    BLOB NOT NULL,
+      entry_id    BLOB NOT NULL,
+      move        INTEGER NOT NULL,
+      salt        BLOB NOT NULL,
+      received_ms INTEGER NOT NULL,
+      PRIMARY KEY (round_id, entry_id)
+    );
+
     -- A STAKE LOCK THIS SIGNER NODE VERIFIED (23.1 step 5): the contract the player
     -- handed over, the federation's id for it, and where it sits.
     -- A STAKE LOCKED FOR A ROUND THIS SIGNER NODE REFUSES, AND NEVER ENTERED (§23.2 row REFUSED; kanban #191, the owner

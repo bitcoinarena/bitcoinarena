@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rock Paper Scissors</title>
+<!-- ROCK PAPER SCISSORS' OWN CLIENT (kanban #233): one file, its SHA-256 in the game's manifest clients[]. The Bitcoin Arena page
+     loads it only from bytes that hash to that, in a frame of its own origin, and hands it the engine as
+     window.parent.ARENA_GAME: the lobby's rows of this game, the player's identity, and a head-to-head round's three acts -
+     hide(round, move), reveal(round), reveals(round). The stake, the lock, the entry and the hidden move's salt are the
+     engine's; this file holds no key, no wallet and no seed. What beats what is this game's (plugin/decide.js), shown here. -->
+<style>
+  :root { color-scheme: dark; --bg: #0d1014; --panel: #161b22; --line: #30363d; --dim: #8b949e; --btc: #f7931a; --win: #2fd38a; --loss: #ff5d5d; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: #e6edf3; font: 15px/1.45 system-ui, sans-serif; }
+  h1 { margin: 4px 0 2px; font-size: 24px; }
+  .sub { color: var(--dim); font-size: 13px; }
+  .round { margin: 14px 0; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--btc); border-radius: 8px; }
+  .round .line { font-size: 13px; color: var(--dim); margin-bottom: 10px; }
+  .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .moves button { font: 700 17px/1.2 system-ui, sans-serif; padding: 16px 8px; border-radius: 8px; border: 1px solid var(--line); background: #0f141b; color: #e6edf3; cursor: pointer; }
+  .moves button:hover { border-color: var(--btc); }
+  .moves button span { display: block; font-size: 30px; margin-bottom: 4px; }
+  .state { margin-top: 10px; font-size: 14px; white-space: pre-wrap; }
+  .vs { display: flex; gap: 14px; align-items: center; justify-content: center; margin-top: 10px; font-size: 34px; }
+  .vs small { display: block; font-size: 12px; color: var(--dim); text-align: center; }
+  .verdict { text-align: center; font: 700 20px/1.3 system-ui, sans-serif; margin-top: 6px; }
+  .verdict.win { color: var(--win); } .verdict.loss { color: var(--loss); }
+  button.back { font: 600 13px system-ui; background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+  .none { color: var(--dim); font-size: 14px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <button class="back" type="button" id="back">&larr; Games</button>
+  <h1>Rock Paper Scissors</h1>
+  <div class="sub" id="what">Two players. Each hides a move; both are revealed after entries close; the seats decide.</div>
+  <div id="rounds"></div>
+<script>
+  const A = window.parent && window.parent.ARENA_GAME;
+  const $ = (id) => document.getElementById(id);
+  const MOVES = [['Rock', '✊'], ['Paper', '✋'], ['Scissors', '✌️']];
+  const beats = (a, b) => (a - b + 3) % 3 === 1;                                   // the same rule as plugin/decide.js
+  const revealing = new Set();
+  if (!A || !A.headToHead) {
+    $('what').textContent = 'This client runs inside the Bitcoin Arena page, which hands it the game.';
+  } else {
+    window.RPS_CLIENT = { hash: A.clientHash, game: A.game.id };
+    $('back').addEventListener('click', () => A.back());
+    const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+    const paint = async () => {
+      const rows = A.rows();
+      const box = $('rounds');
+      const mine = rows.filter((r) => A.hidden(r.id));
+      const open = rows.filter((r) => r.joinable && !A.hidden(r.id));
+      const shown = [...mine, ...open.slice(0, mine.length ? 0 : 1)];
+      box.textContent = '';
+      if (!shown.length) { const d = document.createElement('div'); d.className = 'none'; d.textContent = 'No round is open on these nodes right now - the next one appears here.'; box.append(d); }
+      for (const r of shown) {
+        const d = document.createElement('div'); d.className = 'round';
+        const l = document.createElement('div'); l.className = 'line'; l.textContent = r.line; d.append(l);
+        const h = A.hidden(r.id);
+        if (!h) {
+          const g = document.createElement('div'); g.className = 'moves';
+          MOVES.forEach(([name, icon], i) => {
+            const b = document.createElement('button'); b.type = 'button'; b.dataset.move = String(i);
+            b.innerHTML = '<span>' + icon + '</span>' + name;
+            b.addEventListener('click', () => { b.disabled = true; A.hide(r.id, i); });
+            g.append(b);
+          });
+          d.append(g);
+        } else {
+          const closeMs = Number(h.entryCloseMs);
+          const st = document.createElement('div'); st.className = 'state';
+          if (Date.now() < closeMs) st.textContent = 'You hid ' + MOVES[h.move][0] + '. Revealed when entries close, in ' + mmss(closeMs - Date.now()) + '.';
+          else {
+            if (!revealing.has(r.id)) { revealing.add(r.id); A.reveal(r.id).then((x) => { if (!x.ok) revealing.delete(r.id); }); }
+            const all = await A.reveals(r.id);
+            const theirs = Object.entries(all).filter(([e]) => e !== h.entryIdHex).map(([, m]) => m);
+            const vs = document.createElement('div'); vs.className = 'vs';
+            vs.innerHTML = '<div>' + MOVES[h.move][1] + '<small>you</small></div><div style="font-size:16px;color:#8b949e">vs</div>'
+              + '<div>' + (theirs.length ? MOVES[theirs[0]][1] : '…') + '<small>' + (theirs.length ? 'them' : 'waiting for their reveal') + '</small></div>';
+            d.append(vs);
+            if (theirs.length) {
+              const v = document.createElement('div');
+              const t = theirs[0];
+              v.className = 'verdict ' + (h.move === t ? '' : beats(h.move, t) ? 'win' : 'loss');
+              v.textContent = h.move === t ? 'Draw - both keep their stake' : beats(h.move, t) ? 'You win' : 'You lose';
+              d.append(v);
+            }
+            st.textContent = 'The seats sign the result at the round\'s end.';
+          }
+          d.append(st);
+        }
+        box.append(d);
+      }
+    };
+    paint();
+    setInterval(paint, 1000);
+  }
+</script>
+</body>
+</html>

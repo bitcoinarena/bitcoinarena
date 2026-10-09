@@ -25,6 +25,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
 import { listingSigner } from './listing-sign.js';
@@ -3448,6 +3449,45 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!out) return text(res, 409, 'that round\'s game is not an attested game this node hosts: it has no outcome');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(id), ...out }));
+      }
+
+      // A HEAD-TO-HEAD PLAYER'S REVEAL (kanban #233): POST /reveal?entry=<entry id> with { move, salt } (JSON, salt in hex),
+      // after the round's entry close and before its end (its reveal deadline). Taken only if it hashes to the commitment
+      // that entry named (head-to-head.js revealStands); kept once. The round's results are decided from the reveals at its
+      // close, so a reveal is the whole of a player's part after entry - there is no run.
+      if (req.method === 'POST' && url.pathname === '/reveal') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'POST /reveal?entry=<the entry\'s id> with { move, salt }');
+        const raw = round.entry(eid);
+        if (!raw) return text(res, 404, 'this node holds no such entry');
+        const entry = decodeEntryContract(raw);
+        const row = round.get(entry.roundId);
+        if (!row) return text(res, 404, 'this node holds no round for that entry');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const found = pluginForRound(c, hosted);
+        if (!found.ok || !found.headToHead) return text(res, 409, 'that entry\'s round is not a head-to-head game this node hosts: it has nothing to reveal');
+        let body;
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }'); }
+        const salt = /^[0-9a-f]{64}$/i.test(String(body && body.salt)) ? new Uint8Array(Buffer.from(body.salt, 'hex')) : null;
+        if (!salt || !Number.isInteger(body.move)) return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }');
+        const stands = revealStands({ roundId: entry.roundId, entryKey: entry.sessionPubkey, commit: entry.commit, move: body.move, salt,
+          moveCount: found.plugin.manifest.moveCount, atMs: BigInt(round.now()), entryCloseMs: c.entryCloseMs,
+          revealWindowMs: BigInt(roundEndMs(c)) - c.entryCloseMs });
+        if (!stands.ok) return text(res, 409, stands.why);
+        const fresh = round.putReveal({ roundId: entry.roundId, entryId: eid, move: body.move, salt, receivedMs: round.now() });
+        console.log(`[reveal] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: move ${body.move}${fresh ? '' : ' (held already)'}`);
+        res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ held: true, fresh }));
+      }
+      // EVERY REVEAL THIS SEAT HOLDS FOR A ROUND (kanban #233), for the players and for the other seats, which pull them at the
+      // round's close so every seat decides from the same moves. Public: a move is revealed only after entry close.
+      if (req.method === 'GET' && url.pathname === '/reveals') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        if (!round.get(id)) return text(res, 404, 'this node holds no such round');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(id), reveals: round.revealsOf(new Uint8Array(id))
+          .map((r) => ({ entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt) })) }));
       }
 
       // WHAT A RECIPIENT KEY WAS DONATED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): every donation

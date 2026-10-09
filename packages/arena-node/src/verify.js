@@ -46,6 +46,7 @@ import {
   encodePlayerResult,
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins } from './plugins.js';
 
@@ -233,6 +234,10 @@ export class Verifier {
     // AN ATTESTED ROUND HAS NO RUN TO REPLAY (§0A.7a, kanban #206): its result is its attestors' outcome (POST /outcome),
     // so its close queues nothing - no beacon, no receipts, no worker
     if (this.#attested(contract)) { this.queued = []; return []; }
+    // A HEAD-TO-HEAD ROUND HAS NO RUN EITHER (kanban #233): its close is its reveal deadline, and every entry's result is
+    // decided over all the round's reveals at once - by the game's decide adapter - then signed as a replayed result is
+    const h2h = this.#headToHead(contract);
+    if (h2h) { this.queued = []; const work = this.#headToHeadClose(roundIdBytes, contract, h2h); this.done = work; return work; }
 
     this.queued = [];
     const work = this.round.entriesOf(roundIdBytes).map(({ entryId, entry }) => {
@@ -640,6 +645,74 @@ export class Verifier {
    * plugins.js resolves it - or none, and the replay refuses (replay.js NO_CORE_RULE).
    */
   /** Is this round's game attested (§0A.7a)? Then nothing of it is replayed, gathered or signed as a run here. */
+  #headToHead(contract) {
+    const found = pluginForRound(contract, this.plugins);
+    return found.ok && found.headToHead === true ? found : null;
+  }
+
+  /**
+   * A HEAD-TO-HEAD ROUND'S CLOSE (kanban #233): the other seats' reveals first (so every seat decides from the same moves),
+   * then the game's decide over all of them (head-to-head.js headToHeadResults: WIN / DRAW / LOSS onto the payout rule,
+   * FORFEIT for no reveal), then one signed result per entry through #sign - its transcript hash the digest of the entry's
+   * reveal (32 zero bytes for none), its core the round's decide adapter. One promise per entry, as a replayed close.
+   */
+  #headToHeadClose(roundIdBytes, contract, found) {
+    const entries = this.round.entriesOf(roundIdBytes);
+    const decided = (async () => {
+      await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
+      const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
+      const list = entries.map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
+      const adapter = found.core && found.core.adapter;
+      if (!adapter || typeof adapter.decide !== 'function') throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
+      return { held, results: headToHeadResults(list, (moves, config) => adapter.decide(moves, config), found.config) };
+    })();
+    return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
+      const r = results[hex(entryId)];
+      const rv = held.get(hex(entryId));
+      this.queued.push({ entryId, objected: false });
+      console.log(`[h2h] ${hex(roundIdBytes).slice(0, 16)} ${hex(entryId).slice(0, 16)}: ${rv ? `move ${rv.move}` : 'no reveal'} -> ${r.outcome} ${r.score}`);
+      return this.#sign({ roundIdBytes, entryId, entry, contract,
+        answer: { ok: true, outcome: r.outcome, score: r.score, coreHash: hex(contract.simCoreHash) },
+        transcript: { roundId: entry.roundId, entryId, hash: transcriptBytesHash(this.#revealRecord(entryId, rv)) } });
+    }).catch((e) => ({ entryId, stored: false, why: e.message })));
+  }
+
+  /**
+   * WHAT A HEAD-TO-HEAD RESULT IS SIGNED OVER AND PUBLISHED AS (kanban #233): the entry's reveal record - entry id || move ||
+   * salt, or entry id || 0xff for no reveal - in place of a run's transcript. Every seat builds it alike from the same
+   * reveals, so its hash names it the way a transcript hash names a run, and publish() posts these bytes to the relays.
+   */
+  #revealRecord(entryIdBytes, reveal) {
+    return reveal ? Uint8Array.of(...entryIdBytes, reveal.move, ...reveal.salt) : Uint8Array.of(...entryIdBytes, 0xff);
+  }
+
+  /**
+   * EVERY PEER'S REVEALS FOR A HEAD-TO-HEAD ROUND (kanban #233), each taken only if it hashes to the commitment its entry
+   * named and is a move the game offers. Not held to the reveal window: a peer's door already was, and a reveal that came
+   * late can change no one's choice - the moves were committed before entry close. A peer that is down is skipped.
+   */
+  async carryReveals(roundIdBytes, entries, moveCount) {
+    const byId = new Map(entries.map((e) => [hex(e.entryId), e.entry]));
+    for (const peer of this.peersOf(roundIdBytes)) {
+      let body;
+      try {
+        const answer = await fetch(`${peer}/reveals?round=${hex(roundIdBytes)}`);
+        if (!answer.ok) continue;
+        body = await answer.json();
+      } catch { continue; }
+      for (const r of (body && Array.isArray(body.reveals) ? body.reveals : [])) {
+        const entry = byId.get(String(r.entry));
+        if (!entry || !(entry.commit instanceof Uint8Array) || !Number.isInteger(r.move) || r.move < 0 || r.move >= moveCount) continue;
+        const salt = /^[0-9a-f]{64}$/i.test(String(r.salt)) ? new Uint8Array(Buffer.from(r.salt, 'hex')) : null;
+        if (!salt) continue;
+        let c;
+        try { c = headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move: r.move, salt }); } catch { continue; }
+        if (hex(c) !== hex(entry.commit)) continue;
+        this.round.putReveal({ roundId: roundIdBytes, entryId: new Uint8Array(Buffer.from(r.entry, 'hex')), move: r.move, salt });
+      }
+    }
+  }
+
   #attested(contract) {
     const found = pluginForRound(contract, this.plugins);
     return found.ok && found.attested === true;
@@ -1641,6 +1714,15 @@ export class Verifier {
       const own = this.round.canonicalTranscript(roundIdBytes, entryIdBytes);
       if (hex(own.hash) === hex(transcriptHash)) return own.bytes;
     } catch { /* not held here; a peer may */ }
+    // A HEAD-TO-HEAD ENTRY (kanban #233): its result names its reveal record, built here from the reveals this seat holds
+    {
+      const row = this.round.get(roundIdBytes);
+      if (row && this.#headToHead(decodeRoundContract(new Uint8Array(row.contract)))) {
+        const rv = this.round.revealsOf(roundIdBytes).find((r) => hex(r.entryId) === hex(entryIdBytes));
+        const rec = this.#revealRecord(entryIdBytes, rv);
+        if (hex(transcriptBytesHash(rec)) === hex(transcriptHash)) return rec;
+      }
+    }
     // AN ENTRY THAT NEVER STARTED (§15 at the close): its FORFEIT names the empty
     // receipted transcript, which every signer node builds alike and none holds as marks.
     const empty = this.#unstarted(roundIdBytes, entryIdBytes);
