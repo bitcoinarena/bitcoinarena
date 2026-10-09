@@ -33,7 +33,8 @@ import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-nam
 import { roundEndMs, startDeadlineOf } from '../../arena-protocol/src/first-mark.js';
 import { OBJECTION_WINDOW_MS, windowsOf } from '../../arena-protocol/src/window.js';
 import { msForTicks } from '../../arena-protocol/src/tick.js';
-import { entryFeeMsat, feeBpsOf } from '../../arena-protocol/src/fee.js';
+import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
+import { cancelId } from '../../arena-protocol/src/order-book.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -910,7 +911,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
   const settlements = new LockSettlement(round, {
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -2962,7 +2963,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // and a paying round with a zero federation id does not encode (§23.6). No custody test is left here.
           {
             let gate;
-            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: stakeLocks, feeBps: g.ok ? feeBpsOf(g.plugin.manifest) : undefined }); }
+            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: stakeLocks, feeBps: g.ok ? entryFeeBpsOf(g.plugin.manifest) : undefined }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
             // fees are 0: the federation runs with disable_base_fees"). A base fee comes out of every input
@@ -3109,7 +3110,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let amountMsat;
         try {
           const ofGame = pluginForRound(contract, hosted);
-          amountMsat = netStakeMsat({ stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat, ofGame.ok ? feeBpsOf(ofGame.plugin.manifest) : undefined),
+          amountMsat = netStakeMsat({ stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat, ofGame.ok ? entryFeeBpsOf(ofGame.plugin.manifest) : undefined),
             donationMsat: named === null ? 0n : BigInt(named) });
         } catch (e) { return text(res, 400, e.message); }
         let made;
@@ -3481,6 +3482,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh }));
       }
+      // A MARKET ENTRY CANCELLED BY ITS PLAYER (kanban #278, the owner 2026-10-09: "until then the orders can be cancelled at no
+      // cost"): POST /cancel?entry=<id> with the 64-byte Ed25519 signature of the entry's session key over cancelId - taken
+      // only for a market (an attested round this node hosts) and only before its entry close, when nothing has filled yet.
+      // From then on the entry is out of the round's table, and its stake and fee locks come back at once by the return door
+      // (GET /forfeit, and GET /forfeit?lock=fee). Any seat may relay it: the signature is the player's.
+      if (req.method === 'POST' && url.pathname === '/cancel') {
+        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        if (eid.length !== 32) return text(res, 400, 'POST /cancel?entry=<the entry\'s id> with its session key\'s 64-byte signature');
+        const raw = round.entry(eid);
+        if (!raw) return text(res, 404, 'this node holds no such entry');
+        const entry = decodeEntryContract(raw);
+        const row = round.get(entry.roundId);
+        if (!row) return text(res, 404, 'this node holds no round for that entry');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const found = pluginForRound(c, hosted);
+        if (!found.ok || !found.attested) return text(res, 409, 'that entry\'s round is not a market this node hosts: only a market order is cancelled');
+        const signature = new Uint8Array(await read(req));
+        if (signature.length !== 64) return text(res, 400, 'a cancel is the 64-byte signature of the entry\'s session key');
+        let good = false;
+        try { good = ed25519.verify(signature, cancelId({ roundId: entry.roundId, entryId: new Uint8Array(eid) }), entry.sessionPubkey); } catch { good = false; }
+        if (!good) return text(res, 403, 'that cancel is not signed by the entry\'s session key');
+        if (round.cancelled(eid)) { res.writeHead(200, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify({ cancelled: true, fresh: false })); }
+        if (BigInt(round.now()) >= c.entryCloseMs)
+          return text(res, 409, `entries closed at ${new Date(Number(c.entryCloseMs)).toISOString()}: that order is in the round now, and its fee is due`);
+        round.putCancel({ roundId: entry.roundId, entryId: new Uint8Array(eid), signature, receivedMs: round.now() });
+        console.log(`[cancel] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: cancelled by its player`);
+        res.writeHead(201, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ cancelled: true, fresh: true }));
+      }
+      // EVERY CANCEL THIS SEAT HOLDS FOR A ROUND (kanban #278), for the other seats, which pull them before they settle
+      if (req.method === 'GET' && url.pathname === '/cancels') {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        if (!round.get(id)) return text(res, 404, 'this node holds no such round');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(id), cancels: round.cancelsOf(new Uint8Array(id))
+          .map((r) => ({ entry: toHex(r.entryId), signature: toHex(r.signature) })) }));
+      }
       // EVERY REVEAL THIS SEAT HOLDS FOR A ROUND (kanban #233), for the players and for the other seats, which pull them at the
       // round's close so every seat decides from the same moves. Public: a move is revealed only after entry close.
       if (req.method === 'GET' && url.pathname === '/reveals') {
@@ -3659,8 +3698,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a forfeit is asked for by a round id and an entry id');
         const r8 = new Uint8Array(rid);
         const e8 = new Uint8Array(eid);
+        // `lock=fee`: a cancelled order's or a refunded market's fee lock (kanban #278), else the stake lock as always
+        const kind = url.searchParams.get('lock') === 'fee' ? 'fee' : 'stake';
         if (url.pathname === '/forfeit-commit') {
-          const got = await forfeits.commit(r8, e8);
+          const got = await forfeits.commit(r8, e8, kind);
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -3668,14 +3709,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/forfeit-share') {
           let list;
           try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await forfeits.share(r8, e8, list);
+          const got = await forfeits.share(r8, e8, list, kind);
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));
         }
         const signature = new Uint8Array(await read(req));
         if (signature.length !== 64) return text(res, 400, 'a forfeit is a 64-byte signature');
-        const got = await forfeits.take(r8, e8, signature);
+        const got = await forfeits.take(r8, e8, signature, kind);
         return got.ok ? text(res, 201, 'forfeit kept') : text(res, got.status || 409, got.why);
       }
 
@@ -3929,7 +3970,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a forfeit is asked for by a round id and an entry id');
-        const got = await forfeits.forfeit(new Uint8Array(rid), new Uint8Array(eid));
+        const got = await forfeits.forfeit(new Uint8Array(rid), new Uint8Array(eid), url.searchParams.get('lock') === 'fee' ? 'fee' : 'stake');
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ signature: toHex(got.signature), contractId: toHex(got.message),

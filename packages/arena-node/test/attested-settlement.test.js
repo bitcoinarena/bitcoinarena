@@ -17,10 +17,12 @@ import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { testAttestedGame, attestorSign } from './plugins/sign.js';
 import { encodeAttestation, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
-import { donationSetId } from '../../arena-protocol/src/donation.js';
+import { donationSetId, splitDonation } from '../../arena-protocol/src/donation.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { cancelId } from '../../arena-protocol/src/order-book.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { MARKET, MARKET_OUTCOMES as OUTCOMES } from './plugins/market/index.js';
 const NETWORK = TEST_DONATION_SET_KEYS_REGTEST.recipients;
@@ -50,7 +52,7 @@ async function marketRound(w, picks, { open = false } = {}) {
   if (open) skipTo(Number(r.c.committeeTimeMs) + 100);
   const target = { network: NETWORK, game: MARKET.registration.donationSet };
   const played = [];
-  for (const [i, pick] of picks.entries()) played.push(await lockAndPlay(r, player(i + (open ? 30 : 0)), { noMarks: true, pick, donation: { msat: STAKE * 50n / 10000n, target } }));
+  for (const [i, pick] of picks.entries()) played.push(await lockAndPlay(r, player(i + (open ? 30 : 0)), { noMarks: true, pick }));
   return { r, played };
 }
 
@@ -96,8 +98,10 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
       payouts: (moved.payouts || []).map((p) => [p.kind, String(p.pk).slice(0, 10), String(p.msat)]) };
     console.log('  SETTLED:', JSON.stringify(facts));
     assert.equal(got.state, 'ACCEPTED', got.why);
+    // EACH FEE LOCK HOLDS THE MARKET'S 1 %: 0.5 % node fee and 0.5 % donation, both due now, at resolution (kanban #235)
     const fee = entryFeeMsat(STAKE, 50);
-    const net = STAKE - fee - STAKE * 50n / 10000n;
+    const donated = entryFeeMsat(STAKE, 100) - fee;
+    const net = STAKE - fee - donated;
     // claims: the two losers' stake locks and all four fee locks
     const stakeClaims = (moved.claims || []).filter((c) => c.kind === 'stake');
     const feeClaims = (moved.claims || []).filter((c) => c.kind === 'fee');
@@ -115,6 +119,12 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
     // the seats: the fee locks, two halves each (no guardian eligible), as #205
     const seats = moved.payouts.filter((x) => x.kind === 'signer node');
     assert.equal(sum(seats.map((x) => BigInt(x.msat))), 4n * fee);
+    // the donation, from the same fee locks, to the donation keys: half the protocol devs' set, half the game dev's
+    const gifts = moved.payouts.filter((x) => x.kind === 'donation key');
+    const want = splitDonation({ donationMsat: 4n * donated, recipients: { network: NETWORK, game: MARKET.registration.donationSet } }).shares.filter((x) => x.amountMsat > 0n);
+    console.log('  DONATION AT RESOLUTION:', JSON.stringify(gifts.map((x) => [x.donation, x.msat])));
+    assert.equal(sum(gifts.map((x) => BigInt(x.msat))), 4n * donated, 'the donation was not paid whole at resolution');
+    assert.deepEqual(gifts.map((x) => String(x.pk)).sort(), want.map((x) => toHex(x.recipientPk)).sort(), 'the donation went to other keys than its sets\'');
     // the winners' own stake locks are not claimed: still held by the federation for them
     for (const e of winners) assert.ok((await w.port.status(e.outpoint)).stored, 'a winner\'s own stake lock was claimed');
     for (const e of played.slice(2)) assert.equal((await w.port.status(e.outpoint)).stored, null, 'a loser\'s lock was not claimed');
@@ -201,7 +211,7 @@ test('a market with terms and no outcome by its deadline: VOID, nothing claimed,
   try {
     const target = { network: NETWORK, game: TERMS_MARKET.registration.donationSet };
     const played = [];
-    for (const [i, pick] of [0, 1].entries()) played.push(await lockAndPlay(w, player(i + 50), { noMarks: true, pick, donation: { msat: STAKE * 50n / 10000n, target } }));
+    for (const [i, pick] of [0, 1].entries()) played.push(await lockAndPlay(w, player(i + 50), { noMarks: true, pick }));
     await closeRound(w, { window: false });                   // the round's own close only: its deadline is 2 min after entry close
     const deadlineMs = Number(w.c.entryCloseMs) + 120000;
     skipTo(deadlineMs - 1000);
@@ -217,5 +227,57 @@ test('a market with terms and no outcome by its deadline: VOID, nothing claimed,
     assert.match(after.why, /no outcome was attested by the market's deadline/);
     assert.deepEqual(back, [200, 200]);
     for (const e of played) assert.ok((await w.port.status(e.outpoint)).stored, 'a stake lock was claimed in a VOID market round');
+  } finally { await w.close(); }
+});
+
+// A CANCEL (kanban #278, the owner 2026-10-09: "until then the orders can be cancelled at no cost"; "when an order is filled, the
+// fee is of course due too"): before entry close, signed by the entry's session key - out of the table, both locks back at once
+test('a cancel before entry close is free: out of the table at every seat, its stake and fee locks back at once; after entry close refused, its fee due', async () => {
+  const w = await lockRound({ stakeMsat: STAKE, round: ROUND, endMs: testNow() + 900000,
+    serveOpts: { plugins: [NEXTBLOCK, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
+  skipTo(Number(w.c.committeeTimeMs) + 100);
+  const cancel = (d, e, by = e) => fetch(`http://127.0.0.1:${d.port}/cancel?entry=${toHex(e.eid)}`,
+    { method: 'POST', body: ed25519.sign(cancelId({ roundId: w.rid, entryId: e.eid }), by.session) }).then(async (r) => `${r.status} ${(await r.text()).slice(0, 160)}`);
+  const back = (e, lock = '') => fetch(`http://127.0.0.1:${w.a.port}/forfeit?round=${toHex(w.rid)}&entry=${toHex(e.eid)}${lock}`)
+    .then(async (r) => (r.status === 200 ? '200' : `${r.status} ${(await r.text()).slice(0, 160)}`));
+  try {
+    const { played } = await marketRound(w, [0, 1, 1, 1]);
+    // ENTRY 3 CANCELS AT BOTH SEATS (the page posts to every seat); A FORGED CANCEL - ANOTHER ENTRY'S KEY - IS REFUSED
+    const forged = await cancel(w.a, played[3], played[1]);
+    const both = [await cancel(w.a, played[3]), await cancel(w.b, played[3]), await cancel(w.a, played[3])];
+    // BOTH ITS LOCKS BACK AT ONCE, BEFORE ANY OUTCOME: the stake lock and the fee lock
+    const free = { stake: await back(played[3]), fee: await back(played[3], '&lock=fee') };
+    // A FEE LOCK OF AN ENTRY STILL IN THE ROUND DOES NOT COME BACK: it is due when the market resolves
+    const kept = await back(played[0], '&lock=fee');
+    // ENTRY 2 CANCELS AT SEAT A ONLY: its return waits for seat B, which pulls the cancel before it settles
+    const one = await cancel(w.a, played[2]);
+    const oneBack = await back(played[2]);
+    console.log('  CANCEL:', JSON.stringify({ forged, both, free, kept, one, oneBack }));
+    assert.match(forged, /^403 that cancel is not signed by the entry's session key/);
+    assert.deepEqual(both.map((x) => x.slice(0, 3)), ['201', '201', '200']);
+    assert.deepEqual(free, { stake: '200', fee: '200' });
+    assert.match(kept, /^409 a fee lock comes back at once only for a cancelled order or a refunded market/);
+    assert.equal(one.slice(0, 3), '201');
+    assert.notEqual(oneBack, '200', 'a cancel one seat holds returned a lock without the other');
+    // AFTER ENTRY CLOSE: the order is in the round, its fee is due - no cancel
+    await closeRound(w);
+    const late = await cancel(w.a, played[0]);
+    assert.match(late, /^409 entries closed at .*: that order is in the round now, and its fee is due/);
+    // OUTCOME 0: entry 0 wins, entry 1 loses; the cancelled entries 2 and 3 are in no table and pay nothing
+    await attestBoth(w, 0);
+    const o = await outcome(w.a, w.rid);
+    skipTo(Number(o.finalAtMs) + 100);
+    const got = await settledBySweep(w);
+    const moved = got.moved || {};
+    const facts = { state: got.state, why: got.why, rows: (await outcome(w.b, w.rid)).table.rows.length,
+      claims: (moved.claims || []).map((c) => c.kind), carried: await back(played[2]) };
+    console.log('  SETTLED WITH CANCELS:', JSON.stringify(facts));
+    assert.equal(got.state, 'ACCEPTED', got.why);
+    assert.deepEqual(facts.claims.sort(), ['fee', 'fee', 'stake'], 'not the one loser\'s stake lock and the two fee locks still in the round');
+    for (const e of played.slice(2)) {
+      assert.ok((await w.port.status(e.outpoint)).stored, 'a cancelled entry\'s stake lock was claimed');
+      assert.ok((await w.port.status(e.feeOutpoint)).stored, 'a cancelled entry\'s fee lock was claimed');
+    }
+    assert.equal(facts.carried, '200', 'seat B did not pull the cancel it was never sent');
   } finally { await w.close(); }
 });

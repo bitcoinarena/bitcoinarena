@@ -29,7 +29,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
-import { feeMatchesEntry, feeBpsOf, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
+import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
@@ -473,10 +473,12 @@ export class Round {
     // THE ROUND'S GAME'S RATE (kanban #235): a market's own fee from its manifest - 0.5 % by default - and a game's the
     // network's; and a market's donation no more than its manifest's rate (0.5 % by default)
     const feeGame = pluginForRound(asks, this.plugins);
-    const feeBps = feeGame.ok ? feeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
+    // A MARKET'S DONATION IS IN ITS FEE LOCK, DUE AT RESOLUTION (the owner 2026-10-09): its entry's fee is node fee + donation
+    // (entryFeeBpsOf, 1 % by default) and its donation field 0
+    const feeBps = feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
     const fee = feeMatchesEntry({
       stakeMsat: asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
-    }, { feeBps });
+    }, { feeBps, donationInFee: feeGame.ok && donationInFee(feeGame.plugin.manifest) });
     if (!fee.ok) throw new Error(fee.why);
     const donationCap = feeGame.ok ? donationBpsOf(feeGame.plugin.manifest) : null;
     if (donationCap !== null && contract.donationMsat > (asks.stakeMsat * BigInt(donationCap)) / 10000n)
@@ -1496,9 +1498,10 @@ export class Round {
     return { joined: joined.size, playing: playing.size };
   }
 
+  // A CANCELLED MARKET ENTRY IS NOT IN ITS ROUND (kanban #278): no table, no settlement, no count
   entriesOf(roundIdBytes) {
     return this.db.prepare(
-      'SELECT entry_id, contract FROM entries WHERE round_id = ? ORDER BY entry_id')
+      'SELECT entry_id, contract FROM entries WHERE round_id = ? AND entry_id NOT IN (SELECT entry_id FROM market_cancels) ORDER BY entry_id')
       .all(roundIdBytes)
       .map((r) => ({
         entryId: new Uint8Array(r.entry_id),
@@ -2641,6 +2644,22 @@ export class Round {
   putOutcomeAttestation({ bodyId, roundId, outcome, observedAtMs, bytes, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(bodyId), Buffer.from(roundId), outcome, Number(observedAtMs), Buffer.from(bytes), receivedMs).changes === 1;
+  }
+
+  /** A market entry's cancel (kanban #278), kept once: its player's signature over cancelId. */
+  putCancel({ roundId, entryId, signature, receivedMs = Date.now() }) {
+    return this.db.prepare('INSERT OR IGNORE INTO market_cancels (entry_id, round_id, signature, received_ms) VALUES (?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(signature), receivedMs).changes === 1;
+  }
+
+  cancelled(entryIdBytes) {
+    return !!this.db.prepare('SELECT 1 FROM market_cancels WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+  }
+
+  /** Every cancel this seat holds for a round: [{ entryId, signature, receivedMs }]. */
+  cancelsOf(roundIdBytes) {
+    return this.db.prepare('SELECT entry_id, signature, received_ms FROM market_cancels WHERE round_id = ? ORDER BY entry_id')
+      .all(Buffer.from(roundIdBytes)).map((r) => ({ entryId: new Uint8Array(r.entry_id), signature: new Uint8Array(r.signature), receivedMs: Number(r.received_ms) }));
   }
 
   /** A head-to-head entry's stood reveal (kanban #233), kept once: a second for the same entry changes nothing. */

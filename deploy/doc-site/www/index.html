@@ -152,7 +152,7 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
   <p>Open <code>/dashboard</code> on your node to see its rounds, its committee seats and its share of the fees per day, month and game.</p>
 
   <h2 id="api">The node API</h2>
-  <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are 101 in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
+  <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are 103 in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
   <ul>
     <li>Round ids, entry ids and keys are hex strings in the query: <code>?round=&lt;64 hex&gt;</code>.</li>
     <li>Answers are JSON, or binary when they are a protocol record (a round contract, a manifest, an attestation). Binary records are encoded and decoded with <code>packages/arena-protocol</code>.</li>
@@ -186,17 +186,18 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/transcript/{hash 64 hex}</code></td><td>Publication relay serves a transcript by hash.</td><td>path transcript hash</td><td>200 octet-stream transcript; 404</td><td>none</td></tr>
 </tbody></table></div>
 
-  <h3 id="api-player">For pages and players (30)</h3>
+  <h3 id="api-player">For pages and players (31)</h3>
   <p>What the game page uses to show the lobby, join, lock a stake and collect winnings.</p>
   <div class="tbl"><table><thead><tr><th>Request</th><th>What it does</th><th>Parameters</th><th>Returns</th><th>Access</th></tr></thead><tbody>
 <tr><td class="ep"><span class="m m-options">OPTIONS</span> <code>*</code></td><td>CORS preflight for any path; changes nothing.</td><td>none</td><td>204 with CORS headers</td><td>none</td></tr>
+<tr><td class="ep"><span class="m m-post">POST</span> <code>/cancel</code></td><td>A market player cancels an order before its round&#x27;s entry close, at no cost: the entry leaves the round and its stake and fee locks come back at once (GET /forfeit, GET /forfeit?lock=fee). Post it to every seat.</td><td>query entry (hex 32); body the 64-byte Ed25519 signature of the entry&#x27;s session key over cancelId(round, entry)</td><td>201 (cancelled) / 200 (held already) JSON {cancelled, fresh}; 403 (not the entry&#x27;s key) / 409 (not a market, or after entry close: the fee is due)</td><td>the entry&#x27;s session key</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/claim-key</code></td><td>This assigned signer node&#x27;s signed claim key for the round (players lock to it).</td><td>query round (hex 32)</td><td>200 octet-stream claim-key attestation + BIP-340 signature; 404/409</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/donation-rotations</code></td><td>Donation-authority rotations held for the round&#x27;s network.</td><td>query round (hex 32)</td><td>200 JSON {rotations:[{body, signature}]}; 404</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/donation-set</code></td><td>The signed network donation set the round names.</td><td>query round (hex 32)</td><td>200 octet-stream donation set body + 64-byte Ed25519 signature; 404</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/entry</code></td><td>Joins a player into a round (fee-lock and donation-output checks for paying rounds).</td><td>body: encoded entry contract (binary)</td><td>201 entry id bytes; 402/409/503 text</td><td>paying entry must be fundable (402 otherwise); signature check at door: unclear</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/federation-invoice</code></td><td>Gets a federation LNv2 invoice for the entry&#x27;s net stake before joining a paying round.</td><td>query round (hex 32), donation (msat, optional)</td><td>200 JSON {round, paymentHash, amountMsat, request}; 400/404/409/502/503</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/fee-lock</code></td><td>Hands over a player&#x27;s fee lock for verification.</td><td>query entry (hex 32); body JSON fee-lock fields</td><td>201 text &quot;fee lock verified ...&quot;; 400/404/409</td><td>none; verified against the federation and the entry</td></tr>
-<tr><td class="ep"><span class="m m-get">GET</span> <code>/forfeit</code></td><td>Returns, or makes with the other signer nodes, the forfeit of a qualifier&#x27;s lock.</td><td>query round, entry (hex 32; entry may be a handout id for refused locks)</td><td>200 JSON {signature, contractId, claimPk, kept}; 400/409</td><td>none</td></tr>
+<tr><td class="ep"><span class="m m-get">GET</span> <code>/forfeit</code></td><td>Returns, or makes with the other signer nodes, the forfeit of a qualifier&#x27;s lock - or of a cancelled market order&#x27;s stake and fee locks.</td><td>query round, entry (hex 32; entry may be a handout id for refused locks); lock=fee for a market order&#x27;s fee lock (cancelled, or the market refunded)</td><td>200 JSON {signature, contractId, claimPk, kept}; 400/409</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/game-icon</code></td><td>Serves a hosted game&#x27;s square icon.</td><td>query game (game id hex, case-insensitive)</td><td>200 image/svg+xml (cache 1 h); 404</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get (websocket upgrade)">GET (WebSocket upgrade)</span> <code>/guardian</code></td><td>Proxies a websocket to this node&#x27;s federation guardian.</td><td>raw stream</td><td>byte-for-byte proxy to 127.0.0.1:guardian.apiPort</td><td>none here; piped to the local guardian API</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/guardian-bonds</code></td><td>Lists the round&#x27;s guardians&#x27; bond transactions and merkle branches for the page to verify.</td><td>query round (hex 32-byte round id)</td><td>200 JSON bonds of the round&#x27;s guardians; 404 with reason</td><td>none</td></tr>
@@ -465,11 +466,15 @@ for (const node of committeeNodes)
   </ol>
   <h3>How a market pays out (pari-mutuel)</h3>
   <ul>
-    <li>Each stake pays the node fee and the player's donation first; the rest is its <b>net stake</b> in the pool.</li>
+    <li>A market's fees are its own, set in its manifest: 0.5% to the nodes and 0.5% donation by default, at most 5% each and 10% together. Its <b>net stake</b> in the pool is the stake less those fees: a 1 sat pick at 1% stakes 0.99 sat on the odds.</li>
+    <li><b>The fees are due when an order fills</b>, for winners and losers alike; a pick fills at the round's entry close. Before that, an order can be cancelled at no cost: the player signs <code>POST /cancel</code>, and its stake and fee locks come back at once. The fees sit in the fee lock until the market resolves; then the nodes take their part and the donation is paid to the protocol developers' and the market developer's keys.</li>
     <li>Every entry that picked the winning outcome gets its net stake back plus its share of the losing pool: <code>losing pool × its net stake ÷ all winning net stakes</code>, rounded down; the millisats left over go one each to the winners.</li>
-    <li>If nobody picked the winning outcome, every net stake goes back to its player.</li>
+    <li>If nobody picked the winning outcome, or the market is void, everything goes back: every stake and every fee. A market is void if its attestors contradict each other, or if no outcome stands by its deadline.</li>
     <li>There is no house and no counterparty: the wrong picks pay the right ones.</li>
   </ul>
+  <h3>Bitcoin Up or Down, every 15 minutes</h3>
+  <p>The first market follows Polymarket's <i>BTC Up or Down 15m</i>. There is one market per quarter hour with two outcomes, <b>Up</b> and <b>Down</b>. Up wins if the time-weighted average BTC price over the window is at or above the price at its start (the <i>price to beat</i>); a tie is Up. The attestors apply that rule to the prices they read (<code>upDownOutcome</code> in <code>packages/arena-protocol/src/up-down.js</code>) and sign the outcome.</p>
+  <p>Trading uses signed limit orders. Prices are in whole cents (0.01 to 0.99), an order buys at least 5 shares, and a share pays 1 sat if its side wins. An Up buyer at 0.73 and a Down buyer at 0.27 together fund a share. The nodes clear each batch of orders at one price that every node computes the same way (<code>clearBatch</code> in <code>order-book.js</code>). The fee is charged on the part of an order that filled, when it fills; what has not filled can be cancelled at no cost.</p>
   <p>The example market <code>btc-close</code> (three outcomes, three attestors, 2 of 3) lives in <code>packages/arena-node/test/plugins/market/</code> with its own client, and <code>packages/arena-client/tools/market-live.sh</code> runs it on a private test chain end to end.</p>
 
   <h2 id="money">Where the money goes</h2>
@@ -480,7 +485,7 @@ for (const node of committeeNodes)
     <tr><td>Donation, half</td><td>2.5%</td><td>the game's developer</td></tr>
     <tr><td>Donation, half</td><td>2.5%</td><td>the protocol developers</td></tr>
   </tbody></table></div>
-  <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. Free rounds pay neither. Markets use the same split today; a lower market fee is planned.</p>
+  <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. Free rounds pay neither. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
 </main>
 </div>
 </body>

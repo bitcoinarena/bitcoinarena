@@ -40,6 +40,7 @@ import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT, GUARDIAN } from '.
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
+import { roundId } from './contracts.js';
 import { sha256, toHex, fromHex } from './hash.js';
 
 const refuse = (why) => ({ ok: false, why });
@@ -223,7 +224,8 @@ const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
  * to it by the stake-return path. Nobody picked the outcome (`table.refunded`): no stake lock is claimed, only the fee
  * locks. Under a fee rule that charges, the shares are scaled to what the claimed locks can pay, the dust to the first.
  */
-export function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null, feeBps = undefined }) {
+// `donation`: { recipients }, the market's donation target - its donation is in the fee locks (feeSettlement), due here
+export function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null, feeBps = undefined, donation = null }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.rows)) return refuse('an attested round is settled from its pari-mutuel table');
@@ -231,7 +233,7 @@ export function attestedLockSettlement({ roundId, table, entries, locks, fees, f
   // THE FEE PART: every counted entry, as for any round (none is a refund: a pick is a counted stake)
   const counted = table.rows.map((r) => ({ ...byId.get(r.entryId), outcome: DELIVERED, score: 0 }));
   if (counted.some((e) => !e.pubkey)) return refuse('a row of the table names an entry this signer node does not hold');
-  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees, feeBps });
+  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees, feeBps, donation });
   if (!feePart.ok) return feePart;
   const empty = (why) => ({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: why });
   // NOBODY PICKED THE OUTCOME: NOTHING IS CLAIMED, THE FEES TOO (kanban #235, the owner 2026-10-09: "refund the fees too") - every
@@ -523,7 +525,10 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, f
  * settlement }: x-only keys); `feeLocks` the verified fee locks by player key,
  * each with its outpoint, amount and F.
  */
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined }) {
+// `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
+// donation rides in its fee locks (fee.js entryFeeBpsOf, kanban #235): what the fee locks hold above the node table is that
+// donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -541,8 +546,20 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   let table;
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(feeBps !== undefined ? { feeBps } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
-  if (table.fee !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
+  // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'
+  const donationOwedMsat = donation ? poolMsat - table.fee : 0n;
+  if (donationOwedMsat < 0n) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold only ${poolMsat}`);
+  if (table.fee + donationOwedMsat !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
   if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible signer node in its pool, so no fee lock is claimed`);
+  let donated = [];
+  if (donationOwedMsat > 0n) {
+    const split = splitDonation({ donationMsat: donationOwedMsat, recipients: donation.recipients });
+    if (!split.owed) return refuse(`the market's donation set does not stand, so no fee lock is claimed: ${split.why}`);
+    if (split.shares.some((x) => x.amountMsat > 0n && !(x.recipientPk instanceof Uint8Array)))
+      return refuse('a market\'s donation is paid to keys in the federation, and its set names a recipient without one');
+    const rid = roundId(contract);
+    donated = split.shares.map((x, i) => ({ ...x, id: donationSendId(rid, i), index: i })).filter((x) => x.amountMsat > 0n);
+  }
   // ONE PAYOUT PER SIGNER NODE KEY: a signer node in both pools is owed both shares (§22A), paid together.
   const owed = new Map();
   for (const [k, msat] of table.signerNodes) { const key = k.slice(k.indexOf(':') + 1); owed.set(key, (owed.get(key) || 0n) + msat); }
@@ -556,6 +573,13 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     const got = largestPayoutMsat(fees, (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
     payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
+  }
+  // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
+  for (const d of donated) {
+    const got = largestPayoutMsat(fees, (d.amountMsat * spendable) / poolMsat);
+    if (got === 0n) { unpaid.push({ pubkey: d.id, owedMsat: d.amountMsat, why: `the donation share for ${d.label || 'a key'} does not pay its own output fee` }); continue; }
+    payouts.push({ pubkey: d.id, payoutPk: d.recipientPk, owedMsat: d.amountMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'donation key',
+      donation: { id: d.id, index: d.index, recipientPk: d.recipientPk, label: d.label } });
   }
   // A FEE THAT CANNOT REACH A SIGNER NODE IS NOT CLAIMED. Measured under the guardians'
   // real rule (1000 msat per input and per output): two 2000 msat fee locks bring

@@ -48,13 +48,14 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
   try {
     const jobs = watchReplays(w.nodes);
     const target = { network: NETWORK, game: MARKET.registration.donationSet };
-    // FOUR ENTRIES: picks 0, 0, 1, 2; donations 0.5%, 0, 0.5%, 0.5% (the market default, kanban #235) - each its stake lock, fee lock and donation outputs
-    const picks = [[0, 50n], [0, 0n], [1, 50n], [2, 50n]];
+    // FOUR ENTRIES: picks 0, 0, 1, 2 - each its stake lock and its fee lock, which holds the market default's 0.5 % node fee
+    // AND 0.5 % donation, both due at resolution (kanban #235, the owner 2026-10-09): no donation outputs beside the stake
+    const picks = [[0], [0], [1], [2]];
     const entries = [];
-    for (const [i, [pick, bps]] of picks.entries()) {
-      const msat = STAKE * bps / 10000n;
-      entries.push(await lockAndPlay(w, player(i), { noMarks: true, pick, ...(msat ? { donation: { msat, target } } : {}) }));
-    }
+    for (const [i, [pick]] of picks.entries()) entries.push(await lockAndPlay(w, player(i), { noMarks: true, pick }));
+    // A MARKET ENTRY THAT DONATES AT ENTRY IS REFUSED: its donation is in its fee lock, due at resolution
+    await assert.rejects(lockAndPlay(w, player(7), { noMarks: true, pick: 0, donation: { msat: STAKE * 50n / 10000n, target } }),
+      /a market's donation is in its fee lock, due at resolution: that entry names a donation of 5000 msat beside it/);
     // AN ENTRY WITHOUT A PICK, OR OUT OF RANGE, IS REFUSED AT THE DOOR
     await assert.rejects(lockAndPlay(w, player(8), { noMarks: true }), /backs one of its outcomes: it carries no pick/);
     await assert.rejects(lockAndPlay(w, player(9), { noMarks: true, pick: 3 }), /picks outcome 3, out of range: game "btc-close" has 3 outcomes/);
@@ -104,8 +105,8 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     const got = await Promise.all(w.nodes.map((d) => outcome(d, w.rid)));
     assert.deepEqual(got[0].table, got[1].table, 'the two seats built different tables');
     const t = got[0].table;
-    const fee = entryFeeMsat(STAKE, 50);
-    const net = picks.map(([, bps]) => STAKE - fee - STAKE * bps / 10000n);
+    const fee = entryFeeMsat(STAKE, 100);
+    const net = picks.map(() => STAKE - fee);
     const losing = net[2] + net[3];
     const winning = net[0] + net[1];
     const want = new Map(entries.map((e, i) => [toHex(e.eid), i < 2 ? net[i] + (losing * net[i]) / winning : 0n]));
@@ -118,10 +119,9 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal(got[0].label, 'above 100k');
     for (const r of t.rows) assert.equal(BigInt(r.payoutMsat), want.get(r.entryId), `entry ${r.entryId.slice(0, 8)}`);
     assert.equal(BigInt(t.feesMsat) + BigInt(t.donationsMsat) + BigInt(t.payoutsMsat), BigInt(t.grossMsat), 'a msat of the gross went to nobody');
-    assert.equal(BigInt(t.feesMsat), 4n * fee, 'the fee is not #205\'s 5% of each stake');
-    // and each donation is #205's: 5% of the stake, half the network's set and half the game's, merged per key
-    const shares = splitDonation({ donationMsat: STAKE * 50n / 10000n, recipients: target }).shares.filter((s) => s.amountMsat > 0n);
-    assert.deepEqual(entries[0].donated.map((d) => d.amountMsat), shares.map((s) => s.amountMsat));
+    assert.equal(BigInt(t.feesMsat), 4n * fee, 'the fee is not the market\'s 1 % of each stake (0.5 % nodes + 0.5 % donation)');
+    assert.equal(BigInt(t.donationsMsat), 0n, 'a market entry donated beside its fee lock');
+    assert.deepEqual(entries.map((e) => (e.donated || []).length), [0, 0, 0, 0], 'a market entry made donation outputs at entry');
     // the listing says it too (/api/rounds: upcoming and finished; /rounds carries the same row field while a round is upcoming)
     const listing = await (await fetch(`http://127.0.0.1:${w.a.port}/api/rounds`)).json();
     const row = [...(listing.upcoming || []), ...(listing.finished || [])].find((r) => r.id === rid);
