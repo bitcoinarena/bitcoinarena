@@ -39,6 +39,7 @@ import { OrderBook } from './order-batch.js';
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
+import { createOwner } from './owner.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
@@ -249,6 +250,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // (guardian.js). Its websocket is carried on this server at /guardian, so the guardian's endpoint is the node's own
   // public address; null for a node that is not a guardian.
   guardian = null,
+  // THE NODE'S OWNER (kanban #276, owner.js): `{ store }` - where the owner's public key and the claim code are kept
+  // (files beside the database, from main.js). Without it the node has no owner area and /owner answers 404.
+  owner: ownerFiles = null,
   // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
   // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's gateway holds.
   federation = null,
@@ -436,6 +440,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
   const round = new Round(db, undefined, { plugins: hosted });
+  const owner = ownerFiles ? createOwner({ store: ownerFiles.store, node: toHex(round.pubkey), log: (l) => console.log(l),
+    verify: (sig, msg, key) => schnorr.verify(sig, msg, key) }) : null;
   if (roundClock) round.now = roundClock;
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED the owner 2026-09-24): this node's own chain view - blocks at both ends of
   // every window, and the block its own postings and re-runs name. A node given no chain decides no window.
@@ -2446,6 +2452,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && (url.pathname === '/Dashboard' || url.pathname === '/dashboard')) {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardHtml());
+      }
+      // THE OWNER AREA (kanban #276): the page, its crypto, and the owner's doors - each POST a request the owner signed
+      if (req.method === 'GET' && (url.pathname === '/Dashboard/owner' || url.pathname === '/dashboard/owner')) {
+        if (!owner) return text(res, 404, 'this node runs without an owner area');
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(readFileSync(new URL('../pages/owner.html', import.meta.url)));
+      }
+      if (req.method === 'GET' && url.pathname === '/owner/client.js') {
+        res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
+        return res.end(readFileSync(new URL('../pages/owner-client.js', import.meta.url)));
+      }
+      if (url.pathname === '/owner' || url.pathname.startsWith('/owner/')) {
+        if (!owner) return text(res, 404, 'this node runs without an owner area');
+        const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        if (req.method === 'GET' && url.pathname === '/owner') return answer(200, owner.state());
+        if (req.method !== 'POST') return text(res, 404, 'no such owner door');
+        let body;
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return answer(400, { ok: false, why: 'an owner request is JSON' }); }
+        if (url.pathname === '/owner/claim') { const r = owner.claim(body); return answer(r.ok ? 200 : r.status, r); }
+        if (url.pathname === '/owner/login') {
+          const r = owner.authorize(body, 'login');
+          if (!r.ok) return answer(r.status, r);
+          return answer(200, { ok: true, node: toHex(round.pubkey), guardian: guardian ? guardian.endpoint || true : null,
+            games: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name })) });
+        }
+        return text(res, 404, 'no such owner door');
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
