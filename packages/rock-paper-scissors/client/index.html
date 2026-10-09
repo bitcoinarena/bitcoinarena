@@ -295,13 +295,19 @@
       float sdRoundBox(vec3 p, vec3 b, float r) { vec3 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r; }
       float palm(vec3 p) {
         // broad at the knuckles, narrower to the wrist, a domed back and a soft heel
-        float u = clamp((p.x + 0.45) / 0.9, 0.0, 1.0);
+        float u = smoothstep(0.0, 1.0, clamp((p.x + 0.45) / 0.9, 0.0, 1.0));   // smooth: a hard corner here drew a seam
         vec3 q = p; q.y /= mix(0.8, 1.0, u); q.z -= 0.025 * cos(q.y * 2.6);
         float d = sdRoundBox(q, vec3(0.36, 0.4, 0.105), 0.1) * 0.85;
         d = smin(d, sdEllipsoid(p - vec3(-0.12, 0.27, -0.05), vec3(0.3, 0.17, 0.15)), 0.12);    // the thumb's pad
         d = smin(d, sdEllipsoid(p - vec3(-0.18, -0.22, -0.04), vec3(0.24, 0.16, 0.12)), 0.1);  // the heel
         vec3 w = p; w.z *= 1.3;
         d = smin(d, sdRoundCone(w, vec3(-0.3, 0.0, 0.0), vec3(-1.05, 0.0, 0.0), 0.27, 0.25) * 0.8, 0.16);  // the wrist
+        // the tendons from each big knuckle over the back of the hand, part of the palm's shape (never cut by a finger's
+        // bounding sphere: a tendon reaches past it, and the cut drew a line across the hand)
+        if (p.x < 0.75 && p.z > -0.05 && abs(p.y) < 0.7) {
+          for (int c = 0; c < 4; c++) { vec3 kn = uA[c * 3] + uU[c * 3] * uR[c * 3].x * 0.3;
+            d = smin(d, sdRoundCone(p, kn + uU[c * 3] * 0.02, vec3(-0.28, kn.y * 0.45, 0.13), 0.026, 0.017), 0.07); }
+        }
         return d;
       }
       float chain(vec3 p, int c, float d) {
@@ -310,7 +316,14 @@
         if (length(p - s.xyz) - s.w > d + 0.12) return d;
         int n0 = c * 3, n = c == 4 ? 2 : 3;
         float f = 1e5;
-        for (int i = 0; i < 3; i++) { if (i >= n) break; int k = n0 + i; f = smin(f, sdRoundCone(p, uA[k], uB[k], uR[k].x, uR[k].y), 0.035); }
+        for (int i = 0; i < 3; i++) { if (i >= n) break; int k = n0 + i; f = smin(f, sdRoundCone(p, uA[k], uB[k], uR[k].x, uR[k].y), 0.035);
+          // a knuckle where each bone starts, raised on the back
+          if (i > 0) f = smin(f, length(p - uA[k] - uU[k] * uR[k].x * 0.22) - uR[k].x * 1.04, 0.03); }
+        if (c < 4) {
+          // the big knuckle where the finger leaves the hand, and the tendon running from it over the back of the hand
+          vec3 kn = uA[n0] + uU[n0] * uR[n0].x * 0.3;
+          f = smin(f, length(p - kn) - uR[n0].x * 1.0, 0.05);
+        }
         return smin(d, f, c == 4 ? 0.14 : 0.09);
       }
       float map(vec3 p) {
@@ -342,6 +355,9 @@
         float cover = 1.0;
         if (!hit) { if (minR > 1.0) discard; p = ro + rd * tMin; cover = 1.0 - clamp(minR, 0.0, 1.0); }
         vec3 n = normalAt(p);
+        // SKIN: a fine grain on the normal, so the light catches a surface and not plastic
+        { vec3 q = p * 95.0; vec3 g = vec3(sin(q.x + sin(q.y * 1.3)), sin(q.y * 1.1 + sin(q.z * 0.9)), sin(q.z * 1.2 + sin(q.x * 0.8)));
+          n = normalize(n + g * 0.007); }
         // occlusion in the creases between the fingers and the palm
         float ao = 0.0; for (int i = 1; i <= 3; i++) { float h = 0.04 * float(i); ao += (h - map(p + n * h)) / h; }
         ao = clamp(1.0 - ao * 0.28, 0.35, 1.0);
@@ -368,9 +384,13 @@
         for (int k = 0; k < 14; k++) {
           if (k == 0 || k == 3 || k == 6 || k == 9 || k == 12) continue;
           vec3 dir = normalize(uB[k] - uA[k]); float along = dot(p - uA[k], dir); float hh = dot(p - uA[k], uU[k]);
-          crease = max(crease, exp(-along * along / 0.00009) * smoothstep(0.0, 0.06, hh));
+          // only on this finger at this joint (a plane alone ran the crease across the neighbours)
+          float near = 1.0 - smoothstep(uR[k].x * 1.1, uR[k].x * 1.4, length(p - uA[k] - dir * along));
+          crease = max(crease, near * exp(-along * along / 0.00009) * smoothstep(0.0, 0.06, hh));
         }
-        vec3 skin = mix(uColor, uColor * 0.55 + vec3(0.42, 0.36, 0.38), nail) * (1.0 - crease * 0.28);
+        // the nail: lighter, a darker rim where it meets the skin, a pale half-moon near its base
+        float rimN = nail * (1.0 - nail) * 4.0;
+        vec3 skin = mix(uColor, uColor * 0.55 + vec3(0.46, 0.4, 0.42), nail) * (1.0 - crease * 0.3) * (1.0 - rimN * 0.22);
         spec += nail * pow(max(dot(nw, h), 0.0), 120.0) * 1.2;
         vec3 sss = uColor * vec3(1.0, 0.45, 0.3) * (1.0 - wrap) * 0.18;     // light through the skin, warm in the shade
         vec3 col = skin * (wrap * 1.15 + hemi) * ao + sss + rim * (0.35 + fres) * ao + spec + fres * 0.18 * hemi + uGlow;
@@ -509,13 +529,21 @@
     const ease = { out: (p) => 1 - Math.pow(1 - p, 3), inOut: (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2), back: (p) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); } };
     const resetHand = (h, at) => { h.body.position.set(0, 0, 0); h.body.rotation.set(0, 0, 0); h.body.scale.set(1, 1, 1); h.mat.color.copy(h.skin); h.mat.opacity = 1; h.root.position.copy(at); };
     const winnerOf = (a, b) => (a === b ? 0 : (a - b + 3) % 3 === 1 ? 1 : -1);   // 1: a beats b (paper 1 > rock 0 > scissors 2 > paper)
+    // THE LEAD-IN (#288, the owner 2026-10-09: "after the result screen the animation must morph smoothly from the lock animation to
+    // the win/loss animation"): for INTRO s the cage around their hand bursts open and fades, and both hands glide from wherever
+    // they are - bouncing, posed, half-faded - to the start of the pump; nothing snaps
+    const INTRO = 0.45;
     function shoot(mine, theirs) {
-      clearHalves(); resetHand(me, HOME.me); resetHand(them, HOME.them);
+      clearHalves();
+      const from = [me, them].map((h) => ({ h, pos: h.body.position.clone(), rot: h.body.rotation.clone(), scale: h.body.scale.clone(), color: h.mat.color.clone(), op: h.mat.opacity }));
       const w = winnerOf(mine, theirs);
       const win = w > 0 ? me : w < 0 ? them : null, lose = w > 0 ? them : w < 0 ? me : null;
       const winMove = w > 0 ? mine : theirs;
       const dir = (h) => (h === me ? 1 : -1);
       const tw = [], c = {};   // c: what each tween did once (a burst, a hit)
+      const lead = { at: -INTRO, dur: INTRO, update: (p) => { const e = ease.inOut(p);
+        for (const f of from) { f.h.body.position.copy(f.pos).multiplyScalar(1 - e); f.h.body.rotation.set(f.rot.x * (1 - e), f.rot.y * (1 - e), f.rot.z * (1 - e)); f.h.body.scale.copy(f.scale).lerp(new THREE.Vector3(1, 1, 1), e); f.h.mat.color.copy(f.color).lerp(f.h.skin, e); f.h.mat.opacity = f.op + (1 - f.op) * e; }
+        if (!c.opened) { c.opened = true; burst(new THREE.Vector3(HOME.them.x, 0.1, 0), 0x6fe3ff, 70, 2.6); kick(0.06); } } };
       // 1. "ROCK - PAPER - SCISSORS": three pumps of both fists
       tw.push({ at: 0, dur: 0.05, update: () => { me.set('rock'); them.set('rock'); } });
       tw.push({ at: 0, dur: 1.05, update: (p) => { const y = Math.abs(Math.sin(p * Math.PI * 3)) * 0.42; me.body.position.y = y; them.body.position.y = y; me.body.rotation.z = y * 0.35; them.body.rotation.z = y * 0.35; } });
@@ -547,7 +575,8 @@
         if (!c.homing) { c.homing = true; clearHalves(); }
         for (const h of [me, them]) { h.body.position.multiplyScalar(1 - ease.out(p)); h.body.rotation.x *= 1 - p; h.body.rotation.z *= 1 - p; h.body.scale.lerp(new THREE.Vector3(1, 1, 1), p); h.mat.color.lerp(h.skin, p); }
       } });
-      seq = { t: 0, tw, end: 4.1, w };
+      tw.push(lead); for (const x of tw) x.at += INTRO;
+      seq = { t: 0, tw, end: 4.1 + INTRO, w };
       return w;
     }
 
@@ -651,8 +680,11 @@
         for (const m of them.mats) { m.opacity += ((ghost ? 0.22 : 1) - m.opacity) * 0.1; }
         ringMe.material.opacity += (0.55 - ringMe.material.opacity) * 0.1; ringThem.material.opacity += ((ghost ? 0.15 : 0.55) - ringThem.material.opacity) * 0.1;
       }
-      const caged = !seq && want.theirs !== 'absent';
-      cage.visible = caged; mark.visible = caged || (!seq && want.theirs === 'absent');
+      const intro = seq && seq.t < INTRO ? seq.t / INTRO : null;
+      const caged = (!seq && want.theirs !== 'absent') || intro !== null;
+      cage.visible = caged;
+      if (intro !== null) { cage.scale.setScalar(1 + intro * 1.1); cage.material.opacity = 0.35 * (1 - intro); }
+      else { cage.scale.setScalar(1); cage.material.opacity = 0.35; } mark.visible = caged || (!seq && want.theirs === 'absent');
       cage.rotation.y = t * 0.6; cage.rotation.x = t * 0.25;
       cage.material.color.setHex(want.theirs === 'in' ? 0x2fd38a : 0x4c9dff);
       mark.material.opacity = 0.65 + Math.sin(t * 3) * 0.3; mark.position.y = 1.3 + Math.sin(t * 2) * 0.06;
@@ -683,7 +715,7 @@
     };
     requestAnimationFrame(frame);
     // seconds until the show's strike lands (the big verdict waits for it), 0 when no show is running
-    const STRIKE_AT = 2.1;
+    const STRIKE_AT = 2.1 + INTRO;
     // A PROBE'S BENCH: ms per frame of the stage drawn and waited for (a 1-pixel read makes the GPU finish), with the
     // hands and without them, and of the buttons' hands - a measure no browser frame cap can hide
     const bench = (n = 40) => {
@@ -841,7 +873,10 @@
         // sometimes it works and the selection is really locked"): a round that closed with this tab alone in it was not
         // played, and the move goes into the next open round by itself - still hidden, so whoever comes cannot see it - until
         // an opponent plays it or CARRY_MS have passed since it was picked
-        if (last && last.phase === 'alone' && row && row.id !== last.id && (!carry || (carry.toId !== row.id && Date.now() - carry.at > CARRY_RETRY_MS))) {
+        // ... but only while someone else is at the table (the owner 2026-10-09 21:08 playtest: "when nobody is in the game and the
+        // timer runs out, you do not get back to the select screen"): alone, the round ends and the pick screen comes back
+        const company = Date.now() - here.seenAt < 15000;
+        if (last && last.phase === 'alone' && company && row && row.id !== last.id && (!carry || (carry.toId !== row.id && Date.now() - carry.at > CARRY_RETRY_MS))) {
           const since = carry && carry.toId === last.id ? carry.since : last.closeMs - WINDOW_MS;
           if (Date.now() - since < CARRY_MS) { carry = { move: last.move, since, toId: row.id, closeMs: row.entryCloseMs, at: Date.now() }; A.hide(row.id, last.move); }
         }
