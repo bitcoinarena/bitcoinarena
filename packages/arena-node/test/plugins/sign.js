@@ -68,5 +68,23 @@ export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'a
   return { registration: Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores: new Map(), donationSet }), attestors: keys };
 }
 
+/**
+ * A HEAD-TO-HEAD TEST GAME (kanban #233): one decide adapter `core` ({ name, hash, adapter, configs }), `players`, `moveCount`
+ * and a reveal window - no run, the rank curve, min_score 2 - signed by a test developer key derived from `dev`.
+ */
+export function testHeadToHeadGame({ name, core, players = 2, moveCount = 3, revealWindowMs = 60000n, dev = name,
+  donationSet = testDonationSet(dev), clients = [] }) {
+  const devKey = testDevKey(dev);
+  const body = {
+    gameName: name, gameDevPubkey: devKey.pubkey, version: 1, parentManifestId: NO_PARENT, resultType: RESULT_TYPE.HEAD_TO_HEAD,
+    cores: [{ hash: fromHex(core.hash), configs: [...core.configs.keys()].sort().map(fromHex) }], runTicksMax: 0, roundPeriodMs: 0n,
+    payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4, minScore: 2,
+    clients: [...clients].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))), gameDonationSetId: donationSetId(donationSet),
+    players, moveCount, revealWindowMs,
+  };
+  const manifest = signManifest(body, devKey);
+  return Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores: new Map([[core.hash, core]]), donationSet });
+}
+
 /** An attestor's signature on an outcome attestation's body: { key, signature } as the attestation carries it. */
 export const attestorSign = (attestor, body) => ({ key: attestor.pubkey, signature: new Uint8Array(edSign(null, Buffer.from(attestationBodyId(body)), attestor.key)) });

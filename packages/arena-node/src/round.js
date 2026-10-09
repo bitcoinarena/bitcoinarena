@@ -34,7 +34,8 @@ import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
-import { firstMarkOutcome, startDeadlineOf } from '../../arena-protocol/src/first-mark.js';
+import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
+import { H2H_REVEAL_MIN_MS } from '../../arena-protocol/src/manifest.js';
 import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
@@ -326,9 +327,16 @@ export class Round {
     if (!runs.ok) throw new Error(runs.why);
     // THE ROUND'S RUN LENGTH ON THE CORE IT NAMES (the 82/90 fork): any the core takes - the old core only its own. An
     // attested round (§0A.7a) has no core and no run, so no length to fit.
-    if (!runs.attested) {
+    if (!runs.attested && !runs.headToHead) {
       const runLength = runLengthFits(runs.core, runs.config, contract.blockTicks);
       if (!runLength.ok) throw new Error(runLength.why);
+    }
+    // A HEAD-TO-HEAD ROUND (kanban #233) HAS NO RUN: its end is its reveal deadline, which may lie no further from its entry
+    // close than its game's reveal window
+    if (runs.headToHead) {
+      const span = BigInt(roundEndMs(contract)) - contract.entryCloseMs;
+      if (span < H2H_REVEAL_MIN_MS || span > runs.plugin.manifest.revealWindowMs)
+        throw new Error(`that round gives its reveals ${span} ms after entry close; game "${runs.plugin.manifest.gameName}" allows ${H2H_REVEAL_MIN_MS} to ${runs.plugin.manifest.revealWindowMs}`);
     }
 
     // AND IT MAY NOT SEAT MORE SIGNER NODES THAN IT HAS SLOTS (§22A: "Not seven census slots when the round
@@ -418,6 +426,17 @@ export class Round {
         if (this.outcomeAttestations(contract.roundId).length)
           throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');
       } else if (picked) throw new Error('that entry carries a pick, and its round is a replayed game\'s: its result is its run, not an outcome');
+      // THE HIDDEN MOVE (kanban #233): an entry into a head-to-head round names its commitment, before entry close, and the
+      // round seats no more than its game's players; an entry into any other round names none
+      const hidden = contract.commit !== undefined && contract.commit !== null;
+      if (game.ok && game.headToHead) {
+        const m = game.plugin.manifest;
+        if (!hidden) throw new Error(`an entry into a round of head-to-head game "${m.gameName}" hides its move: it carries no commitment`);
+        if (typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
+          throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
+        const seated = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey)).length;
+        if (seated >= m.players) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
+      } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
 
     // AND IT PAYS WHAT THIS ROUND ASKS - THE STAKE, AND THE FEE AND THE
@@ -2615,6 +2634,18 @@ export class Round {
   putOutcomeAttestation({ bodyId, roundId, outcome, observedAtMs, bytes, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(bodyId), Buffer.from(roundId), outcome, Number(observedAtMs), Buffer.from(bytes), receivedMs).changes === 1;
+  }
+
+  /** A head-to-head entry's stood reveal (kanban #233), kept once: a second for the same entry changes nothing. */
+  putReveal({ roundId, entryId, move, salt, receivedMs = Date.now() }) {
+    return this.db.prepare('INSERT OR IGNORE INTO head_to_head_reveals (round_id, entry_id, move, salt, received_ms) VALUES (?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), Buffer.from(entryId), move, Buffer.from(salt), receivedMs).changes === 1;
+  }
+
+  /** Every reveal this seat holds for a round: [{ entryId, move, salt, receivedMs }]. */
+  revealsOf(roundIdBytes) {
+    return this.db.prepare('SELECT entry_id, move, salt, received_ms FROM head_to_head_reveals WHERE round_id = ? ORDER BY entry_id')
+      .all(Buffer.from(roundIdBytes)).map((r) => ({ entryId: new Uint8Array(r.entry_id), move: Number(r.move), salt: new Uint8Array(r.salt), receivedMs: Number(r.received_ms) }));
   }
 
   /** Every standing attestation this seat holds for a round, oldest first. */
