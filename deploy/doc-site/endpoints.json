@@ -1,0 +1,992 @@
+[
+ {
+  "method": "OPTIONS",
+  "path": "*",
+  "params": "none",
+  "auth": "none",
+  "returns": "204 with CORS headers",
+  "purpose": "CORS preflight for any path; changes nothing.",
+  "audience": "player/page",
+  "line": 2393
+ },
+ {
+  "method": "GET",
+  "path": "/guardian",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
+  "purpose": "Says whether this node runs a federation guardian and its public endpoint.",
+  "audience": "operator/monitoring",
+  "line": 2396
+ },
+ {
+  "method": "GET",
+  "path": "/identity",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 raw bytes: the node public key",
+  "purpose": "Returns this node's identity public key.",
+  "audience": "operator/monitoring",
+  "line": 2400
+ },
+ {
+  "method": "GET",
+  "path": "/dashboard (also /Dashboard)",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 text/html, no-store",
+  "purpose": "Serves the operator dashboard page (earned, spent, activity).",
+  "audience": "operator/monitoring",
+  "line": 2406
+ },
+ {
+  "method": "GET",
+  "path": "/dashboard.json",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON dashboard data (cached 30 s)",
+  "purpose": "Data behind the dashboard: node earnings, pools, hosts, hosted games.",
+  "audience": "operator/monitoring",
+  "line": 2410
+ },
+ {
+  "method": "GET",
+  "path": "/headers",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 octet-stream: 80-byte Bitcoin headers back to back; 404 if the operator gave no chain",
+  "purpose": "Serves a Bitcoin header chain only when the operator configured one (ARENA_ATTACH_PROOF_DIR headers.bin).",
+  "audience": "operator/monitoring",
+  "line": 2428
+ },
+ {
+  "method": "GET",
+  "path": "/bond",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON bond proof (transaction + merkle branch); 404 if none",
+  "purpose": "Serves this node's bond proof so a client can check it against headers.",
+  "audience": "operator/monitoring",
+  "line": 2441
+ },
+ {
+  "method": "GET",
+  "path": "/guardian-bonds",
+  "params": "query round (hex 32-byte round id)",
+  "auth": "none",
+  "returns": "200 JSON bonds of the round's guardians; 404 with reason",
+  "purpose": "Lists the round's guardians' bond transactions and merkle branches for the page to verify.",
+  "audience": "player/page",
+  "line": 2452
+ },
+ {
+  "method": "POST",
+  "path": "/round",
+  "params": "body: encoded round contract (binary)",
+  "auth": "no signature; paying round must be funded by operator (ARENA_FUNDED_ROUNDS) or of a series this node holds, else 402",
+  "returns": "201 round id bytes; 202 id (stored, beacon not yet); 400/402/409/503 text reason",
+  "purpose": "Opens (stores) a round contract on this node after game, series, federation, gateway, fee and bond checks.",
+  "audience": "game/market developer",
+  "line": 2459
+ },
+ {
+  "method": "POST",
+  "path": "/first-mark",
+  "params": "body JSON {mark hex, batches[] hex, receipt hex?, entryVoid?, ask?}",
+  "auth": "mark must carry the player's valid signature; no request auth",
+  "returns": "200 {receipt}; 400/404/409 {why, forfeit?/entryVoid?}",
+  "purpose": "Takes a player's first signed mark forwarded by another signer node and receipts it, or records VOID/FORFEIT.",
+  "audience": "node-to-node",
+  "line": 2588
+ },
+ {
+  "method": "GET",
+  "path": "/entry-void",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {outcome:ENTRY_VOID, why, firstMark, evidenceKind, evidence, receipt, receipts[], offers}; 404",
+  "purpose": "Serves the ENTRY_VOID record this node holds for an entry.",
+  "audience": "node-to-node",
+  "line": 2642
+ },
+ {
+  "method": "POST",
+  "path": "/name",
+  "params": "body JSON {record hex (lobby name record), sig hex}",
+  "auth": "Schnorr signature by the player key in the record; player must be joined at this node",
+  "returns": "201 {kept:true}; 200 {kept:false, why}; 400/404/409 {why}",
+  "purpose": "Stores a joined player's signed display name for a round.",
+  "audience": "player/page",
+  "line": 2661
+ },
+ {
+  "method": "GET",
+  "path": "/names",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {round, names}",
+  "purpose": "Lists the signed player names held for a round.",
+  "audience": "player/page",
+  "line": 2685
+ },
+ {
+  "method": "GET",
+  "path": "/refused-first-mark",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {mark, why}; 404",
+  "purpose": "Serves an on-time first mark this node refused, for peers closing the round.",
+  "audience": "node-to-node",
+  "line": 2697
+ },
+ {
+  "method": "GET",
+  "path": "/evidence-blocks",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {marks:[{mark, block, seenMs}]}",
+  "purpose": "Lists each mark of an entry held as evidence with the block it names.",
+  "audience": "node-to-node",
+  "line": 2709
+ },
+ {
+  "method": "GET",
+  "path": "/start-forfeit",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {outcome:FORFEIT, markTick, lastTick, why, mark, forwarded}; 404",
+  "purpose": "Serves the FORFEIT record for a late first mark of an entry.",
+  "audience": "node-to-node",
+  "line": 2716
+ },
+ {
+  "method": "GET",
+  "path": "/game-icon",
+  "params": "query game (game id hex, case-insensitive)",
+  "auth": "none",
+  "returns": "200 image/svg+xml (cache 1 h); 404",
+  "purpose": "Serves a hosted game's square icon.",
+  "audience": "player/page",
+  "line": 2735
+ },
+ {
+  "method": "GET",
+  "path": "/games",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {node, games:[{id, name, title, icon, attested, manifest hex}]} (cache 60 s)",
+  "purpose": "Lists the games this node hosts, each with its signed manifest.",
+  "audience": "game/market developer",
+  "line": 2744
+ },
+ {
+  "method": "GET",
+  "path": "/rounds (Accept: text/html)",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 text/html (pages/rounds.html)",
+  "purpose": "Serves the human rounds page when a browser asks for HTML.",
+  "audience": "player/page",
+  "line": 2751
+ },
+ {
+  "method": "GET",
+  "path": "/rounds",
+  "params": "query ahead (ms or Nh, optional), next (per-series count, optional)",
+  "auth": "none",
+  "returns": "200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, outcome, startTime, endTime, committee, stakeMsat, free, wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}",
+  "purpose": "Lobby listing of announced rounds this node holds, each row signed by the node.",
+  "audience": "player/page",
+  "line": 2755
+ },
+ {
+  "method": "GET",
+  "path": "/api/rounds",
+  "params": "query ahead, next (as /rounds)",
+  "auth": "none",
+  "returns": "200 JSON {node, nowMs, upcoming[], finished[] (up to 200), games}",
+  "purpose": "Upcoming and finished rounds of hosted games, with times, committee, game and outcome.",
+  "audience": "game/market developer",
+  "line": 2792
+ },
+ {
+  "method": "GET",
+  "path": "/api/round-result",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {id, state, free, players:[{entry, player, name, stakeMsat, outcome, score, signedBy, wonMsat, winningsState, ...balance}]}; 400/404",
+  "purpose": "Who played a round, their signed outcome/score and what they won or lost.",
+  "audience": "game/market developer",
+  "line": 2825
+ },
+ {
+  "method": "GET",
+  "path": "/series",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {node, nowMs, series:[summary]}",
+  "purpose": "Lists the round series this node writes and how far ahead.",
+  "audience": "game/market developer",
+  "line": 2867
+ },
+ {
+  "method": "GET",
+  "path": "/round",
+  "params": "query id (hex 32 round id)",
+  "auth": "none",
+  "returns": "200 octet-stream round contract, header x-state; 404",
+  "purpose": "Returns a stored round contract by id.",
+  "audience": "game/market developer",
+  "line": 2873
+ },
+ {
+  "method": "POST",
+  "path": "/handout",
+  "params": "body: encoded stake-share handout (binary)",
+  "auth": "node opens only its own sealed share and checks it against the commitments; no request signature",
+  "returns": "201 handout id bytes, header x-signer-node; 400/404/409",
+  "purpose": "Accepts a player's sealed stake-preimage shares dealt at the round's threshold.",
+  "audience": "player/page",
+  "line": 2897
+ },
+ {
+  "method": "GET",
+  "path": "/handout",
+  "params": "query id (hex handout id)",
+  "auth": "none",
+  "returns": "200 octet-stream handout bytes; 404",
+  "purpose": "Returns a handout this node accepted.",
+  "audience": "node-to-node",
+  "line": 2935
+ },
+ {
+  "method": "POST",
+  "path": "/entry",
+  "params": "body: encoded entry contract (binary)",
+  "auth": "paying entry must be fundable (402 otherwise); signature check at door: unclear",
+  "returns": "201 entry id bytes; 402/409/503 text",
+  "purpose": "Joins a player into a round (fee-lock and donation-output checks for paying rounds).",
+  "audience": "player/page",
+  "line": 2942
+ },
+ {
+  "method": "GET",
+  "path": "/stake",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {entry, state, paidMsat}; 404/409",
+  "purpose": "Says whether this node has seen the entry's stake.",
+  "audience": "player/page",
+  "line": 3032
+ },
+ {
+  "method": "GET",
+  "path": "/settlement",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {entry, stake FREE|SEEN|UNSEEN, finality, finalityWhy, windowClosesAtMs}; 404",
+  "purpose": "Where an entry's stake and result finality stand.",
+  "audience": "player/page",
+  "line": 3059
+ },
+ {
+  "method": "GET",
+  "path": "/federation-invoice",
+  "params": "query round (hex 32), donation (msat, optional)",
+  "auth": "none",
+  "returns": "200 JSON {round, paymentHash, amountMsat, request}; 400/404/409/502/503",
+  "purpose": "Gets a federation LNv2 invoice for the entry's net stake before joining a paying round.",
+  "audience": "player/page",
+  "line": 3091
+ },
+ {
+  "method": "GET",
+  "path": "/entry",
+  "params": "query id (hex entry id)",
+  "auth": "none",
+  "returns": "200 octet-stream entry contract; 404",
+  "purpose": "Returns a stored entry contract (makes equivocation proofs portable).",
+  "audience": "game/market developer",
+  "line": 3138
+ },
+ {
+  "method": "GET",
+  "path": "/foreign-receipts",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 octet-stream receipts, header x-foreign-receipts; 204 none",
+  "purpose": "Lists receipts seen for marks this node does not hold (gossip signal).",
+  "audience": "node-to-node",
+  "line": 3151
+ },
+ {
+  "method": "GET",
+  "path": "/equivocation",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream pairs of signed marks, headers x-equivocations, x-ticks-at; 204 none",
+  "purpose": "Publishes proof that a player signed two marks for the same tick.",
+  "audience": "node-to-node",
+  "line": 3166
+ },
+ {
+  "method": "POST",
+  "path": "/proof-pull",
+  "params": "query round, entry (hex 32)",
+  "auth": "none (proof is checked here, not taken on the asker's word)",
+  "returns": "200 text \"proven\" | \"no proof\"; 400/404",
+  "purpose": "Asks this node to pull and verify a two-first-marks proof now.",
+  "audience": "node-to-node",
+  "line": 3192
+ },
+ {
+  "method": "GET",
+  "path": "/late-first-mark",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream mark; 204 none",
+  "purpose": "Serves the player's late first mark this node keeps.",
+  "audience": "node-to-node",
+  "line": 3201
+ },
+ {
+  "method": "GET",
+  "path": "/canonical",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream canonical transcript, headers x-transcript-hash, x-ticks, x-marks, x-dropped, x-through-tick; 409",
+  "purpose": "Returns the committee-carried canonical transcript of a run.",
+  "audience": "node-to-node",
+  "line": 3215
+ },
+ {
+  "method": "GET",
+  "path": "/replay",
+  "params": "query round (hex 32), entry (used by the page)",
+  "auth": "none",
+  "returns": "200 text/html game replay page; 400/404",
+  "purpose": "Serves the round's game replay page.",
+  "audience": "game/market developer",
+  "line": 3238
+ },
+ {
+  "method": "GET",
+  "path": "/replay/core.js",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 text/javascript core bundle the round names; 404/409",
+  "purpose": "Serves the game rules (core) the round names, for replay.",
+  "audience": "game/market developer",
+  "line": 3252
+ },
+ {
+  "method": "GET",
+  "path": "/replay/client.js",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 text/javascript arena-client bundle",
+  "purpose": "Serves the protocol decoders/client bundle for the replay page.",
+  "audience": "game/market developer",
+  "line": 3275
+ },
+ {
+  "method": "GET",
+  "path": "/replay/transcript",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON transcript (ticks, ...) + clock {firstTick, firstMs, lastTick, lastMs}; 400/404",
+  "purpose": "The run as this node replays it, as JSON.",
+  "audience": "game/market developer",
+  "line": 3281
+ },
+ {
+  "method": "GET",
+  "path": "/replay/nodes",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {stable, endpoints[] https}",
+  "purpose": "Other committee endpoints that may hold the run.",
+  "audience": "game/market developer",
+  "line": 3298
+ },
+ {
+  "method": "GET",
+  "path": "/transcript",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream transcript, headers x-transcript-hash, x-ticks",
+  "purpose": "Everything this node received for a run (input transcript).",
+  "audience": "node-to-node",
+  "line": 3312
+ },
+ {
+  "method": "GET",
+  "path": "/share",
+  "params": "query round, entry (hex 32), \"signer node\" (asker pubkey hex; literal param name contains a space), proof=1 optional",
+  "auth": "no request signature; answer sealed to the asker; refused unless asker is a signer node and run is final with a claimable outcome",
+  "returns": "200 octet-stream sealed share answer, header x-signer-node; 400/409",
+  "purpose": "Hands one signer node's share of a stake preimage to another signer node.",
+  "audience": "node-to-node",
+  "line": 3343
+ },
+ {
+  "method": "GET",
+  "path": "/closing",
+  "params": "query round (hex, optional filter)",
+  "auth": "none",
+  "returns": "200 JSON array of close states (HOLDING/SIGNED)",
+  "purpose": "Runs this node could not sign at close and their state.",
+  "audience": "operator/monitoring",
+  "line": 3378
+ },
+ {
+  "method": "GET",
+  "path": "/results",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream fixed-size signed results, headers x-results, x-no-quorum?",
+  "purpose": "Signed player results held for a run.",
+  "audience": "game/market developer",
+  "line": 3384
+ },
+ {
+  "method": "GET",
+  "path": "/postings",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream fixed-size signed postings, header x-postings",
+  "purpose": "Each signer node's signed word that it posted the run's transcript.",
+  "audience": "node-to-node",
+  "line": 3402
+ },
+ {
+  "method": "POST",
+  "path": "/outcome",
+  "params": "query round (hex 32); body: encoded outcome attestation (binary)",
+  "auth": "attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close",
+  "returns": "201/200 JSON {held, fresh, why, state, ...}; 400/404/409",
+  "purpose": "Submits an attested (oracle/market) round outcome; a conflicting one marks the round DISPUTED.",
+  "audience": "game/market developer",
+  "line": 3418
+ },
+ {
+  "method": "GET",
+  "path": "/outcome",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {round, state OPEN|ATTESTED|DISPUTED, ..., table}; 404/409",
+  "purpose": "Current outcome of an attested round.",
+  "audience": "game/market developer",
+  "line": 3441
+ },
+ {
+  "method": "GET",
+  "path": "/donations",
+  "params": "query key (66-hex compressed secp256k1), since (ms, optional)",
+  "auth": "none",
+  "returns": "200 JSON {key, donations[]}; 400",
+  "purpose": "Donation outputs this node verified for a recipient key.",
+  "audience": "game/market developer",
+  "line": 3456
+ },
+ {
+  "method": "POST",
+  "path": "/donations/read",
+  "params": "body JSON {key, atMs, outpoints[txid:index], signature hex}",
+  "auth": "ECDSA (DER) signature by the recipient key over donationsReadMessage; time window enforced",
+  "returns": "200 JSON {deleted}; 400/403/409",
+  "purpose": "Recipient acknowledges donations read; node deletes those rows.",
+  "audience": "game/market developer",
+  "line": 3467
+ },
+ {
+  "method": "POST",
+  "path": "/lock",
+  "params": "query entry (hex 32); body JSON stake-lock contract fields",
+  "auth": "none; verified against the federation and the entry",
+  "returns": "201 text \"stake lock verified ...\"; 400/404/409",
+  "purpose": "Hands over a player's federation stake lock for verification.",
+  "audience": "player/page",
+  "line": 3494
+ },
+ {
+  "method": "POST",
+  "path": "/fee-lock",
+  "params": "query entry (hex 32); body JSON fee-lock fields",
+  "auth": "none; verified against the federation and the entry",
+  "returns": "201 text \"fee lock verified ...\"; 400/404/409",
+  "purpose": "Hands over a player's fee lock for verification.",
+  "audience": "player/page",
+  "line": 3520
+ },
+ {
+  "method": "POST",
+  "path": "/refused-lock",
+  "params": "query round (hex 32); body JSON {fields, outpoint \"txid:index\"}",
+  "auth": "none; checked against held handout, claim key and federation",
+  "returns": "201 text with forfeit link; 400/404/409",
+  "purpose": "Registers a stake locked for a round this node refuses so it can be returned at once.",
+  "audience": "player/page",
+  "line": 3547
+ },
+ {
+  "method": "GET",
+  "path": "/stake-lock",
+  "params": "query round (hex 32), refund (33-byte refund key hex)",
+  "auth": "none",
+  "returns": "200 JSON array of verified (and refused-round) locks",
+  "purpose": "Finds a player's stake locks by refund key (seed recovery).",
+  "audience": "player/page",
+  "line": 3599
+ },
+ {
+  "method": "POST",
+  "path": "/forfeit-commit",
+  "params": "query round, entry (hex 32)",
+  "auth": "none; node answers only for a forfeit it rebuilt itself",
+  "returns": "200 octet-stream nonce commitment; 400/409",
+  "purpose": "Round one of the committee signing of a qualifier's lock forfeit.",
+  "audience": "node-to-node",
+  "line": 3620
+ },
+ {
+  "method": "POST",
+  "path": "/forfeit-share",
+  "params": "query round, entry; body: encoded commitment list",
+  "auth": "none; same rule",
+  "returns": "200 octet-stream signature share; 400/409",
+  "purpose": "Round two of the forfeit signing.",
+  "audience": "node-to-node",
+  "line": 3626
+ },
+ {
+  "method": "POST",
+  "path": "/forfeit-signature",
+  "params": "query round, entry; body: 64-byte signature",
+  "auth": "none; checked",
+  "returns": "201 \"forfeit kept\"; 400/409",
+  "purpose": "Hands over the combined forfeit signature.",
+  "audience": "node-to-node",
+  "line": 3635
+ },
+ {
+  "method": "POST",
+  "path": "/settle-commit",
+  "params": "query round (hex 32), txid, entry (late settlement, optional)",
+  "auth": "none; node answers only for the txid it rebuilt",
+  "returns": "200 octet-stream nonce commitment; 400/409",
+  "purpose": "Round one of signing the round's settlement of losers' locks.",
+  "audience": "node-to-node",
+  "line": 3653
+ },
+ {
+  "method": "POST",
+  "path": "/settle-share",
+  "params": "query round, entry?; body: commitment list",
+  "auth": "none; same rule",
+  "returns": "200 octet-stream signature share; 400/409",
+  "purpose": "Round two of the settlement signing.",
+  "audience": "node-to-node",
+  "line": 3659
+ },
+ {
+  "method": "POST",
+  "path": "/settle-signature",
+  "params": "query round, entry?; body: 64-byte signature",
+  "auth": "none; checked",
+  "returns": "201 \"settlement signature kept\"; 400/409",
+  "purpose": "Hands over the combined settlement signature.",
+  "audience": "node-to-node",
+  "line": 3668
+ },
+ {
+  "method": "POST",
+  "path": "/payout-address",
+  "params": "query entry (hex 32); body: Lightning address UTF-8 + 64-byte signature",
+  "auth": "Ed25519 signature by the entry's session key; first address stands",
+  "returns": "201 JSON {entry, address, state:NAMED, why}; 400/403/404/409",
+  "purpose": "Names where a player's winnings are sent.",
+  "audience": "player/page",
+  "line": 3676
+ },
+ {
+  "method": "GET",
+  "path": "/settle-sends",
+  "params": "query round (hex 32), late (entry hex, optional)",
+  "auth": "none",
+  "returns": "200 JSON kept send plan; 400/409",
+  "purpose": "The winnings send plan this node keeps for a round.",
+  "audience": "node-to-node",
+  "line": 3704
+ },
+ {
+  "method": "POST",
+  "path": "/settle-sends",
+  "params": "query round, late?; body JSON array of send plans",
+  "auth": "none; plans checked here",
+  "returns": "201 octet-stream this seat's signature over the plan id; 400/409",
+  "purpose": "Coordinator proposes winnings send plans; seat signs if they stand.",
+  "audience": "node-to-node",
+  "line": 3717
+ },
+ {
+  "method": "POST",
+  "path": "/settle-taken",
+  "params": "query round, late?; body: certificate bytes (128-byte acceptances)",
+  "auth": "none; checked against kept plan",
+  "returns": "201 text \"N of M seats' signed agreement kept\"; 400/409",
+  "purpose": "Hands in the seats' signed agreement on a send plan.",
+  "audience": "node-to-node",
+  "line": 3738
+ },
+ {
+  "method": "GET",
+  "path": "/settle-taken",
+  "params": "query round (hex 32), late?",
+  "auth": "none",
+  "returns": "200 JSON {planId, certificate}; 404",
+  "purpose": "Serves the signed agreement a settlement plan was taken by.",
+  "audience": "node-to-node",
+  "line": 3748
+ },
+ {
+  "method": "POST",
+  "path": "/send-commit",
+  "params": "query round, entry (hex 32), late?, kind (auth|resend), attempt?, hash?",
+  "auth": "none; node answers only for the message it rebuilt",
+  "returns": "200 octet-stream nonce commitment; 400/409",
+  "purpose": "Round one of authorising a winnings send.",
+  "audience": "node-to-node",
+  "line": 3783
+ },
+ {
+  "method": "POST",
+  "path": "/send-share",
+  "params": "query round, entry, late?, kind, attempt?; body: commitment list",
+  "auth": "none; same rule",
+  "returns": "200 octet-stream signature share; 400/409",
+  "purpose": "Round two of authorising a winnings send.",
+  "audience": "node-to-node",
+  "line": 3791
+ },
+ {
+  "method": "POST",
+  "path": "/winnings-paid",
+  "params": "query round, entry, late?; body: 32-byte preimage",
+  "auth": "none; preimage must match the invoice",
+  "returns": "201 \"the winning is kept as paid\"; 400/409",
+  "purpose": "Reports a winnings payment preimage.",
+  "audience": "node-to-node",
+  "line": 3773
+ },
+ {
+  "method": "POST",
+  "path": "/resend-sends",
+  "params": "query round (hex 32), late?; body JSON re-send proposal",
+  "auth": "none; checked",
+  "returns": "201 \"re-send checked and kept\"; 400/409",
+  "purpose": "Proposes a re-send of an expired winnings payment.",
+  "audience": "node-to-node",
+  "line": 3799
+ },
+ {
+  "method": "GET",
+  "path": "/standing",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {entry, round, nowMs, ...standing (state, payout row, window open/close)}; 404",
+  "purpose": "Pending-line figure: entry state and payout row so far.",
+  "audience": "player/page",
+  "line": 3820
+ },
+ {
+  "method": "GET",
+  "path": "/winnings",
+  "params": "query entry (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {entry, send, winnings {state, owedMsat, request, paidMs}}; 404",
+  "purpose": "Where an entry's winnings stand.",
+  "audience": "player/page",
+  "line": 3834
+ },
+ {
+  "method": "GET",
+  "path": "/lock-settlement",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {state, txid, why, signature, message, madeMs, moved} or {state:NONE}",
+  "purpose": "Where the round's settlement of losers' locks stands.",
+  "audience": "game/market developer",
+  "line": 3849
+ },
+ {
+  "method": "GET",
+  "path": "/settled",
+  "params": "query since (ms; capped to 7 days)",
+  "auth": "none",
+  "returns": "200 JSON {node, nowMs, since, rounds:[{id, state, madeMs, payouts[], refunds}]}",
+  "purpose": "Rounds settled since a time, for seed-only recovery on another device.",
+  "audience": "player/page",
+  "line": 3867
+ },
+ {
+  "method": "GET",
+  "path": "/forfeit",
+  "params": "query round, entry (hex 32; entry may be a handout id for refused locks)",
+  "auth": "none",
+  "returns": "200 JSON {signature, contractId, claimPk, kept}; 400/409",
+  "purpose": "Returns, or makes with the other signer nodes, the forfeit of a qualifier's lock.",
+  "audience": "player/page",
+  "line": 3886
+ },
+ {
+  "method": "GET",
+  "path": "/donation-rotations",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {rotations:[{body, signature}]}; 404",
+  "purpose": "Donation-authority rotations held for the round's network.",
+  "audience": "player/page",
+  "line": 3910
+ },
+ {
+  "method": "GET",
+  "path": "/game-donation-set",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream encoded game donation set; 404",
+  "purpose": "The round's game developer donation set.",
+  "audience": "game/market developer",
+  "line": 3924
+ },
+ {
+  "method": "GET",
+  "path": "/game-manifest",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream signed game manifest; 404",
+  "purpose": "The signed manifest of the round's game.",
+  "audience": "game/market developer",
+  "line": 3938
+ },
+ {
+  "method": "GET",
+  "path": "/donation-set",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream donation set body + 64-byte Ed25519 signature; 404",
+  "purpose": "The signed network donation set the round names.",
+  "audience": "player/page",
+  "line": 3949
+ },
+ {
+  "method": "GET",
+  "path": "/claim-key",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream claim-key attestation + BIP-340 signature; 404/409",
+  "purpose": "This assigned signer node's signed claim key for the round (players lock to it).",
+  "audience": "player/page",
+  "line": 3964
+ },
+ {
+  "method": "GET",
+  "path": "/reruns",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream fixed-size signed re-run results, header x-reruns",
+  "purpose": "Signer nodes' re-runs of a suspended result (own one re-signed now).",
+  "audience": "node-to-node",
+  "line": 3984
+ },
+ {
+  "method": "GET",
+  "path": "/slash-owing",
+  "params": "query round, entry (hex 32), height (required)",
+  "auth": "none",
+  "returns": "200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, toPlayers, toNodes, toDevelopers, players[], nodes[], ...}]}; 400/404/409",
+  "purpose": "What filed slash proofs owe and to whom at a given height; records nothing.",
+  "audience": "operator/monitoring",
+  "line": 4016
+ },
+ {
+  "method": "GET",
+  "path": "/slash-proofs",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream fixed-size slash evidence, header x-slash-proofs",
+  "purpose": "Slash proofs this node filed for a run.",
+  "audience": "node-to-node",
+  "line": 4084
+ },
+ {
+  "method": "PUT",
+  "path": "/slash/{proofId 64 hex}",
+  "params": "body: slash evidence bytes (proof + signed result or signed re-run)",
+  "auth": "none; proof id and evidence checked",
+  "returns": "201 \"kept\"; 400/409",
+  "purpose": "Relay stores a slash proof under its own id.",
+  "audience": "node-to-node",
+  "line": 4097
+ },
+ {
+  "method": "GET",
+  "path": "/slash/{proofId 64 hex}",
+  "params": "path proof id",
+  "auth": "none",
+  "returns": "200 octet-stream evidence; 404",
+  "purpose": "Relay serves a stored slash proof.",
+  "audience": "node-to-node",
+  "line": 4122
+ },
+ {
+  "method": "PUT",
+  "path": "/transcript/{hash 64 hex}",
+  "params": "body: transcript bytes",
+  "auth": "none; bytes must hash to the path",
+  "returns": "201 \"kept\"; 409",
+  "purpose": "Publication relay stores a transcript under its hash.",
+  "audience": "node-to-node",
+  "line": 4132
+ },
+ {
+  "method": "GET",
+  "path": "/transcript/{hash 64 hex}",
+  "params": "path transcript hash",
+  "auth": "none",
+  "returns": "200 octet-stream transcript; 404",
+  "purpose": "Publication relay serves a transcript by hash.",
+  "audience": "game/market developer",
+  "line": 4140
+ },
+ {
+  "method": "GET",
+  "path": "/final-sig",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream signed FINAL record; 409 text reason",
+  "purpose": "This seat's FINAL signature on a run once the window has closed.",
+  "audience": "node-to-node",
+  "line": 4150
+ },
+ {
+  "method": "POST",
+  "path": "/final-sig",
+  "params": "query round, entry; body: signed FINAL signature (fixed size)",
+  "auth": "none; signature checked on arrival",
+  "returns": "201 \"kept\"; 400/409",
+  "purpose": "Peer pushes its FINAL signature on a run.",
+  "audience": "node-to-node",
+  "line": 4164
+ },
+ {
+  "method": "POST",
+  "path": "/objection",
+  "params": "query round, entry (hex 32), block (hex 32, optional); body: objection bundle (transcript + receipts)",
+  "auth": "none; bundle replayed and checked",
+  "returns": "201/200/400/404/422 text",
+  "purpose": "Files an objection against a run result; a holding one suspends it and triggers a re-run.",
+  "audience": "player/page",
+  "line": 4177
+ },
+ {
+  "method": "GET",
+  "path": "/checkpoints",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream checkpoints, header x-checkpoints",
+  "purpose": "Checkpoints (marks) of a run as received.",
+  "audience": "node-to-node",
+  "line": 4235
+ },
+ {
+  "method": "GET",
+  "path": "/receipts",
+  "params": "query round, entry (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream receipts, header x-receipts",
+  "purpose": "Receipts for a run's marks, so a reconnecting client can recover them.",
+  "audience": "player/page",
+  "line": 4253
+ },
+ {
+  "method": "GET",
+  "path": "/randomness",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream 32-byte beacon block hash, header x-height; 404/409",
+  "purpose": "The round's randomness beacon so the client seeds the same world.",
+  "audience": "player/page",
+  "line": 4286
+ },
+ {
+  "method": "POST",
+  "path": "/dkg",
+  "params": "body: DKG contribution (binary)",
+  "auth": "none; checked by dkg.accept",
+  "returns": "201 \"taken\" / 200 \"already\"; 409",
+  "purpose": "Hands over a signer node's contribution to the committee key.",
+  "audience": "node-to-node",
+  "line": 4321
+ },
+ {
+  "method": "GET",
+  "path": "/dkg",
+  "params": "query epoch (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream this node's contribution; 404",
+  "purpose": "Serves this node's own DKG contribution for an epoch.",
+  "audience": "node-to-node",
+  "line": 4328
+ },
+ {
+  "method": "GET",
+  "path": "/dkg-agreement",
+  "params": "query epoch (hex 32)",
+  "auth": "none",
+  "returns": "200 octet-stream signed agreement bytes; 409",
+  "purpose": "Which contributions this node combined, signed.",
+  "audience": "node-to-node",
+  "line": 4340
+ },
+ {
+  "method": "GET",
+  "path": "/committee",
+  "params": "query round (hex 32), role (game|settlement, default game)",
+  "auth": "none",
+  "returns": "200 octet-stream 32-byte pubkeys, headers x-eligible, x-signer-nodes, x-census-root; 409",
+  "purpose": "The round's committee drawn from the chain census.",
+  "audience": "game/market developer",
+  "line": 4349
+ },
+ {
+  "method": "GET (WebSocket upgrade)",
+  "path": "/play",
+  "params": "text \"watch <round> <entry>\", \"close <round>\"; binary checkpoint or checkpoint-receipt frames",
+  "auth": "none at upgrade; checkpoints carry player signatures",
+  "returns": "binary receipts, ghost frames; text watching N / closed / error ...",
+  "purpose": "Game socket: sends signed marks, receives receipts and other players' ghosts; peers gossip receipts.",
+  "audience": "player/page",
+  "line": 4384
+ },
+ {
+  "method": "GET (WebSocket upgrade)",
+  "path": "/guardian",
+  "params": "raw stream",
+  "auth": "none here; piped to the local guardian API",
+  "returns": "byte-for-byte proxy to 127.0.0.1:guardian.apiPort",
+  "purpose": "Proxies a websocket to this node's federation guardian.",
+  "audience": "player/page",
+  "line": 4385
+ },
+ {
+  "method": "GET",
+  "path": "/lnurlp/{name} and /lnurlp/{name}/cb",
+  "params": "name blwp-test-a|blwp-test-b; cb: amount (msat), comment",
+  "auth": "none",
+  "returns": "200 LUD-06 payRequest JSON or {pr, routes}; 404",
+  "purpose": "Separate local TEST donation-recipient server (port 18777, src/lnurl-recipients.js), not the node.",
+  "audience": "operator/monitoring",
+  "line": "src/lnurl-recipients.js:44"
+ }
+]
