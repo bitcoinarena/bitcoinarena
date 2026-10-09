@@ -26,7 +26,11 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECK = process.argv.includes('--check');
-const BUILD = process.argv.find((a, i) => i > 1 && !a.startsWith('--'))
+// `--game <name>` (kanban #279): a deploy for one game's site - the page opens on that game, and shows no nextblock screen
+const gameAt = process.argv.indexOf('--game');
+const GAME = gameAt > 1 ? process.argv[gameAt + 1] : null;
+if (gameAt > 1 && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(String(GAME))) { console.error('--game names a game by its manifest name, e.g. rock-paper-scissors'); process.exit(2); }
+const BUILD = process.argv.find((a, i) => i > 1 && !a.startsWith('--') && i !== gameAt + 1)
   || join(HERE, '..', 'build', 'webgl');
 
 const page = join(BUILD, 'index.html');
@@ -95,6 +99,12 @@ const over = left();
 if (over.length) {
   console.error(`still unfilled after substitution: ${over.join(' ')}`);
   process.exit(1);
+}
+if (GAME) {
+  const tag = '<meta name="arena-site-game" content="">';
+  if (!html.includes(tag)) { console.error('this page has no empty arena-site-game meta to name its game in'); process.exit(1); }
+  html = html.replace(tag, `<meta name="arena-site-game" content="${GAME}">`);
+  console.log(`  site game -> ${GAME}`);
 }
 writeFileSync(page, html);
 for (const [k, v] of Object.entries(values)) console.log(`  ${k} -> ${v}`);
