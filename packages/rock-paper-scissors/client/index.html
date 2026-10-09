@@ -59,6 +59,8 @@
   .moves button span { display: block; font-size: 42px; margin-bottom: 6px; }
   .moves button:hover { border-color: var(--btc); } .moves button:active { transform: scale(0.96); }
   .moves button:disabled { opacity: 0.4; }
+  .moves { position: relative; } .moves button span.ic { display: block; width: 88px; height: 88px; margin: -10px auto -4px; font-size: 0; }
+  .moves canvas.hand-icons { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
   .moves button.chosen, .moves button.chosen:disabled { opacity: 1; border-color: var(--btc); box-shadow: 0 0 0 3px rgba(247,147,26,0.25); }
   .verdict { margin-top: 16px; text-align: center; font: 800 26px/1.2 system-ui; }
   .verdict.win { color: var(--win); } .verdict.loss { color: var(--loss); } .verdict.draw { color: var(--draw); }
@@ -185,71 +187,166 @@
       scissors: { f: [[0, 0.03, 0.02, 0.26], [0, 0.03, 0.02, -0.22], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.15, 0.85, 0.6] },
     };
     const NAMES = ['rock', 'paper', 'scissors'];
-    // THE SHAPES, SMOOTH (#285, the owner 2026-10-09: "far more polygons for the hands, they look ugly. Must look like a stylised
-    // hand"): a sculpted palm - an ellipsoid of 96 x 64, tapered to the wrist, domed on the back, broad at the knuckles - fingers
-    // of round capsules that taper to the tip, knuckle bumps, nails, a padded thumb base, a skin wrist into a rolled sleeve
-    const palmGeo = (() => {
-      const g = new THREE.SphereGeometry(0.5, 96, 64), p = g.attributes.position, v = new THREE.Vector3();
-      for (let i = 0; i < p.count; i++) {
-        v.fromBufferAttribute(p, i);
-        const u = (v.x + 0.5);                                   // 0 at the wrist, 1 at the knuckles
-        const width = 0.74 + 0.3 * Math.sin(Math.min(1, u * 1.15) * Math.PI / 2);
-        v.x *= 0.96; v.y *= width * 1.02;
-        v.z *= v.z > 0 ? 0.5 : 0.36;                             // a domed back, a flatter palm side
-        v.z += 0.04 * Math.cos(v.y * 3.1) * (v.z > 0 ? 1 : 0);   // the back rises a little between the edges
-        p.setXYZ(i, v.x, v.y, v.z);
+    // ONE SEAMLESS HAND (#286, the owner 2026-10-09 19:29 playtest: "the ball of the hand looks unnatural ... and must flow
+    // seamlessly into the fingers"): no meshes joined at seams - the hand is one smooth surface, a signed distance field of
+    // a palm, a thumb pad and a wrist blended with every finger's three tapered bones and the thumb's two, ray-marched on the
+    // GPU inside a box around the hand. The bones are the jointed groups the poses and the shows already move; each frame
+    // their ends and radii are handed to the shader. Exact at any size: there are no polygons to see.
+    const SDF_VERT = `out vec3 vLocal; void main() { vLocal = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+    const SDF_FRAG = `
+      precision highp float;
+      in vec3 vLocal;
+      layout(location = 0) out highp vec4 outColor;
+      uniform vec3 uA[14]; uniform vec3 uB[14]; uniform vec2 uR[14];
+      uniform vec4 uChain[5];              // a bounding sphere per finger and the thumb: center, radius
+      uniform vec3 uColor; uniform vec3 uGlow; uniform float uOpacity;
+      uniform vec4 uCut; uniform float uCutOn;
+      uniform vec3 uBoxMin; uniform vec3 uBoxMax;
+      uniform mat4 uInvModel; uniform mat4 uModel; uniform mat4 uView; uniform mat4 uProj;
+      uniform vec3 uRimL; uniform vec3 uRimR;
+      float smin(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
+      float sdRoundCone(vec3 p, vec3 a, vec3 b, float r1, float r2) {
+        vec3 ba = b - a; float l2 = dot(ba, ba); float rr = r1 - r2; float a2 = l2 - rr * rr; float il2 = 1.0 / l2;
+        vec3 pa = p - a; float y = dot(pa, ba); float z = y - l2; vec3 xv = pa * l2 - ba * y; float x2 = dot(xv, xv);
+        float y2 = y * y * l2; float z2 = z * z * l2; float k = sign(rr) * rr * rr * x2;
+        if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) * il2 - r2;
+        if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) * il2 - r1;
+        return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
       }
-      g.computeVertexNormals(); return g;
-    })();
-    const segGeo = new Map();
-    const capsule = (r, l) => { const k = r.toFixed(3) + ':' + l.toFixed(3); if (!segGeo.has(k)) { const g = new THREE.CapsuleGeometry(r, Math.max(0.01, l - r * 0.6), 16, 40); g.rotateZ(-Math.PI / 2); g.translate(l / 2, 0, 0); segGeo.set(k, g); } return segGeo.get(k); };
-    const ball = new THREE.SphereGeometry(1, 48, 32);
-    const nailGeo = (() => { const g = new THREE.SphereGeometry(1, 40, 24); g.scale(0.55, 0.42, 0.14); return g; })();
-    const wristGeo = new THREE.CylinderGeometry(0.27, 0.3, 0.7, 64, 1, true);
+      float sdEllipsoid(vec3 p, vec3 r) { float k0 = length(p / r); float k1 = length(p / (r * r)); return k0 * (k0 - 1.0) / k1; }
+      float sdRoundBox(vec3 p, vec3 b, float r) { vec3 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r; }
+      float palm(vec3 p) {
+        // broad at the knuckles, narrower to the wrist, a domed back and a soft heel
+        float u = clamp((p.x + 0.45) / 0.9, 0.0, 1.0);
+        vec3 q = p; q.y /= mix(0.8, 1.0, u); q.z -= 0.025 * cos(q.y * 2.6);
+        float d = sdRoundBox(q, vec3(0.36, 0.4, 0.105), 0.1) * 0.85;
+        d = smin(d, sdEllipsoid(p - vec3(-0.12, 0.27, -0.05), vec3(0.3, 0.17, 0.15)), 0.12);    // the thumb's pad
+        d = smin(d, sdEllipsoid(p - vec3(-0.18, -0.22, -0.04), vec3(0.24, 0.16, 0.12)), 0.1);  // the heel
+        vec3 w = p; w.z *= 1.3;
+        d = smin(d, sdRoundCone(w, vec3(-0.3, 0.0, 0.0), vec3(-1.05, 0.0, 0.0), 0.27, 0.25) * 0.8, 0.16);  // the wrist
+        return d;
+      }
+      float chain(vec3 p, int c, float d) {
+        // a finger's three bones (the thumb's two), each tapering into the next, the whole finger blended into the palm
+        vec4 s = uChain[c];
+        if (length(p - s.xyz) - s.w > d + 0.12) return d;
+        int n0 = c * 3, n = c == 4 ? 2 : 3;
+        float f = 1e5;
+        for (int i = 0; i < 3; i++) { if (i >= n) break; int k = n0 + i; f = smin(f, sdRoundCone(p, uA[k], uB[k], uR[k].x, uR[k].y), 0.035); }
+        return smin(d, f, c == 4 ? 0.14 : 0.09);
+      }
+      float map(vec3 p) {
+        float d = palm(p);
+        for (int c = 0; c < 5; c++) d = chain(p, c, d);
+        if (uCutOn > 0.5) d = max(d, -(dot(uCut.xyz, p) + uCut.w));
+        return d;
+      }
+      vec3 normalAt(vec3 p) {
+        const vec2 e = vec2(0.0015, -0.0015);
+        return normalize(e.xyy * map(p + e.xyy) + e.yyx * map(p + e.yyx) + e.yxy * map(p + e.yxy) + e.xxx * map(p + e.xxx));
+      }
+      void main() {
+        vec3 ro = (uInvModel * vec4(cameraPosition, 1.0)).xyz;
+        vec3 rd = normalize(vLocal - ro);
+        vec3 t0 = (uBoxMin - ro) / rd, t1 = (uBoxMax - ro) / rd;
+        vec3 tn = min(t0, t1), tf = max(t0, t1);
+        float tNear = max(max(max(tn.x, tn.y), tn.z), 0.0), tFar = min(min(tf.x, tf.y), tf.z);
+        float t = tNear; bool hit = false; vec3 p;
+        for (int i = 0; i < 64; i++) {
+          p = ro + rd * t; float d = map(p);
+          if (d < 0.0012 * (1.0 + t)) { hit = true; break; }
+          t += d * 0.96; if (t > tFar) break;
+        }
+        if (!hit) discard;
+        vec3 n = normalAt(p);
+        // occlusion in the creases between the fingers and the palm
+        float ao = 0.0; for (int i = 1; i <= 3; i++) { float h = 0.04 * float(i); ao += (h - map(p + n * h)) / h; }
+        ao = clamp(1.0 - ao * 0.28, 0.35, 1.0);
+        vec3 pw = (uModel * vec4(p, 1.0)).xyz;
+        vec3 nw = normalize(transpose(inverse(mat3(uModel))) * n);
+        vec3 v = normalize(cameraPosition - pw);
+        vec3 key = normalize(vec3(2.5, 6.0, 7.0));
+        float wrap = clamp((dot(nw, key) + 0.45) / 1.45, 0.0, 1.0);
+        vec3 hemi = mix(vec3(0.16, 0.1, 0.07), vec3(0.42, 0.5, 0.68), nw.y * 0.5 + 0.5);
+        vec3 h = normalize(key + v);
+        float spec = pow(max(dot(nw, h), 0.0), 60.0) * 0.55 + pow(max(dot(nw, h), 0.0), 9.0) * 0.07;
+        float fres = pow(1.0 - max(dot(nw, v), 0.0), 3.0);
+        vec3 lL = normalize(uRimL - pw), lR = normalize(uRimR - pw);
+        vec3 rim = vec3(1.0, 0.55, 0.15) * pow(max(dot(nw, lL), 0.0), 2.0) * 0.9 + vec3(0.25, 0.55, 1.0) * pow(max(dot(nw, lR), 0.0), 2.0) * 0.9;
+        vec3 sss = uColor * vec3(1.0, 0.45, 0.3) * (1.0 - wrap) * 0.18;     // light through the skin, warm in the shade
+        vec3 col = uColor * (wrap * 1.15 + hemi) * ao + sss + rim * (0.35 + fres) * ao + spec + fres * 0.18 * hemi + uGlow;
+        col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);   // ACES, as the rest of the stage
+        outColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), uOpacity);
+        vec4 clip = uProj * uView * vec4(pw, 1.0);
+        gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
+      }`;
+    const BOX_MIN = new THREE.Vector3(-1.2, -0.85, -0.85), BOX_MAX = new THREE.Vector3(1.7, 1.15, 0.7);
+    const boxGeo = (() => { const g = new THREE.BoxGeometry(BOX_MAX.x - BOX_MIN.x, BOX_MAX.y - BOX_MIN.y, BOX_MAX.z - BOX_MIN.z); g.translate((BOX_MAX.x + BOX_MIN.x) / 2, (BOX_MAX.y + BOX_MIN.y) / 2, (BOX_MAX.z + BOX_MIN.z) / 2); return g; })();
+    // a material's opacity and color are its uniforms, so the shows' fades and greys work on it as on any material
+    // the matrices the fragment shader needs (a ShaderMaterial's fragment stage is handed none of them)
+    const sdfCamera = (m, mesh, camera) => { const U = m.uniforms; U.uModel.value.copy(mesh.matrixWorld); U.uInvModel.value.copy(mesh.matrixWorld).invert(); U.uView.value.copy(camera.matrixWorldInverse); U.uProj.value.copy(camera.projectionMatrix); };
+    const bindSdf = (m) => { Object.defineProperty(m, 'opacity', { get: () => m.uniforms.uOpacity.value, set: (v) => { m.uniforms.uOpacity.value = v; }, configurable: true }); m.color = m.uniforms.uColor.value; m.isSdf = true; return m; };
+    const sdfMaterial = (skin, glow) => bindSdf(new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: SDF_VERT, fragmentShader: SDF_FRAG, side: THREE.BackSide, transparent: false,
+      uniforms: { uA: { value: Array.from({ length: 14 }, () => new THREE.Vector3()) }, uB: { value: Array.from({ length: 14 }, () => new THREE.Vector3()) },
+        uR: { value: Array.from({ length: 14 }, () => new THREE.Vector2(0.1, 0.1)) }, uChain: { value: Array.from({ length: 5 }, () => new THREE.Vector4(0, 0, 0, 1)) },
+        uColor: { value: new THREE.Color(skin) }, uGlow: { value: new THREE.Color(glow) }, uOpacity: { value: 1 },
+        uCut: { value: new THREE.Vector4(0, 1, 0, 0) }, uCutOn: { value: 0 }, uBoxMin: { value: BOX_MIN.clone() }, uBoxMax: { value: BOX_MAX.clone() },
+        uInvModel: { value: new THREE.Matrix4() }, uModel: { value: new THREE.Matrix4() }, uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() }, uRimL: { value: new THREE.Vector3(-3.2, 1.6, -2.4) }, uRimR: { value: new THREE.Vector3(3.2, 1.6, -2.4) } } }));
     const sleeveGeo = new THREE.CylinderGeometry(0.38, 0.4, 1.4, 64, 1, false);
     const rimGeo = new THREE.TorusGeometry(0.39, 0.06, 24, 96);
     const bandGeo = new THREE.TorusGeometry(0.405, 0.022, 12, 96);
     function makeHand(skin, sheen, band, side, glow) {
-      const mat = new THREE.MeshPhysicalMaterial({ color: skin, emissive: glow, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.3, sheen: 0.8, sheenColor: sheen, sheenRoughness: 0.5, envMapIntensity: 1.0 });
-      const nailMat = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(skin).lerp(new THREE.Color(0xffffff), 0.45), roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.05 });
+      const mat = sdfMaterial(skin, glow);
       const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x161c2a, roughness: 0.55, metalness: 0.35 });
       const bandMat = new THREE.MeshBasicMaterial({ color: band });
       const root = new THREE.Group(), body = new THREE.Group(), hand = new THREE.Group();
       root.add(body); body.add(hand);
-      hand.add(new THREE.Mesh(palmGeo, mat));
-      // the wrist, then the sleeve with its rolled rim and a band of light
-      const wrist = new THREE.Mesh(wristGeo, mat); wrist.rotation.z = Math.PI / 2; wrist.scale.set(1, 1, 0.7); wrist.position.x = -0.62; hand.add(wrist);
-      const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat); sleeve.rotation.z = Math.PI / 2; sleeve.scale.set(1, 1, 0.8); sleeve.position.x = -1.55; hand.add(sleeve);
-      const rim = new THREE.Mesh(rimGeo, sleeveMat); rim.rotation.y = Math.PI / 2; rim.scale.set(1, 0.8, 1); rim.position.x = -0.86; hand.add(rim);
-      const cuff = new THREE.Mesh(bandGeo, bandMat); cuff.rotation.y = Math.PI / 2; cuff.scale.set(1, 0.8, 1); cuff.position.x = -1.0; hand.add(cuff);
+      const skinMesh = new THREE.Mesh(boxGeo, mat); skinMesh.frustumCulled = false; hand.add(skinMesh);
+      const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat); sleeve.rotation.z = Math.PI / 2; sleeve.scale.set(1, 1, 0.8); sleeve.position.x = -1.75; hand.add(sleeve);
+      const rim = new THREE.Mesh(rimGeo, sleeveMat); rim.rotation.y = Math.PI / 2; rim.scale.set(1, 0.8, 1); rim.position.x = -1.06; hand.add(rim);
+      const cuff = new THREE.Mesh(bandGeo, bandMat); cuff.rotation.y = Math.PI / 2; cuff.scale.set(1, 0.8, 1); cuff.position.x = -1.2; hand.add(cuff);
+      // THE BONES: groups only (nothing drawn); the shader reads their ends
+      const bones = [];   // { j, len, r1, r2 } in uniform order: 4 fingers x 3, then the thumb's 2
       const fingers = FINGERS.map((spec) => {
-        const base = new THREE.Group(); base.position.set(0.38, spec.y * 0.98, 0.01); hand.add(base);
-        // the knuckle: a bump on the back where the finger leaves the palm
-        const knuckle = new THREE.Mesh(ball, mat); knuckle.scale.set(spec.r * 1.15, spec.r * 1.08, spec.r * 1.0); knuckle.position.set(0.0, 0, 0.03); base.add(knuckle);
+        const base = new THREE.Group(); base.position.set(0.36, spec.y * 0.98, 0.0); hand.add(base);
         const joints = []; let parent = base, at = 0;
         spec.len.forEach((l, k) => {
-          const r = spec.r * [1, 0.92, 0.85][k];
           const j = new THREE.Group(); j.position.x = at; parent.add(j);
-          const seg = new THREE.Mesh(capsule(r, l), mat); seg.scale.z = 0.92; j.add(seg);
-          if (k === 2) { const n = new THREE.Mesh(nailGeo, nailMat); n.scale.multiplyScalar(r * 1.25); n.position.set(l - r * 0.75, 0, r * 0.82); n.rotation.y = -0.18; j.add(n); }
-          joints.push(j); parent = j; at = l;
+          const r1 = spec.r * [1.02, 0.93, 0.86][k], r2 = spec.r * [0.93, 0.86, 0.74][k];
+          bones.push({ j, len: l, r1, r2 }); joints.push(j); parent = j; at = l;
         });
         return joints;
       });
-      // the thumb: a padded base on the palm, two round segments, a nail
-      const mound = new THREE.Mesh(ball, mat); mound.scale.set(0.3, 0.2, 0.17); mound.position.set(-0.08, 0.3, -0.02); hand.add(mound);
-      const thumbBase = new THREE.Group(); thumbBase.position.set(-0.08, 0.4, -0.02); hand.add(thumbBase);
-      const t1 = new THREE.Group(); thumbBase.add(t1); t1.add(new THREE.Mesh(capsule(0.135, 0.32), mat));
-      const t2 = new THREE.Group(); t2.position.x = 0.32; t1.add(t2); t2.add(new THREE.Mesh(capsule(0.125, 0.27), mat));
-      const tn = new THREE.Mesh(nailGeo, nailMat); tn.scale.multiplyScalar(0.15); tn.position.set(0.2, 0, 0.11); tn.rotation.y = -0.2; t2.add(tn);
+      const thumbBase = new THREE.Group(); thumbBase.position.set(-0.06, 0.4, -0.03); hand.add(thumbBase);
+      const t1 = new THREE.Group(); thumbBase.add(t1); const t2 = new THREE.Group(); t2.position.x = 0.32; t1.add(t2);
+      bones.push({ j: t1, len: 0.32, r1: 0.15, r2: 0.13 }, { j: t2, len: 0.27, r1: 0.13, r2: 0.105 });
+      const inv = new THREE.Matrix4(), m = new THREE.Matrix4(), va = new THREE.Vector3(), vb = new THREE.Vector3();
+      // every frame, just before the hand is drawn: the bones' ends in the hand's own space, a bounding sphere per finger
+      skinMesh.onBeforeRender = (renderer, sc, cam) => {
+        hand.updateMatrixWorld(true);
+        inv.copy(hand.matrixWorld).invert();
+        const U = mat.uniforms;
+        bones.forEach((b, i) => {
+          m.multiplyMatrices(inv, b.j.matrixWorld);
+          U.uA.value[i].set(0, 0, 0).applyMatrix4(m); U.uB.value[i].set(b.len, 0, 0).applyMatrix4(m); U.uR.value[i].set(b.r1, b.r2);
+        });
+        for (let c = 0; c < 5; c++) {
+          const ks = c < 4 ? [c * 3, c * 3 + 1, c * 3 + 2] : [12, 13];
+          va.set(0, 0, 0); ks.forEach((k) => va.add(U.uA.value[k]).add(U.uB.value[k])); va.multiplyScalar(1 / (ks.length * 2));
+          let r = 0; ks.forEach((k) => { r = Math.max(r, va.distanceTo(U.uA.value[k]) + U.uR.value[k].x, va.distanceTo(U.uB.value[k]) + U.uR.value[k].y); });
+          U.uChain.value[c].set(va.x, va.y, va.z, r);
+        }
+        sdfCamera(mat, skinMesh, cam);
+      };
       root.scale.x = side;          // the opponent's hand is the mirror of yours
       const pose = JSON.parse(JSON.stringify(POSES.idle)), target = JSON.parse(JSON.stringify(POSES.idle));
       const apply = () => {
         fingers.forEach((joints, i) => { const p = pose.f[i]; joints[0].rotation.set(0, p[0], p[3]); joints[1].rotation.y = p[1]; joints[2].rotation.y = p[2]; });
         thumbBase.rotation.set(0, 0, pose.t[0]); t1.rotation.y = pose.t[1]; t2.rotation.y = pose.t[2];
       };
-      const mats = [mat, nailMat];
-      return { root, body, hand, mat, mats, pose, target, apply, skin: new THREE.Color(skin),
+      const mats = [mat];
+      return { root, body, hand, mat, mats, pose, target, apply, skin: new THREE.Color(skin), skinMesh, decor: [sleeve, rim, cuff],
         set(name) { const p = POSES[name]; target.f = p.f.map((x) => x.slice()); target.t = p.t.slice(); },
         step(k) { for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) pose.f[i][j] += (target.f[i][j] - pose.f[i][j]) * k; for (let j = 0; j < 3; j++) pose.t[j] += (target.t[j] - pose.t[j]) * k; apply(); } };
     }
@@ -288,7 +385,16 @@
       const parts = local.map((pl) => {
         // every material of the copy - skin, sleeve, band - clipped by the one plane of its half
         const plane = new THREE.Plane(), made = new Map(), copy = h.root.clone(true);
-        copy.traverse((o) => { if (!o.isMesh) return; if (!made.has(o.material)) { const m = o.material.clone(); m.clippingPlanes = [plane]; m.side = THREE.DoubleSide; m.transparent = true; made.set(o.material, m); } o.material = made.get(o.material); });
+        copy.traverse((o) => {
+          if (!o.isMesh) return;
+          if (o.material.isSdf) {
+            // the seamless hand: its bones as they are now, cut by the plane in its own space, its camera matrices its own
+            const m = bindSdf(o.material.clone()); m.transparent = true; m.uniforms.uCutOn.value = 1; m.uniforms.uCut.value.set(pl.normal.x, pl.normal.y, pl.normal.z, pl.constant);
+            o.material = m; o.onBeforeRender = (r, sc, cam) => sdfCamera(m, o, cam); made.set(Symbol('sdf'), m); return;
+          }
+          if (!made.has(o.material)) { const m = o.material.clone(); m.clippingPlanes = [plane]; m.side = THREE.DoubleSide; m.transparent = true; made.set(o.material, m); }
+          o.material = made.get(o.material);
+        });
         scene.add(copy); return { copy, mats: [...made.values()], plane, local: pl };
       });
       h.root.visible = false;
@@ -357,6 +463,42 @@
       if (done && done.id !== shownFor && (!s.prev || !s.prev.id || done.id !== s.prev.id || Date.now() - (s.prev.closeMs || 0) < 30000)) { shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }
     }
 
+    // THE MOVES' BUTTONS (#286, the owner 2026-10-09: "the icons below must not be standard icons - high-quality hands too,
+    // animated, e.g. turning on their own axis"): the same seamless hand in each move's pose, turning, drawn by a small
+    // renderer of its own and copied into each button's canvas; the one pointed at turns faster
+    // one transparent canvas over the row of buttons, each hand drawn straight into its button's square (no copy back from
+    // the GPU, which stalled every frame)
+    const iconRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    iconRenderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); iconRenderer.autoClear = false; iconRenderer.setClearColor(0x000000, 0);
+    iconRenderer.outputColorSpace = THREE.SRGBColorSpace; iconRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    const iconLayer = iconRenderer.domElement; iconLayer.className = 'hand-icons';
+    const iconScene = new THREE.Scene();
+    const iconCam = new THREE.PerspectiveCamera(30, 1, 0.1, 20); iconCam.position.set(0, 0.35, 3.5); iconCam.lookAt(0, 0.12, 0);
+    const iconHands = NAMES.map((name) => {
+      const h = makeHand(0xffb15e, new THREE.Color(0xffe2bf), 0xff9a2e, 1, 0x3a1600);
+      h.decor.forEach((d) => { d.visible = false; });
+      const p = POSES[name]; h.pose.f = p.f.map((x) => x.slice()); h.pose.t = p.t.slice(); h.set(name); h.apply();
+      const pivot = new THREE.Group(); h.root.position.set(-0.42, name === 'paper' ? -0.1 : 0, 0); h.root.rotation.set(0.25, 0, name === 'scissors' ? 0.15 : 0); pivot.add(h.root); pivot.visible = false; iconScene.add(pivot);
+      return { h, pivot, spin: 0 };
+    });
+    let iconHover = null, iconChosen = null, iconSlots = [], layerW = 0, layerH = 0;
+    const drawIcons = (dt) => {
+      if (!iconLayer.isConnected || !iconSlots.length) return;
+      const host = iconLayer.parentElement, hr = host.getBoundingClientRect();
+      if (Math.round(hr.width) !== layerW || Math.round(hr.height) !== layerH) { layerW = Math.round(hr.width); layerH = Math.round(hr.height); iconRenderer.setSize(layerW, layerH, false); }
+      iconRenderer.setScissorTest(false); iconRenderer.clear();
+      iconRenderer.setScissorTest(true);
+      iconHands.forEach((x, i) => {
+        const slot = iconSlots[i]; if (!slot || !slot.isConnected) return;
+        x.spin += dt * (i === iconChosen ? 6.4 : i === iconHover ? 5.2 : 1.7);
+        x.pivot.rotation.y = x.spin + i * 2.1;
+        iconHands.forEach((y) => { y.pivot.visible = y === x; });
+        const r = slot.getBoundingClientRect(), vx = r.left - hr.left, vy = layerH - (r.top - hr.top) - r.height;
+        iconRenderer.setViewport(vx, vy, r.width, r.height); iconRenderer.setScissor(vx, vy, r.width, r.height);
+        iconRenderer.render(iconScene, iconCam);
+      });
+    };
+
     // THE FRAME
     let last = performance.now(), visible = true;
     document.addEventListener('visibilitychange', () => { visible = !document.hidden; last = performance.now(); });
@@ -369,10 +511,17 @@
       camera.position.set(0, 1.35 + dist * 0.06, dist); camera.lookAt(0, 0.05, 0); camera.updateProjectionMatrix();
     };
     new ResizeObserver(fit).observe(box);
+    // THE FRAME RATE HOLDS (#286): the seamless hands are drawn per pixel, so a screen that cannot keep 45 fps for 1.5 s
+    // draws the stage at a lower pixel ratio, a quarter at a time, down to 1 - window.RPS_PIXEL_RATIO says where it is
+    let pr = renderer.getPixelRatio(), fpsN = 0, fpsT = 0;
+    window.RPS_PIXEL_RATIO = pr;
     const frame = (now) => {
       requestAnimationFrame(frame);
       if (!visible || !box.isConnected) return;
       const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      fpsN++; fpsT += dt;
+      if (fpsT >= 1.5) { const fps = fpsN / fpsT; fpsN = 0; fpsT = 0; if (fps < 45 && !(fps > 28 && fps < 32) && pr > 1) {   // a steady 30 is a capped display (low power), not a slow one
+         pr = Math.max(1, pr - 0.25); renderer.setPixelRatio(pr); fit(); window.RPS_PIXEL_RATIO = pr; } }
       const t = now / 1000;
       if (seq) {
         seq.t += dt;
@@ -410,11 +559,26 @@
       dustGeo.attributes.position.needsUpdate = true;
       line.material.opacity = 0.18 + Math.sin(t * 2.2) * 0.08;
       renderer.render(scene, camera);
+      drawIcons(dt);
     };
     requestAnimationFrame(frame);
     // seconds until the show's strike lands (the big verdict waits for it), 0 when no show is running
     const STRIKE_AT = 2.1;
-    return { box, ov, show, shoot, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
+    // A PROBE'S BENCH: ms per frame of the stage drawn and waited for (a 1-pixel read makes the GPU finish), with the
+    // hands and without them, and of the buttons' hands - a measure no browser frame cap can hide
+    const bench = (n = 40) => {
+      const gl = renderer.getContext(), px = new Uint8Array(4);
+      const time = (f) => { f(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const t0 = performance.now(); for (let i = 0; i < n; i++) { f(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); } return +((performance.now() - t0) / n).toFixed(2); };
+      const withHands = time(() => renderer.render(scene, camera));
+      me.skinMesh.visible = them.skinMesh.visible = false;
+      const without = time(() => renderer.render(scene, camera));
+      me.skinMesh.visible = them.skinMesh.visible = true;
+      const igl = iconRenderer.getContext();
+      const t0 = performance.now(); for (let i = 0; i < n; i++) { drawIcons(0.016); igl.readPixels(0, 0, 1, 1, igl.RGBA, igl.UNSIGNED_BYTE, px); }
+      const icons = iconLayer.isConnected ? +((performance.now() - t0) / n).toFixed(2) : null;
+      return { stageMs: withHands, stageWithoutHandsMs: without, buttonsMs: icons, pixelRatio: renderer.getPixelRatio(), size: [box.clientWidth, box.clientHeight] };
+    };
+    return { box, ov, show, shoot, bench, attachIcons(row, slots) { row.append(iconLayer); iconSlots = slots; }, iconHover(i) { iconHover = i; }, iconChosen(i) { iconChosen = i; }, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
   }
 </script>
 <script>
@@ -620,7 +784,7 @@
       card.append(steps(at));
       // ON THE STAGE: the hands play the round; the clock and who is who sit over it
       if (stage) {
-        if (s.phase !== 'pick' || pickedFor !== s.id) { stage.preview(null); pickedFor = s.id; }
+        if (s.phase !== 'pick' || pickedFor !== s.id) { stage.preview(null); stage.iconChosen(null); pickedFor = s.id; }
         stage.show(s);
         card.append(stage.box);
         const ov = stage.ov; ov.textContent = '';
@@ -644,12 +808,13 @@
         card.append(el('div', 'pick', 'Pick - your opponent cannot see it until the round closes'));
         const g = el('div', 'moves');
         MOVES.forEach(([name, icon], i) => {
-          const b = el('button', '', '<span>' + icon + '</span>' + name); b.type = 'button';
-          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; b.classList.add('chosen'); if (stage) stage.preview(i); A.hide(s.id, i); });
-          if (stage) { b.addEventListener('pointerenter', () => { if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { if (!b.disabled) stage.preview(null); }); }
+          const b = el('button', '', stage ? '<span class="ic"></span>' + name : '<span>' + icon + '</span>' + name); b.type = 'button';
+          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; b.classList.add('chosen'); if (stage) { stage.preview(i); stage.iconChosen(i); } A.hide(s.id, i); });
+          if (stage) { b.addEventListener('pointerenter', () => { stage.iconHover(i); if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { stage.iconHover(null); if (!b.disabled) stage.preview(null); }); }
           g.append(b);
         });
         card.append(g);
+        if (stage) stage.attachIcons(g, [...g.querySelectorAll('span.ic')]);
       } else if (s.phase === 'wait') {
         table.append(seat('you · ' + MOVES[s.move][0], 'shown', MOVES[s.move][1]), middle,
           seat(s.them ? 'opponent in' : 'waiting…', s.them ? 'in' : 'empty', s.them ? '🔒' : '?'));
