@@ -174,12 +174,31 @@
   .cta-end h2 { margin-inline: auto; max-width: 20ch; }
   .cta-end .ctas { justify-content: center; margin-top: 26px; }
   .cta-end .who { margin-top: 14px; color: var(--dim); font-size: 14px; }
+  /* ROCK PAPER SCISSORS and BUILD YOUR OWN GAME (kanban #272) */
+  .rps { display: grid; grid-template-columns: 1.25fr 1fr; gap: 28px; align-items: center; margin-top: 36px; }
+  .rps .shot { border-radius: 22px; overflow: hidden; border: 1px solid rgba(255,90,180,.45); box-shadow: 0 20px 60px rgba(120,60,255,.25); }
+  .rps .shot img { width: 100%; display: block; }
+  .rps ul { margin: 14px 0 22px; padding: 0; list-style: none; color: #c3cdd8; }
+  .rps li { padding: 6px 0 6px 26px; position: relative; } .rps li::before { content: "●"; position: absolute; left: 4px; color: var(--pink, #ff5ab4); font-size: 12px; top: 10px; }
+  .rps .ctas { margin-top: 0; }
+  .own { margin-top: 36px; border-radius: 24px; padding: 30px; background: linear-gradient(135deg, rgba(247,147,26,.20), rgba(79,209,255,.10) 60%, rgba(255,90,180,.14)); border: 1px solid rgba(247,147,26,.5); }
+  .own h3 { margin: 0 0 6px; font-size: clamp(26px, 4.4vw, 36px); }
+  .own > p { margin: 0 0 20px; color: #d7dee7; max-width: 62ch; }
+  .own .parts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .own .part { background: rgba(7,9,13,.62); border: 1px solid var(--line); border-radius: 16px; padding: 16px; text-decoration: none; transition: border-color .2s, transform .2s; }
+  .own .part:hover { border-color: var(--btc); transform: translateY(-3px); }
+  .own .part b { display: block; font-size: 17px; margin-bottom: 6px; }
+  .own .part p { margin: 0; color: #b9c4cf; font-size: 14px; }
+  .own .part span { display: inline-block; margin-top: 10px; color: var(--btc); font-weight: 600; font-size: 14px; }
+  .own .ctas { margin-top: 22px; }
+  @media (max-width: 860px) { .rps { grid-template-columns: 1fr; } .own .parts { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 520px) { .own { padding: 20px; } .own .parts { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <nav><div class="wrap">
   <a class="brand" href="#top"><i>₿</i>Bitcoin Arena</a>
-  <div class="links"><a href="#play">Games</a><a href="#markets">Markets</a><a href="#build">Build</a><a href="#run">Run a Node</a><a href="https://doc.bitcoin-arena.io/">Docs</a></div>
+  <div class="links"><a href="/games">Games</a><a href="#markets">Markets</a><a href="#build">Build</a><a href="#run">Run a Node</a><a href="https://doc.bitcoin-arena.io/">Docs</a></div>
 </div></nav>
 
 <header class="hero" id="top">
@@ -227,6 +246,25 @@
   </div>
 </div></section>
 
+<section id="rps"><div class="wrap">
+  <div class="kicker reveal">Head to head</div>
+  <h2 class="reveal">Rock Paper Scissors</h2>
+  <p class="intro reveal">The oldest game there is, one-on-one. Both pick at once, and the nodes decide who won.</p>
+  <div class="rps">
+    <div class="shot reveal"><img src="img/rps.jpg" alt="Two hands in the Rock Paper Scissors arena, a pick counting down" loading="lazy"></div>
+    <div class="reveal">
+      <ul>
+        <li>Eight seconds a round. Pick rock, paper or scissors.</li>
+        <li>Your opponent cannot see your pick until the round closes.</li>
+        <li>Free tables to practise, paid tables for sats.</li>
+        <li>A game built on the same engine anyone can build on.</li>
+      </ul>
+      <div class="ctas"><a class="btn primary" href="/games"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Play</a>
+        <a class="btn ghost" href="/games">All live games</a></div>
+    </div>
+  </div>
+</div></section>
+
 <section id="trust"><div class="wrap">
   <div class="kicker reveal">Why it can be trusted</div>
   <h2 class="reveal">Nobody to trust with your sats.</h2>
@@ -255,6 +293,17 @@
 <section id="build"><div class="wrap">
   <div class="kicker reveal">Build on it</div>
   <h2 class="reveal">One engine. Your game, your market.</h2>
+  <div class="own reveal" id="build-game">
+    <h3>Build your own game</h3>
+    <p>A game is yours: you write it, you sign it, and any node can host it. The nodes check every round with your rules. No approval, no listing fee.</p>
+    <div class="parts">
+      <a class="part" href="https://doc.bitcoin-arena.io/#game"><b>📜 A manifest</b><p>Name, rules, your client's hash and how it pays out, signed with your key. Its hash is your game's id.</p><span>The manifest →</span></a>
+      <a class="part" href="https://doc.bitcoin-arena.io/#h2h"><b>🧩 A plugin</b><p>The rules the nodes run: a deterministic core they replay, or a decide function for head-to-head games.</p><span>Plugins →</span></a>
+      <a class="part" href="https://doc.bitcoin-arena.io/#api-dev"><b>🖥️ Its own client</b><p>One page you write, pinned by its hash. The Arena page runs it and hands it the lobby, wallet and round.</p><span>Developer API →</span></a>
+      <a class="part" href="#split"><b>₿ The fee split</b><p>Paid rounds: nodes 5 %, and optional donations of 2.5 % to the protocol developers and 2.5 % to you. Markets take 1 %. Free rounds take nothing.</p><span>Every sat →</span></a>
+    </div>
+    <div class="ctas"><a class="btn primary" href="https://doc.bitcoin-arena.io/#game">Start building</a><a class="btn ghost" href="/games">See what the nodes host</a></div>
+  </div>
   <div class="build">
     <a class="card reveal" href="https://doc.bitcoin-arena.io/#game"><div class="ic">🎮</div><h3>Make a game</h3><p>Write your game and sign it, and any node can host it. The nodes replay every round with your rules, so nobody can cheat. No approval needed.</p><span>How to build →</span></a>
     <a class="card reveal" href="https://doc.bitcoin-arena.io/#market"><div class="ic">📈</div><h3>Make a market</h3><p>Pick a question and the outcomes, and name who reports the result. Paying out the winners is built in.</p><span>How markets work →</span></a>
