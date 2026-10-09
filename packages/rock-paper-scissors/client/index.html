@@ -39,7 +39,6 @@
   const A = window.parent && window.parent.ARENA_GAME;
   const $ = (id) => document.getElementById(id);
   const MOVES = [['Rock', '✊'], ['Paper', '✋'], ['Scissors', '✌️']];
-  const beats = (a, b) => (a - b + 3) % 3 === 1;                                   // the same rule as plugin/decide.js
   const revealing = new Set();
   if (!A || !A.headToHead) {
     $('what').textContent = 'This client runs inside the Bitcoin Arena page, which hands it the game.';
@@ -75,8 +74,20 @@
         } else {
           const closeMs = Number(h.entryCloseMs);
           const st = document.createElement('div'); st.className = 'state';
-          if (Date.now() < closeMs) st.textContent = 'You hid ' + MOVES[h.move][0] + '. Revealed when entries close, in ' + mmss(closeMs - Date.now()) + '.';
-          else {
+          // THE ROUND AS THE SEATS HOLD IT: how many entered, and - once decided - each entry's signed outcome
+          const held = await A.result(r.id);
+          const entries = held ? held.entries : [];
+          const players = (A.headToHead && A.headToHead.players) || 2;
+          if (Date.now() < closeMs) {
+            st.textContent = 'You hid ' + MOVES[h.move][0] + '. ' + (entries.length < players
+              ? 'Waiting for an opponent (' + entries.length + ' of ' + players + ') - '
+              : 'Both players are in - ') + 'entries close in ' + mmss(closeMs - Date.now()) + '.';
+          } else if (entries.length && entries.length < players) {
+            // THERE MUST BE TWO BEFORE THE GAME STARTS (the owner 2026-10-09): one alone is not played, and nothing is revealed
+            const v = document.createElement('div'); v.className = 'verdict'; v.textContent = 'No opponent joined - the round is not played';
+            d.append(v);
+            st.textContent = 'Your entry is void: your stake comes back.';
+          } else {
             if (!revealing.has(r.id)) { revealing.add(r.id); A.reveal(r.id).then((x) => { if (!x.ok) revealing.delete(r.id); }); }
             const all = await A.reveals(r.id);
             const theirs = Object.entries(all).filter(([e]) => e !== h.entryIdHex).map(([, m]) => m);
@@ -84,14 +95,18 @@
             vs.innerHTML = '<div>' + MOVES[h.move][1] + '<small>you</small></div><div style="font-size:16px;color:#8b949e">vs</div>'
               + '<div>' + (theirs.length ? MOVES[theirs[0]][1] : '…') + '<small>' + (theirs.length ? 'them' : 'waiting for their reveal') + '</small></div>';
             d.append(vs);
-            if (theirs.length) {
-              const v = document.createElement('div');
-              const t = theirs[0];
-              v.className = 'verdict ' + (h.move === t ? '' : beats(h.move, t) ? 'win' : 'loss');
-              v.textContent = h.move === t ? 'Draw - both keep their stake' : beats(h.move, t) ? 'You win' : 'You lose';
+            // THE RESULT IS THE SEATS' SIGNED ONE, not this page's: shown once a seat signed this entry's outcome
+            const mine = entries.find((e) => e.entry === h.entryIdHex);
+            const v = document.createElement('div');
+            if (mine && mine.outcome && mine.signedBy > 0) {
+              const word = mine.outcome === 'DELIVERED' && mine.score >= 2 ? ['win', 'You win']
+                : mine.outcome === 'DELIVERED' ? ['', 'Draw - both keep their stake']
+                : mine.outcome === 'VOID' ? ['', 'Not played - your stake comes back']
+                : ['loss', mine.outcome === 'FORFEIT' ? 'You did not reveal - you lose' : 'You lose'];
+              v.className = 'verdict ' + word[0]; v.textContent = word[1];
               d.append(v);
-            }
-            st.textContent = 'The seats sign the result at the round\'s end.';
+              st.textContent = 'Signed by ' + mine.signedBy + ' seat' + (mine.signedBy === 1 ? '' : 's') + '.';
+            } else st.textContent = 'Revealed - the seats sign the result at the round\'s end.';
           }
           d.append(st);
         }

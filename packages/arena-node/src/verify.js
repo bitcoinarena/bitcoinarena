@@ -664,7 +664,7 @@ export class Verifier {
       const list = entries.map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
       const adapter = found.core && found.core.adapter;
       if (!adapter || typeof adapter.decide !== 'function') throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
-      return { held, results: headToHeadResults(list, (moves, config) => adapter.decide(moves, config), found.config) };
+      return { held, results: headToHeadResults(list, (moves, config) => adapter.decide(moves, config), found.config, { players: found.plugin.manifest.players }) };
     })();
     return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
       const r = results[hex(entryId)];

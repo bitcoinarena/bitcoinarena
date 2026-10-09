@@ -11,13 +11,16 @@
 //        DRAW -> DELIVERED, score 1 (below min_score: keeps its stake)   net stake back
 //        LOSS -> FAILED                                                   net stake into the pool
 //        no stood reveal -> FORFEIT                                       net stake into the pool
-//      A lone revealer wins; with no reveal at all every entry forfeits. Every node decides the same from the same reveals,
+//      A lone revealer wins; with no reveal at all every entry forfeits.
+//      FEWER ENTRIES THAN THE GAME'S PLAYERS (the owner 2026-10-09: "refuse 1 game rounds since there is only 1 player - there
+//      must be 2 before the game starts"): nobody was played against, so the round is not played - every entry VOID, its
+//      stake back, no result for anyone. Every node decides the same from the same reveals,
 //      so their results agree the way two replays of one transcript agree.
 import { Writer } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG } from './constants.js';
 import { H2H_WIN_SCORE, H2H_DRAW_SCORE } from './manifest.js';
-import { DELIVERED, FAILED, FORFEIT } from './payout.js';
+import { DELIVERED, FAILED, FORFEIT, VOID } from './payout.js';
 
 export const SALT_BYTES = 32;
 export const VERDICT = Object.freeze({ WIN: 'WIN', DRAW: 'DRAW', LOSS: 'LOSS' });
@@ -55,8 +58,12 @@ export function revealStands({ roundId, entryKey, commit, move, salt, moveCount,
  * reveal) }]; `decide(moves, config)` is the game's adapter: it gets [{ key, move }] of the revealers only and answers
  * { [key]: 'WIN' | 'DRAW' | 'LOSS' } for each of them. Answers { [key]: { outcome, score } } for every entry.
  */
-export function headToHeadResults(entries, decide, config) {
+export function headToHeadResults(entries, decide, config, { players = 2 } = {}) {
   const out = {};
+  if (entries.length < players) {
+    for (const e of entries) out[e.key] = { outcome: VOID, score: 0 };
+    return out;
+  }
   const revealed = entries.filter((e) => Number.isInteger(e.move));
   for (const e of entries) if (!Number.isInteger(e.move)) out[e.key] = { outcome: FORFEIT, score: 0 };
   if (revealed.length === 1) out[revealed[0].key] = { outcome: DELIVERED, score: H2H_WIN_SCORE };
