@@ -242,9 +242,21 @@ export const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
   return (stakeMsat * BigInt(bps)) / 10000n;
 };
 
-/** The node fee a round's game charges: its market terms' rate, or the network's. */
+/**
+ * A MARKET'S DEFAULT FEE (the owner 2026-10-09: "market default fees are 1%, 0.5 + 0.5, per default"): an attested market that
+ * names no fee of its own charges 0.5 % to the nodes and 0.5 % donation; a game, the network's 5 % (+ its donation choice).
+ */
+export const MARKET_DEFAULT_NODE_FEE_BPS = 50;
+export const MARKET_DEFAULT_DONATION_BPS = 50;
+const isMarket = (m) => !!m && m.resultType === 2;                       // RESULT_TYPE.ATTESTED (manifest.js)
+
+/** The node fee a round's game charges: its market terms' rate, a market's default 0.5 %, or the network's. */
 export const feeBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.nodeFeeBps)
-  ? manifest.marketTerms.nodeFeeBps : NODE_FEE_BPS);
+  ? manifest.marketTerms.nodeFeeBps : isMarket(manifest) ? MARKET_DEFAULT_NODE_FEE_BPS : NODE_FEE_BPS);
+
+/** A market's donation: its terms' rate, or the market default 0.5 %; null for a game (the player's donation choice). */
+export const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.donationBps)
+  ? manifest.marketTerms.donationBps : isMarket(manifest) ? MARKET_DEFAULT_DONATION_BPS : null);
 
 /**
  * DOES THIS ENTRY'S FEE STAND?

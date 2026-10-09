@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { encodeManifest, decodeManifest, encodeManifestBody, manifestBodyId, gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, marketTermsFit } from '../src/manifest.js';
 import { attestationTimely, marketTimes, marketVoided } from '../src/attested.js';
-import { entryFeeMsat, feeMatchesEntry, feeBpsOf, NODE_FEE_BPS } from '../src/fee.js';
+import { entryFeeMsat, feeMatchesEntry, feeBpsOf, donationBpsOf, NODE_FEE_BPS } from '../src/fee.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const DEV = (() => { const { privateKey, publicKey } = generateKeyPairSync('ed25519'); return { key: privateKey, pub: new Uint8Array(publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)) }; })();
@@ -46,10 +46,17 @@ test('a market\'s terms are bounded: its fee within the network\'s, a question, 
   assert.throws(() => encodeManifestBody({ ...BODY, marketTerms: { ...TERMS, nodeFeeBps: 900 } }), /node fee/);
 });
 
-test('the market\'s fee is its manifest\'s rate: 0.5 % of a 100,000 msat stake is 500 msat; without terms the network\'s 5 %', () => {
+test('the market\'s fee is its manifest\'s rate, 0.5 % + 0.5 % by default; a game\'s the network\'s 5 %', () => {
   const m = { ...BODY, marketTerms: TERMS };
   assert.equal(feeBpsOf(m), 50);
-  assert.equal(feeBpsOf(BODY), NODE_FEE_BPS);
+  // A MARKET WITHOUT TERMS: the market default 0.5 % + 0.5 % (the owner 2026-10-09); a game: the network's 5 %, its donation the player's
+  assert.equal(feeBpsOf(BODY), 50);
+  assert.equal(donationBpsOf(BODY), 50);
+  assert.equal(feeBpsOf({ ...m, marketTerms: { ...TERMS, nodeFeeBps: 200, donationBps: 100 } }), 200);
+  assert.equal(donationBpsOf({ ...m, marketTerms: { ...TERMS, nodeFeeBps: 200, donationBps: 100 } }), 100);
+  const game = { resultType: RESULT_TYPE.REPLAY };
+  assert.equal(feeBpsOf(game), NODE_FEE_BPS);
+  assert.equal(donationBpsOf(game), null);
   assert.equal(entryFeeMsat(100000n, 50), 500n);
   assert.equal(entryFeeMsat(100000n), 5000n);
   const entry = { stakeMsat: 100000n, feeMsat: 500n, donationMsat: 500n };
