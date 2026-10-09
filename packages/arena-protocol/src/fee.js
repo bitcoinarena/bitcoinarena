@@ -232,11 +232,19 @@ export function feeTableId(table) {
  *
  * The same integer floor the table uses, so one rate is applied one way.
  */
-export const entryFeeMsat = (stakeMsat) => {
+// A MARKET'S OWN NODE FEE (kanban #235, the owner 2026-10-09: "per market in manifest"): `bps`, its manifest's
+// marketTerms.nodeFeeBps (0 to NODE_FEE_BPS) - the rate is still never the operator's or the round's to choose, only the
+// signed manifest's, within the network's. Without one, the network's.
+export const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
   if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
   if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
-  return (stakeMsat * BigInt(NODE_FEE_BPS)) / 10000n;
+  if (!Number.isInteger(bps) || bps < 0 || bps > NODE_FEE_BPS) throw new Error(`a node fee is 0 to ${NODE_FEE_BPS} bps`);
+  return (stakeMsat * BigInt(bps)) / 10000n;
 };
+
+/** The node fee a round's game charges: its market terms' rate, or the network's. */
+export const feeBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.nodeFeeBps)
+  ? manifest.marketTerms.nodeFeeBps : NODE_FEE_BPS);
 
 /**
  * DOES THIS ENTRY'S FEE STAND?
@@ -251,7 +259,7 @@ export const entryFeeMsat = (stakeMsat) => {
  * in this package: a caller that asked whether an entry stands should be told,
  * not made to catch.
  */
-export function feeMatchesEntry(entry) {
+export function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS } = {}) {
   // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
   // bytes, so its amounts are BigInt - a free round is three zeros, not three
   // missing fields. Coercing a Number or a missing amount here would have
@@ -262,15 +270,16 @@ export function feeMatchesEntry(entry) {
   if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
     return { ok: false, why: 'a stake and a fee cannot be negative' };
 
-  const owed = entryFeeMsat(entry.stakeMsat);
+  const owed = entryFeeMsat(entry.stakeMsat, feeBps);
+  const pct = `${feeBps / 100}%`;
   if (entry.feeMsat !== owed)
     return {
       ok: false,
       owed,
       why: entry.feeMsat > owed
-        ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
+        ? `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}: `
           + `the ${entry.feeMsat - owed} over is money no fee table allocates`
-        : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
+        : `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}`,
     };
 
   // AND THE DONATION COMES OUT OF THE SAME COMMITMENT, so together they cannot
@@ -280,5 +289,5 @@ export function feeMatchesEntry(entry) {
   let net;
   try { net = netStakeMsat(entry); }
   catch (e) { return { ok: false, owed, why: e.message }; }
-  return { ok: true, owed, net, why: `${owed} is 2% of ${entry.stakeMsat}, and ${net} of it is staked` };
+  return { ok: true, owed, net, why: `${owed} is ${pct} of ${entry.stakeMsat}, and ${net} of it is staked` };
 }
