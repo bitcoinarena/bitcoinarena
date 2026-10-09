@@ -3580,7 +3580,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const fresh = round.putReveal({ roundId: entry.roundId, entryId: eid, move: body.move, salt, receivedMs: round.now() });
         console.log(`[reveal] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: move ${body.move}${fresh ? '' : ' (held already)'}`);
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ held: true, fresh }));
+        res.end(JSON.stringify({ held: true, fresh }));
+        // EVERY MOVE IN: DECIDED NOW (the owner 2026-10-09 playtest: "after the reveal it still takes 10-15 s until the result
+        // stands - it has to be more instant"). A seat that closes its rounds itself (closeAtEnd) and holds a reveal for each of
+        // a round's entries - its game's players, all in - has nothing its reveal deadline could still add: it closes the round
+        // now, not at that deadline. A round short of a reveal still waits for its end (that entry's FORFEIT).
+        if (closeAtEnd && fresh) {
+          const all = round.entriesOf(entry.roundId);
+          const revealed = new Set(round.revealsOf(entry.roundId).map((r) => toHex(r.entryId)));
+          if (all.length >= found.plugin.manifest.players && all.every(({ entryId }) => revealed.has(toHex(entryId))) && round.close(entry.roundId)) {
+            console.log(`[close] ${toHex(entry.roundId).slice(0, 16)}: every move revealed - closed by this signer node before its end`);
+            afterClose(entry.roundId);
+          }
+        }
+        return;
       }
       // THE MARKET ORDER BOOK (kanban #278, step 4 + comment 1127; order-batch.js). An order is an entry with a limit price,
       // tradable once this seat verified its two locks. Between seats: a seat's proposal for batch k (GET /batch-proposal),
