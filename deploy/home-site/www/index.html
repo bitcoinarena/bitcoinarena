@@ -115,6 +115,10 @@
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px; vertical-align: -1px; }
   .legend strong { display: block; font: 700 22px "Space Grotesk"; color: var(--text); }
   @media (max-width: 720px) { .legend { grid-template-columns: repeat(2, 1fr); } }
+  .legend small { display: block; margin-top: 4px; font-size: 13px; line-height: 1.4; color: var(--dim); }
+  .legend small b { color: var(--gold); font-weight: 600; }
+  .split .note { margin: 24px 0 0; padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(255,209,102,.28); background: rgba(255,209,102,.06); color: #d5dde6; font-size: 15px; }
+  .split .note b { color: var(--gold); }
 
   /* MARKETS */
   .markets { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; }
@@ -261,17 +265,17 @@
 <section id="split"><div class="wrap">
   <div class="split reveal">
     <div class="kicker">Economics</div>
-    <h2>Most of the stake <em>stays in the game.</em></h2>
+    <h2>Know where <em>every&nbsp;sat</em> goes.</h2>
     <div class="bar" aria-label="A 10,000 sat stake">
-      <div class="pool">9,000 in play</div><div class="nodes"></div><div class="game"></div><div class="proto"></div>
+      <div class="pool">9,000 sats in play</div><div class="nodes"></div><div class="game"></div><div class="proto"></div>
     </div>
     <div class="legend">
-      <div><i style="background:var(--bull)"></i>Stays in play<strong>90%</strong></div>
-      <div><i style="background:var(--cyan)"></i>Protocol fee to the nodes that verify the round<strong>5%</strong></div>
-      <div><i style="background:var(--gold)"></i>Optional donation to the game's developer<strong>2.5%</strong></div>
-      <div><i style="background:var(--btc)"></i>Optional donation to the protocol developers<strong>2.5%</strong></div>
+      <div><i style="background:var(--bull)"></i>In play<strong>90%</strong></div>
+      <div><i style="background:var(--cyan)"></i>Node fee<strong>5%</strong><small>Protocol fee paid to the nodes that verify the round.</small></div>
+      <div><i style="background:var(--gold)"></i>Game developer donation<strong>2.5%</strong><small><b>Optional.</b></small></div>
+      <div><i style="background:var(--btc)"></i>Protocol developer donation<strong>2.5%</strong><small><b>Optional.</b></small></div>
     </div>
-    <p style="color:var(--dim);font-size:15px;margin:22px 0 0">Donations are the player's choice: on by default, down to zero in settings.</p>
+    <p class="note">Developer donations are <b>optional</b> and can be set to <b>0%</b> at any time.</p>
   </div>
 </div></section>
 
