@@ -210,3 +210,19 @@ test('the outcome: verified when the pinned attestors signed it, UNVERIFIED for 
   assert.match(freeLines[0], /verified\) · your pick was right \(free round\)$/);
   assert.match(freeLines[1], /verified\) · your pick was wrong \(free round\)$/);
 });
+
+test('the order (kanban #237): the entry carries its pick, limit price and expiry; an order without a pick or a whole price is refused', async () => {
+  const seed = b32(3);
+  const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
+  const curve = (await import('../src/page-curve.js')).pageCurve;
+  const { encodeEntryContract } = await import('../../arena-protocol/src/contracts.js');
+  const entry = { ...entryFor(round, { seed, curve, random: () => b32(5), pick: 1, limitPrice: 62000, orderExpiryMs: 1791600000000n }), roundId: ROUND_ID, sessionPubkey: b32(6) };
+  const back = decodeEntryContract(encodeEntryContract(entry));
+  console.log('  ORDER:', JSON.stringify({ pick: back.pick, limitPrice: back.limitPrice, orderExpiryMs: String(back.orderExpiryMs) }));
+  assert.deepEqual([back.pick, back.limitPrice, back.orderExpiryMs], [1, 62000, 1791600000000n]);
+  const plain = decodeEntryContract(encodeEntryContract({ ...entryFor(round, { seed, curve, random: () => b32(5), pick: 1 }), roundId: ROUND_ID, sessionPubkey: b32(6) }));
+  assert.equal(plain.limitPrice, undefined, 'a pick without a price stays a pick: its bytes are unchanged');
+  assert.throws(() => entryFor(round, { seed, curve, random: () => b32(5), limitPrice: 62000 }), /an order backs an outcome: it needs a pick/);
+  assert.throws(() => entryFor(round, { seed, curve, random: () => b32(5), pick: 0, limitPrice: 0 }), /a limit price is a whole number/);
+  assert.throws(() => entryFor(round, { seed, curve, random: () => b32(5), pick: 0, limitPrice: 1.5 }), /a limit price is a whole number/);
+});
