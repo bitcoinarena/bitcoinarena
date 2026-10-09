@@ -3,6 +3,17 @@
 // (never the password), lasts a year, and on bitcoin-arena.io is set for the whole domain, so bitcoin-arena.io and
 // www.bitcoin-arena.io share one login. The password is the Pages secret SITE_PASSWORD.
 const COOKIE = 'ba_gate';
+import { scanChain } from './chain-scan.js';
+
+// THE NODES, AS BITCOIN NAMES THEM (kanban #272): the cron below reads testnet4 through mempool.space every 2 minutes and
+// keeps the read in KV; /api/chain-nodes hands it out at once. It is evidence, not a verdict - the page (www/js/
+// chain-nodes.js) proves every transaction into its block and checks every signature before it believes a node.
+const CHAIN_KEY = 'chain:testnet4';
+async function chainNodes(env, ctx) {
+  let body = await env.CHAIN.get(CHAIN_KEY);
+  if (!body) { body = JSON.stringify(await scanChain(null)); ctx.waitUntil(env.CHAIN.put(CHAIN_KEY, body)); }
+  return new Response(body, { headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30', 'Access-Control-Allow-Origin': '*' } });
+}
 
 async function tokenOf(password) {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('bitcoin-arena-gate/v1:' + password));
@@ -34,7 +45,15 @@ const page = (wrong, next) => `<!doctype html><html lang="en"><head><meta charse
 <input type="hidden" name="next" value="${next.replace(/[^\w\/\-.#?=&%]/g, '')}">
 <button>Enter</button>${wrong ? '<p>That password is not right.</p>' : ''}</form></body></html>`;
 
-export default { async fetch(request, env) {
+export default {
+async scheduled(event, env, ctx) {
+  const before = await env.CHAIN.get(CHAIN_KEY, 'json');
+  const read = await scanChain(before);
+  // a read that reached nothing does not replace one that did
+  if (read.txs.length || !before) await env.CHAIN.put(CHAIN_KEY, JSON.stringify(read));
+  console.log(JSON.stringify({ chain: { txs: read.txs.length, tip: read.tip, fetches: read.fetches, partial: read.partial, errors: read.errors.length, ms: read.ms } }));
+},
+async fetch(request, env, ctx) {
 
   const url = new URL(request.url);
   // robots.txt OUTSIDE THE GATE: a fetcher that asks it first and gets 401 may stop there (the page itself stays gated)
@@ -54,6 +73,7 @@ export default { async fetch(request, env) {
   // chatgpt.bitcoin-arena.io HAS NO PASSWORD (the owner 2026-10-08 23:17: so ChatGPT can read the page): the same files, kept out
   // of search indexes; every other hostname stays gated
   if (url.hostname === 'chatgpt.bitcoin-arena.io') {
+    if (url.pathname === '/api/chain-nodes') return chainNodes(env, ctx);
     const open = await env.ASSETS.fetch(request);
     const res = new Response(open.body, open);
     res.headers.set('X-Robots-Tag', 'noindex, nofollow');
@@ -86,7 +106,7 @@ export default { async fetch(request, env) {
     return res;
   }
   console.log(JSON.stringify({ gate: given === null ? (cookieOf(request, COOKIE) === want ? 'cookie' : 'none') : 'param', path: url.pathname, ua: (request.headers.get('User-Agent') || '').slice(0, 80) }));
-  if (cookieOf(request, COOKIE) === want) return env.ASSETS.fetch(request);
+  if (cookieOf(request, COOKIE) === want) return url.pathname === '/api/chain-nodes' ? chainNodes(env, ctx) : env.ASSETS.fetch(request);
 
   if (request.method === 'POST' && url.pathname === '/__login') {
     const form = await request.formData();
