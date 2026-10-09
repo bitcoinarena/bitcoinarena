@@ -1,11 +1,11 @@
 // AN ATTESTOR OF A PERIOD MARKET (kanban #236; spec §0A.7b.1). Every 10 s it reads its sources and keeps the median, in whole
 // cents. At the end of each round's window - the period before the round's entry close (attested.js marketWindowOf) - it
-// applies the market's rule (up-down.js upDownOutcome: Up when the window's TWAP is at or above the price at its start, a tie
-// Up), and signs the attestation body {round, outcome, observed_at = the window's end}. Honest attestors that saw the same
+// applies the market's rule (up-down.js upDownOutcome: Up when the 60 s average at the window's end is at or above the 60 s
+// average at its start, a tie Up), and signs the attestation body {round, outcome, observed_at = the window's end}. Honest attestors that saw the same
 // outcome sign THE SAME BYTES, so their signatures combine: a seat takes an attestation only with the market's threshold of
 // its attestors' signatures on it (attestationStands), and its intake is unchanged. So each attestor serves its own
 // signature (GET /attestation?round=), pulls the others', and once the threshold of signatures over one body is held, posts
-// that attestation to every seat - with retry. No reading at or before the window's start: it signs nothing for that window.
+// that attestation to every seat - with retry. No reading a minute before the window's start: it signs nothing for that window.
 import { createPrivateKey, createPublicKey, sign as edSign } from 'node:crypto';
 import { attestationBodyId, encodeAttestation } from '../../arena-protocol/src/attested.js';
 import { upDownOutcome, UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
@@ -23,14 +23,14 @@ export function attestorKey(bytes) {
 
 /**
  * THIS ATTESTOR'S WORD ON ONE WINDOW: `samples` [{ atMs, price }] (its medians), the round and its window. Answers
- * { ok, body, signature (hex), key (hex), priceToBeat, twap, label } or why it signs nothing.
+ * { ok, body, signature (hex), key (hex), priceToBeat, endPrice, label } or why it signs nothing.
  */
 export function attestWindow({ samples, roundId, window, attestor }) {
   const out = upDownOutcome(samples, { startMs: window.startMs, endMs: window.endMs });
   if (!out.ok) return { ok: false, why: out.why };
   const body = { roundId, outcome: out.outcome, observedAtMs: window.endMs };
   const signature = new Uint8Array(edSign(null, Buffer.from(attestationBodyId(body)), attestor.key));
-  return { ok: true, body, signature: toHex(signature), key: toHex(attestor.pubkey), priceToBeat: out.priceToBeat, twap: out.twap, label: out.label };
+  return { ok: true, body, signature: toHex(signature), key: toHex(attestor.pubkey), priceToBeat: out.priceToBeat, endPrice: out.endPrice, label: out.label };
 }
 
 /**
@@ -56,7 +56,7 @@ export function combine(words, { attestors, threshold }) {
 
 /** A word on the wire (JSON) and back. */
 export const wordToJson = (w) => ({ body: { roundId: toHex(w.body.roundId), outcome: w.body.outcome, observedAtMs: String(w.body.observedAtMs) },
-  key: w.key, signature: w.signature, priceToBeat: w.priceToBeat !== undefined ? String(w.priceToBeat) : null, twap: w.twap !== undefined ? String(w.twap) : null, label: w.label || null });
+  key: w.key, signature: w.signature, priceToBeat: w.priceToBeat !== undefined ? String(w.priceToBeat) : null, endPrice: w.endPrice !== undefined ? String(w.endPrice) : null, label: w.label || null });
 export function wordFromJson(j) {
   if (!j || !j.body || !/^[0-9a-f]{64}$/.test(String(j.body.roundId)) || !Number.isInteger(j.body.outcome) || !/^[0-9]{1,20}$/.test(String(j.body.observedAtMs))
       || !/^[0-9a-f]{64}$/.test(String(j.key)) || !/^[0-9a-f]{128}$/.test(String(j.signature))) return null;
