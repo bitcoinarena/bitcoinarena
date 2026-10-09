@@ -9,7 +9,7 @@ import {
 } from '../src/manifest.js';
 import { encodeEntryContract, decodeEntryContract, entryId, COMMIT_MARKER } from '../src/contracts.js';
 import { headToHeadCommit, revealStands, headToHeadResults, VERDICT, SALT_BYTES } from '../src/head-to-head.js';
-import { computePayoutTable, DELIVERED, FAILED, FORFEIT } from '../src/payout.js';
+import { computePayoutTable, DELIVERED, FAILED, FORFEIT, VOID } from '../src/payout.js';
 import { toHex } from '../src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -119,4 +119,15 @@ test('the money: a win takes the loser\'s net stake, a draw keeps both stakes, a
   assert.deepEqual(table(0, 2), { paid: [1800000n, 0n], settling: 2 }, 'rock beats scissors: the winner gets both net stakes');
   assert.deepEqual(table(1, 1), { paid: [0n, 0n], settling: 0 }, 'a draw: no stake moves - both locks return to their players');
   assert.deepEqual(table(2, null), { paid: [1800000n, 0n], settling: 2 }, 'a no-show forfeits to the revealer');
+});
+
+test('fewer entries than the game\'s players: the round is not played - every entry VOID, its stake back, no winner', () => {
+  assert.deepEqual(headToHeadResults([{ key: 'aa', move: 0 }], rps, {}, { players: 2 }), { aa: { outcome: VOID, score: 0 } });
+  assert.deepEqual(headToHeadResults([{ key: 'aa', move: null }], rps, {}, { players: 2 }), { aa: { outcome: VOID, score: 0 } });
+  // the money: a VOID entry is a refund - outside the pot, paid nothing out of it
+  const t = computePayoutTable({ roundId: b32(9), entries: [{ pubkey: b32(0xaa), stakeMsat: 1000000n, feeMsat: 50000n, donationMsat: 0n, outcome: VOID, score: 0 }], minScore: H2H_WIN_SCORE });
+  assert.equal(t.activated.length, 0);
+  assert.equal(t.settling.length, 0);
+  // with both seated, a lone revealer still wins
+  assert.equal(headToHeadResults([{ key: 'aa', move: 0 }, { key: 'bb', move: null }], rps, {}, { players: 2 }).aa.outcome, DELIVERED);
 });
