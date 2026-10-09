@@ -48,7 +48,7 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
   // THE ATTESTORS' CORE on a feed: a reading at the window's start, then `after` for the rest of it
   const attest = (x, signers, startCents, afterCents) => {
     const startMs = x.c.entryCloseMs - UPDOWN_PERIOD_MS;
-    const samples = [{ atMs: startMs - 5000n, price: BigInt(startCents) }, { atMs: startMs + 60000n, price: BigInt(afterCents) }];
+    const samples = [{ atMs: startMs - 60000n, price: BigInt(startCents) }, { atMs: startMs + 60000n, price: BigInt(afterCents) }];
     const words = signers.map((l) => attestWindow({ samples, roundId: x.rid, window: { startMs, endMs: x.c.entryCloseMs }, attestor: UPDOWN_ATTESTOR_KEYS[l] }));
     return combine(words, { attestors: ATTESTORS, threshold: 2 });
   };
@@ -79,7 +79,7 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
     const old = await lockAndPlay(w, player(0), { noMarks: true, pick: YES, order: { price: 55000n }, expirySpan: 144 }).then(() => 'taken', (e) => e.message.split('\n')[0]);
     facts.oldLock = old.slice(0, 200);
     assert.match(old, /lock height .* less the round's \d+ blocks\) is more than 12 blocks below the height/);
-    // 3. LOCKED ORDERS: Up and Down cross; the attestors' core resolves Up (TWAP above the price to beat); settled to the msat
+    // 3. LOCKED ORDERS: Up and Down cross; the attestors' core resolves Up (the end price above the price to beat); settled to the msat
     const up = await lockAndPlay(w, player(1), { noMarks: true, pick: YES, order: { price: 60000n } });
     const down = await lockAndPlay(w, player(2), { noMarks: true, pick: NO, order: { price: 45000n } });
     const b1 = await batch(w);
