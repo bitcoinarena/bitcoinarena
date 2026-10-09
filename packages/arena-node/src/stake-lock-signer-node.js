@@ -155,7 +155,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     return { ok: false, why: 'that contract\'s expiration is not the one the federation holds' };
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
 
-  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount });
+  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'stake', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (the owner 2026-10-03): a stake whose donation outputs are wrong or missing is
@@ -203,7 +203,7 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (fields.expiration !== st.blockCount + st.stored.blocksLeft)
     return { ok: false, why: 'that fee contract\'s expiration is not the one the federation holds' };
   if (!(claimPk instanceof Uint8Array)) return { ok: false, why: 'this signer node holds no claim key for that round' };
-  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount });
+  const matches = lockMatchesEntry({ lock: fields, entry, kind: 'fee', claimPk, height: st.blockCount, expiryBlocks: contract.stakeExpiryBlocks });
   if (!matches.ok) return matches;
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id) });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).

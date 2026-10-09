@@ -1063,6 +1063,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // `kind.entryAfterStartMs` (kanban #233): this kind's own entry window after its start - a head-to-head round closes its
     // entries a couple of minutes in, not when the first round's (a 30-minute nextblock window) would
     let close = start + (kind.entryAfterStartMs !== undefined ? BigInt(kind.entryAfterStartMs) : (contract.entryCloseMs - contract.startTimeMs));
+    // `kind.entryCloseAtMs` (kanban #236): an exact entry close - a market on its own period closes on its UTC grid
+    if (kind.entryCloseAtMs !== undefined) close = BigInt(kind.entryCloseAtMs);
     if (roundPeriodMs) {
       // ON THE PERIOD: the last round of this kind's start + 90 s, stepped on until its committee time is still ahead of
       // the chain and the clock (a committee time the chain has passed cannot name a beacon after its publication).
@@ -1090,6 +1092,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       committeeTimeMs: committee, startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start),
       // ANOTHER GAME'S ROUND ON THE SAME SEATS (kanban #208): its fields over this one (a market's game id, no core, no config)
       ...(kind.fields || {}) };
+    // `kind.stakeExpiryFor(round)` (kanban #236): a market round's own lock span, sized from its times (lock-expiry.js)
+    if (typeof kind.stakeExpiryFor === 'function') next.stakeExpiryBlocks = kind.stakeExpiryFor(next);
     censusView = await viewToTip();
     // THE KEEPER'S OWN WORK, NAMED (the owner 2026-09-17 19:15, the ghost lag). Eight of twelve stalls over 300 ms still
     // name nothing but 0-20 ms of frames while this thread burns 190-250 ms, and the keeper opening a round is the

@@ -85,3 +85,13 @@ export function feeOfKnownGame(gameId) {
   if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps };
   return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
 }
+
+/**
+ * A PINNED MARKET'S TERMS (kanban #236): its resolution delay and void deadline as the generator wrote them (decimal ms), the
+ * ones its rounds' lock span is checked by on the page (lock-expiry.js); null for a game, or a market pinned without terms.
+ */
+export function termsOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  if (!game || !game.terms) return null;
+  return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
+}
