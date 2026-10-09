@@ -491,8 +491,9 @@ clears it the same way: no arrival order, nothing to front-run.
 
 **Standing orders, every second** (the owner 2026-10-09: "Order batches alle 1s,
 wenn möglich alle 0.5s"). A player places a limit order at any time, and it
-is matched in the next batch. Batches run every 1 s (`BATCH_MS`), and every
-0.5 s once the seats are measured to agree on a batch's set in time. What has
+is matched in the next batch. **Batches run every 0.5 s** (`BATCH_MS`;
+measured, §0A.7b.5: seven seats agreed every batch's set in at most 275 ms
+with real round trips, inside the half second; 1 s was the fallback). What has
 not filled **stands** in the book for the batches after, until it fills, its
 player cancels it (at no cost), or its expiry passes. An order names
 `expiry_ms` in its signed bytes: 0 stands until filled or cancelled
@@ -535,6 +536,38 @@ seats and the immediate return of a cancelled order's stake and fee locks.
 Positions as locks and the payout per share. The reference attestor daemon
 (three price sources, `upDownOutcome`). Selling before resolution. The
 market page: Up/Down prices, the price to beat, the order entry, positions.
+
+**0A.7b.5 How the seats agree a batch** (kanban #278 step 4). A page posts
+a signed order to every seat (`POST /order`), and each seat keeps it with the
+time it arrived. Batch k takes what reached any seat before its cutoff,
+(k + 1) x the interval in ms since the epoch, so every seat names the same k
+from its clock. Its **leader** is the round's seat k mod n, so leadership
+rotates: a seat that is down only moves its batches' orders into the next
+leader's batch, which takes everything before its own cutoff.
+1. A little after the cutoff (100 ms grace, so an order posted just before it
+   has landed), the leader asks every seat for its unbatched orders
+   (`GET /batch-proposal`) and takes their union, checking each order again.
+2. It hands the set and its signature over `batchId` (round, k, the order ids)
+   to every seat (`POST /batch`).
+3. Each seat checks the leader is the round's seat k mod n, every order, that
+   none of them is in another batch there, and that it signed no other set
+   for (round, k). It keeps the orders it lacked, marks the set as batch k,
+   and answers its own signature over the same id.
+
+Every seat that signed holds the same set, and `bookBatch` clears it the same
+way (`GET /book`). Measured with seven seats on one host, every seat-to-seat
+request delayed by a round trip measured to a live seat through its tunnel
+(p50 56 ms, max 106 ms):
+
+| interval | batches | agreed p50 | p95 | max |
+|---|---|---|---|---|
+| 0.5 s | 20 | 225 ms | 275 ms | 275 ms |
+| 1 s | 20 | 221 ms | 267 ms | 267 ms |
+
+Every batch was held and signed by all seven seats, and all seven cleared
+the 40 batches identically. Still to build: orders backed by locks
+(positions), cancel of a standing order, and a leader that is down for its
+batch.
 
 ## 0A.8 The money: 10% of the gross stake
 
