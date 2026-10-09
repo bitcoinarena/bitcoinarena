@@ -988,5 +988,25 @@
   "purpose": "Separate local TEST donation-recipient server (port 18777, src/lnurl-recipients.js), not the node.",
   "audience": "operator/monitoring",
   "line": "src/lnurl-recipients.js:44"
+ },
+ {
+  "method": "POST",
+  "path": "/reveal",
+  "params": "query entry (hex 32); body JSON {\"move\": integer, \"salt\": \"64 hex\"}",
+  "auth": "none - the reveal must hash to the commitment that entry named, after the round's entry close and before its end, for a move the game offers",
+  "returns": "201 (taken) / 200 (held already) JSON {held, fresh}; 400/404/409 with the reason",
+  "purpose": "A head-to-head player reveals its hidden move (e.g. Rock Paper Scissors).",
+  "audience": "player/page",
+  "line": 3458
+ },
+ {
+  "method": "GET",
+  "path": "/reveals",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {round, reveals:[{entry, move, salt}]}; 404",
+  "purpose": "Every reveal this node holds for a head-to-head round; the other nodes pull these at the round's close so all decide from the same moves.",
+  "audience": "node-to-node",
+  "line": 3484
  }
 ]

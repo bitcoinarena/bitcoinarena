@@ -82,6 +82,7 @@
   <a href="#api-n2n">Between nodes</a>
   <b>Build</b>
   <a href="#game">Implement a game</a>
+  <a href="#h2h">Implement a head-to-head game</a>
   <a href="#market">Implement a prediction market</a>
   <a href="#money">Where the money goes</a>
 </aside>
@@ -116,6 +117,7 @@
     <li><b>Federation</b> and <b>guardians</b>: the Fedimint federation that holds the stakes; its guardians are nodes that each hold one of its keys.</li>
     <li><b>Manifest</b>: the developer's signed record of a game or market: its rules, its client files, how it pays out. Its hash is the <b>game id</b>.</li>
     <li><b>Replayed</b> game: the result is a run the nodes replay. <b>Attested</b> game (a prediction market): the result is an outcome signed by the people or services the developer named (its <b>attestors</b>).</li>
+    <li><b>Head-to-head</b> game: each player hides a move, all moves are revealed after entry close, and the game's rule decides between them (<a href="#h2h">Rock Paper Scissors</a>). A round is played only when all its players entered.</li>
   </ul>
 
   <h2 id="node">What a node does</h2>
@@ -150,7 +152,7 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
   <p>Open <code>/dashboard</code> on your node to see its rounds, its committee seats and its share of the fees per day, month and game.</p>
 
   <h2 id="api">The node API</h2>
-  <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are 99 in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
+  <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are 101 in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
   <ul>
     <li>Round ids, entry ids and keys are hex strings in the query: <code>?round=&lt;64 hex&gt;</code>.</li>
     <li>Answers are JSON, or binary when they are a protocol record (a round contract, a manifest, an attestation). Binary records are encoded and decoded with <code>packages/arena-protocol</code>.</li>
@@ -184,7 +186,7 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/transcript/{hash 64 hex}</code></td><td>Publication relay serves a transcript by hash.</td><td>path transcript hash</td><td>200 octet-stream transcript; 404</td><td>none</td></tr>
 </tbody></table></div>
 
-  <h3 id="api-player">For pages and players (29)</h3>
+  <h3 id="api-player">For pages and players (30)</h3>
   <p>What the game page uses to show the lobby, join, lock a stake and collect winnings.</p>
   <div class="tbl"><table><thead><tr><th>Request</th><th>What it does</th><th>Parameters</th><th>Returns</th><th>Access</th></tr></thead><tbody>
 <tr><td class="ep"><span class="m m-options">OPTIONS</span> <code>*</code></td><td>CORS preflight for any path; changes nothing.</td><td>none</td><td>204 with CORS headers</td><td>none</td></tr>
@@ -208,6 +210,7 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/randomness</code></td><td>The round&#x27;s randomness beacon so the client seeds the same world.</td><td>query round (hex 32)</td><td>200 octet-stream 32-byte beacon block hash, header x-height; 404/409</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/receipts</code></td><td>Receipts for a run&#x27;s marks, so a reconnecting client can recover them.</td><td>query round, entry (hex 32)</td><td>200 octet-stream receipts, header x-receipts</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/refused-lock</code></td><td>Registers a stake locked for a round this node refuses so it can be returned at once.</td><td>query round (hex 32); body JSON {fields, outpoint &quot;txid:index&quot;}</td><td>201 text with forfeit link; 400/404/409</td><td>none; checked against held handout, claim key and federation</td></tr>
+<tr><td class="ep"><span class="m m-post">POST</span> <code>/reveal</code></td><td>A head-to-head player reveals its hidden move (e.g. Rock Paper Scissors).</td><td>query entry (hex 32); body JSON {&quot;move&quot;: integer, &quot;salt&quot;: &quot;64 hex&quot;}</td><td>201 (taken) / 200 (held already) JSON {held, fresh}; 400/404/409 with the reason</td><td>none - the reveal must hash to the commitment that entry named, after the round&#x27;s entry close and before its end, for a move the game offers</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/rounds</code></td><td>Lobby listing of announced rounds this node holds, each row signed by the node.</td><td>query ahead (ms or Nh, optional), next (per-series count, optional)</td><td>200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, outcome, startTime, endTime, committee, stakeMsat, free, wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/rounds (Accept: text/html)</code></td><td>Serves the human rounds page when a browser asks for HTML.</td><td>none</td><td>200 text/html (pages/rounds.html)</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/settled</code></td><td>Rounds settled since a time, for seed-only recovery on another device.</td><td>query since (ms; capped to 7 days)</td><td>200 JSON {node, nowMs, since, rounds:[{id, state, madeMs, payouts[], refunds}]}</td><td>none</td></tr>
@@ -231,9 +234,9 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/slash-owing</code></td><td>What filed slash proofs owe and to whom at a given height; records nothing.</td><td>query round, entry (hex 32), height (required)</td><td>200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, toPlayers, toNodes, toDevelopers, players[], nodes[], ...}]}; 400/404/409</td><td>none</td></tr>
 </tbody></table></div>
 
-  <h3 id="api-n2n">Between nodes (39)</h3>
+  <h3 id="api-n2n">Between nodes (40)</h3>
   <p>Signing ceremonies, shares and gossip between the nodes of a committee. You do not call these yourself; they are listed so nothing is hidden.</p>
-  <details><summary>Show the 39 node-to-node requests</summary>
+  <details><summary>Show the 40 node-to-node requests</summary>
   <div class="tbl"><table><thead><tr><th>Request</th><th>What it does</th><th>Parameters</th><th>Returns</th><th>Access</th></tr></thead><tbody>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/canonical</code></td><td>Returns the committee-carried canonical transcript of a run.</td><td>query round, entry (hex 32)</td><td>200 octet-stream canonical transcript, headers x-transcript-hash, x-ticks, x-marks, x-dropped, x-through-tick; 409</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/checkpoints</code></td><td>Checkpoints (marks) of a run as received.</td><td>query round, entry (hex 32)</td><td>200 octet-stream checkpoints, header x-checkpoints</td><td>none</td></tr>
@@ -257,6 +260,7 @@ node packages/nextblock/bin/node.mjs 8080 round.db</pre>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/refused-first-mark</code></td><td>Serves an on-time first mark this node refused, for peers closing the round.</td><td>query entry (hex 32)</td><td>200 JSON {mark, why}; 404</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-get">GET</span> <code>/reruns</code></td><td>Signer nodes&#x27; re-runs of a suspended result (own one re-signed now).</td><td>query round, entry (hex 32)</td><td>200 octet-stream fixed-size signed re-run results, header x-reruns</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/resend-sends</code></td><td>Proposes a re-send of an expired winnings payment.</td><td>query round (hex 32), late?; body JSON re-send proposal</td><td>201 &quot;re-send checked and kept&quot;; 400/409</td><td>none; checked</td></tr>
+<tr><td class="ep"><span class="m m-get">GET</span> <code>/reveals</code></td><td>Every reveal this node holds for a head-to-head round; the other nodes pull these at the round&#x27;s close so all decide from the same moves.</td><td>query round (hex 32)</td><td>200 JSON {round, reveals:[{entry, move, salt}]}; 404</td><td>none</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/send-commit</code></td><td>Round one of authorising a winnings send.</td><td>query round, entry (hex 32), late?, kind (auth|resend), attempt?, hash?</td><td>200 octet-stream nonce commitment; 400/409</td><td>none; node answers only for the message it rebuilt</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/send-share</code></td><td>Round two of authorising a winnings send.</td><td>query round, entry, late?, kind, attempt?; body: commitment list</td><td>200 octet-stream signature share; 400/409</td><td>none; same rule</td></tr>
 <tr><td class="ep"><span class="m m-post">POST</span> <code>/settle-commit</code></td><td>Round one of signing the round&#x27;s settlement of losers&#x27; locks.</td><td>query round (hex 32), txid, entry (late settlement, optional)</td><td>200 octet-stream nonce commitment; 400/409</td><td>none; node answers only for the txid it rebuilt</td></tr>
@@ -342,6 +346,79 @@ export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
       <p>An update is a new manifest with the same key, <code>version</code> + 1 and the old game id as <code>parentManifestId</code>. Rounds already written keep the manifest they named.</p></li>
   </ol>
   <div class="note">Paid rounds of a replayed game need the game on the page's list of known games (with its cores and configs), because that list ships with the page. A newly signed game plays free rounds first.</div>
+
+  <h2 id="h2h">Implement a head-to-head game</h2>
+  <p>In a replayed game every run is checked on its own, so one player's score can never depend on what another player did. A <b>head-to-head game</b> is for the games where it does: each player picks a move in secret, all moves are shown together, and the game's rule decides who won. The engine does the hiding, the showing, the checking and the money; your game only says what beats what. The example is the real <b>Rock Paper Scissors</b> (<code>packages/rock-paper-scissors</code>).</p>
+  <div class="tbl"><table><thead><tr><th>Result type</th><th>The result comes from</th><th>Example</th></tr></thead><tbody>
+    <tr><td><code>REPLAY</code> (1)</td><td>each player's own run, replayed by every node</td><td>Tick Tock, Next Block</td></tr>
+    <tr><td><code>ATTESTED</code> (2)</td><td>an outcome signed by the attestors the game names</td><td>a prediction market</td></tr>
+    <tr><td><code>HEAD_TO_HEAD</code> (3)</td><td>all players' revealed moves together, decided by the game's rule</td><td>Rock Paper Scissors</td></tr>
+  </tbody></table></div>
+  <h3>A round, step by step</h3>
+  <ol class="steps">
+    <li><b>Hide.</b> Before entry close the player enters with a <b>commitment</b> instead of a move: <code>H(round id ‖ session key ‖ move ‖ salt)</code>, with a fresh 32-byte salt. Nobody can read the move from it, and nobody can copy it: it names the entry's own session key.</li>
+    <li><b>Wait for the other players.</b> A round seats exactly the game's <code>players</code>. A further entry is refused (<i>"that round already seats … 2 players"</i>).</li>
+    <li><b>Reveal.</b> Between entry close and the round's end, each player sends its move and salt to every node (<code>POST /reveal</code>). A node takes it only if it hashes to that entry's commitment.</li>
+    <li><b>Decide.</b> At the round's end every node pulls the other nodes' reveals (<code>GET /reveals</code>), hands all the moves to the game's rule, and signs each player's result, exactly as it signs a replayed run. Same moves, same rule, so every node signs the same result.</li>
+    <li><b>Pay.</b> The result goes through the normal settlement, unchanged:</li>
+  </ol>
+  <div class="tbl"><table><thead><tr><th>What happened</th><th>Result the nodes sign</th><th>Money</th></tr></thead><tbody>
+    <tr><td>You won</td><td>DELIVERED, score 2</td><td>your stake back plus the losers' stakes</td></tr>
+    <tr><td>A draw</td><td>DELIVERED, score 1</td><td>everyone keeps their own stake</td></tr>
+    <tr><td>You lost</td><td>FAILED</td><td>your stake goes to the winner</td></tr>
+    <tr><td>You did not reveal</td><td>FORFEIT</td><td>your stake goes to the winner (a lone revealer wins)</td></tr>
+    <tr><td>Fewer players than the game needs entered</td><td>VOID for everyone</td><td>not played: every stake comes back</td></tr>
+  </tbody></table></div>
+  <h3>Build it</h3>
+  <ol class="steps">
+    <li><b>Write the rule</b>
+      <p>One function: it gets the moves of the players who revealed and says WIN, DRAW or LOSS for each. Like a core it must be pure: same moves, same answer, on every machine.</p>
+<pre>// plugin/decide.js - Rock Paper Scissors: 0 rock, 1 paper, 2 scissors
+export const DECIDE = {
+  name: 'rock-paper-scissors decide v1',
+  decide(moves) {                                   // [{ key, move }]  -&gt;  { [key]: 'WIN' | 'DRAW' | 'LOSS' }
+    const shown = [...new Set(moves.map((m) =&gt; m.move))];
+    const out = {};
+    if (shown.length !== 2) { for (const m of moves) out[m.key] = 'DRAW'; return out; }
+    const beats = (a, b) =&gt; (a - b + 3) % 3 === 1;
+    const winning = beats(shown[0], shown[1]) ? shown[0] : shown[1];
+    for (const m of moves) out[m.key] = m.move === winning ? 'WIN' : 'LOSS';
+    return out;
+  },
+};</pre>
+      <p>Its id is the SHA-256 of its file, and the manifest names it in <code>cores[]</code>, so a node installs and checks it just like a replay core.</p></li>
+    <li><b>Write the manifest</b>
+<pre>export const BODY = {
+  gameName: 'rock-paper-scissors', version: 1, parentManifestId: NO_PARENT,
+  resultType: RESULT_TYPE.HEAD_TO_HEAD,
+  cores: [{ hash: sha256(decide.js), configs: [sha256('rock-paper-scissors-config:v1')] }],
+  runTicksMax: 0,                                   // no run
+  payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4,
+  minScore: 2,                                      // a win scores 2, a draw 1
+  players: 2,                                       // 2 to 16: a round is played only with all of them
+  moveCount: 3,                                     // 2 to 32 moves
+  revealWindowMs: 120000n,                          // 10 s to 1 h: the longest a round may give for reveals
+  roundPeriodMs: 0n, clients: [sha256(games/rock-paper-scissors/index.html)], gameDonationSetId,
+};</pre>
+      <p>Sign it and hand it to the nodes exactly as in <a href="#game">Implement a game</a> (<code>arena-donor sign</code>, a module exporting <code>GAME</code>, listed in <code>ARENA_GAMES</code>).</p></li>
+    <li><b>Write the client</b>
+      <p>Besides <code>rows</code>, <code>identity</code> and <code>back</code>, a head-to-head client gets these from <code>window.parent.ARENA_GAME</code>. The salt, the stake and the keys stay the engine's.</p>
+<pre>const A = window.parent.ARENA_GAME;
+A.headToHead;          // { players, moveCount } - or null for another kind of game
+A.hide(roundId, move); // enter the round with this move hidden
+A.hidden(roundId);     // this tab's hidden move in that round (kept in the tab until revealed)
+A.hiddenAll();         // every move this tab hid in this game - a round leaves the rows at its entry close
+A.reveal(roundId);     // after entry close: send the move and salt to every node
+A.reveals(roundId);    // the moves the nodes hold: { [entryId]: move }
+A.result(roundId);     // the round as the nodes hold it: entries, each signed outcome and how many nodes signed it</pre>
+      <p>Show the players <code>A.result</code>, the signed result, not a verdict your page worked out itself. Rock Paper Scissors' client shows "waiting for an opponent (1 of 2)" before entry close, reveals at entry close, and then "You win - signed by 2 nodes".</p></li>
+    <li><b>Keep it apart from other games</b>
+      <p>A page shows one game's rounds at a time: on nodes that host Tick Tock, Next Block and Rock Paper Scissors, the truck's lobby lists only its own rounds, and Rock Paper Scissors loads none of the truck.</p></li>
+    <li><b>Try it on your own machine</b>
+<pre>ARENA_PAGE=&lt;a page with games/rock-paper-scissors/index.html&gt; node packages/rock-paper-scissors/tools/demo-regtest.mjs ./work
+# a private test chain, two nodes hosting both games, one free round always open; prints the lobby link</pre>
+      <p>Open the link twice in two browser profiles (two players) and add <code>&amp;game=rock-paper-scissors</code>.</p></li>
+  </ol>
 
   <h2 id="market">Implement a prediction market</h2>
   <p>A market is a round where players pick one outcome and the right picks share the stakes of the wrong ones. It uses the same custody, nodes and settlement as a game, but there is no core and no run: the result is the outcome reported by the attestors you name.</p>
