@@ -26,7 +26,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { batchId, batchDeclineId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
+import { bookBatchId, batchDeclineId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
 import { bookLedger, positionFilled } from '../../arena-protocol/src/book-ledger.js';
 import { entryFeeBpsOf, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -162,7 +162,7 @@ export class OrderBook {
     const sells = [];
     for (const s of record.sells || []) { const x = this.#sellStands(roundIdBytes, s); if (!x.ok) return x; ids.push(x.id); sells.push(x.sell); }
     let id;
-    try { id = batchId({ roundId: roundIdBytes, k: BigInt(record.k), orderIds: ids }); } catch (e) { return refuse(e.message, 400); }
+    try { id = bookBatchId({ roundId: roundIdBytes, k: BigInt(record.k), orderIds: ids }); } catch (e) { return refuse(e.message, 400); }
     return { ok: true, id: toHex(id), sells };
   }
 

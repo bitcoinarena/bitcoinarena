@@ -17,6 +17,7 @@ import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { handLock } from './page-lock.js';
+import { cancelId, sellId, PRICE_SCALE } from '../../arena-protocol/src/order-book.js';
 
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
@@ -179,3 +180,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
   }
   return lines;
 }
+
+// AN ORDER'S OWN MESSAGES (kanban #237): what its session key signs to cancel it, or to sell its shares back, before the
+// market resolves (protocol order-book.js) - here so the page's bundle carries them (the bundle takes no import aliases)
+export function orderCancelId({ roundId, entryId }) { return cancelId({ roundId, entryId }); }
+export function orderSellId({ roundId, entryId, outcome, price, sharesMsat, nonce }) { return sellId({ roundId, entryId, outcome, price, sharesMsat, nonce }); }
+/** The order book's price scale: a limit price of PRICE_SCALE is certainty (1 sat per share). */
+export const ORDER_PRICE_SCALE = Number(PRICE_SCALE);
