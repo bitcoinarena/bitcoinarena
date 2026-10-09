@@ -424,11 +424,22 @@ export function encodeEntryContract(e) {
     w.u8(PICK_MARKER);
     w.u8(e.pick);
   }
+  // THE HIDDEN MOVE (kanban #233): on a round of a head-to-head game the entry names H(round_id || session key || move ||
+  // salt) (head-to-head.js), revealed after entry close. WRITTEN ONLY WHEN THERE IS ONE, after its own marker: every
+  // other entry keeps exactly its bytes and its id. An entry backs a pick or hides a move, never both.
+  if (e.commit !== undefined && e.commit !== null) {
+    if (e.pick !== undefined && e.pick !== null) throw new Error('an entry backs an outcome or hides a move, not both');
+    if (!(e.commit instanceof Uint8Array) || e.commit.length !== 32) throw new Error('a move commitment is 32 bytes');
+    w.u8(COMMIT_MARKER);
+    w.bytes32(e.commit);
+  }
   return w.finish();
 }
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
 export const PICK_MARKER = 0xa7;
+/** The byte before an entry's move commitment (head-to-head), likewise never a donation list's first byte. */
+export const COMMIT_MARKER = 0xa8;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 export const STAKE_POINT_BYTES = 33;
@@ -463,13 +474,15 @@ export function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER) {
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
   }
   if (r.at < bytes.length) {
-    if (r.u8() !== PICK_MARKER) throw new Error('these bytes carry something after the entry that is not a pick');
-    e.pick = r.u8();
+    const marker = r.u8();
+    if (marker === PICK_MARKER) e.pick = r.u8();
+    else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
+    else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
   }
   r.end();
   return e;

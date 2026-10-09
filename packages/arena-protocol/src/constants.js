@@ -348,6 +348,8 @@ export const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
+  // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.
+  headToHeadCommit: 'ARENA/v1/HeadToHeadCommit',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };
