@@ -22,13 +22,13 @@ import { DELIVERED, FAILED, FORFEIT } from './payout.js';
 export const SALT_BYTES = 32;
 export const VERDICT = Object.freeze({ WIN: 'WIN', DRAW: 'DRAW', LOSS: 'LOSS' });
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const h2hIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const h2hSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** The commitment a player names at entry. */
 export function headToHeadCommit({ roundId, entryKey, move, salt }) {
-  if (!is32(roundId)) throw new Error('a commitment names its 32-byte round');
-  if (!is32(entryKey)) throw new Error('a commitment names its 32-byte entry key');
+  if (!h2hIs32(roundId)) throw new Error('a commitment names its 32-byte round');
+  if (!h2hIs32(entryKey)) throw new Error('a commitment names its 32-byte entry key');
   if (!Number.isInteger(move) || move < 0 || move > 255) throw new Error('a move is a byte');
   if (!(salt instanceof Uint8Array) || salt.length !== SALT_BYTES) throw new Error(`a salt is ${SALT_BYTES} bytes`);
   const w = new Writer();
@@ -38,7 +38,7 @@ export function headToHeadCommit({ roundId, entryKey, move, salt }) {
 
 /** Does this reveal stand for that entry: in the window, a move the game offers, and the commitment it named? */
 export function revealStands({ roundId, entryKey, commit, move, salt, moveCount, atMs, entryCloseMs, revealWindowMs }) {
-  if (!is32(commit)) return { ok: false, why: 'that entry named no 32-byte commitment' };
+  if (!h2hIs32(commit)) return { ok: false, why: 'that entry named no 32-byte commitment' };
   if (typeof atMs !== 'bigint' || typeof entryCloseMs !== 'bigint' || typeof revealWindowMs !== 'bigint')
     return { ok: false, why: 'a reveal is judged against the round\'s clock' };
   if (atMs < entryCloseMs) return { ok: false, why: 'a move is revealed only after entry close: before it, the others could still answer it' };
@@ -46,7 +46,7 @@ export function revealStands({ roundId, entryKey, commit, move, salt, moveCount,
   if (!Number.isInteger(move) || move < 0 || move >= moveCount) return { ok: false, why: `move ${move} is not one of the game's ${moveCount}` };
   let h;
   try { h = headToHeadCommit({ roundId, entryKey, move, salt }); } catch (e) { return { ok: false, why: e.message }; }
-  if (!same(h, commit)) return { ok: false, why: 'that move and salt are not what this entry committed to' };
+  if (!h2hSame(h, commit)) return { ok: false, why: 'that move and salt are not what this entry committed to' };
   return { ok: true };
 }
 
