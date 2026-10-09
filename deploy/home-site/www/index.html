@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena · Play for sats. Settle on Bitcoin.</title>
+<meta name="description" content="Play decentralized games and markets for sats. No custodian, no central operator: independent nodes verify every result and sats settle over Lightning. Build your own games or markets, or run a node and earn fees.">
+<link rel="icon" href="/favicon.ico">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07090d; --panel: #0e131b; --line: #1d2633; --text: #e8edf3; --dim: #8d99a8;
+    --btc: #f7931a; --gold: #ffd166; --bull: #2fd38a; --bear: #ff5d5d; --cyan: #4fd1ff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 400 17px/1.55 Inter, system-ui, sans-serif; overflow-x: hidden; }
+  a { color: inherit; }
+  h1, h2, h3, .brand { font-family: "Space Grotesk", Inter, sans-serif; letter-spacing: -0.02em; }
+  .wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+
+  /* NAV */
+  nav { position: fixed; inset: 0 0 auto 0; z-index: 20; backdrop-filter: blur(10px); background: rgba(7,9,13,.55); border-bottom: 1px solid rgba(255,255,255,.06); }
+  nav .wrap { display: flex; align-items: center; gap: 24px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; text-decoration: none; }
+  .brand i { width: 30px; height: 30px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; font-weight: 800; }
+  nav .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; color: var(--dim); }
+  nav .links a { text-decoration: none; } nav .links a:hover { color: var(--text); }
+  @media (max-width: 720px) { nav .links { display: none; } }
+
+  /* HERO */
+  .hero { position: relative; min-height: min(100svh, 920px); display: flex; align-items: flex-end; padding: 120px 0 72px; overflow: hidden; }
+  .hero .bg { position: absolute; inset: -4%; background: url(img/hero.jpg) 60% 8% / cover no-repeat; animation: drift 26s ease-in-out infinite alternate; filter: saturate(1.15) contrast(1.05); }
+  .hero::after { content: ""; position: absolute; inset: 0; background:
+      linear-gradient(90deg, rgba(7,9,13,.92) 0%, rgba(7,9,13,.72) 38%, rgba(7,9,13,.15) 72%, transparent 100%),
+      radial-gradient(120% 70% at 70% 20%, rgba(247,147,26,.18), transparent 60%),
+      linear-gradient(180deg, rgba(7,9,13,.35) 0%, rgba(7,9,13,.15) 35%, rgba(7,9,13,.88) 78%, var(--bg) 100%); }
+  @keyframes drift { from { transform: scale(1.04) translate3d(0,0,0); } to { transform: scale(1.12) translate3d(-2%, 1.5%, 0); } }
+  .hero .wrap { position: relative; z-index: 2; }
+  .chip { display: inline-flex; align-items: center; gap: 10px; padding: 7px 14px; border-radius: 999px; background: rgba(14,19,27,.75); border: 1px solid rgba(255,255,255,.12); font: 600 13px/1 Inter; color: var(--gold); letter-spacing: .02em; }
+  .pills { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px; font: 700 15px/1 "Space Grotesk", Inter, sans-serif; letter-spacing: .01em;
+    background: rgba(247,147,26,.14); border: 1px solid rgba(247,147,26,.55); color: #ffd9a6; }
+  .pill svg { width: 16px; height: 16px; }
+  .chip b { width: 8px; height: 8px; border-radius: 50%; background: var(--bull); box-shadow: 0 0 0 0 rgba(47,211,138,.7); animation: pulse 1.6s infinite; }
+  @keyframes pulse { to { box-shadow: 0 0 0 10px rgba(47,211,138,0); } }
+  .hero h1 { font-size: clamp(40px, 6.6vw, 88px); line-height: .98; margin: 22px 0 16px; max-width: 18ch; }
+  .hero h1 em { display: block; }
+  .hero p.sub { font-size: clamp(18px, 2.1vw, 23px); color: #d5dde6; margin: 0 0 8px; max-width: 52ch; font-weight: 500; }
+  .hero p.eco { font: 600 clamp(14px, 1.5vw, 16px)/1.4 "Space Grotesk", Inter, sans-serif; letter-spacing: .04em; color: var(--gold); margin: 0 0 30px; }
+  .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--btc), var(--gold)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.lead { font-size: clamp(17px, 2vw, 21px); color: #c9d2dc; max-width: 46ch; margin: 0 0 32px; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 14px; }
+  .btn { display: inline-flex; align-items: center; gap: 10px; padding: 17px 26px; border-radius: 14px; font: 600 17px/1 Inter; text-decoration: none; transition: transform .15s, box-shadow .15s; }
+  .btn:hover { transform: translateY(-2px); }
+  .btn.primary { background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; box-shadow: 0 10px 30px rgba(247,147,26,.35); }
+  .btn.ghost { background: rgba(14,19,27,.7); color: var(--text); border: 1px solid rgba(255,255,255,.18); }
+  .btn svg { width: 18px; height: 18px; }
+  .testnet { margin-top: 20px; font-size: 13px; color: var(--dim); }
+  .testnet b { color: var(--bull); font-weight: 600; }
+  @media (max-width: 720px) { .hero { min-height: auto; padding: 104px 0 44px; } .hero h1 { margin-top: 16px; } .btn { padding: 15px 20px; font-size: 16px; } }
+
+  /* STATS STRIP */
+  .strip { border-block: 1px solid var(--line); background: linear-gradient(90deg, rgba(247,147,26,.06), transparent 40%, rgba(79,209,255,.05)); }
+  .strip .wrap { display: grid; grid-template-columns: repeat(3, 1fr); }
+  .strip div { padding: 26px 8px; text-align: center; }
+  .strip strong { display: block; font: 700 clamp(21px, 2.5vw, 32px)/1.1 "Space Grotesk"; color: var(--text); white-space: nowrap; }
+  .strip span { font-size: 14px; color: var(--dim); }
+  @media (max-width: 720px) { .strip .wrap { grid-template-columns: 1fr; } .strip div { padding: 16px 8px; } .strip div + div { border-top: 1px solid var(--line); } }
+
+  section { padding: 96px 0; }
+  @media (max-width: 720px) { section { padding: 64px 0; } }
+  .intro { color: #c9d2dc; font-size: clamp(17px, 1.9vw, 20px); max-width: 52ch; margin: 0; }
+  .loop { font: 700 clamp(20px, 2.6vw, 30px)/1.2 "Space Grotesk", Inter, sans-serif; margin: 56px 0 0; }
+  .loop span { color: var(--gold); }
+  .kicker { font: 600 13px/1 Inter; letter-spacing: .14em; text-transform: uppercase; color: var(--btc); }
+  h2 { font-size: clamp(32px, 4.6vw, 56px); line-height: 1.03; margin: 14px 0 18px; }
+
+  /* TILES */
+  .tiles { display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: auto auto; gap: 18px; margin-top: 40px; }
+  .tile { position: relative; border-radius: 22px; overflow: hidden; min-height: 300px; background: var(--panel); border: 1px solid var(--line); isolation: isolate; }
+  .tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: -2; transition: transform .6s; }
+  .tile:hover img { transform: scale(1.05); }
+  .tile::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, transparent 30%, rgba(7,9,13,.92)); }
+  .tile .t { position: absolute; left: 24px; right: 24px; bottom: 22px; }
+  .tile h3 { margin: 0 0 6px; font-size: 26px; }
+  .tile p { margin: 0; color: #c3cdd8; font-size: 16px; }
+  .tile.big { grid-row: span 2; min-height: 620px; }
+  @media (max-width: 860px) { .tiles { grid-template-columns: 1fr; } .tile.big { grid-row: auto; min-height: 380px; } }
+
+  /* STEPS */
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 40px; }
+  .step { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+  .step img { width: 100%; aspect-ratio: 4/3; object-fit: contain; display: block; background: #05070a; padding: 10px; }
+  .step div { padding: 14px 16px 18px; }
+  .step b { color: var(--gold); font: 700 14px "Space Grotesk"; }
+  .step p { margin: 4px 0 0; font-size: 15px; color: #c3cdd8; }
+  @media (max-width: 860px) { .steps { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .steps { gap: 10px; } .step div { padding: 10px 12px 14px; } .step p { font-size: 14px; } }
+
+  /* SPLIT */
+  .split { background: radial-gradient(80% 120% at 0% 0%, rgba(247,147,26,.10), transparent 60%), var(--panel); border: 1px solid var(--line); border-radius: 28px; padding: clamp(28px, 5vw, 64px); }
+  .split h2 { max-width: 18ch; }
+  .split h2 em { font-style: normal; color: var(--gold); }
+  .bar { display: flex; height: 64px; border-radius: 16px; overflow: hidden; margin: 36px 0 18px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
+  .bar div { display: grid; place-items: center; font: 700 15px "Space Grotesk"; color: #0b0f14; white-space: nowrap; overflow: hidden; }
+  .bar .pool { flex: 90; background: linear-gradient(90deg, #1f6f4f, var(--bull)); color: #04130c; }
+  .bar .nodes { flex: 5; background: var(--cyan); }
+  .bar .game { flex: 2.5; background: var(--gold); }
+  .bar .proto { flex: 2.5; background: var(--btc); }
+  .legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .legend div { font-size: 15px; color: #c3cdd8; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px; vertical-align: -1px; }
+  .legend strong { display: block; font: 700 22px "Space Grotesk"; color: var(--text); }
+  @media (max-width: 720px) { .legend { grid-template-columns: repeat(2, 1fr); } }
+
+  /* MARKETS */
+  .markets { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: center; }
+  .ticker { background: #05070a; border: 1px solid var(--line); border-radius: 22px; padding: 26px; font-family: "Space Grotesk"; }
+  .ticker .row { display: flex; justify-content: space-between; align-items: baseline; }
+  .ticker .q { font-size: 22px; font-weight: 700; }
+  .ticker .clock { color: var(--gold); font-size: 15px; }
+  .ticker .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+  .ticker .side { border-radius: 14px; padding: 18px; text-align: center; font-weight: 700; font-size: 20px; }
+  .side.up { background: rgba(47,211,138,.12); color: var(--bull); border: 1px solid rgba(47,211,138,.35); }
+  .side.down { background: rgba(255,93,93,.10); color: var(--bear); border: 1px solid rgba(255,93,93,.35); }
+  .ticker small { display: block; margin-top: 16px; color: var(--dim); font: 400 14px Inter; }
+  .soon { display: inline-block; margin-top: 18px; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255,209,102,.4); color: var(--gold); font: 600 13px Inter; }
+  @media (max-width: 860px) { .markets { grid-template-columns: 1fr; } }
+
+  /* BUILD */
+  .build { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 36px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 26px; text-decoration: none; transition: border-color .2s, transform .2s; }
+  .card:hover { border-color: rgba(247,147,26,.6); transform: translateY(-3px); }
+  .card .ic { font-size: 28px; }
+  .card h3 { margin: 12px 0 6px; font-size: 22px; }
+  .card p { margin: 0; color: #b9c4cf; font-size: 15px; }
+  .card span { display: inline-block; margin-top: 14px; color: var(--btc); font-weight: 600; font-size: 15px; }
+  @media (max-width: 860px) { .build { grid-template-columns: 1fr; } }
+
+  footer { border-top: 1px solid var(--line); padding: 34px 0 48px; color: var(--dim); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 18px; justify-content: space-between; }
+
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity .7s ease, transform .7s ease; }
+  .reveal.on { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .hero .bg, .chip b { animation: none; } .reveal { opacity: 1; transform: none; } }
+
+  /* TRUST */
+  .trust { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 36px; }
+  .why { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+  .why h3 { margin: 0 0 8px; font-size: 19px; }
+  .why h3 i { font-style: normal; color: var(--btc); margin-right: 8px; }
+  .why p { margin: 0; color: #b9c4cf; font-size: 15px; }
+  @media (max-width: 960px) { .trust { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .trust { grid-template-columns: 1fr; } }
+
+  /* ARCHITECTURE */
+  .arch { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; margin-top: 36px; border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+  .arch div { padding: 20px 18px; background: #05070a; position: relative; }
+  .arch div + div { border-left: 1px solid var(--line); }
+  .arch b { display: block; font: 700 13px/1 Inter; letter-spacing: .12em; text-transform: uppercase; color: var(--cyan); margin-bottom: 10px; }
+  .arch p { margin: 0; font-size: 15px; color: #c3cdd8; }
+  @media (max-width: 960px) { .arch { grid-template-columns: 1fr; } .arch div + div { border-left: 0; border-top: 1px solid var(--line); } }
+  .more { display: inline-block; margin-top: 22px; color: var(--btc); font-weight: 600; text-decoration: none; }
+
+  /* FINAL CTA */
+  .cta-end { text-align: center; }
+  .cta-end h2 { margin-inline: auto; max-width: 20ch; }
+  .cta-end .ctas { justify-content: center; margin-top: 26px; }
+  .cta-end .who { margin-top: 14px; color: var(--dim); font-size: 14px; }
+</style>
+</head>
+<body>
+<nav><div class="wrap">
+  <a class="brand" href="#top"><i>₿</i>Bitcoin Arena</a>
+  <div class="links"><a href="#play">Games</a><a href="#markets">Markets</a><a href="#build">Build</a><a href="#run">Run a Node</a><a href="https://doc.bitcoin-arena.io/">Docs</a></div>
+</div></nav>
+
+<header class="hero" id="top">
+  <div class="bg" role="img" aria-label="Tick Tock, Next Block: the mempool building above a war on the BTC chart"></div>
+  <div class="wrap">
+    <span class="chip"><b></b><span id="block">Bitcoin block · live</span></span>
+    <h1>Play for sats. <em>Settle on Bitcoin.</em></h1>
+    <p class="sub">Decentralized games and markets. No custodian. No central operator.</p>
+    <p class="eco">Play. Build. Run a node. Earn fees.</p>
+    <div class="ctas">
+      <a class="btn primary" href="https://testnet.bitcoin-arena.io/">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Launch Games</a>
+      <a class="btn ghost" href="#markets">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>Explore Markets</a>
+    </div>
+    <div class="testnet"><b>●</b> On Bitcoin testnet. Play with test sats.</div>
+  </div>
+</header>
+
+<div class="strip"><div class="wrap">
+  <div><strong>Decentralized</strong><span>No central server or company.</span></div>
+  <div><strong>Non-custodial</strong><span>Your sats stay in your control.</span></div>
+  <div><strong>Verified by nodes</strong><span>Independent nodes verify every result.</span></div>
+</div></div>
+
+<section id="play"><div class="wrap">
+  <div class="kicker reveal">The flagship game</div>
+  <h2 class="reveal">Tick Tock, Next Block</h2>
+  <p class="intro reveal">Haul the mempool through a war. Real Bitcoin transactions. Live BTC price action. One block per round.</p>
+  <div class="tiles">
+    <div class="tile big reveal"><img src="img/hero.jpg" alt="The mempool building and the war front" loading="lazy">
+      <div class="t"><h3>The mempool is your cargo</h3><p>The transactions waiting for the next block, loaded onto your truck.</p></div></div>
+    <div class="tile reveal"><img src="img/war.jpg" alt="A bomber over the front" loading="lazy">
+      <div class="t"><h3>The price is the front</h3><p>The live BTC chart moves the war between bulls and bears.</p></div></div>
+    <div class="tile reveal"><img src="img/mempool.jpg" alt="The mempool building" loading="lazy">
+      <div class="t"><h3>The block ends the round</h3><p>Fees, blocks and transactions on the map are Bitcoin's own, right now.</p></div></div>
+  </div>
+
+  <p class="loop reveal" id="how">Stake. <span>Cross the front.</span> Deliver. <span>Win sats.</span></p>
+  <div class="steps">
+    <div class="step reveal"><img src="img/howto-1.jpg" alt="" loading="lazy"><div><b>1 · Stake</b><p>100, 500 or 1,000 sats into a round with other players.</p></div></div>
+    <div class="step reveal"><img src="img/howto-2.jpg" alt="" loading="lazy"><div><b>2 · Cross the front</b><p>Drive close to the price war. Closer scores more.</p></div></div>
+    <div class="step reveal"><img src="img/howto-3.jpg" alt="" loading="lazy"><div><b>3 · Deliver</b><p>Reach the miners' drop-off before the block.</p></div></div>
+    <div class="step reveal"><img src="img/howto-4.jpg" alt="" loading="lazy"><div><b>4 · Win sats</b><p>Paid from the players who didn't make it, over Lightning.</p></div></div>
+  </div>
+</div></section>
+
+<section id="trust"><div class="wrap">
+  <div class="kicker reveal">Why it can be trusted</div>
+  <h2 class="reveal">Nobody to trust with your sats.</h2>
+  <div class="trust">
+    <div class="why reveal"><h3><i>01</i>No central server</h3><p>Rounds run on independent nodes. Any bonded operator can host them; no company runs the game.</p></div>
+    <div class="why reveal"><h3><i>02</i>No custodian</h3><p>Your stake is locked in a federation contract, not paid to an operator. No single party can take it.</p></div>
+    <div class="why reveal"><h3><i>03</i>Every run replayed</h3><p>The round's nodes replay every input you sent. A result counts only when enough of them sign the same one.</p></div>
+    <div class="why reveal"><h3><i>04</i>Settled over Lightning</h3><p>Winnings go back to your wallet as sats over Lightning. Withdraw to any Lightning wallet.</p></div>
+  </div>
+</div></section>
+
+<section id="markets"><div class="wrap markets">
+  <div class="reveal">
+    <div class="kicker">Prediction markets</div>
+    <h2>Markets settled in sats.</h2>
+    <p style="color:#c3cdd8;max-width:44ch">Create or join decentralized markets with outcomes verified by independent nodes. No custodian. No central operator. Same engine, same settlement as the games.</p>
+    <span class="soon">Coming next</span>
+  </div>
+  <div class="ticker reveal" aria-label="An example market">
+    <div class="row"><span class="q">Example · BTC/USD up or down</span><span class="clock" id="mclock">closes in 14:59</span></div>
+    <div class="sides"><div class="side up">▲ Up</div><div class="side down">▼ Down</div></div>
+    <small>Up or down. Every 15 minutes. One market anyone could create.</small>
+  </div>
+</div></section>
+
+<section id="build"><div class="wrap">
+  <div class="kicker reveal">Build · Create · Run</div>
+  <h2 class="reveal">One engine. Your game, your market.</h2>
+  <div class="build">
+    <a class="card reveal" href="https://doc.bitcoin-arena.io/#game"><div class="ic">🎮</div><h3>Build a game</h3><p>Create multiplayer games that settle directly in sats. Sign your game; any node can host it, no approval needed.</p><span>Build a Game →</span></a>
+    <a class="card reveal" href="https://doc.bitcoin-arena.io/#market"><div class="ic">📈</div><h3>Create a market</h3><p>Launch prediction markets using the same decentralized settlement infrastructure. Name the outcomes and who reports the result.</p><span>Create a Market →</span></a>
+    <a class="card reveal" id="run" href="https://doc.bitcoin-arena.io/#run"><div class="ic">🛰️</div><h3>Run a node</h3><p>Verify outcomes and earn a share of protocol fees. Bond your node on Bitcoin and host the games you choose.</p><span>Run a Node →</span></a>
+  </div>
+</div></section>
+
+<section id="split"><div class="wrap">
+  <div class="split reveal">
+    <div class="kicker">Economics</div>
+    <h2>Most of the stake <em>stays in the game.</em></h2>
+    <div class="bar" aria-label="A 10,000 sat stake">
+      <div class="pool">9,000 in play</div><div class="nodes"></div><div class="game"></div><div class="proto"></div>
+    </div>
+    <div class="legend">
+      <div><i style="background:var(--bull)"></i>Stays in play<strong>90%</strong></div>
+      <div><i style="background:var(--cyan)"></i>Protocol fee to the nodes that verify the round<strong>5%</strong></div>
+      <div><i style="background:var(--gold)"></i>Optional donation to the game's developer<strong>2.5%</strong></div>
+      <div><i style="background:var(--btc)"></i>Optional donation to the protocol developers<strong>2.5%</strong></div>
+    </div>
+    <p style="color:var(--dim);font-size:15px;margin:22px 0 0">Donations are the player's choice: on by default, down to zero in settings.</p>
+  </div>
+</div></section>
+
+<section id="arch"><div class="wrap">
+  <div class="kicker reveal">Under the hood</div>
+  <h2 class="reveal">Built on Bitcoin, end to end.</h2>
+  <div class="arch reveal">
+    <div><b>Bonds</b><p>Every node posts a bond on Bitcoin. No bond, no seat.</p></div>
+    <div><b>Committees</b><p>Each round's committee is drawn from the bonded nodes by a Bitcoin block hash.</p></div>
+    <div><b>Replay</b><p>Games are deterministic. Nodes re-run every input and sign the result.</p></div>
+    <div><b>Custody</b><p>Stakes lock in a federation run by bonded nodes, never in one company's wallet.</p></div>
+    <div><b>Settlement</b><p>Payouts and withdrawals move as sats over Lightning.</p></div>
+  </div>
+  <a class="more reveal" href="https://doc.bitcoin-arena.io/#how">How Bitcoin Arena works →</a>
+</div></section>
+
+<section id="start"><div class="wrap cta-end">
+  <div class="kicker reveal">Start</div>
+  <h2 class="reveal">Play it. Build on it. Run it.</h2>
+  <div class="ctas reveal">
+    <a class="btn primary" href="https://testnet.bitcoin-arena.io/"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Launch Games</a>
+    <a class="btn ghost" href="https://doc.bitcoin-arena.io/#game">Build a Game</a>
+    <a class="btn ghost" href="https://doc.bitcoin-arena.io/#market">Create a Market</a>
+    <a class="btn ghost" href="https://doc.bitcoin-arena.io/#run">Run a Node</a>
+  </div>
+  <div class="who reveal">On Bitcoin testnet. Play with test sats. The node API and guides are in the docs.</div>
+</div></section>
+
+<footer><div class="wrap">
+  <span>Bitcoin Arena · testnet</span>
+  <span><a href="https://testnet.bitcoin-arena.io/">Launch Games</a> · <a href="#markets">Explore Markets</a> · <a href="https://doc.bitcoin-arena.io/">Docs</a></span>
+</div></footer>
+
+<script>
+  // THE LIVE BLOCK: the tip's height from mempool.space; the chip stays as it is if that does not answer
+  fetch('https://mempool.space/api/blocks/tip/height').then((r) => r.ok ? r.text() : Promise.reject())
+    .then((h) => { document.getElementById('block').textContent = 'Bitcoin block #' + Number(h).toLocaleString('en-US') + ' · live'; })
+    .catch(() => {});
+  // the market's clock: the next 15-minute boundary
+  const mc = document.getElementById('mclock');
+  const tick = () => { const ms = 900000 - (Date.now() % 900000), s = Math.floor(ms / 1000);
+    mc.textContent = 'closes in ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  tick(); setInterval(tick, 1000);
+  // sections fade in as they arrive
+  const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } }), { threshold: 0.12 });
+  document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+</script>
+</body>
+</html>
