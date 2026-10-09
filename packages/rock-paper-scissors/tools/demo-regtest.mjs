@@ -15,7 +15,9 @@ import { standUpRound } from '../../arena-node/tools/round-2of2.mjs';
 import { bitcoindRpc } from '../../arena-node/src/chain-rpc.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { ROCK_PAPER_SCISSORS, RPS_DECIDE_CORE } from '../plugin/rock-paper-scissors.js';
-import { fromHex } from '../../arena-protocol/src/hash.js';
+import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { testAttestedGame } from '../../arena-node/test/plugins/sign.js';
+import { UP_DOWN_OUTCOMES, upDownWindow } from '../../arena-protocol/src/up-down.js';
 
 const env = process.env;
 const dir = process.argv[2];
@@ -38,8 +40,12 @@ const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPC}/`, cookiePath: join(rt, 
 // reveal window (entry close to the round's end) about 20 s, inside the game's 120 s
 const RPS_FIELDS = { gameId: ROCK_PAPER_SCISSORS.gameId, simCoreHash: fromHex(RPS_DECIDE_CORE.hash),
   configHash: fromHex([...RPS_DECIDE_CORE.configs.keys()][0]), blockTicks: 600, startDeadlineTicks: 300, minScore: 2 };
+// AND AN UP/DOWN MARKET'S ORDER BOOK (kanban #278): the seats also host a two-outcome test market (Polymarket's BTC Up or Down
+// 15m, its attestors test keys) and keep one Up/Down round open to the next quarter hour, so each seat runs its order book
+// for a live round (GET /book?round=). Regtest only: test keys, free rounds.
+const UPDOWN = testAttestedGame({ name: 'btc-updown-15m', outcomes: [...UP_DOWN_OUTCOMES] });
 const round = await standUpRound({ host: '127.0.0.1', portA: 21651, portB: 21652, rpc, cli, page: env.ARENA_PAGE,
-  plugins: [NEXTBLOCK, ROCK_PAPER_SCISSORS], closeAtEnd: true });
+  plugins: [NEXTBLOCK, ROCK_PAPER_SCISSORS, UPDOWN.registration], closeAtEnd: true });
 say({ step: 'up', nodes: round.nodes, lobby: round.lobbyUrl });
 // 15-SECOND ROUNDS (kanban #279, the owner 2026-10-09 15:00: "rounds are 15 seconds"): each round takes picks for 15 s, and the
 // next one's 15 s begin as this one's end - entry closes on a 15 s grid. A round is joinable only once both seats took it,
@@ -64,6 +70,23 @@ const keep = async () => {
 };
 await keep();
 setInterval(keep, 2000);
+// ONE UP/DOWN ROUND OPEN AT A TIME: its entries (its orders) close at the end of the quarter hour after the one now
+const UPDOWN_FIELDS = { gameId: UPDOWN.registration.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32) };
+let marketClose = 0n, marketOpening = false;
+const keepMarket = async () => {
+  const now = BigInt(Date.now());
+  if (marketOpening || marketClose > now + 60000n) return;
+  marketOpening = true;
+  try {
+    const close = upDownWindow(now + 900000n).endMs;
+    const id = await round.openNext({ fields: UPDOWN_FIELDS, entryAfterStartMs: Number(close - (BigInt(Date.now()) + 62000n)) });
+    const held = round.rounds().find((r) => r.id === id);
+    marketClose = held ? BigInt(held.entryCloseMs) : close;
+    say({ step: 'opened', game: 'btc-updown-15m', round: id, entryClose: new Date(Number(marketClose)).toISOString(), book: `${round.nodes[0]}/book?round=${id}` });
+  } catch (e) { say({ step: 'market not opened', why: e.message }); } finally { marketOpening = false; }
+};
+await keepMarket();
+setInterval(keepMarket, 10000);
 // THE CHAIN MOVES, so each round finds its beacon and is assigned
 setInterval(() => { try { cli('generatetoaddress', '1', cli('getnewaddress')); } catch (e) { say({ step: 'mine', why: e.message }); } }, 10000);
 say({ step: 'lobby', url: round.lobbyUrl });
