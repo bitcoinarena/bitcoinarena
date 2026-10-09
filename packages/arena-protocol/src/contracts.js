@@ -424,6 +424,18 @@ export function encodeEntryContract(e) {
     w.u8(PICK_MARKER);
     w.u8(e.pick);
   }
+  // A MARKET ORDER (kanban #278, comment 1127): an entry whose pick is bought at a LIMIT PRICE (order-book.js, a fraction of
+  // PRICE_SCALE in whole cents) and that stands until its EXPIRY (ms, 0: until it fills or is cancelled). Its stake lock is
+  // its budget less its fee, its fee lock the fee - the locks every entry has. WRITTEN ONLY WHEN IT IS ONE, after the pick
+  // and its own marker: every other entry keeps exactly its bytes and its id.
+  if (e.limitPrice !== undefined && e.limitPrice !== null) {
+    if (e.pick === undefined || e.pick === null) throw new Error('an order buys an outcome: it names a pick');
+    if (!Number.isInteger(e.limitPrice) || e.limitPrice < 1 || e.limitPrice > 0xffffffff) throw new Error('a limit price is a whole number of the price scale');
+    if (typeof (e.orderExpiryMs ?? 0n) !== 'bigint') throw new Error('an order\'s expiry is BigInt ms');
+    w.u8(ORDER_MARKER);
+    w.u32(e.limitPrice);
+    w.u64(e.orderExpiryMs ?? 0n);
+  }
   // THE HIDDEN MOVE (kanban #233): on a round of a head-to-head game the entry names H(round_id || session key || move ||
   // salt) (head-to-head.js), revealed after entry close. WRITTEN ONLY WHEN THERE IS ONE, after its own marker: every
   // other entry keeps exactly its bytes and its id. An entry backs a pick or hides a move, never both.
@@ -440,6 +452,8 @@ export function encodeEntryContract(e) {
 export const PICK_MARKER = 0xa7;
 /** The byte before an entry's move commitment (head-to-head), likewise never a donation list's first byte. */
 export const COMMIT_MARKER = 0xa8;
+/** The byte before a market order's limit price and expiry (kanban #278), after its pick. */
+export const ORDER_MARKER = 0xa9;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 export const STAKE_POINT_BYTES = 33;
@@ -483,6 +497,11 @@ export function decodeEntryContract(bytes) {
     if (marker === PICK_MARKER) e.pick = r.u8();
     else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
     else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
+    if (marker === PICK_MARKER && r.at < bytes.length) {
+      if (r.u8() !== ORDER_MARKER) throw new Error('these bytes carry something after the pick that is not an order');
+      e.limitPrice = r.u32();
+      e.orderExpiryMs = r.u64();
+    }
   }
   r.end();
   return e;

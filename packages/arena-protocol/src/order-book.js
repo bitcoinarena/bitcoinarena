@@ -96,6 +96,14 @@ const demandAt = (o, q) => (q <= o.price ? (o.net * PRICE_SCALE) / q : 0n);
  * `feeBps`: the market's whole fee (entryFeeBpsOf: node fee + donation). Answers { price (of YES, or null if nothing
  * crossed), matchedMsat (the payout matched each side), fills: [{ id, outcome, payoutMsat, costMsat, feeMsat, refundMsat }] }
  * - one row per order, in id order; an unmatched order fills 0 and its whole stake is its refund.
+ *
+ * AN ORDER BACKED BY LOCKS (kanban #278, comment 1127) carries `fullNet` and `fullFee` - its stake lock and its fee lock -
+ * and `net`, what is left of its budget: its fee is then `fullFee x cost / fullNet`, the share of its fee lock its fill
+ * used, the same over one batch or many. A SELL (`sell: true`, `outcome` the outcome sold, `price` the least it takes a
+ * share, `sharesMsat` the payout units sold): selling s of an outcome at >= p is buying s of the other at <= 1 - p, paid
+ * for by the shares already held - an Up and a Down share make one complete set, which pays 1 sat whatever happens. So it
+ * is one more order of the other side, its demand fixed at s; its cost (`costMsat`) is owed out of that set at settlement,
+ * what is left of the set is its proceeds, and its fee is the market's rate of the proceeds.
  */
 export function clearBatch({ orders, feeBps }) {
   if (!Number.isInteger(feeBps) || feeBps < 0 || feeBps >= 10000) throw new Error('a fee is 0 to 9999 bps');
@@ -106,18 +114,25 @@ export function clearBatch({ orders, feeBps }) {
     seen.add(o.id);
     if (o.outcome !== YES && o.outcome !== NO) throw new Error('an order buys outcome 0 or 1');
     if (typeof o.price !== 'bigint' || o.price < 1n || o.price >= PRICE_SCALE) throw new Error('a price is inside the scale');
+    if (o.sell) {
+      if (typeof o.sharesMsat !== 'bigint' || o.sharesMsat <= 0n) throw new Error('a sell names the shares it sells, a positive BigInt');
+      // THE SELL AS A BUY OF THE OTHER SIDE: its limit 1 - p, its demand the shares it sells
+      book.push({ ...o, sold: o.outcome, outcome: 1 - o.outcome, price: PRICE_SCALE - o.price, fixed: o.sharesMsat });
+      continue;
+    }
     if (typeof o.stakeMsat !== 'bigint' || o.stakeMsat <= 0n) throw new Error('a stake is a positive BigInt msat');
-    book.push({ ...o, net: orderNetMsat(o.stakeMsat, feeBps) });
+    book.push({ ...o, net: typeof o.net === 'bigint' ? o.net : orderNetMsat(o.stakeMsat, feeBps) });
   }
   book.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const sides = [book.filter((o) => o.outcome === YES), book.filter((o) => o.outcome === NO)];
+  const want = (o, q) => (o.fixed !== undefined ? (q <= o.price ? o.fixed : 0n) : demandAt(o, q));
 
   // THE CANDIDATE PRICES: every limit, as the price of YES it means
   const candidates = [...new Set(book.map((o) => String(o.outcome === YES ? o.price : PRICE_SCALE - o.price)))].map(BigInt).sort((a, b) => (a < b ? -1 : 1));
   let best = null;
   for (const pi of candidates) {
     const q = [pi, PRICE_SCALE - pi];
-    const d = sides.map((s, k) => s.reduce((t, o) => t + demandAt(o, q[k]), 0n));
+    const d = sides.map((s, k) => s.reduce((t, o) => t + want(o, q[k]), 0n));
     const v = d[0] < d[1] ? d[0] : d[1];
     if (v === 0n) continue;
     const gap = d[0] > d[1] ? d[0] - d[1] : d[1] - d[0];
@@ -130,7 +145,7 @@ export function clearBatch({ orders, feeBps }) {
       // THE SHORT SIDE FILLS WHOLE; THE LONG SIDE BY LIMIT, BETTER FIRST, THE MARGINAL LIMIT PRO RATA
       let left = best.v;
       const byLimit = new Map();
-      for (const o of sides[k]) { const want = demandAt(o, q[k]); if (want > 0n) { const key = String(o.price); if (!byLimit.has(key)) byLimit.set(key, []); byLimit.get(key).push({ o, want }); } }
+      for (const o of sides[k]) { const w = want(o, q[k]); if (w > 0n) { const key = String(o.price); if (!byLimit.has(key)) byLimit.set(key, []); byLimit.get(key).push({ o, want: w }); } }
       const limits = [...byLimit.keys()].map(BigInt).sort((a, b) => (a > b ? -1 : 1));
       for (const lim of limits) {
         if (left === 0n) break;
@@ -149,10 +164,18 @@ export function clearBatch({ orders, feeBps }) {
     const q = o.outcome === YES ? (best ? best.pi : 0n) : (best ? PRICE_SCALE - best.pi : 0n);
     // WHAT THE FILL COSTS, rounded up so the sets are always funded - never above the order's net (its limit bounds it)
     let costMsat = payoutMsat === 0n ? 0n : (payoutMsat * q + PRICE_SCALE - 1n) / PRICE_SCALE;
+    if (o.fixed !== undefined) {
+      // A SELL: the cost is owed out of the complete set it closes; its fee is the market's rate of the proceeds
+      const proceeds = payoutMsat - costMsat;
+      const feeMsat = (proceeds * BigInt(feeBps)) / 10000n;
+      return { id: o.id, sell: true, outcome: o.outcome, sold: o.sold, price: PRICE_SCALE - o.price, payoutMsat, costMsat, feeMsat, refundMsat: 0n,
+        restSharesMsat: o.fixed - payoutMsat };
+    }
     if (costMsat > o.net) costMsat = o.net;
-    const held = o.stakeMsat - o.net;
-    const feeMsat = o.net === 0n ? 0n : (held * costMsat) / o.net;
-    return { id: o.id, outcome: o.outcome, price: o.price, payoutMsat, costMsat, feeMsat, refundMsat: o.stakeMsat - costMsat - feeMsat };
+    const feeMsat = typeof o.fullNet === 'bigint'
+      ? (o.fullNet === 0n ? 0n : (o.fullFee * costMsat) / o.fullNet)
+      : (o.net === 0n ? 0n : ((o.stakeMsat - o.net) * costMsat) / o.net);
+    return { id: o.id, outcome: o.outcome, price: o.price, payoutMsat, costMsat, feeMsat, refundMsat: o.stakeMsat - costMsat - feeMsat, restNetMsat: o.net - costMsat };
   });
   return { price: best ? best.pi : null, matchedMsat: best ? best.v : 0n, fills: rows };
 }
@@ -252,4 +275,26 @@ export function batchId({ roundId, k, orderIds }) {
   w.bytes32(roundId); w.u64(k); w.u32(ids.length);
   for (const id of ids) w.bytes32(Uint8Array.from(id.match(/../g).map((x) => parseInt(x, 16))));
   return taggedHash(TAG.marketBatch, w.finish());
+}
+
+/**
+ * A SELL (kanban #278, comment 1127): the bytes a player signs, with its market entry's session key, to sell `sharesMsat`
+ * of `outcome` that entry holds, for at least `price` a share - matched in a batch, its proceeds paid at settlement (a).
+ */
+export function sellId({ roundId, entryId, outcome, price, sharesMsat, nonce }) {
+  if (!obIs32(roundId) || !obIs32(entryId)) throw new Error('a sell names a 32-byte round and its 32-byte entry');
+  if (outcome !== YES && outcome !== NO) throw new Error('a sell sells outcome 0 or 1');
+  if (typeof price !== 'bigint' || price < 1n || price >= PRICE_SCALE) throw new Error('a sell price is inside the scale');
+  if (typeof sharesMsat !== 'bigint' || sharesMsat <= 0n || typeof nonce !== 'bigint' || nonce < 0n) throw new Error('a sell names its shares and a nonce, BigInt');
+  const w = new Writer();
+  w.bytes32(roundId); w.bytes32(entryId); w.u8(outcome); w.u32(Number(price)); w.u64(sharesMsat); w.u64(nonce);
+  return taggedHash(TAG.marketSell, w.finish());
+}
+
+/** A seat's decline of batch k: it did not sign it and never will - enough of them and the batch can never be certified. */
+export function batchDeclineId({ roundId, k }) {
+  if (!obIs32(roundId) || typeof k !== 'bigint') throw new Error('a decline names a 32-byte round and a BigInt batch');
+  const w = new Writer();
+  w.bytes32(roundId); w.u64(k);
+  return taggedHash(TAG.marketBatchDecline, w.finish());
 }

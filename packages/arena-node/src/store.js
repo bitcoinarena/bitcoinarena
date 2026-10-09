@@ -717,8 +717,9 @@ export function openStore(path = ':memory:') {
     -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE (kanban #233): the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.
-    -- A MARKET ORDER THIS SEAT TOOK (kanban #278 step 4): the player's signed limit order as JSON, when it arrived here, and
-    -- the batch it was agreed into (NULL while it waits for the next one). Kept once by its id.
+    -- THE MARKET ORDER BOOK (kanban #278, comment 1127). An ORDER is an entry with a limit price whose stake lock and fee lock
+    -- this seat verified; received_ms is when it became tradable here (both locks verified), batch the batch it is in
+    -- (NULL while it waits). Kept once by its entry id.
     CREATE TABLE IF NOT EXISTS market_orders (
       order_id    TEXT PRIMARY KEY,
       round_id    BLOB NOT NULL,
@@ -727,17 +728,34 @@ export function openStore(path = ':memory:') {
       batch       INTEGER
     );
     CREATE INDEX IF NOT EXISTS market_orders_round ON market_orders (round_id, batch);
-    -- ONE AGREED BATCH (kanban #278 step 4): its number, its id (batchId over its order ids), the ids, its leader's key and
-    -- signature, this seat's own signature, and when this seat stored it. One per (round, batch): a seat signs one set.
+    -- A CANCEL OR A SELL of a market entry, signed by its session key: it takes effect only in a certified batch.
+    CREATE TABLE IF NOT EXISTS market_book_events (
+      event_id    TEXT PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      kind        TEXT NOT NULL,
+      entry_id    TEXT NOT NULL,
+      body        TEXT NOT NULL,
+      received_ms INTEGER NOT NULL,
+      batch       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS market_book_events_round ON market_book_events (round_id, batch);
+    -- ONE BATCH THIS SEAT SIGNED OR WAS SHOWN CERTIFIED: its record (orders, cancels, sells, leader and its signature), its id,
+    -- this seat's own signature (none if it only imported the certificate), and - once at least the threshold of the round's
+    -- seats signed it - the certificate. Only a certified batch is in the book. One per (round, batch).
     CREATE TABLE IF NOT EXISTS market_batches (
       round_id    BLOB NOT NULL,
       k           INTEGER NOT NULL,
       batch_id    TEXT NOT NULL,
-      order_ids   TEXT NOT NULL,
-      leader      TEXT NOT NULL,
-      leader_sig  TEXT NOT NULL,
-      own_sig     TEXT NOT NULL,
+      record      TEXT NOT NULL,
+      own_sig     TEXT,
+      certificate TEXT,
       stored_ms   INTEGER NOT NULL,
+      PRIMARY KEY (round_id, k)
+    );
+    -- A BATCH THIS SEAT DECLINED: it did not sign it and never will, so a leader can show the batch can no longer be certified.
+    CREATE TABLE IF NOT EXISTS market_batch_declines (
+      round_id    BLOB NOT NULL,
+      k           INTEGER NOT NULL,
       PRIMARY KEY (round_id, k)
     );
 

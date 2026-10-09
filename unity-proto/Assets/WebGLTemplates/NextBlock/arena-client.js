@@ -912,6 +912,12 @@ const TAG = {
   marketOrder: 'ARENA/v1/MarketOrder',
   // a player's cancel of a market entry before its entry close (kanban #278)
   marketCancel: 'ARENA/v1/MarketCancel',
+  // one batch of a market's order book, the set its seats agreed and signed (kanban #278 step 4, order-book.js)
+  marketBatch: 'ARENA/v1/MarketBatch',
+  // a player's sell of shares its market entry holds (kanban #278, comment 1127)
+  marketSell: 'ARENA/v1/MarketSell',
+  // a seat's word that it did not sign a batch and never will (kanban #278: a batch is void once 5 can no longer be reached)
+  marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };
@@ -1837,6 +1843,18 @@ function encodeEntryContract(e) {
     w.u8(PICK_MARKER);
     w.u8(e.pick);
   }
+  // A MARKET ORDER (kanban #278, comment 1127): an entry whose pick is bought at a LIMIT PRICE (order-book.js, a fraction of
+  // PRICE_SCALE in whole cents) and that stands until its EXPIRY (ms, 0: until it fills or is cancelled). Its stake lock is
+  // its budget less its fee, its fee lock the fee - the locks every entry has. WRITTEN ONLY WHEN IT IS ONE, after the pick
+  // and its own marker: every other entry keeps exactly its bytes and its id.
+  if (e.limitPrice !== undefined && e.limitPrice !== null) {
+    if (e.pick === undefined || e.pick === null) throw new Error('an order buys an outcome: it names a pick');
+    if (!Number.isInteger(e.limitPrice) || e.limitPrice < 1 || e.limitPrice > 0xffffffff) throw new Error('a limit price is a whole number of the price scale');
+    if (typeof (e.orderExpiryMs ?? 0n) !== 'bigint') throw new Error('an order\'s expiry is BigInt ms');
+    w.u8(ORDER_MARKER);
+    w.u32(e.limitPrice);
+    w.u64(e.orderExpiryMs ?? 0n);
+  }
   // THE HIDDEN MOVE (kanban #233): on a round of a head-to-head game the entry names H(round_id || session key || move ||
   // salt) (head-to-head.js), revealed after entry close. WRITTEN ONLY WHEN THERE IS ONE, after its own marker: every
   // other entry keeps exactly its bytes and its id. An entry backs a pick or hides a move, never both.
@@ -1853,6 +1871,8 @@ function encodeEntryContract(e) {
 const PICK_MARKER = 0xa7;
 /** The byte before an entry's move commitment (head-to-head), likewise never a donation list's first byte. */
 const COMMIT_MARKER = 0xa8;
+/** The byte before a market order's limit price and expiry (kanban #278), after its pick. */
+const ORDER_MARKER = 0xa9;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 const STAKE_POINT_BYTES = 33;
@@ -1896,6 +1916,11 @@ function decodeEntryContract(bytes) {
     if (marker === PICK_MARKER) e.pick = r.u8();
     else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
     else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
+    if (marker === PICK_MARKER && r.at < bytes.length) {
+      if (r.u8() !== ORDER_MARKER) throw new Error('these bytes carry something after the pick that is not an order');
+      e.limitPrice = r.u32();
+      e.orderExpiryMs = r.u64();
+    }
   }
   r.end();
   return e;
@@ -10168,6 +10193,88 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   const outputFeesMsat = payouts.reduce((s, p) => s + p.feeMsat, 0n);
   return { ok: true, claims, payouts, unpaid, poolMsat, inputFeesMsat, paidMsat, outputFeesMsat,
     unspentMsat: spendable - paidMsat - outputFeesMsat, unallocatedMsat: table.unallocated, hole: null };
+}
+
+/**
+ * AN ORDER BOOK'S SETTLEMENT (kanban #278, comment 1127; the owner 2026-10-09: "(a)"). `table` is book-ledger.js
+ * `bookSettlement` over the certified batches and the final outcome: every entry with a fill, its stake lock (N) and fee
+ * lock (F) CLAIMED WHOLE - a lock moves whole, never split - and paid out of in this one transaction: each entry its out
+ * (its winnings, less what its sells owe and their fee, plus the rest of its budget and fee it did not spend - a cancelled
+ * or partly filled order's rest, a seller's proceeds, all here), the nodes their part of the fees due (`nodeBps` of the
+ * market's whole rate, evenly over the round's sitting seats, the msat left to the first), the donation the rest of them
+ * (`donation.recipients`, the protocol devs' set and the market dev's, by key). An entry with no fill is not claimed: its
+ * locks come back whole by the return door. Under a fee rule that charges, every payout is scaled to what the claimed locks
+ * pay after their fees, the dust to the first.
+ */
+function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null }) {
+  if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
+  if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
+  if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
+  if (!table.claimed.length) return { ok: true, nothing: true, why: 'no order filled: nothing is claimed - every lock comes back whole' };
+  const byId = new Map(entries.map((e) => [typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId), e]));
+  const claims = [];
+  const owed = [];
+  for (const r of table.claimed) {
+    const e = byId.get(r.entry);
+    if (!e) return refuse(`the book names an order this signer node does not hold: ${r.entry.slice(0, 16)}`);
+    const lock = locks.get(toHex(e.pubkey));
+    const fl = feeLocks.get(toHex(e.pubkey));
+    if (!lock) return refuse(`a filled order's stake lock was never verified here: ${r.entry.slice(0, 16)}`);
+    if (lock.amountMsat !== r.stakeMsat) return refuse(`a filled order's stake lock holds ${lock.amountMsat} msat and its budget is ${r.stakeMsat}`);
+    claims.push({ pubkey: e.pubkey, outpoint: lock.outpoint, amountMsat: lock.amountMsat, kind: 'stake' });
+    if (r.feeMsat > 0n) {
+      if (!fl) return refuse(`a filled order's fee lock was never verified here: ${r.entry.slice(0, 16)}`);
+      if (fl.amountMsat !== r.feeMsat) return refuse(`a filled order's fee lock holds ${fl.amountMsat} msat and its fee is ${r.feeMsat}`);
+      if (!(fl.preimage instanceof Uint8Array) || fl.preimage.length !== 32) return refuse('a fee lock is claimed with its F, and that is 32 bytes');
+      claims.push({ pubkey: e.pubkey, outpoint: fl.outpoint, amountMsat: fl.amountMsat, preimage: fl.preimage, kind: 'fee' });
+    }
+    if (r.outMsat > 0n) owed.push({ kind: 'qualifier', pubkey: e.pubkey, payoutPk: lock.refundPk, owedMsat: r.outMsat });
+  }
+  // THE FEES DUE: the nodes' part of the market's whole rate, the donation the rest
+  const total = nodeBps + donationBps;
+  const nodesMsat = total > 0 ? (table.feesDueMsat * BigInt(nodeBps)) / BigInt(total) : 0n;
+  const giftMsat = table.feesDueMsat - nodesMsat;
+  const sitting = contract && Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
+  if (nodesMsat > 0n) {
+    if (!sitting.length) return refuse('the nodes\' fee is paid to the round\'s sitting seats, and no contract names them');
+    const each = nodesMsat / BigInt(sitting.length);
+    sitting.forEach((k, i) => owed.push({ kind: 'signer node', pubkey: k, payoutPk: refundKeyOf(k), owedMsat: each + (i === 0 ? nodesMsat - each * BigInt(sitting.length) : 0n) }));
+  }
+  if (giftMsat > 0n) {
+    if (!donation || !donation.recipients) return refuse('a market\'s donation is paid to its donation target, and this signer node names none');
+    const split = splitDonation({ donationMsat: giftMsat, recipients: donation.recipients });
+    if (!split.owed) return refuse(`the market's donation set does not stand: ${split.why}`);
+    const rid = roundId;
+    split.shares.forEach((x, i) => {
+      if (x.amountMsat <= 0n) return;
+      if (!(x.recipientPk instanceof Uint8Array)) throw new Error('a market\'s donation is paid to keys');
+      const sid = donationSendId(rid, i);
+      owed.push({ kind: 'donation key', pubkey: sid, payoutPk: x.recipientPk, owedMsat: x.amountMsat, donation: { id: sid, index: i, recipientPk: x.recipientPk, label: x.label } });
+    });
+  }
+  const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
+  const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
+  const spendableMsat = poolMsat - inputFeesMsat;
+  if (spendableMsat <= 0n) return refuse(`the guardians' fees on the claimed locks (${inputFeesMsat} msat) take the whole ${poolMsat}`);
+  const owedTotal = owed.reduce((s, x) => s + x.owedMsat, 0n);
+  if (owedTotal !== poolMsat) return refuse(`the book owes ${owedTotal} msat and the claimed locks hold ${poolMsat}`);
+  const gross = (msat) => msat + lnv2FeeMsat(fees, msat);
+  const split = owed.map((x) => ({ ...x, msat: largestPayoutMsat(fees, (x.owedMsat * spendableMsat) / poolMsat) }));
+  const dust = spendableMsat - split.reduce((s, x) => s + (x.msat > 0n ? gross(x.msat) : 0n), 0n);
+  if (dust > 0n && split.length) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
+  const payouts = [];
+  const unpaid = [];
+  for (const x of split) {
+    if (x.msat <= 0n) { unpaid.push({ pubkey: x.pubkey, owedMsat: x.owedMsat, why: 'its share does not pay its own output fee' }); continue; }
+    payouts.push({ pubkey: x.pubkey, payoutPk: x.payoutPk, owedMsat: x.owedMsat, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: x.kind, ...(x.donation ? { donation: x.donation } : {}) });
+  }
+  const paidMsat = payouts.reduce((s, p) => s + p.msat, 0n);
+  const outputFeesMsat = payouts.reduce((s, p) => s + p.feeMsat, 0n);
+  const unspentMsat = spendableMsat - paidMsat - outputFeesMsat;
+  if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
+  return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
+    nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
+    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat } };
 }
 
 // ---- arena-protocol/src/bech32.js

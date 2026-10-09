@@ -519,6 +519,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // The peers are the same list the verifier gathers results from, because a
   // signer node that answers about a run is a signer node that can be asked about its share.
   const stakeSecrets = new StakeSecrets(round, {
+    bookStanding: (rid, eid) => orderBook.standing(rid, eid),
     curve: feldmanGroup, peers, fetcher: (u, o) => fetch(u, o), random: (n) => new Uint8Array(randomBytes(n)),
     // AND WHEN THE OPERATOR SAID NOTHING, the round's SETTLEMENT signer nodes off the
     // census - they hold the shares. Read when a stake is opened, long after
@@ -891,6 +892,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const namesHeld = (rid) => round.lobbyNames(rid).map((n) => ({ record: toHex(n.record), sig: toHex(n.signature) }));
 
   const forfeits = new Forfeit(round, {
+    bookStanding: (rid, eid) => orderBook.standing(rid, eid),
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     // §23.2 REFUSED (kanban #191): asked at the forfeit - does this node still refuse that round? (null: it offers it)
     refusedNow: (rid) => offerRefusalOfRound(rid),
@@ -924,11 +926,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const orderBatchTick = async () => {
     const at = round.now();
     const k = Math.floor((at - orderBatchGraceMs) / orderBatchMs) - 1;
-    const rounds = round.db.prepare('SELECT DISTINCT round_id FROM market_orders WHERE batch IS NULL').all().map((r) => new Uint8Array(r.round_id));
+    // the rounds with orders: an entry with a limit price, open or within one interval of its close
+    const rounds = round.db.prepare('SELECT DISTINCT round_id FROM market_orders UNION SELECT DISTINCT round_id FROM market_book_events UNION SELECT DISTINCT round_id FROM market_batches WHERE certificate IS NULL').all().map((r) => new Uint8Array(r.round_id));
     for (const rid of rounds) {
       if (!orderBook.leads(rid, k)) continue;
       const got = await orderBook.lead(rid, k).catch((e) => ({ ok: false, why: e.message }));
-      if (got.ok) console.log(`[orders] ${toHex(rid).slice(0, 16)} batch ${k}: ${got.orderIds.length} order(s), held by ${got.heldBy} of ${got.of} seats in ${got.timings.agreedMs} ms`);
+      if (got.ok && !got.empty) console.log(`[orders] ${toHex(rid).slice(0, 16)} batch ${k}: ${got.orderIds.length} order(s), ${got.cancels} cancel(s), ${got.sells} sell(s), signed by ${got.heldBy} of ${got.of}, certified ${got.certified} in ${got.timings.certifiedMs} ms`);
     }
   };
   const scheduleOrderBatch = () => {
@@ -939,7 +942,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   if (orderBatchTimer) scheduleOrderBatch();
   const settlements = new LockSettlement(round, {
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -3510,40 +3513,44 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh }));
       }
-      // THE MARKET ORDER BOOK (kanban #278 step 4): a player's signed limit order (POST /order, JSON, posted to every seat);
-      // a seat's unbatched orders before batch k's cutoff (GET /batch-proposal, for that batch's leader); the leader's set for
-      // batch k (POST /batch: held and signed, or refused by name); every agreed batch as this seat clears it (GET /book).
-      if (req.method === 'POST' && url.pathname === '/order') {
-        let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an order is JSON'); }
-        const got = orderBook.ingest(body);
-        if (!got.ok) return text(res, got.status || 409, got.why);
-        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ id: got.id, fresh: got.fresh, batchAfterMs: got.batchAfterMs }));
-      }
-      if (req.method === 'GET' && url.pathname === '/batch-proposal') {
-        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        const k = url.searchParams.get('k') || '';
-        if (id.length !== 32 || !/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'GET /batch-proposal?round=<id>&k=<batch>');
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ k, orders: orderBook.proposal(new Uint8Array(id), Number(k)) }));
-      }
-      if (req.method === 'POST' && url.pathname === '/batch') {
-        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        if (id.length !== 32) return text(res, 400, 'POST /batch?round=<id> with { k, orders, leader, leaderSig }');
-        let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a batch is JSON'); }
-        const got = orderBook.accept(new Uint8Array(id), body);
-        if (!got.ok) return text(res, got.status || 409, got.why);
-        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ seat: got.seat, signature: got.signature, storedAtMs: got.storedAtMs }));
-      }
-      if (req.method === 'GET' && url.pathname === '/book') {
+      // THE MARKET ORDER BOOK (kanban #278, step 4 + comment 1127; order-batch.js). An order is an entry with a limit price,
+      // tradable once this seat verified its two locks. Between seats: a seat's proposal for batch k (GET /batch-proposal),
+      // the leader's set (POST /batch: held and signed, or refused by name), its certificate (POST /batch-certificate), the
+      // void of a batch that can no longer be certified (POST /batch-void-ask, POST /batch-void), and every certified batch
+      // for a seat that missed one (GET /book-certificates). For anyone: the book as this seat clears it (GET /book), and a
+      // player's sell of shares its entry holds (POST /sell, its session key; matched in a batch, paid at settlement).
+      if (req.method === 'GET' && (url.pathname === '/batch-proposal' || url.pathname === '/book' || url.pathname === '/book-certificates')) {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
-        const got = orderBook.cleared(new Uint8Array(id));
-        if (!got.ok) return text(res, got.status || 409, got.why);
+        const rid = new Uint8Array(id);
+        let got;
+        if (url.pathname === '/batch-proposal') {
+          const k = url.searchParams.get('k') || '';
+          if (!/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'GET /batch-proposal?round=<id>&k=<batch>');
+          got = orderBook.proposal(rid, Number(k));
+        } else if (url.pathname === '/book-certificates') got = { certificates: orderBook.certificates(rid) };
+        else { got = orderBook.cleared(rid); if (!got.ok) return text(res, got.status || 409, got.why); }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got, (key, v) => (typeof v === 'bigint' ? String(v) : v)));
+      }
+      if (req.method === 'POST' && ['/batch', '/batch-certificate', '/batch-void-ask', '/batch-void', '/sell'].includes(url.pathname)) {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, `POST ${url.pathname}?round=<id>`);
+        const rid = new Uint8Array(id);
+        let body = {};
+        try { const raw = Buffer.from(await read(req)).toString('utf8'); body = raw ? JSON.parse(raw) : {}; } catch { return text(res, 400, 'that body is not JSON'); }
+        let got;
+        if (url.pathname === '/batch') got = orderBook.accept(rid, body);
+        else if (url.pathname === '/batch-certificate') got = orderBook.certify(rid, body);
+        else if (url.pathname === '/batch-void') got = orderBook.applyVoid(rid, body);
+        else if (url.pathname === '/sell') got = orderBook.ask(rid, 'sell', body);
+        else {
+          const k = url.searchParams.get('k') || '';
+          if (!/^[0-9]{1,15}$/.test(k)) return text(res, 400, 'POST /batch-void-ask?round=<id>&k=<batch>');
+          got = orderBook.voidAsk(rid, Number(k));
+        }
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(got.fresh === false ? 200 : 201, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got, (key, v) => (typeof v === 'bigint' ? String(v) : v)));
       }
       // A MARKET ENTRY CANCELLED BY ITS PLAYER (kanban #278, the owner 2026-10-09: "until then the orders can be cancelled at no
@@ -3564,6 +3571,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!found.ok || !found.attested) return text(res, 409, 'that entry\'s round is not a market this node hosts: only a market order is cancelled');
         const signature = new Uint8Array(await read(req));
         if (signature.length !== 64) return text(res, 400, 'a cancel is the 64-byte signature of the entry\'s session key');
+        // AN ORDER OF AN ORDER BOOK (comment 1127): its cancel takes effect in a batch - the book's, not at once
+        if (entry.limitPrice !== undefined && entry.limitPrice !== null) {
+          const got = orderBook.ask(entry.roundId, 'cancel', { entry: toHex(eid), signature: toHex(signature) });
+          if (!got.ok) return text(res, got.status || 409, got.why);
+          res.writeHead(got.fresh ? 202 : 200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify({ cancelled: false, inNextBatch: true, id: got.id }));
+        }
         let good = false;
         try { good = ed25519.verify(signature, cancelId({ roundId: entry.roundId, entryId: new Uint8Array(eid) }), entry.sessionPubkey); } catch { good = false; }
         if (!good) return text(res, 403, 'that cancel is not signed by the entry\'s session key');
@@ -3655,6 +3669,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { got = await verifyStakeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
+        // AN ORDER (comment 1127): tradable here once both its locks are verified
+        if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `stake lock verified: contract ${got.contractId} holds ${got.paidMsat} msat`
           + (got.waitsForFeeLock ? ' - counted once its fee lock is verified (this round mints fee locks)' : ''));
       }
@@ -3676,6 +3692,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try { got = await verifyFeeLock({ round, port: stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
+        if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat`);
       }
 

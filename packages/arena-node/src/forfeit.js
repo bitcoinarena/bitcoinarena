@@ -51,8 +51,10 @@ export class Forfeit {
    * federation (it hashes a contract the way the guardians do); `peersFor(rid)`
    * names the other settlement signer nodes' bases.
    */
-  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null } = {}) {
+  constructor(round, { dkg, port, curve, random, peersFor = () => [], fetcher = (u, o) => fetch(u, o), onVoid = null, pullProof = null, refusedNow = null, bookStanding = null } = {}) {
     this.round = round;
+    // AN ORDER OF AN ORDER BOOK (kanban #278, comment 1127): the book's word on it - filled, cancelled, in a batch not decided
+    this.bookStanding = bookStanding;
     // §23.2 REFUSED (kanban #191): rid -> why this node refuses the round, or null while it offers it
     this.refusedNow = refusedNow;
     // THE OTHER SIGNER NODES' PROOF OF TWO FIRST MARKS, pulled and checked here before a
@@ -79,6 +81,9 @@ export class Forfeit {
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // AN ORDER OF AN ORDER BOOK: its own rules (comment 1127)
+    { const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+      if (book && book.book) return this.#bookReturn(roundIdBytes, entryIdBytes, contract, kind, book); }
     // A CANCELLED MARKET ORDER (kanban #278): signed by its player before entry close, out of the round's table at this seat
     const cancelled = !!(this.round.cancelled && this.round.cancelled(entryIdBytes));
     if (kind === 'fee') {
@@ -219,6 +224,28 @@ export class Forfeit {
       if (st === SUSPENDED || st === PROVISIONALLY_FINAL) return { ok: false, why: 'an entry of the round is still inside its window' };
     }
     return { ok: true };
+  }
+
+  /**
+   * AN ORDER'S LOCKS AT THE RETURN DOOR (kanban #278, comment 1127; the owner 2026-10-09 "(a)"). A lock moves whole, so:
+   *  - FILLED: closed - a whole return would hand back filled money; its lock is claimed at resolution and its unfilled rest
+   *    paid back there (also when it was cancelled after a fill, and a seller's proceeds);
+   *  - in a batch NOT DECIDED yet: it waits for that batch;
+   *  - UNFILLED and CANCELLED by a certified batch: both locks back at once, whole;
+   *  - UNFILLED and standing: back once the market's outcome is final (nothing can fill it then), or when it is refunded.
+   */
+  #bookReturn(roundIdBytes, entryIdBytes, contract, kind, book) {
+    const lock = kind === 'fee' ? (this.round.feeLock ? this.round.feeLock(entryIdBytes) : null) : this.round.stakeLock(entryIdBytes);
+    if (!lock) return refuse(`this signer node verified no ${kind} lock for that order, so it returns none`);
+    if (this.#marketRefund(roundIdBytes, contract).ok) return this.#signable(contract, lock);
+    if (book.inPending) return refuse('that order is in a batch not decided yet: its locks wait for it');
+    if (book.filled) return refuse('that order filled: its locks are claimed at resolution and its unfilled rest paid back there');
+    if (book.cancelled) return this.#signable(contract, lock);
+    const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
+      .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
+    if (fin.final) return this.#signable(contract, lock);
+    return refuse('that order stands unfilled: cancel it (at no cost) or wait for the market to resolve');
   }
 
   /** Whether a market round is refunded on this signer node's record: VOID (deadline, contradiction), or nobody picked right. */

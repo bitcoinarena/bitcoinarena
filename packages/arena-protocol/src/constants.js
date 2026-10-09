@@ -356,6 +356,10 @@ export const TAG = {
   marketCancel: 'ARENA/v1/MarketCancel',
   // one batch of a market's order book, the set its seats agreed and signed (kanban #278 step 4, order-book.js)
   marketBatch: 'ARENA/v1/MarketBatch',
+  // a player's sell of shares its market entry holds (kanban #278, comment 1127)
+  marketSell: 'ARENA/v1/MarketSell',
+  // a seat's word that it did not sign a batch and never will (kanban #278: a batch is void once 5 can no longer be reached)
+  marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };
