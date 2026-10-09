@@ -178,3 +178,38 @@ test('the header window is read once and extended by new blocks; two rounds shar
   const kept = await beacon.refresh(asked);
   assert.deepEqual({ ok: kept.ok, height: kept.height }, { ok: fresh.ok, height: fresh.height });
 });
+
+// A BEACON BEHIND THE WINDOW (kanban #157): measured on testnet4 2026-10-07, a seat started after its round's beacon had
+// sunk 736 blocks below the tip read a 400-header window that began after committee_time, and refused for good. From the
+// round's census height, which comes before committee_time, the beacon is found - the same block the whole chain names.
+test('a beacon below the tip window is read from the round\'s census height, the same block the whole chain names', async () => {
+  const node = chainNode({ blocks: 600 });
+  const c = contract({ committeeTimeMs: BigInt(NOW + 80 * 600) * 1000n, censusConfirmations: 6, censusHeight: 90 });
+  const whole = beaconFromChain(c, { headers: node.headers, firstHeight: 0 });
+  assert.equal(whole.ok, true, whole.why);
+  const tipOnly = beaconFromChain(c, { headers: node.headers.slice(600 - BEACON_WINDOW), firstHeight: 600 - BEACON_WINDOW });
+  assert.equal(tipOnly.ok, false, 'the tip window alone cannot say which block is the first');
+  const seen = await chainBeacon({ call: node.call }).refresh(c);
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.height, whole.height);
+  assert.equal(toHex(seen.hash), toHex(whole.hash));
+});
+
+test('without a census height a tip window that begins after committee_time still refuses', async () => {
+  const node = chainNode({ blocks: 600 });
+  const c = contract({ committeeTimeMs: BigInt(NOW + 80 * 600) * 1000n, censusConfirmations: 6 });
+  const seen = await chainBeacon({ call: node.call }).refresh(c);
+  assert.equal(seen.ok, false);
+  assert.match(seen.why, /cannot say which block is the FIRST/);
+});
+
+test('the read from the census height goes up to the tip, not one window: a beacon further above the census than the window', async () => {
+  const node = chainNode({ blocks: 600 });
+  // census 20, beacon ~106: more than BEACON_WINDOW (64) above the census height
+  const c = contract({ committeeTimeMs: BigInt(NOW + 80 * 600) * 1000n, censusConfirmations: 6, censusHeight: 20 });
+  const whole = beaconFromChain(c, { headers: node.headers, firstHeight: 0 });
+  assert.ok(whole.height - 20 > BEACON_WINDOW, 'the case: beacon further above the census than one window');
+  const seen = await chainBeacon({ call: node.call }).refresh(c);
+  assert.equal(seen.ok, true, seen.why);
+  assert.equal(seen.height, whole.height);
+});

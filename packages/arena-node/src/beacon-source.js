@@ -21,8 +21,8 @@
 // `for()` returns undefined and the daemons' own rule turns that into "this
 // node has no beacon for that round", which is the honest state and already
 // tested. There is no default, no constant and no fallback here.
-import { beaconFromChain } from '../../arena-protocol/src/beacon.js';
-import { headersToTip } from './chain-rpc.js';
+import { beaconFromChain, MEDIAN_TIME_SPAN } from '../../arena-protocol/src/beacon.js';
+import { headersToTip, headersFrom, MAX_HEADERS } from './chain-rpc.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
@@ -82,7 +82,19 @@ export function chainBeacon({ call, window = BEACON_WINDOW } = {}) {
       if (reading.has(key)) return reading.get(key);
       const read = (async () => {
         const view = await extend();
-        const seen = beaconFromChain(contract, view);
+        let seen = beaconFromChain(contract, view);
+        // A BEACON BEHIND THE WINDOW (kanban #157, measured on testnet4 2026-10-07): a seat started after its round's beacon
+        // had sunk more than the window below the tip read "this view begins at height ... already after this round's
+        // committee time" for good - no committee, no peer for the send plan, a settle retried forever. A tip window that
+        // begins after committee_time cannot say which block is the first one; a range read forward from the round's
+        // census height (which comes before committee_time) can, and names the same block every other view does.
+        if (!seen.ok && Number.isInteger(contract.censusHeight) && view.firstHeight > contract.censusHeight) {
+          const from = Math.max(0, contract.censusHeight - (MEDIAN_TIME_SPAN - 1));
+          // up to the tip, at most one read's worth (2016 headers, two weeks of blocks); read once - a found beacon is held
+          const back = await headersFrom(call, { from, count: Math.min(MAX_HEADERS, view.tipHeight - from + 1) });
+          const again = beaconFromChain(contract, back);
+          if (again.ok) seen = again;
+        }
         if (seen.ok) held.set(key, seen);
         return seen;
       })().finally(() => reading.delete(key));
