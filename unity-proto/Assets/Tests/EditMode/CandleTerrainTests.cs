@@ -6,7 +6,7 @@ using L = Blwp.Layout;
 
 /// <summary>
 /// WAR_TACTICS.md §4.15: the candles are drawn where the core stands everything on them. The core's words and its
-/// candle-layer heights (Tests/Fixtures/candle-words.txt, written by packages/core/tools/candle-fixture.mjs); the mesh
+/// candle-layer heights (Tests/Fixtures/candle-words.txt, written by packages/nextblock/tools/candle-fixture.mjs); the mesh
 /// built from the words must meet every height within 0.1 m ("the client's drawn height differs from candleHeight by
 /// more than 0.1 m" fails), face up on the top and out on the x sides.
 /// </summary>
@@ -203,4 +203,61 @@ public class CandleTerrainTests
         for (int i = 0; i < 120; i++) { ground += 2.75f * dt; drawn = ArmyRenderer.EaseRest(drawn, ground, dt); worst = Mathf.Max(worst, Mathf.Abs(drawn - ground)); }
         Assert.Less(worst, 1e-4f, $"the hull lagged a slope by {worst:0.0000} m");
     }
+    // THE GATE OF COMMENT 979 (kanban #266): a rebuild is due when a candle word changes, never for the shift alone - the
+    // shift is what the slide carries between rebuilds
+    [Test]
+    public void ARebuildIsDueForACandleWordButNotForTheShift()
+    {
+        var built = new int[Blwp.Layout.CV_TOTAL];
+        for (int i = 0; i < built.Length; i++) built[i] = i * 7;
+        var now = (int[])built.Clone();
+        Assert.IsFalse(CandleTerrain.WordsChanged(now, built), "the same words call for a rebuild");
+        now[Blwp.Layout.CV_SHIFT] += 123456;
+        Assert.IsFalse(CandleTerrain.WordsChanged(now, built), "the shift alone calls for a rebuild");
+        now[Blwp.Layout.CV_FIRST + 5] += 1;
+        Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a changed candle word does not call for a rebuild");
+        now = (int[])built.Clone(); now[Blwp.Layout.CV_FORMING] = -1;
+        Assert.IsTrue(CandleTerrain.WordsChanged(now, built), "a new forming candle does not call for a rebuild");
+    }
+
+    // THE TAIL IS THE SAME RIBBON (kanban #266, comment 980): the last two candles are their own mesh, rebuilt alone when only
+    // the forming candle moved - candles [0, n-2) followed by [n-2, n) are vertex for vertex the full build, on every fixture view
+    [Test]
+    public void TheRestAndTheTailAreTheWholeRibbon()
+    {
+        Load();
+        foreach (var kv in _views)
+        {
+            var v = kv.Value;
+            int n = Mathf.Min(v[L.CV_COUNT], L.CANDLES), k = Mathf.Max(0, n - CandleTerrain.TailCandles);
+            var full = CandleTerrain.Build(v, Ground);
+            var rest = CandleTerrain.Build(v, Ground, 0, k);
+            var tail = CandleTerrain.Build(v, Ground, k, n);
+            Assert.AreEqual(full.Body.Count, rest.Body.Count + tail.Body.Count, $"{kv.Key}: vertices");
+            for (int i = 0; i < full.Body.Count; i++)
+                Assert.AreEqual(full.Body[i], i < rest.Body.Count ? rest.Body[i] : tail.Body[i - rest.Body.Count], $"{kv.Key}: vertex {i}");
+            Assert.AreEqual(full.SideGreen.Count + full.SideRed.Count + full.TopGreen.Count + full.TopRed.Count + full.FormingTop.Count,
+                rest.SideGreen.Count + rest.SideRed.Count + rest.TopGreen.Count + rest.TopRed.Count + rest.FormingTop.Count
+                + tail.SideGreen.Count + tail.SideRed.Count + tail.TopGreen.Count + tail.TopRed.Count + tail.FormingTop.Count, $"{kv.Key}: triangles");
+            Assert.AreEqual(full.RidgeTriangles, rest.RidgeTriangles + tail.RidgeTriangles, $"{kv.Key}: ridge triangles");
+            Assert.AreEqual(full.FormingTop.Count, rest.FormingTop.Count + tail.FormingTop.Count, $"{kv.Key}: the forming top");
+        }
+    }
+
+    [Test]
+    public void OnlyTheFormingCandleMovingIsATailRebuild()
+    {
+        int n = L.CANDLES;
+        var built = new int[L.CV_TOTAL];
+        for (int i = 0; i < built.Length; i++) built[i] = i * 3;
+        var now = (int[])built.Clone();
+        now[L.CV_FIRST + (n - 1) * L.CV_WORDS + 2] += 77;      // the last candle's z
+        now[L.CV_SHIFT] += 5;
+        Assert.IsTrue(CandleTerrain.OnlyLastCandleChanged(now, built, n), "the forming candle alone is not a tail rebuild");
+        now[L.CV_FIRST + (n - 2) * L.CV_WORDS + 2] += 1;      // and its neighbour
+        Assert.IsFalse(CandleTerrain.OnlyLastCandleChanged(now, built, n), "a second candle moving is a tail rebuild");
+        now = (int[])built.Clone(); now[L.CV_FORMING] += 1;
+        Assert.IsFalse(CandleTerrain.OnlyLastCandleChanged(now, built, n), "a closed candle is a tail rebuild");
+    }
+
 }

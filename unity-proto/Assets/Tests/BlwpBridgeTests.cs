@@ -138,7 +138,7 @@ public class BlwpBridgeTests
     public void TheBundleIsPresentInTheTemplateAndIsTheRealOne()
     {
         string inTemplate = Path.Combine(Application.dataPath,
-            "WebGLTemplates/BtcLogistics/blwp-core.js");
+            "WebGLTemplates/NextBlock/blwp-core.js");
         Assert.IsTrue(File.Exists(inTemplate),
             "the WebGL template has no core bundle - the build would load nothing");
 
@@ -148,7 +148,7 @@ public class BlwpBridgeTests
             StringAssert.Contains(name, text, "the bundle does not export " + name);
 
         string html = File.ReadAllText(Path.Combine(Application.dataPath,
-            "WebGLTemplates/BtcLogistics/index.html"));
+            "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("blwp-core.js", html,
             "the page never loads the bundle, so the jslib would find no BLWP");
     }

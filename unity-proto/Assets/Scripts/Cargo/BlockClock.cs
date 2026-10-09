@@ -41,7 +41,7 @@ public class BlockClock : MonoBehaviour
     /// The ticks a core run lasts before it is MISSED - the core's own `BLOCK_TICKS`, GENERATED into
     /// `Blwp.Layout` rather than written here.
     ///
-    /// IT WAS WRITTEN HERE, AND IT DRIFTED. This was a hand-typed 9000 while `packages/core/src/rules/gate.js`
+    /// IT WAS WRITTEN HERE, AND IT DRIFTED. This was a hand-typed 9000 while `packages/nextblock/src/rules/gate.js`
     /// had moved to 10800 (c01cc655, "a round is three minutes"). Nothing threw: the HUD clock simply counted
     /// down to 0:00 at elapsed 9000 and the run went on for another 1800 ticks - thirty seconds of a round with
     /// a timer showing nothing left. That is the owner's 2026-09-20 16:21 report, and it is the SECOND time this
@@ -54,7 +54,7 @@ public class BlockClock : MonoBehaviour
 
     /// <summary>
     /// Seconds of a core run left after `elapsed` of its ticks, at the core's own rate - 65536/1092 ticks a second
-    /// (packages/core/src/tick.js) - never below zero.
+    /// (packages/nextblock/src/tick.js) - never below zero.
     /// </summary>
     public static float CoreSecondsLeft(int elapsed) => Mathf.Max(0, RunTicks - elapsed) * 1092f / 65536f;
 

@@ -1,0 +1,16 @@
+{
+  "name": "arena-protocol",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Canonical encoding, contracts, census, sortition and payout. Isomorphic.",
+  "scripts": {
+    "test": "node --test --test-timeout=120000 test/*.test.js",
+    "vectors": "node tools/make-vectors.js",
+    "guard": "node tools/check-money.js",
+    "acceptance": "npm run guard && npm test"
+  },
+  "devDependencies": {
+    "acorn": "^8.18.0"
+  }
+}

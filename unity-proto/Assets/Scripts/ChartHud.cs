@@ -465,6 +465,11 @@ public class ChartHud : MonoBehaviour
         // war is now recorded while it happens.
         if (loadout != null && loadout.IsOpen) return;
 
+        // THE CHART IS BUILT AND DRAWN ON THE REPAINT PASS ONLY (kanban #266). IMGUI calls OnGUI for its layout pass as
+        // well, where a draw paints nothing and the chart reads no input, and this built and painted the whole chart there
+        // too: in a named profile of spectate (phone at 4x) ChartHud.OnGUI was 400 ms of every 5 s.
+        if (Event.current.type != EventType.Repaint) return;
+
         if (_field == null) _field = FindFirstObjectByType<Blwp.GhostField>();
         _ghosts.Clear();
         if (_field != null)
@@ -719,6 +724,26 @@ public class ChartHud : MonoBehaviour
 
     void Box(Rect r, Color c) { GUI.color = c; GUI.DrawTexture(r, _flat); }
 
+    // A DOTTED LINE IN ONE DRAW (kanban #266): `dash` px on in every `period` from x0, the last dash whole even past x1 - the
+    // pixels the old loop of one 1 px box per dash drew, which was one IMGUI draw call per dash (about 150 a frame).
+    readonly Dictionary<int, Texture2D> _dashes = new Dictionary<int, Texture2D>();
+    void Dashes(float x0, float x1, float y, int dash, int period, Color c)
+    {
+        int n = Mathf.CeilToInt((x1 - x0) / period);
+        if (n <= 0) return;
+        int key = dash * 1000 + period;
+        if (!_dashes.TryGetValue(key, out var tex))
+        {
+            tex = new Texture2D(period, 1, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Repeat, filterMode = FilterMode.Point };
+            for (int i = 0; i < period; i++) tex.SetPixel(i, 0, i < dash ? Color.white : Color.clear);
+            tex.Apply();
+            _dashes[key] = tex;
+        }
+        float len = (n - 1) * period + dash;
+        GUI.color = c;
+        GUI.DrawTextureWithTexCoords(new Rect(x0, y, len, 1f), tex, new Rect(0f, 0f, len / period, 1f));
+    }
+
     void Text(Rect r, string s, Color c, GUIStyle style)
     {
         // WHITE UNDER THE LABEL. IMGUI multiplies a label by GUI.color, and Box leaves it at the last box's colour: measured on
@@ -788,7 +813,7 @@ public class ChartHud : MonoBehaviour
         foreach (var c in f.Bars) { Box(c.Wick, c.Green ? Green : Red); Box(c.Body, c.Green ? Green : Red); }
 
         // OPEN, dashed (its label is placed further down, once every box it must keep off is known)
-        for (float x = p.x; x < p.xMax; x += 8f) Box(new Rect(x, f.OpenY, 4f, 1f), Axis);
+        Dashes(p.x, p.xMax, f.OpenY, 4, 8, Axis);
 
         // 1. the seam, white 2 px
         for (int i = 1; i < f.Front.Count; i++) Line(f.Front[i - 1], f.Front[i], 2f, Color.white);
@@ -811,7 +836,7 @@ public class ChartHud : MonoBehaviour
 
         // last price: dotted line and the tag on the axis
         var lastColour = f.LastGreen ? Green : Red;
-        for (float x = p.x; x < p.xMax; x += 4f) Box(new Rect(x, f.LastY, 2f, 1f), lastColour);
+        Dashes(p.x, p.xMax, f.LastY, 2, 4, lastColour);
         float axisText = f.Panel.xMax - (p.xMax + 4f);
         foreach (var a in f.PriceAxis) Text(new Rect(a.At.x, a.At.y - lh * 0.5f, axisText, lh), a.Text, a.Colour, _right);
         Box(new Rect(p.xMax + 2f, f.LastY - lh * 0.5f, f.Panel.xMax - p.xMax - 3f, lh), lastColour);

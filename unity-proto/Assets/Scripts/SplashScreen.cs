@@ -259,6 +259,7 @@ public class SplashScreen : MonoBehaviour
 
 #if UNITY_WEBGL && !UNITY_EDITOR
     [DllImport("__Internal")] static extern void UnlockAudio();
+    [DllImport("__Internal")] static extern void BlwpBenchmark();
 #endif
 
     /// <summary>
@@ -512,7 +513,7 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     public struct Frame
     {
-        public Rect panel, head, copy, hint, play, spectate, build;
+        public Rect panel, head, copy, hint, play, spectate, benchmark, build;
         public float pad;
     }
 
@@ -538,12 +539,14 @@ public class SplashScreen : MonoBehaviour
         float bh = Mathf.Max(30f, btnFont * 2.0f);
         float gap = Mathf.Max(8f, padV * 0.35f);
 
-        // one row, one baseline, one height - the primary takes two thirds
-        // because it is the one to press
+        // one row, one baseline, one height - the primary takes half because it is the one to press; SPECTATE and
+        // BENCHMARK (kanban #266) share the other half
         float row = panel.yMax - padV * 0.6f - bh;
-        float wide = (inner - gap) * 0.62f;
+        float wide = (inner - 2f * gap) * 0.5f;
+        float side = (inner - wide - 2f * gap) * 0.5f;
         var play = new Rect(panel.x + pad, row, wide, bh);
-        var spectate = new Rect(play.xMax + gap, row, inner - wide - gap, bh);
+        var spectate = new Rect(play.xMax + gap, row, side, bh);
+        var benchmark = new Rect(spectate.xMax + gap, row, side, bh);
 
         float hintHigh = subFont * 1.5f;
         var hint = new Rect(panel.x + pad, row - gap - hintHigh, inner, hintHigh);
@@ -562,7 +565,7 @@ public class SplashScreen : MonoBehaviour
                             Mathf.Max(0f, hint.y - padV * 0.25f - top));
 
         return new Frame { panel = panel, head = head, copy = copy, hint = hint,
-                           play = play, spectate = spectate, pad = pad, build = build };
+                           play = play, spectate = spectate, benchmark = benchmark, pad = pad, build = build };
     }
 
     void OnGUI()
@@ -626,10 +629,28 @@ public class SplashScreen : MonoBehaviour
                                  new Color(0.07f, 0.065f, 0.05f, 0.98f));
         PanelSkin.Rule(new Rect(head.x, head.yMax - 3f, head.width, 3f), PanelSkin.Gold);
 
+        // THE NAME ON ONE LINE WITH THE GAME'S MARK BESIDE IT (kanban #228): "TICK TOCK, NEXT BLOCK" is longer than the old
+        // title and wrapped to two lines on a phone, under the backup banner. The icon and the name are centred together in
+        // the bar, and set smaller until both fit on one line.
+        _title.wordWrap = false;
+        Vector2 need = _title.CalcSize(new GUIContent(Title));
+        float mark = 0f, gap = 0f;
+        for (int guard = 0; guard < 24; guard++)
+        {
+            need = _title.CalcSize(new GUIContent(Title));
+            mark = NextBlockMark.Icon != null ? Mathf.Min(head.height * 0.78f, need.y * 1.15f) : 0f;
+            gap = mark > 0f ? Mathf.Max(6f, mark * 0.25f) : 0f;
+            if ((need.x + mark + gap + 24f <= head.width && need.y <= head.height) || _title.fontSize <= 12) break;
+            _title.fontSize = Mathf.Max(12, Mathf.RoundToInt(_title.fontSize * 0.92f));
+        }
+        float shift = (mark + gap) * 0.5f;                     // the name moves right by half the mark: the pair is centred
+        var name = new Rect(head.x + shift, head.y, head.width, head.height);
         _title.normal.textColor = new Color(0f, 0f, 0f, 0.6f);
-        GUI.Label(new Rect(head.x + 3f, head.y + 4f, head.width, head.height), Title, _title);
+        GUI.Label(new Rect(name.x + 3f, name.y + 4f, name.width, name.height), Title, _title);
         _title.normal.textColor = PanelSkin.Gold;
-        GUI.Label(head, Title, _title);
+        GUI.Label(name, Title, _title);
+        if (mark > 0f)
+            NextBlockMark.DrawIcon(new Rect(name.center.x - need.x * 0.5f - gap - mark, head.center.y - mark * 0.5f, mark, mark));
 
         // The build, right-aligned on its own row under the title bar.
         var stamp = new GUIStyle(_sub)
@@ -888,7 +909,7 @@ public class SplashScreen : MonoBehaviour
         sb.Append(",\"panel\":").Append(R(f.panel));
         sb.Append(",\"play\":").Append(R(f.play)).Append(",\"playEnabled\":")
           .Append(_lobby == null || (!_joining && !string.IsNullOrEmpty(_pickId)) ? "true" : "false");
-        sb.Append(",\"spectate\":").Append(R(f.spectate)).Append(",\"hint\":").Append(R(f.hint));
+        sb.Append(",\"spectate\":").Append(R(f.spectate)).Append(",\"benchmark\":").Append(R(f.benchmark)).Append(",\"hint\":").Append(R(f.hint));
         if (_lobby != null)
         {
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"withdrawNotice\":").Append(J(_lastNotice)).Append(",\"name\":").Append(R(_lastName))
@@ -918,9 +939,10 @@ public class SplashScreen : MonoBehaviour
         Blwp.DailyLobby.Shown(sb.ToString());
     }
 
-    public const string Title = "BTC LOGISTICS WAR";
+    public const string Title = NextBlockMark.Name;
     public const string PlayLabel = "▶  PLAY";
     public const string SpectateLabel = "SPECTATE";
+    public const string BenchmarkLabel = "BENCHMARK";
 
     const string Standfirst = "HAUL REAL MEMPOOL FREIGHT THROUGH A LIVE BATTLEFIELD";
     const string Footnote = "One Bitcoin block is one round - and every fee, block and " +
@@ -1036,6 +1058,25 @@ public class SplashScreen : MonoBehaviour
         blue.normal.textColor = new Color(0.70f, 0.85f, 1f);
         Shrink(blue, SpectateLabel, f.spectate);
         if (GUI.Button(f.spectate, SpectateLabel, blue)) Spectate();
+
+        // BENCHMARK (kanban #266, the owner 2026-10-08: "basically it is spectate with benchmark"): SPECTATE, and the page's
+        // frame-rate test over it - each render cost switched off in turn, the frame rate of each written into the FPS line
+        PanelSkin.Gradient(f.benchmark, new Color(0.10f, 0.14f, 0.20f, 0.95f),
+                                        new Color(0.06f, 0.09f, 0.13f, 0.95f));
+        PanelSkin.Border(f.benchmark, new Color(0.55f, 0.75f, 1f, 0.75f));
+        var bench = new GUIStyle(_btn);
+        bench.normal.textColor = new Color(0.70f, 0.85f, 1f);
+        Shrink(bench, BenchmarkLabel, f.benchmark);
+        if (GUI.Button(f.benchmark, BenchmarkLabel, bench)) Benchmark();
+    }
+
+    /// <summary>SPECTATE, and the page's frame-rate test once the camera has settled (kanban #266).</summary>
+    public void Benchmark()
+    {
+        Spectate();
+#if UNITY_WEBGL && !UNITY_EDITOR
+        BlwpBenchmark();
+#endif
     }
 
     /// <summary>
