@@ -116,6 +116,29 @@ export function blockCache({ max = 50000 } = {}) {
  * hand back a list with a hole in it - the heights are consecutive by
  * construction and `chainWork` checks they link.
  */
+/**
+ * HEADERS FORWARD FROM A HEIGHT (kanban #157): `count` headers from `from`, or up to the tip if that is nearer. The
+ * beacon of a round whose committee_time lies further back than a tip window reaches is read from the round's own
+ * census height on, which comes before it (§5A.5: census cut = start - 36 h, committee_time = start - 24 h).
+ */
+export async function headersFrom(call, { from, count } = {}) {
+  if (!Number.isInteger(from) || from < 0) return Promise.reject(new Error('a header range starts at a height'));
+  if (!Number.isInteger(count) || count < 1) return Promise.reject(new Error('a header range is at least one block'));
+  if (count > MAX_HEADERS)
+    return Promise.reject(new Error(`a range of ${count} is more than the ${MAX_HEADERS} this asks for at once`));
+  const tip = Number(await call('getblockcount'));
+  if (!Number.isInteger(tip) || tip < 0) throw new Error('bitcoind gave no block count');
+  if (from > tip) throw new Error(`a range from ${from} starts past the tip ${tip}`);
+  const to = Math.min(tip, from + count - 1);
+  const headers = [];
+  for (let h = from; h <= to; h++) {
+    const bytes = fromHex(await call('getblockheader', [await call('getblockhash', [h]), false]));
+    if (bytes.length !== HEADER_BYTES) throw new Error(`block ${h} came back as ${bytes.length} bytes, not a header`);
+    headers.push(bytes);
+  }
+  return { headers, firstHeight: from, tipHeight: to };
+}
+
 export async function headersToTip(call, { count } = {}) {
   if (!Number.isInteger(count) || count < 1)
     return Promise.reject(new Error('a header window is at least one block'));
