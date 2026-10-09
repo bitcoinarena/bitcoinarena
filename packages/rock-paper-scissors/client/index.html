@@ -119,6 +119,9 @@
   .moves { margin-top: 6px; gap: 8px; } .moves button { padding: 4px 4px 8px; font-size: 13px; }
   .moves button span.ic { width: 72px; height: 72px; margin: 0 auto 0; }
   .verdict { margin-top: 6px; font-size: 20px; }
+  .card.loading { flex: 1; display: grid; place-items: center; min-height: 200px; }
+  .card.loading .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--btc); animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -612,7 +615,7 @@
       const pivot = new THREE.Group(); h.root.rotation.set(0, 0.0, Math.PI / 2); h.root.position.set(name === 'rock' ? 0.05 : 0, name === 'rock' ? -0.05 : -0.3, 0); pivot.add(h.root); pivot.visible = false; iconScene.add(pivot);
       return { h, pivot, rise: 0, hop: 0 };
     });
-    let iconHover = null, iconChosen = null, iconSlots = [], layerW = 0, layerH = 0;
+    let iconHover = null, iconChosen = null, iconSlots = [], layerW = 0, layerH = 0;   // each hand's rise starts at 0 once, when the page loads
     const drawIcons = (dt) => {
       if (!iconLayer.isConnected || !iconSlots.length) return;
       const host = iconLayer.parentElement, hr = host.getBoundingClientRect();
@@ -730,7 +733,7 @@
       const icons = iconLayer.isConnected ? +((performance.now() - t0) / n).toFixed(2) : null;
       return { stageMs: withHands, stageWithoutHandsMs: without, buttonsMs: icons, pixelRatio: renderer.getPixelRatio(), size: [box.clientWidth, box.clientHeight] };
     };
-    return { box, ov, show, shoot, bench, celebrate() { confetti(); kick(0.12); }, attachIcons(row, slots) { const fresh = !iconLayer.isConnected || iconLayer.parentElement !== row; row.append(iconLayer); iconSlots = slots; if (fresh) iconHands.forEach((x) => { x.rise = 0; }); }, iconHover(i) { iconHover = i; }, iconChosen(i) { iconChosen = i; }, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
+    return { get iconRise() { return iconHands.map((x) => +x.rise.toFixed(2)); }, box, ov, show, shoot, bench, celebrate() { confetti(); kick(0.12); }, attachIcons(row, slots) { row.append(iconLayer); iconSlots = slots; } /* the hands rise from below once, at the page's first buttons (#289: not again at each round's end) */, iconHover(i) { iconHover = i; }, iconChosen(i) { iconChosen = i; }, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
   }
 </script>
 <script>
@@ -801,6 +804,7 @@
     let carry = null;
     let due = null;             // the reveal view's "result in" line, ticked every second: { el, closeMs, endMs }
     let stage = null;           // the Three.js stage (kanban #284), null until it is loaded or if it cannot be
+    let stageFailed = false;    // only then the emoji cards are drawn (#289: never while Three.js is still loading)
     let pickedFor = null;       // the round the stage's pick preview belongs to
     // THE BIG VERDICT (kanban #283): once per decided round of this tab, when the seats' signed result arrives - on the stage's
     // strike if a show is running - WON / LOST / DRAW, 2 s, then it fades; a loss greys the page under it, as WASTED does
@@ -915,6 +919,7 @@
       if (s.scoreboard) view.append(el('div', 'board', '<span class="who">You</span><b>' + s.scoreboard.me + '</b><i>:</i><b>' + s.scoreboard.them + '</b><span class="who">'
         + String(s.scoreboard.themName).replace(/[<>&]/g, '') + '</span>'));
       if (s.phase === 'none') {
+        if (!stage && !stageFailed) { view.append(el('div', 'card loading', '<span class="spin"></span>')); return; }
         if (stage) { const c = el('div', 'card'); stage.show(s); stage.ov.textContent = ''; c.append(stage.box, el('div', 'pick', 'The next round opens in a moment.')); view.append(c); return; }
         view.append(el('div', 'card none', '<span class="big">⏳</span>The next round opens in a moment.')); return;
       }
@@ -935,6 +940,9 @@
           ? el('div', 'presence here', '<span class="icon">⚔️</span><div><b>' + (them ? 'You are playing against ' + clean(them) : 'Opponent is here') + '</b><small>' + what + '</small></div>')
           : el('div', 'presence alone', '<span class="icon">🙋</span><div><b>You are alone in this round</b><small>Waiting for other players<span class="dots"><i>.</i><i>.</i><i>.</i></span></small></div>'));
       }
+      // WHILE THREE.JS LOADS (#289, the owner 2026-10-09: "do not show the normal emojis and the fallback at all until Three.js
+      // has loaded"): the round waits behind one quiet card; the emoji cards only if the stage cannot load at all
+      if (!stage && !stageFailed) { view.append(el('div', 'card loading', '<span class="spin"></span>')); return; }
       const card = el('div', 'card');
       const at = { pick: 0, wait: 1, alone: 3, reveal: 2, result: 3 }[s.phase];
       card.append(steps(at));
@@ -996,7 +1004,7 @@
       view.append(card);
     };
     // THE STAGE, once Three.js is in (kanban #284); until then, and without it, the cards
-    loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); }).catch((e) => console.warn('[rps] no 3D stage: ' + e.message));
+    loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); }).catch((e) => { stageFailed = true; drawnKey = null; console.warn('[rps] no 3D stage: ' + e.message); paint(); });
     paint();
     setInterval(paint, 1000);
   }
