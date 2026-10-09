@@ -30,6 +30,7 @@ import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
+import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES } from '../../arena-protocol/src/order-book.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
@@ -425,6 +426,24 @@ export class Round {
         // AND NOT ONCE THE OUTCOME IS KNOWN HERE: a pick made after its attestation came is not a pick, it is a copy
         if (this.outcomeAttestations(contract.roundId).length)
           throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');
+        // A MARKET ORDER (kanban #278, comment 1127): a pick bought at a limit price on a two-outcome market - a whole cent,
+        // at least 5 shares at its limit out of its stake less its fee, an expiry not past. A round is a book or a pool: it
+        // takes orders or plain picks, never both, so its settlement is one or the other.
+        const order = contract.limitPrice !== undefined && contract.limitPrice !== null;
+        const others = this.entriesOf(contract.roundId).filter((x) => !same(x.entry.sessionPubkey, contract.sessionPubkey));
+        if (others.some((x) => (x.entry.limitPrice !== undefined && x.entry.limitPrice !== null) !== order))
+          throw new Error(order ? 'that round takes plain picks (pari-mutuel): it takes no order' : 'that round is an order book: it takes orders, not a plain pick');
+        if (order) {
+          if (outcomes.length !== 2) throw new Error(`the order book trades a two-outcome market, and game "${game.plugin.manifest.gameName}" has ${outcomes.length}`);
+          const price = BigInt(contract.limitPrice);
+          if (price < 1n || price >= PRICE_SCALE || price % TICK !== 0n)
+            throw new Error(`a limit price is a whole cent below 1: ${contract.limitPrice} of ${PRICE_SCALE} is not`);
+          const net = contract.stakeMsat - contract.feeMsat - contract.donationMsat;
+          const shares = (net * PRICE_SCALE) / price / SHARE_MSAT;
+          if (shares < MIN_SHARES) throw new Error(`an order buys at least ${MIN_SHARES} shares at its limit, and that one buys ${shares}`);
+          if (contract.orderExpiryMs && contract.orderExpiryMs !== 0n && contract.orderExpiryMs <= BigInt(this.now()))
+            throw new Error('that order\'s expiry has passed');
+        }
       } else if (picked) throw new Error('that entry carries a pick, and its round is a replayed game\'s: its result is its run, not an outcome');
       // THE HIDDEN MOVE (kanban #233): an entry into a head-to-head round names its commitment, before entry close, and the
       // round seats no more than its game's players; an entry into any other round names none

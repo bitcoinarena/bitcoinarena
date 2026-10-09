@@ -28,7 +28,8 @@ import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/s
 import { pluginForRound } from './plugins.js';
 import { marketVoided } from '../../arena-protocol/src/attested.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
-import { lockSettlement, lateLockSettlement, attestedLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
+import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
+import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { decodeAttestation, outcomeFinality, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
@@ -98,7 +99,7 @@ export class LockSettlement {
    */
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
-    turnClock = null, donationSetFor = null, donationTargetFor = null, now = () => Date.now(), finalityOf = resultFinality } = {}) {
+    turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), finalityOf = resultFinality } = {}) {
     this.round = round;
     this.now = now;
     // THE ROUND'S SIGNED DONATION SET (server.js `donationSetFor`): where a walk-away's claimed lock sends its 25%.
@@ -106,6 +107,8 @@ export class LockSettlement {
     // A ROUND'S DONATION TARGET (server.js `donationTargetFor`: the network's set and its game's): where a market's donation,
     // held in its fee locks until the market resolves, is paid (kanban #235)
     this.donationTargetFor = donationTargetFor;
+    // THE MARKET ORDER BOOK (kanban #278, comment 1127): a round whose entries are orders settles from its certified batches
+    this.orderBook = orderBook;
     // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
     // `finality.rerunMs` is), since two signer nodes that agree on a run cannot hold a valid objection against it.
     this.finalityOf = finalityOf;
@@ -375,8 +378,65 @@ export class LockSettlement {
     }
   }
 
+  /**
+   * AN ORDER BOOK'S PLAN (kanban #278, comment 1127; the owner 2026-10-09 "(a)"): every certified batch this seat or another
+   * holds (carried first), none pending, through the ledger (book-ledger.js) to the settlement table on the final outcome,
+   * and `bookLockSettlement`: each filled order's stake lock and fee lock claimed whole and paid out of in this one
+   * transaction - winnings, sellers' proceeds, every unfilled rest, the fees due to the nodes and the donation. An order
+   * with no fill is not claimed: its locks come back whole by the return door.
+   */
+  async #bookPlan(roundIdBytes, a, claimPk, held) {
+    const { contract } = a;
+    await this.orderBook.carry(roundIdBytes);
+    const pending = this.orderBook.pending(roundIdBytes);
+    if (pending.length) return refuse(`no lock is claimed: batch ${pending[0]} of the book is not decided at this seat`);
+    const L = this.orderBook.ledger(roundIdBytes);
+    if (!L.ok) return refuse(`no lock is claimed: ${L.why}`);
+    let table;
+    try { table = bookSettlement({ positions: L.positions, outcome: a.finality.outcome }); } catch (e) { return refuse(`no lock is claimed: ${e.message}`); }
+    const entries = [];
+    const locks = new Map();
+    const lockEntry = new Map();
+    const feeLocks = new Map();
+    for (const r of table.claimed) {
+      const entryId = fromHex(r.entry);
+      const raw = this.round.entry(entryId);
+      if (!raw) return refuse(`no lock is claimed: this seat holds no entry ${r.entry.slice(0, 16)}`);
+      const e = decodeEntryContract(raw);
+      entries.push({ entryId: r.entry, pubkey: e.playerPubkey });
+      const lock = this.round.stakeLock(entryId);
+      if (lock) {
+        const fields = lockFieldsFromJson(lock.fields);
+        if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('a lock of this round names another claim key than the round\'s');
+        locks.set(toHex(e.playerPubkey), { outpoint: outpointOf(lock.outpoint), amountMsat: fields.amountMsat, refundPk: fields.refundPk, fields });
+        lockEntry.set(toHex(e.playerPubkey), entryId);
+      }
+      const fl = this.round.feeLock ? this.round.feeLock(entryId) : null;
+      if (fl) {
+        const fields = lockFieldsFromJson(fl.fields);
+        if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('a fee lock of this round names another claim key than the round\'s');
+        feeLocks.set(toHex(e.playerPubkey), { outpoint: outpointOf(fl.outpoint), amountMsat: fields.amountMsat, preimage: e.feePreimage });
+      }
+    }
+    const key = toHex(roundIdBytes);
+    let fees = this.fees.get(key);
+    if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    let donation = null;
+    if (L.market.donationBps > 0 && table.feesDueMsat > 0n) {
+      const t = this.donationTargetFor ? this.donationTargetFor(contract) : { ok: false, why: 'this signer node names no donation target' };
+      if (!t.ok) return refuse(`no lock is claimed: the book's fees carry a donation, and ${t.why}`);
+      donation = { recipients: t.target };
+    }
+    const plan = bookLockSettlement({ roundId: roundIdBytes, table, entries, locks, feeLocks, fees, contract,
+      nodeBps: L.market.nodeBps, donationBps: L.market.donationBps, donation });
+    if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
+  }
+
   async #attestedPlan(roundIdBytes, a, claimPk, held) {
     const { contract } = a;
+    if (this.orderBook && this.orderBook.isBook(roundIdBytes)) return this.#bookPlan(roundIdBytes, a, claimPk, held);
     if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes);
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
