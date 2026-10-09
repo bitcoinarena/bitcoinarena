@@ -234,10 +234,10 @@ export function attestedLockSettlement({ roundId, table, entries, locks, fees, f
   const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees, feeBps });
   if (!feePart.ok) return feePart;
   const empty = (why) => ({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: why });
-  if (table.refunded || !table.rows.some((r) => r.won)) {
-    if (!feePart.claims.length) return { ok: true, nothing: true, why: 'nobody picked the outcome and no fee lock pays: nothing is claimed' };
-    return finish(empty('nobody picked the outcome: no stake lock is claimed, every net stake comes back'), feePart);
-  }
+  // NOBODY PICKED THE OUTCOME: NOTHING IS CLAIMED, THE FEES TOO (kanban #235, the owner 2026-10-09: "refund the fees too") - every
+  // stake comes back by the return door at once (forfeit.js), every fee lock to its player at its expiry; no settlement moves
+  if (table.refunded || !table.rows.some((r) => r.won))
+    return { ok: true, nothing: true, refunded: true, why: 'nobody picked the outcome: nothing is claimed - every stake comes back, its fee too' };
   const losers = table.rows.filter((r) => !r.won && r.netMsat > 0n);
   const winners = table.rows.filter((r) => r.won);
   const claims = [];
