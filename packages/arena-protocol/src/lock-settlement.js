@@ -223,7 +223,7 @@ const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
  * to it by the stake-return path. Nobody picked the outcome (`table.refunded`): no stake lock is claimed, only the fee
  * locks. Under a fee rule that charges, the shares are scaled to what the claimed locks can pay, the dust to the first.
  */
-export function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null }) {
+export function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null, feeBps = undefined }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.rows)) return refuse('an attested round is settled from its pari-mutuel table');
@@ -231,7 +231,7 @@ export function attestedLockSettlement({ roundId, table, entries, locks, fees, f
   // THE FEE PART: every counted entry, as for any round (none is a refund: a pick is a counted stake)
   const counted = table.rows.map((r) => ({ ...byId.get(r.entryId), outcome: DELIVERED, score: 0 }));
   if (counted.some((e) => !e.pubkey)) return refuse('a row of the table names an entry this signer node does not hold');
-  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees });
+  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees, feeBps });
   if (!feePart.ok) return feePart;
   const empty = (why) => ({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: why });
   if (table.refunded || !table.rows.some((r) => r.won)) {
@@ -491,12 +491,13 @@ function finish(stake, fee) {
  * output. `fees` is the federation's rule, read by the page's own lock client -
  * not a signer node's word.
  */
-export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
+// `feeBps`: the round's game's node fee (fee.js feeBpsOf - a market's own, 0.5 % by default; kanban #235), the network's if none
+export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
-  const lockMsat = entryFeeMsat(stakeMsat);
+  const lockMsat = entryFeeMsat(stakeMsat, feeBps);
   // THE ROUND'S SITTING SIGNER NODES, each once - the signer nodes its settlement pays, in both pools.
   const sitting = Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
   const base = { stakeMsat, lockMsat, players, signerNodes: sitting.length };
@@ -506,7 +507,7 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } 
   const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
-  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees });
+  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps });
   if (!part.ok) return { ...base, pays: false, why: part.why };
   const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
     perSignerNodeNetMsat: part.payouts.map((p) => p.msat), unpaidSignerNodes: part.unpaid.length };
@@ -522,7 +523,7 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } 
  * settlement }: x-only keys); `feeLocks` the verified fee locks by player key,
  * each with its outpoint, amount and F.
  */
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees }) {
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -538,7 +539,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees }) {
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : [])].map(toHex));
   let table;
-  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible }); } catch (e) { return refuse(e.message); }
+  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(feeBps !== undefined ? { feeBps } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   if (table.fee !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
   if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible signer node in its pool, so no fee lock is claimed`);

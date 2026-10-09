@@ -73,3 +73,15 @@ export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = n
       + `not a config ${game.name} lists for that core: refused, as an unknown core is (§5, §27A.6)` };
   return { ok: true, game: game.name };
 }
+
+/**
+ * THE NODE FEE AND DONATION A PINNED GAME CHARGES (kanban #235): a market's own (its manifest's terms), else the market default
+ * 0.5 % + 0.5 % (the owner 2026-10-09), else a game's network 5 % and the player's donation choice (null). null for a game this
+ * client does not pin - the caller then knows its rate another way (an unpinned market the player confirmed: its manifest).
+ */
+export function feeOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  if (!game) return null;
+  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps };
+  return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
+}

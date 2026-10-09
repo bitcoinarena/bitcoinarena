@@ -29,7 +29,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
-import { feeMatchesEntry } from '../../arena-protocol/src/fee.js';
+import { feeMatchesEntry, feeBpsOf, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
@@ -470,10 +470,17 @@ export class Round {
       throw new Error(
         `that round asks a stake of ${asks.stakeMsat} msat and that entry names `
         + `${contract.stakeMsat}`);
+    // THE ROUND'S GAME'S RATE (kanban #235): a market's own fee from its manifest - 0.5 % by default - and a game's the
+    // network's; and a market's donation no more than its manifest's rate (0.5 % by default)
+    const feeGame = pluginForRound(asks, this.plugins);
+    const feeBps = feeGame.ok ? feeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
     const fee = feeMatchesEntry({
       stakeMsat: asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
-    });
+    }, { feeBps });
     if (!fee.ok) throw new Error(fee.why);
+    const donationCap = feeGame.ok ? donationBpsOf(feeGame.plugin.manifest) : null;
+    if (donationCap !== null && contract.donationMsat > (asks.stakeMsat * BigInt(donationCap)) / 10000n)
+      throw new Error(`that entry donates ${contract.donationMsat} msat, and game "${feeGame.plugin.manifest.gameName}" takes a donation of at most ${donationCap / 100}% of its ${asks.stakeMsat} msat stake`);
     // AND THE SHARES IT NAMES MUST BE SHARES THIS NODE CHECKED.
     //
     // 23.1: `vss_shares_ref` points at the published shares. An entry that

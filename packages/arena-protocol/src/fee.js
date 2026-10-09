@@ -104,9 +104,11 @@ export function grossVolumeMsat(entries) {
  * `roundId` comes off the CONTRACT rather than being passed, so the order the
  * remainders go out in belongs to the round and not to whoever asks.
  */
-export function nodeFeeTable({ contract, entries, pools, eligible }) {
+// `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
+// was checked against at the door; the network's 5 % if none is named
+export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS }) {
   const gross = grossVolumeMsat(entries);
-  const fee = (gross * BigInt(NODE_FEE_BPS)) / 10000n;
+  const fee = (gross * BigInt(feeBps)) / 10000n;
   // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
   // what is left (two floors of the same ragged number can lose a millisatoshi between them). With no guardian named, the
   // two-pool table exactly as before - 1% and the rest.

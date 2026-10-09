@@ -7290,6 +7290,18 @@ function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, co
   return { ok: true, game: game.name };
 }
 
+/**
+ * THE NODE FEE AND DONATION A PINNED GAME CHARGES (kanban #235): a market's own (its manifest's terms), else the market default
+ * 0.5 % + 0.5 % (the owner 2026-10-09), else a game's network 5 % and the player's donation choice (null). null for a game this
+ * client does not pin - the caller then knows its rate another way (an unpinned market the player confirmed: its manifest).
+ */
+function feeOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  if (!game) return null;
+  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps };
+  return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
+}
+
 // ---- arena-protocol/src/fee.js
 // 22A: WHAT EACH NODE IS OWED, AND THE FACT THAT SOMEBODY COMPUTES IT.
 //
@@ -7396,9 +7408,11 @@ function grossVolumeMsat(entries) {
  * `roundId` comes off the CONTRACT rather than being passed, so the order the
  * remainders go out in belongs to the round and not to whoever asks.
  */
-function nodeFeeTable({ contract, entries, pools, eligible }) {
+// `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
+// was checked against at the door; the network's 5 % if none is named
+function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS }) {
   const gross = grossVolumeMsat(entries);
-  const fee = (gross * BigInt(NODE_FEE_BPS)) / 10000n;
+  const fee = (gross * BigInt(feeBps)) / 10000n;
   // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
   // what is left (two floors of the same ragged number can lose a millisatoshi between them). With no guardian named, the
   // two-pool table exactly as before - 1% and the rest.
@@ -7524,11 +7538,31 @@ function feeTableId(table) {
  *
  * The same integer floor the table uses, so one rate is applied one way.
  */
-const entryFeeMsat = (stakeMsat) => {
+// A MARKET'S OWN NODE FEE (kanban #235, the owner 2026-10-09: "per market in manifest"): `bps`, its manifest's
+// marketTerms.nodeFeeBps (0 to NODE_FEE_BPS) - the rate is still never the operator's or the round's to choose, only the
+// signed manifest's, within the network's. Without one, the network's.
+const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
   if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
   if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
-  return (stakeMsat * BigInt(NODE_FEE_BPS)) / 10000n;
+  if (!Number.isInteger(bps) || bps < 0 || bps > NODE_FEE_BPS) throw new Error(`a node fee is 0 to ${NODE_FEE_BPS} bps`);
+  return (stakeMsat * BigInt(bps)) / 10000n;
 };
+
+/**
+ * A MARKET'S DEFAULT FEE (the owner 2026-10-09: "market default fees are 1%, 0.5 + 0.5, per default"): an attested market that
+ * names no fee of its own charges 0.5 % to the nodes and 0.5 % donation; a game, the network's 5 % (+ its donation choice).
+ */
+const MARKET_DEFAULT_NODE_FEE_BPS = 50;
+const MARKET_DEFAULT_DONATION_BPS = 50;
+const isMarket = (m) => !!m && m.resultType === 2;                       // RESULT_TYPE.ATTESTED (manifest.js)
+
+/** The node fee a round's game charges: its market terms' rate, a market's default 0.5 %, or the network's. */
+const feeBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.nodeFeeBps)
+  ? manifest.marketTerms.nodeFeeBps : isMarket(manifest) ? MARKET_DEFAULT_NODE_FEE_BPS : NODE_FEE_BPS);
+
+/** A market's donation: its terms' rate, or the market default 0.5 %; null for a game (the player's donation choice). */
+const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.donationBps)
+  ? manifest.marketTerms.donationBps : isMarket(manifest) ? MARKET_DEFAULT_DONATION_BPS : null);
 
 /**
  * DOES THIS ENTRY'S FEE STAND?
@@ -7543,7 +7577,7 @@ const entryFeeMsat = (stakeMsat) => {
  * in this package: a caller that asked whether an entry stands should be told,
  * not made to catch.
  */
-function feeMatchesEntry(entry) {
+function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS } = {}) {
   // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
   // bytes, so its amounts are BigInt - a free round is three zeros, not three
   // missing fields. Coercing a Number or a missing amount here would have
@@ -7554,15 +7588,16 @@ function feeMatchesEntry(entry) {
   if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
     return { ok: false, why: 'a stake and a fee cannot be negative' };
 
-  const owed = entryFeeMsat(entry.stakeMsat);
+  const owed = entryFeeMsat(entry.stakeMsat, feeBps);
+  const pct = `${feeBps / 100}%`;
   if (entry.feeMsat !== owed)
     return {
       ok: false,
       owed,
       why: entry.feeMsat > owed
-        ? `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}: `
+        ? `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}: `
           + `the ${entry.feeMsat - owed} over is money no fee table allocates`
-        : `that entry was charged ${entry.feeMsat} where 2% of ${entry.stakeMsat} is ${owed}`,
+        : `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}`,
     };
 
   // AND THE DONATION COMES OUT OF THE SAME COMMITMENT, so together they cannot
@@ -7572,7 +7607,7 @@ function feeMatchesEntry(entry) {
   let net;
   try { net = netStakeMsat(entry); }
   catch (e) { return { ok: false, owed, why: e.message }; }
-  return { ok: true, owed, net, why: `${owed} is 2% of ${entry.stakeMsat}, and ${net} of it is staked` };
+  return { ok: true, owed, net, why: `${owed} is ${pct} of ${entry.stakeMsat}, and ${net} of it is staked` };
 }
 
 // ---- arena-protocol/src/threshold.js
@@ -7731,6 +7766,13 @@ function claimKeyIsAttested({ roundId, claimPk, signatures, signerNodes, settlem
 
 
 
+
+/**
+ * THE NODE FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
+ * player confirmed - its manifest's), else the pinned game's (a market's own, 0.5 % by default), else the network's 5 %.
+ */
+const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
+  : ((feeOfKnownGame(round && round.gameId) || {}).nodeBps ?? NODE_FEE_BPS));
 
 
 
@@ -8492,7 +8534,7 @@ function feeLockOf(stakeLock, round) {
   if (!f.fields || !f.fields.paymentImage || f.fields.paymentImage.kind !== 'hash'
     || toHex(f.fields.paymentImage.bytes) !== toHex(sha256(f.preimage)))
     throw new Error('that fee lock is not locked to H(F) of the F it hands over');
-  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n));
+  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round));
   if (f.fields.amountMsat !== want) throw new Error(`that fee lock holds ${f.fields.amountMsat} msat and the entry's fee is ${want}`);
   return f;
 }
@@ -8510,7 +8552,8 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     throw new Error('a donation is a BigInt millisatoshi amount, 0 or more');
   {
     const stakeMsat = BigInt(round.stakeMsat || 0n);
-    const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+    const feeBps = feeBpsForRound(round);
+    const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBps), donationMsat }, { feeBps });
     if (!fee.ok) throw new Error(fee.why);
   }
   // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
@@ -8606,7 +8649,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     //
     // A free round is 2% of nothing, which is nothing, so the same line is
     // right for both and there is no branch to get wrong.
-    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n)),
+    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round)),
     donationMsat,
     joinTick,
   };
@@ -9732,7 +9775,7 @@ const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
  * to it by the stake-return path. Nobody picked the outcome (`table.refunded`): no stake lock is claimed, only the fee
  * locks. Under a fee rule that charges, the shares are scaled to what the claimed locks can pay, the dust to the first.
  */
-function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null }) {
+function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null, feeBps = undefined }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.rows)) return refuse('an attested round is settled from its pari-mutuel table');
@@ -9740,7 +9783,7 @@ function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks
   // THE FEE PART: every counted entry, as for any round (none is a refund: a pick is a counted stake)
   const counted = table.rows.map((r) => ({ ...byId.get(r.entryId), outcome: DELIVERED, score: 0 }));
   if (counted.some((e) => !e.pubkey)) return refuse('a row of the table names an entry this signer node does not hold');
-  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees });
+  const feePart = feeSettlement({ entries: counted, feeLocks, signerNodes, contract, fees, feeBps });
   if (!feePart.ok) return feePart;
   const empty = (why) => ({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: why });
   if (table.refunded || !table.rows.some((r) => r.won)) {
@@ -10000,12 +10043,13 @@ function finish(stake, fee) {
  * output. `fees` is the federation's rule, read by the page's own lock client -
  * not a signer node's word.
  */
-function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
+// `feeBps`: the round's game's node fee (fee.js feeBpsOf - a market's own, 0.5 % by default; kanban #235), the network's if none
+function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
-  const lockMsat = entryFeeMsat(stakeMsat);
+  const lockMsat = entryFeeMsat(stakeMsat, feeBps);
   // THE ROUND'S SITTING SIGNER NODES, each once - the signer nodes its settlement pays, in both pools.
   const sitting = Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
   const base = { stakeMsat, lockMsat, players, signerNodes: sitting.length };
@@ -10015,7 +10059,7 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
   const pools = { [GAME_VERIFY]: sitting, [SETTLEMENT]: sitting };
   const entries = Array.from({ length: players }, (_, i) => ({ pubkey: key(0xb0, i), stakeMsat, feeMsat: lockMsat, donationMsat: 0n, outcome: FAILED, score: 0 }));
   const feeLocks = new Map(entries.map((e, i) => [toHex(e.pubkey), { outpoint: { txid: key(0xc0, i), outIdx: BigInt(i) }, amountMsat: lockMsat, preimage: key(0xd0, i) }]));
-  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees });
+  const part = feeSettlement({ entries, feeLocks, signerNodes: pools, contract, fees, feeBps });
   if (!part.ok) return { ...base, pays: false, why: part.why };
   const out = { ...base, inputFeesMsat: part.inputFeesMsat, outputFeesMsat: part.outputFeesMsat,
     perSignerNodeNetMsat: part.payouts.map((p) => p.msat), unpaidSignerNodes: part.unpaid.length };
@@ -10031,7 +10075,7 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND } = {}) {
  * settlement }: x-only keys); `feeLocks` the verified fee locks by player key,
  * each with its outpoint, amount and F.
  */
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees }) {
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -10047,7 +10091,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees }) {
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : [])].map(toHex));
   let table;
-  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible }); } catch (e) { return refuse(e.message); }
+  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(feeBps !== undefined ? { feeBps } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   if (table.fee !== poolMsat) return refuse(`the fee table owes the signer nodes ${table.fee} msat and the fee locks hold ${poolMsat}`);
   if (table.unallocated > 0n) return refuse(`${table.unallocated} msat of the fee has no eligible signer node in its pool, so no fee lock is claimed`);
@@ -10272,6 +10316,7 @@ function decodeBolt11(invoice) {
 
 
 
+
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 /**
@@ -10337,7 +10382,7 @@ function lockLine(stakeLock) {
  */
 const lockAmountMsat = (round, donationMsat = 0n) => {
   const stakeMsat = BigInt(round.stakeMsat || 0n);
-  return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+  return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBpsForRound(round)), donationMsat });
 };
 
 /**
@@ -10520,7 +10565,7 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
   if (feeRule && feeRule.baseMsat > 0n)
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
-  const feeGate = feeLockPays({ contract: round, fees: feeRule });
+  const feeGate = feeLockPays({ contract: round, fees: feeRule, feeBps: feeBpsForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (the owner 2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
@@ -15816,7 +15861,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
 async function federationStakeFor(round, { nodes, fetcher = fetch, donationMsat = 0n } = {}) {
   const stakeMsat = BigInt((round && round.stakeMsat) || 0n);
   if (!(stakeMsat > 0n)) throw new Error('a round that asks no stake has nothing to invoice');
-  const want = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+  const want = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBpsForRound(round)), donationMsat });
   const id = toHex(round.id);
   const refused = [];
   for (const node of nodes || []) {
@@ -19828,6 +19873,8 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 //       clients[], game_donation_set,
 //       [ATTESTED only] outcomes[], attestors[], attest_threshold,
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
+//       [ATTESTED, optional] market terms: node_fee_bps, donation_bps, question, resolve_after_close, deadline_after_resolve,
+//         source_rule (kanban #235),
 //       signature by game_dev_pubkey
 //     }
 //     game_id = H(GameManifest)
@@ -19860,6 +19907,35 @@ const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1, PARI_MUTUEL: 2 });
 /** An attested game names 2 to 16 outcomes and 1 to 16 attestors. */
 const OUTCOMES_MAX = 16;
 const ATTESTORS_MAX = 16;
+
+/**
+ * A MARKET'S OWN TERMS (kanban #235, the owner 2026-10-09: the market's fee "per market in manifest"; "refund at deadline"):
+ * its fee - the node share and the donation, each in basis points of the stake, within the network's (NODE_FEE_BPS 500,
+ * donations up to 500) - its question, when its outcome is decided (`resolveAfterCloseMs` after a round's entry close),
+ * the deadline its attestors have after that, and the rule its attestors read the outcome by (sources and aggregation, as
+ * text). Optional: an attested manifest without them keeps the network's fee and today's rules, and its bytes.
+ */
+const MARKET_TERMS_MARKER = 0x01;
+const MARKET_FEE_BPS_MAX = 500;
+const MARKET_DONATION_BPS_MAX = 500;
+const MARKET_TOTAL_FEE_BPS_MAX = 1000;
+const MARKET_RESOLVE_MAX_MS = 30n * 24n * 3600000n;
+const MARKET_DEADLINE_MIN_MS = 60000n;
+const MARKET_DEADLINE_MAX_MS = 7n * 24n * 3600000n;
+function marketTermsFit(t) {
+  if (!t || typeof t !== 'object') return { ok: false, why: 'a market\'s terms are an object' };
+  if (!Number.isInteger(t.nodeFeeBps) || t.nodeFeeBps < 0 || t.nodeFeeBps > MARKET_FEE_BPS_MAX) return { ok: false, why: `a market's node fee is 0 to ${MARKET_FEE_BPS_MAX} bps` };
+  if (!Number.isInteger(t.donationBps) || t.donationBps < 0 || t.donationBps > MARKET_DONATION_BPS_MAX) return { ok: false, why: `a market's donation is 0 to ${MARKET_DONATION_BPS_MAX} bps` };
+  // AT MOST 10 % IN ALL (the owner 2026-10-09: "fees per market can't be more than ... to prevent malicious markets" - "I mean 10
+  // in total"): the node fee and the donation together, each at most 5 % - a market takes no more of a stake than the
+  // network's own games can (5 % node fee + up to 5 % donation)
+  if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (10 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
+  if (typeof t.question !== 'string' || t.question.length < 1 || t.question.length > 256) return { ok: false, why: 'a market asks its question in 1 to 256 characters' };
+  if (typeof t.resolveAfterCloseMs !== 'bigint' || t.resolveAfterCloseMs < 0n || t.resolveAfterCloseMs > MARKET_RESOLVE_MAX_MS) return { ok: false, why: 'a market resolves 0 to 30 days after its entry close' };
+  if (typeof t.deadlineAfterResolveMs !== 'bigint' || t.deadlineAfterResolveMs < MARKET_DEADLINE_MIN_MS || t.deadlineAfterResolveMs > MARKET_DEADLINE_MAX_MS) return { ok: false, why: 'a market gives its attestors 1 minute to 7 days after its resolution time' };
+  if (typeof t.sourceRule !== 'string' || t.sourceRule.length < 1 || t.sourceRule.length > 1024) return { ok: false, why: 'a market names the rule its attestors read the outcome by, in 1 to 1024 characters' };
+  return { ok: true };
+}
 
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
@@ -19913,6 +19989,7 @@ function encodeManifestBody(m) {
       throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+    if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
   } else if (isHeadToHead(m)) {
     // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
     if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
@@ -19970,6 +20047,12 @@ function encodeManifestBody(m) {
     w.vec(m.outcomes, (o, ww) => ww.str(o));
     w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
     w.u8(m.attestThreshold);
+    // ITS MARKET TERMS (kanban #235), after a marker and only when it names them: every attested manifest before keeps its bytes
+    if (m.marketTerms) {
+      const t = m.marketTerms;
+      w.u8(MARKET_TERMS_MARKER); w.u16(t.nodeFeeBps); w.u16(t.donationBps); w.str(t.question);
+      w.u64(t.resolveAfterCloseMs); w.u64(t.deadlineAfterResolveMs); w.str(t.sourceRule);
+    }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -20004,6 +20087,11 @@ function readBody(r) {
     body.outcomes = r.vec((rr) => rr.str());
     body.attestors = r.vec((rr) => rr.bytes32());
     body.attestThreshold = r.u8();
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_TERMS_MARKER) {
+      r.u8();
+      body.marketTerms = { nodeFeeBps: r.u16(), donationBps: r.u16(), question: r.str(),
+        resolveAfterCloseMs: r.u64(), deadlineAfterResolveMs: r.u64(), sourceRule: r.str() };
+    }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
     body.players = r.u8();
@@ -20300,12 +20388,43 @@ function outcomeFinality(held, { windowMs, nowMs }) {
  * MAY AN ATTESTATION COME IN YET (§0A.7a slice 2): only once the round's entries have closed on the seat's clock, and only
  * for an outcome seen after that close - an outcome known while a pick could still be made is a pick to be copied.
  */
-function attestationTimely(a, { entryCloseMs, nowMs }) {
+function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
+  // A MARKET WITH TERMS (kanban #235) DECIDES AT ITS RESOLUTION TIME, and not before it: an outcome observed earlier is not
+  // the outcome the market asked for (the price at 18:00 is not the price at 17:59)
+  if (terms) {
+    const t = marketTimes({ entryCloseMs, terms });
+    if (BigInt(a.observedAtMs) < t.resolveAtMs)
+      return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the market's resolution time ${new Date(Number(t.resolveAtMs)).toISOString()}` };
+  }
   if (BigInt(nowMs) < BigInt(entryCloseMs))
     return { ok: false, why: `that round's entries are still open (they close at ${new Date(Number(entryCloseMs)).toISOString()}): no outcome is taken before the last pick` };
   if (BigInt(a.observedAtMs) < BigInt(entryCloseMs))
     return { ok: false, why: `that attestation says it was observed at ${new Date(Number(a.observedAtMs)).toISOString()}, before the round's entries closed at ${new Date(Number(entryCloseMs)).toISOString()}` };
   return { ok: true };
+}
+
+/**
+ * A MARKET ROUND'S TIMES (kanban #235): its resolution time - `resolveAfterCloseMs` after its entry close - and the deadline
+ * its attestors have, `deadlineAfterResolveMs` after that.
+ */
+function marketTimes({ entryCloseMs, terms }) {
+  const resolveAtMs = BigInt(entryCloseMs) + BigInt(terms.resolveAfterCloseMs);
+  return { resolveAtMs, deadlineMs: resolveAtMs + BigInt(terms.deadlineAfterResolveMs) };
+}
+
+/**
+ * REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market round with no standing outcome at its deadline, or whose
+ * attestors contradicted themselves, is not settled on any outcome - it is VOID, and every stake goes back, its fee too.
+ * Answers { voided, why } on the seat's clock; a round inside its deadline with no outcome yet is not decided here.
+ */
+function marketVoided(held, { entryCloseMs, terms, nowMs }) {
+  if (!terms) return { voided: false };
+  const standing = outcomeStanding(held);
+  if (standing.state === 'DISPUTED') return { voided: true, why: `the attestors contradicted themselves: ${standing.why}` };
+  const { deadlineMs } = marketTimes({ entryCloseMs, terms });
+  if (standing.state === 'OPEN' && BigInt(nowMs) >= deadlineMs)
+    return { voided: true, why: `no outcome was attested by the market's deadline ${new Date(Number(deadlineMs)).toISOString()}: every stake goes back` };
+  return { voided: false };
 }
 
 // ---- arena-client/src/market.js
@@ -20337,13 +20456,15 @@ const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { m
 function marketForRound(round, { manifestBytes = null } = {}) {
   if (!round || !(round.gameId instanceof Uint8Array)) return null;
   const pinned = marketOf(round.gameId);
-  if (pinned) return { ...pinned, needsConfirm: false };
+  // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
+  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId) };
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
-    attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [] };
+    attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) } };
 }
 
 /**
@@ -20355,16 +20476,20 @@ function marketForRound(round, { manifestBytes = null } = {}) {
 // contract at hand.
 function pickSheet({ market, contract = null, stakeMsat = contract ? contract.stakeMsat : 0n, donationBps = 500 }) {
   const stake = BigInt(stakeMsat);
-  const fee = entryFeeMsat(stake);
+  // THE MARKET'S OWN RATES (kanban #235): its node fee, and a donation no higher than its own (0.5 % + 0.5 % by default)
+  const rates = market.fee || { nodeBps: 50, donationBps: 50 };
+  donationBps = Math.min(donationBps, rates.donationBps);
+  const fee = entryFeeMsat(stake, rates.nodeBps);
   const donation = (stake * BigInt(donationBps)) / 10000n;
+  const pct = (bps) => `${(bps / 100).toFixed(bps % 100 ? (bps % 10 ? 2 : 1) : 0)}%`;
   const net = stake - fee - donation;
   return {
     title: `${market.name} - pick one`,
     outcomes: market.outcomes.map((label, index) => ({ index, label })),
     lines: {
       stake: `stake ${sats(stake)} sats`,
-      fee: `node fee 5%: ${sats(fee)} sats`,
-      donation: `donation ${(donationBps / 100).toFixed(donationBps % 100 ? 1 : 0)}%: ${sats(donation)} sats (half to the protocol devs, half to ${market.name}'s dev)`,
+      fee: `node fee ${pct(rates.nodeBps)}: ${sats(fee)} sats`,
+      donation: `donation ${pct(donationBps)}: ${sats(donation)} sats (half to the protocol devs, half to ${market.name}'s dev)`,
       net: `at risk on your pick: ${sats(net)} sats`,
     },
     stakeMsat: stake, feeMsat: fee, donationMsat: donation, netMsat: net,
@@ -20495,7 +20620,10 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
 //        DRAW -> DELIVERED, score 1 (below min_score: keeps its stake)   net stake back
 //        LOSS -> FAILED                                                   net stake into the pool
 //        no stood reveal -> FORFEIT                                       net stake into the pool
-//      A lone revealer wins; with no reveal at all every entry forfeits. Every node decides the same from the same reveals,
+//      A lone revealer wins; with no reveal at all every entry forfeits.
+//      FEWER ENTRIES THAN THE GAME'S PLAYERS (the owner 2026-10-09: "refuse 1 game rounds since there is only 1 player - there
+//      must be 2 before the game starts"): nobody was played against, so the round is not played - every entry VOID, its
+//      stake back, no result for anyone. Every node decides the same from the same reveals,
 //      so their results agree the way two replays of one transcript agree.
 
 
@@ -20538,8 +20666,12 @@ function revealStands({ roundId, entryKey, commit, move, salt, moveCount, atMs, 
  * reveal) }]; `decide(moves, config)` is the game's adapter: it gets [{ key, move }] of the revealers only and answers
  * { [key]: 'WIN' | 'DRAW' | 'LOSS' } for each of them. Answers { [key]: { outcome, score } } for every entry.
  */
-function headToHeadResults(entries, decide, config) {
+function headToHeadResults(entries, decide, config, { players = 2 } = {}) {
   const out = {};
+  if (entries.length < players) {
+    for (const e of entries) out[e.key] = { outcome: VOID, score: 0 };
+    return out;
+  }
   const revealed = entries.filter((e) => Number.isInteger(e.move));
   for (const e of entries) if (!Number.isInteger(e.move)) out[e.key] = { outcome: FORFEIT, score: 0 };
   if (revealed.length === 1) out[revealed[0].key] = { outcome: DELIVERED, score: H2H_WIN_SCORE };
