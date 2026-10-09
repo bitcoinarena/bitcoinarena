@@ -1,0 +1,6 @@
+# kanban #268: testnet.bitcoin-arena.io -> the arena alias of btc-logistics-core (Workers custom domain: DNS and cert by Cloudflare)
+name = "bitcoin-arena-testnet"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = false
+routes = [ { pattern = "testnet.bitcoin-arena.io", custom_domain = true } ]
