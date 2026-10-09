@@ -30,7 +30,7 @@ const ROUND_ID = b32(0x77);
 const CONTRACT = { gameId: MARKET.registration.gameId, simCoreHash: b32(0), configHash: b32(0), networkId: NETWORK_ID_REGTEST, stakeMsat: 1_000_000n };
 const signBody = (body, keys) => ({ ...body, signatures: keys.map((k) => ({ key: k.pubkey, signature: new Uint8Array(edSign(null, Buffer.from(attestationBodyId(body)), k.key)) })) });
 
-test('the sheet: the pinned market\'s outcomes, the stake, the 5% fee and the donation; an unpinned market needs the second confirmation', () => {
+test('the sheet: the pinned market\'s outcomes, the stake, the market\'s fee (0.5 % by default) and its donation; an unpinned market needs the second confirmation', () => {
   const market = marketForRound(CONTRACT);
   assert.ok(market && market.known, 'the regtest market is not pinned');
   assert.deepEqual(market.outcomes, MARKET_OUTCOMES);
@@ -38,10 +38,11 @@ test('the sheet: the pinned market\'s outcomes, the stake, the 5% fee and the do
   console.log('  SHEET:', JSON.stringify({ title: sheet.title, outcomes: sheet.outcomes.map((o) => o.label), lines: sheet.lines, confirm: sheet.confirm }));
   assert.deepEqual(sheet.outcomes.map((o) => o.label), ['above 100k', 'between', 'below 90k']);
   assert.equal(sheet.lines.stake, 'stake 1,000 sats');
-  assert.equal(sheet.lines.fee, 'node fee 5%: 50 sats');
-  assert.match(sheet.lines.donation, /^donation 5%: 50 sats \(half to the protocol devs, half to btc-close's dev\)$/);
-  assert.equal(sheet.lines.net, 'at risk on your pick: 900 sats');
-  assert.equal(sheet.feeMsat, entryFeeMsat(CONTRACT.stakeMsat));
+  // THE MARKET'S OWN RATES (kanban #235, the owner 2026-10-09: 0.5 % + 0.5 % by default): the 5 % asked is capped at the market's 0.5 %
+  assert.equal(sheet.lines.fee, 'node fee 0.5%: 5 sats');
+  assert.match(sheet.lines.donation, /^donation 0.5%: 5 sats \(half to the protocol devs, half to btc-close's dev\)$/);
+  assert.equal(sheet.lines.net, 'at risk on your pick: 990 sats');
+  assert.equal(sheet.feeMsat, entryFeeMsat(CONTRACT.stakeMsat, 50));
   assert.equal(sheet.confirm, null);
   // pinned for regtest only: a testnet4 round of it is refused by the entry, as a game the page does not know
   assert.throws(() => entryFor({ ...CONTRACT, networkId: NETWORK_ID_TESTNET4, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9) },

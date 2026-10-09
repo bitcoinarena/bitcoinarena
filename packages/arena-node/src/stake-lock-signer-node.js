@@ -37,9 +37,9 @@ import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
  * fee lock made the round's one settlement refuse everybody: "an entry's fee lock was
  * never verified, so the fee cannot be claimed").
  */
-export async function roundMintsFees({ contract, port }) {
+export async function roundMintsFees({ contract, port, feeBps = undefined }) {
   if (!port || typeof port.fees !== 'function') return { mints: false, why: 'this signer node reads no federation fee rule' };
-  const gate = feeLockPays({ contract, fees: await port.fees() });
+  const gate = feeLockPays({ contract, fees: await port.fees(), feeBps });
   return { mints: gate.pays, why: gate.why };
 }
 

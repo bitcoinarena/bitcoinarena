@@ -19,6 +19,7 @@
 //
 // FEES ARE NOT IN IT. The fee locks' claim hash and §22A's node slots are not
 // decided (FEDERATION.md F5); the fee lock expires back to its player as before.
+import { feeBpsOf } from '../../arena-protocol/src/fee.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -362,7 +363,9 @@ export class LockSettlement {
     let fees = this.fees.get(key);
     if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
     const plan = attestedLockSettlement({ roundId: roundIdBytes, table, entries, locks, fees, feeLocks,
-      signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract });
+      signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract,
+      // THE MARKET'S OWN NODE FEE (kanban #235): the rate its entries' fees were checked against, 0.5 % by default
+      feeBps: (() => { const f = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null; return f && f.ok ? feeBpsOf(f.plugin.manifest) : undefined; })() });
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
     return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };

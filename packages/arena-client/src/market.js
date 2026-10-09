@@ -11,8 +11,8 @@
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
 import { decodeManifest, gameIdOf, isAttested, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
-import { marketOf } from '../../arena-protocol/src/known-game.js';
-import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
+import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
+import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { handLock } from './page-lock.js';
@@ -27,13 +27,15 @@ const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { m
 export function marketForRound(round, { manifestBytes = null } = {}) {
   if (!round || !(round.gameId instanceof Uint8Array)) return null;
   const pinned = marketOf(round.gameId);
-  if (pinned) return { ...pinned, needsConfirm: false };
+  // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
+  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId) };
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
-    attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [] };
+    attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) } };
 }
 
 /**
@@ -45,16 +47,20 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
 // contract at hand.
 export function pickSheet({ market, contract = null, stakeMsat = contract ? contract.stakeMsat : 0n, donationBps = 500 }) {
   const stake = BigInt(stakeMsat);
-  const fee = entryFeeMsat(stake);
+  // THE MARKET'S OWN RATES (kanban #235): its node fee, and a donation no higher than its own (0.5 % + 0.5 % by default)
+  const rates = market.fee || { nodeBps: 50, donationBps: 50 };
+  donationBps = Math.min(donationBps, rates.donationBps);
+  const fee = entryFeeMsat(stake, rates.nodeBps);
   const donation = (stake * BigInt(donationBps)) / 10000n;
+  const pct = (bps) => `${(bps / 100).toFixed(bps % 100 ? (bps % 10 ? 2 : 1) : 0)}%`;
   const net = stake - fee - donation;
   return {
     title: `${market.name} - pick one`,
     outcomes: market.outcomes.map((label, index) => ({ index, label })),
     lines: {
       stake: `stake ${sats(stake)} sats`,
-      fee: `node fee 5%: ${sats(fee)} sats`,
-      donation: `donation ${(donationBps / 100).toFixed(donationBps % 100 ? 1 : 0)}%: ${sats(donation)} sats (half to the protocol devs, half to ${market.name}'s dev)`,
+      fee: `node fee ${pct(rates.nodeBps)}: ${sats(fee)} sats`,
+      donation: `donation ${pct(donationBps)}: ${sats(donation)} sats (half to the protocol devs, half to ${market.name}'s dev)`,
       net: `at risk on your pick: ${sats(net)} sats`,
     },
     stakeMsat: stake, feeMsat: fee, donationMsat: donation, netMsat: net,

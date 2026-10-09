@@ -33,7 +33,7 @@ import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-nam
 import { roundEndMs, startDeadlineOf } from '../../arena-protocol/src/first-mark.js';
 import { OBJECTION_WINDOW_MS, windowsOf } from '../../arena-protocol/src/window.js';
 import { msForTicks } from '../../arena-protocol/src/tick.js';
-import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
+import { entryFeeMsat, feeBpsOf } from '../../arena-protocol/src/fee.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -2962,7 +2962,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // and a paying round with a zero federation id does not encode (§23.6). No custody test is left here.
           {
             let gate;
-            try { gate = await roundMintsFees({ contract: rc, port: stakeLocks }); }
+            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: stakeLocks, feeBps: g.ok ? feeBpsOf(g.plugin.manifest) : undefined }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
             // fees are 0: the federation runs with disable_base_fees"). A base fee comes out of every input
@@ -3108,7 +3108,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return text(res, 400, 'a donation is named in whole millisatoshi, 0 or more');
         let amountMsat;
         try {
-          amountMsat = netStakeMsat({ stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat),
+          const ofGame = pluginForRound(contract, hosted);
+          amountMsat = netStakeMsat({ stakeMsat: contract.stakeMsat, feeMsat: entryFeeMsat(contract.stakeMsat, ofGame.ok ? feeBpsOf(ofGame.plugin.manifest) : undefined),
             donationMsat: named === null ? 0n : BigInt(named) });
         } catch (e) { return text(res, 400, e.message); }
         let made;
@@ -3429,7 +3430,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const stands = attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 });
         if (!stands.ok) return text(res, 409, stands.why);
         // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
-        const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now() });
+        // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one (kanban #235)
+        const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: plugin.manifest.marketTerms || null });
         if (!timely.ok) return text(res, 409, timely.why);
         const fresh = round.putOutcomeAttestation({ bodyId: attestationBodyId(a), roundId: a.roundId, outcome: a.outcome, observedAtMs: a.observedAtMs,
           bytes: raw, receivedMs: round.now() });

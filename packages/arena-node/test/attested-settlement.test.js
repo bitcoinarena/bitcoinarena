@@ -50,7 +50,7 @@ async function marketRound(w, picks, { open = false } = {}) {
   if (open) skipTo(Number(r.c.committeeTimeMs) + 100);
   const target = { network: NETWORK, game: MARKET.registration.donationSet };
   const played = [];
-  for (const [i, pick] of picks.entries()) played.push(await lockAndPlay(r, player(i + (open ? 30 : 0)), { noMarks: true, pick, donation: { msat: STAKE * 500n / 10000n, target } }));
+  for (const [i, pick] of picks.entries()) played.push(await lockAndPlay(r, player(i + (open ? 30 : 0)), { noMarks: true, pick, donation: { msat: STAKE * 50n / 10000n, target } }));
   return { r, played };
 }
 
@@ -96,8 +96,8 @@ test('the door, the window, the table paid by the seats\' own sweep, and a contr
       payouts: (moved.payouts || []).map((p) => [p.kind, String(p.pk).slice(0, 10), String(p.msat)]) };
     console.log('  SETTLED:', JSON.stringify(facts));
     assert.equal(got.state, 'ACCEPTED', got.why);
-    const fee = entryFeeMsat(STAKE);
-    const net = STAKE - fee - STAKE * 500n / 10000n;
+    const fee = entryFeeMsat(STAKE, 50);
+    const net = STAKE - fee - STAKE * 50n / 10000n;
     // claims: the two losers' stake locks and all four fee locks
     const stakeClaims = (moved.claims || []).filter((c) => c.kind === 'stake');
     const feeClaims = (moved.claims || []).filter((c) => c.kind === 'fee');
