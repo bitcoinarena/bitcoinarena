@@ -1894,8 +1894,8 @@
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
       // refused here by name rather than played on the wrong one
       {
-        // a market's pick and a head-to-head move play no run on any core here (kanban #206, #233)
         const core = window.BLWP_USE_CORE && !pickFor(named.roundIdHex) && !hiddenFor(named.roundIdHex) ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
+        // (a market's pick and a head-to-head move play no run on any core here: kanban #206, #233)
         if (!core.ok) {
           window.BLWP_JOIN_REFUSED = core.why;
           if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: core.why });

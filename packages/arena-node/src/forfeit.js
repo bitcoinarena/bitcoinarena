@@ -21,6 +21,7 @@
 // commitment list: the same nonce over two lists is two signatures over two
 // messages, which publishes the share. A second asker with the same list gets
 // the same share back; with another list, nothing.
+import { decodeAttestation, outcomeFinality, marketVoided } from '../../arena-protocol/src/attested.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -132,7 +133,11 @@ export class Forfeit {
     // nobody picked the outcome. Before that it waits; a claimed lock was a losing pick's, and is not the player's.
     const attested = !voided && !refused && this.round.plugins
       ? (() => { const f = pluginForRound(contract, this.round.plugins); return f.ok && f.attested; })() : false;
-    if (attested) {
+    // A MARKET ROUND REFUNDED (kanban #235, the owner 2026-10-09: "refund at the deadline", "refund the fees too"): VOID at its
+    // deadline or on a contradiction, or final with nobody holding the right pick - nothing is claimed in it, so every stake
+    // comes back now, on this signer node's own record, with no settlement to wait for
+    const refund = attested ? this.#marketRefund(roundIdBytes, contract) : { ok: false };
+    if (attested && !refund.ok) {
       const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
       if (!s || s.state !== 'ACCEPTED')
         return refuse('an attested round\'s stake comes back only after its settlement is ACCEPTED at this signer node: no outcome final and settled yet, so the lock waits (or expires back)');
@@ -191,6 +196,21 @@ export class Forfeit {
       if (st === SUSPENDED || st === PROVISIONALLY_FINAL) return { ok: false, why: 'an entry of the round is still inside its window' };
     }
     return { ok: true };
+  }
+
+  /** Whether a market round is refunded on this signer node's record: VOID (deadline, contradiction), or nobody picked right. */
+  #marketRefund(roundIdBytes, contract) {
+    const f = pluginForRound(contract, this.round.plugins);
+    if (!f.ok || !f.attested) return { ok: false };
+    const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
+      .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    const nowMs = this.round.now ? this.round.now() : Date.now();
+    const voided = marketVoided(held, { entryCloseMs: contract.entryCloseMs, terms: f.plugin.manifest.marketTerms || null, nowMs });
+    if (voided.voided) return { ok: true, why: voided.why };
+    const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs });
+    if (fin.final && !this.round.entriesOf(roundIdBytes).some(({ entry }) => entry.pick === fin.outcome))
+      return { ok: true, why: `nobody picked the outcome ${fin.outcome}: every stake comes back` };
+    return { ok: false };
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the forfeit it would sign. */

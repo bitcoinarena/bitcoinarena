@@ -154,7 +154,7 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.deepEqual(disputed.outcomesNamed, [1, 2]);
     assert.equal(disputed.proof.length, 2, 'the two attestations are kept as the proof');
     assert.equal(disputed.table, undefined, 'a disputed round has no table');
-    assert.equal(settled2.state, 'HELD');
+    assert.equal(settled2.state, 'VOID', 'a contradiction voids the round (kanban #235): nothing settles, every stake back at once');
     assert.equal(jobs.filter((k) => k.startsWith(toHex(r2.rid))).length, 0);
   } finally { await w.close(); }
 });

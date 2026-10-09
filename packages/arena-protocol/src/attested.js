@@ -207,9 +207,10 @@ export function marketTimes({ entryCloseMs, terms }) {
  * Answers { voided, why } on the seat's clock; a round inside its deadline with no outcome yet is not decided here.
  */
 export function marketVoided(held, { entryCloseMs, terms, nowMs }) {
-  if (!terms) return { voided: false };
+  // A CONTRADICTION VOIDS ANY MARKET, with terms or without (the ruling: "or a contradiction, makes the round VOID")
   const standing = outcomeStanding(held);
   if (standing.state === 'DISPUTED') return { voided: true, why: `the attestors contradicted themselves: ${standing.why}` };
+  if (!terms) return { voided: false };
   const { deadlineMs } = marketTimes({ entryCloseMs, terms });
   if (standing.state === 'OPEN' && BigInt(nowMs) >= deadlineMs)
     return { voided: true, why: `no outcome was attested by the market's deadline ${new Date(Number(deadlineMs)).toISOString()}: every stake goes back` };
