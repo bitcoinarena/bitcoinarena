@@ -4153,6 +4153,20 @@
           return { ok: seats.some((x) => x.status === 201 || x.status === 200), seats };
         },
         reveals: (id) => { const h = readHidden().find((x) => x.roundIdHex === id); return h ? BLWPCLIENT.revealsOfRound({ roundIdHex: id, nodes: h.nodes }) : Promise.resolve({}); },
+        // THE ROUND AS ITS SEATS HOLD IT (kanban #275): its entries and each one's signed outcome, score and how many seats
+        // signed it - the first seat that answers; null if none does. What a client shows as the result is this, not its own.
+        result: async (id) => {
+          const h = readHidden().find((x) => x.roundIdHex === id);
+          for (const n of (h ? h.nodes : [])) {
+            try {
+              const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+              if (!r.ok) continue;
+              const j = await r.json();
+              return { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })) };
+            } catch { /* the next seat */ }
+          }
+          return null;
+        },
         state: () => ({ join: window.BLWP_JOIN || null, picks: (BLWPCLIENT.marketLines && window.BLWP_MARKET_LINES) ? window.BLWP_MARKET_LINES() : [] }),
         back: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
           location.search = q.toString(); },

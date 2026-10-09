@@ -98,3 +98,20 @@ test('a player who never reveals forfeits at both nodes, and the one who reveale
   assert.deepEqual([only(r.a), only(r.b)], [['DELIVERED 2'], ['FORFEIT 0']]);
   assert.equal(r.state, 'ACCEPTED', r.why);
 });
+
+test('one player alone is not played (the owner 2026-10-09: "there must be 2 before the game starts"): VOID at both nodes, the stake back', async () => {
+  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  try {
+    skipTo(Number(w.c.committeeTimeMs) + 20);
+    const salt = new Uint8Array(randomBytes(32));
+    const a = await lockAndPlay(w, { name: 'alone', key: b32(0x61), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0] },
+      { hidden: { move: 0, salt }, noMarks: true, address: true });
+    skipTo(Number(w.c.entryCloseMs) + 500);
+    await reveal(w, a, 0, salt);
+    await closeRound(w);
+    const r = results(w, a.eid);
+    let st = null; for (const stop = Date.now() + 15000; Date.now() < stop; await new Promise((x) => setTimeout(x, 250))) { st = await (await fetch(`http://127.0.0.1:${w.nodes[0].port}/lock-settlement?round=${toHex(w.rid)}`)).json(); if (st.state && st.state !== 'NONE') break; }
+    console.log('  FACTS (alone):', JSON.stringify({ results: only(r), state: st && st.state, why: st && st.why && st.why.slice(0, 160) }));
+    assert.deepEqual(only(r), ['VOID 0']);
+  } finally { await w.close(); }
+});
