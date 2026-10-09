@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ROCK PAPER SCISSORS, ALWAYS PLAYABLE (kanban #233, "Two players can always play each other. It is a demo."): a private
-// regtest bitcoind, two seats hosting nextblock and rock-paper-scissors (each advertising both), one free round of
-// Rock Paper Scissors kept open - a new one whenever the last has under a minute of entry left - and the lobby link printed.
+// regtest bitcoind, two seats hosting nextblock and rock-paper-scissors (each advertising both), free 15-second rounds of
+// Rock Paper Scissors back to back (kanban #279), and the lobby link printed.
 // Regtest only: no bond on any other chain, no money. The seats are reached publicly through the named tunnel when
 // ARENA_WSS_<port> names them (rps-a / rps-b.bitcoin-arena.io).
 //
@@ -41,21 +41,29 @@ const RPS_FIELDS = { gameId: ROCK_PAPER_SCISSORS.gameId, simCoreHash: fromHex(RP
 const round = await standUpRound({ host: '127.0.0.1', portA: 21651, portB: 21652, rpc, cli, page: env.ARENA_PAGE,
   plugins: [NEXTBLOCK, ROCK_PAPER_SCISSORS], closeAtEnd: true });
 say({ step: 'up', nodes: round.nodes, lobby: round.lobbyUrl });
-let last = 0n, opening = false;
+// 15-SECOND ROUNDS (kanban #279, the owner 2026-10-09 15:00: "rounds are 15 seconds"): each round takes picks for 15 s, and the
+// next one's 15 s begin as this one's end - entry closes on a 15 s grid. A round is joinable only once both seats took it,
+// ~95 s after its committee time on this 10 s chain (its beacon 6 deep), so rounds are opened LEAD_MS ahead and kept in
+// flight: whenever the last close is under LEAD_MS + 15 s away, the next is opened 15 s after it.
+const WINDOW_MS = 15000n;
+const LEAD_MS = 150000n;
+let lastClose = 0n, opening = false;
 const keep = async () => {
-  if (opening || last > BigInt(Date.now()) + 60000n) return;
+  const now = BigInt(Date.now());
+  if (opening || lastClose > now + LEAD_MS + WINDOW_MS) return;
   opening = true;
   try {
-    // ENTRIES CLOSE 2 MIN AFTER START: a seat takes a round ~95 s after its committee time on this 10 s chain (its beacon 6
-    // deep), so this leaves about a minute to pick a move; the reveal window follows (~20 s)
-    const id = await round.openNext({ fields: RPS_FIELDS, entryAfterStartMs: 120000 });
+    // 15 s after the last close, never sooner - and never less than LEAD_MS ahead (the seats must hold it before its window)
+    const want = lastClose + WINDOW_MS > now + LEAD_MS ? lastClose + WINDOW_MS : now + LEAD_MS;
+    // openNext starts a round 60 s after its committee time (now + 2 s): the entry window after that start lands its close on `want`
+    const id = await round.openNext({ fields: RPS_FIELDS, entryAfterStartMs: Number(want - (BigInt(Date.now()) + 62000n)) });
     const held = round.rounds().find((r) => r.id === id);
-    last = held ? BigInt(held.entryCloseMs) : BigInt(Date.now()) + 120000n;
-    say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: held ? new Date(Number(held.entryCloseMs)).toISOString() : null });
+    lastClose = held ? BigInt(held.entryCloseMs) : want;
+    say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(lastClose)).toISOString() });
   } catch (e) { say({ step: 'not opened', why: e.message }); } finally { opening = false; }
 };
 await keep();
-setInterval(keep, 10000);
+setInterval(keep, 2000);
 // THE CHAIN MOVES, so each round finds its beacon and is assigned
 setInterval(() => { try { cli('generatetoaddress', '1', cli('getnewaddress')); } catch (e) { say({ step: 'mine', why: e.message }); } }, 10000);
 say({ step: 'lobby', url: round.lobbyUrl });
