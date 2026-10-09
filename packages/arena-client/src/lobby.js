@@ -129,6 +129,11 @@ function lobbySigned(verify, { id, nodeKey, nowMs, x }) {
  *   soonest entry close first; a round past its entry close is not a row.
  */
 const CONTRACTS = new Map();                     // round id hex -> its contract (the id is its hash)
+// A ROUND WHOSE CONTRACT COULD NOT BE FETCHED OR READ IS NOT ASKED FOR AGAIN FOR UNREADABLE_MS (kanban #266, measured
+// 2026-10-08: once the seats listed the Arena series' rounds - a layout this client does not read - the page asked every seat
+// for each listed round's contract on every poll, 714 /round requests in 25 s, none of them ever kept). Round id -> when it failed.
+const UNREADABLE = new Map();
+export const UNREADABLE_MS = 30000;
 
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
@@ -169,10 +174,10 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
   // KEPT BY ID, FETCHED 16 AT A TIME (the owner 2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
   // fetched one after another on every paint). A round's id is its contract's hash, so a kept contract cannot go stale.
-  const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id));
+  const wanted = [...said.keys()].filter((id) => !CONTRACTS.has(id) && !(nowMs - (UNREADABLE.get(id) ?? -Infinity) < UNREADABLE_MS));
   for (let i = 0; i < wanted.length; i += 16)
     await Promise.all(wanted.slice(i, i + 16).map((id) => fetchRound(id, answeredFirst, { fetcher: ask })
-      .then(({ contract }) => { CONTRACTS.set(id, contract); }, (e) => { refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
+      .then(({ contract }) => { CONTRACTS.set(id, contract); UNREADABLE.delete(id); }, (e) => { UNREADABLE.set(id, nowMs); refused.push(`${id.slice(0, 16)}: ${e.message}`); })));
   for (const [id, counts] of said) {
     const contract = CONTRACTS.get(id);
     if (!contract) continue;
