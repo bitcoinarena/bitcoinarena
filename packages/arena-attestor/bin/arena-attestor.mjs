@@ -69,7 +69,7 @@ const tick = async () => {
       const w = attestWindow({ samples, roundId: fromHex(r.id), window, attestor });
       words.set(r.id, w.ok ? w : { none: w.why });
       log(w.ok ? { step: 'signed', round: r.id, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
-        priceToBeat: w.priceToBeat, twap: w.twap, outcome: w.label, samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
+        priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label, samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
         : { step: 'signs nothing', round: r.id, why: w.why });
     }
     const mine = words.get(r.id);
