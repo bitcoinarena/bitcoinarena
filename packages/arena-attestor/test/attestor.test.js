@@ -24,16 +24,16 @@ test('prices to whole cents, the median of the readings, a window\'s word - and 
   assert.equal(centsOf('-1'), null);
   assert.equal(medianOf([8295356n, 8294922n, 8295000n]), 8295000n);
   const A = UPDOWN_ATTESTOR_KEYS.A;
-  // a reading before the window (the price to beat), then higher for the window: Up
+  // the minute before the window (the price to beat), then higher at its end: Up
   const up = attestWindow({ samples: [at(-1, 8295000), at(3, 8296000), at(9, 8299000)], roundId: ROUND, window: WINDOW, attestor: A });
   console.log('  WORD:', JSON.stringify(wordToJson(up)));
   assert.equal(up.ok, true);
   assert.equal(up.body.outcome, UP);
   assert.equal(up.body.observedAtMs, WINDOW.endMs, 'observed_at is not the window\'s end');
   assert.equal(up.priceToBeat, 8295000n);
-  assert.ok(up.twap > 8295000n);
-  // lower all window: Down
-  assert.equal(attestWindow({ samples: [at(0, 8295000), at(1, 8290000)], roundId: ROUND, window: WINDOW, attestor: A }).body.outcome, DOWN);
+  assert.equal(up.endPrice, 8299000n);
+  // lower at the end: Down
+  assert.equal(attestWindow({ samples: [at(-1, 8295000), at(1, 8290000)], roundId: ROUND, window: WINDOW, attestor: A }).body.outcome, DOWN);
   // NO READING AT OR BEFORE THE START (the daemon came up inside the window): signs nothing
   const none = attestWindow({ samples: [at(2, 8295000), at(9, 8296000)], roundId: ROUND, window: WINDOW, attestor: A });
   assert.equal(none.ok, false);

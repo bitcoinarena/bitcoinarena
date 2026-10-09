@@ -453,8 +453,8 @@ outcomes. Its rule, verbatim:
 |---|---|---|
 | market | one per 15 min window, a recurring series, open ~24 h before its window | one **market round** per 15 min window of a market series (off the games' 90 s grid, §0A.7b.4) |
 | outcomes | Up, Down | `outcomes[] = [Up, Down]`, indexes 0 and 1 |
-| price to beat | the price at the window's start | the same: the feed's reading in force at the window's start |
-| rule | Up if the window's TWAP >= the price to beat, else Down | the same, **a tie is Up**; `up-down.js` `upDownOutcome` is the rule as a pure function |
+| price to beat | the price at the window's start: the stream's 60 s TWAP at that moment | the same: the 60 s time-weighted average of the feed's readings before the window's start |
+| rule | Up if the end price (the stream's 60 s TWAP at the window's end) >= the price to beat, else Down | the same, **a tie is Up**; `up-down.js` `upDownOutcome` is the rule as a pure function |
 | who resolves | UMA / Polymarket from Chainlink | the market's **attestors** (§0A.7a), k of n, each applying `upDownOutcome` to the feed samples it read, signing `{round, outcome, observed_at}` |
 | trading | a central limit order book matched continuously: tick 0.01, minimum 5 shares, a share pays $1 | **signed standing limit orders cleared every second at one uniform price** (§0A.7b.2): tick 0.01, minimum 5 shares, **a share pays 1 sat** |
 | fees | taker only, 0.07 x p(1-p) per share, maker rebate | **the owner's rulings instead** (§0A.7b.3): the market's own rate, 1 % by default (0.5 % nodes + 0.5 % donation), due when an order fills, paid out at resolution |
@@ -462,9 +462,14 @@ outcomes. Its rule, verbatim:
 
 **0A.7b.1 Resolution.** At the window's end each attestor reads its feed
 samples ([{at_ms, price}], integer prices) and computes the price to beat
-(the reading in force at the window's start) and the time-weighted average
-over [start, end), each reading weighted by how long it stood inside the
-window. Up if `TWAP >= price to beat`, else Down. The comparison is exact
+(the time-weighted average of its readings over the 60 s before the window's
+start) and the end price (the same 60 s average before the window's end),
+each reading weighted by how long it stood. Up if `end price >= price to
+beat`, else Down. **Read, not averaged over the window (corrected 2026-10-10,
+kanban #236 comment 1154):** the "TWAP" in Polymarket's rule is Chainlink's
+TWAP 60 s *stream*, read at the two ends. Averaging the whole window instead
+disagreed with Polymarket in 2 of 4 live windows; end against start agreed
+in 4 of 4. The comparison is exact
 (integers, no float), so two honest attestors reading the same samples sign
 the same outcome. Seats refuse an attestation observed before the window's
 end (`resolveAfterCloseMs`, §0A.7a terms). With no standing outcome by the
