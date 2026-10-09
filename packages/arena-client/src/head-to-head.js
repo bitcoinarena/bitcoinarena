@@ -18,8 +18,9 @@ export function moveCommitment({ roundId, sessionPubkey, move, salt }) {
 }
 
 /** The reveal to every seat: POST /reveal?entry= { move, salt }. Answers each seat's status. */
-export async function revealMove({ entryIdHex, move, salt, nodes, fetcher = fetch }) {
-  const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt) });
+// `identity`: { key, sig } (identity.js identityProofFor, kanban #280) - the tab's identity on this entry, for a score across rounds
+export async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetcher = fetch }) {
+  const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt), ...(identity ? { identity } : {}) });
   return Promise.all(nodes.map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveal?entry=${entryIdHex}`, { method: 'POST', body });

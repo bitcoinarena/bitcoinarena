@@ -84,7 +84,9 @@ export const curve = { ...feldmanGroup, tweakPoint };
 
 // `n`: THE ROUND'S SIGNER NODES - 2 (a 2-of-2), or 7 (5 of 7, receiptsNeeded); `a` and `b` are the first two.
 // `round`: fields of the round's contract over the fixture's (kanban #202: another game's id, core, config and run length).
-export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2, endMs = testNow() + 3000, round = {} } = {}) {
+// `alignCloseMs`: the round shifted forward so its entry close lands on that period's grid (a market's own clock, kanban #236);
+// `stakeExpiryFor(contract)`: the round's own lock span (lock-expiry.js), from its final times
+export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPort(), serveOpts = {}, n = 2, endMs = testNow() + 3000, round = {}, alignCloseMs = null, stakeExpiryFor = null } = {}) {
   const address = lnurl(port);
   // A CHAIN THAT BONDS THE ROUND'S TWO SIGNER NODES (RULED 2026-09-25: a paying round opens only on a node that reads the
   // chain). Both signer nodes are running daemons, so the round's claim key is their own live DKG, as before.
@@ -104,7 +106,7 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
   // THE GAMES THE NODES' ADVERTISEMENTS HOST (kanban #204): the games they were handed
   const hostedGames = (serveOpts.plugins || HOSTED).map((p) => p.gameId);
   return openLockRound({ a, b, nodes, port, slot, lnurl: address, hostedGames, close: async () => { for (const d of nodes) await d.close(); } },
-    { minScore, stakeMsat, endMs, round });
+    { minScore, stakeMsat, endMs, round, alignCloseMs, stakeExpiryFor });
 }
 
 /**
@@ -112,7 +114,7 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
  * `on` is what lockRound stood - its nodes, lock port, chain slot and address - and the round is built, bonded, opened and
  * keyed on them as lockRound's first. Answers the same object lockRound does, for this round.
  */
-export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs = testNow() + 3000, round = {} } = {}) {
+export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs = testNow() + 3000, round = {}, alignCloseMs = null, stakeExpiryFor = null } = {}) {
   const { nodes, slot } = on;
   const [a] = nodes;
   const n = nodes.length;
@@ -123,7 +125,12 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   // closed - under the deadline every run of them would be VOID. A round ends 3 s after it is built (or at `endMs`); its
   // results are held inside its window, and closeRound skips the fixtures' clock past final_after. `endMs: null`: the old
   // 1970 dates, for a test about a round whose window is long gone.
-  const drafted = endMs === null ? first : presentDay(first, endMs);
+  let drafted = endMs === null ? first : presentDay(first, endMs);
+  if (alignCloseMs) {
+    const p = BigInt(alignCloseMs), off = drafted.entryCloseMs % p, shift = off === 0n ? 0n : p - off;
+    drafted = { ...drafted, committeeTimeMs: drafted.committeeTimeMs + shift, startTimeMs: drafted.startTimeMs + shift, entryCloseMs: drafted.entryCloseMs + shift };
+  }
+  if (stakeExpiryFor) drafted = { ...drafted, stakeExpiryBlocks: stakeExpiryFor(drafted) };
   // ONLY THE TWO FIELDS THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to, and a committee time
   // among its blocks. The round id follows from them.
   const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`),
@@ -160,7 +167,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order (kanban #278): the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null } = {}) {
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, expirySpan = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -197,11 +204,14 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     entry.donationOutpoints = donated.map((d) => d.outpoint);
   }
   const eid = entryId(entry);
+  // THE LOCK SPAN: the round's own when it names more than the ruled 144 (a market's, kanban #236 - as the page locks for
+  // round.stakeExpiryBlocks), else the fixture's 200 as before; `expirySpan` a test's own (a lock made at the old 144)
+  const span = expirySpan ?? (w.c.stakeExpiryBlocks > 144 ? w.c.stakeExpiryBlocks : 200);
   const fields = { paymentImage: { kind: 'point', bytes: entry.stakePoint }, amountMsat: netStakeMsat(entry), claimPk: w.claimPk,
-    refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 };
+    refundPk: refundKeyOf(who.key), expiration: w.port.height + span };
   await w.port.put(outpoint, fields);
   const feeFields = feeLock ? { paymentImage: { kind: 'hash', bytes: sha256(feeSecret) }, amountMsat: entry.feeMsat, claimPk: w.claimPk,
-    refundPk: refundKeyOf(who.key), expiration: w.port.height + 200 } : null;
+    refundPk: refundKeyOf(who.key), expiration: w.port.height + span } : null;
   if (feeLock) await w.port.put(feeOutpoint, feeFields);
   const input = { roundId: w.rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0,
     ticks: Array.from({ length: who.ticks }, (_, t) => play.words(t)), liquidations: [], loads: game ? [] : bedFrom(0) };

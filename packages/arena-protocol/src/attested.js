@@ -216,3 +216,17 @@ export function marketVoided(held, { entryCloseMs, terms, nowMs }) {
     return { voided: true, why: `no outcome was attested by the market's deadline ${new Date(Number(deadlineMs)).toISOString()}: every stake goes back` };
   return { voided: false };
 }
+
+/**
+ * A MARKET'S OWN CLOCK (kanban #236, the owner 2026-10-09: "Period is 15 minutes on the market's own clock, not the games' 90 s
+ * grid"): a market whose manifest names a period (`roundPeriodMs`, e.g. 900 000 for BTC Up or Down 15m) runs one round per
+ * period on the UTC grid - each round's entries close at the end of its period, and its WINDOW is the period before that
+ * close. A seat refuses a round of it that closes off the grid. A market naming no period (0) has no grid.
+ */
+export function marketWindowOf(contract, manifest) {
+  const period = manifest && typeof manifest.roundPeriodMs === 'bigint' ? manifest.roundPeriodMs : 0n;
+  if (period <= 0n) return { ok: true, window: null };
+  if (contract.entryCloseMs % period !== 0n)
+    return { ok: false, why: `game "${manifest.gameName}" runs one round per ${period} ms on the UTC grid, and that round's entries close at ${contract.entryCloseMs}, off it` };
+  return { ok: true, window: { startMs: contract.entryCloseMs - period, endMs: contract.entryCloseMs, periodMs: period } };
+}

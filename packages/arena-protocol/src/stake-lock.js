@@ -70,7 +70,9 @@ const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
  */
 export const refundKeyOf = (playerPubkey) => Uint8Array.from([0x02, ...playerPubkey]);
 
-export function lockMatchesEntry({ lock, entry, kind, claimPk, height } = {}) {
+// `expiryBlocks`: the round's own stake_expiry_blocks (lock-expiry.js, kanban #236: a market round's locks last its whole
+// life; every other round the ruled 144) - the span its locks are made for, so a lock's height is its expiration less it
+export function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
   if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };
   if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   if (!Number.isInteger(height) || height < 0)
@@ -102,11 +104,12 @@ export function lockMatchesEntry({ lock, entry, kind, claimPk, height } = {}) {
   if (!eq(lock.refundPk, refundKeyOf(entry.playerPubkey)))
     return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
   if (!Number.isInteger(lock.expiration)) return { ok: false, why: `that ${kind} lock names no expiration height` };
-  const lockHeight = lock.expiration - STAKE_EXPIRY_BLOCKS;
+  if (!Number.isInteger(expiryBlocks) || expiryBlocks < 1) return { ok: false, why: 'the round names no stake_expiry_blocks to check the lock against' };
+  const lockHeight = lock.expiration - expiryBlocks;
   if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
     return {
       ok: false,
-      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less ${STAKE_EXPIRY_BLOCKS}) `
+      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
         + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
         + 'a loser could refund before settlement',
     };

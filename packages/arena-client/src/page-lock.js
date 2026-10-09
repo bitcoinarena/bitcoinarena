@@ -194,7 +194,8 @@ export const seedRecovers = (storage, seed) => {
  */
 function paysIntoALock(round, invite, LockClient) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const custody = custodyFieldsAreValid(round);
+  // A MARKET ROUND'S LOCK SPAN (kanban #236) is checked by its terms - the page set them on the round (its market's); else 144
+  const custody = custodyFieldsAreValid(round, { manifest: round.marketTerms ? { resultType: 2, marketTerms: round.marketTerms } : null });
   if (!custody.ok) throw new Error(`no stake is locked to this round: ${custody.why}`);
   if (!invite)
     throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '

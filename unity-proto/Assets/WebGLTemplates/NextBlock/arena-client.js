@@ -918,6 +918,10 @@ const TAG = {
   marketSell: 'ARENA/v1/MarketSell',
   // a seat's word that it did not sign a batch and never will (kanban #278: a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
+  // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities (kanban #280)
+  matchProof: 'ARENA/v1/MatchProof',
+  matchRecord: 'ARENA/v1/MatchRecord',
+  presence: 'ARENA/v1/Presence',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };
@@ -1422,6 +1426,67 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
   };
 }
 
+// ---- arena-protocol/src/lock-expiry.js
+// A MARKET ROUND'S LOCKS OUTLIVE ITS WHOLE LIFE (kanban #236, the owner 2026-10-09: "drop the fixed 144 blocks. Size expiry from
+// the round end plus the void deadline plus the objection window plus a margin. Seats check that size; the page computes it").
+//
+// A lock expires back to its player at a block height, and nobody can claim it after: a lock that expires before its round
+// is settled hands a loser its stake back. The fixed 144 blocks (§23.1) were a day on testnet4 and 24 minutes on the demo's
+// 10 s regtest chain - shorter than one Up/Down window, its void deadline and its objection window together. So a market
+// round names its own `stake_expiry_blocks`: enough blocks, at the FASTEST its chain can make them, to cover everything from
+// its committee time (the earliest an entry can lock) to the latest it can be settled - window end, resolution delay, void
+// deadline, objection window - and a margin. The page locks for exactly the round's number (page-lock.js, as before); every
+// seat checks the round's number at its door and every lock against it. A game round keeps the ruled 144.
+
+
+
+const lxHex = (b) => Array.from(b || [], (x) => x.toString(16).padStart(2, '0')).join('');
+
+/**
+ * THE FASTEST A CHAIN MAKES BLOCKS, per network: the demo's regtest chain is mined every 10 s; testnet4's are 10 min on
+ * average but come in bursts at minimum difficulty (its 20-minute rule) - taken as one a minute, so a span sized by it
+ * outlasts the time it was sized for. A network not named here has no market rounds.
+ */
+const FASTEST_BLOCK_MS = Object.freeze({ [lxHex(NETWORK_ID_REGTEST)]: 10000n, [lxHex(NETWORK_ID_TESTNET4)]: 60000n });
+const LOCK_EXPIRY_MARGIN_MS = 30n * 60n * 1000n;
+
+const fastestBlockMsOf = (networkId) => FASTEST_BLOCK_MS[lxHex(networkId)] ?? null;
+
+/** The latest a market round can be settled: its entry close, its resolution delay, its void deadline, its objection window. */
+function marketSettledByMs(contract, terms) {
+  const objection = typeof contract.objectionWindowMs === 'bigint' ? contract.objectionWindowMs : OBJECTION_WINDOW_MS;
+  return contract.entryCloseMs + terms.resolveAfterCloseMs + terms.deadlineAfterResolveMs + objection;
+}
+
+/** The blocks a market round's locks must last: from its committee time to its settled-by time and the margin. */
+function marketExpiryBlocks(contract, terms) {
+  const blockMs = fastestBlockMsOf(contract.networkId);
+  if (!blockMs) return { ok: false, why: 'that round\'s network names no fastest block time: it holds no market round' };
+  const spanMs = marketSettledByMs(contract, terms) - contract.committeeTimeMs + LOCK_EXPIRY_MARGIN_MS;
+  if (spanMs <= 0n) return { ok: false, why: 'that round is settled before its committee time' };
+  return { ok: true, blocks: Number((spanMs + blockMs - 1n) / blockMs), spanMs, blockMs };
+}
+
+/**
+ * DOES THE ROUND NAME THE RIGHT LOCK SPAN? A market with terms (an attested manifest naming `marketTerms`): at least
+ * `marketExpiryBlocks`; any other round: the ruled 144. `manifest` is the round's game's, as the seat hosts it or the page
+ * pinned it; none - the ruled 144.
+ */
+function stakeExpiryFits(contract, { manifest = null } = {}) {
+  const terms = manifest && manifest.resultType === 2 && manifest.marketTerms ? manifest.marketTerms : null;
+  if (!terms) {
+    if (contract.stakeExpiryBlocks !== STAKE_EXPIRY_BLOCKS)
+      return { ok: false, why: `that round names stake_expiry_blocks ${contract.stakeExpiryBlocks} where §23.1 rules ${STAKE_EXPIRY_BLOCKS}` };
+    return { ok: true, blocks: STAKE_EXPIRY_BLOCKS };
+  }
+  const need = marketExpiryBlocks(contract, terms);
+  if (!need.ok) return need;
+  if (!Number.isInteger(contract.stakeExpiryBlocks) || contract.stakeExpiryBlocks < need.blocks)
+    return { ok: false, why: `that market round names stake_expiry_blocks ${contract.stakeExpiryBlocks}, and its locks must last ${need.blocks} blocks `
+      + `(committee time to window end + void deadline + objection window + 30 min, at ${need.blockMs} ms a block)` };
+  return { ok: true, blocks: contract.stakeExpiryBlocks, need: need.blocks };
+}
+
 // ---- arena-protocol/src/contracts.js
 // The two artifacts everything else hangs off.
 //
@@ -1432,6 +1497,7 @@ async function provesEquivocation(a, b, sessionPubkey, verify) {
 // Field order is protocol. Adding a field means a new version, not an append -
 // an old implementation reading a new contract must fail rather than silently
 // mis-parse, which is why the version comes second, right after the type.
+
 
 
 
@@ -2109,14 +2175,12 @@ function roundWindowsAreValid(c) {
  */
 const RELAY_SCHEMES = ['http:', 'https:', 'ws:', 'wss:'];
 
-function custodyFieldsAreValid(c) {
+// `manifest`: the round's game's, where the checker knows it - a market's round names its own lock span (lock-expiry.js,
+// kanban #236), every other round the ruled 144
+function custodyFieldsAreValid(c, { manifest = null } = {}) {
   if (!c) return { ok: false, why: 'no contract' };
-  if (c.stakeExpiryBlocks !== STAKE_EXPIRY_BLOCKS)
-    return {
-      ok: false,
-      why: `that round names stake_expiry_blocks ${c.stakeExpiryBlocks} where §23.1 rules `
-        + `${STAKE_EXPIRY_BLOCKS}`,
-    };
+  const span = stakeExpiryFits(c, { manifest });
+  if (!span.ok) return span;
   if (!is32(c.federationId)) return { ok: false, why: 'that round names no 32-byte federation_id' };
   const named = federationIsNamed(c);
   if (!named.ok) return named;
@@ -7067,7 +7131,9 @@ const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
  */
 const refundKeyOf = (playerPubkey) => Uint8Array.from([0x02, ...playerPubkey]);
 
-function lockMatchesEntry({ lock, entry, kind, claimPk, height } = {}) {
+// `expiryBlocks`: the round's own stake_expiry_blocks (lock-expiry.js, kanban #236: a market round's locks last its whole
+// life; every other round the ruled 144) - the span its locks are made for, so a lock's height is its expiration less it
+function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = STAKE_EXPIRY_BLOCKS } = {}) {
   if (kind !== 'stake' && kind !== 'fee') return { ok: false, why: 'a lock is a stake lock or a fee lock' };
   if (!lock || !entry) return { ok: false, why: 'there is no lock or no entry to compare' };
   if (!Number.isInteger(height) || height < 0)
@@ -7099,11 +7165,12 @@ function lockMatchesEntry({ lock, entry, kind, claimPk, height } = {}) {
   if (!eq(lock.refundPk, refundKeyOf(entry.playerPubkey)))
     return { ok: false, why: `that ${kind} lock's refund_pk is not the entry's player key` };
   if (!Number.isInteger(lock.expiration)) return { ok: false, why: `that ${kind} lock names no expiration height` };
-  const lockHeight = lock.expiration - STAKE_EXPIRY_BLOCKS;
+  if (!Number.isInteger(expiryBlocks) || expiryBlocks < 1) return { ok: false, why: 'the round names no stake_expiry_blocks to check the lock against' };
+  const lockHeight = lock.expiration - expiryBlocks;
   if (lockHeight < height - STAKE_LOCK_FRESHNESS_BLOCKS)
     return {
       ok: false,
-      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less ${STAKE_EXPIRY_BLOCKS}) `
+      why: `that ${kind} lock's lock height ${lockHeight} (its expiration ${lock.expiration} less the round's ${expiryBlocks} blocks) `
         + `is more than ${STAKE_LOCK_FRESHNESS_BLOCKS} blocks below the height ${height} it is verified at: `
         + 'a loser could refund before settlement',
     };
@@ -7329,6 +7396,16 @@ function feeOfKnownGame(gameId) {
   if (!game) return null;
   if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps };
   return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
+}
+
+/**
+ * A PINNED MARKET'S TERMS (kanban #236): its resolution delay and void deadline as the generator wrote them (decimal ms), the
+ * ones its rounds' lock span is checked by on the page (lock-expiry.js); null for a game, or a market pinned without terms.
+ */
+function termsOfKnownGame(gameId) {
+  const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
+  if (!game || !game.terms) return null;
+  return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
 }
 
 // ---- arena-protocol/src/fee.js
@@ -10634,7 +10711,8 @@ const seedRecovers = (storage, seed) => {
  */
 function paysIntoALock(round, invite, LockClient) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const custody = custodyFieldsAreValid(round);
+  // A MARKET ROUND'S LOCK SPAN (kanban #236) is checked by its terms - the page set them on the round (its market's); else 144
+  const custody = custodyFieldsAreValid(round, { manifest: round.marketTerms ? { resultType: 2, marketTerms: round.marketTerms } : null });
   if (!custody.ok) throw new Error(`no stake is locked to this round: ${custody.why}`);
   if (!invite)
     throw new Error('this round\'s stake goes into a federation lock, and the link names no federation '
@@ -18963,6 +19041,86 @@ function backupLine(storage, seed) {
 
 
 
+// ---- arena-protocol/src/match.js
+// A SCORE ACROSS ROUNDS (kanban #280, the owner 2026-10-09: "The protocol must support a score across rounds, when the same two
+// players stay in the game. I win: 1:0. Opponent wins: 1:1. It keeps counting until one player or both leave. The protocol
+// counts it up, attests it, and shows it in the results").
+//
+// A round's player key is derived per round (player-key.js) - rounds cannot be linked by it, on purpose. A player who wants
+// its rounds counted together names its IDENTITY key (the tab's, identitySecretFor - the key its name is generated from) on
+// each head-to-head entry, signed by that identity key over (round, entry): a seat holds it with the reveal. Two identities
+// that play a head-to-head round together continue a MATCH when the last round either of them played in that game was one
+// they played together, ended at most MATCH_CONTINUE_MS earlier - so a player who sits a round out, or plays someone else,
+// ends it, and the next meeting starts at 0:0. A win adds 1 to the winner; a draw adds nothing; a round not played (one of
+// them alone, VOID) ends the match. Each seat computes the score from its own signed results and signs the match record.
+
+
+
+// 60 s: rounds of 10 s run back to back and a result lands ~20 s after its entry close (the reveal window), so a player
+// waiting for a verdict sits one or two rounds out between moves - that is staying, not leaving
+const MATCH_CONTINUE_MS = 60000n;
+
+const mIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** The bytes an identity key signs to name its head-to-head entry: round, entry, identity key. */
+function matchProofId({ roundId, entryId, identityKey }) {
+  if (!mIs32(roundId) || !mIs32(entryId) || !mIs32(identityKey)) throw new Error('a match proof names a 32-byte round, entry and identity key');
+  const w = new Writer();
+  w.bytes32(roundId); w.bytes32(entryId); w.bytes32(identityKey);
+  return taggedHash(TAG.matchProof, w.finish());
+}
+
+// WHO IS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table, both read "You are alone in this
+// round" until one picked): a tab at a head-to-head round's table says so to the round's seats with its identity key, signed
+// over (round, key), every PRESENCE_EVERY_MS; a seat counts it as there for PRESENCE_MS after the last one. Presence decides
+// nothing - it is what the table shows before a move is in.
+const PRESENCE_EVERY_MS = 2000;
+const PRESENCE_MS = 6000;
+
+/** The bytes an identity key signs to say it is at a round's table: round, identity key. */
+function presenceId({ roundId, identityKey }) {
+  if (!mIs32(roundId) || !mIs32(identityKey)) throw new Error('a presence names a 32-byte round and identity key');
+  const w = new Writer();
+  w.bytes32(roundId); w.bytes32(identityKey);
+  return taggedHash(TAG.presence, w.finish());
+}
+
+/** A head-to-head result as the match counts it: 'win', 'draw', 'loss', or null (not played - VOID, or no result). */
+function matchResultOf(outcome, score) {
+  if (outcome === 'DELIVERED') return score >= 2 ? 'win' : 'draw';
+  if (outcome === 'FAILED' || outcome === 'FORFEIT') return 'loss';
+  return null;
+}
+
+/**
+ * THE NEXT SCORE: `prev` { identities: [hexA, hexB] (sorted), score: [a, b] } or null (a new match), and this round's two
+ * results by identity ({ [hex]: 'win' | 'draw' | 'loss' | null }). Answers { identities, score, played } - played false (a
+ * round not played) ends the match: its score is the previous one, and nothing continues from it.
+ */
+function matchStep(prev, results) {
+  const identities = Object.keys(results).sort();
+  if (identities.length !== 2) throw new Error('a match is two identities');
+  const base = prev && prev.identities.join() === identities.join() ? [...prev.score] : [0, 0];
+  const r = identities.map((k) => results[k]);
+  if (r.some((x) => x === null)) return { identities, score: base, played: false };
+  if (r[0] === 'win' && r[1] !== 'win') base[0] += 1;
+  else if (r[1] === 'win' && r[0] !== 'win') base[1] += 1;
+  return { identities, score: base, played: true };
+}
+
+/** The bytes a seat signs for a round's match record: game, round, the two identities, their score, the round before. */
+function matchRecordId({ gameId, roundId, identities, score, previousRoundId = null }) {
+  if (!mIs32(gameId) || !mIs32(roundId)) throw new Error('a match record names its 32-byte game and round');
+  const w = new Writer();
+  w.bytes32(gameId); w.bytes32(roundId);
+  for (const k of identities) w.bytes32(typeof k === 'string' ? Uint8Array.from(k.match(/../g).map((x) => parseInt(x, 16))) : k);
+  w.u32(score[0]); w.u32(score[1]);
+  w.bytes32(previousRoundId || new Uint8Array(32));
+  return taggedHash(TAG.matchRecord, w.finish());
+}
+
+const matchHex = toHex;
+
 // ---- arena-protocol/src/lobby-name.js
 // A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
 //
@@ -19052,6 +19210,7 @@ const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record
 // (lobby-name.js). The other pages check each record before they draw its name,
 // so a signer node can leave a name out but cannot write one, and nobody is shown a
 // key in place of a name: no record, no name, only a count.
+
 
 
 
@@ -19201,6 +19360,30 @@ function boardNames(rows, names) {
   const byPlayer = new Map((Array.isArray(names) ? names : []).map((n) => [n.player, n.name]));
   return (Array.isArray(rows) ? rows : []).map((row) => ({ row,
     name: (row && row.playerPubkey instanceof Uint8Array && byPlayer.get(toHex(row.playerPubkey))) || null }));
+}
+
+/**
+ * THIS TAB'S IDENTITY ON A HEAD-TO-HEAD ENTRY (kanban #280): its identity key and that key's signature over (round, entry,
+ * key) - handed to the seats with the reveal, so the rounds this tab plays against the same opponent count one score.
+ * Without it a round counts for itself alone.
+ */
+function identityProofFor({ roundIdHex, entryIdHex, storage, random, curve } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('an identity proof is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const key = curve.pointX(secret);
+  const id = matchProofId({ roundId: fromHex(roundIdHex), entryId: fromHex(entryIdHex), identityKey: key });
+  return { key: toHex(key), sig: toHex(curve.signSchnorr(id, secret)) };
+}
+
+/**
+ * THIS TAB AT A HEAD-TO-HEAD ROUND'S TABLE (kanban #280): its identity key and that key's signature over (round, key) - said
+ * to the round's seats while the tab sits at the table, so the other player sees someone is there before any move is in.
+ */
+function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a presence is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const key = curve.pointX(secret);
+  return { key: toHex(key), sig: toHex(curve.signSchnorr(presenceId({ roundId: fromHex(roundIdHex), identityKey: key }), secret)) };
 }
 
 // ---- arena-protocol/src/lobby-listing.js
@@ -20581,6 +20764,20 @@ function marketVoided(held, { entryCloseMs, terms, nowMs }) {
   return { voided: false };
 }
 
+/**
+ * A MARKET'S OWN CLOCK (kanban #236, the owner 2026-10-09: "Period is 15 minutes on the market's own clock, not the games' 90 s
+ * grid"): a market whose manifest names a period (`roundPeriodMs`, e.g. 900 000 for BTC Up or Down 15m) runs one round per
+ * period on the UTC grid - each round's entries close at the end of its period, and its WINDOW is the period before that
+ * close. A seat refuses a round of it that closes off the grid. A market naming no period (0) has no grid.
+ */
+function marketWindowOf(contract, manifest) {
+  const period = manifest && typeof manifest.roundPeriodMs === 'bigint' ? manifest.roundPeriodMs : 0n;
+  if (period <= 0n) return { ok: true, window: null };
+  if (contract.entryCloseMs % period !== 0n)
+    return { ok: false, why: `game "${manifest.gameName}" runs one round per ${period} ms on the UTC grid, and that round's entries close at ${contract.entryCloseMs}, off it` };
+  return { ok: true, window: { startMs: contract.entryCloseMs - period, endMs: contract.entryCloseMs, periodMs: period } };
+}
+
 // ---- arena-client/src/market.js
 // A MARKET IN THE PAGE (kanban #206 slice 2, §0A.7a; the owner 2026-10-07, decisions A and B of plan 777): the pick sheet's
 // model, the pick handed to the seats, the outcome checked by the page itself, and the lines the lobby draws.
@@ -20600,6 +20797,7 @@ function marketVoided(held, { entryCloseMs, terms, nowMs }) {
 
 
 
+
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
 /**
@@ -20611,14 +20809,15 @@ function marketForRound(round, { manifestBytes = null } = {}) {
   if (!round || !(round.gameId instanceof Uint8Array)) return null;
   const pinned = marketOf(round.gameId);
   // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
-  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId) };
+  // AND ITS TERMS (kanban #236): resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
+  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) };
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
-    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) } };
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null };
 }
 
 /**
@@ -20865,8 +21064,9 @@ function moveCommitment({ roundId, sessionPubkey, move, salt }) {
 }
 
 /** The reveal to every seat: POST /reveal?entry= { move, salt }. Answers each seat's status. */
-async function revealMove({ entryIdHex, move, salt, nodes, fetcher = fetch }) {
-  const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt) });
+// `identity`: { key, sig } (identity.js identityProofFor, kanban #280) - the tab's identity on this entry, for a score across rounds
+async function revealMove({ entryIdHex, move, salt, nodes, identity = null, fetcher = fetch }) {
+  const body = JSON.stringify({ move, salt: salt instanceof Uint8Array ? h2hHex(salt) : String(salt), ...(identity ? { identity } : {}) });
   return Promise.all(nodes.map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/reveal?entry=${entryIdHex}`, { method: 'POST', body });
@@ -21017,7 +21217,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,
-         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,
+         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName, identityProofFor: identityProofFor, presenceProofFor: presenceProofFor,
          nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,
          boardNames: boardNames,
          tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,

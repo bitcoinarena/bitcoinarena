@@ -10,6 +10,7 @@
 
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
+import { stakeExpiryFits } from './lock-expiry.js';
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
@@ -690,14 +691,12 @@ export function roundWindowsAreValid(c) {
  */
 const RELAY_SCHEMES = ['http:', 'https:', 'ws:', 'wss:'];
 
-export function custodyFieldsAreValid(c) {
+// `manifest`: the round's game's, where the checker knows it - a market's round names its own lock span (lock-expiry.js,
+// kanban #236), every other round the ruled 144
+export function custodyFieldsAreValid(c, { manifest = null } = {}) {
   if (!c) return { ok: false, why: 'no contract' };
-  if (c.stakeExpiryBlocks !== STAKE_EXPIRY_BLOCKS)
-    return {
-      ok: false,
-      why: `that round names stake_expiry_blocks ${c.stakeExpiryBlocks} where §23.1 rules `
-        + `${STAKE_EXPIRY_BLOCKS}`,
-    };
+  const span = stakeExpiryFits(c, { manifest });
+  if (!span.ok) return span;
   if (!is32(c.federationId)) return { ok: false, why: 'that round names no 32-byte federation_id' };
   const named = federationIsNamed(c);
   if (!named.ok) return named;

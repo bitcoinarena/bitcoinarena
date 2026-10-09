@@ -66,6 +66,13 @@
   .last { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 12px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; color: var(--dim); }
   .last b { font-size: 26px; font-weight: 400; } .last i { font-style: normal; font-size: 11px; } .last em { font: 800 13px system-ui; text-transform: uppercase; letter-spacing: 0.05em; font-style: normal; }
   .last.win em { color: var(--win); } .last.loss em { color: var(--loss); } .last.draw em { color: var(--draw); }
+  .presence { display: flex; align-items: center; gap: 14px; margin: 0 0 12px; padding: 14px 16px; border-radius: 14px; border: 2px solid var(--line); }
+  .presence .icon { font-size: 34px; } .presence b { display: block; font-size: 19px; } .presence small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+  .presence.alone { border-color: #6b4310; background: #2a1c0a; } .presence.alone b { color: var(--btc); }
+  .presence.here { border-color: #1f5a43; background: #0f2a20; } .presence.here b { color: var(--win); }
+  .presence .dots i { font-style: normal; animation: pulse 1.2s infinite; } .presence .dots i:nth-child(2) { animation-delay: .2s; } .presence .dots i:nth-child(3) { animation-delay: .4s; }
+  .board { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 12px; padding: 10px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+  .board b { font: 800 38px/1 ui-monospace, monospace; } .board i { font-style: normal; font: 800 30px/1 system-ui; color: var(--dim); } .board .who { color: var(--dim); font-size: 13px; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -111,12 +118,31 @@
     $('back').addEventListener('click', () => A.back());
     let drawnKey = null;
     let live = null;            // what the countdown needs between redraws: { clock, closeMs, openMs }
-    const WINDOW_MS = 15000;    // a round takes picks for 15 s (the owner 2026-10-09 15:00: "rounds are 15 seconds")
+    const WINDOW_MS = 10000;    // a round takes picks for 10 s (kanban #280, the owner 2026-10-09 17:04: "Set rounds to 10 seconds")
+    const MATCH_CONTINUE_MS = 60000;   // a match goes on while both keep playing (arena-protocol match.js)
     const joinedOf = (line) => { const m = String(line || '').match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
     // THE ROUND TO PLAY: the open one that closes soonest with a few seconds left - every player's page offers the same one
     const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > 2500)
       .sort((x, y) => x.entryCloseMs - y.entryCloseMs)[0] || null;
+    // WHO SITS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You are alone"): this
+    // tab says it is here to the table's seats every 2 s (ARENA_GAME.here) and keeps who else is - the banner reads that, not
+    // the moves already in
+    // A new round's table is empty for the second or two before the other tab says it moved on with this one: who was
+    // seen within HERE_CARRY_MS still counts, so the banner does not blink "alone" at every round's turn
+    const HERE_CARRY_MS = 4000;
+    let here = { id: null, names: [], at: 0, seenAt: 0, busy: false };
+    const lookHere = (id) => {
+      if (!A.here || !id || here.busy || (here.id === id && Date.now() - here.at < 2000)) return;
+      here.busy = true;
+      A.here(id).then((x) => {
+        const now = Date.now();
+        if (x && x.others.length) here = { id, names: x.others, at: now, seenAt: now, busy: false };
+        else here = { ...here, id, names: here.id !== id && now - here.seenAt < HERE_CARRY_MS ? here.names : [], at: now, busy: false };
+      }).catch(() => { here.busy = false; });
+    };
+    const hereAt = (id) => (here.id === id || Date.now() - here.at < HERE_CARRY_MS ? here.names : []);
     // WHAT THE TABLE LOOKS LIKE NOW, as a key: the view is redrawn only when it changes (never a full rebuild each second)
+    let kept = null;            // the match score of this tab's newest decided round (below)
     const paint = async () => {
       // every listed round of this game (the page's allRows), so the soonest to close is the one offered
       const rows = A.allRows ? A.allRows() : A.rows();
@@ -143,16 +169,28 @@
             ? (me.outcome === 'DELIVERED' && me.score >= 2 ? 'win' : me.outcome === 'DELIVERED' ? 'draw' : me.outcome === 'VOID' ? 'void' : me.outcome === 'FORFEIT' ? 'forfeit' : 'loss') : null;
           last.phase = last.verdict ? 'result' : 'reveal';
         }
+        // THE SCORE ACROSS ROUNDS (kanban #280): the seats' signed match record - which identity is this tab's, its score first
+        const m = held && held.match;
+        if (m && m.byEntry && m.byEntry[h.entryIdHex]) {
+          const mine = m.identities.indexOf(m.byEntry[h.entryIdHex]);
+          if (mine >= 0) last.score = { me: m.score[mine], them: m.score[1 - mine], themName: (m.names || [])[1 - mine] || 'them', themKey: m.identities[1 - mine], played: m.played };
+        }
       }
       // WHILE A ROUND OF THIS TAB IS STILL BEING PLAYED (picked, waiting, revealing), that round is the table; once it is
       // decided (or not played), the next open round is, with the last result beside it
       let state;
-      if (last && (last.phase === 'wait' || last.phase === 'reveal')) state = { ...last, openMs: last.closeMs - WINDOW_MS };
+      // THE MATCH GOES ON while this tab played within the last minute and its last round was played: its score stays up
+      // kept from the newest decided round: while the next is picked and waited for, its own record is not there yet, and the
+      // board - and whose name the banner gives - must not drop out between moves
+      if (last && last.score && (!kept || last.closeMs >= kept.closeMs)) kept = { ...last.score, closeMs: last.closeMs };
+      const scoreboard = kept && kept.played && Date.now() - kept.closeMs <= MATCH_CONTINUE_MS ? kept : null;
+      if (last && (last.phase === 'wait' || last.phase === 'reveal')) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
       else {
         const row = openRound(rows);
-        const prev = last ? { phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null } : null;
-        state = row ? { phase: 'pick', id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev }
-          : { phase: 'none', prev };
+        const prev = last ? { phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
+        if (row) lookHere(row.id);
+        state = row ? { phase: 'pick', id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
+          : { phase: 'none', prev, scoreboard };
       }
       const key = JSON.stringify(state);
       if (key !== drawnKey) { drawnKey = key; draw(state); }
@@ -172,7 +210,27 @@
         const words = p.phase === 'alone' ? ['draw', 'not played'] : ({ win: ['win', 'won'], loss: ['loss', 'lost'], forfeit: ['loss', 'lost'], draw: ['draw', 'draw'], void: ['draw', 'not played'] }[p.verdict] || ['draw', '']);
         view.append(el('div', 'last ' + words[0], '<span>last round</span><b>' + MOVES[p.move][1] + '</b><i>vs</i><b>' + (p.theirs === null || p.theirs === undefined ? '∅' : MOVES[p.theirs][1]) + '</b><em>' + words[1] + '</em>'));
       }
+      // THE SCORE ACROSS ROUNDS, big, while the match goes on (kanban #280)
+      if (s.scoreboard) view.append(el('div', 'board', '<span class="who">You</span><b>' + s.scoreboard.me + '</b><i>:</i><b>' + s.scoreboard.them + '</b><span class="who">'
+        + String(s.scoreboard.themName).replace(/[<>&]/g, '') + '</span>'));
       if (s.phase === 'none') { view.append(el('div', 'card none', '<span class="big">⏳</span>The next round opens in a moment.')); return; }
+      // WHO IS HERE, prominently (kanban #280: "Always show prominently when you are alone in the round. Then also Waiting for
+      // other Players. When someone else is there, show that")
+      if (s.phase === 'pick' || s.phase === 'wait') {
+        const moved = s.phase === 'pick' ? s.joined : s.them > 0;     // the other move is in
+        const names = s.here || [];
+        // who they are: the name the table's seats give their key - the match's own name (the seats sign it) when it is the
+        // same player the match goes on with
+        const sb = s.scoreboard;
+        const seen = names.find((o) => sb && o.key === sb.themKey) || names[0] || null;
+        const them = seen ? (sb && seen.key === sb.themKey ? sb.themName : seen.name) : null;
+        const clean = (t) => String(t).replace(/[<>&]/g, '');
+        const what = s.phase === 'pick' ? (moved ? 'their move is in - pick yours' : 'pick your move')
+          : (moved ? 'both moves are in - hidden until the round closes' : 'waiting for their move');
+        view.append(names.length || moved
+          ? el('div', 'presence here', '<span class="icon">⚔️</span><div><b>' + (them ? 'You are playing against ' + clean(them) : 'Opponent is here') + '</b><small>' + what + '</small></div>')
+          : el('div', 'presence alone', '<span class="icon">🙋</span><div><b>You are alone in this round</b><small>Waiting for other players<span class="dots"><i>.</i><i>.</i><i>.</i></span></small></div>'));
+      }
       const card = el('div', 'card');
       const at = { pick: 0, wait: 1, alone: 3, reveal: 2, result: 3 }[s.phase];
       card.append(steps(at));
@@ -208,6 +266,7 @@
         if (s.verdict) {
           const words = { win: ['win', 'You win 🏆'], loss: ['loss', 'You lose'], forfeit: ['loss', 'Not revealed · you lose'], draw: ['draw', 'Draw · stakes back'], void: ['draw', 'Not played · stake back'] }[s.verdict];
           card.append(el('div', 'verdict ' + words[0], words[1]));
+          if (s.score) card.append(el('div', 'pick', 'score ' + s.score.me + ' : ' + s.score.them + (s.score.played ? '' : ' · match over')));
         }
       }
       view.append(card);

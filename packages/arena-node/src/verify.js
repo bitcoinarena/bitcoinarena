@@ -46,6 +46,7 @@ import {
   encodePlayerResult,
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { matchProofId } from '../../arena-protocol/src/match.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
 import { pluginForRound, hostedPlugins } from './plugins.js';
@@ -709,6 +710,13 @@ export class Verifier {
         try { c = headToHeadCommit({ roundId: entry.roundId, entryKey: entry.sessionPubkey, move: r.move, salt }); } catch { continue; }
         if (hex(c) !== hex(entry.commit)) continue;
         this.round.putReveal({ roundId: roundIdBytes, entryId: new Uint8Array(Buffer.from(r.entry, 'hex')), move: r.move, salt });
+        // ITS IDENTITY TOO (kanban #280), kept only if its key signed it over this round and entry
+        if (r.identity && /^[0-9a-f]{64}$/.test(String(r.identity.key)) && /^[0-9a-f]{128}$/.test(String(r.identity.sig)) && this.round.putIdentity) {
+          const entryId = new Uint8Array(Buffer.from(r.entry, 'hex')), key = new Uint8Array(Buffer.from(r.identity.key, 'hex')), sig = new Uint8Array(Buffer.from(r.identity.sig, 'hex'));
+          let good = false;
+          try { good = schnorr.verify(sig, matchProofId({ roundId: roundIdBytes, entryId, identityKey: key }), key); } catch { good = false; }
+          if (good) this.round.putIdentity({ roundId: roundIdBytes, entryId, identity: key, sig });
+        }
       }
     }
   }

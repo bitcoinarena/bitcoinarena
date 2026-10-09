@@ -770,6 +770,22 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS market_cancels_round ON market_cancels (round_id);
 
+    -- A HEAD-TO-HEAD ENTRY'S IDENTITY (kanban #280): the player's identity key, signed by it over (round, entry, key) -
+    -- what a score across rounds links its rounds by. Kept once per entry. And each round's match record as this seat
+    -- counted and signed it: the two identities, their score, the round it continued.
+    CREATE TABLE IF NOT EXISTS h2h_identities (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      identity    BLOB NOT NULL,
+      sig         BLOB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS h2h_identities_identity ON h2h_identities (identity);
+    CREATE TABLE IF NOT EXISTS match_records (
+      round_id    BLOB PRIMARY KEY,
+      record      TEXT NOT NULL,
+      sig         TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS head_to_head_reveals (
       round_id    BLOB NOT NULL,
       entry_id    BLOB NOT NULL,

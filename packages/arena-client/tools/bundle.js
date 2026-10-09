@@ -212,7 +212,7 @@ out += '         EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,\n';
 out += '         dailyLobbySearch: dailyLobbySearch,\n';
 // WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the
 // name made from it, and the player's own name over it.
-out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName,\n';
+out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName, identityProofFor: identityProofFor, presenceProofFor: presenceProofFor,\n';
 // AND THE OTHERS' NAMES (M3.3-34): this tab's signed record for its signer nodes, and
 // the round's records fetched and checked before a name is drawn.
 out += '         nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,\n';

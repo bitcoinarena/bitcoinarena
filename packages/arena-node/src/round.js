@@ -2681,6 +2681,23 @@ export class Round {
       .all(Buffer.from(roundIdBytes)).map((r) => ({ entryId: new Uint8Array(r.entry_id), signature: new Uint8Array(r.signature), receivedMs: Number(r.received_ms) }));
   }
 
+  /** A head-to-head entry's identity (kanban #280), kept once: the key and its signature over matchProofId. */
+  putIdentity({ roundId, entryId, identity, sig }) {
+    return this.db.prepare('INSERT OR IGNORE INTO h2h_identities (entry_id, round_id, identity, sig) VALUES (?, ?, ?, ?)')
+      .run(Buffer.from(entryId), Buffer.from(roundId), Buffer.from(identity), Buffer.from(sig)).changes === 1;
+  }
+
+  identityOf(entryIdBytes) {
+    const r = this.db.prepare('SELECT identity, sig FROM h2h_identities WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return r ? { identity: new Uint8Array(r.identity), sig: new Uint8Array(r.sig) } : null;
+  }
+
+  /** The rounds an identity named an entry in, newest entry first: [{ roundId, entryId }]. */
+  roundsOfIdentity(identity) {
+    return this.db.prepare('SELECT round_id, entry_id FROM h2h_identities WHERE identity = ?').all(Buffer.from(identity))
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
+  }
+
   /** A head-to-head entry's stood reveal (kanban #233), kept once: a second for the same entry changes nothing. */
   putReveal({ roundId, entryId, move, salt, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO head_to_head_reveals (round_id, entry_id, move, salt, received_ms) VALUES (?, ?, ?, ?, ?)')

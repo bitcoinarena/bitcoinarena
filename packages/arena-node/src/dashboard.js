@@ -26,7 +26,8 @@ const DAY = 86400000;
 const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null } = {}) {
+// `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js, kanban #280) - its score shown with the round
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null } = {}) {
   const db = round.db;
   const me = hex(round.pubkey);
   const first = db.prepare('SELECT MIN(opened_ms) AS t FROM rounds').get();
@@ -74,7 +75,13 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     // THE ROUND'S GAME (kanban #204): its id, and the name this node hosts it under (none for a game it no longer hosts)
     const gameId = contract.gameId instanceof Uint8Array ? hex(contract.gameId) : null;
     const hostedAs = gameId && games instanceof Map && games.get(gameId);
-    rounds.push({ id: hex(r.round_id), game: gameId, gameName: hostedAs ? hostedAs.name : null, startMs: Number(contract.startTimeMs), free: contract.stakeMsat === 0n,
+    // ITS KIND (kanban #280: "which kind of game was played, and the score if that game supports it"): the manifest's result
+    // type - a replayed game, a market (attested), a head-to-head game - and a head-to-head round's match score
+    const rt = hostedAs && hostedAs.manifest ? hostedAs.manifest.resultType : null;
+    const kind = rt === 1 ? 'game' : rt === 2 ? 'market' : rt === 3 ? 'head-to-head' : null;
+    let score = null;
+    if (rt === 3 && matchFor) { try { const m = matchFor(new Uint8Array(r.round_id)); if (m) score = { score: m.score, identities: m.identities.map((k) => k.slice(0, 8)), continued: !!m.previousRound }; } catch { score = null; } }
+    rounds.push({ id: hex(r.round_id), game: gameId, gameName: hostedAs ? hostedAs.name : null, kind, score, startMs: Number(contract.startTimeMs), free: contract.stakeMsat === 0n,
       stakeMsat: String(contract.stakeMsat), entries: r.n, checked: mine.length,
       settlement: s ? { state: s.state, madeMs: Number(s.made_ms), why: String(s.why || '').slice(0, 160) } : null,
       earned: s && s.state === 'ACCEPTED', gameVerifyMsat: String(gameVerify), settlementMsat: String(settlement), guardianMsat: String(guardian) });
@@ -215,7 +222,7 @@ if(i<0||i>=days.length){tip.style.display='none';return}const d=days[i],g=Number
 tip.textContent=d.day+': game/verify '+g+' msat · settlement '+st+' msat · guardian '+gd+' msat';tip.style.display='block';const b=box.getBoundingClientRect();
 tip.style.left=Math.max(4,Math.min(ev.clientX-b.left+10,b.width-tip.offsetWidth-4))+'px';tip.style.top=Math.max(4,ev.clientY-b.top-34)+'px'};
 svg.addEventListener('pointermove',show);svg.addEventListener('pointerdown',show);svg.addEventListener('pointerleave',()=>{tip.style.display='none'})}
-function tables(){el('rounds').innerHTML='<tr><th>Round</th><th>Start</th><th>Kind</th><th class="n">Entries</th><th class="n">Checked</th><th class="n">Game/verify</th><th class="n">Settlement</th><th class="n">Guardian</th><th>Settlement</th></tr>'+D.rounds.map(r=>'<tr class="rr" data-r="'+r.id+'"><td>'+(open.has(r.id)?'&#9662; ':'&#9656; ')+r.id.slice(0,12)+'</td><td>'+t(r.startMs)+'</td><td>'+(r.free?'free':sat(r.stakeMsat))+'</td><td class="n">'+r.entries+'</td><td class="n">'+r.checked+'</td><td class="n">'+sat(r.gameVerifyMsat)+'</td><td class="n">'+sat(r.settlementMsat)+'</td><td class="n">'+sat(r.guardianMsat)+'</td><td class="'+(r.earned?'ok':'')+'">'+(r.settlement?r.settlement.state:'-')+'</td></tr>'+(open.has(r.id)?'<tr class="pl"><td colspan="9">'+playersOf(r.id)+'</td></tr>':'')).join('');
+function tables(){el('rounds').innerHTML='<tr><th>Round</th><th>Start</th><th>Game</th><th>Score</th><th>Kind</th><th class="n">Entries</th><th class="n">Checked</th><th class="n">Game/verify</th><th class="n">Settlement</th><th class="n">Guardian</th><th>Settlement</th></tr>'+D.rounds.map(r=>'<tr class="rr" data-r="'+r.id+'"><td>'+(open.has(r.id)?'&#9662; ':'&#9656; ')+r.id.slice(0,12)+'</td><td>'+t(r.startMs)+'</td><td>'+(r.gameName||'-').replace(/[<>&]/g,'')+(r.kind?' <span style="color:var(--dim)">· '+r.kind+'</span>':'')+'</td><td>'+(r.score?'<b>'+r.score.score[0]+' : '+r.score.score[1]+'</b> <span style="color:var(--dim)">'+r.score.identities.join(' vs ')+'</span>':'-')+'</td><td>'+(r.free?'free':sat(r.stakeMsat))+'</td><td class="n">'+r.entries+'</td><td class="n">'+r.checked+'</td><td class="n">'+sat(r.gameVerifyMsat)+'</td><td class="n">'+sat(r.settlementMsat)+'</td><td class="n">'+sat(r.guardianMsat)+'</td><td class="'+(r.earned?'ok':'')+'">'+(r.settlement?r.settlement.state:'-')+'</td></tr>'+(open.has(r.id)?'<tr class="pl"><td colspan="9">'+playersOf(r.id)+'</td></tr>':'')).join('');
 el('rounds').onclick=(ev)=>{const tr=ev.target.closest('tr.rr');if(!tr)return;const id=tr.dataset.r;if(open.has(id))open.delete(id);else{open.add(id);if(!players.has(id)||players.get(id).error)readPlayers(id)}tables()};
 el('sstate').textContent=Object.entries(D.settlementsByState).map(([k,v])=>k+' '+v).join(' · ')||'none yet';
 el('settle').innerHTML='<tr><th>Round</th><th>Made</th><th>State</th><th>What</th></tr>'+D.settlements.map(s=>'<tr><td>'+s.round.slice(0,12)+'</td><td>'+t(s.madeMs)+'</td><td class="'+(s.state==='ACCEPTED'?'ok':s.state==='REFUSED'?'bad':'')+'">'+s.state+'</td><td>'+s.why.replace(/[<>&]/g,'')+'</td></tr>').join('');

@@ -21,6 +21,7 @@
 // key in place of a name: no record, no name, only a count.
 import { tabSeed, playerFor } from './join.js';
 import { identitySecretFor } from '../../arena-protocol/src/player-key.js';
+import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId, lobbyNameIsValid, LOBBY_NAME_MAX } from '../../arena-protocol/src/lobby-name.js';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
@@ -169,4 +170,28 @@ export function boardNames(rows, names) {
   const byPlayer = new Map((Array.isArray(names) ? names : []).map((n) => [n.player, n.name]));
   return (Array.isArray(rows) ? rows : []).map((row) => ({ row,
     name: (row && row.playerPubkey instanceof Uint8Array && byPlayer.get(toHex(row.playerPubkey))) || null }));
+}
+
+/**
+ * THIS TAB'S IDENTITY ON A HEAD-TO-HEAD ENTRY (kanban #280): its identity key and that key's signature over (round, entry,
+ * key) - handed to the seats with the reveal, so the rounds this tab plays against the same opponent count one score.
+ * Without it a round counts for itself alone.
+ */
+export function identityProofFor({ roundIdHex, entryIdHex, storage, random, curve } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('an identity proof is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const key = curve.pointX(secret);
+  const id = matchProofId({ roundId: fromHex(roundIdHex), entryId: fromHex(entryIdHex), identityKey: key });
+  return { key: toHex(key), sig: toHex(curve.signSchnorr(id, secret)) };
+}
+
+/**
+ * THIS TAB AT A HEAD-TO-HEAD ROUND'S TABLE (kanban #280): its identity key and that key's signature over (round, key) - said
+ * to the round's seats while the tab sits at the table, so the other player sees someone is there before any move is in.
+ */
+export function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a presence is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const key = curve.pointX(secret);
+  return { key: toHex(key), sig: toHex(curve.signSchnorr(presenceId({ roundId: fromHex(roundIdHex), identityKey: key }), secret)) };
 }
