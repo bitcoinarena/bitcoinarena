@@ -53,6 +53,7 @@
   .vs { font: 800 14px/1 system-ui; color: var(--dim); text-align: center; }
   /* THE MOVES */
   .pick { margin-top: 16px; text-align: center; color: var(--dim); font-size: 13px; }
+  .pick.due { color: var(--btc); font-size: 15px; font-weight: 600; }
   .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
   .moves button { font: 700 14px/1.2 system-ui; padding: 14px 6px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); color: #e6edf3; cursor: pointer; transition: transform 0.08s, border-color 0.15s; }
   .moves button span { display: block; font-size: 42px; margin-bottom: 6px; }
@@ -142,6 +143,10 @@
     };
     const hereAt = (id) => (here.id === id || Date.now() - here.at < HERE_CARRY_MS ? here.names : []);
     // WHAT THE TABLE LOOKS LIKE NOW, as a key: the view is redrawn only when it changes (never a full rebuild each second)
+    // a move carried into the next round when nobody answered it (below): { move, since, toId, closeMs, at }
+    const CARRY_MS = 120000, CARRY_RETRY_MS = 8000;
+    let carry = null;
+    let due = null;             // the reveal view's "result in" line, ticked every second: { el, closeMs, endMs }
     let kept = null;            // the match score of this tab's newest decided round (below)
     const paint = async () => {
       // every listed round of this game (the page's allRows), so the soonest to close is the one offered
@@ -156,7 +161,7 @@
         const entries = held ? held.entries : [];
         const closeMs = Number(h.entryCloseMs);
         const row = rows.find((r) => r.id === h.roundIdHex);
-        last = { id: h.roundIdHex, move: h.move, closeMs, free: row ? !!row.free : true, them: Math.max(0, entries.length - 1) };
+        last = { id: h.roundIdHex, move: h.move, closeMs, endMs: h.endMs ? Number(h.endMs) : null, free: row ? !!row.free : true, them: Math.max(0, entries.length - 1) };
         if (Date.now() < closeMs) last.phase = 'wait';
         else if (entries.length && entries.length < players) last.phase = 'alone';
         else {
@@ -189,17 +194,35 @@
         const row = openRound(rows);
         const prev = last ? { phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
         if (row) lookHere(row.id);
-        state = row ? { phase: 'pick', id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
+        // A MOVE NOBODY ANSWERED STAYS IN (the owner 2026-10-09 playtest: "pick, the Wait screen comes, then back to Pick -
+        // sometimes it works and the selection is really locked"): a round that closed with this tab alone in it was not
+        // played, and the move goes into the next open round by itself - still hidden, so whoever comes cannot see it - until
+        // an opponent plays it or CARRY_MS have passed since it was picked
+        if (last && last.phase === 'alone' && row && row.id !== last.id && (!carry || (carry.toId !== row.id && Date.now() - carry.at > CARRY_RETRY_MS))) {
+          const since = carry && carry.toId === last.id ? carry.since : last.closeMs - WINDOW_MS;
+          if (Date.now() - since < CARRY_MS) { carry = { move: last.move, since, toId: row.id, closeMs: row.entryCloseMs, at: Date.now() }; A.hide(row.id, last.move); }
+        }
+        if (carry && carry.toId === (row && row.id) && Date.now() - carry.at < CARRY_RETRY_MS && !(h && h.roundIdHex === carry.toId))
+          state = { phase: 'wait', id: carry.toId, move: carry.move, closeMs: carry.closeMs, openMs: carry.closeMs - WINDOW_MS, them: 0, carried: true, scoreboard, here: hereAt(carry.toId) };
+        else state = row ? { phase: 'pick', id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
           : { phase: 'none', prev, scoreboard };
       }
       const key = JSON.stringify(state);
       if (key !== drawnKey) { drawnKey = key; draw(state); }
       if (live) tickClock(live.clock, live.closeMs, live.openMs);
+      tickDue();
+    };
+    const tickDue = () => {
+      if (!due) return;
+      const now = Date.now(), waited = Math.max(0, Math.floor((now - due.closeMs) / 1000));
+      const left = due.endMs ? Math.ceil((due.endMs - now) / 1000) : null;
+      due.el.textContent = 'Result: waiting ' + waited + ' s' + (left === null ? '' : left > 0 ? ' · at most ' + left + ' s more' : ' · past its ' + Math.round((due.endMs - due.closeMs) / 1000) + ' s timeout, the seats are signing');
     };
     const draw = (s) => {
       const view = $('view');
       view.textContent = '';
       live = null;
+      due = null;
       const kind = $('kind');
       kind.hidden = s.phase === 'none';
       kind.className = 'chip ' + (s.free ? 'free' : 'paid');
@@ -263,6 +286,10 @@
         table.append(seat('you', 'shown' + (win ? ' win' : loss ? ' loss' : ''), MOVES[s.move][1]), middle,
           seat('them', s.theirs === null ? 'empty' : 'shown' + (loss ? ' win' : win ? ' loss' : ''), s.theirs === null ? '…' : MOVES[s.theirs][1]));
         card.append(table);
+        // THE RESULT NOT THERE YET (the owner 2026-10-09: "if the result takes time, show how long it takes, in seconds, with a
+        // timeout"): seconds since the moves closed, and the most it can still take - the round's reveal deadline, by which the
+        // seats decide whoever revealed
+        if (!s.verdict) { const w = el('div', 'pick due'); card.append(w); due = { el: w, closeMs: s.closeMs, endMs: s.endMs }; }
         if (s.verdict) {
           const words = { win: ['win', 'You win 🏆'], loss: ['loss', 'You lose'], forfeit: ['loss', 'Not revealed · you lose'], draw: ['draw', 'Draw · stakes back'], void: ['draw', 'Not played · stake back'] }[s.verdict];
           card.append(el('div', 'verdict ' + words[0], words[1]));

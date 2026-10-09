@@ -2474,7 +2474,8 @@
         console.log('[blwp] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: BLWPCLIENT.toHex(hidden.salt),
-          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: BLWPCLIENT.toHex(named.round.gameId) });
+          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: BLWPCLIENT.toHex(named.round.gameId),
+          endMs: String(BLWPCLIENT.roundEndMs(named.round)) });   // its reveal deadline: the result stands by then at the latest
         window.BLWP_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
         return;
       }
