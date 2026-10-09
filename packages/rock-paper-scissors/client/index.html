@@ -59,6 +59,7 @@
   .moves button span { display: block; font-size: 42px; margin-bottom: 6px; }
   .moves button:hover { border-color: var(--btc); } .moves button:active { transform: scale(0.96); }
   .moves button:disabled { opacity: 0.4; }
+  .moves button.chosen, .moves button.chosen:disabled { opacity: 1; border-color: var(--btc); box-shadow: 0 0 0 3px rgba(247,147,26,0.25); }
   .verdict { margin-top: 16px; text-align: center; font: 800 26px/1.2 system-ui; }
   .verdict.win { color: var(--win); } .verdict.loss { color: var(--loss); } .verdict.draw { color: var(--draw); }
   .foot { margin-top: 12px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
@@ -84,6 +85,19 @@
   .stage .ov .who { position: absolute; bottom: 10px; font: 700 12px/1 system-ui; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 10px;
     border-radius: 999px; background: rgba(9,12,20,0.6); border: 1px solid var(--line); max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stage .ov .who.me { left: 12px; color: #ffc27a; } .stage .ov .who.them { right: 12px; color: #9cc4ff; }
+  /* THE VERDICT, BIG (kanban #283, the owner 2026-10-09: "Like the big WASTED in the truck game ... WON, large, stays 2 seconds, then
+     fades. LOST, the same"): over everything, never in the way of a tap */
+  .verdict-big { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; pointer-events: none;
+    background: radial-gradient(60% 40% at 50% 50%, rgba(0,0,0,0.55), rgba(0,0,0,0) 70%); animation: vb 2.7s ease-out forwards; }
+  .verdict-big b { font: 900 clamp(64px, 24vw, 200px)/1 system-ui, -apple-system, sans-serif; letter-spacing: 0.06em; transform-origin: center;
+    animation: vbIn 0.35s cubic-bezier(.2,1.6,.4,1) both; -webkit-text-stroke: 2px rgba(0,0,0,0.35); }
+  .verdict-big.win b { color: #2fd38a; text-shadow: 0 0 28px rgba(47,211,138,0.85), 0 6px 0 #0b5a3a; }
+  .verdict-big.loss b { color: #ff4d4d; text-shadow: 0 0 28px rgba(255,77,77,0.8), 0 6px 0 #6a1010; }
+  .verdict-big.draw b { color: #9aa7ff; text-shadow: 0 0 24px rgba(154,167,255,0.75), 0 6px 0 #2b3170; }
+  body.lost-gray #view { filter: grayscale(0.85) brightness(0.8); transition: filter 0.3s; }
+  #view { transition: filter 0.6s; }
+  @keyframes vb { 0% { opacity: 0; } 8% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes vbIn { from { transform: scale(1.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 </style>
 </head>
 <body>
@@ -368,7 +382,9 @@
       renderer.render(scene, camera);
     };
     requestAnimationFrame(frame);
-    return { box, ov, show, shoot, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; } };
+    // seconds until the show's strike lands (the big verdict waits for it), 0 when no show is running
+    const STRIKE_AT = 2.1;
+    return { box, ov, show, shoot, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
   }
 </script>
 <script>
@@ -440,6 +456,19 @@
     let due = null;             // the reveal view's "result in" line, ticked every second: { el, closeMs, endMs }
     let stage = null;           // the Three.js stage (kanban #284), null until it is loaded or if it cannot be
     let pickedFor = null;       // the round the stage's pick preview belongs to
+    // THE BIG VERDICT (kanban #283): once per decided round of this tab, when the seats' signed result arrives - on the stage's
+    // strike if a show is running - WON / LOST / DRAW, 2 s, then it fades; a loss greys the page under it, as WASTED does
+    let bannerFor = null;
+    const bigVerdict = (verdict) => {
+      const kind = verdict === 'win' ? 'win' : verdict === 'loss' || verdict === 'forfeit' ? 'loss' : 'draw';
+      const word = { win: 'WON', loss: 'LOST', draw: verdict === 'void' ? 'NOT PLAYED' : 'DRAW' }[kind];
+      const b = el('div', 'verdict-big ' + kind, '<b>' + word + '</b>');
+      document.body.append(b);
+      if (kind === 'loss') document.body.classList.add('lost-gray');
+      setTimeout(() => document.body.classList.remove('lost-gray'), 2300);
+      setTimeout(() => b.remove(), 2800);
+      window.RPS_VERDICT_SHOWN = { word, at: Date.now() };
+    };
     let kept = null;            // the match score of this tab's newest decided round (below)
     const paint = async () => {
       // every listed round of this game (the page's allRows), so the soonest to close is the one offered
@@ -466,6 +495,12 @@
           last.verdict = me && me.outcome && me.signedBy > 0
             ? (me.outcome === 'DELIVERED' && me.score >= 2 ? 'win' : me.outcome === 'DELIVERED' ? 'draw' : me.outcome === 'VOID' ? 'void' : me.outcome === 'FORFEIT' ? 'forfeit' : 'loss') : null;
           last.phase = last.verdict ? 'result' : 'reveal';
+          if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 60000) {
+            bannerFor = h.roundIdHex;
+            const v = last.verdict;
+            // the stage's show may start in this same paint: let it, then wait for its strike
+            setTimeout(() => setTimeout(() => bigVerdict(v), stage ? stage.strikeIn() * 1000 : 0), 50);
+          }
         }
         // THE SCORE ACROSS ROUNDS (kanban #280): the seats' signed match record - which identity is this tab's, its score first
         const m = held && held.match;
@@ -580,17 +615,17 @@
         const g = el('div', 'moves');
         MOVES.forEach(([name, icon], i) => {
           const b = el('button', '', '<span>' + icon + '</span>' + name); b.type = 'button';
-          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; if (stage) stage.preview(i); A.hide(s.id, i); });
+          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; b.classList.add('chosen'); if (stage) stage.preview(i); A.hide(s.id, i); });
           if (stage) { b.addEventListener('pointerenter', () => { if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { if (!b.disabled) stage.preview(null); }); }
           g.append(b);
         });
         card.append(g);
       } else if (s.phase === 'wait') {
-        table.append(seat('you · ' + MOVES[s.move][0], 'facedown', '🔒'), middle,
+        table.append(seat('you · ' + MOVES[s.move][0], 'shown', MOVES[s.move][1]), middle,
           seat(s.them ? 'opponent in' : 'waiting…', s.them ? 'in' : 'empty', s.them ? '🔒' : '?'));
         put(table);
       } else if (s.phase === 'alone') {
-        table.append(seat('you', 'facedown', '🔒'), middle, seat('nobody came', 'empty', '∅'));
+        table.append(seat('you · ' + MOVES[s.move][0], 'shown', MOVES[s.move][1]), middle, seat('nobody came', 'empty', '∅'));
         put(table); card.append(el('div', 'verdict draw', 'Not played · stake back'));
       } else {
         const win = s.verdict === 'win', loss = s.verdict === 'loss' || s.verdict === 'forfeit';
