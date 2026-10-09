@@ -1852,13 +1852,13 @@
         }
       }
       if (!market) throw new Error('that round is not a market this page can read');
-      const sheet = BLWPCLIENT.pickSheet({ market, contract, donationBps: BLWPCLIENT.roundPays(contract) ? donationBps() : 0 });
+      const sheet = BLWPCLIENT.pickSheet({ market, contract });
       const el = document.getElementById('blwp-pick');
       const box = el.querySelector('.sheet');
       box.textContent = '';
       const h = document.createElement('h3'); h.textContent = sheet.title;
       const lines = document.createElement('div'); lines.className = 'lines';
-      for (const t of BLWPCLIENT.roundPays(contract) ? [sheet.lines.stake, sheet.lines.fee, sheet.lines.donation, sheet.lines.net, sheet.attestors] : ['free - nothing at stake', sheet.attestors]) {
+      for (const t of BLWPCLIENT.roundPays(contract) ? [sheet.lines.stake, sheet.lines.fee, sheet.lines.net, sheet.attestors] : ['free - nothing at stake', sheet.attestors]) {
         const d = document.createElement('div'); d.textContent = t; lines.append(d);
       }
       const outs = document.createElement('div'); outs.className = 'outcomes';
@@ -2066,19 +2066,20 @@
         console.log('[blwp] donation recipients are loopback, which no wallet can reach - the share will show unpaid: '
           + recipientsLine);
       const settingsPct = String(donationBps() / 100);
-      // A MARKET'S OWN RATES (kanban #235, the owner 2026-10-09: a market's fee is its manifest's, 0.5 % + 0.5 % by default): its
-      // node fee on the round (an unpinned market's from the manifest the player confirmed), and its donation - not the
-      // games' donation setting
+      // A MARKET'S OWN RATES (kanban #235, the owner 2026-10-09: a market's fee is its manifest's, 0.5 % + 0.5 % by default), BOTH
+      // DUE AT RESOLUTION: its node fee and its donation together are the entry's fee, held in the fee lock until the market
+      // resolves (an unpinned market's rates from the manifest the player confirmed) - nothing is donated at entry
       const marketHere = (() => { const c = pickFor(named.roundIdHex);
         return BLWPCLIENT.marketForRound(named.round, c && c.manifestHex ? { manifestBytes: BLWPCLIENT.fromHex(c.manifestHex) } : {}); })();
-      if (marketHere && marketHere.fee) named.round.feeBps = marketHere.fee.nodeBps;
-      const donation = pays && donationSet && marketHere && marketHere.fee
-        ? { bps: marketHere.fee.donationBps, donationMsat: (BigInt(named.round.stakeMsat) * BigInt(marketHere.fee.donationBps)) / 10000n }
+      if (marketHere && marketHere.fee) named.round.feeBps = marketHere.fee.nodeBps + marketHere.fee.donationBps;
+      const donation = marketHere && marketHere.fee
+        ? { bps: 0, donationMsat: 0n, inFee: marketHere.fee.donationBps }
         : pays && donationSet
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
           ask: () => settingsPct, confirm: () => false, storage: window.sessionStorage, recipientsLine })
         : { bps: 0, donationMsat: 0n };
-      console.log(`[blwp] donation ${donation.bps / 100}% = ${donation.donationMsat} msat${donation.kept ? ' (kept for this round)' : ''}`);
+      console.log(donation.inFee !== undefined ? `[blwp] donation ${donation.inFee / 100}% in the fee lock, due when the market resolves`
+        : `[blwp] donation ${donation.bps / 100}% = ${donation.donationMsat} msat${donation.kept ? ' (kept for this round)' : ''}`);
       window.BLWP_DONATION = { bps: donation.bps, donationMsat: String(donation.donationMsat), kept: !!donation.kept };
       let stake = null;
       let claimKey = null;

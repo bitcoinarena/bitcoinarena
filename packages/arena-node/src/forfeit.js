@@ -31,10 +31,16 @@ import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protoc
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { resultFinality } from './finality.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
+
+// A FEE LOCK'S RETURN (kanban #278, the owner 2026-10-09: "orders can be cancelled at no cost"): kept under its own key beside
+// the stake lock's, so an entry's two returns never stand in each other's place
+const FEE_RETURN_TAG = new TextEncoder().encode('arena fee lock return v1');
+export const feeReturnKey = (entryIdBytes) => { const m = new Uint8Array(FEE_RETURN_TAG.length + 32); m.set(FEE_RETURN_TAG); m.set(entryIdBytes, FEE_RETURN_TAG.length); return sha256(m); };
+const keptUnder = (entryIdBytes, kind) => (kind === 'fee' ? feeReturnKey(entryIdBytes) : entryIdBytes);
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
@@ -66,10 +72,22 @@ export class Forfeit {
   }
 
   /** WHAT THIS SIGNER NODE WILL SIGN, rebuilt from its own store - or the refusal. */
-  async message(roundIdBytes, entryIdBytes) {
+  // `kind`: 'stake' (the stake lock, as always) or 'fee' - a market order's fee lock, returned at once only when the order was
+  // cancelled before its round's entry close or the market is refunded (VOID, nobody right); otherwise it is claimed at
+  // resolution or expires back to its player
+  async message(roundIdBytes, entryIdBytes, kind = 'stake') {
     const row = this.round.get(roundIdBytes);
     if (!row) return refuse('this node holds no such round', 404);
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    // A CANCELLED MARKET ORDER (kanban #278): signed by its player before entry close, out of the round's table at this seat
+    const cancelled = !!(this.round.cancelled && this.round.cancelled(entryIdBytes));
+    if (kind === 'fee') {
+      const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
+      if (!fl) return refuse('this signer node verified no fee lock for that entry, so it returns none');
+      if (!cancelled && !this.#marketRefund(roundIdBytes, contract).ok)
+        return refuse('a fee lock comes back at once only for a cancelled order or a refunded market: this one is claimed at resolution, or expires back to its player');
+      return this.#signable(contract, fl);
+    }
     let lock = this.round.stakeLock(entryIdBytes);
     // §23.2 REFUSED (kanban #191, the owner 2026-10-06 08:57: "A round the seats refuse gets an immediate refund"): no entry,
     // but a lock this node kept for a round it refuses, under its handout's id (POST /refused-lock) - returned at once, on
@@ -131,7 +149,7 @@ export class Forfeit {
     // AN ATTESTED ROUND (§0A.7a, kanban #206 slice 2): no run and no result. A stake comes back by this forfeit once THIS
     // signer node's settlement of the round is ACCEPTED and did not claim the lock - a winning pick's, or every pick's when
     // nobody picked the outcome. Before that it waits; a claimed lock was a losing pick's, and is not the player's.
-    const attested = !voided && !refused && this.round.plugins
+    const attested = !voided && !refused && !cancelled && this.round.plugins
       ? (() => { const f = pluginForRound(contract, this.round.plugins); return f.ok && f.attested; })() : false;
     // A MARKET ROUND REFUNDED (kanban #235, the owner 2026-10-09: "refund at the deadline", "refund the fees too"): VOID at its
     // deadline or on a contradiction, or final with nobody holding the right pick - nothing is claimed in it, so every stake
@@ -145,7 +163,7 @@ export class Forfeit {
       if (!moves) return refuse('this signer node keeps no record of what its settlement moved');
       if ((moves.claims || []).includes(String(lock.outpoint))) return refuse('that pick lost: its lock was claimed into the winners\' payouts');
     }
-    if (!voided && !refused && !attested) {
+    if (!voided && !refused && !attested && !cancelled) {
       const standing = resultFinality(this.round, roundIdBytes, entryIdBytes);
       // VOID (§13C, §23.2 "do nothing"): nothing is forfeited - nobody acts, and
       // the lock returns to the player at its expiry. Not ENTRY_VOID's forfeit.
@@ -163,6 +181,11 @@ export class Forfeit {
             + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
       }
     }
+    return this.#signable(contract, lock);
+  }
+
+  /** The lock's contract id, rebuilt from this signer node's own record, under the round's claim key - what it signs. */
+  async #signable(contract, lock) {
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
@@ -214,8 +237,8 @@ export class Forfeit {
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the forfeit it would sign. */
-  async commit(roundIdBytes, entryIdBytes) {
-    const m = await this.message(roundIdBytes, entryIdBytes);
+  async commit(roundIdBytes, entryIdBytes, kind = 'stake') {
+    const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     const key = toHex(m.message);
     let pair = this.pairs.get(key);
@@ -230,8 +253,8 @@ export class Forfeit {
   }
 
   /** ROUND TWO: this signer node's signature share, over the forfeit it rebuilt, for ONE commitment list. */
-  async share(roundIdBytes, entryIdBytes, commitments) {
-    const m = await this.message(roundIdBytes, entryIdBytes);
+  async share(roundIdBytes, entryIdBytes, commitments, kind = 'stake') {
+    const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     const pair = this.pairs.get(toHex(m.message));
     if (!pair) return refuse('this signer node committed to no forfeit of that lock');
@@ -250,11 +273,11 @@ export class Forfeit {
   }
 
   /** A combined forfeit handed over by a peer: kept only if it verifies over what THIS signer node rebuilt. */
-  async take(roundIdBytes, entryIdBytes, signature) {
-    const m = await this.message(roundIdBytes, entryIdBytes);
+  async take(roundIdBytes, entryIdBytes, signature, kind = 'stake') {
+    const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that forfeit does not verify under the round\'s claim key');
-    this.round.putForfeit({ entryId: entryIdBytes, roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
+    this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
     return { ok: true };
   }
 
@@ -263,18 +286,18 @@ export class Forfeit {
    * made now with its peers, checked under the claim key, kept, and handed to
    * them.
    */
-  async forfeit(roundIdBytes, entryIdBytes) {
-    const kept = this.round.forfeit(entryIdBytes);
+  async forfeit(roundIdBytes, entryIdBytes, kind = 'stake') {
+    const kept = this.round.forfeit(keptUnder(entryIdBytes, kind));
     if (kept) return { ok: true, ...kept, kept: true };
-    const m = await this.message(roundIdBytes, entryIdBytes);
+    const m = await this.message(roundIdBytes, entryIdBytes, kind);
     if (!m.ok) return m;
     // AN ENTRY_VOID LOCK: the evidence goes to the other signer nodes before they are
     // asked to sign, so a signer node that was down records the same Void on its own.
     if (this.onVoid && this.round.entryVoid && this.round.entryVoid(entryIdBytes)) {
       try { await this.onVoid(roundIdBytes, entryIdBytes); } catch { /* each signer node still signs only on its own record */ }
     }
-    const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}`;
-    const own = await this.commit(roundIdBytes, entryIdBytes);
+    const q = `round=${toHex(roundIdBytes)}&entry=${toHex(entryIdBytes)}${kind === 'fee' ? '&lock=fee' : ''}`;
+    const own = await this.commit(roundIdBytes, entryIdBytes, kind);
     if (!own.ok) return own;
     const signers = [{ base: null, commitment: own.commitment }];
     const refused = [];
@@ -291,7 +314,7 @@ export class Forfeit {
     const shares = [];
     for (const s of signers) {
       if (s.base === null) {
-        const mine = await this.share(roundIdBytes, entryIdBytes, commitments);
+        const mine = await this.share(roundIdBytes, entryIdBytes, commitments, kind);
         if (!mine.ok) return mine;
         shares.push(mine.share);
         continue;
@@ -303,7 +326,7 @@ export class Forfeit {
     const { signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve });
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1)))
       return refuse('the combined forfeit does not verify under the round\'s claim key', 500);
-    this.round.putForfeit({ entryId: entryIdBytes, roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
+    this.round.putForfeit({ entryId: keptUnder(entryIdBytes, kind), roundId: roundIdBytes, message: m.message, signature, claimPk: m.claimPk });
     for (const s of signers) {
       if (s.base === null) continue;
       try { await this.fetcher(`${s.base}/forfeit-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ }

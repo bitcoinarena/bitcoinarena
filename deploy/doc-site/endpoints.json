@@ -732,10 +732,10 @@
  {
   "method": "GET",
   "path": "/forfeit",
-  "params": "query round, entry (hex 32; entry may be a handout id for refused locks)",
+  "params": "query round, entry (hex 32; entry may be a handout id for refused locks); lock=fee for a market order's fee lock (cancelled, or the market refunded)",
   "auth": "none",
   "returns": "200 JSON {signature, contractId, claimPk, kept}; 400/409",
-  "purpose": "Returns, or makes with the other signer nodes, the forfeit of a qualifier's lock.",
+  "purpose": "Returns, or makes with the other signer nodes, the forfeit of a qualifier's lock - or of a cancelled market order's stake and fee locks.",
   "audience": "player/page",
   "line": 3886
  },
@@ -988,6 +988,26 @@
   "purpose": "Separate local TEST donation-recipient server (port 18777, src/lnurl-recipients.js), not the node.",
   "audience": "operator/monitoring",
   "line": "src/lnurl-recipients.js:44"
+ },
+ {
+  "method": "POST",
+  "path": "/cancel",
+  "params": "query entry (hex 32); body the 64-byte Ed25519 signature of the entry's session key over cancelId(round, entry)",
+  "auth": "the entry's session key",
+  "returns": "201 (cancelled) / 200 (held already) JSON {cancelled, fresh}; 403 (not the entry's key) / 409 (not a market, or after entry close: the fee is due)",
+  "purpose": "A market player cancels an order before its round's entry close, at no cost: the entry leaves the round and its stake and fee locks come back at once (GET /forfeit, GET /forfeit?lock=fee). Post it to every seat.",
+  "audience": "player/page",
+  "line": 0
+ },
+ {
+  "method": "GET",
+  "path": "/cancels",
+  "params": "query round (hex 32)",
+  "auth": "none",
+  "returns": "200 JSON {round, cancels: [{entry, signature}]}",
+  "purpose": "Every cancel this seat holds for a market round; the other seats pull them before they settle.",
+  "audience": "node",
+  "line": 0
  },
  {
   "method": "POST",

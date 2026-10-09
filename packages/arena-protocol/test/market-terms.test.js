@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { encodeManifest, decodeManifest, encodeManifestBody, manifestBodyId, gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, marketTermsFit } from '../src/manifest.js';
 import { attestationTimely, marketTimes, marketVoided } from '../src/attested.js';
-import { entryFeeMsat, feeMatchesEntry, feeBpsOf, donationBpsOf, NODE_FEE_BPS } from '../src/fee.js';
+import { entryFeeMsat, feeMatchesEntry, feeBpsOf, donationBpsOf, entryFeeBpsOf, donationInFee, NODE_FEE_BPS } from '../src/fee.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const DEV = (() => { const { privateKey, publicKey } = generateKeyPairSync('ed25519'); return { key: privateKey, pub: new Uint8Array(publicKey.export({ type: 'spki', format: 'der' }).subarray(-32)) }; })();
@@ -62,7 +62,18 @@ test('the market\'s fee is its manifest\'s rate, 0.5 % + 0.5 % by default; a gam
   const entry = { stakeMsat: 100000n, feeMsat: 500n, donationMsat: 500n };
   assert.equal(feeMatchesEntry(entry, { feeBps: 50 }).ok, true);
   assert.match(feeMatchesEntry(entry).why, /5% of 100000 is 5000/);
-  assert.throws(() => entryFeeMsat(100000n, 600), /0 to 500 bps/);
+  // AN ENTRY FEE: a market's carries its donation (both due at resolution, the owner 2026-10-09), so up to 10 % together
+  assert.equal(entryFeeMsat(100000n, 1000), 10000n);
+  assert.throws(() => entryFeeMsat(100000n, 1001), /0 to 1000 bps/);
+  assert.equal(entryFeeBpsOf(BODY), 100);
+  assert.equal(entryFeeBpsOf({ ...m, marketTerms: { ...TERMS, nodeFeeBps: 500, donationBps: 500 } }), 1000);
+  assert.equal(entryFeeBpsOf(game), NODE_FEE_BPS);
+  assert.equal(donationInFee(BODY), true);
+  assert.equal(donationInFee(game), false);
+  // a market entry: the whole 1 % is its fee, and a donation beside it does not stand
+  assert.equal(feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 0n }, { feeBps: 100, donationInFee: true }).ok, true);
+  assert.match(feeMatchesEntry({ stakeMsat: 100000n, feeMsat: 1000n, donationMsat: 500n }, { feeBps: 100, donationInFee: true }).why,
+    /a market's donation is in its fee lock, due at resolution: that entry names a donation of 500 msat beside it/);
 });
 
 test('an attestation is taken only for an outcome observed at or after the market\'s resolution time', () => {

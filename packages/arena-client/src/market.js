@@ -45,25 +45,26 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
  */
 // `contract`: the round's (its stake is read here, so the page names no contract field); `stakeMsat` instead, for a caller with no
 // contract at hand.
-export function pickSheet({ market, contract = null, stakeMsat = contract ? contract.stakeMsat : 0n, donationBps = 500 }) {
+export function pickSheet({ market, contract = null, stakeMsat = contract ? contract.stakeMsat : 0n }) {
   const stake = BigInt(stakeMsat);
-  // THE MARKET'S OWN RATES (kanban #235): its node fee, and a donation no higher than its own (0.5 % + 0.5 % by default)
+  // THE MARKET'S OWN RATES (kanban #235): its node fee and its donation (0.5 % + 0.5 % by default), DUE WHEN THE PICK FILLS -
+  // at entry close (the owner 2026-10-09): they sit in the fee lock beside the stake, are paid out when the market resolves from
+  // winners and losers alike, and come back whole on a cancel before entry close, a VOID or a market nobody picked right
   const rates = market.fee || { nodeBps: 50, donationBps: 50 };
-  donationBps = Math.min(donationBps, rates.donationBps);
-  const fee = entryFeeMsat(stake, rates.nodeBps);
-  const donation = (stake * BigInt(donationBps)) / 10000n;
+  const fee = entryFeeMsat(stake, rates.nodeBps + rates.donationBps);
   const pct = (bps) => `${(bps / 100).toFixed(bps % 100 ? (bps % 10 ? 2 : 1) : 0)}%`;
-  const net = stake - fee - donation;
+  const net = stake - fee;
   return {
     title: `${market.name} - pick one`,
     outcomes: market.outcomes.map((label, index) => ({ index, label })),
     lines: {
       stake: `stake ${sats(stake)} sats`,
-      fee: `node fee ${pct(rates.nodeBps)}: ${sats(fee)} sats`,
-      donation: `donation ${pct(donationBps)}: ${sats(donation)} sats (half to the protocol devs, half to ${market.name}'s dev)`,
+      fee: `fees ${pct(rates.nodeBps + rates.donationBps)}: ${sats(fee)} sats - ${pct(rates.nodeBps)} nodes + ${pct(rates.donationBps)} donation `
+        + `(half to the protocol devs, half to ${market.name}'s dev), due once your pick is in at entry close - cancel before that costs nothing; `
+        + 'back in full if the market is void or nobody picked right',
       net: `at risk on your pick: ${sats(net)} sats`,
     },
-    stakeMsat: stake, feeMsat: fee, donationMsat: donation, netMsat: net,
+    stakeMsat: stake, feeMsat: fee, donationMsat: 0n, netMsat: net,
     attestors: `outcome by ${market.threshold} of ${market.attestors.length} attestors named by ${market.name}'s dev`,
     confirm: market.needsConfirm
       ? `${market.name} is not on this page's list of known markets. Its developer key is ${market.devKey.slice(0, 16)}… and its manifest ${market.gameId.slice(0, 16)}…; `

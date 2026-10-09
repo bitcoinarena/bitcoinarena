@@ -717,6 +717,17 @@ export function openStore(path = ':memory:') {
     -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE (kanban #233): the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.
+    -- A MARKET ENTRY ITS PLAYER CANCELLED (kanban #278): signed with the entry's session key before the round's entry close,
+    -- taken at this seat's door or pulled from a peer before settlement. One per entry; the entry is out of the round's table
+    -- from then on, and its stake and fee locks come back at once by the return door.
+    CREATE TABLE IF NOT EXISTS market_cancels (
+      entry_id    BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      signature   BLOB NOT NULL,
+      received_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS market_cancels_round ON market_cancels (round_id);
+
     CREATE TABLE IF NOT EXISTS head_to_head_reveals (
       round_id    BLOB NOT NULL,
       entry_id    BLOB NOT NULL,
