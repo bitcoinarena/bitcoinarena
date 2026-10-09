@@ -19,3 +19,12 @@ run_worker_first = true
 [[kv_namespaces]]
 binding = "BENCH"
 id = "83351bd43e524815a441e37295a53ba8"
+
+# kanban #272: the testnet4 bond announcements, read through mempool.space every 2 minutes (worker.js scheduled) and
+# served at /api/chain-nodes; the page checks them itself
+[[kv_namespaces]]
+binding = "CHAIN"
+id = "f53d379e2f6d41a3a5ab590150d979b8"
+
+[triggers]
+crons = ["*/2 * * * *"]
