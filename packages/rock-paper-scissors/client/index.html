@@ -122,6 +122,55 @@
   .card.loading { flex: 1; display: grid; place-items: center; min-height: 200px; }
   .card.loading .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--btc); animation: spin 0.9s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* THE FRAME, ALIVE (#290, the owner 2026-10-09: "make the frame of rps and the background visually more exciting, it is
+     still too boring"): drifting colour clouds and sparkles behind everything, a shimmering title, glass cards, a rainbow
+     edge running round the stage, a colour for each move */
+  @property --ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+  body { background:
+      radial-gradient(1.5px 1.5px at 20% 30%, rgba(255,255,255,0.7), transparent 60%),
+      radial-gradient(1.5px 1.5px at 70% 60%, rgba(255,201,60,0.7), transparent 60%),
+      radial-gradient(1.5px 1.5px at 40% 80%, rgba(43,210,255,0.7), transparent 60%),
+      radial-gradient(1.5px 1.5px at 85% 15%, rgba(255,60,172,0.8), transparent 60%),
+      radial-gradient(55% 40% at 10% 0%, rgba(255,60,172,0.38), transparent 70%),
+      radial-gradient(50% 40% at 95% 25%, rgba(43,210,255,0.32), transparent 70%),
+      radial-gradient(70% 50% at 50% 105%, rgba(157,78,221,0.45), transparent 70%),
+      radial-gradient(40% 30% at 70% 70%, rgba(255,201,60,0.16), transparent 70%),
+      linear-gradient(180deg, #120a26, #08061a);
+    background-size: 180px 180px, 230px 230px, 160px 160px, 210px 210px, 200% 200%, 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+    animation: skyDrift 22s ease-in-out infinite alternate; }
+  @keyframes skyDrift { 0% { background-position: 0 0, 0 0, 0 0, 0 0, 0% 0%, 100% 0%, 50% 100%, 30% 60%, 0 0; }
+    100% { background-position: 180px 360px, -230px 230px, 160px -320px, -210px 420px, 60% 30%, 40% 50%, 30% 70%, 80% 20%, 0 0; } }
+  h1 { background: linear-gradient(90deg, #ffc93c, #ff3cac, #9d4edd, #2bd2ff, #3cff9e, #ffc93c); background-size: 300% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 7s linear infinite; font-weight: 900; }
+  h1 .icons { -webkit-text-fill-color: initial; color: initial; display: inline-block; animation: wiggle 2.4s ease-in-out infinite; }
+  @keyframes shimmer { to { background-position: 300% 0; } }
+  @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) scale(1.08); } }
+  button.back { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); color: #d9d2ff; }
+  .chip.free { box-shadow: 0 0 14px rgba(47,211,138,0.45); }
+  #view > .card, .card { background: linear-gradient(160deg, rgba(48,22,86,0.72), rgba(12,14,34,0.88)); border: 1px solid rgba(255,255,255,0.09);
+    box-shadow: 0 12px 40px rgba(157,78,221,0.28), inset 0 1px 0 rgba(255,255,255,0.07); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .stage { border: 2.5px solid transparent;
+    background: linear-gradient(#0b0820, #0b0820) padding-box, conic-gradient(from var(--ang), #ff3cac, #ffc93c, #3cff9e, #2bd2ff, #9d4edd, #ff3cac) border-box;
+    box-shadow: 0 0 26px rgba(255,60,172,0.35), 0 0 52px rgba(43,210,255,0.18); animation: edge 5s linear infinite; }
+  @keyframes edge { to { --ang: 360deg; } }
+  .presence.here { background: linear-gradient(100deg, rgba(47,211,138,0.28), rgba(43,210,255,0.16)); border-color: rgba(60,255,158,0.6); box-shadow: 0 0 18px rgba(60,255,158,0.22); }
+  .presence.alone { background: linear-gradient(100deg, rgba(247,147,26,0.3), rgba(255,60,172,0.16)); border-color: rgba(255,170,60,0.65); box-shadow: 0 0 18px rgba(255,140,60,0.22); }
+  .board { background: linear-gradient(100deg, rgba(157,78,221,0.25), rgba(43,210,255,0.14)); border-color: rgba(157,78,221,0.45); }
+  .board b { background: linear-gradient(180deg, #fff, #ffc93c); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .last { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1); }
+  .step b { background: rgba(10,8,30,0.8); }
+  .step.now b { border-color: #ffc93c; color: #ffc93c; box-shadow: 0 0 0 4px rgba(255,201,60,0.18), 0 0 16px rgba(255,140,60,0.55); }
+  .step.done b { border-color: #3cff9e; color: #3cff9e; box-shadow: 0 0 10px rgba(60,255,158,0.35); }
+  .moves button { --c: #ff8a3c; position: relative; overflow: hidden; border: 1.5px solid color-mix(in srgb, var(--c) 65%, transparent);
+    background: radial-gradient(120% 90% at 50% 100%, color-mix(in srgb, var(--c) 38%, transparent), rgba(12,8,30,0.92) 70%);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--c) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.08); transition: transform 0.12s, box-shadow 0.2s; }
+  .moves button:nth-of-type(2) { --c: #2bd2ff; } .moves button:nth-of-type(3) { --c: #ff3cac; }
+  .moves button:hover { transform: translateY(-2px); box-shadow: 0 0 26px color-mix(in srgb, var(--c) 55%, transparent); }
+  .moves button.chosen, .moves button.chosen:disabled { border-color: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 35%, transparent), 0 0 30px color-mix(in srgb, var(--c) 60%, transparent); }
+  .moves button::after { content: ''; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,0.18) 50%, transparent 65%);
+    background-size: 250% 100%; animation: sheen 3.6s ease-in-out infinite; pointer-events: none; }
+  .moves button:nth-of-type(2)::after { animation-delay: 0.6s; } .moves button:nth-of-type(3)::after { animation-delay: 1.2s; }
+  @keyframes sheen { 0% { background-position: 120% 0; } 60%, 100% { background-position: -120% 0; } }
 </style>
 </head>
 <body>
@@ -216,7 +265,7 @@
           vec3 bc[5]; bc[0] = vec3(1.0, 0.24, 0.67); bc[1] = vec3(0.17, 0.82, 1.0); bc[2] = vec3(1.0, 0.62, 0.12); bc[3] = vec3(0.6, 0.3, 1.0); bc[4] = vec3(0.2, 1.0, 0.62);
           for (int i = 0; i < 5; i++) { float fi = float(i);
             vec2 c = vec2(sin(uT * 0.17 * (1.0 + fi * 0.31) + fi * 1.7) * 0.62 * uAspect, cos(uT * 0.13 * (1.0 + fi * 0.23) + fi * 2.3) * 0.33 + 0.12);
-            float d = length(p - c); col += bc[i] * 0.5 * exp(-d * d * 6.0); }
+            float d = length(p - c); col += bc[i] * 0.62 * exp(-d * d * 5.0); }
           float beam = pow(max(0.0, sin(p.x * 3.2 + uT * 0.8 + sin(p.y * 2.0 + uT * 0.35) * 1.4)), 20.0) * (1.0 - uv.y * 0.4);
           col += vec3(1.0, 0.9, 1.0) * beam * 0.16;
           vec2 g = uv * vec2(uAspect, 1.0) * 46.0; vec2 id = floor(g); vec2 f = fract(g) - 0.5; float h = hash(id);
@@ -235,6 +284,10 @@
       m.userData = { spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2), bob: Math.random() * 6, drift: (Math.random() - 0.5) * 0.4, y: m.position.y };
       m.scale.setScalar(0.7 + Math.random() * 0.8); scene.add(m); return m;
     });
+    // two neon rings turning behind the table
+    const halos = [[3.4, 0.035, 0xff3cac, 0.5], [4.3, 0.028, 0x2bd2ff, -0.35]].map(([r, w, c, sp]) => {
+      const m = new THREE.Mesh(new THREE.TorusGeometry(r, w, 12, 200), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.position.set(0, 0.9, -5.5); m.userData.sp = sp; scene.add(m); return m; });
     const ripple = new THREE.Mesh(new THREE.CircleGeometry(6, 96), new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       uniforms: { uT: { value: 0 }, uPulse: { value: 0 } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
@@ -707,6 +760,7 @@
       dustGeo.attributes.position.needsUpdate = true;
       line.material.opacity = 0.18 + Math.sin(t * 2.2) * 0.08;
       sky.material.uniforms.uT.value = t; sky.material.uniforms.uFlash.value = flash;
+      halos.forEach((m, i) => { m.rotation.x = 1.15 + Math.sin(t * 0.4 + i) * 0.12; m.rotation.z += m.userData.sp * dt; m.material.opacity = 0.55 + Math.sin(t * 2 + i * 1.7) * 0.2 + pulse * 0.4; });
       ripple.material.uniforms.uT.value = t; ripple.material.uniforms.uPulse.value = pulse;
       for (const m of toys) { const u = m.userData; m.rotation.x += u.spin.x * dt; m.rotation.y += u.spin.y * dt; m.rotation.z += u.spin.z * dt;
         m.position.y = u.y + Math.sin(t * 1.1 + u.bob) * 0.25 + pulse * 0.15; m.position.x += u.drift * dt; if (m.position.x > 8) m.position.x = -8; if (m.position.x < -8) m.position.x = 8; }
