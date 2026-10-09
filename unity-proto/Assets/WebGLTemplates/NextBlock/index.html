@@ -4109,8 +4109,11 @@
     // carries, held to the same rules (`dailyLobbySearch`). Read only when the
     // address carries no query; a missing or broken file leaves the root the
     // offline daily it was.
+    const VIEW_ONLY_PARAMS = ['rps-demo'];
     async function dailySearch() {
-      if (location.search.replace(/^\?/, '') !== '' || !BLWPCLIENT.dailyLobbySearch) return null;
+      // a parameter only a game's client reads (#291: ?rps-demo=all) leaves the root bare: it names no lobby
+      const named = new URLSearchParams(location.search); for (const k of VIEW_ONLY_PARAMS) named.delete(k);
+      if (named.toString() !== '' || !BLWPCLIENT.dailyLobbySearch) return null;
       try {
         const r = await fetch('daily.json', { cache: 'no-store' });
         return r.ok ? BLWPCLIENT.dailyLobbySearch(await r.json()) : null;

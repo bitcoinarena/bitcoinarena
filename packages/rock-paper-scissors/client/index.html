@@ -171,6 +171,9 @@
     background-size: 250% 100%; animation: sheen 3.6s ease-in-out infinite; pointer-events: none; }
   .moves button:nth-of-type(2)::after { animation-delay: 0.6s; } .moves button:nth-of-type(3)::after { animation-delay: 1.2s; }
   @keyframes sheen { 0% { background-position: 120% 0; } 60%, 100% { background-position: -120% 0; } }
+  .demo-label { position: fixed; top: 6px; right: 8px; z-index: 60; padding: 6px 12px; border-radius: 999px;
+    background: rgba(10, 8, 30, 0.85); border: 1px solid rgba(255,201,60,0.6); font: 600 13px/1.2 system-ui; white-space: nowrap; box-shadow: 0 0 18px rgba(255,201,60,0.3); }
+  .demo-label b { color: #ffc93c; margin-right: 6px; } .demo-label i { color: var(--dim); font-style: normal; margin: 0 4px; }
 </style>
 </head>
 <body>
@@ -311,8 +314,10 @@
 
     // A HAND: a bevelled palm, four fingers of three joints and a thumb of two, a sleeve with a band of light. Fingers point
     // along +x, the back of the hand faces the camera (+z), a finger curls away from it (rotation.y > 0).
-    const FINGERS = [{ y: 0.32, len: [0.36, 0.24, 0.2], r: 0.118 }, { y: 0.105, len: [0.4, 0.27, 0.21], r: 0.125 },
-      { y: -0.11, len: [0.37, 0.25, 0.2], r: 0.118 }, { y: -0.315, len: [0.29, 0.2, 0.17], r: 0.104 }];
+    // FULLER (#291, the owner 2026-10-09: "the hand looks very bony, it must have a bit more fat"): thicker fingers that taper
+    // less, a little more room between them, a plumper palm, softer knuckles and tendons
+    const FINGERS = [{ y: 0.345, len: [0.36, 0.24, 0.2], r: 0.138 }, { y: 0.113, len: [0.4, 0.27, 0.21], r: 0.146 },
+      { y: -0.119, len: [0.37, 0.25, 0.2], r: 0.138 }, { y: -0.34, len: [0.29, 0.2, 0.17], r: 0.122 }];
     const POSES = {
       idle: { f: [[0.3, 0.35, 0.2, 0.07], [0.3, 0.35, 0.2, 0], [0.35, 0.4, 0.25, -0.06], [0.4, 0.45, 0.3, -0.12]], t: [0.7, 0.25, 0.2] },
       rock: { f: [[1.5, 1.75, 1.25, 0], [1.5, 1.75, 1.25, 0], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.25, 0.85, 0.55] },
@@ -353,16 +358,16 @@
         // broad at the knuckles, narrower to the wrist, a domed back and a soft heel
         float u = smoothstep(0.0, 1.0, clamp((p.x + 0.45) / 0.9, 0.0, 1.0));   // smooth: a hard corner here drew a seam
         vec3 q = p; q.y /= mix(0.8, 1.0, u); q.z -= 0.025 * cos(q.y * 2.6);
-        float d = sdRoundBox(q, vec3(0.36, 0.4, 0.105), 0.1) * 0.85;
-        d = smin(d, sdEllipsoid(p - vec3(-0.12, 0.27, -0.05), vec3(0.3, 0.17, 0.15)), 0.12);    // the thumb's pad
-        d = smin(d, sdEllipsoid(p - vec3(-0.18, -0.22, -0.04), vec3(0.24, 0.16, 0.12)), 0.1);  // the heel
+        float d = sdRoundBox(q, vec3(0.37, 0.43, 0.135), 0.13) * 0.85;
+        d = smin(d, sdEllipsoid(p - vec3(-0.12, 0.27, -0.05), vec3(0.33, 0.2, 0.19)), 0.14);    // the thumb's pad
+        d = smin(d, sdEllipsoid(p - vec3(-0.18, -0.22, -0.04), vec3(0.27, 0.19, 0.15)), 0.12);  // the heel
         vec3 w = p; w.z *= 1.3;
         d = smin(d, sdRoundCone(w, vec3(-0.3, 0.0, 0.0), vec3(-1.05, 0.0, 0.0), 0.27, 0.25) * 0.8, 0.16);  // the wrist
         // the tendons from each big knuckle over the back of the hand, part of the palm's shape (never cut by a finger's
         // bounding sphere: a tendon reaches past it, and the cut drew a line across the hand)
         if (p.x < 0.75 && p.z > -0.05 && abs(p.y) < 0.7) {
           for (int c = 0; c < 4; c++) { vec3 kn = uA[c * 3] + uU[c * 3] * uR[c * 3].x * 0.3;
-            d = smin(d, sdRoundCone(p, kn + uU[c * 3] * 0.02, vec3(-0.28, kn.y * 0.45, 0.13), 0.026, 0.017), 0.07); }
+            d = smin(d, sdRoundCone(p, kn + uU[c * 3] * 0.02, vec3(-0.28, kn.y * 0.45, 0.13), 0.017, 0.012), 0.09); }
         }
         return d;
       }
@@ -374,11 +379,11 @@
         float f = 1e5;
         for (int i = 0; i < 3; i++) { if (i >= n) break; int k = n0 + i; f = smin(f, sdRoundCone(p, uA[k], uB[k], uR[k].x, uR[k].y), 0.035);
           // a knuckle where each bone starts, raised on the back
-          if (i > 0) f = smin(f, length(p - uA[k] - uU[k] * uR[k].x * 0.22) - uR[k].x * 1.04, 0.03); }
+          if (i > 0) f = smin(f, length(p - uA[k] - uU[k] * uR[k].x * 0.12) - uR[k].x * 0.99, 0.05); }
         if (c < 4) {
           // the big knuckle where the finger leaves the hand, and the tendon running from it over the back of the hand
           vec3 kn = uA[n0] + uU[n0] * uR[n0].x * 0.3;
-          f = smin(f, length(p - kn) - uR[n0].x * 1.0, 0.05);
+          f = smin(f, length(p - kn) - uR[n0].x * 0.95, 0.08);
         }
         return smin(d, f, c == 4 ? 0.14 : 0.09);
       }
@@ -421,10 +426,11 @@
         vec3 nw = normalize(transpose(inverse(mat3(uModel))) * n);
         vec3 v = normalize(cameraPosition - pw);
         vec3 key = normalize(vec3(2.5, 6.0, 7.0));
-        float wrap = clamp((dot(nw, key) + 0.45) / 1.45, 0.0, 1.0);
-        vec3 hemi = mix(vec3(0.16, 0.1, 0.07), vec3(0.42, 0.5, 0.68), nw.y * 0.5 + 0.5);
+        float wrap = clamp((dot(nw, key) + 0.45) / 1.45, 0.0, 1.0) * 0.92;
+        // (#291, the owner 2026-10-09: the hand lit too bright, "highlighted" - a calmer, matte skin)
+        vec3 hemi = mix(vec3(0.14, 0.09, 0.07), vec3(0.3, 0.35, 0.47), nw.y * 0.5 + 0.5);
         vec3 h = normalize(key + v);
-        float spec = pow(max(dot(nw, h), 0.0), 60.0) * 0.55 + pow(max(dot(nw, h), 0.0), 9.0) * 0.07;
+        float spec = pow(max(dot(nw, h), 0.0), 40.0) * 0.16 + pow(max(dot(nw, h), 0.0), 8.0) * 0.03;
         float fres = pow(1.0 - max(dot(nw, v), 0.0), 3.0);
         vec3 lL = normalize(uRimL - pw), lR = normalize(uRimR - pw);
         vec3 rim = vec3(1.0, 0.55, 0.15) * pow(max(dot(nw, lL), 0.0), 2.0) * 0.9 + vec3(0.25, 0.55, 1.0) * pow(max(dot(nw, lR), 0.0), 2.0) * 0.9;
@@ -449,7 +455,7 @@
         vec3 skin = mix(uColor, uColor * 0.55 + vec3(0.46, 0.4, 0.42), nail) * (1.0 - crease * 0.3) * (1.0 - rimN * 0.22);
         spec += nail * pow(max(dot(nw, h), 0.0), 120.0) * 1.2;
         vec3 sss = uColor * vec3(1.0, 0.45, 0.3) * (1.0 - wrap) * 0.18;     // light through the skin, warm in the shade
-        vec3 col = skin * (wrap * 1.15 + hemi) * ao + sss + rim * (0.35 + fres) * ao + spec + fres * 0.18 * hemi + uGlow;
+        vec3 col = skin * (wrap * 1.05 + hemi) * ao + sss + rim * (0.12 + fres * 0.45) * ao + spec + fres * 0.05 * hemi + uGlow;
         col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);   // ACES, as the rest of the stage
         outColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), uOpacity * cover);
         vec4 clip = uProj * uView * vec4(pw, 1.0);
@@ -489,7 +495,7 @@
         const joints = []; let parent = base, at = 0;
         spec.len.forEach((l, k) => {
           const j = new THREE.Group(); j.position.x = at; parent.add(j);
-          const r1 = spec.r * [1.02, 0.93, 0.86][k], r2 = spec.r * [0.93, 0.86, 0.74][k];
+          const r1 = spec.r * [1.04, 0.98, 0.94][k], r2 = spec.r * [0.98, 0.94, 0.84][k];
           bones.push({ j, len: l, r1, r2 }); joints.push(j); parent = j; at = l;
         });
         return joints;
@@ -532,7 +538,7 @@
     for (const [h, at] of [[me, HOME.me], [them, HOME.them]]) { h.root.position.copy(at); h.root.rotation.set(0.3, h === me ? -0.32 : 0.32, 0); scene.add(h.root); h.apply(); }
 
     // THE OPPONENT'S MOVE, NOT YET SHOWN: a turning cage of light around a closed fist; green once their move is in
-    const cage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.08, 1), new THREE.MeshBasicMaterial({ color: 0x4c9dff, wireframe: true, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+    const cage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.08, 1), new THREE.MeshBasicMaterial({ color: 0x4c9dff, wireframe: true, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }));
     cage.position.copy(HOME.them); scene.add(cage);
     const mark = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
       g.font = '800 96px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffffff'; g.shadowColor = '#4c9dff'; g.shadowBlur = 18; g.fillText('?', 64, 70);
@@ -588,7 +594,8 @@
     // THE LEAD-IN (#288, the owner 2026-10-09: "after the result screen the animation must morph smoothly from the lock animation to
     // the win/loss animation"): for INTRO s the cage around their hand bursts open and fades, and both hands glide from wherever
     // they are - bouncing, posed, half-faded - to the start of the pump; nothing snaps
-    const INTRO = 0.45;
+    const INTRO = 0.45, PUMP = 1.95, REVEAL = 0.9, LATER = (PUMP - 1.05) + (REVEAL - 0.35);
+    let revealing = false;   // while the moves open, the fingers move slower
     function shoot(mine, theirs) {
       clearHalves();
       const from = [me, them].map((h) => ({ h, pos: h.body.position.clone(), rot: h.body.rotation.clone(), scale: h.body.scale.clone(), color: h.mat.color.clone(), op: h.mat.opacity }));
@@ -602,10 +609,15 @@
         if (!c.opened) { c.opened = true; burst(new THREE.Vector3(HOME.them.x, 0.1, 0), 0x6fe3ff, 70, 2.6); kick(0.06); } } };
       // 1. "ROCK - PAPER - SCISSORS": three pumps of both fists
       tw.push({ at: 0, dur: 0.05, update: () => { me.set('rock'); them.set('rock'); } });
-      tw.push({ at: 0, dur: 1.05, update: (p) => { const y = Math.abs(Math.sin(p * Math.PI * 3)) * 0.42; me.body.position.y = y; them.body.position.y = y; me.body.rotation.z = y * 0.35; them.body.rotation.z = y * 0.35; } });
+      // (#291, the owner 2026-10-09: "the hand strikes down 3 times and then reveals"): each stroke lifts the fist, brings it
+      // down hard, and lands with a small kick; the third lands and opens into the move
+      tw.push({ at: 0, dur: PUMP, update: (p) => { const q = (p * 3) % 1, n = Math.min(2, Math.floor(p * 3));
+        const y = p >= 1 ? 0 : q < 0.55 ? 0.62 * Math.sin((q / 0.55) * Math.PI / 2) : q < 0.75 ? 0.62 - 0.74 * Math.pow((q - 0.55) / 0.2, 2) : -0.12 * (1 - (q - 0.75) / 0.25);
+        for (const h of [me, them]) { h.body.position.y = y; h.body.rotation.z = Math.max(0, y) * 0.45; }
+        if (q >= 0.75 && !c['hit' + n]) { c['hit' + n] = true; kick(0.07); } } });
       // 2. "SHOOT": both forms, a pulse
       tw.push({ at: 1.05, dur: 0.05, update: () => { me.set(NAMES[mine]); them.set(NAMES[theirs]); kick(0.08); burst(new THREE.Vector3(0, 0.2, 0), 0xffffff, 60, 2.4); } });
-      tw.push({ at: 1.05, dur: 0.35, update: (p) => { const s = 1 + Math.sin(p * Math.PI) * 0.12; me.body.scale.setScalar(s); them.body.scale.setScalar(s); me.body.position.x = ease.out(p) * 0.25; them.body.position.x = ease.out(p) * 0.25; } });
+      tw.push({ at: 1.05, dur: REVEAL, update: (p) => { revealing = p < 1; const s = 1 + Math.sin(p * Math.PI) * 0.12; me.body.scale.setScalar(s); them.body.scale.setScalar(s); me.body.position.x = ease.out(p) * 0.25; them.body.position.x = ease.out(p) * 0.25; } });
       // 3. THE STRIKE
       if (!win) {
         tw.push({ at: 1.55, dur: 0.5, update: (p) => { const x = Math.sin(p * Math.PI) * 0.75 + 0.25; me.body.position.x = x; them.body.position.x = x; if (p > 0.5 && !c.bumped) { c.bumped = true; burst(new THREE.Vector3(0, 0.1, 0), 0x9aa7ff, 70, 2.6); } } });
@@ -631,13 +643,15 @@
         if (!c.homing) { c.homing = true; clearHalves(); }
         for (const h of [me, them]) { h.body.position.multiplyScalar(1 - ease.out(p)); h.body.rotation.x *= 1 - p; h.body.rotation.z *= 1 - p; h.body.scale.lerp(new THREE.Vector3(1, 1, 1), p); h.mat.color.lerp(h.skin, p); }
       } });
+      // the old 1.05 s pump and 0.35 s pulse were the first draft: everything after them moves by what they grew
+      for (const x of tw) { if (x.at === 1.05) x.at += PUMP - 1.05; else if (x.at > 1.05) x.at += LATER; }
       tw.push(lead); for (const x of tw) x.at += INTRO;
-      seq = { t: 0, tw, end: 4.1 + INTRO, w };
+      seq = { t: 0, tw, end: 4.1 + LATER + INTRO, w };
       return w;
     }
 
     // WHAT THE TABLE SAYS (from the client's state): your hand, theirs, and whether their move is in
-    let want = { mine: 'idle', theirs: 'absent' }, preview = null, shownFor = null;
+    let want = { mine: 'idle', theirs: 'absent' }, preview = null, shownFor = null, demoMode = false;
     function show(s) {
       const mine = s.phase === 'wait' || s.phase === 'reveal' || s.phase === 'result' ? NAMES[s.move] : preview !== null ? NAMES[preview] : 'idle';
       const present = (s.here && s.here.length) || (s.phase === 'pick' ? s.joined : s.them > 0);
@@ -646,7 +660,7 @@
       // THE SHOW: once a round of this tab has both moves, played out once
       const done = (s.phase === 'reveal' || s.phase === 'result') && s.theirs !== null && s.theirs !== undefined ? { id: s.id, mine: s.move, theirs: s.theirs }
         : s.prev && s.prev.id && s.prev.theirs !== null && s.prev.theirs !== undefined && s.prev.phase === 'result' ? { id: s.prev.id, mine: s.prev.move, theirs: s.prev.theirs } : null;
-      if (done && done.id !== shownFor && (!s.prev || !s.prev.id || done.id !== s.prev.id || Date.now() - (s.prev.closeMs || 0) < 30000)) { shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }
+      if (!demoMode && done && done.id !== shownFor && (!s.prev || !s.prev.id || done.id !== s.prev.id || Date.now() - (s.prev.closeMs || 0) < 30000)) { shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }
     }
 
     // THE MOVES' BUTTONS (#286, the owner 2026-10-09: "the icons below must not be standard icons - high-quality hands too,
@@ -739,12 +753,12 @@
       const intro = seq && seq.t < INTRO ? seq.t / INTRO : null;
       const caged = (!seq && want.theirs !== 'absent') || intro !== null;
       cage.visible = caged;
-      if (intro !== null) { cage.scale.setScalar(1 + intro * 1.1); cage.material.opacity = 0.35 * (1 - intro); }
-      else { cage.scale.setScalar(1); cage.material.opacity = 0.35; } mark.visible = caged || (!seq && want.theirs === 'absent');
+      if (intro !== null) { cage.scale.setScalar(1 + intro * 1.1); cage.material.opacity = 0.12 * (1 - intro); }
+      else { cage.scale.setScalar(1); cage.material.opacity = 0.12; } mark.visible = caged || (!seq && want.theirs === 'absent');
       cage.rotation.y = t * 0.6; cage.rotation.x = t * 0.25;
-      cage.material.color.setHex(want.theirs === 'in' ? 0x2fd38a : 0x4c9dff);
-      mark.material.opacity = 0.65 + Math.sin(t * 3) * 0.3; mark.position.y = 1.3 + Math.sin(t * 2) * 0.06;
-      const k = 1 - Math.exp(-dt * 14); me.step(k); them.step(k);
+      cage.material.color.setHex(want.theirs === 'in' ? 0x5fae94 : 0x5a7fb8);
+      mark.material.opacity = 0.3 + Math.sin(t * 2) * 0.08; mark.position.y = 1.3 + Math.sin(t * 2) * 0.06;
+      const k = 1 - Math.exp(-dt * (revealing ? 4.5 : 14)); me.step(k); them.step(k);
       if (halves) {
         halves.t += dt;
         halves.parts.forEach((p, i) => {
@@ -772,7 +786,7 @@
     };
     requestAnimationFrame(frame);
     // seconds until the show's strike lands (the big verdict waits for it), 0 when no show is running
-    const STRIKE_AT = 2.1 + INTRO;
+    const STRIKE_AT = 2.1 + LATER + INTRO;
     // A PROBE'S BENCH: ms per frame of the stage drawn and waited for (a 1-pixel read makes the GPU finish), with the
     // hands and without them, and of the buttons' hands - a measure no browser frame cap can hide
     const bench = (n = 40) => {
@@ -787,7 +801,8 @@
       const icons = iconLayer.isConnected ? +((performance.now() - t0) / n).toFixed(2) : null;
       return { stageMs: withHands, stageWithoutHandsMs: without, buttonsMs: icons, pixelRatio: renderer.getPixelRatio(), size: [box.clientWidth, box.clientHeight] };
     };
-    return { get iconRise() { return iconHands.map((x) => +x.rise.toFixed(2)); }, box, ov, show, shoot, bench, celebrate() { confetti(); kick(0.12); }, attachIcons(row, slots) { row.append(iconLayer); iconSlots = slots; } /* the hands rise from below once, at the page's first buttons (#289: not again at each round's end) */, iconHover(i) { iconHover = i; }, iconChosen(i) { iconChosen = i; }, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
+    // a probe's view of the show: my fist's height and my middle finger's curl, and whether a show runs
+    return { get probe() { return { y: +me.body.position.y.toFixed(3), curl: +me.pose.f[1][0].toFixed(3), t: seq ? +seq.t.toFixed(3) : null }; }, demo(on) { demoMode = !!on; if (on) want = { mine: 'idle', theirs: 'here' }; }, get iconRise() { return iconHands.map((x) => +x.rise.toFixed(2)); }, box, ov, show, shoot, bench, celebrate() { confetti(); kick(0.12); }, attachIcons(row, slots) { row.append(iconLayer); iconSlots = slots; } /* the hands rise from below once, at the page's first buttons (#289: not again at each round's end) */, iconHover(i) { iconHover = i; }, iconChosen(i) { iconChosen = i; }, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
   }
 </script>
 <script>
@@ -829,11 +844,17 @@
     $('back').addEventListener('click', () => A.back());
     let drawnKey = null;
     let live = null;            // what the countdown needs between redraws: { clock, closeMs, openMs }
-    const WINDOW_MS = 10000;    // a round takes picks for 10 s (kanban #280, the owner 2026-10-09 17:04: "Set rounds to 10 seconds")
+    const WINDOW_MS = 8000;     // a round takes picks for 8 s (#291, the owner 2026-10-09: "reduce the round length to 8 seconds"; #280: 10)
     const MATCH_CONTINUE_MS = 60000;   // a match goes on while both keep playing (arena-protocol match.js)
     const joinedOf = (line) => { const m = String(line || '').match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
     // THE ROUND TO PLAY: the open one that closes soonest with a few seconds left - every player's page offers the same one
-    const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > 2500)
+    // ONLY IN ITS OWN 8 SECONDS (#291, the owner 2026-10-09: "round length is over 1m, not 8 secs"): the seats hold each round
+    // 150 s before its window, so a round is listed long before it starts - after a seat restart the first one waited ~2.5
+    // min with its clock running. A round is offered only from its window's start (entry close less WINDOW_MS)
+    // ITS LAST 1.5 S THE TABLE STAYS, CLOSING (#291): a pick then might not land before the close, so the moves are off -
+    // but the table is not swapped for an empty screen, and the next round's own 8 s have begun by then
+    const CLOSING_MS = 1500;
+    const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > 300 && r.entryCloseMs - Date.now() <= WINDOW_MS - 50)   // the clock rounds up: at most 0:08
       .sort((x, y) => x.entryCloseMs - y.entryCloseMs)[0] || null;
     // WHO SITS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You are alone"): this
     // tab says it is here to the table's seats every 2 s (ARENA_GAME.here) and keeps who else is - the banner reads that, not
@@ -940,7 +961,7 @@
         }
         if (carry && carry.toId === (row && row.id) && Date.now() - carry.at < CARRY_RETRY_MS && !(h && h.roundIdHex === carry.toId))
           state = { phase: 'wait', id: carry.toId, move: carry.move, closeMs: carry.closeMs, openMs: carry.closeMs - WINDOW_MS, them: 0, carried: true, scoreboard, here: hereAt(carry.toId) };
-        else state = row ? { phase: 'pick', id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
+        else state = row ? { phase: 'pick', closing: row.entryCloseMs - Date.now() < CLOSING_MS, id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
           : { phase: 'none', prev, scoreboard };
       }
       const key = JSON.stringify(state);
@@ -1023,10 +1044,11 @@
       if (s.phase === 'pick') {
         table.append(seat('you', 'empty', '?'), middle, seat(s.joined ? 'opponent in' : 'opponent', s.joined ? 'in' : 'empty', s.joined ? '✓' : '?'));
         put(table);
-        card.append(el('div', 'pick', 'Pick - your opponent cannot see it until the round closes'));
+        card.append(el('div', 'pick', s.closing ? 'Closing - the next round starts in a moment' : 'Pick - your opponent cannot see it until the round closes'));
         const g = el('div', 'moves');
         MOVES.forEach(([name, icon], i) => {
           const b = el('button', '', stage ? '<span class="ic"></span>' + name : '<span>' + icon + '</span>' + name); b.type = 'button';
+          if (s.closing) b.disabled = true;
           b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; b.classList.add('chosen'); if (stage) { stage.preview(i); stage.iconChosen(i); } A.hide(s.id, i); });
           if (stage) { b.addEventListener('pointerenter', () => { stage.iconHover(i); if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { stage.iconHover(null); if (!b.disabled) stage.preview(null); }); }
           g.append(b);
@@ -1058,7 +1080,26 @@
       view.append(card);
     };
     // THE STAGE, once Three.js is in (kanban #284); until then, and without it, the cards
-    loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); }).catch((e) => { stageFailed = true; drawnKey = null; console.warn('[rps] no 3D stage: ' + e.message); paint(); });
+    // EVERY COMBINATION, ON THE PAGE ITSELF (#291, the owner 2026-10-09: "make a ?parameter where I can see all combinations in
+    // the UI"): ?rps-demo=all on the page's address plays the nine - your rock, paper, scissors against theirs - one after
+    // another on the stage, each with its big verdict, a label saying which it is, over and over; the rounds go on under it
+    const DEMO = (() => { try { return new URLSearchParams(window.parent.location.search).get('rps-demo'); } catch { return null; } })();
+    const runDemo = async () => {
+      stage.demo(true);
+      const label = el('div', 'demo-label'); document.body.append(label);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let loop = 0; ; loop++) {
+        for (let n = 0; n < 9; n++) {
+          const a = Math.floor(n / 3), b = n % 3, w = (a - b + 3) % 3;
+          label.innerHTML = '<b>' + (n + 1) + ' / 9</b> You ' + MOVES[a][1] + ' ' + MOVES[a][0] + ' <i>vs</i> ' + MOVES[b][0] + ' ' + MOVES[b][1] + ' them';
+          stage.shoot(a, b);
+          setTimeout(() => bigVerdict(w === 0 ? 'draw' : w === 1 ? 'win' : 'loss'), stage.strikeIn() * 1000);
+          await sleep(300); while (stage.busy) await sleep(100);
+          await sleep(1200);
+        }
+      }
+    };
+    loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); if (DEMO) runDemo(); }).catch((e) => { stageFailed = true; drawnKey = null; console.warn('[rps] no 3D stage: ' + e.message); paint(); });
     paint();
     setInterval(paint, 1000);
   }
