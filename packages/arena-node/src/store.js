@@ -717,6 +717,30 @@ export function openStore(path = ':memory:') {
     -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE (kanban #233): the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.
+    -- A MARKET ORDER THIS SEAT TOOK (kanban #278 step 4): the player's signed limit order as JSON, when it arrived here, and
+    -- the batch it was agreed into (NULL while it waits for the next one). Kept once by its id.
+    CREATE TABLE IF NOT EXISTS market_orders (
+      order_id    TEXT PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      body        TEXT NOT NULL,
+      received_ms INTEGER NOT NULL,
+      batch       INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS market_orders_round ON market_orders (round_id, batch);
+    -- ONE AGREED BATCH (kanban #278 step 4): its number, its id (batchId over its order ids), the ids, its leader's key and
+    -- signature, this seat's own signature, and when this seat stored it. One per (round, batch): a seat signs one set.
+    CREATE TABLE IF NOT EXISTS market_batches (
+      round_id    BLOB NOT NULL,
+      k           INTEGER NOT NULL,
+      batch_id    TEXT NOT NULL,
+      order_ids   TEXT NOT NULL,
+      leader      TEXT NOT NULL,
+      leader_sig  TEXT NOT NULL,
+      own_sig     TEXT NOT NULL,
+      stored_ms   INTEGER NOT NULL,
+      PRIMARY KEY (round_id, k)
+    );
+
     -- A MARKET ENTRY ITS PLAYER CANCELLED (kanban #278): signed with the entry's session key before the round's entry close,
     -- taken at this seat's door or pulled from a peer before settlement. One per entry; the entry is out of the round's table
     -- from then on, and its stake and fee locks come back at once by the return door.

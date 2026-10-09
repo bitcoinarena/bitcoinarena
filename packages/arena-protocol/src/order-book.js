@@ -187,7 +187,7 @@ export function resolveBook({ fills, outcome }) {
 }
 
 /**
- * STANDING ORDERS (the owner 2026-10-09: "Gut weiter" - batches every second (0.5 s where the seats keep up), orders that stand): a player places a limit order at
+ * STANDING ORDERS (the owner 2026-10-09: "Gut weiter" - batches every half second (measured: the seats agree a set in at most 275 ms), orders that stand): a player places a limit order at
  * any time and it is matched in the next batch; what has not filled STANDS in the book for the batches after, until it
  * fills, its player cancels it (at no cost) or its expiry passes. One batch of the book: `resting` - the orders standing,
  * each with what is left of its stake; `incoming` - the orders placed since the last batch; `cancels` - ids its players
@@ -195,8 +195,10 @@ export function resolveBook({ fills, outcome }) {
  * batch's, filled only), resting (left standing, each with its remaining stake), returned: [{ id, stakeMsat, why }] (what
  * comes back now: cancelled or expired, untouched by this batch) }.
  */
-// EVERY SECOND (the owner 2026-10-09: "Order batches alle 1s, wenn möglich alle 0.5s"): MIN_BATCH_MS once the seats measure it
-export const BATCH_MS = 1000n;
+// EVERY HALF SECOND (the owner 2026-10-09: "Order batches alle 1s, wenn möglich alle 0.5s"; kanban #278 step 4, measured): seven
+// seats agreed every batch's set in at most 275 ms (p50 225 ms) with every seat-to-seat request delayed by a round trip
+// measured to a live seat through its tunnel (p50 56 ms, max 106 ms) - inside 0.5 s, so the book runs at 0.5 s, not 1 s.
+export const BATCH_MS = 500n;
 export const MIN_BATCH_MS = 500n;
 export function bookBatch({ resting = [], incoming = [], cancels = [], nowMs, feeBps }) {
   if (typeof nowMs !== 'bigint') throw new Error('a batch is cleared at a BigInt ms time');
@@ -217,4 +219,37 @@ export function bookBatch({ resting = [], incoming = [], cancels = [], nowMs, fe
   // WHAT IS LEFT STANDS: an order's refund is its remaining stake (its fee on that part not charged), into the next batch
   const resting2 = b.fills.filter((f) => f.refundMsat > 0n).map((f) => ({ ...byId.get(f.id), stakeMsat: f.refundMsat }));
   return { price: b.price, matchedMsat: b.matchedMsat, fills, resting: resting2, returned };
+}
+
+/**
+ * AN ORDER ON THE WIRE (kanban #278 step 4): JSON with hex bytes and decimal amounts, as a page posts it to every seat
+ * (POST /order) and a seat hands it to another. `orderFromJson` answers the order or throws; the signature is checked by
+ * `orderStands`, never here.
+ */
+export function orderToJson(o) {
+  return { roundId: toHex(o.roundId), playerKey: toHex(o.playerKey), outcome: o.outcome, price: String(o.price), stakeMsat: String(o.stakeMsat),
+    nonce: String(o.nonce), expiryMs: String(o.expiryMs || 0n), signature: toHex(o.signature) };
+}
+export function orderFromJson(j) {
+  const hex = (s, n) => { if (typeof s !== 'string' || s.length !== 2 * n || !/^[0-9a-f]+$/i.test(s)) throw new Error(`an order's bytes are ${n} hex bytes`); return Uint8Array.from(s.match(/../g).map((x) => parseInt(x, 16))); };
+  const int = (s) => { if (typeof s !== 'string' || !/^[0-9]{1,20}$/.test(s)) throw new Error('an order\'s amounts are decimal strings'); return BigInt(s); };
+  if (!j || typeof j !== 'object') throw new Error('an order is a JSON object');
+  return { roundId: hex(j.roundId, 32), playerKey: hex(j.playerKey, 32), outcome: j.outcome, price: int(j.price), stakeMsat: int(j.stakeMsat),
+    nonce: int(j.nonce), expiryMs: int(j.expiryMs ?? '0'), signature: hex(j.signature, 64) };
+}
+
+/**
+ * ONE BATCH'S ID, the bytes every seat signs when it holds that batch (kanban #278 step 4): the round, the batch's number
+ * (batch k takes what reached any seat before (k + 1) x the interval) and its order ids in order. Two seats that signed the
+ * same id hold the same set, so they clear it the same way (`bookBatch` is a pure function of it).
+ */
+export function batchId({ roundId, k, orderIds }) {
+  if (!obIs32(roundId)) throw new Error('a batch names its 32-byte round');
+  if (typeof k !== 'bigint' || k < 0n) throw new Error('a batch number is a BigInt');
+  const ids = [...orderIds].sort();
+  if (new Set(ids).size !== ids.length) throw new Error('an order is in a batch once');
+  const w = new Writer();
+  w.bytes32(roundId); w.u64(k); w.u32(ids.length);
+  for (const id of ids) w.bytes32(Uint8Array.from(id.match(/../g).map((x) => parseInt(x, 16))));
+  return taggedHash(TAG.marketBatch, w.finish());
 }
