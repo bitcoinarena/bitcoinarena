@@ -82,6 +82,7 @@
   <a href="#api-n2n">Between nodes</a>
   <b>Build</b>
   <a href="#game">Implement a game</a>
+  <a href="#h2h">Implement a head-to-head game</a>
   <a href="#market">Implement a prediction market</a>
   <a href="#money">Where the money goes</a>
 </aside>
@@ -116,6 +117,7 @@
     <li><b>Federation</b> and <b>guardians</b>: the Fedimint federation that holds the stakes; its guardians are nodes that each hold one of its keys.</li>
     <li><b>Manifest</b>: the developer's signed record of a game or market: its rules, its client files, how it pays out. Its hash is the <b>game id</b>.</li>
     <li><b>Replayed</b> game: the result is a run the nodes replay. <b>Attested</b> game (a prediction market): the result is an outcome signed by the people or services the developer named (its <b>attestors</b>).</li>
+    <li><b>Head-to-head</b> game: each player hides a move, all moves are revealed after entry close, and the game's rule decides between them (<a href="#h2h">Rock Paper Scissors</a>). A round is played only when all its players entered.</li>
   </ul>
 
   <h2 id="node">What a node does</h2>
@@ -239,6 +241,79 @@ export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
       <p>An update is a new manifest with the same key, <code>version</code> + 1 and the old game id as <code>parentManifestId</code>. Rounds already written keep the manifest they named.</p></li>
   </ol>
   <div class="note">Paid rounds of a replayed game need the game on the page's list of known games (with its cores and configs), because that list ships with the page. A newly signed game plays free rounds first.</div>
+
+  <h2 id="h2h">Implement a head-to-head game</h2>
+  <p>In a replayed game every run is checked on its own, so one player's score can never depend on what another player did. A <b>head-to-head game</b> is for the games where it does: each player picks a move in secret, all moves are shown together, and the game's rule decides who won. The engine does the hiding, the showing, the checking and the money; your game only says what beats what. The example is the real <b>Rock Paper Scissors</b> (<code>packages/rock-paper-scissors</code>).</p>
+  <div class="tbl"><table><thead><tr><th>Result type</th><th>The result comes from</th><th>Example</th></tr></thead><tbody>
+    <tr><td><code>REPLAY</code> (1)</td><td>each player's own run, replayed by every node</td><td>Tick Tock, Next Block</td></tr>
+    <tr><td><code>ATTESTED</code> (2)</td><td>an outcome signed by the attestors the game names</td><td>a prediction market</td></tr>
+    <tr><td><code>HEAD_TO_HEAD</code> (3)</td><td>all players' revealed moves together, decided by the game's rule</td><td>Rock Paper Scissors</td></tr>
+  </tbody></table></div>
+  <h3>A round, step by step</h3>
+  <ol class="steps">
+    <li><b>Hide.</b> Before entry close the player enters with a <b>commitment</b> instead of a move: <code>H(round id ‖ session key ‖ move ‖ salt)</code>, with a fresh 32-byte salt. Nobody can read the move from it, and nobody can copy it: it names the entry's own session key.</li>
+    <li><b>Wait for the other players.</b> A round seats exactly the game's <code>players</code>. A further entry is refused (<i>"that round already seats … 2 players"</i>).</li>
+    <li><b>Reveal.</b> Between entry close and the round's end, each player sends its move and salt to every node (<code>POST /reveal</code>). A node takes it only if it hashes to that entry's commitment.</li>
+    <li><b>Decide.</b> At the round's end every node pulls the other nodes' reveals (<code>GET /reveals</code>), hands all the moves to the game's rule, and signs each player's result, exactly as it signs a replayed run. Same moves, same rule, so every node signs the same result.</li>
+    <li><b>Pay.</b> The result goes through the normal settlement, unchanged:</li>
+  </ol>
+  <div class="tbl"><table><thead><tr><th>What happened</th><th>Result the nodes sign</th><th>Money</th></tr></thead><tbody>
+    <tr><td>You won</td><td>DELIVERED, score 2</td><td>your stake back plus the losers' stakes</td></tr>
+    <tr><td>A draw</td><td>DELIVERED, score 1</td><td>everyone keeps their own stake</td></tr>
+    <tr><td>You lost</td><td>FAILED</td><td>your stake goes to the winner</td></tr>
+    <tr><td>You did not reveal</td><td>FORFEIT</td><td>your stake goes to the winner (a lone revealer wins)</td></tr>
+    <tr><td>Fewer players than the game needs entered</td><td>VOID for everyone</td><td>not played: every stake comes back</td></tr>
+  </tbody></table></div>
+  <h3>Build it</h3>
+  <ol class="steps">
+    <li><b>Write the rule</b>
+      <p>One function: it gets the moves of the players who revealed and says WIN, DRAW or LOSS for each. Like a core it must be pure: same moves, same answer, on every machine.</p>
+<pre>// plugin/decide.js - Rock Paper Scissors: 0 rock, 1 paper, 2 scissors
+export const DECIDE = {
+  name: 'rock-paper-scissors decide v1',
+  decide(moves) {                                   // [{ key, move }]  -&gt;  { [key]: 'WIN' | 'DRAW' | 'LOSS' }
+    const shown = [...new Set(moves.map((m) =&gt; m.move))];
+    const out = {};
+    if (shown.length !== 2) { for (const m of moves) out[m.key] = 'DRAW'; return out; }
+    const beats = (a, b) =&gt; (a - b + 3) % 3 === 1;
+    const winning = beats(shown[0], shown[1]) ? shown[0] : shown[1];
+    for (const m of moves) out[m.key] = m.move === winning ? 'WIN' : 'LOSS';
+    return out;
+  },
+};</pre>
+      <p>Its id is the SHA-256 of its file, and the manifest names it in <code>cores[]</code>, so a node installs and checks it just like a replay core.</p></li>
+    <li><b>Write the manifest</b>
+<pre>export const BODY = {
+  gameName: 'rock-paper-scissors', version: 1, parentManifestId: NO_PARENT,
+  resultType: RESULT_TYPE.HEAD_TO_HEAD,
+  cores: [{ hash: sha256(decide.js), configs: [sha256('rock-paper-scissors-config:v1')] }],
+  runTicksMax: 0,                                   // no run
+  payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4,
+  minScore: 2,                                      // a win scores 2, a draw 1
+  players: 2,                                       // 2 to 16: a round is played only with all of them
+  moveCount: 3,                                     // 2 to 32 moves
+  revealWindowMs: 120000n,                          // 10 s to 1 h: the longest a round may give for reveals
+  roundPeriodMs: 0n, clients: [sha256(games/rock-paper-scissors/index.html)], gameDonationSetId,
+};</pre>
+      <p>Sign it and hand it to the nodes exactly as in <a href="#game">Implement a game</a> (<code>arena-donor sign</code>, a module exporting <code>GAME</code>, listed in <code>ARENA_GAMES</code>).</p></li>
+    <li><b>Write the client</b>
+      <p>Besides <code>rows</code>, <code>identity</code> and <code>back</code>, a head-to-head client gets these from <code>window.parent.ARENA_GAME</code>. The salt, the stake and the keys stay the engine's.</p>
+<pre>const A = window.parent.ARENA_GAME;
+A.headToHead;          // { players, moveCount } - or null for another kind of game
+A.hide(roundId, move); // enter the round with this move hidden
+A.hidden(roundId);     // this tab's hidden move in that round (kept in the tab until revealed)
+A.hiddenAll();         // every move this tab hid in this game - a round leaves the rows at its entry close
+A.reveal(roundId);     // after entry close: send the move and salt to every node
+A.reveals(roundId);    // the moves the nodes hold: { [entryId]: move }
+A.result(roundId);     // the round as the nodes hold it: entries, each signed outcome and how many nodes signed it</pre>
+      <p>Show the players <code>A.result</code>, the signed result, not a verdict your page worked out itself. Rock Paper Scissors' client shows "waiting for an opponent (1 of 2)" before entry close, reveals at entry close, and then "You win - signed by 2 nodes".</p></li>
+    <li><b>Keep it apart from other games</b>
+      <p>A page shows one game's rounds at a time: on nodes that host Tick Tock, Next Block and Rock Paper Scissors, the truck's lobby lists only its own rounds, and Rock Paper Scissors loads none of the truck.</p></li>
+    <li><b>Try it on your own machine</b>
+<pre>ARENA_PAGE=&lt;a page with games/rock-paper-scissors/index.html&gt; node packages/rock-paper-scissors/tools/demo-regtest.mjs ./work
+# a private test chain, two nodes hosting both games, one free round always open; prints the lobby link</pre>
+      <p>Open the link twice in two browser profiles (two players) and add <code>&amp;game=rock-paper-scissors</code>.</p></li>
+  </ol>
 
   <h2 id="market">Implement a prediction market</h2>
   <p>A market is a round where players pick one outcome and the right picks share the stakes of the wrong ones. It uses the same custody, nodes and settlement as a game, but there is no core and no run: the result is the outcome reported by the attestors you name.</p>
