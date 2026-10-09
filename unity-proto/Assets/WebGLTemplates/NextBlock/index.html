@@ -2066,7 +2066,15 @@
         console.log('[blwp] donation recipients are loopback, which no wallet can reach - the share will show unpaid: '
           + recipientsLine);
       const settingsPct = String(donationBps() / 100);
-      const donation = pays && donationSet
+      // A MARKET'S OWN RATES (kanban #235, the owner 2026-10-09: a market's fee is its manifest's, 0.5 % + 0.5 % by default): its
+      // node fee on the round (an unpinned market's from the manifest the player confirmed), and its donation - not the
+      // games' donation setting
+      const marketHere = (() => { const c = pickFor(named.roundIdHex);
+        return BLWPCLIENT.marketForRound(named.round, c && c.manifestHex ? { manifestBytes: BLWPCLIENT.fromHex(c.manifestHex) } : {}); })();
+      if (marketHere && marketHere.fee) named.round.feeBps = marketHere.fee.nodeBps;
+      const donation = pays && donationSet && marketHere && marketHere.fee
+        ? { bps: marketHere.fee.donationBps, donationMsat: (BigInt(named.round.stakeMsat) * BigInt(marketHere.fee.donationBps)) / 10000n }
+        : pays && donationSet
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
           ask: () => settingsPct, confirm: () => false, storage: window.sessionStorage, recipientsLine })
         : { bps: 0, donationMsat: 0n };

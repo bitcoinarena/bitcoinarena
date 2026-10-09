@@ -52,7 +52,7 @@ import {
 // which is the one number they are about to part with money over.
 import { parseConnection, payInvoice } from './nwc.js';
 import { STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
-import { stakeSeenBy, settlementBy, settlementDecided } from './join.js';
+import { stakeSeenBy, settlementBy, settlementDecided, feeBpsForRound } from './join.js';
 import { handLock } from './page-lock.js';
 import { invoiceQrSvg } from './qr.js';
 import { decodeGhost } from '../../arena-protocol/src/ghost.js';
@@ -88,7 +88,7 @@ import { donationPaidRecord, noteDonationShare } from './donation-pay.js';
 export async function federationStakeFor(round, { nodes, fetcher = fetch, donationMsat = 0n } = {}) {
   const stakeMsat = BigInt((round && round.stakeMsat) || 0n);
   if (!(stakeMsat > 0n)) throw new Error('a round that asks no stake has nothing to invoice');
-  const want = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+  const want = netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBpsForRound(round)), donationMsat });
   const id = toHex(round.id);
   const refused = [];
   for (const node of nodes || []) {

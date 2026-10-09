@@ -29,7 +29,8 @@ import { loaded, bedFrom } from './window-fixture.js';
 import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
-import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
+import { entryFeeMsat, feeBpsOf } from '../../arena-protocol/src/fee.js';
+import { pluginForRound } from '../src/plugins.js';
 import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -155,6 +156,8 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // `pick`: the outcome an entry into an attested round backs (§0A.7a, kanban #206) - such an entry plays no run, so pass noMarks.
 // `hidden`: { move, salt } - an entry into a head-to-head round (kanban #233) names H(round || session key || move || salt); such
 // an entry plays no run either (noMarks), and reveals after entry close (POST /reveal).
+// THE ROUND'S GAME'S NODE FEE (kanban #235): a market's own (0.5 % by default), a game's the network's - as the page pays it
+const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? feeBpsOf(f.plugin.manifest) : undefined; };
 export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
@@ -171,7 +174,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
   const play = playFor(who, w.randomness);
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
-    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat), donationMsat: donation ? donation.msat : 0n,
+    stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: entryFeeMsat(w.c.stakeMsat, gameFeeBps(w)), donationMsat: donation ? donation.msat : 0n,
     joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),

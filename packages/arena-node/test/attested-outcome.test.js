@@ -48,8 +48,8 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
   try {
     const jobs = watchReplays(w.nodes);
     const target = { network: NETWORK, game: MARKET.registration.donationSet };
-    // FOUR ENTRIES: picks 0, 0, 1, 2; donations 5%, 0, 5%, 5% - each its stake lock, fee lock and donation outputs
-    const picks = [[0, 500n], [0, 0n], [1, 500n], [2, 500n]];
+    // FOUR ENTRIES: picks 0, 0, 1, 2; donations 0.5%, 0, 0.5%, 0.5% (the market default, kanban #235) - each its stake lock, fee lock and donation outputs
+    const picks = [[0, 50n], [0, 0n], [1, 50n], [2, 50n]];
     const entries = [];
     for (const [i, [pick, bps]] of picks.entries()) {
       const msat = STAKE * bps / 10000n;
@@ -104,7 +104,7 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     const got = await Promise.all(w.nodes.map((d) => outcome(d, w.rid)));
     assert.deepEqual(got[0].table, got[1].table, 'the two seats built different tables');
     const t = got[0].table;
-    const fee = entryFeeMsat(STAKE);
+    const fee = entryFeeMsat(STAKE, 50);
     const net = picks.map(([, bps]) => STAKE - fee - STAKE * bps / 10000n);
     const losing = net[2] + net[3];
     const winning = net[0] + net[1];
@@ -120,7 +120,7 @@ test('an attested round: picks in, no replay, the outcome\'s refusals by name, t
     assert.equal(BigInt(t.feesMsat) + BigInt(t.donationsMsat) + BigInt(t.payoutsMsat), BigInt(t.grossMsat), 'a msat of the gross went to nobody');
     assert.equal(BigInt(t.feesMsat), 4n * fee, 'the fee is not #205\'s 5% of each stake');
     // and each donation is #205's: 5% of the stake, half the network's set and half the game's, merged per key
-    const shares = splitDonation({ donationMsat: STAKE * 500n / 10000n, recipients: target }).shares.filter((s) => s.amountMsat > 0n);
+    const shares = splitDonation({ donationMsat: STAKE * 50n / 10000n, recipients: target }).shares.filter((s) => s.amountMsat > 0n);
     assert.deepEqual(entries[0].donated.map((d) => d.amountMsat), shares.map((s) => s.amountMsat));
     // the listing says it too (/api/rounds: upcoming and finished; /rounds carries the same row field while a round is upcoming)
     const listing = await (await fetch(`http://127.0.0.1:${w.a.port}/api/rounds`)).json();

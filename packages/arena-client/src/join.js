@@ -29,7 +29,15 @@ import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { worldSeedWord, worldIsShared } from '../../arena-protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
 import { gameIsKnownGood, sharedWorldOf } from '../../arena-protocol/src/known-game.js';
-import { entryFeeMsat, feeMatchesEntry } from '../../arena-protocol/src/fee.js';
+import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
+import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
+
+/**
+ * THE NODE FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
+ * player confirmed - its manifest's), else the pinned game's (a market's own, 0.5 % by default), else the network's 5 %.
+ */
+export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
+  : ((feeOfKnownGame(round && round.gameId) || {}).nodeBps ?? NODE_FEE_BPS));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../arena-protocol/src/claim-key.js';
@@ -792,7 +800,7 @@ function feeLockOf(stakeLock, round) {
   if (!f.fields || !f.fields.paymentImage || f.fields.paymentImage.kind !== 'hash'
     || toHex(f.fields.paymentImage.bytes) !== toHex(sha256(f.preimage)))
     throw new Error('that fee lock is not locked to H(F) of the F it hands over');
-  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n));
+  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round));
   if (f.fields.amountMsat !== want) throw new Error(`that fee lock holds ${f.fields.amountMsat} msat and the entry's fee is ${want}`);
   return f;
 }
@@ -810,7 +818,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     throw new Error('a donation is a BigInt millisatoshi amount, 0 or more');
   {
     const stakeMsat = BigInt(round.stakeMsat || 0n);
-    const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat), donationMsat });
+    const feeBps = feeBpsForRound(round);
+    const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBps), donationMsat }, { feeBps });
     if (!fee.ok) throw new Error(fee.why);
   }
   // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
@@ -906,7 +915,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     //
     // A free round is 2% of nothing, which is nothing, so the same line is
     // right for both and there is no branch to get wrong.
-    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n)),
+    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round)),
     donationMsat,
     joinTick,
   };
