@@ -808,8 +808,10 @@ function feeLockOf(stakeLock, round) {
 
 // `pick`: the outcome an entry into a market round backs (§0A.7a, kanban #206 slice 2) - written only when given.
 // `confirmedGames`: game ids (hex) of markets the player confirmed a second time on this page (§0A.6).
+// `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
+// the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -828,6 +830,10 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
   // A PICK IS AN OUTCOME INDEX (§0A.7a): the seats check it against the game's outcomes; here only its shape
   if (pick !== undefined && pick !== null && (!Number.isInteger(pick) || pick < 0 || pick > 255)) throw new Error('a pick is an outcome index, 0 to 255');
+  const order = limitPrice !== undefined && limitPrice !== null;
+  if (order && (pick === undefined || pick === null)) throw new Error('an order backs an outcome: it needs a pick');
+  if (order && (!Number.isInteger(limitPrice) || limitPrice < 1 || limitPrice > 0xffffffff)) throw new Error('a limit price is a whole number of the price scale, 1 or more');
+  if (order && typeof orderExpiryMs !== 'bigint') throw new Error('an order\'s expiry is BigInt ms (0n: until the market closes)');
   // THE SIGNER NODE'S KEY IS THE SEED'S KEY FOR THIS ROUND, and nothing else (§24,
   // v4.6.2, F2). A payout and a refund go to it, so a page that joined a player
   // under any other key - a bug, or a host that lies - would send the money
@@ -902,6 +908,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
       ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
     // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
     ...(pick !== undefined && pick !== null ? { pick } : {}),
+    // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
+    ...(order ? { limitPrice, orderExpiryMs } : {}),
     stakeMsat: BigInt(round.stakeMsat || 0n),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the

@@ -1834,7 +1834,7 @@
     function rememberPick(p) {
       try {
         const c = window.BLWP_PICK_CHOSEN;
-        const all = readPicks().filter((x) => x.roundIdHex !== p.roundIdHex);
+        const all = readPicks().filter((x) => (p.order ? x.entryIdHex !== p.entryIdHex : x.roundIdHex !== p.roundIdHex));
         all.push(Object.assign({}, p, c && c.manifestHex ? { manifestHex: c.manifestHex } : {}));
         window.sessionStorage.setItem(PICKS_KEY, JSON.stringify(all.slice(-50)));
       } catch { /* kept for this page only */ }
@@ -2483,23 +2483,29 @@
       if (chosen) {
         // THE ENTRY IN FULL HERE (the session completes a run's entry with its round id and session key; a pick opens none):
         // a session key of its own, Ed25519 as a run's, that signs nothing - a pick sends no mark
-        let sessionPubkey = random(32);
+        let sessionPubkey = random(32), sessionKeyPkcs8 = null;
         try {
           const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
           sessionPubkey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+          // AN ORDER'S KEY IS KEPT (kanban #237): it signs the order's cancel and its sell (protocol cancelId / sellId)
+          if (chosen.limitPrice) sessionKeyPkcs8 = BLWPCLIENT.toHex(new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey)));
         } catch { /* a browser without WebCrypto Ed25519: random bytes, as no mark is ever checked against them */ }
+        if (chosen.limitPrice && !sessionKeyPkcs8) { window.BLWP_JOIN_REFUSED = 'this browser cannot make the Ed25519 key an order is cancelled with'; return; }
         const entry = keptEntry || Object.assign(BLWPCLIENT.entryFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
             donationMsat: donation.donationMsat, joinTick: 0, pick: chosen.pick, confirmedGames: confirmedMarkets(),
+            // AN ORDER (kanban #237): the pick at most this price of the scale, until this time - from a market client's order
+            ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         const sent = await BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes });
         console.log('[blwp] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return; }
         window.BLWP_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick };
-        rememberPick(BLWPCLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick,
-          round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }));
+        rememberPick(Object.assign(BLWPCLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick,
+          round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }),
+          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now() } } : {}));
         return;
       }
       if (keptEntry) window.BLWP_ENTRY = keptEntry;
@@ -4103,8 +4109,11 @@
     // carries, held to the same rules (`dailyLobbySearch`). Read only when the
     // address carries no query; a missing or broken file leaves the root the
     // offline daily it was.
+    const VIEW_ONLY_PARAMS = ['rps-demo'];
     async function dailySearch() {
-      if (location.search.replace(/^\?/, '') !== '' || !BLWPCLIENT.dailyLobbySearch) return null;
+      // a parameter only a game's client reads (#291: ?rps-demo=all) leaves the root bare: it names no lobby
+      const named = new URLSearchParams(location.search); for (const k of VIEW_ONLY_PARAMS) named.delete(k);
+      if (named.toString() !== '' || !BLWPCLIENT.dailyLobbySearch) return null;
       try {
         const r = await fetch('daily.json', { cache: 'no-store' });
         return r.ok ? BLWPCLIENT.dailyLobbySearch(await r.json()) : null;
@@ -4256,6 +4265,36 @@
           }
           return null;
         },
+        // A MARKET'S CLIENT (kanban #237): place an order (the pick at most this price of the scale) through the same join and
+        // lock as a pick; the round's cleared book; this tab's orders; cancel one (signed with its kept session key, posted to
+        // every seat of its round). Which outcome is which, and how a price is shown, is the client's.
+        market: game.attested ? {
+          order: (id, pick, limitPrice, orderExpiryMs = 0) => {
+            window.BLWP_PICK_CHOSEN = { round: id, pick, label: String(pick), gameId: game.id, confirmed: false, limitPrice, orderExpiryMs };
+            return window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false;
+          },
+          book: async (id) => {
+            const nodes = window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(id) : [];
+            for (const n of nodes) {
+              try { const r = await fetch(String(n).replace(/\/+$/, '') + '/book?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) }); if (r.ok) return await r.json(); }
+              catch { /* the next seat */ }
+            }
+            return null;
+          },
+          orders: () => readPicks().filter((x) => x.order && x.gameId === game.id).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
+            limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled })),
+          cancel: async (entryIdHex) => {
+            const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
+            if (!x) return { ok: false, why: 'this tab placed no such order' };
+            const key = await crypto.subtle.importKey('pkcs8', BLWPCLIENT.fromHex(x.order.sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']);
+            const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, BLWPCLIENT.orderCancelId({ roundId: BLWPCLIENT.fromHex(x.roundIdHex), entryId: BLWPCLIENT.fromHex(entryIdHex) })));
+            const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig })
+              .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
+            const ok = seats.some((r) => r.status >= 200 && r.status < 300);
+            if (ok) { x.order.cancelled = true; rememberPick(x); }
+            return { ok, seats };
+          },
+        } : null,
         state: () => ({ join: window.BLWP_JOIN || null, picks: (BLWPCLIENT.marketLines && window.BLWP_MARKET_LINES) ? window.BLWP_MARKET_LINES() : [] }),
         back: () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
           location.search = q.toString(); },

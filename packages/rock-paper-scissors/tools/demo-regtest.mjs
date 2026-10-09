@@ -53,7 +53,8 @@ say({ step: 'up', nodes: round.nodes, lobby: round.lobbyUrl });
 // ~95 s after its committee time on this 10 s chain (its beacon 6 deep), so rounds are opened LEAD_MS ahead and kept in
 // flight: whenever the last close is under LEAD_MS + 15 s away, the next is opened 15 s after it.
 // 10 S (kanban #280, the owner 2026-10-09 17:04: "Set rounds to 10 seconds")
-const WINDOW_MS = 10000n;
+// 8 S (#291, the owner 2026-10-09: "reduce the round length to 8 seconds")
+const WINDOW_MS = 8000n;
 const LEAD_MS = 150000n;
 let lastClose = 0n, opening = false;
 const keep = async () => {
