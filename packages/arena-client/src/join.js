@@ -33,11 +33,12 @@ import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protoco
 import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 
 /**
- * THE NODE FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
- * player confirmed - its manifest's), else the pinned game's (a market's own, 0.5 % by default), else the network's 5 %.
+ * THE ENTRY FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
+ * player confirmed - its manifest's), else the pinned game's, else the network's 5 %. A MARKET'S IS ITS NODE FEE AND ITS
+ * DONATION TOGETHER (1 % by default): both sit in its fee lock and are due only when it resolves (the owner 2026-10-09).
  */
-export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
-  : ((feeOfKnownGame(round && round.gameId) || {}).nodeBps ?? NODE_FEE_BPS));
+const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ? k.nodeBps + (k.donationBps ?? 0) : NODE_FEE_BPS; };
+export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../arena-protocol/src/claim-key.js';

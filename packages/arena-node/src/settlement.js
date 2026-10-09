@@ -19,10 +19,12 @@
 //
 // FEES ARE NOT IN IT. The fee locks' claim hash and §22A's node slots are not
 // decided (FEDERATION.md F5); the fee lock expires back to its player as before.
-import { feeBpsOf } from '../../arena-protocol/src/fee.js';
+import { feeBpsOf, donationBpsOf, donationInFee } from '../../arena-protocol/src/fee.js';
+import { cancelId } from '../../arena-protocol/src/order-book.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { pluginForRound } from './plugins.js';
 import { marketVoided } from '../../arena-protocol/src/attested.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
@@ -40,6 +42,13 @@ import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from '
 import { sendPlanToJson, planKey } from './winnings-send.js';
 import { askerOrder, eligibleAsker } from './payout.js';
 import { planTakenId, signPlanTaken, countPlanTaken, joinCertificate, splitCertificate } from './plan-taken.js';
+
+// WHO THE FEE LOCKS PAID: the signer nodes, and a market's donation keys (kanban #235) - named apart
+const feeLine = (payouts) => {
+  const part = (kind) => { const p = payouts.filter((x) => (x.kind === 'donation key') === kind); return [p.length, p.reduce((t, x) => t + x.msat, 0n)]; };
+  const [n, nodes] = part(false); const [d, gifts] = part(true);
+  return `${n} signer node(s) ${nodes} msat${d ? ` and ${d} donation key(s) ${gifts} msat` : ''}`;
+};
 
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).sort().join('|');
 const refuse = (why, status = 409) => ({ ok: false, status, why });
@@ -89,11 +98,14 @@ export class LockSettlement {
    */
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
-    turnClock = null, donationSetFor = null, now = () => Date.now(), finalityOf = resultFinality } = {}) {
+    turnClock = null, donationSetFor = null, donationTargetFor = null, now = () => Date.now(), finalityOf = resultFinality } = {}) {
     this.round = round;
     this.now = now;
     // THE ROUND'S SIGNED DONATION SET (server.js `donationSetFor`): where a walk-away's claimed lock sends its 25%.
     this.donationSetFor = donationSetFor;
+    // A ROUND'S DONATION TARGET (server.js `donationTargetFor`: the network's set and its game's): where a market's donation,
+    // held in its fee locks until the market resolves, is paid (kanban #235)
+    this.donationTargetFor = donationTargetFor;
     // HOW THIS SIGNER NODE READS A RUN'S FINALITY - `resultFinality`; a test may hand another view (a test aid, as
     // `finality.rerunMs` is), since two signer nodes that agree on a run cannot hold a valid objection against it.
     this.finalityOf = finalityOf;
@@ -338,8 +350,34 @@ export class LockSettlement {
    * pari-mutuel table over them and the outcome, and `attestedLockSettlement` - the losers' stake locks and every fee lock
    * claimed, the winners paid their shares of the losing pool, the seats their §22A fee.
    */
+  // THE CANCELS THE OTHER SEATS HOLD (kanban #278), pulled before a market is settled so every seat builds its table from
+  // the same entries: each kept only if its player's session key signed it - a seat cannot forge one for anybody
+  async #carryCancels(roundIdBytes) {
+    for (const peer of this.peersFor(roundIdBytes)) {
+      let body;
+      try {
+        const answer = await this.fetcher(`${peer}/cancels?round=${toHex(roundIdBytes)}`);
+        if (!answer.ok) continue;
+        body = await answer.json();
+      } catch { continue; }
+      for (const c of (body && Array.isArray(body.cancels) ? body.cancels : [])) {
+        if (!/^[0-9a-f]{64}$/.test(String(c.entry)) || !/^[0-9a-f]{128}$/.test(String(c.signature))) continue;
+        const entryId = fromHex(c.entry);
+        if (this.round.cancelled(entryId)) continue;
+        const raw = this.round.entry(entryId);
+        if (!raw) continue;
+        const entry = decodeEntryContract(raw);
+        if (toHex(entry.roundId) !== toHex(roundIdBytes)) continue;
+        let good = false;
+        try { good = ed25519.verify(fromHex(c.signature), cancelId({ roundId: roundIdBytes, entryId }), entry.sessionPubkey); } catch { good = false; }
+        if (good) this.round.putCancel({ roundId: roundIdBytes, entryId, signature: fromHex(c.signature), receivedMs: this.now() });
+      }
+    }
+  }
+
   async #attestedPlan(roundIdBytes, a, claimPk, held) {
     const { contract } = a;
+    if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes);
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
         donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId }));
@@ -367,10 +405,19 @@ export class LockSettlement {
     const key = toHex(roundIdBytes);
     let fees = this.fees.get(key);
     if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    // THE MARKET'S OWN NODE FEE (kanban #235), 0.5 % by default - and its donation, which its entries' fee locks hold with
+    // it (entryFeeBpsOf): due now, at resolution, to the round's donation target
+    const ofGame = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
+    const manifest = ofGame && ofGame.ok ? ofGame.plugin.manifest : null;
+    let donation = null;
+    if (manifest && donationInFee(manifest) && donationBpsOf(manifest) > 0 && feeLocks.size) {
+      const t = this.donationTargetFor ? this.donationTargetFor(contract) : { ok: false, why: 'this signer node names no donation target' };
+      if (!t.ok) return refuse(`no lock is claimed: a market's fee locks hold its donation, and ${t.why}`);
+      donation = { recipients: t.target };
+    }
     const plan = attestedLockSettlement({ roundId: roundIdBytes, table, entries, locks, fees, feeLocks,
       signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract,
-      // THE MARKET'S OWN NODE FEE (kanban #235): the rate its entries' fees were checked against, 0.5 % by default
-      feeBps: (() => { const f = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null; return f && f.ok ? feeBpsOf(f.plugin.manifest) : undefined; })() });
+      feeBps: manifest ? feeBpsOf(manifest) : undefined, donation });
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
     return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
@@ -896,7 +943,7 @@ export class LockSettlement {
       ? `; the walk-away's remainder ${m.plan.remainder.nodesMsat} msat to ${m.plan.remainder.sitting} signer node(s), `
         + `${m.plan.remainder.donationMsat} msat to ${m.plan.remainder.recipients} donation recipient(s)` : '';
     const feePart = m.plan.feeClaims && m.plan.feeClaims.length
-      ? `; fee locks ${m.plan.feeClaims.length}, ${m.plan.feePoolMsat} msat, paid ${m.plan.signerNodePayouts.length} signer node(s) ${m.plan.feePaidMsat} msat`
+      ? `; fee locks ${m.plan.feeClaims.length}, ${m.plan.feePoolMsat} msat, paid ${feeLine(m.plan.signerNodePayouts)}`
       : (m.plan.feeHole ? `; no fee lock claimed: ${m.plan.feeHole.why}` : '');
     const why = sent.accepted
       ? `claimed ${stakeClaims} loser lock(s), ${m.plan.poolMsat} msat; paid ${qualifiers} qualifier(s) ${m.plan.paidMsat} msat${remainder}${feePart}`

@@ -384,9 +384,11 @@ slashes, is a later ruling; until then they stay locked and expire back to
 their players under §23.1's refund path.)
 
 **The payout rule: pari-mutuel** (RULED: no counterparty - the losers pay the
-winners). Out of each entry's stake the node fee (5%) and the donation
-(0-5%, halves to the network's and the game's sets) as for every round
-(§0A.8, unchanged); the rest is its net stake in the pool. With outcome `o`:
+winners). Out of each entry's stake come the market's fees: its manifest's,
+0.5 % nodes + 0.5 % donation by default (§0A.7b.3), **due once the entry is
+in the round at its entry close, paid out at resolution** (the owner
+2026-10-09): a market entry's fee lock holds both, it makes no donation
+outputs at entry, and before entry close it can be cancelled at no cost. The rest is its net stake in the pool. With outcome `o`:
 - every entry that picked `o` gets its own net stake back plus
   `floor(losing_pool x its_net / winning_net)`, where `losing_pool` is the sum
   of the other entries' net stakes and `winning_net` the sum of the winners';
@@ -418,11 +420,12 @@ is no core.
 
 1. A series of rounds opens as for any game (§5A.5). Each round's entry
    window closes before Friday's close, its `end` after it.
-2. A player picks `below 90k` and stakes 10,000 sat in the same lock
-   transaction as for nextblock:
-   - 500 sat fee lock;
-   - 500 sat donation, half to the protocol devs and half to `btc-close`'s dev;
-   - a 9,000 sat stake lock to the round's claim key.
+2. A player picks `below 90k` and stakes 10,000 sat (market default fees,
+   §0A.7b.3):
+   - a 100 sat fee lock: 50 sat for the nodes and 50 sat donation, half to
+     the protocol devs and half to `btc-close`'s dev, due at entry close and
+     paid out at resolution;
+   - a 9,900 sat stake lock to the round's claim key.
 3. After the close, two of the three operators sign `{round_id, 2, t}` and
    anyone posts it to the seats. Each seat checks the two signatures against
    the manifest and holds it.
@@ -433,6 +436,105 @@ is no core.
    outcomes need at least one key to have signed both. That key's two
    signatures are the proof: the round is `DISPUTED`, and nothing is paid out
    of it.
+
+## 0A.7b The market we build first: "Bitcoin Up or Down - 15 minutes" *(the owner 2026-10-09: "match this polymarket market", board #235/#278)*
+
+The model is Polymarket's series **BTC Up or Down 15m**
+(polymarket.com/event/btc-updown-15m-1791598500, read 2026-10-09 from its
+public API). One market per quarter hour, on the clock (UTC), each with two
+outcomes. Its rule, verbatim:
+
+> This market will resolve to "Up" if the time-weighted average price (TWAP)
+> of Bitcoin ... of the time range specified in the title is greater than or
+> equal to the price at the beginning of that range. Otherwise, it will
+> resolve to "Down". (Source: the Chainlink BTC/USD TWAP 60 s data stream.)
+
+| | Polymarket | Bitcoin Arena |
+|---|---|---|
+| market | one per 15 min window, a recurring series, open ~24 h before its window | one **market round** per 15 min window of a market series (off the games' 90 s grid, §0A.7b.4) |
+| outcomes | Up, Down | `outcomes[] = [Up, Down]`, indexes 0 and 1 |
+| price to beat | the price at the window's start | the same: the feed's reading in force at the window's start |
+| rule | Up if the window's TWAP >= the price to beat, else Down | the same, **a tie is Up**; `up-down.js` `upDownOutcome` is the rule as a pure function |
+| who resolves | UMA / Polymarket from Chainlink | the market's **attestors** (§0A.7a), k of n, each applying `upDownOutcome` to the feed samples it read, signing `{round, outcome, observed_at}` |
+| trading | a central limit order book matched continuously: tick 0.01, minimum 5 shares, a share pays $1 | **signed standing limit orders cleared every second at one uniform price** (§0A.7b.2): tick 0.01, minimum 5 shares, **a share pays 1 sat** |
+| fees | taker only, 0.07 x p(1-p) per share, maker rebate | **the owner's rulings instead** (§0A.7b.3): the market's own rate, 1 % by default (0.5 % nodes + 0.5 % donation), due when an order fills, paid out at resolution |
+| custody | USDC on Polygon | the federation's locks (§23.1); no house, no counterparty but the other side's orders |
+
+**0A.7b.1 Resolution.** At the window's end each attestor reads its feed
+samples ([{at_ms, price}], integer prices) and computes the price to beat
+(the reading in force at the window's start) and the time-weighted average
+over [start, end), each reading weighted by how long it stood inside the
+window. Up if `TWAP >= price to beat`, else Down. The comparison is exact
+(integers, no float), so two honest attestors reading the same samples sign
+the same outcome. Seats refuse an attestation observed before the window's
+end (`resolveAfterCloseMs`, §0A.7a terms). With no standing outcome by the
+deadline (`deadlineAfterResolveMs`) the market is VOID and everything comes
+back. The source rule is in the manifest's terms as text (`sourceRule`), and
+the market dev names the attestors: they are not Chainlink, and a player sees
+who they are before trading.
+
+**0A.7b.2 The book.** Complete sets: 1 sat of collateral pays 1 sat to
+whichever side wins, so an Up buyer at price p and a Down buyer at 1 - p
+together fund a set. An order is `{round, player key, outcome, limit price,
+stake (fees included), nonce, expiry}`, signed by the player over its id. A price is
+a whole cent (tick 0.01 on a scale of 100,000), and an order buys at least 5
+shares at its limit. The seats agree only on **which** orders are in a batch.
+`order-book.js` `clearBatch` is a pure function of that set, so every seat
+clears it the same way: no arrival order, nothing to front-run.
+- **The price** is the Up price that matches the most payout; then the
+  smaller imbalance; then the lower price.
+- **The short side** fills whole. **The long side** fills better limits
+  first, and the marginal limit is shared pro rata, the leftover msat one
+  each in order-id order.
+- **What does not fill** is not charged: its stake and its fee come back.
+  What fills pays its fee (§0A.7b.3).
+
+**Standing orders, every second** (the owner 2026-10-09: "Order batches alle 1s,
+wenn möglich alle 0.5s"). A player places a limit order at any time, and it
+is matched in the next batch. Batches run every 1 s (`BATCH_MS`), and every
+0.5 s once the seats are measured to agree on a batch's set in time. What has
+not filled **stands** in the book for the batches after, until it fills, its
+player cancels it (at no cost), or its expiry passes. An order names
+`expiry_ms` in its signed bytes: 0 stands until filled or cancelled
+(Polymarket's GTC), a time stands until then (GTD). An order that fills over
+several batches is one position. Polymarket matches each order the moment it
+arrives because one operator orders them all. Here seven seats would have to
+agree on the order of every single order, and whoever orders them can
+front-run. A batch only needs the seats to agree on **which** orders are in
+it, and everyone in it gets the same price. Measured: `clearBatch` clears
+5,000 orders in 27 ms (at most 99 candidate prices at a 0.01 tick).
+
+Selling a position before resolution (Polymarket's sell button) is a later
+slice: a sell of Up at p is an order matched against a buy of Up at >= p in
+the same batch.
+
+**0A.7b.3 Fees (the owner 2026-10-09).** A market's fees are its manifest's:
+0.5 % to the nodes and 0.5 % donation by default, at most 5 % each and 10 %
+together.
+- **The fee falls due when an order fills** ("when an order is filled, the
+  fee is of course due too"), on the filled part only. In a pari-mutuel
+  market round an entry fills at the round's entry close.
+- **What has not filled can be cancelled at no cost**: the player signs a
+  cancel with the entry's session key (`POST /cancel`), every seat drops the
+  entry from the round, and both its locks come back at once by the return
+  door (`GET /forfeit`, and `GET /forfeit?lock=fee` for the fee lock). After
+  entry close a cancel is refused: the order is in, and its fee is due.
+- The fees sit in the order's fee lock until the market resolves. Then the
+  nodes take their part and the donation is paid to the protocol devs' and
+  the market dev's keys, from winners and losers alike.
+- A VOID market, or a pari-mutuel round nobody picked right, gives everything
+  back (rulings "refund at the deadline", "refund the fees too").
+- Example: 1 sat on Up pays 0.01 sat in fees once it fills, and 0.99 sat buys
+  the odds. At an Up price of 0.73 that is 0.99 / 0.73 = 1.356 sat of payout
+  if Up wins.
+
+**0A.7b.4 Still to build.** Market rounds on their own 15 min period
+instead of the 90 s grid, with lock expiry per round (window end + deadline
++ objection window). The batch record signed by the seats. Cancel at the
+seats and the immediate return of a cancelled order's stake and fee locks.
+Positions as locks and the payout per share. The reference attestor daemon
+(three price sources, `upDownOutcome`). Selling before resolution. The
+market page: Up/Down prices, the price to beat, the order entry, positions.
 
 ## 0A.8 The money: 10% of the gross stake
 

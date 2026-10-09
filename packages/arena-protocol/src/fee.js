@@ -237,10 +237,13 @@ export function feeTableId(table) {
 // A MARKET'S OWN NODE FEE (kanban #235, the owner 2026-10-09: "per market in manifest"): `bps`, its manifest's
 // marketTerms.nodeFeeBps (0 to NODE_FEE_BPS) - the rate is still never the operator's or the round's to choose, only the
 // signed manifest's, within the network's. Without one, the network's.
+// A MARKET'S ENTRY FEE CARRIES ITS DONATION TOO (entryFeeBpsOf), so the bound is the markets' 10 % together, not the
+// network's 5 %; a game's rate is still the network's constant.
+export const ENTRY_FEE_BPS_MAX = 1000;
 export const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
   if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
   if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
-  if (!Number.isInteger(bps) || bps < 0 || bps > NODE_FEE_BPS) throw new Error(`a node fee is 0 to ${NODE_FEE_BPS} bps`);
+  if (!Number.isInteger(bps) || bps < 0 || bps > ENTRY_FEE_BPS_MAX) throw new Error(`an entry fee is 0 to ${ENTRY_FEE_BPS_MAX} bps`);
   return (stakeMsat * BigInt(bps)) / 10000n;
 };
 
@@ -261,6 +264,17 @@ export const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && 
   ? manifest.marketTerms.donationBps : isMarket(manifest) ? MARKET_DEFAULT_DONATION_BPS : null);
 
 /**
+ * A MARKET'S FEES ARE DUE AT RESOLUTION, ITS DONATION TOO (kanban #235/#278, the owner 2026-10-09: "the fees are due at the
+ * close, when you win or lose ... until then orders can be cancelled for free"): a market entry pays nothing at entry - its
+ * fee lock holds the node fee AND the donation (1 % by default), claimed only when the market resolves, from winners and
+ * losers alike, and returned whole on a cancel, a VOID or a market nobody picked right. So a market entry's `feeMsat` is
+ * that whole rate of its stake and its `donationMsat` is 0 (no donation outputs beside the stake); the settlement splits
+ * the claimed fee locks into the node table (feeBpsOf) and the donation set (the rest). A game: its node fee alone.
+ */
+export const entryFeeBpsOf = (manifest) => (isMarket(manifest) ? feeBpsOf(manifest) + donationBpsOf(manifest) : feeBpsOf(manifest));
+export const donationInFee = (manifest) => isMarket(manifest);
+
+/**
  * DOES THIS ENTRY'S FEE STAND?
  *
  * An entry whose `feeMsat` is not 2% of its own `stakeMsat` does not, and it
@@ -273,7 +287,8 @@ export const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && 
  * in this package: a caller that asked whether an entry stands should be told,
  * not made to catch.
  */
-export function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS } = {}) {
+// `donationInFee`: a market's entry (entryFeeBpsOf) - its donation rides in the fee lock, so its own donation field is 0
+export function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = false } = {}) {
   // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
   // bytes, so its amounts are BigInt - a free round is three zeros, not three
   // missing fields. Coercing a Number or a missing amount here would have
@@ -284,6 +299,8 @@ export function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS } = {}) {
   if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
     return { ok: false, why: 'a stake and a fee cannot be negative' };
 
+  if (inFee && entry.donationMsat !== 0n)
+    return { ok: false, why: `a market's donation is in its fee lock, due at resolution: that entry names a donation of ${entry.donationMsat} msat beside it` };
   const owed = entryFeeMsat(entry.stakeMsat, feeBps);
   const pct = `${feeBps / 100}%`;
   if (entry.feeMsat !== owed)
