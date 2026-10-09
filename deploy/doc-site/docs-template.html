@@ -18,6 +18,7 @@
   h1 { font-size: clamp(34px, 5vw, 54px); margin: 0 0 12px; }
   h2 { font-size: clamp(26px, 3.4vw, 36px); margin: 64px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); }
   h3 { font-size: 21px; margin: 32px 0 8px; }
+  h4 { font: 700 17px "Space Grotesk", Inter, sans-serif; margin: 22px 0 6px; color: var(--text); }
   p, li { color: #cdd5de; } li { margin: 4px 0; }
   code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13.5px; }
   :not(pre) > code { background: #121a24; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #ffe0b3; }
@@ -70,6 +71,7 @@
 <aside>
   <b>Start</b>
   <a href="#how">How Bitcoin Arena works</a>
+  <a href="#cheat">When a node cheats</a>
   <a href="#words">The words used here</a>
   <b>Nodes</b>
   <a href="#node">What a node does</a>
@@ -106,7 +108,59 @@
     <div class="box"><h4>Non-custodial</h4><p>No company, developer or single node holds players' sats. Stakes sit in locks of a federation (Fedimint) and move only as the round's result says.</p></div>
     <div class="box"><h4>Checked, not trusted</h4><p>Game runs are replayed by independent nodes from the player's inputs. A run that does not replay to the same score is not paid.</p></div>
     <div class="box"><h4>No approval</h4><p>A game exists once its developer signs it. Nobody has to accept it; node operators decide what they host.</p></div>
+    <div class="box"><h4>Cheating is caught</h4><p>A node that signs a false result leaves a proof anyone can check. The result is overturned, and the proof costs the node its bond. <a href="#cheat">When a node cheats</a></p></div>
   </div>
+
+  <h3 id="cheat">When a node cheats</h3>
+  <p>A node is not trusted. Everything it signs can be checked by someone else, and a false signature is evidence against it. This is what happens when one tries.</p>
+
+  <h4>What a node could try</h4>
+  <p>Each of these is a cheat, and each leaves a proof anyone can check:</p>
+  <div class="tbl"><table><thead><tr><th>The cheat</th><th>The proof</th></tr></thead><tbody>
+    <tr><td>Signing two different results for the same player in one round</td><td>The two signed results</td></tr>
+    <tr><td>Signing a result that replaying the player's inputs does not give</td><td>The inputs, the nodes' receipts for them, and the replay</td></tr>
+    <tr><td>Signing a payout table that is not what the rules give for these entries and results</td><td>The table and its inputs</td></tr>
+    <tr><td>Paying out without the required 5 of 7 result and payout signatures</td><td>The settlement record</td></tr>
+    <tr><td>Signing for a round its own operator played in</td><td>The player's entry and the node's signature</td></tr>
+    <tr><td>Claiming a fee share for work it did not do</td><td>The receipt record</td></tr>
+    <tr><td>Agreeing to a round's payout and then not signing it before the locks run out</td><td>Its signed agreement, the transaction and the expiry</td></tr>
+  </tbody></table></div>
+
+  <h4>Why one node alone cannot do it</h4>
+  <p>Every round has a committee of 7 seats, and a result or payout counts only when 5 of them sign the same one. Up to 9 nodes are drawn per role, so spares take the seats of nodes that do not show up. The draw comes from a Bitcoin block hash, and your app computes the committee itself. A cheating node is one signature of the five needed. To change a result, five nodes would have to lie together.</p>
+
+  <h4>How it is caught: replay and the objection window</h4>
+  <p>After a result is signed, it waits <b>10 minutes</b> before it is final. In that time <b>anyone</b> can object: the player, another player, a node that is not in the committee, a spectator or a watchtower. An objection is not an opinion. It is the player's inputs, the receipts the committee's nodes signed for them, and the result that replaying them gives. Any node checks it the same way, by running the game again with the round's own rules (<code>POST /objection</code>; <code>tools/check-objection.mjs</code> does the same check outside any node).</p>
+  <ul>
+    <li>A <b>valid</b> objection stops the result. The whole committee replays the inputs again, and the replay decides. The new result gets its own 10-minute window.</li>
+    <li>If the committee cannot get 5 of 7 to agree, the entry is <b>void</b> and the stake goes back to the player.</li>
+    <li>An objection that does not check is refused with its reason, and nothing is stored.</li>
+  </ul>
+  <p>The player's app sends the inputs of the run to all the round's nodes as it plays, each node signs a receipt for them, so the evidence does not live only on the player's phone.</p>
+
+  <h4>What evidence is kept</h4>
+  <p>Nodes keep every proof they hold and hand it to anyone who asks (<code>/slash-proofs</code>, <code>/equivocation</code>). A proof has no deadline. An objection that arrives after the 10 minutes can no longer change a final result: the payment goes ahead. But it is still a proof against every node that signed the false result.</p>
+
+  <h4>What happens to the cheater</h4>
+  <p>Every node puts up a <b>bond</b> on Bitcoin to get a seat. The bond is designed with a slash path that only a separate set of <b>arbitration</b> keys can use, and only with a proof:</p>
+  <ul>
+    <li>The arbitration keys sign a transaction that takes the bond. It names the proof's hash on chain, so anyone can fetch the proof later and check it again. A slash without a valid proof is itself public evidence against the arbitration set.</li>
+    <li>Half the bond goes to the players the cheat harmed. Of the other half, 75% goes evenly to the other active nodes (not the round's own seats) and 25% to the developers. Nothing is burned.</li>
+    <li>A spent bond is no longer a bond, so the node drops out of the census and out of every future committee. It would need a new bond to come back.</li>
+  </ul>
+  <p>Arbitration touches bonds only. It can never move a player's stake, delay a round or change a result.</p>
+
+  <h4>What the other nodes and your app do</h4>
+  <ul>
+    <li><b>Honest nodes</b> replay every run themselves and sign only what their own replay gives. They will not co-sign a false result. They check and store objections, and replay again when one is valid.</li>
+    <li><b>Your app</b> works out the committee and checks every signature itself, and sends your inputs to every node of the round as you play.</li>
+  </ul>
+
+  <h4>The honest limits</h4>
+  <p>Bitcoin itself cannot replay a game, so a slash needs the arbitration set to confirm that the proof checks. That trust is limited, not removed: the arbitration set is separate from the committees, cannot touch stakes, and cannot hold a bond forever. In the design, 30 days after a bond confirms its owner can always take it back.</p>
+  <p><b>Your money never depends on slashing.</b> Three things protect it even if arbitration failed entirely: the 5-of-7 rule, stakes that go back to you by default if nothing is signed, and the objection window. Slashing is the penalty for getting caught, not the thing that keeps you safe.</p>
+
+  <div class="note"><b>Today, on testnet4:</b> objections, the re-run, void-and-refund and the evidence nodes keep are built and running. The slash itself is <b>not</b>: a node only works out and records what a slash would owe (<code>/slash-owing</code>), and no bond is taken. Mainnet is not live.</div>
 
   <h3 id="words">The words used here</h3>
   <ul>
@@ -129,6 +183,7 @@
     <li>signs results and the payout table with the other nodes of the committee;</li>
     <li>as a guardian, holds one key of the federation that keeps the stakes.</li>
   </ul>
+  <p>A node is checked by the others in everything it signs. See <a href="#cheat">When a node cheats</a>.</p>
   <p>For that work the nodes of a round share the round's <b>node fee</b> (5% of every paid stake today). It is split three ways: the nodes that replay the runs, the nodes that sign the payouts, and the guardians that hold the money. A node operator gets a share of the fees of every round their node serves.</p>
 
   <h3 id="run">Run a node</h3>
