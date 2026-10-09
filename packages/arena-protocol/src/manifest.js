@@ -8,6 +8,7 @@
 //       payout_rule, payout_params (the rank curve's numerator and denominator), min_score,
 //       clients[], game_donation_set,
 //       [ATTESTED only] outcomes[], attestors[], attest_threshold,
+//       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       signature by game_dev_pubkey
 //     }
 //     game_id = H(GameManifest)
@@ -32,7 +33,7 @@ import { PROTOCOL_VERSION, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS } from './co
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
  * event - a prediction market), with no core and no run.
  */
-export const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2 });
+export const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2, HEAD_TO_HEAD: 3 });
 /**
  * The engine's payout rules a manifest may pick (§0A.5): §18A's rank curve for a replayed run; pari-mutuel for an attested
  * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks).
@@ -44,6 +45,21 @@ export const ATTESTORS_MAX = 16;
 
 /** Is this manifest's result attested - no core, no run, its attestors' signed outcome (§0A.7a)? */
 export const isAttested = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED;
+/**
+ * IS THIS A HEAD-TO-HEAD GAME (kanban #233, the owner 2026-10-09)? Each player commits a hidden move at entry and reveals
+ * it after entry close; the round's nodes decide every entry's result from all the reveals together, with the game's
+ * decide adapter - named in cores[] by its hash like a replay core, so a node installs and checks it the same way. No
+ * run (run_ticks_max 0); paid by the rank curve with the game's min_score (head-to-head.js maps win/draw/loss onto it).
+ */
+export const isHeadToHead = (m) => !!m && m.resultType === RESULT_TYPE.HEAD_TO_HEAD;
+/** A head-to-head game seats 2 to 16 players, offers 2 to 32 moves, and gives its reveals 10 s to 1 h after entry close. */
+export const H2H_PLAYERS_MAX = 16;
+export const H2H_MOVES_MAX = 32;
+export const H2H_REVEAL_MIN_MS = 10000n;
+export const H2H_REVEAL_MAX_MS = 3600000n;
+/** What the engine scores a head-to-head win and a draw: a win qualifies (min_score), a draw keeps its stake (§18). */
+export const H2H_WIN_SCORE = 2;
+export const H2H_DRAW_SCORE = 1;
 
 export const MANIFEST_SIGNATURE_BYTES = 64;
 export const NO_PARENT = new Uint8Array(32);
@@ -63,7 +79,7 @@ export function encodeManifestBody(m) {
   if (!manIs32(m.gameDevPubkey)) throw new Error('a game names a 32-byte developer key');
   if (!Number.isInteger(m.version) || m.version < 1) throw new Error('a manifest version is 1 or more');
   if (!manIs32(m.parentManifestId)) throw new Error('a manifest names a 32-byte parent (zeros for the first)');
-  if (!manNameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED)`);
+  if (!manNameOf(m.resultType, RESULT_TYPE)) throw new Error(`result type ${m.resultType} is not one this engine has (REPLAY, ATTESTED, HEAD_TO_HEAD)`);
   if (isAttested(m)) {
     // AN ATTESTED GAME HAS NO CORE AND NO RUN (§0A.7a): the replay fields are written empty, so a reader of them finds
     // nothing to replay, and its payout rule is pari-mutuel
@@ -79,6 +95,22 @@ export function encodeManifestBody(m) {
       throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+  } else if (isHeadToHead(m)) {
+    // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
+    if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
+    const c = m.cores[0];
+    if (!manIs32(c.hash) || !Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(manIs32))
+      throw new Error('a head-to-head game\'s decide adapter is named by its 32-byte hash with at least one 32-byte config');
+    if (m.runTicksMax !== 0) throw new Error('a head-to-head game has no run: run_ticks_max is 0');
+    if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) throw new Error('a head-to-head game pays by the rank curve');
+    if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
+        || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
+      throw new Error('the rank curve is a numerator below its denominator, both 1 to 255');
+    if (m.minScore !== H2H_WIN_SCORE) throw new Error(`a head-to-head game's min_score is ${H2H_WIN_SCORE}: a win scores ${H2H_WIN_SCORE}, a draw ${H2H_DRAW_SCORE} (head-to-head.js)`);
+    if (!Number.isInteger(m.players) || m.players < 2 || m.players > H2H_PLAYERS_MAX) throw new Error(`a head-to-head game seats 2 to ${H2H_PLAYERS_MAX} players`);
+    if (!Number.isInteger(m.moveCount) || m.moveCount < 2 || m.moveCount > H2H_MOVES_MAX) throw new Error(`a head-to-head game offers 2 to ${H2H_MOVES_MAX} moves`);
+    if (typeof m.revealWindowMs !== 'bigint' || m.revealWindowMs < H2H_REVEAL_MIN_MS || m.revealWindowMs > H2H_REVEAL_MAX_MS)
+      throw new Error(`a head-to-head game's reveal window is ${H2H_REVEAL_MIN_MS} to ${H2H_REVEAL_MAX_MS} ms`);
   } else {
     if (!Array.isArray(m.cores) || m.cores.length < 1) throw new Error('a game names at least one core');
     for (const c of m.cores) {
@@ -121,6 +153,12 @@ export function encodeManifestBody(m) {
     w.vec(m.attestors, (k, ww) => ww.bytes32(k), { sortedBy: manCompare32 });
     w.u8(m.attestThreshold);
   }
+  // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
+  if (isHeadToHead(m)) {
+    w.u8(m.players);
+    w.u8(m.moveCount);
+    w.u64(m.revealWindowMs);
+  }
   return w.finish();
 }
 
@@ -148,6 +186,11 @@ function readBody(r) {
     body.outcomes = r.vec((rr) => rr.str());
     body.attestors = r.vec((rr) => rr.bytes32());
     body.attestThreshold = r.u8();
+  }
+  if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
+    body.players = r.u8();
+    body.moveCount = r.u8();
+    body.revealWindowMs = r.u64();
   }
   return body;
 }
@@ -227,6 +270,14 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   if (!core) return { ok: false, why: `${name} lists no core ${toHex(contract.simCoreHash).slice(0, 16)}` };
   if (!manIs32(contract.configHash) || !core.configs.some((h) => manSame(h, contract.configHash)))
     return { ok: false, why: `${name} lists no config ${manIs32(contract.configHash) ? toHex(contract.configHash).slice(0, 16) : '(none)'} for core ${toHex(core.hash).slice(0, 16)}` };
+  // A HEAD-TO-HEAD ROUND HAS NO RUN: its blockTicks is left as any u16 says nothing; the curve and min_score still bind
+  if (isHeadToHead(m)) {
+    if (contract.rankNumerator !== m.rankNumerator || contract.rankDenominator !== m.rankDenominator)
+      return { ok: false, why: `that round's rank curve is ${contract.rankNumerator}/${contract.rankDenominator}; ${name} pays ${m.rankNumerator}/${m.rankDenominator}` };
+    if (!Number.isInteger(contract.minScore) || contract.minScore < m.minScore)
+      return { ok: false, why: `that round's min_score ${contract.minScore} is below ${name}'s ${m.minScore}` };
+    return { ok: true, headToHead: true };
+  }
   if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1 || contract.blockTicks > m.runTicksMax)
     return { ok: false, why: `that round's run is ${contract.blockTicks} ticks; ${name} runs at most ${m.runTicksMax}` };
   if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) return { ok: false, why: `${name} picks payout rule ${m.payoutRule}, which is not the engine's` };
