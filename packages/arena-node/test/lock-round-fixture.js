@@ -159,7 +159,8 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // THE ROUND'S GAME'S ENTRY FEE (kanban #235): a market's node fee and donation together (1 % by default, both in the fee lock
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null } = {}) {
+// `order`: { price (PRICE_SCALE units), expiryMs } - a market order (kanban #278): the entry buys `pick` at that limit
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -180,6 +181,7 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     feePreimage: feeSecret, stakeLockOutpoint: outpoint, feeLockOutpoint: feeOutpoint,
     claimKeyAttestationRef: b32(0x9a),
     ...(pick !== undefined ? { pick } : {}),
+    ...(order ? { limitPrice: Number(order.price), orderExpiryMs: order.expiryMs ?? 0n } : {}),
   };
   if (hidden) entry.commit = headToHeadCommit({ roundId: w.rid, entryKey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
   // THE DONATION'S OUTPUTS (kanban #205): one payout contract per share, to its key, for exactly its amount
@@ -247,6 +249,8 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
       await handFee();
       assert.equal(d.round.stakeSeen(eid), null, 'a stake counted on its fee lock alone, before its stake lock');
     }
+    // `only`: the seats (by index) handed the locks - the others hold the entry and never verify a lock of it
+    if (only && !only.includes((w.nodes || [w.a, w.b]).indexOf(d))) continue;
     const locked = await fetch(`${base}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(fields)) });
     assert.equal(locked.status, 201, await locked.text());
     if (feeLock && !feeFirst) await handFee();

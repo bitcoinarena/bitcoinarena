@@ -565,9 +565,65 @@ request delayed by a round trip measured to a live seat through its tunnel
 | 1 s | 20 | 221 ms | 267 ms | 267 ms |
 
 Every batch was held and signed by all seven seats, and all seven cleared
-the 40 batches identically. Still to build: orders backed by locks
-(positions), cancel of a standing order, and a leader that is down for its
-batch.
+the 40 batches identically. Orders backed by locks, the certificate and the
+void are §0A.7b.6.
+
+**0A.7b.6 Positions backed by locks** (kanban #278, comment 1127; the owner
+2026-10-09: "Pick (a)").
+
+**Orders and locks:**
+- **An order is an entry** with a limit price and an expiry after its pick
+  (marker `0xa9`). The player locks first: its stake lock is its budget less
+  1 %, its fee lock is the 1 %.
+- An order is tradable at a seat once that seat verified both locks with the
+  federation. A leader batches only orders tradable at at least the threshold
+  of seats.
+- No seat holds the money. A lock moves whole: claimed whole, or returned
+  whole.
+- Only **certified** batches (at least the threshold of seats' signatures)
+  are in the book (`book-ledger.js`, a pure function of them).
+- A batch that can no longer reach the threshold is **void** (enough seats
+  declined it, each signing that it never will). Until then the book waits
+  for it.
+- Cancels and sells travel inside a batch. In a batch, new orders join first,
+  then cancels take their orders' rest out, then expiries, then sells, then
+  the clear.
+
+**What each event does to an order's locks:**
+
+| event | in the federation | in every seat's book | return door |
+|---|---|---|---|
+| match certified | nothing moves | fill recorded | closed (a whole return would hand back filled money) |
+| match not certified | nothing moves | no fill; the orders wait (a void batch's go into the next) | unchanged; while pending: "in a batch not decided yet" |
+| cancel, unfilled | stake and fee lock back at once, whole | out of the book | open once the batch carrying the cancel is certified |
+| cancel, partly filled | nothing until settlement | the rest leaves the book | closed; the rest is paid at settlement (a) |
+| sell | nothing | Up and Down shares close into sets; the buyer gets the shares | closed; the proceeds are paid at settlement (a) |
+| resolution | every lock with a fill claimed whole in one settlement | | locks with no fill come back whole |
+
+**A sell** of s shares of an outcome at ≥ p is a buy of s of the other
+outcome at ≤ 1 − p, paid for by the shares already held. Its cost is owed out
+of the complete sets it closes, and its fee is the market's rate of the
+proceeds.
+
+**At settlement** each claimed order is paid:
+- its winnings (every winning share paid out of the pool of all collateral);
+- less its sells' debt and fee;
+- plus the unspent rest of its budget;
+- plus the part of its fee lock its fills did not use (the fee due is
+  `fee lock × filled cost ÷ budget`).
+
+The nodes get their part of the fees due (`nodeBps` of the whole rate,
+evenly over the round's seats), and the donation the rest. A filled order's
+stake secret is released for this settlement whoever won; an unfilled one's
+stays sealed.
+
+Measured (`order-locks.test.js`, 7 seats, measured round trips): every case
+above. 8 filled orders settled with 16 locks claimed, 80,000 msat paid out of
+80,000 claimed, and a partly filled cancel paid exactly its 1,819 msat rest.
+`order-batch.test.js` on locked orders: certified at all seven p50 297 ms,
+max 344 ms, so 0.5 s holds (with the 100 ms grace). A batch that must first
+void or certify an earlier one took up to 532 ms; the book is then one batch
+late.
 
 ## 0A.8 The money: 10% of the gross stake
 

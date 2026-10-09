@@ -64,7 +64,9 @@ export function decodeShareAnswer(bytes) {
 }
 
 export class StakeSecrets {
-  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null } = {}) {
+  constructor(round, { curve, peers = [], fetcher = fetch, random, peersFor = null, bookStanding = null } = {}) {
+    // AN ORDER OF AN ORDER BOOK (kanban #278, comment 1127): the book's word on it - filled or not
+    this.bookStanding = bookStanding;
     this.round = round;
     this.curve = curve;
     this.peers = peers;
@@ -132,6 +134,14 @@ export class StakeSecrets {
         const stored = this.round.entry(entryIdBytes);
         if (!stored) return { ok: false, why: 'this node holds no such entry' };
         const entry = decodeEntryContract(stored);
+        // AN ORDER (comment 1127, the owner's "(a)"): every FILLED order's lock is claimed whole at settlement, winners' too - their
+        // winnings, a seller's proceeds and every unfilled rest are paid out of it; an unfilled order's lock comes back whole
+        const book = this.bookStanding ? this.bookStanding(roundIdBytes, entryIdBytes) : null;
+        if (book && book.book) {
+          if (book.inPending) return { ok: false, why: 'that order is in a batch not decided yet: no share of it is handed out' };
+          if (!book.filled) return { ok: false, why: 'that order never filled: its lock comes back whole, and its stake secret stays sealed' };
+          return { ok: true, outcome: 'FILLED_ORDER' };
+        }
         if (entry.pick === f.outcome) return { ok: false, why: 'that entry picked the outcome: its lock is its own, and its stake secret stays sealed' };
         const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (!this.round.stakeSeen || this.round.stakeSeen(entryId)));
         if (!anyWinner) return { ok: false, why: 'nobody picked the outcome: every stake comes back, and no stake secret is handed out' };
