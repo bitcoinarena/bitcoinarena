@@ -50,7 +50,7 @@ import { startNode } from './node-start.js';
 import { pathToFileURL } from 'node:url';
 import { resolve as resolvePath } from 'node:path';
 import { hostsFromEnv, hostsReader } from './hosts.js';
-import { statSync, readFileSync, existsSync } from 'node:fs';
+import { statSync, readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
@@ -97,7 +97,13 @@ for (const at of (process.env.ARENA_GAMES || '').split(',').map((x) => x.trim())
 console.log(`[games] hosting ${games.length ? games.map((g) => g.name).join(', ') : 'none (ARENA_GAMES names no game)'}`);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
-const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+// THE OWNER'S KEY AND CLAIM CODE (kanban #276, owner.js): two files beside the database, the code readable by the operator only
+const ownerFiles = { store: {
+  read: () => { try { return JSON.parse(readFileSync(`${path}.owner.json`, 'utf8')); } catch { return null; } },
+  write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
+  writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
+} };
+const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
 {
