@@ -1,0 +1,14 @@
+{
+ "name": "Tick Tock, Next Block",
+ "short_name": "Next Block",
+ "description": "Tick Tock, Next Block - on Bitcoin Arena",
+ "start_url": "./",
+ "display": "fullscreen",
+ "background_color": "#0d1014",
+ "theme_color": "#0d1014",
+ "icons": [
+  { "src": "nextblock-icon-192.png", "sizes": "192x192", "type": "image/png" },
+  { "src": "nextblock-icon-512.png", "sizes": "512x512", "type": "image/png" },
+  { "src": "nextblock-icon.svg", "sizes": "any", "type": "image/svg+xml" }
+ ]
+}

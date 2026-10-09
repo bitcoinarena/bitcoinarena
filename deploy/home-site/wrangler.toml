@@ -1,0 +1,21 @@
+# kanban #238: the bitcoin-arena.io homepage behind its password gate. A Worker (not Pages) because a Worker custom domain gets
+# its DNS record from Cloudflare, and the OAuth token here cannot write DNS.
+name = "bitcoin-arena-site"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = false
+routes = [
+  { pattern = "bitcoin-arena.io", custom_domain = true },
+  { pattern = "www.bitcoin-arena.io", custom_domain = true },
+  { pattern = "chatgpt.bitcoin-arena.io", custom_domain = true },
+]
+
+[assets]
+directory = "./www"
+binding = "ASSETS"
+run_worker_first = true
+
+# kanban #269: the phones' ?bench=1 results, kept 30 days (read with `wrangler kv key list --binding BENCH`)
+[[kv_namespaces]]
+binding = "BENCH"
+id = "83351bd43e524815a441e37295a53ba8"

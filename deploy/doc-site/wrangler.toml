@@ -1,0 +1,12 @@
+# kanban #264: the node API documentation on doc.bitcoin-arena.io, behind the same password gate as the homepage (one cookie
+# for all of bitcoin-arena.io). A Worker with static assets, as bitcoin-arena-site (#238): its custom domain gets its DNS record.
+name = "bitcoin-arena-docs"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = false
+routes = [ { pattern = "doc.bitcoin-arena.io", custom_domain = true } ]
+
+[assets]
+directory = "./www"
+binding = "ASSETS"
+run_worker_first = true

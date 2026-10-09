@@ -1,7 +1,0 @@
-{
- "name": "@blwp/donor",
- "version": "0.0.1",
- "type": "module",
- "private": true,
- "description": "A dev's donation client: one key, its donations found at the seats in every federation, redeemed, withdrawn to the dev's own LND."
-}

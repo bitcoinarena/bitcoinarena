@@ -84,7 +84,7 @@ public class LobbyScreenTests
             string at = $"at {css.x}x{css.y} css";
 
             Inside(f.panel, new Rect(0, 0, w, h), $"the panel {at}");
-            foreach (var (r, what) in new[] { (f.play, "PLAY"), (f.spectate, "SPECTATE"), (f.hint, "the hint") })
+            foreach (var (r, what) in new[] { (f.play, "PLAY"), (f.spectate, "SPECTATE"), (f.benchmark, "BENCHMARK"), (f.hint, "the hint") })
                 Inside(r, f.panel, $"{what} {at}");
 
             var parts = new[] { (l.you, "who you are"), (l.name, "NAME"), (l.key, "KEY"), (l.head, "the rounds header"),
@@ -126,13 +126,13 @@ public class LobbyScreenTests
             }
             if (css.x >= 1366f)
                 Assert.AreEqual(l.howToCells[0].y, l.howToCells[3].y, 0.5f, $"a wide desktop does not get 1-2-3-4 in one row {at}");
-            Assert.IsFalse(l.howTo.Overlaps(f.play) || l.howTo.Overlaps(f.spectate) || l.howTo.Overlaps(f.hint),
+            Assert.IsFalse(l.howTo.Overlaps(f.play) || l.howTo.Overlaps(f.spectate) || l.howTo.Overlaps(f.benchmark) || l.howTo.Overlaps(f.hint),
                 $"the how-to art and the buttons overlap {at}");
             foreach (var (r, what) in parts) Inside(r, f.copy, $"{what} {at}");
             for (int i = 0; i < parts.Length; i++)
                 for (int j = i + 1; j < parts.Length; j++)
                     Assert.IsFalse(parts[i].Item1.Overlaps(parts[j].Item1), $"{parts[i].Item2} and {parts[j].Item2} overlap {at}");
-            foreach (var (r, what) in new[] { (f.play, "PLAY"), (f.spectate, "SPECTATE"), (f.hint, "the hint") })
+            foreach (var (r, what) in new[] { (f.play, "PLAY"), (f.spectate, "SPECTATE"), (f.benchmark, "BENCHMARK"), (f.hint, "the hint") })
                 Assert.IsFalse(l.list.Overlaps(r) || l.you.Overlaps(r), $"the lobby and {what} overlap {at}");
 
             Assert.GreaterOrEqual(l.rows, 2, $"fewer than two rounds fit {at}: list {l.list.height:0} px, row {l.rowH:0} px"
