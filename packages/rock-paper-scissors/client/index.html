@@ -74,12 +74,303 @@
   .presence .dots i { font-style: normal; animation: pulse 1.2s infinite; } .presence .dots i:nth-child(2) { animation-delay: .2s; } .presence .dots i:nth-child(3) { animation-delay: .4s; }
   .board { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 12px; padding: 10px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
   .board b { font: 800 38px/1 ui-monospace, monospace; } .board i { font-style: normal; font: 800 30px/1 system-ui; color: var(--dim); } .board .who { color: var(--dim); font-size: 13px; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* THE STAGE (kanban #284): a Three.js scene - two hands, lit, on a floor of light - in place of the two cards */
+  .stage { position: relative; height: min(52vh, 440px); min-height: 280px; margin: 0 -8px; border-radius: 14px; overflow: hidden;
+    background: radial-gradient(90% 70% at 50% 35%, #1d2a44 0%, #0f1524 55%, #090c14 100%); }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .stage .ov { position: absolute; inset: 0; pointer-events: none; }
+  .stage .ov .top { position: absolute; top: 10px; left: 0; right: 0; display: flex; justify-content: center; }
+  .stage .ov .clock .t { text-shadow: 0 2px 8px #000; }
+  .stage .ov .who { position: absolute; bottom: 10px; font: 700 12px/1 system-ui; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 10px;
+    border-radius: 999px; background: rgba(9,12,20,0.6); border: 1px solid var(--line); max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage .ov .who.me { left: 12px; color: #ffc27a; } .stage .ov .who.them { right: 12px; color: #9cc4ff; }
 </style>
 </head>
 <body>
   <button class="back" type="button" id="back">&larr; Games</button>
   <header><h1>Rock Paper Scissors<span class="icons">✊✋✌️</span></h1><span class="chip" id="kind" hidden></span></header>
   <div id="view"></div>
+<script>
+  // THE STAGE (kanban #284, the owner 2026-10-09: "Change the Rock Paper Scissors game to a Three.js version. More dynamic ... The
+  // choice of rock, paper, or scissors is animated. You see the hand in that position. The result is animated too. Scissors
+  // cut the flat paper hand. The paper hand covers the fist."). Two hands built from the shapes Three.js has - a bevelled
+  // palm, jointed fingers and thumb - posed by their joints; this client only shows. Three.js itself is fetched from one
+  // pinned build and run only if its bytes hash to THREE_SHA256, so the client still runs no code its manifest hash does
+  // not pin. Without WebGL or Three.js the client draws the cards it drew before.
+  const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js';
+  const THREE_SHA256 = '3e690ac7d180b0aadf0891bea39eec643e29e2d3e75c99b18689518665f69ba6';
+  async function loadStage() {
+    const probe = document.createElement('canvas');
+    if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) throw new Error('no WebGL');
+    const bytes = await (await fetch(THREE_URL, { cache: 'force-cache' })).arrayBuffer();
+    const hex = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    if (hex !== THREE_SHA256) throw new Error('three.js at ' + THREE_URL + ' is not the pinned build (' + hex.slice(0, 16) + ')');
+    const THREE = await import(URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })));
+    return createStage(THREE);
+  }
+
+  function createStage(THREE) {
+    const box = document.createElement('div'); box.className = 'stage';
+    const canvas = document.createElement('canvas'); box.append(canvas);
+    const ov = document.createElement('div'); ov.className = 'ov'; box.append(ov);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.3;
+    renderer.localClippingEnabled = true;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x0b101c, 9, 18);
+    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 60);
+
+    // REFLECTIONS: a small room of light panels, prefiltered once - the clear coat of the hands catches them
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const room = new THREE.Scene();
+    room.add(new THREE.Mesh(new THREE.SphereGeometry(20, 24, 12), new THREE.MeshBasicMaterial({ color: 0x0a0f1c, side: THREE.BackSide })));
+    const panel = (color, pos, w, h) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })); m.position.set(...pos); m.lookAt(0, 0, 0); room.add(m); };
+    panel(0xffffff, [0, 8, 6], 10, 4); panel(0xff9a3c, [-9, 2, -2], 4, 8); panel(0x4aa3ff, [9, 2, -2], 4, 8); panel(0x8899bb, [0, -6, 8], 12, 2);
+    scene.environment = pmrem.fromScene(room, 0.03).texture;
+
+    scene.add(new THREE.HemisphereLight(0x9cbcff, 0x20120a, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.7); key.position.set(2.5, 6, 7); scene.add(key);
+    const rimL = new THREE.PointLight(0xff8a1c, 26, 12, 2); rimL.position.set(-3.2, 1.6, -2.4); scene.add(rimL);
+    const rimR = new THREE.PointLight(0x3c8cff, 26, 12, 2); rimR.position.set(3.2, 1.6, -2.4); scene.add(rimR);
+
+    // THE FLOOR: dark glass with a ring of light under each hand, and a line of light between them
+    const FLOOR_Y = -1.25;
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(6, 64), new THREE.MeshStandardMaterial({ color: 0x0c1220, roughness: 0.5, metalness: 0.5, envMapIntensity: 0.35 }));
+    floor.rotation.x = -Math.PI / 2; floor.position.y = FLOOR_Y; scene.add(floor);
+    const ringOf = (color, x) => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.95, 1.07, 72), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.rotation.x = -Math.PI / 2; m.position.set(x, FLOOR_Y + 0.01, 0); scene.add(m); return m;
+    };
+    const ringMe = ringOf(0xff9a2e, -1.55), ringThem = ringOf(0x4c9dff, 1.55);
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.03), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
+    line.rotation.x = -Math.PI / 2; line.position.y = FLOOR_Y + 0.012; scene.add(line);
+
+    // SPARKS AND DUST: one soft dot, drawn once
+    const dot = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+      const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.35, 'rgba(255,255,255,0.45)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = r; g.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; })();
+    const DUST = 160;
+    const dustGeo = new THREE.BufferGeometry();
+    const dustPos = new Float32Array(DUST * 3), dustSpeed = new Float32Array(DUST);
+    for (let i = 0; i < DUST; i++) { dustPos[i * 3] = (Math.random() - 0.5) * 12; dustPos[i * 3 + 1] = FLOOR_Y + Math.random() * 6; dustPos[i * 3 + 2] = -5 + Math.random() * 6; dustSpeed[i] = 0.08 + Math.random() * 0.25; }
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ size: 0.07, map: dot, color: 0xffc58a, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+    scene.add(dust);
+
+    // A HAND: a bevelled palm, four fingers of three joints and a thumb of two, a sleeve with a band of light. Fingers point
+    // along +x, the back of the hand faces the camera (+z), a finger curls away from it (rotation.y > 0).
+    const FINGERS = [{ y: 0.32, len: [0.36, 0.24, 0.2], r: 0.118 }, { y: 0.105, len: [0.4, 0.27, 0.21], r: 0.125 },
+      { y: -0.11, len: [0.37, 0.25, 0.2], r: 0.118 }, { y: -0.315, len: [0.29, 0.2, 0.17], r: 0.104 }];
+    const POSES = {
+      idle: { f: [[0.3, 0.35, 0.2, 0.07], [0.3, 0.35, 0.2, 0], [0.35, 0.4, 0.25, -0.06], [0.4, 0.45, 0.3, -0.12]], t: [0.7, 0.25, 0.2] },
+      rock: { f: [[1.5, 1.75, 1.25, 0], [1.5, 1.75, 1.25, 0], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.25, 0.85, 0.55] },
+      paper: { f: [[0, 0.04, 0.02, 0.1], [0, 0.03, 0.02, 0.02], [0, 0.04, 0.02, -0.06], [0.02, 0.05, 0.03, -0.15]], t: [0.95, 0.05, 0.05] },
+      scissors: { f: [[0, 0.03, 0.02, 0.26], [0, 0.03, 0.02, -0.22], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.15, 0.85, 0.6] },
+    };
+    const NAMES = ['rock', 'paper', 'scissors'];
+    const rr = (w, h, r) => { const s = new THREE.Shape(), x = -w / 2, y = -h / 2;
+      s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r); s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r); s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s; };
+    const palmGeo = new THREE.ExtrudeGeometry(rr(0.86, 0.94, 0.24), { depth: 0.2, bevelEnabled: true, bevelThickness: 0.09, bevelSize: 0.08, bevelSegments: 5, curveSegments: 10 });
+    palmGeo.center();
+    const segGeo = new Map();
+    const capsule = (r, l) => { const k = r.toFixed(3) + ':' + l.toFixed(3); if (!segGeo.has(k)) { const g = new THREE.CapsuleGeometry(r, Math.max(0.01, l - r * 0.9), 6, 14); g.rotateZ(-Math.PI / 2); g.translate(l / 2, 0, 0); segGeo.set(k, g); } return segGeo.get(k); };
+    function makeHand(skin, sheen, band, side, glow) {
+      const mat = new THREE.MeshPhysicalMaterial({ color: skin, emissive: glow, roughness: 0.34, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.16, sheen: 0.7, sheenColor: sheen, sheenRoughness: 0.4, envMapIntensity: 1.1 });
+      const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x151b28, roughness: 0.5, metalness: 0.5 });
+      const bandMat = new THREE.MeshBasicMaterial({ color: band });
+      const root = new THREE.Group(), body = new THREE.Group(), hand = new THREE.Group();
+      root.add(body); body.add(hand);
+      hand.add(new THREE.Mesh(palmGeo, mat));
+      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 1.3, 32), sleeveMat);
+      sleeve.rotation.z = Math.PI / 2; sleeve.scale.set(1, 1, 0.72); sleeve.position.x = -1.05; hand.add(sleeve);
+      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.035, 10, 40), bandMat);
+      cuff.rotation.y = Math.PI / 2; cuff.scale.set(1, 1, 0.72); cuff.position.x = -0.42; hand.add(cuff);
+      const fingers = FINGERS.map((spec) => {
+        const base = new THREE.Group(); base.position.set(0.4, spec.y, 0.0); hand.add(base);
+        const joints = []; let parent = base, at = 0;
+        spec.len.forEach((l, k) => { const j = new THREE.Group(); j.position.x = at; parent.add(j); j.add(new THREE.Mesh(capsule(spec.r * (1 - k * 0.06), l), mat)); joints.push(j); parent = j; at = l; });
+        return joints;
+      });
+      const thumbBase = new THREE.Group(); thumbBase.position.set(-0.1, 0.42, -0.04); hand.add(thumbBase);
+      const t1 = new THREE.Group(); thumbBase.add(t1); t1.add(new THREE.Mesh(capsule(0.12, 0.32), mat));
+      const t2 = new THREE.Group(); t2.position.x = 0.32; t1.add(t2); t2.add(new THREE.Mesh(capsule(0.11, 0.26), mat));
+      root.scale.x = side;          // the opponent's hand is the mirror of yours
+      const pose = JSON.parse(JSON.stringify(POSES.idle)), target = JSON.parse(JSON.stringify(POSES.idle));
+      const apply = () => {
+        fingers.forEach((joints, i) => { const p = pose.f[i]; joints[0].rotation.set(0, p[0], p[3]); joints[1].rotation.y = p[1]; joints[2].rotation.y = p[2]; });
+        thumbBase.rotation.set(0, 0, pose.t[0]); t1.rotation.y = pose.t[1]; t2.rotation.y = pose.t[2];
+      };
+      const mats = [mat];
+      return { root, body, hand, mat, mats, pose, target, apply, skin: new THREE.Color(skin),
+        set(name) { const p = POSES[name]; target.f = p.f.map((x) => x.slice()); target.t = p.t.slice(); },
+        step(k) { for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) pose.f[i][j] += (target.f[i][j] - pose.f[i][j]) * k; for (let j = 0; j < 3; j++) pose.t[j] += (target.t[j] - pose.t[j]) * k; apply(); } };
+    }
+    const me = makeHand(0xffb15e, new THREE.Color(0xffe2bf), 0xff9a2e, 1, 0x3a1600);
+    const them = makeHand(0x6fa8ff, new THREE.Color(0xd8e8ff), 0x4c9dff, -1, 0x05183a);
+    const HOME = { me: new THREE.Vector3(-1.55, 0, 0), them: new THREE.Vector3(1.55, 0, 0) };
+    for (const [h, at] of [[me, HOME.me], [them, HOME.them]]) { h.root.position.copy(at); h.root.rotation.set(0.3, h === me ? -0.32 : 0.32, 0); scene.add(h.root); h.apply(); }
+
+    // THE OPPONENT'S MOVE, NOT YET SHOWN: a turning cage of light around a closed fist; green once their move is in
+    const cage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.08, 1), new THREE.MeshBasicMaterial({ color: 0x4c9dff, wireframe: true, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }));
+    cage.position.copy(HOME.them); scene.add(cage);
+    const mark = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+      g.font = '800 96px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffffff'; g.shadowColor = '#4c9dff'; g.shadowBlur = 18; g.fillText('?', 64, 70);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false })); })();
+    mark.scale.set(0.8, 0.8, 1); mark.position.set(HOME.them.x, 1.25, 0.4); scene.add(mark);
+
+    // BURSTS AND SHOCKWAVES, short-lived
+    const fx = [];
+    const burst = (pos, color, n = 90, speed = 3.2) => {
+      const g = new THREE.BufferGeometry(), p = new Float32Array(n * 3), v = [];
+      for (let i = 0; i < n; i++) { p.set([pos.x, pos.y, pos.z], i * 3); const d = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(speed * (0.4 + Math.random())); v.push(d); }
+      g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+      const m = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.12, map: dot, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      scene.add(m); fx.push({ t: 0, life: 0.9, step(dt, t) { const a = g.attributes.position.array; for (let i = 0; i < n; i++) { v[i].y -= 4 * dt; a[i * 3] += v[i].x * dt; a[i * 3 + 1] += v[i].y * dt; a[i * 3 + 2] += v[i].z * dt; } g.attributes.position.needsUpdate = true; m.material.opacity = 1 - t; }, end() { scene.remove(m); g.dispose(); m.material.dispose(); } });
+    };
+    const shock = (pos, color) => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.32, 64), new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      m.rotation.x = -Math.PI / 2; m.position.set(pos.x, FLOOR_Y + 0.02, pos.z); scene.add(m);
+      fx.push({ t: 0, life: 0.7, step(dt, t) { const s = 1 + t * 9; m.scale.set(s, s, s); m.material.opacity = 1 - t; }, end() { scene.remove(m); m.geometry.dispose(); m.material.dispose(); } });
+    };
+
+    // THE CUT (scissors beat paper): the paper hand drawn twice, each copy clipped to one side of the cut, the halves parting
+    let halves = null;
+    const cutPaper = (h, cutY) => {
+      const local = [new THREE.Plane(new THREE.Vector3(0, 1, 0), -cutY), new THREE.Plane(new THREE.Vector3(0, -1, 0), cutY)];
+      const parts = local.map((pl) => {
+        // every material of the copy - skin, sleeve, band - clipped by the one plane of its half
+        const plane = new THREE.Plane(), made = new Map(), copy = h.root.clone(true);
+        copy.traverse((o) => { if (!o.isMesh) return; if (!made.has(o.material)) { const m = o.material.clone(); m.clippingPlanes = [plane]; m.side = THREE.DoubleSide; m.transparent = true; made.set(o.material, m); } o.material = made.get(o.material); });
+        scene.add(copy); return { copy, mats: [...made.values()], plane, local: pl };
+      });
+      h.root.visible = false;
+      const out = Math.sign(h.root.position.x) || 1;
+      halves = { parts, h, v: [new THREE.Vector3(0.9 * out, 2.2, 0.5), new THREE.Vector3(0.5 * out, -0.4, 0.8)], spin: [1.6 * out, -1.1 * out], t: 0 };
+    };
+    const clearHalves = () => { if (!halves) return; for (const p of halves.parts) { scene.remove(p.copy); for (const m of p.mats) m.dispose(); } halves.h.root.visible = true; halves = null; };
+
+    // A SEQUENCE: tweens on a clock, each update(p) with p 0..1 over its span
+    let seq = null;
+    const ease = { out: (p) => 1 - Math.pow(1 - p, 3), inOut: (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2), back: (p) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); } };
+    const resetHand = (h, at) => { h.body.position.set(0, 0, 0); h.body.rotation.set(0, 0, 0); h.body.scale.set(1, 1, 1); h.mat.color.copy(h.skin); h.mat.opacity = 1; h.mat.transparent = false; h.root.position.copy(at); };
+    const winnerOf = (a, b) => (a === b ? 0 : (a - b + 3) % 3 === 1 ? 1 : -1);   // 1: a beats b (paper 1 > rock 0 > scissors 2 > paper)
+    function shoot(mine, theirs) {
+      clearHalves(); resetHand(me, HOME.me); resetHand(them, HOME.them);
+      const w = winnerOf(mine, theirs);
+      const win = w > 0 ? me : w < 0 ? them : null, lose = w > 0 ? them : w < 0 ? me : null;
+      const winMove = w > 0 ? mine : theirs;
+      const dir = (h) => (h === me ? 1 : -1);
+      const tw = [], c = {};   // c: what each tween did once (a burst, a hit)
+      // 1. "ROCK - PAPER - SCISSORS": three pumps of both fists
+      tw.push({ at: 0, dur: 0.05, update: () => { me.set('rock'); them.set('rock'); } });
+      tw.push({ at: 0, dur: 1.05, update: (p) => { const y = Math.abs(Math.sin(p * Math.PI * 3)) * 0.42; me.body.position.y = y; them.body.position.y = y; me.body.rotation.z = y * 0.35; them.body.rotation.z = y * 0.35; } });
+      // 2. "SHOOT": both forms, a pulse
+      tw.push({ at: 1.05, dur: 0.05, update: () => { me.set(NAMES[mine]); them.set(NAMES[theirs]); burst(new THREE.Vector3(0, 0.2, 0), 0xffffff, 40, 2); } });
+      tw.push({ at: 1.05, dur: 0.35, update: (p) => { const s = 1 + Math.sin(p * Math.PI) * 0.12; me.body.scale.setScalar(s); them.body.scale.setScalar(s); me.body.position.x = ease.out(p) * 0.25; them.body.position.x = ease.out(p) * 0.25; } });
+      // 3. THE STRIKE
+      if (!win) {
+        tw.push({ at: 1.55, dur: 0.5, update: (p) => { const x = Math.sin(p * Math.PI) * 0.75 + 0.25; me.body.position.x = x; them.body.position.x = x; if (p > 0.5 && !c.bumped) { c.bumped = true; burst(new THREE.Vector3(0, 0.1, 0), 0x9aa7ff, 70, 2.6); } } });
+      } else if (winMove === 2) {
+        // scissors cut the paper: the hand turns so its blades open in front of and behind the paper, reaches in, snips twice,
+        // and the paper falls apart in two halves
+        tw.push({ at: 1.5, dur: 0.45, update: (p) => { const e = ease.out(p); win.body.rotation.x = e * 1.4; win.body.position.x = 0.25 + e * 1.15; win.target.f[0][3] = win.pose.f[0][3] = 0.42 * e + 0.26 * (1 - e); win.target.f[1][3] = win.pose.f[1][3] = -(0.42 * e + 0.22 * (1 - e)); } });
+        tw.push({ at: 1.95, dur: 0.6, update: (p) => { const open = 0.42 * Math.abs(Math.cos(p * Math.PI * 1.5)); win.target.f[0][3] = win.pose.f[0][3] = open; win.target.f[1][3] = win.pose.f[1][3] = -open; win.body.position.x = 0.25 + 1.15 + p * 0.3;
+          if (p > 0.66 && !c.cut) { c.cut = true; lose.root.updateMatrixWorld(true); cutPaper(lose, 0.0); burst(new THREE.Vector3(lose.root.position.x - 0.5 * Math.sign(lose.root.position.x), 0.0, 0.4), 0xffd27a, 120, 3.6); } } });
+        tw.push({ at: 2.6, dur: 0.5, update: (p) => { win.body.rotation.x = 1.4 * (1 - ease.out(p)); win.body.position.x = 1.7 - ease.out(p) * 1.2; } });
+      } else if (winMove === 1) {
+        // paper covers the fist: up, over, and down onto it; the fist sinks and greys
+        tw.push({ at: 1.5, dur: 0.55, update: (p) => { const e = ease.inOut(p); win.body.position.x = 0.25 + e * 2.15; win.body.position.y = Math.sin(p * Math.PI) * 0.9 + e * 0.55; win.body.rotation.x = -e * 1.15; } });
+        tw.push({ at: 2.05, dur: 0.35, update: (p) => { win.body.position.y = 0.55 - ease.out(p) * 0.32; lose.body.scale.setScalar(1 - ease.out(p) * 0.22); lose.mat.color.copy(lose.skin).lerp(new THREE.Color(0x2a3040), ease.out(p) * 0.7); if (p > 0.6 && !c.covered) { c.covered = true; shock(new THREE.Vector3(lose.root.position.x, 0, 0), 0xffffff); } } });
+      } else {
+        // rock smashes the scissors: up high, down hard, the scissors crumple
+        tw.push({ at: 1.5, dur: 0.4, update: (p) => { const e = ease.out(p); win.body.position.x = 0.25 + e * 1.6; win.body.position.y = e * 1.25; win.body.rotation.z = e * 0.5; } });
+        tw.push({ at: 1.9, dur: 0.16, update: (p) => { win.body.position.y = 1.25 - p * 1.05; win.body.rotation.z = 0.5 - p * 0.6; if (p === 1 && !c.hit) { c.hit = true; shock(new THREE.Vector3(lose.root.position.x, 0, 0), 0xffb35c); burst(new THREE.Vector3(lose.root.position.x * 0.7, 0.3, 0.2), 0xffb35c, 120, 4); lose.set('idle'); lose.target.f[0] = [1.1, 1.3, 0.9, 0.5]; lose.target.f[1] = [1.2, 1.4, 1.0, -0.5]; } } });
+        tw.push({ at: 2.06, dur: 0.6, update: (p) => { lose.body.scale.set(1 + (1 - p) * 0.1, 1 - ease.out(p) * 0.35, 1); lose.body.position.x = Math.sin(p * 40) * 0.06 * (1 - p); lose.mat.color.copy(lose.skin).lerp(new THREE.Color(0x2a3040), ease.out(p) * 0.6); } });
+      }
+      // 4. HOLD, then home
+      tw.push({ at: 3.5, dur: 0.6, update: (p) => {
+        if (!c.homing) { c.homing = true; clearHalves(); }
+        for (const h of [me, them]) { h.body.position.multiplyScalar(1 - ease.out(p)); h.body.rotation.x *= 1 - p; h.body.rotation.z *= 1 - p; h.body.scale.lerp(new THREE.Vector3(1, 1, 1), p); h.mat.color.lerp(h.skin, p); }
+      } });
+      seq = { t: 0, tw, end: 4.1, w };
+      return w;
+    }
+
+    // WHAT THE TABLE SAYS (from the client's state): your hand, theirs, and whether their move is in
+    let want = { mine: 'idle', theirs: 'absent' }, preview = null, shownFor = null;
+    function show(s) {
+      const mine = s.phase === 'wait' || s.phase === 'reveal' || s.phase === 'result' ? NAMES[s.move] : preview !== null ? NAMES[preview] : 'idle';
+      const present = (s.here && s.here.length) || (s.phase === 'pick' ? s.joined : s.them > 0);
+      const theirs = s.phase === 'wait' || s.phase === 'pick' ? (s.phase === 'pick' ? (s.joined ? 'in' : present ? 'here' : 'absent') : (s.them > 0 ? 'in' : present ? 'here' : 'absent')) : 'here';
+      want = { mine, theirs };
+      // THE SHOW: once a round of this tab has both moves, played out once
+      const done = (s.phase === 'reveal' || s.phase === 'result') && s.theirs !== null && s.theirs !== undefined ? { id: s.id, mine: s.move, theirs: s.theirs }
+        : s.prev && s.prev.id && s.prev.theirs !== null && s.prev.theirs !== undefined && s.prev.phase === 'result' ? { id: s.prev.id, mine: s.prev.move, theirs: s.prev.theirs } : null;
+      if (done && done.id !== shownFor && (!s.prev || !s.prev.id || done.id !== s.prev.id || Date.now() - (s.prev.closeMs || 0) < 30000)) { shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }
+    }
+
+    // THE FRAME
+    let last = performance.now(), visible = true;
+    document.addEventListener('visibilitychange', () => { visible = !document.hidden; last = performance.now(); });
+    const fit = () => {
+      const w = box.clientWidth || 1, h = box.clientHeight || 1;
+      renderer.setSize(w, h, false); camera.aspect = w / h;
+      // the two hands and their reach (~6.4 wide) fit any width; a tall screen moves the camera back
+      const half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const dist = Math.max(5.6, 2.85 / (half * camera.aspect));
+      camera.position.set(0, 1.35 + dist * 0.06, dist); camera.lookAt(0, 0.05, 0); camera.updateProjectionMatrix();
+    };
+    new ResizeObserver(fit).observe(box);
+    const frame = (now) => {
+      requestAnimationFrame(frame);
+      if (!visible || !box.isConnected) return;
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      const t = now / 1000;
+      if (seq) {
+        seq.t += dt;
+        for (const x of seq.tw) { const p = (seq.t - x.at) / x.dur; if (p >= 0 && !x.finished) { x.update(Math.min(1, p)); if (p >= 1) x.finished = true; } }
+        if (seq.t >= seq.end) { seq = null; clearHalves(); resetHand(me, HOME.me); resetHand(them, HOME.them); }
+        const glow = seq ? (seq.w > 0 ? [1, 0.3] : seq.w < 0 ? [0.3, 1] : [0.7, 0.7]) : [0.55, 0.55];
+        ringMe.material.opacity += (glow[0] - ringMe.material.opacity) * 0.1; ringThem.material.opacity += (glow[1] - ringThem.material.opacity) * 0.1;
+      } else {
+        me.set(want.mine); them.set(want.theirs === 'absent' || want.theirs === 'here' || want.theirs === 'in' ? 'rock' : want.theirs);
+        // breathing: an idle bob, each hand on its own beat
+        me.body.position.y = Math.sin(t * 1.6) * 0.06; them.body.position.y = Math.sin(t * 1.6 + 1.3) * 0.06;
+        me.body.rotation.z = Math.sin(t * 1.1) * 0.04; them.body.rotation.z = Math.sin(t * 1.1 + 0.8) * 0.04;
+        const ghost = want.theirs === 'absent';
+        them.mat.transparent = ghost; them.mat.opacity += ((ghost ? 0.22 : 1) - them.mat.opacity) * 0.1;
+        ringMe.material.opacity += (0.55 - ringMe.material.opacity) * 0.1; ringThem.material.opacity += ((ghost ? 0.15 : 0.55) - ringThem.material.opacity) * 0.1;
+      }
+      const caged = !seq && want.theirs !== 'absent';
+      cage.visible = caged; mark.visible = caged || (!seq && want.theirs === 'absent');
+      cage.rotation.y = t * 0.6; cage.rotation.x = t * 0.25;
+      cage.material.color.setHex(want.theirs === 'in' ? 0x2fd38a : 0x4c9dff);
+      mark.material.opacity = 0.65 + Math.sin(t * 3) * 0.3; mark.position.y = 1.3 + Math.sin(t * 2) * 0.06;
+      const k = 1 - Math.exp(-dt * 14); me.step(k); them.step(k);
+      if (halves) {
+        halves.t += dt;
+        halves.parts.forEach((p, i) => {
+          p.copy.position.addScaledVector(halves.v[i], dt); halves.v[i].y -= 3.2 * dt; p.copy.rotation.z += halves.spin[i] * dt;
+          const o = Math.max(0, 1 - Math.max(0, halves.t - 0.5) / 0.9); for (const m of p.mats) m.opacity = o;
+          p.copy.updateMatrixWorld(true);
+          p.plane.copy(p.local).applyMatrix4(p.copy.children[0].children[0].matrixWorld);
+        });
+      }
+      for (let i = fx.length - 1; i >= 0; i--) { const f = fx[i]; f.t += dt; f.step(dt, Math.min(1, f.t / f.life)); if (f.t >= f.life) { f.end(); fx.splice(i, 1); } }
+      const a = dustGeo.attributes.position.array;
+      for (let i = 0; i < DUST; i++) { a[i * 3 + 1] += dustSpeed[i] * dt; if (a[i * 3 + 1] > FLOOR_Y + 6) a[i * 3 + 1] = FLOOR_Y; }
+      dustGeo.attributes.position.needsUpdate = true;
+      line.material.opacity = 0.18 + Math.sin(t * 2.2) * 0.08;
+      renderer.render(scene, camera);
+    };
+    requestAnimationFrame(frame);
+    return { box, ov, show, shoot, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; } };
+  }
+</script>
 <script>
   const A = window.parent && window.parent.ARENA_GAME;
   const $ = (id) => document.getElementById(id);
@@ -147,6 +438,8 @@
     const CARRY_MS = 120000, CARRY_RETRY_MS = 8000;
     let carry = null;
     let due = null;             // the reveal view's "result in" line, ticked every second: { el, closeMs, endMs }
+    let stage = null;           // the Three.js stage (kanban #284), null until it is loaded or if it cannot be
+    let pickedFor = null;       // the round the stage's pick preview belongs to
     let kept = null;            // the match score of this tab's newest decided round (below)
     const paint = async () => {
       // every listed round of this game (the page's allRows), so the soonest to close is the one offered
@@ -192,7 +485,7 @@
       if (last && (last.phase === 'wait' || last.phase === 'reveal')) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
       else {
         const row = openRound(rows);
-        const prev = last ? { phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
+        const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
         if (row) lookHere(row.id);
         // A MOVE NOBODY ANSWERED STAYS IN (the owner 2026-10-09 playtest: "pick, the Wait screen comes, then back to Pick -
         // sometimes it works and the selection is really locked"): a round that closed with this tab alone in it was not
@@ -236,7 +529,10 @@
       // THE SCORE ACROSS ROUNDS, big, while the match goes on (kanban #280)
       if (s.scoreboard) view.append(el('div', 'board', '<span class="who">You</span><b>' + s.scoreboard.me + '</b><i>:</i><b>' + s.scoreboard.them + '</b><span class="who">'
         + String(s.scoreboard.themName).replace(/[<>&]/g, '') + '</span>'));
-      if (s.phase === 'none') { view.append(el('div', 'card none', '<span class="big">⏳</span>The next round opens in a moment.')); return; }
+      if (s.phase === 'none') {
+        if (stage) { const c = el('div', 'card'); stage.show(s); stage.ov.textContent = ''; c.append(stage.box, el('div', 'pick', 'The next round opens in a moment.')); view.append(c); return; }
+        view.append(el('div', 'card none', '<span class="big">⏳</span>The next round opens in a moment.')); return;
+      }
       // WHO IS HERE, prominently (kanban #280: "Always show prominently when you are alone in the round. Then also Waiting for
       // other Players. When someone else is there, show that")
       if (s.phase === 'pick' || s.phase === 'wait') {
@@ -257,35 +553,50 @@
       const card = el('div', 'card');
       const at = { pick: 0, wait: 1, alone: 3, reveal: 2, result: 3 }[s.phase];
       card.append(steps(at));
+      // ON THE STAGE: the hands play the round; the clock and who is who sit over it
+      if (stage) {
+        if (s.phase !== 'pick' || pickedFor !== s.id) { stage.preview(null); pickedFor = s.id; }
+        stage.show(s);
+        card.append(stage.box);
+        const ov = stage.ov; ov.textContent = '';
+        if (s.phase === 'pick' || s.phase === 'wait') { const top = el('div', 'top'); const c = clock(); top.append(c); ov.append(top); live = { clock: c, closeMs: s.closeMs, openMs: s.openMs }; }
+        const sb = s.scoreboard, names = s.here || [];
+        const seen = names.find((o) => sb && o.key === sb.themKey) || names[0] || null;
+        const themName = seen ? (sb && seen.key === sb.themKey ? sb.themName : seen.name) : (sb ? sb.themName : null);
+        ov.append(el('div', 'who me', 'You' + (s.phase === 'wait' || s.phase === 'reveal' ? ' · ' + MOVES[s.move][0] : '')));
+        const w = el('div', 'who them'); w.textContent = themName || (s.phase === 'pick' && !s.joined && !names.length ? 'waiting…' : 'opponent'); ov.append(w);
+      }
       const table = el('div', 'table');
       const middle = el('div');
-      if (s.phase === 'pick' || s.phase === 'wait') {
+      if (stage) { /* the clock is on the stage */ } else if (s.phase === 'pick' || s.phase === 'wait') {
         const c = clock(); middle.append(c);
         live = { clock: c, closeMs: s.closeMs, openMs: s.openMs };
       } else middle.append(el('div', 'vs', 'VS'));
+      const put = (...xs) => { if (!stage) card.append(...xs); };
       if (s.phase === 'pick') {
         table.append(seat('you', 'empty', '?'), middle, seat(s.joined ? 'opponent in' : 'opponent', s.joined ? 'in' : 'empty', s.joined ? '✓' : '?'));
-        card.append(table);
-        card.append(el('div', 'pick', 'Pick - your move stays hidden'));
+        put(table);
+        card.append(el('div', 'pick', 'Pick - your opponent cannot see it until the round closes'));
         const g = el('div', 'moves');
         MOVES.forEach(([name, icon], i) => {
           const b = el('button', '', '<span>' + icon + '</span>' + name); b.type = 'button';
-          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; A.hide(s.id, i); });
+          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; if (stage) stage.preview(i); A.hide(s.id, i); });
+          if (stage) { b.addEventListener('pointerenter', () => { if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { if (!b.disabled) stage.preview(null); }); }
           g.append(b);
         });
         card.append(g);
       } else if (s.phase === 'wait') {
         table.append(seat('you · ' + MOVES[s.move][0], 'facedown', '🔒'), middle,
           seat(s.them ? 'opponent in' : 'waiting…', s.them ? 'in' : 'empty', s.them ? '🔒' : '?'));
-        card.append(table);
+        put(table);
       } else if (s.phase === 'alone') {
         table.append(seat('you', 'facedown', '🔒'), middle, seat('nobody came', 'empty', '∅'));
-        card.append(table, el('div', 'verdict draw', 'Not played · stake back'));
+        put(table); card.append(el('div', 'verdict draw', 'Not played · stake back'));
       } else {
         const win = s.verdict === 'win', loss = s.verdict === 'loss' || s.verdict === 'forfeit';
         table.append(seat('you', 'shown' + (win ? ' win' : loss ? ' loss' : ''), MOVES[s.move][1]), middle,
           seat('them', s.theirs === null ? 'empty' : 'shown' + (loss ? ' win' : win ? ' loss' : ''), s.theirs === null ? '…' : MOVES[s.theirs][1]));
-        card.append(table);
+        put(table);
         // THE RESULT NOT THERE YET (the owner 2026-10-09: "if the result takes time, show how long it takes, in seconds, with a
         // timeout"): seconds since the moves closed, and the most it can still take - the round's reveal deadline, by which the
         // seats decide whoever revealed
@@ -298,6 +609,8 @@
       }
       view.append(card);
     };
+    // THE STAGE, once Three.js is in (kanban #284); until then, and without it, the cards
+    loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); }).catch((e) => console.warn('[rps] no 3D stage: ' + e.message));
     paint();
     setInterval(paint, 1000);
   }
