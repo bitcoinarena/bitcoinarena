@@ -185,40 +185,70 @@
       scissors: { f: [[0, 0.03, 0.02, 0.26], [0, 0.03, 0.02, -0.22], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.15, 0.85, 0.6] },
     };
     const NAMES = ['rock', 'paper', 'scissors'];
-    const rr = (w, h, r) => { const s = new THREE.Shape(), x = -w / 2, y = -h / 2;
-      s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r); s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-      s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r); s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s; };
-    const palmGeo = new THREE.ExtrudeGeometry(rr(0.86, 0.94, 0.24), { depth: 0.2, bevelEnabled: true, bevelThickness: 0.09, bevelSize: 0.08, bevelSegments: 5, curveSegments: 10 });
-    palmGeo.center();
+    // THE SHAPES, SMOOTH (#285, the owner 2026-10-09: "far more polygons for the hands, they look ugly. Must look like a stylised
+    // hand"): a sculpted palm - an ellipsoid of 96 x 64, tapered to the wrist, domed on the back, broad at the knuckles - fingers
+    // of round capsules that taper to the tip, knuckle bumps, nails, a padded thumb base, a skin wrist into a rolled sleeve
+    const palmGeo = (() => {
+      const g = new THREE.SphereGeometry(0.5, 96, 64), p = g.attributes.position, v = new THREE.Vector3();
+      for (let i = 0; i < p.count; i++) {
+        v.fromBufferAttribute(p, i);
+        const u = (v.x + 0.5);                                   // 0 at the wrist, 1 at the knuckles
+        const width = 0.74 + 0.3 * Math.sin(Math.min(1, u * 1.15) * Math.PI / 2);
+        v.x *= 0.96; v.y *= width * 1.02;
+        v.z *= v.z > 0 ? 0.5 : 0.36;                             // a domed back, a flatter palm side
+        v.z += 0.04 * Math.cos(v.y * 3.1) * (v.z > 0 ? 1 : 0);   // the back rises a little between the edges
+        p.setXYZ(i, v.x, v.y, v.z);
+      }
+      g.computeVertexNormals(); return g;
+    })();
     const segGeo = new Map();
-    const capsule = (r, l) => { const k = r.toFixed(3) + ':' + l.toFixed(3); if (!segGeo.has(k)) { const g = new THREE.CapsuleGeometry(r, Math.max(0.01, l - r * 0.9), 6, 14); g.rotateZ(-Math.PI / 2); g.translate(l / 2, 0, 0); segGeo.set(k, g); } return segGeo.get(k); };
+    const capsule = (r, l) => { const k = r.toFixed(3) + ':' + l.toFixed(3); if (!segGeo.has(k)) { const g = new THREE.CapsuleGeometry(r, Math.max(0.01, l - r * 0.6), 16, 40); g.rotateZ(-Math.PI / 2); g.translate(l / 2, 0, 0); segGeo.set(k, g); } return segGeo.get(k); };
+    const ball = new THREE.SphereGeometry(1, 48, 32);
+    const nailGeo = (() => { const g = new THREE.SphereGeometry(1, 40, 24); g.scale(0.55, 0.42, 0.14); return g; })();
+    const wristGeo = new THREE.CylinderGeometry(0.27, 0.3, 0.7, 64, 1, true);
+    const sleeveGeo = new THREE.CylinderGeometry(0.38, 0.4, 1.4, 64, 1, false);
+    const rimGeo = new THREE.TorusGeometry(0.39, 0.06, 24, 96);
+    const bandGeo = new THREE.TorusGeometry(0.405, 0.022, 12, 96);
     function makeHand(skin, sheen, band, side, glow) {
-      const mat = new THREE.MeshPhysicalMaterial({ color: skin, emissive: glow, roughness: 0.34, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.16, sheen: 0.7, sheenColor: sheen, sheenRoughness: 0.4, envMapIntensity: 1.1 });
-      const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x151b28, roughness: 0.5, metalness: 0.5 });
+      const mat = new THREE.MeshPhysicalMaterial({ color: skin, emissive: glow, roughness: 0.42, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.3, sheen: 0.8, sheenColor: sheen, sheenRoughness: 0.5, envMapIntensity: 1.0 });
+      const nailMat = new THREE.MeshPhysicalMaterial({ color: new THREE.Color(skin).lerp(new THREE.Color(0xffffff), 0.45), roughness: 0.18, clearcoat: 1, clearcoatRoughness: 0.05 });
+      const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x161c2a, roughness: 0.55, metalness: 0.35 });
       const bandMat = new THREE.MeshBasicMaterial({ color: band });
       const root = new THREE.Group(), body = new THREE.Group(), hand = new THREE.Group();
       root.add(body); body.add(hand);
       hand.add(new THREE.Mesh(palmGeo, mat));
-      const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 1.3, 32), sleeveMat);
-      sleeve.rotation.z = Math.PI / 2; sleeve.scale.set(1, 1, 0.72); sleeve.position.x = -1.05; hand.add(sleeve);
-      const cuff = new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.035, 10, 40), bandMat);
-      cuff.rotation.y = Math.PI / 2; cuff.scale.set(1, 1, 0.72); cuff.position.x = -0.42; hand.add(cuff);
+      // the wrist, then the sleeve with its rolled rim and a band of light
+      const wrist = new THREE.Mesh(wristGeo, mat); wrist.rotation.z = Math.PI / 2; wrist.scale.set(1, 1, 0.7); wrist.position.x = -0.62; hand.add(wrist);
+      const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat); sleeve.rotation.z = Math.PI / 2; sleeve.scale.set(1, 1, 0.8); sleeve.position.x = -1.55; hand.add(sleeve);
+      const rim = new THREE.Mesh(rimGeo, sleeveMat); rim.rotation.y = Math.PI / 2; rim.scale.set(1, 0.8, 1); rim.position.x = -0.86; hand.add(rim);
+      const cuff = new THREE.Mesh(bandGeo, bandMat); cuff.rotation.y = Math.PI / 2; cuff.scale.set(1, 0.8, 1); cuff.position.x = -1.0; hand.add(cuff);
       const fingers = FINGERS.map((spec) => {
-        const base = new THREE.Group(); base.position.set(0.4, spec.y, 0.0); hand.add(base);
+        const base = new THREE.Group(); base.position.set(0.38, spec.y * 0.98, 0.01); hand.add(base);
+        // the knuckle: a bump on the back where the finger leaves the palm
+        const knuckle = new THREE.Mesh(ball, mat); knuckle.scale.set(spec.r * 1.15, spec.r * 1.08, spec.r * 1.0); knuckle.position.set(0.0, 0, 0.03); base.add(knuckle);
         const joints = []; let parent = base, at = 0;
-        spec.len.forEach((l, k) => { const j = new THREE.Group(); j.position.x = at; parent.add(j); j.add(new THREE.Mesh(capsule(spec.r * (1 - k * 0.06), l), mat)); joints.push(j); parent = j; at = l; });
+        spec.len.forEach((l, k) => {
+          const r = spec.r * [1, 0.92, 0.85][k];
+          const j = new THREE.Group(); j.position.x = at; parent.add(j);
+          const seg = new THREE.Mesh(capsule(r, l), mat); seg.scale.z = 0.92; j.add(seg);
+          if (k === 2) { const n = new THREE.Mesh(nailGeo, nailMat); n.scale.multiplyScalar(r * 1.25); n.position.set(l - r * 0.75, 0, r * 0.82); n.rotation.y = -0.18; j.add(n); }
+          joints.push(j); parent = j; at = l;
+        });
         return joints;
       });
-      const thumbBase = new THREE.Group(); thumbBase.position.set(-0.1, 0.42, -0.04); hand.add(thumbBase);
-      const t1 = new THREE.Group(); thumbBase.add(t1); t1.add(new THREE.Mesh(capsule(0.12, 0.32), mat));
-      const t2 = new THREE.Group(); t2.position.x = 0.32; t1.add(t2); t2.add(new THREE.Mesh(capsule(0.11, 0.26), mat));
+      // the thumb: a padded base on the palm, two round segments, a nail
+      const mound = new THREE.Mesh(ball, mat); mound.scale.set(0.3, 0.2, 0.17); mound.position.set(-0.08, 0.3, -0.02); hand.add(mound);
+      const thumbBase = new THREE.Group(); thumbBase.position.set(-0.08, 0.4, -0.02); hand.add(thumbBase);
+      const t1 = new THREE.Group(); thumbBase.add(t1); t1.add(new THREE.Mesh(capsule(0.135, 0.32), mat));
+      const t2 = new THREE.Group(); t2.position.x = 0.32; t1.add(t2); t2.add(new THREE.Mesh(capsule(0.125, 0.27), mat));
+      const tn = new THREE.Mesh(nailGeo, nailMat); tn.scale.multiplyScalar(0.15); tn.position.set(0.2, 0, 0.11); tn.rotation.y = -0.2; t2.add(tn);
       root.scale.x = side;          // the opponent's hand is the mirror of yours
       const pose = JSON.parse(JSON.stringify(POSES.idle)), target = JSON.parse(JSON.stringify(POSES.idle));
       const apply = () => {
         fingers.forEach((joints, i) => { const p = pose.f[i]; joints[0].rotation.set(0, p[0], p[3]); joints[1].rotation.y = p[1]; joints[2].rotation.y = p[2]; });
         thumbBase.rotation.set(0, 0, pose.t[0]); t1.rotation.y = pose.t[1]; t2.rotation.y = pose.t[2];
       };
-      const mats = [mat];
+      const mats = [mat, nailMat];
       return { root, body, hand, mat, mats, pose, target, apply, skin: new THREE.Color(skin),
         set(name) { const p = POSES[name]; target.f = p.f.map((x) => x.slice()); target.t = p.t.slice(); },
         step(k) { for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) pose.f[i][j] += (target.f[i][j] - pose.f[i][j]) * k; for (let j = 0; j < 3; j++) pose.t[j] += (target.t[j] - pose.t[j]) * k; apply(); } };
@@ -356,7 +386,7 @@
         me.body.position.y = Math.sin(t * 1.6) * 0.06; them.body.position.y = Math.sin(t * 1.6 + 1.3) * 0.06;
         me.body.rotation.z = Math.sin(t * 1.1) * 0.04; them.body.rotation.z = Math.sin(t * 1.1 + 0.8) * 0.04;
         const ghost = want.theirs === 'absent';
-        them.mat.transparent = ghost; them.mat.opacity += ((ghost ? 0.22 : 1) - them.mat.opacity) * 0.1;
+        for (const m of them.mats) { m.transparent = ghost; m.opacity += ((ghost ? 0.22 : 1) - m.opacity) * 0.1; }
         ringMe.material.opacity += (0.55 - ringMe.material.opacity) * 0.1; ringThem.material.opacity += ((ghost ? 0.15 : 0.55) - ringThem.material.opacity) * 0.1;
       }
       const caged = !seq && want.theirs !== 'absent';
