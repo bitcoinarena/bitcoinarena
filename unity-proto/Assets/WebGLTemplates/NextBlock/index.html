@@ -1894,7 +1894,8 @@
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
       // refused here by name rather than played on the wrong one
       {
-        const core = window.BLWP_USE_CORE && !pickFor(named.roundIdHex) ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
+        // a market's pick and a head-to-head move play no run on any core here (kanban #206, #233)
+        const core = window.BLWP_USE_CORE && !pickFor(named.roundIdHex) && !hiddenFor(named.roundIdHex) ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
         if (!core.ok) {
           window.BLWP_JOIN_REFUSED = core.why;
           if (window.BLWP_JOIN) Object.assign(window.BLWP_JOIN, { state: 'refused', why: core.why });
@@ -1921,7 +1922,7 @@
       // /round hang on the round alone, not on the entry; measured after the stake was locked (0.0.2470, 00:03Z) they ran
       // one after another - 1.5 s, 1.0 s and 1.4 s. Started at the click, the session finds them done: fetchRandomness and
       // openRound keep their answer per round, and Client.at (wrapped below) hands its proof on as BLWP_PROVED_CHAIN.
-      if (!pickFor(named.roundIdHex)) warmTheSession(named);   // a market's pick opens no session (kanban #206)
+      if (!pickFor(named.roundIdHex) && !hiddenFor(named.roundIdHex)) warmTheSession(named);   // a market's pick or a head-to-head move opens no session (kanban #206, #233)
       // THE PLAYER'S KEY IS A KEY, and this page makes one.
       //
       // `player_pubkey` used to be 32 random bytes. It is where a winner's
@@ -2421,7 +2422,7 @@
         console.log('[blwp] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: BLWPCLIENT.toHex(hidden.salt),
-          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs) });
+          nodes: named.nodes, entryCloseMs: String(named.round.entryCloseMs), gameId: BLWPCLIENT.toHex(named.round.gameId) });
         window.BLWP_HIDDEN = { round: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move };
         return;
       }
@@ -4142,6 +4143,9 @@
         headToHead: game.manifest.resultType === 3 ? { players: game.manifest.players, moveCount: game.manifest.moveCount } : null,
         hide: (id, move) => { window.ARENA_HIDDEN_CHOSEN = { round: id, move }; return window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false; },
         hidden: (id) => readHidden().find((x) => x.roundIdHex === id) || null,
+        // every move this tab hid in this game's rounds, newest last - a round leaves the lobby's rows at its entry close, and
+        // its reveal and verdict come after that
+        hiddenAll: () => readHidden().filter((x) => !x.gameId || x.gameId === game.id),
         reveal: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
           if (!h) return { ok: false, why: 'this tab hid no move in that round' };

@@ -50,9 +50,13 @@
     const paint = async () => {
       const rows = A.rows();
       const box = $('rounds');
-      const mine = rows.filter((r) => A.hidden(r.id));
+      // THIS TAB'S OWN ROUNDS FROM ITS HIDDEN MOVES, not from the lobby's rows: a round leaves the rows at its entry close,
+      // and its reveal and verdict come after that. The last 15 minutes of them, then one open round to play next.
+      const mine = A.hiddenAll().filter((h) => Date.now() < Number(h.entryCloseMs) + 900000)
+        .map((h) => rows.find((r) => r.id === h.roundIdHex) || { id: h.roundIdHex, line: 'round ' + h.roundIdHex.slice(0, 8) });
+      const pending = mine.some((r) => Date.now() < Number(A.hidden(r.id).entryCloseMs));
       const open = rows.filter((r) => r.joinable && !A.hidden(r.id));
-      const shown = [...mine, ...open.slice(0, mine.length ? 0 : 1)];
+      const shown = [...mine.slice(-1), ...(pending ? [] : open.slice(0, 1))];
       box.textContent = '';
       if (!shown.length) { const d = document.createElement('div'); d.className = 'none'; d.textContent = 'No round is open on these nodes right now - the next one appears here.'; box.append(d); }
       for (const r of shown) {

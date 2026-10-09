@@ -125,6 +125,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // nothing between, so these are the two shapes a round may take.
                                      extraPorts = [],
                                      bDownAtStart = false,
+                                     // EACH SEAT CLOSES A ROUND ITSELF AT ITS END (kanban #233), as a live seat does with
+                                     // ARENA_CLOSE_AT_END=1 - for a stack nobody else closes rounds on (the demo)
+                                     closeAtEnd = false,
                                      store = ':memory:', rpc = null, cli = null,
                                      page = 'https://btc-logistics-core.pages.dev',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
@@ -618,7 +621,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   } : {};
   const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}) };
   // ATTACHED: the page's bond proof for the running nodes to serve (their ARENA_ATTACH_PROOF_DIR), and no node started -
   // each member is its port and its key, the node itself another process's.
   if (attach) {
@@ -630,7 +633,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let a = attach ? attached(members[0]) : await launchNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}) };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
@@ -1057,7 +1060,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const tip = await tipHeader();
     let committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
     let start = committee + MIN_ENTRY_WINDOW_MS;
-    let close = start + (contract.entryCloseMs - contract.startTimeMs);
+    // `kind.entryAfterStartMs` (kanban #233): this kind's own entry window after its start - a head-to-head round closes its
+    // entries a couple of minutes in, not when the first round's (a 30-minute nextblock window) would
+    let close = start + (kind.entryAfterStartMs !== undefined ? BigInt(kind.entryAfterStartMs) : (contract.entryCloseMs - contract.startTimeMs));
     if (roundPeriodMs) {
       // ON THE PERIOD: the last round of this kind's start + 90 s, stepped on until its committee time is still ahead of
       // the chain and the clock (a committee time the chain has passed cannot name a beacon after its publication).
