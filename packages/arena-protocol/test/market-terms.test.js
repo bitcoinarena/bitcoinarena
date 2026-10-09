@@ -35,11 +35,11 @@ test('a market\'s terms are bounded: its fee within the network\'s, a question, 
   assert.equal(marketTermsFit(TERMS).ok, true);
   assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 501 }).why, /node fee is 0 to 500/);
   assert.match(marketTermsFit({ ...TERMS, donationBps: 600 }).why, /donation is 0 to 500/);
-  // AT MOST 5 % IN ALL (the owner 2026-10-09): 5 % node fee alone stands, 4 % + 1 % stands, 4 % + 1.01 % does not
-  assert.equal(marketTermsFit({ ...TERMS, nodeFeeBps: 500, donationBps: 0 }).ok, true);
-  assert.equal(marketTermsFit({ ...TERMS, nodeFeeBps: 400, donationBps: 100 }).ok, true);
-  assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 400, donationBps: 101 }).why, /at most 500 bps \(5 %\) together; these come to 501/);
-  assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 300, donationBps: 300 }).why, /at most 500 bps/);
+  // AT MOST 10 % IN ALL, EACH AT MOST 5 % (the owner 2026-10-09: "I mean 10 in total"): 5 % + 5 % stands, 5.01 % of either does not
+  assert.equal(marketTermsFit({ ...TERMS, nodeFeeBps: 500, donationBps: 500 }).ok, true);
+  assert.equal(marketTermsFit({ ...TERMS, nodeFeeBps: 300, donationBps: 300 }).ok, true);
+  assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 501, donationBps: 0 }).why, /node fee is 0 to 500/);
+  assert.match(marketTermsFit({ ...TERMS, nodeFeeBps: 0, donationBps: 501 }).why, /donation is 0 to 500/);
   assert.match(marketTermsFit({ ...TERMS, question: '' }).why, /question/);
   assert.match(marketTermsFit({ ...TERMS, deadlineAfterResolveMs: 1000n }).why, /1 minute to 7 days/);
   assert.match(marketTermsFit({ ...TERMS, sourceRule: '' }).why, /rule/);

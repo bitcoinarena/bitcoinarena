@@ -55,7 +55,7 @@ export const ATTESTORS_MAX = 16;
 export const MARKET_TERMS_MARKER = 0x01;
 export const MARKET_FEE_BPS_MAX = 500;
 export const MARKET_DONATION_BPS_MAX = 500;
-export const MARKET_TOTAL_FEE_BPS_MAX = 500;
+export const MARKET_TOTAL_FEE_BPS_MAX = 1000;
 export const MARKET_RESOLVE_MAX_MS = 30n * 24n * 3600000n;
 export const MARKET_DEADLINE_MIN_MS = 60000n;
 export const MARKET_DEADLINE_MAX_MS = 7n * 24n * 3600000n;
@@ -63,9 +63,10 @@ export function marketTermsFit(t) {
   if (!t || typeof t !== 'object') return { ok: false, why: 'a market\'s terms are an object' };
   if (!Number.isInteger(t.nodeFeeBps) || t.nodeFeeBps < 0 || t.nodeFeeBps > MARKET_FEE_BPS_MAX) return { ok: false, why: `a market's node fee is 0 to ${MARKET_FEE_BPS_MAX} bps` };
   if (!Number.isInteger(t.donationBps) || t.donationBps < 0 || t.donationBps > MARKET_DONATION_BPS_MAX) return { ok: false, why: `a market's donation is 0 to ${MARKET_DONATION_BPS_MAX} bps` };
-  // AT MOST 5 % IN ALL (the owner 2026-10-09: "fees per market can't be more than 5% to prevent malicious markets"): the node
-  // fee and the donation together - a market cannot take more of a stake than the network's own games do in node fee
-  if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (5 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
+  // AT MOST 10 % IN ALL (the owner 2026-10-09: "fees per market can't be more than ... to prevent malicious markets" - "I mean 10
+  // in total"): the node fee and the donation together, each at most 5 % - a market takes no more of a stake than the
+  // network's own games can (5 % node fee + up to 5 % donation)
+  if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (10 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
   if (typeof t.question !== 'string' || t.question.length < 1 || t.question.length > 256) return { ok: false, why: 'a market asks its question in 1 to 256 characters' };
   if (typeof t.resolveAfterCloseMs !== 'bigint' || t.resolveAfterCloseMs < 0n || t.resolveAfterCloseMs > MARKET_RESOLVE_MAX_MS) return { ok: false, why: 'a market resolves 0 to 30 days after its entry close' };
   if (typeof t.deadlineAfterResolveMs !== 'bigint' || t.deadlineAfterResolveMs < MARKET_DEADLINE_MIN_MS || t.deadlineAfterResolveMs > MARKET_DEADLINE_MAX_MS) return { ok: false, why: 'a market gives its attestors 1 minute to 7 days after its resolution time' };
