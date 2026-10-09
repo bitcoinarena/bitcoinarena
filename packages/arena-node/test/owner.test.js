@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
@@ -85,6 +86,8 @@ test('without an owner store the node has no owner area', async () => {
   try { assert.equal((await fetch(`http://127.0.0.1:${node.port}/owner`)).status, 404); } finally { await node.close(); }
 });
 
-test('the owner page bundle is what its source builds', () => {
+// the check builds with arena-client's esbuild; a tree synced without node_modules (the test host's suite copy) has none
+const ESBUILD = new URL('../../arena-client/node_modules/esbuild/lib/main.js', import.meta.url);
+test('the owner page bundle is what its source builds', { skip: !existsSync(ESBUILD) && 'no esbuild in arena-client/node_modules: the bundle check needs the build tool' }, () => {
   execFileSync(process.execPath, [new URL('../tools/bundle-owner.mjs', import.meta.url).pathname, '--check']);
 });
