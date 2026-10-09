@@ -1,0 +1,143 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bitcoin Arena · Node Owner</title>
+<!-- THE OWNER AREA OF A NODE (kanban #276): /Dashboard/owner. The owner is a key made from 24 words this browser keeps;
+     every request it sends is signed with it (src/owner.js). Nothing here is a password, and nothing leaves the browser
+     but public keys and signatures. -->
+<style>
+:root{--bg:#0f1218;--card:#171c25;--line:#2a3140;--text:#e6e9ef;--dim:#8b93a3;--gv:#f2a93b;--st:#4fa3ff;--ok:#3fbf7f;--bad:#e25c5c;color-scheme:dark}
+@media (prefers-color-scheme: light){:root:not([data-theme="dark"]){--bg:#f5f6f8;--card:#fff;--line:#dde1e7;--text:#1b2230;--dim:#5d6676;color-scheme:light}}
+*{box-sizing:border-box}body{margin:0 auto;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif;padding:16px;max-width:760px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:14px;margin:22px 0 8px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.sub{color:var(--dim);margin-bottom:14px;overflow-wrap:anywhere}a{color:var(--st)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin:10px 0}
+.card h3{margin:0 0 8px;font-size:16px}.card p{margin:0 0 10px}
+.row{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 10px;padding:4px 0;border-bottom:1px solid var(--line)}.row:last-child{border:0}.row b{overflow-wrap:anywhere;text-align:right}
+button{font:600 15px system-ui;border-radius:10px;padding:11px 16px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer;margin:4px 6px 4px 0}
+button.primary{background:var(--gv);border-color:var(--gv);color:#1a1200}button:disabled{opacity:.5;cursor:default}
+input,textarea{width:100%;font:15px ui-monospace,monospace;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+textarea{min-height:110px}
+.words{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin:10px 0;counter-reset:w}
+.words span{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px;font:14px ui-monospace,monospace}
+.words span::before{counter-increment:w;content:counter(w) ". ";color:var(--dim)}
+.warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
+.err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
+label{display:block;margin:8px 0 4px;color:var(--dim)}
+</style></head><body>
+<h1>Bitcoin Arena · Node Owner</h1>
+<div class="sub" id="who">loading…</div>
+<div id="view"></div>
+<p class="sub"><a id="public" href="#">← Public dashboard</a></p>
+<script type="module">
+// The node's address: this page is <base>/Dashboard/owner, its doors are <base>/owner...
+const BASE = location.pathname.replace(/\/[Dd]ashboard\/owner\/?$/, '');
+const at = (p) => BASE + p;
+document.getElementById('public').href = at('/Dashboard');
+const C = await import(at('/owner/client.js'));
+const STORE = 'arena-owner-seed:' + BASE;          // per node address, in this browser only
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+const view = (html) => { $('view').innerHTML = html; };
+const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
+const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
+const forget = () => { try { localStorage.removeItem(STORE); } catch {} start(); };
+let state = null;
+const signed = (action, args = {}) => {
+  const seed = readSeed();
+  return C.signOwnerRequest({ node: state.node, action, args, secret: C.ownerSecretFromSeed(seed), sign: C.sign, pubkeyOf: C.pubkeyOf });
+};
+const post = async (path, body) => {
+  const r = await fetch(at(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const t = await r.text();
+  let j = null; try { j = JSON.parse(t); } catch {}
+  if (!r.ok) throw new Error((j && j.why) || t.trim() || 'HTTP ' + r.status);
+  return j;
+};
+
+// 1. NO WORDS IN THIS BROWSER: make new ones, or restore
+function welcome() {
+  view(`<div class="card"><h3>Your owner key</h3>
+    <p>The owner of this node is a key made from <b>24 words</b>. This browser keeps them; anyone with them is the owner.</p>
+    <button class="primary" id="make">Create new 24 words</button><button id="restore">I have my 24 words</button></div>`);
+  $('make').onclick = () => make(globalThis.crypto.getRandomValues(new Uint8Array(32)));
+  $('restore').onclick = restore;
+}
+// 1a. NEW WORDS: shown once, written down, three of them typed back
+function make(seed) {
+  const words = C.phraseFromSeed(seed).words;
+  const ask = [2, 10, 19].map((i) => i + Math.floor(Math.random() * 3));      // three words, a different three each time
+  view(`<div class="card"><h3>Write these 24 words down</h3>
+    <div class="warn">On paper, in this order. They are the only way back to this node's owner area: from another browser, or after this one is cleared. Nobody can recover them for you.</div>
+    <div class="words">${words.map((w) => `<span>${w}</span>`).join('')}</div>
+    <p>Then type three of them back:</p>
+    ${ask.map((i) => `<label>Word ${i + 1}</label><input id="w${i}" autocomplete="off" autocapitalize="none" spellcheck="false">`).join('')}
+    <div class="err" id="err"></div><button class="primary" id="ok">I wrote them down</button><button id="back">Back</button></div>`);
+  $('back').onclick = welcome;
+  $('ok').onclick = () => {
+    if (!ask.every((i) => $('w' + i).value.trim().toLowerCase() === words[i])) { $('err').textContent = 'One of the three words is not right. Check what you wrote.'; return; }
+    if (!keepSeed(seed)) { $('err').textContent = 'This browser does not let the page keep them (private mode?).'; return; }
+    start();
+  };
+}
+// 1b. RESTORE: the 24 words, checked by their checksum word
+function restore() {
+  view(`<div class="card"><h3>Restore from your 24 words</h3><label>The 24 words, in order</label>
+    <textarea id="ws" autocomplete="off" autocapitalize="none" spellcheck="false"></textarea>
+    <div class="err" id="err"></div><button class="primary" id="ok">Restore</button><button id="back">Back</button></div>`);
+  $('back').onclick = welcome;
+  $('ok').onclick = () => {
+    const got = C.seedFromPhrase($('ws').value);
+    if (!got.ok) { $('err').textContent = 'These are not your 24 words: ' + got.why; return; }
+    const seed = got.seed;
+    if (!keepSeed(seed)) { $('err').textContent = 'This browser does not let the page keep them (private mode?).'; return; }
+    start();
+  };
+}
+// 2. THE NODE HAS NO OWNER: claim it with the code from its log
+function claim(mine) {
+  view(`<div class="card"><h3>Claim this node</h3>
+    <p>This node has no owner yet. Its claim code is in the node's log and in the file <code>&lt;database&gt;.owner-claim</code> on its machine.</p>
+    <label>Claim code</label><input id="code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" autocapitalize="characters">
+    <div class="err" id="err"></div><button class="primary" id="ok">Become the owner</button></div>
+    <div class="card"><div class="row"><span>Your owner key</span><b>${esc(mine)}</b></div></div>`);
+  $('ok').onclick = async () => {
+    $('ok').disabled = true;
+    try { await post('/owner/claim', signed('claim', { code: $('code').value })); start(); }
+    catch (e) { $('err').textContent = e.message; $('ok').disabled = false; }
+  };
+}
+// 3. THE OWNER AREA
+async function area() {
+  let me;
+  try { me = await post('/owner/login', signed('login')); }
+  catch (e) { view(`<div class="card"><h3>Could not sign in</h3><p class="err">${esc(e.message)}</p><button id="again">Try again</button></div>`); $('again').onclick = start; return; }
+  const games = me.games || [];
+  view(`<div class="card"><h3>Signed in as the owner <span class="ok">✓</span></h3>
+      <div class="row"><span>Owner key</span><b>${esc(state.owner.slice(0, 16))}…</b></div>
+      <div class="row"><span>Owner since</span><b>${new Date(state.claimedAtMs).toISOString().slice(0, 16).replace('T', ' ')} UTC</b></div></div>
+    <h2>This node</h2><div class="card">
+      <div class="row"><span>Node key</span><b>${esc(state.node.slice(0, 16))}…</b></div>
+      <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
+      <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
+    <h2>Your 24 words</h2><div class="card"><p>They are kept in this browser only.</p>
+      <button id="show">Show them</button><button id="forget">Forget them on this browser</button><div id="shown"></div></div>`);
+  $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
+  $('forget').onclick = () => { if (confirm('Forget the 24 words on this browser? You need them written down to come back.')) forget(); };
+}
+async function start() {
+  try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
+  catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
+  $('who').textContent = 'Node ' + state.node;
+  const seed = readSeed();
+  if (!seed) return welcome();
+  const mine = C.toHex(C.pubkeyOf(C.ownerSecretFromSeed(seed)));
+  if (!state.claimed) return claim(mine);
+  if (state.owner !== mine) {
+    view(`<div class="card"><h3>These words are not this node's owner</h3><p>This node belongs to another key. Restore the right 24 words, or forget these.</p>
+      <button id="forget">Forget these words</button></div>`);
+    $('forget').onclick = forget; return;
+  }
+  return area();
+}
+start();
+</script>
+</body></html>

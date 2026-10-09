@@ -173,7 +173,7 @@ svg{width:100%;height:auto;display:block}table{width:100%;border-collapse:collap
 th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:tabular-nums}.ok{color:var(--ok)}.bad{color:var(--bad)}.scroll{overflow-x:auto}
 .legend span{display:inline-block;margin-right:12px;color:var(--dim)}tr.rr{cursor:pointer}tr.rr:hover td{background:rgba(127,127,127,.08)}tr.pl>td{background:rgba(127,127,127,.05);padding:6px 6px 10px 22px}tr.pl table{font-size:12px}a{color:var(--st)}.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 </style></head><body>
-<h1>Bitcoin Arena · Node Dashboard</h1><div class="sub" id="who">loading…</div>
+<h1>Bitcoin Arena · Node Dashboard</h1><div class="sub" id="who">loading…</div><div class="sub"><a href="Dashboard/owner" id="ownerlink">Owner area →</a></div>
 <h2>Earnings</h2><div class="tabs" id="tabs"></div><div class="grid" id="totals" style="margin-top:8px"></div>
 <h2>Fee earned per day, last 30 days (msat)</h2><div class="card" id="chartbox"><div id="tip" role="status"></div><div class="legend"><span><i style="background:var(--gv)"></i>game/verify</span><span><i style="background:var(--st)"></i>settlement</span><span><i style="background:var(--gd)"></i>guardian</span></div><div id="chart"></div></div>
 <h2>Rounds checked</h2><div class="card scroll"><table id="rounds"></table></div>
