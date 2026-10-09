@@ -266,7 +266,7 @@ export function orderFromJson(j) {
  * (batch k takes what reached any seat before (k + 1) x the interval) and its order ids in order. Two seats that signed the
  * same id hold the same set, so they clear it the same way (`bookBatch` is a pure function of it).
  */
-export function batchId({ roundId, k, orderIds }) {
+export function bookBatchId({ roundId, k, orderIds }) {
   if (!obIs32(roundId)) throw new Error('a batch names its 32-byte round');
   if (typeof k !== 'bigint' || k < 0n) throw new Error('a batch number is a BigInt');
   const ids = [...orderIds].sort();
