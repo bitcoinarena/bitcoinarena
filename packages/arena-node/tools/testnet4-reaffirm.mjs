@@ -13,7 +13,16 @@
 // Without --publish it builds everything, checks every transaction with testmempoolaccept, reads each back as the census
 // reads it, and broadcasts nothing.
 //
-//   ARENA_FUND_INPUT=<txid>:<vout> node tools/testnet4-reaffirm.mjs [--publish]
+//   ARENA_FUND_INPUT=<txid>:<vout> node tools/testnet4-reaffirm.mjs [--publish] [--update-only]
+//
+// THE ADVERTISEMENT CARRIED IS THE BOND'S NEWEST OF THE BLWP ERA (kanban #209, measured 2026-10-09): the BLWP updates of
+// 154282 named each node's guardian of federation 337ae01a; step 4's updates (155609) were built from the bond's FIRST
+// advertisement (154172), whose guardian_of[] names keys the federation does not have - so under series ab069055's census
+// 0 of its 7 guardians were bonded and every seat refused every paid round (409, §23.6). The BLWP updates pay the BLWP
+// marker and carry the "BLW" 'A' payload, which the Arena reader does not look for; they are read here by the ancestor's
+// layout, id and payload. --update-only: the bonds are re-affirmed already (155609) - one update each, no re-affirmation.
+// ARENA_FEDERATION_READ_DIR (+ ARENA_STAKE_LOCK_BIN): every update must name, for the federation, only guardian keys its
+// config has, and at least its threshold of them - read from the federation before anything is built.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -26,9 +35,13 @@ import { readAdvertUpdate, checkAgainstBond } from '../../arena-protocol/src/adv
 import { readReaffirmationPayload, reaffirmationMessage } from '../../arena-protocol/src/reaffirm.js';
 import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { ancestorMarker, ancestorAdvertId, decodeAncestorAdvert } from '../../arena-protocol/src/ancestor.js';
+import { splitSignedAdvert } from '../../arena-protocol/src/advert.js';
+import { witnessRunsOf } from '../../arena-protocol/src/tx.js';
 
 const env = process.env;
 const publish = process.argv.includes('--publish');
+const updateOnly = process.argv.includes('--update-only');
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
 const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
 const wallet = env.ARENA_TN4_BOND_WALLET || 'blwp-tn4-bonds';
@@ -49,6 +62,56 @@ const keyOf = (n) => {
   finally { db.close(); }
 };
 
+// THE BOND'S NEWEST BLWP UPDATE: the BLWP marker's unspent dust at or above the bond, its "BLW" 'A' payload naming this
+// bond, the signed body in its witness under the BLWP advert id, signed by the node key; the highest such wins.
+const BLWP_UPDATE_MAGIC = '424c5741';
+let ancestorMarkers = null;
+function newestAncestorUpdateOf(bond, nodePubkey) {
+  if (!ancestorMarkers) {
+    const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(ancestorMarker('testnet4'))})`])));
+    ancestorMarkers = (scan.unspents || []).filter((m) => m.height > 0);
+  }
+  const bondTxid = toHex(fromHex(bond.txid).reverse());
+  let best = null;
+  for (const m of ancestorMarkers) {
+    if (m.height < bond.height) continue;
+    let tx;
+    try { tx = parseTransaction(fromHex(cli('getrawtransaction', m.txid, 'false', cli('getblockhash', String(m.height))))); } catch { continue; }
+    const payloads = commitmentsOf(tx).filter((c) => c.length === 72 && toHex(c.subarray(0, 4)) === BLWP_UPDATE_MAGIC);
+    if (payloads.length !== 1) continue;
+    const p = payloads[0];
+    if (toHex(p.subarray(4, 36)) !== bondTxid || new DataView(p.buffer, p.byteOffset).getUint32(36, true) !== bond.vout) continue;
+    const id = p.subarray(40, 72);
+    for (const item of witnessRunsOf(tx)) {
+      try {
+        const { body, signature } = splitSignedAdvert(item);
+        if (toHex(ancestorAdvertId(body)) !== toHex(id)) continue;
+        const advert = decodeAncestorAdvert(body);
+        if (toHex(advert.nodePubkey) !== toHex(nodePubkey) || !verify(signature, id, nodePubkey)) continue;
+        if (!best || m.height > best.height) best = { advert, height: m.height, txid: m.txid };
+        break;
+      } catch { /* not a signed body */ }
+    }
+  }
+  return best;
+}
+
+// THE FEDERATION'S GUARDIANS, when its client directory is named: what every update's guardian_of[] is checked against
+let federation = null;
+if (env.ARENA_FEDERATION_READ_DIR) {
+  const j = JSON.parse(execFileSync(env.ARENA_STAKE_LOCK_BIN || `${home}/patched/bin/blwp-stake-lock`,
+    ['--mode', 'guardians', '--data-dir', env.ARENA_FEDERATION_READ_DIR], { encoding: 'utf8', timeout: 120000 }).trim().split('\n').pop());
+  federation = { id: String(j.federation_id), threshold: Number(j.threshold), keys: new Set((j.keys || []).map((k) => String(k.key))) };
+  say({ federation: federation.id.slice(0, 16), guardians: federation.keys.size, threshold: federation.threshold });
+}
+const guardiansOk = (advert) => {
+  if (!federation) return { ok: true };
+  const named = (advert.guardianOf || []).filter((g) => toHex(g.federationId) === federation.id).map((g) => toHex(g.guardianKey));
+  const unknown = named.filter((k) => !federation.keys.has(k));
+  if (unknown.length) return { ok: false, why: `names guardian key(s) the federation does not have: ${unknown.map((k) => k.slice(0, 8)).join(', ')}` };
+  return { ok: true, keys: named };
+};
+
 const plans = [];
 for (let n = 1; n <= 7; n++) {
   const { secret, pubkey } = keyOf(n);
@@ -59,16 +122,28 @@ for (let n = 1; n <= 7; n++) {
     ancestor: !!bond.ancestor, otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), endpoint: bond.advert.endpoint,
     guardianOf: (bond.advert.guardianOf || []).length, hostsNow: (bond.advert.hostedGames || []).map((g) => toHex(g).slice(0, 8)) });
   if (!bond.ancestor) throw new Error(`node ${n}: its bond is not the BLWP network's - nothing to re-affirm (already Arena's?)`);
-  const advert = { ...bond.advert, hostedGames: [NEXTBLOCK.gameId], timestamp: BigInt(Date.now()) };
+  const blwp = newestAncestorUpdateOf(bond, pubkey);
+  const base = blwp ? blwp.advert : bond.bondAdvert;
+  const advert = { ...base, hostedGames: [NEXTBLOCK.gameId], timestamp: BigInt(Date.now()) };
+  const g = guardiansOk(advert);
+  if (!g.ok) throw new Error(`node ${n}: the update ${g.why}`);
+  say({ node: n, carries: blwp ? `BLWP update ${blwp.txid.slice(0, 16)} at ${blwp.height}` : `bond advertisement at ${bond.height}`,
+    arenaNow: bond.updatedBy ? `${bond.updatedBy.txid.slice(0, 16)} at ${bond.updatedBy.height}` : null,
+    guardianOf: (advert.guardianOf || []).map((x) => `${toHex(x.federationId).slice(0, 8)}:${toHex(x.guardianKey).slice(0, 8)}`) });
   plans.push({ n, secret, pubkey, bond, advert,
-    reaffirm: rt.prepareReaffirmation(secret, bond, { networkId: NETWORK_ID_TESTNET4 }),
+    reaffirm: updateOnly ? null : rt.prepareReaffirmation(secret, bond, { networkId: NETWORK_ID_TESTNET4 }),
     update: rt.prepareAdvertUpdate(secret, advert) });
+}
+if (federation) {
+  const covered = new Set(plans.flatMap((p) => guardiansOk(p.advert).keys));
+  if (covered.size < federation.threshold) throw new Error(`the updates name ${covered.size} of the federation's guardians, below its threshold ${federation.threshold}`);
+  say({ guardiansNamed: covered.size, threshold: federation.threshold });
 }
 
 // THE CARRIER KEYS, WRITTEN FIRST
 const keysPath = join(home, `reaffirm-carriers-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}.json`);
 writeFileSync(keysPath, JSON.stringify(plans.flatMap((p) => [
-  { node: p.n, kind: 'reaffirmation', bond: `${p.bond.txid}:${p.bond.vout}`, carrierSecret: toHex(p.reaffirm.carrierSecret), carrierSpk: toHex(p.reaffirm.spk) },
+  ...(p.reaffirm ? [{ node: p.n, kind: 'reaffirmation', bond: `${p.bond.txid}:${p.bond.vout}`, carrierSecret: toHex(p.reaffirm.carrierSecret), carrierSpk: toHex(p.reaffirm.spk) }] : []),
   { node: p.n, kind: 'update', bond: `${p.bond.txid}:${p.bond.vout}`, carrierSecret: toHex(p.update.carrierSecret), carrierSpk: toHex(p.update.spk) },
 ]), null, 2) + '\n', { mode: 0o600 });
 
@@ -78,7 +153,7 @@ if (!input) throw new Error(`${fundTxid}:${fundVout} is not an unspent output`);
 const inputSats = Math.round(input.value * 1e8);
 if (plans.some((p) => p.bond.txid === fundTxid)) throw new Error('that input is in a bond transaction; it is not spent here');
 if (inputSats <= 1000) throw new Error('that input has a marker\'s value; it is not spent here');
-const spks = plans.flatMap((p) => [p.reaffirm.spk, p.update.spk]);
+const spks = plans.flatMap((p) => (p.reaffirm ? [p.reaffirm.spk, p.update.spk] : [p.update.spk]));
 const outputs = spks.map((spk) => ({ [JSON.parse(cli('decodescript', toHex(spk))).address]: Number(CARRIER_SATS) / 1e8 }));
 const funded = JSON.parse(cli('-named', 'walletcreatefundedpsbt', `inputs=${JSON.stringify([{ txid: fundTxid, vout: Number(fundVout) }])}`,
   `outputs=${JSON.stringify(outputs)}`, `options=${JSON.stringify({ add_inputs: false, include_unsafe: true, fee_rate: 2 })}`));
@@ -93,33 +168,35 @@ const utxo = (spk) => ({ txid: fundingTx.txid, vout: fundingTx.vout.find((o) => 
 
 const built = [];
 for (const p of plans) {
-  const r = rt.postReaffirmation(p.reaffirm, { utxo: utxo(p.reaffirm.spk) });
+  const r = p.reaffirm ? rt.postReaffirmation(p.reaffirm, { utxo: utxo(p.reaffirm.spk) }) : null;
   const u = rt.postAdvertUpdate(p.update, { txid: p.bond.txid, vout: p.bond.vout }, { utxo: utxo(p.update.spk) });
-  for (const [what, hex] of [['re-affirmation', r.hex], ['update', u.hex]]) {
+  for (const [what, hex] of [...(r ? [['re-affirmation', r.hex]] : []), ['update', u.hex]]) {
     const d = JSON.parse(cli('decoderawtransaction', hex));
     // NO BOND IS SPENT OR POSTED: one input, its carrier; no output of a bond's size
     if (d.vin.length !== 1 || d.vin[0].txid !== fundingTx.txid) throw new Error(`node ${p.n}: the ${what} spends something other than its carrier`);
     if (d.vout.some((o) => Math.round(o.value * 1e8) >= 10000)) throw new Error(`node ${p.n}: the ${what} carries a bond-sized output`);
   }
   // READ BACK AS THE CENSUS READS THEM, before anything is broadcast
-  const rp = commitmentsOf(parseTransaction(fromHex(r.hex))).map(readReaffirmationPayload).find(Boolean);
+  const rp = r ? commitmentsOf(parseTransaction(fromHex(r.hex))).map(readReaffirmationPayload).find(Boolean) : null;
   const bondTxid = fromHex(p.bond.txid).reverse();
-  const rOk = !!rp && toHex(rp.networkPrefix) === toHex(NETWORK_ID_TESTNET4.subarray(0, 8))
+  const rOk = !r || !!rp && toHex(rp.networkPrefix) === toHex(NETWORK_ID_TESTNET4.subarray(0, 8))
     && verify(rp.signature, reaffirmationMessage({ networkId: NETWORK_ID_TESTNET4, bondTxid, bondVout: p.bond.vout }), p.pubkey);
   if (!rOk) throw new Error(`node ${p.n}: the re-affirmation does not read back for testnet4's Arena id under its node key`);
   const read = readAdvertUpdate(fromHex(u.hex), { network: 'testnet4' });
   const checked = read.ok ? await checkAgainstBond(read, { txid: bondTxid, vout: p.bond.vout, nodePubkey: p.pubkey }, verify) : read;
   if (!checked.ok) throw new Error(`node ${p.n}: the update does not read back: ${checked.why}`);
   if (toHex(checked.advert.hostedGames[0] || new Uint8Array()) !== toHex(NEXTBLOCK.gameId)) throw new Error(`node ${p.n}: the update hosts another game`);
+  const gr = guardiansOk(checked.advert);
+  if (!gr.ok || (federation && !gr.keys.length)) throw new Error(`node ${p.n}: the update as read back ${gr.why || 'names none of the federation\'s guardians'}`);
   built.push({ n: p.n, bond: `${p.bond.txid}:${p.bond.vout}`, reaffirmation: r, update: u });
 }
-const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([fundingHex, ...built.flatMap((b) => [b.reaffirmation.hex, b.update.hex])])));
+const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([fundingHex, ...built.flatMap((b) => (b.reaffirmation ? [b.reaffirmation.hex, b.update.hex] : [b.update.hex]))])));
 say({ funding: fundingTx.txid, fundingFee: funded.fee, inputSats, carriers: spks.length, carrierKeys: keysPath, network: toHex(NETWORK_ID_TESTNET4).slice(0, 16),
   accept: accept.map((a) => ({ txid: a.txid.slice(0, 16), allowed: a.allowed, why: a['reject-reason'] || null })) });
 if (!accept.every((a) => a.allowed)) throw new Error('the mempool refuses a transaction above; nothing is broadcast');
-for (const b of built) say({ node: b.n, bond: b.bond, reaffirmation: b.reaffirmation.txid, update: b.update.txid });
+for (const b of built) say({ node: b.n, bond: b.bond, reaffirmation: b.reaffirmation ? b.reaffirmation.txid : null, update: b.update.txid });
 if (!publish) { say({ published: false, why: 'no --publish: built and checked, nothing broadcast' }); process.exit(0); }
 cli('sendrawtransaction', fundingHex);
-for (const b of built) { cli('sendrawtransaction', b.reaffirmation.hex); cli('sendrawtransaction', b.update.hex); }
-say({ published: true, funding: fundingTx.txid, reaffirmations: built.map((b) => b.reaffirmation.txid), updates: built.map((b) => b.update.txid) });
+for (const b of built) { if (b.reaffirmation) cli('sendrawtransaction', b.reaffirmation.hex); cli('sendrawtransaction', b.update.hex); }
+say({ published: true, funding: fundingTx.txid, reaffirmations: built.filter((b) => b.reaffirmation).map((b) => b.reaffirmation.txid), updates: built.map((b) => b.update.txid) });
 process.exit(0);
