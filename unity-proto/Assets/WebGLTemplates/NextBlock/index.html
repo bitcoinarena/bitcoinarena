@@ -122,6 +122,8 @@
     #arena-fps-bench { display: block; color: #c9d1d9; font-weight: 500; white-space: pre-line; text-align: left; }
     #arena-fps-bench:empty { display: none; }
     body.blwp-clean #arena-fps { display: none; }
+    /* a game with its own client (Rock Paper Scissors) shows no frame rate (the owner 2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
+    body.arena-own-client #arena-fps { display: none; }
     #creep { position: absolute; left: 90%; top: 0; height: 100%; width: 10%; transform-origin: left center; transform: scaleX(0);
       background: linear-gradient(90deg, #ffc46b, #ffe2a8); border-radius: 0 99px 99px 0; }
     #creep.on { animation: creep90 6s cubic-bezier(0.15, 0.7, 0.3, 1) forwards; }
@@ -2111,6 +2113,8 @@
       const marketHere = (() => { const c = pickFor(named.roundIdHex);
         return BLWPCLIENT.marketForRound(named.round, c && c.manifestHex ? { manifestBytes: BLWPCLIENT.fromHex(c.manifestHex) } : {}); })();
       if (marketHere && marketHere.fee) named.round.feeBps = marketHere.fee.nodeBps + marketHere.fee.donationBps;
+      // ITS TERMS (kanban #236): the lock span its rounds name is checked by them before anything is locked (lock-expiry.js)
+      if (marketHere && marketHere.terms) named.round.marketTerms = marketHere.terms;
       const donation = marketHere && marketHere.fee
         ? { bps: 0, donationMsat: 0n, inFee: marketHere.fee.donationBps }
         : pays && donationSet
@@ -4179,6 +4183,7 @@
       const file = await BLWPCLIENT.gameClientFile({ game, url: 'games/' + encodeURIComponent(game.name) + '/index.html', digest });
       if (!file.ok) throw new Error(file.why);
       // WHAT THE CLIENT IS HANDED: the engine's (this page's lobby, pick sheet, wallet and seed), never a second copy of them
+      const hereProofs = new Map();   // this tab's signed presence, one per round's table (ARENA_GAME.here)
       window.ARENA_GAME = {
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
           outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length },
@@ -4203,8 +4208,34 @@
         reveal: async (id) => {
           const h = readHidden().find((x) => x.roundIdHex === id);
           if (!h) return { ok: false, why: 'this tab hid no move in that round' };
-          const seats = await BLWPCLIENT.revealMove({ entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes });
+          // THIS TAB'S IDENTITY ON THE ENTRY (kanban #280): the rounds it plays against the same opponent count one score
+          let identity = null;
+          try { identity = BLWPCLIENT.identityProofFor({ roundIdHex: id, entryIdHex: h.entryIdHex, storage: window.sessionStorage,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE }); } catch (e) { console.warn('[arena] no identity on the reveal: ' + e.message); }
+          const seats = await BLWPCLIENT.revealMove({ entryIdHex: h.entryIdHex, move: h.move, salt: h.saltHex, nodes: h.nodes, identity });
           return { ok: seats.some((x) => x.status === 201 || x.status === 200), seats };
+        },
+        // WHO SITS AT A ROUND'S TABLE (kanban #280, the owner 2026-10-09 playtest: both tabs at one table read "You are alone" -
+        // the table counted moves, not players): this tab says it is here to the round's seats, signed with its identity key,
+        // and reads back who else is - { others: [{ key, name }] } from the seats that answer, this tab left out; null if none does
+        here: async (id) => {
+          const h = readHidden().find((x) => x.roundIdHex === id);
+          const nodes = h ? h.nodes : (window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(id) : []);
+          let proof;
+          try { proof = hereProofs.get(id) || BLWPCLIENT.presenceProofFor({ roundIdHex: id, storage: window.sessionStorage,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE }); } catch (e) { return null; }
+          hereProofs.set(id, proof);
+          if (hereProofs.size > 32) hereProofs.delete(hereProofs.keys().next().value);
+          const said = await Promise.all(nodes.map(async (n) => {
+            try {
+              const r = await fetch(String(n).replace(/\/+$/, '') + '/here?round=' + id, { method: 'POST', body: JSON.stringify(proof), cache: 'no-store', signal: AbortSignal.timeout(4000) });
+              return r.ok ? (await r.json()).here || [] : null;
+            } catch { return null; }
+          }));
+          if (said.every((x) => x === null)) return null;
+          const others = new Map();
+          for (const x of said) for (const p of (x || [])) if (p.key !== proof.key) others.set(p.key, { key: p.key, name: p.name });
+          return { others: [...others.values()] };
         },
         reveals: (id) => { const h = readHidden().find((x) => x.roundIdHex === id); return h ? BLWPCLIENT.revealsOfRound({ roundIdHex: id, nodes: h.nodes }) : Promise.resolve({}); },
         // THE ROUND AS ITS SEATS HOLD IT (kanban #275): its entries and each one's signed outcome, score and how many seats
@@ -4216,7 +4247,10 @@
               const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
               if (!r.ok) continue;
               const j = await r.json();
-              return { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })) };
+              // AND THE SCORE ACROSS ROUNDS (kanban #280): the seat's signed match record, with whose identity is whose
+              return { entries: (j.players || []).map((p) => ({ entry: p.entry, outcome: p.outcome, score: p.score, signedBy: p.signedBy })),
+                match: j.match ? { identities: j.match.identities, names: j.match.names || [], score: j.match.score, played: j.match.played,
+                  continued: !!j.match.previousRound, byEntry: j.match.players || {}, seat: j.match.seat, signature: j.match.signature } : null };
             } catch { /* the next seat */ }
           }
           return null;
@@ -4229,6 +4263,7 @@
       frame.id = 'arena-client';
       frame.title = game.title;
       frame.src = URL.createObjectURL(new Blob([file.bytes], { type: 'text/html' }));
+      document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
       boot.remove();
       console.log('[arena] ' + game.name + ' client ' + file.hash.slice(0, 16) + ' loaded by its manifest hash, ' + (Date.now() - t0) + ' ms');
@@ -4351,6 +4386,8 @@
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
+        // the seats of a listed round: its side's lobby nodes (a head-to-head table says who sits at it to them, ARENA_GAME.here)
+        window.BLWP_ROW_NODES = (id) => (testnet && rowSearch.get(id) === testnet.search ? testnet.named.nodes : named.nodes) || [];
         lobbyNow();
         refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];
         unanswered = [...(got.unanswered || []), ...((got2 && got2.unanswered) || [])];

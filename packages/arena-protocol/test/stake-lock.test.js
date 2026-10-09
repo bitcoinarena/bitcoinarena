@@ -38,7 +38,7 @@ test('each field the player could get wrong is refused by name', () => {
     [{ amountMsat: netStakeMsat(entry) - 1n }, /holds 97999 msat, and the entry's net stake is 98000/],
     [{ claimPk: Uint8Array.from([0x02, ...b32(0x45)]) }, /claim_pk is not this round's attested claim key/],
     [{ refundPk: Uint8Array.from([0x03, ...b32(0x05)]) }, /refund_pk is not the entry's player key/],
-    [{ expiration: HEIGHT + 131 }, /lock height 987 \(its expiration 1131 less 144\) is more than 12 blocks below the height 1000 it is verified at: a loser could refund/],
+    [{ expiration: HEIGHT + 131 }, /lock height 987 \(its expiration 1131 less the round's 144 blocks\) is more than 12 blocks below the height 1000 it is verified at: a loser could refund/],
   ];
   for (const [over, why] of cases) assert.match(check({ ...stakeLock(), ...over }).why, why);
   assert.match(check(stakeLock(), 'stake', { height: undefined }).why, /no federation height/);
@@ -71,5 +71,5 @@ test('a lock built at 306 to expire at 450 is counted when verified at 316, and 
   assert.deepEqual(check(built, 'stake', { height: 318 }), { ok: true }, 'twelve blocks below is still fresh');
   const stale = check(built, 'stake', { height: 319 });
   assert.equal(stale.ok, false);
-  assert.match(stale.why, /^that stake lock's lock height 306 \(its expiration 450 less 144\) is more than 12 blocks below the height 319 it is verified at: a loser could refund before settlement$/);
+  assert.match(stale.why, /^that stake lock's lock height 306 \(its expiration 450 less the round's 144 blocks\) is more than 12 blocks below the height 319 it is verified at: a loser could refund before settlement$/);
 });

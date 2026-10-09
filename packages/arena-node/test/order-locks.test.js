@@ -33,7 +33,9 @@ const cents = (c) => ({ price: BigInt(c) * 1000n });
 const sum = (xs) => xs.reduce((t, x) => t + x, 0n);
 const pct = (xs, q) => { const s = [...xs].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
 
-test('positions backed by locks: placement, an agreed match, a failed one (void), a dropped certificate, cancels, a sell, and the settlement - seven seats, to the msat', async () => {
+// 170 S OF ITS OWN (the suite's per-test default is 120 s, its per-file cap 180 s): seven seats and a settlement of 16 locks
+// took 46-80 s alone and in a suite, and over 120 s once under a heavier suite (1,197 event-loop stalls logged in that file)
+test('positions backed by locks: placement, an agreed match, a failed one (void), a dropped certificate, cancels, a sell, and the settlement - seven seats, to the msat', { timeout: 170000 }, async () => {
   const T0 = Date.now();
   const phases = [];
   const mark = (name) => phases.push([name, Date.now() - T0]);
@@ -208,14 +210,14 @@ test('positions backed by locks: placement, an agreed match, a failed one (void)
     skipTo(Number(o.finalAtMs) + 100);
     mark('final');
     let got;
-    // THE SEATS' OWN SETTLE, ASKED EVERY SECOND (the call their 5 s sweep makes): each step - propose, sign, submit, find it in
+    // THE SEATS' OWN SETTLE, ASKED EVERY 3 S (the call their 5 s sweep makes; every 1 s added load of its own under the suite): each step - propose, sign, submit, find it in
     // the federation - comes a second apart instead of a sweep apart; measured in the suite under load, 40 s of sweeps left it
     // SUBMITTING. The check is the same: ACCEPTED, then every payout to the msat below.
     let nudged = 0;
     for (const stop = Date.now() + 60000; Date.now() < stop; await wait(250)) {
       got = await standing(w.a, w);
       if (got.state === 'ACCEPTED') break;
-      if (Date.now() - nudged > 1000) { nudged = Date.now(); await Promise.all(w.nodes.map((d) => d.settlements.settle(w.rid).catch(() => null))); }
+      if (Date.now() - nudged > 3000) { nudged = Date.now(); await Promise.all(w.nodes.map((d) => d.settlements.settle(w.rid).catch(() => null))); }
     }
     if (got.state !== 'ACCEPTED') {
       const asked = await Promise.all(w.nodes.map((d) => d.settlements.settle(w.rid).catch((e) => ({ why: e.stack }))));

@@ -360,6 +360,10 @@ export const TAG = {
   marketSell: 'ARENA/v1/MarketSell',
   // a seat's word that it did not sign a batch and never will (kanban #278: a batch is void once 5 can no longer be reached)
   marketBatchDecline: 'ARENA/v1/MarketBatchDecline',
+  // a player's identity key naming its head-to-head entry, and a seat's signed running score of two identities (kanban #280)
+  matchProof: 'ARENA/v1/MatchProof',
+  matchRecord: 'ARENA/v1/MatchRecord',
+  presence: 'ARENA/v1/Presence',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
 };

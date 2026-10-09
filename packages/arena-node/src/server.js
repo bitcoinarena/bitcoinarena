@@ -36,6 +36,8 @@ import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
 import { OrderBook } from './order-batch.js';
+import { matchOf } from './match.js';
+import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -94,7 +96,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
 import { encodeManifest, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
-import { decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -105,6 +107,7 @@ import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, fed
 import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
+
 import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
@@ -112,6 +115,10 @@ import { Dkg } from './dkg.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
+
+// who sits at each head-to-head round's table, per seat (POST /here): round hex -> identity key hex -> last said (ms)
+const presenceByRound = new WeakMap();
+const presenceTables = (round) => { let t = presenceByRound.get(round); if (!t) { t = new Map(); presenceByRound.set(round, t); } return t; };
 
 const read = (req) => new Promise((resolve, reject) => {
   const parts = [];
@@ -2442,7 +2449,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, games: hosted })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, games: hosted, matchFor: (rid) => matchOf(round, hosted, rid) })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
@@ -2514,15 +2521,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // round names its sim_wasm_hash and config_hash, signer nodes replay what that round names). 27A.7.5: the
         // signer node is not selectable for it - it serves nothing there, and is not slashed. Refused before
         // anything of the round exists on this signer node.
+        let roundManifest = null;
         {
           const runs = pluginForRound(contract, hosted);
           if (!runs.ok) return text(res, 409, runs.why);
+          roundManifest = runs.plugin.manifest;
+          // A MARKET'S OWN CLOCK (kanban #236): a market naming a period closes each round at the end of a period on the UTC grid
+          const clock = marketWindowOf(contract, roundManifest.resultType === 2 ? roundManifest : null);
+          if (!clock.ok) return text(res, 409, clock.why);
         }
         // AND A ROUND THAT TAKES A STAKE INTO A FEDERATION IS HELD TO THE CUSTODY FIELDS IN FULL
-        // (M3 W7, §23): which federation, the 144-block expiry, the relays - before anything of it
-        // exists on this signer node. A free round is the check below; no other custody parses (§23.6).
+        // (M3 W7, §23): which federation, the lock span - the ruled 144 blocks, or a market's own (lock-expiry.js, kanban
+        // #236: its locks last its whole life) - the relays, before anything of it exists on this signer node. A free round
+        // is the check below; no other custody parses (§23.6).
         if (contract.stakeMsat > 0n) {
-          const custodyOk = custodyFieldsAreValid(contract);
+          const custodyOk = custodyFieldsAreValid(contract, { manifest: roundManifest });
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
         }
         // AND A SIGNER NODE THAT REACHES NO FEDERATION OPENS NO PAYING ROUND (RULED the owner 2026-09-25). Measured before: on a
@@ -2892,8 +2905,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             wonMsat: won ? String(won.owedMsat) : '0', winningsState: won ? won.state : (entry.stakeMsat === 0n ? 'FREE' : 'NONE'),
             ...playerBalance({ entry, best, won, settled, nobodyWon, minScore: c.minScore }) };
         });
+        // THE SCORE ACROSS ROUNDS (kanban #280): a head-to-head round of two named identities - its match record, signed here
+        let match = null;
+        try { match = matchOf(round, hosted, new Uint8Array(rid)); } catch { match = null; }
+        if (match) {
+          // A MATCH'S NAMES ARE ITS IDENTITIES' (kanban #280): the lobby record's name where the player posted one, else the name
+          // generated from the identity key - the same in every round, as the player's own tab shows it (never a round key's)
+          const nameOf = (idHex) => { const p = players.find((x) => { const who = round.identityOf(fromHex(x.entry)); return who && toHex(who.identity) === idHex; });
+            return p && names.has(p.player) ? names.get(p.player) : displayNameFromKey(fromHex(idHex)); };
+          match = { ...match, names: match.identities.map(nameOf),
+            players: Object.fromEntries(players.map((p) => { const who = round.identityOf(fromHex(p.entry)); return [p.entry, who ? toHex(who.identity) : null]; })) };
+        }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players }));
+        return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players, match }));
       }
 
       // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
@@ -3485,6 +3509,41 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ round: toHex(id), ...out }));
       }
 
+      // WHO IS AT A HEAD-TO-HEAD ROUND'S TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You
+      // are alone in this round" - the table counted moves, not players): POST /here?round=<id> with { key, sig } - the tab's
+      // identity key and its signature over (round, key) (match.js presenceId) - says this tab sits at that round's table; GET
+      // reads who does. Each answers the identities said within PRESENCE_MS, with the name made from each key. Kept in memory
+      // only: presence decides nothing.
+      if (url.pathname === '/here' && (req.method === 'POST' || req.method === 'GET')) {
+        const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (id.length !== 32) return text(res, 400, 'that is not a round id');
+        const row = round.get(id);
+        if (!row) return text(res, 404, 'this node holds no such round');
+        const found = pluginForRound(decodeRoundContract(new Uint8Array(row.contract)), hosted);
+        if (!found.ok || !found.headToHead) return text(res, 409, 'that round is not a head-to-head game this node hosts: it has no table');
+        const now = Number(round.now());
+        const tables = presenceTables(round);
+        for (const [rid, t] of tables) { for (const [k, at] of t) if (now - at > PRESENCE_MS) t.delete(k); if (!t.size) tables.delete(rid); }
+        const ridHex = toHex(id);
+        if (req.method === 'POST') {
+          let body;
+          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a presence is JSON: { "key": "<64 hex>", "sig": "<128 hex>" }'); }
+          const key = /^[0-9a-f]{64}$/.test(String(body && body.key)) ? fromHex(body.key) : null;
+          const sig = /^[0-9a-f]{128}$/.test(String(body && body.sig)) ? fromHex(body.sig) : null;
+          let good = false;
+          try { good = !!(key && sig) && schnorr.verify(sig, presenceId({ roundId: new Uint8Array(id), identityKey: key }), key); } catch { good = false; }
+          if (!good) return text(res, 403, 'that presence is not signed by its key over this round');
+          if (!tables.has(ridHex) && tables.size >= 256) return text(res, 503, 'this node keeps no more tables just now');
+          const t = tables.get(ridHex) || new Map();
+          if (!t.has(body.key) && t.size >= 32) return text(res, 503, 'that table is full');
+          t.set(body.key, now);
+          tables.set(ridHex, t);
+        }
+        const t = tables.get(ridHex) || new Map();
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: ridHex, here: [...t].map(([key, at]) => ({ key, name: displayNameFromKey(fromHex(key)), agoMs: now - at })) }));
+      }
+
       // A HEAD-TO-HEAD PLAYER'S REVEAL (kanban #233): POST /reveal?entry=<entry id> with { move, salt } (JSON, salt in hex),
       // after the round's entry close and before its end (its reveal deadline). Taken only if it hashes to the commitment
       // that entry named (head-to-head.js revealStands); kept once. The round's results are decided from the reveals at its
@@ -3508,6 +3567,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           moveCount: found.plugin.manifest.moveCount, atMs: BigInt(round.now()), entryCloseMs: c.entryCloseMs,
           revealWindowMs: BigInt(roundEndMs(c)) - c.entryCloseMs });
         if (!stands.ok) return text(res, 409, stands.why);
+        // AND ITS IDENTITY, if the player names one (kanban #280): its identity key's signature over (round, entry, key) -
+        // what a score across rounds links its rounds by; a proof that does not verify is refused, none is fine
+        if (body.identity) {
+          const key = /^[0-9a-f]{64}$/.test(String(body.identity.key)) ? fromHex(body.identity.key) : null;
+          const sig = /^[0-9a-f]{128}$/.test(String(body.identity.sig)) ? fromHex(body.identity.sig) : null;
+          let good = false;
+          try { good = !!(key && sig) && schnorr.verify(sig, matchProofId({ roundId: entry.roundId, entryId: new Uint8Array(eid), identityKey: key }), key); } catch { good = false; }
+          if (!good) return text(res, 403, 'that identity is not signed by its key over this round and entry');
+          round.putIdentity({ roundId: entry.roundId, entryId: new Uint8Array(eid), identity: key, sig });
+        }
         const fresh = round.putReveal({ roundId: entry.roundId, entryId: eid, move: body.move, salt, receivedMs: round.now() });
         console.log(`[reveal] ${toHex(entry.roundId).slice(0, 16)} ${toHex(eid).slice(0, 16)}: move ${body.move}${fresh ? '' : ' (held already)'}`);
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
@@ -3606,7 +3675,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.get(id)) return text(res, 404, 'this node holds no such round');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ round: toHex(id), reveals: round.revealsOf(new Uint8Array(id))
-          .map((r) => ({ entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt) })) }));
+          .map((r) => { const who = round.identityOf(r.entryId); return { entry: toHex(r.entryId), move: r.move, salt: toHex(r.salt),
+            ...(who ? { identity: { key: toHex(who.identity), sig: toHex(who.sig) } } : {}) }; }) }));
       }
 
       // WHAT A RECIPIENT KEY WAS DONATED (the owner 2026-10-03, FEDERATION.md "Donations in the federation"): every donation

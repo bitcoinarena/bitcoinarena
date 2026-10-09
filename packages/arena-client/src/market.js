@@ -13,6 +13,7 @@ import { decodeManifest, gameIdOf, isAttested, RESULT_TYPE } from '../../arena-p
 import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
+import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { handLock } from './page-lock.js';
@@ -28,14 +29,15 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
   if (!round || !(round.gameId instanceof Uint8Array)) return null;
   const pinned = marketOf(round.gameId);
   // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
-  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId) };
+  // AND ITS TERMS (kanban #236): resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
+  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) };
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
-    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) } };
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null };
 }
 
 /**
