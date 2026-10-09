@@ -1,4 +1,4 @@
-# Bitcoin Logistics War — Bulls & Bears Delivery Front
+# Bitcoin Arena
 
 A real-time 3D browser game where the **live Bitcoin price chart is the battlefield** and **real
 unconfirmed mempool transactions are your cargo**.

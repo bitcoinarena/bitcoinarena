@@ -16,7 +16,7 @@
 # ITS DEPLOYS NEED CLOUDFLARE AUTH THAT NEEDS NO BROWSER (the owner 2026-09-15: a Pages-only API token,
 # for the keeper alone). Measured before: wrangler's OAuth login lapsed - "Not logged in ... the
 # environment is non-interactive" - and a tunnel restart then left the Daily naming dead signer nodes with
-# nothing able to deploy. The unit reads $BLWP_2OF2_DIR/cloudflare.env, owned by this user, mode 600:
+# nothing able to deploy. The unit reads $ARENA_2OF2_DIR/cloudflare.env, owned by this user, mode 600:
 #   CLOUDFLARE_API_TOKEN=<token>
 #   CLOUDFLARE_ACCOUNT_ID=<the account that owns the btc-logistics-core Pages project>
 # The token, created at dash.cloudflare.com -> My Profile -> API Tokens -> Create Custom Token:
@@ -30,8 +30,8 @@
 # failed every 30 s - so the keeper says once why it holds and keeps the signer nodes on the tunnels'
 # names. Nothing here prints the token.
 set -uo pipefail
-D="${BLWP_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
-CODE="${BLWP_DAILY_CODE:-$D/code}"
+D="${ARENA_2OF2_DIR:-/mnt/bitcoin/blwp-2of2}"
+CODE="${ARENA_DAILY_CODE:-$D/code}"
 ENVF="$D/signer-nodes.env"
 LAST="$D/keeper.deployed.json"
 say() { echo "{\"at\":\"$(date -u +%FT%TZ)\",$1}"; }
@@ -67,7 +67,7 @@ while true; do
   A=$(tunnel a); B=$(tunnel b)
   if [ -n "$A" ] && [ -n "$B" ]; then
     WANT="BLWP_WSS_18080=wss://${A#https://}
-BLWP_WSS_18081=wss://${B#https://}"
+ARENA_WSS_18081=wss://${B#https://}"
     if [ "$(cat "$ENVF" 2>/dev/null)" != "$WANT" ]; then
       printf '%s\n' "$WANT" > "$ENVF"
       say "\"tunnels\":[\"$A\",\"$B\"],\"signerNodes\":\"restarting under the new names\""
@@ -83,7 +83,7 @@ PY
         if auth; then
           HOLD=""
           say "\"daily.json\":\"changed since the last deploy\",\"deploying\":\"$D/page\",\"auth\":\"api token (Pages edit)\""
-          if BLWP_2OF2_DIR="$D" BLWP_BUILD_DIR="$D/page" "$CODE/deploy-core.sh" > "$D/keeper-deploy.log" 2>&1; then
+          if ARENA_2OF2_DIR="$D" ARENA_BUILD_DIR="$D/page" "$CODE/deploy-core.sh" > "$D/keeper-deploy.log" 2>&1; then
             cp "$D/daily.json" "$LAST"
             say "\"deployed\":\"$(grep -oE 'https://[0-9a-f]{8}\.btc-logistics-core\.pages\.dev' "$D/keeper-deploy.log" | tail -1)\""
           else

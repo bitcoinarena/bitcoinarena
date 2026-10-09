@@ -20,7 +20,7 @@ public class ArmyReferenceTests
 {
     [Test]
     [Explicit("Measurement, not an assertion. Read the ARMYREF lines out of " +
-              "the log and paste them into packages/core/test/vectors/.")]
+              "the log and paste them into packages/nextblock/test/vectors/.")]
     public void MeasureTheArmy()
     {
         var sb = new StringBuilder();
@@ -283,7 +283,7 @@ public class InfantryReferenceTests
 {
     [Test]
     [Explicit("Measurement, not an assertion. Read the INFREF lines out of " +
-              "the log and paste them into packages/core/test/vectors/.")]
+              "the log and paste them into packages/nextblock/test/vectors/.")]
     public void MeasureTheInfantry()
     {
         var sb = new StringBuilder();

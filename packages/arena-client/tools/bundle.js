@@ -1,0 +1,255 @@
+// Bundles the BLWP client into one file for the browser.
+//
+// The same smallest-possible bundler `@blwp/core` uses, and for the same
+// stated reason: a bundler in the trust path is a bad property for something
+// that pins money. It topologically sorts the imports, strips the import and
+// export lines, and concatenates. No transforms, no minification, no renaming.
+//
+// IT CARRIES NO CRYPTO, and that is why it can be this simple. Signing and
+// verifying are injected - the page hands the client `sign` and `verify` - so
+// the bundle is the protocol's encoding plus the client's rules and nothing
+// else. A vendored curve would be an implementation of the thing that pins
+// money, sitting in the page, that nobody audits.
+//
+// The test that matters is bundle.test.js: the bundle must build the same
+// bytes and the same ids as the modules, or it is not the same client.
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, resolve, relative } from 'node:path';
+
+const SRC = new URL('../src/', import.meta.url).pathname;
+const ROOT = new URL('../../', import.meta.url).pathname;
+// ARENA_BUNDLE_OUT builds into another directory, so a test can build this
+// source and compare it with what is committed; unset, it writes dist/ as ever.
+const OUT = process.env.ARENA_BUNDLE_OUT ? process.env.ARENA_BUNDLE_OUT.replace(/\/?$/, '/') : new URL('../dist/', import.meta.url).pathname;
+
+const seen = new Set();
+const order = [];
+
+function walk(file) {
+  if (seen.has(file)) return;
+  seen.add(file);
+  const text = readFileSync(file, 'utf8');
+  for (const m of text.matchAll(/import\s[\s\S]*?from\s+'([^']+)';/g)) {
+    walk(resolve(dirname(file), m[1]));
+  }
+  order.push(file);
+}
+walk(SRC + 'client.js');
+// AND THE PAGE'S OWN HALF. `ghost-field.js` is what a page does with a picture
+// once the client has decoded one; the client does not import it, because a
+// client that publishes a run should not depend on whether anybody is drawing
+// the others.
+walk(SRC + 'ghost-field.js');
+// AND THE BACKUP GATE AND THE PHRASE IT CHECKS (§24B). Nothing in the client imports them - the gate is
+// what the PAGE asks before a deposit or a paid join, and the phrase is what it shows in Settings - so
+// they are walked in here the same way `ghost-field.js` is.
+walk(SRC + 'backup-gate.js');
+walk(SRC + 'bip39.js');
+// AND THE WAY IN. `join.js` is what a page does with its own URL before the
+// client exists at all: nothing imports it, because a client that publishes a
+// run must not depend on how the page was told which round to publish to.
+walk(SRC + 'join.js');
+// AND THE LOBBY (M3.3-34): what a page with no round in its link lists - the
+// named nodes' rounds, each checked against its own contract.
+walk(SRC + 'lobby.js');
+// AND THE NEXT ROUND (the owner 2026-09-28, option 1 of A): after a run, the round the page enters by default, and the
+// countdown and the exit it shows.
+walk(SRC + 'next-round.js');
+// AND WHO THE TAB IS IN IT: a generated key, a name from that key, and the
+// player's own name over it (M3.3-34).
+walk(SRC + 'identity.js');
+// AND THE PLAYER'S DONATION (M3.2 6e): the choice, judged and kept per round.
+walk(SRC + 'donation-choice.js');
+// AND ITS SET (M3.2 6e): the round's donation set from its signer nodes, checked. The
+// donation itself is paid by the player's own Client (payDonation).
+walk(SRC + 'donation-pay.js');
+// AND WHERE A WINNER'S WINNINGS ARE SENT (ruled 2026-09-23): the one question at the run's end, and the signed
+// address posted to every signer node that has not taken it. Nothing in the client imports it; the page calls it.
+walk(SRC + 'winnings.js');
+// COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
+walk(SRC + 'replay-link.js');
+walk(SRC + 'market.js');
+// AND A HEAD-TO-HEAD ROUND'S HIDDEN MOVE AND ITS REVEAL (kanban #233)
+walk(SRC + 'head-to-head.js');
+// AND THE GAMES (kanban #208): the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
+walk(SRC + 'games.js');
+
+// One scope, so a name declared twice would collide. EVERY top-level name is
+// checked, not only the exported ones: two files with a private helper of the
+// same name are the dangerous case, because nothing in either module says so.
+// A duplicated `const` throws when the page loads, which is loud; a duplicated
+// `function` or `var` silently keeps one of them and the survivor depends on
+// file order, which is a different program from the modules with no symptom.
+// Measured: `chain.js` and `transcript.js` each had a private `same`.
+const declared = new Map();
+for (const file of order) {
+  for (const m of readFileSync(file, 'utf8')
+    .matchAll(/^(?:export\s+)?(?:async\s+)?(?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/gm)) {
+    if (declared.has(m[1]) && declared.get(m[1]) !== file) {
+      console.error(`bundle: ${m[1]} is declared at the top level of both `
+        + `${relative(ROOT, declared.get(m[1]))} and ${relative(ROOT, file)}`);
+      process.exit(1);
+    }
+    declared.set(m[1], file);
+  }
+}
+
+let out = '';
+out += '// GENERATED by tools/bundle.js from @blwp/client. Do not edit.\n';
+out += '// Verified against the module build by test/bundle.test.js.\n';
+out += 'var BLWPCLIENT = (function () {\n"use strict";\n';
+for (const file of order) {
+  const body = readFileSync(file, 'utf8')
+    .replace(/^import\s[\s\S]*?;\s*$/gm, '')
+    .replace(/^export\s+\*\s+from\s+[^;]*;\s*$/gm, '')
+    // A LIST OF NAMES ON ONE LINE, and not a lazy match that crosses them.
+    //
+    // These two used to read `\{[\s\S]*?\}`, which spans lines: with an
+    // `export { A, B };` early in a file and an `export { C } from './x.js';`
+    // later, the match started at the first and ran to the second, DELETING
+    // every declaration in between. Measured on `core/src/sim.js`: line 51's
+    // `export { UNITS, ARMOUR_MASK };` and line 106's `export { TICK_DT } from
+    // './tick.js';` swallowed 55 lines, including `export const HALF_X` - and
+    // the bundle still carried nine USES of it, so the page threw
+    // "HALF_X is not defined" on the first step. The committed bundle predated
+    // that re-export, which is the only reason anybody had a working one.
+    .replace(/^export\s*\{[^{}]*\}\s*from\s+[^;]*;\s*$/gm, '')
+    .replace(/^export\s*\{[^{}]*\}\s*;\s*$/gm, '')
+    .replace(/^export\s+(async\s+)?(const|function|class|let|var)\s/gm, '$1$2 ');
+  out += '\n// ---- ' + relative(ROOT, file) + '\n' + body;
+}
+out += '\nreturn { Client: Client, markState: markState, catchUpCore: catchUpCore,\n';
+out += '         reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,\n';
+out += '         discover: discover, agreedChain: agreedChain,\n';
+out += '         askForBond: askForBond, provenBond: provenBond,\n';
+out += '         headersOverHttp: headersOverHttp, httpProvider: httpProvider,\n';
+out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
+out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
+out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
+out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
+// The debug label over a ghost (the owner 2026-09-17 19:15): the page writes it, blwp.jslib hands it to Unity.
+out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,\n';
+out += '         playersLine: playersLine, newestPose: newestPose,\n';
+out += '         stakeLine: stakeLine,\n';
+out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
+out += '         verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,\n';
+out += '         isVerified: isVerified, backupLine: backupLine, NO_BACKUP_LINE: NO_BACKUP_LINE,\n';
+out += '         phraseFromSeed: phraseFromSeed, seedFromPhrase: seedFromPhrase, seedHexFromInput: seedHexFromInput, PHRASE_WORDS: PHRASE_WORDS,\n';
+out += '         fetchRound: fetchRound, bondProvider: bondProvider,\n';
+// THE SEED THE COMMITTEE WILL REPLAY THIS PLAYER WITH. Without it the page
+// cannot put its own core in the world its transcript is judged in, which is
+// exactly what it could not do before letter 36.
+out += '         fetchRandomness: fetchRandomness, worldSeedFor: worldSeedFor,\n';
+out += '         seedWordForEntry: seedWordForEntry, worldSeedWord: worldSeedWord, worldIsShared: worldIsShared, sharedWorldOf: sharedWorldOf,\n';
+out += '         tabSeed: tabSeed, importSeed: importSeed, restoreSeed: restoreSeed, seedOrigin: seedOrigin,\n'; out += '         playerFor: playerFor, entryFor: entryFor,\n';
+out += '         chooseDonation: chooseDonation, donationChoice: donationChoice, DONATION_CONFIRM_BPS: DONATION_CONFIRM_BPS,\n';
+out += '         DONATION_DEFAULT_BPS: DONATION_DEFAULT_BPS, DONATION_CHOICES_BPS: DONATION_CHOICES_BPS,\n';
+out += '         keptDonation: keptDonation, depositDonationMsat: depositDonationMsat,\n';
+out += '         fetchDonationSet: fetchDonationSet, donationRecipientsLine: donationRecipientsLine,\n';
+// EACH DONATION SHARE, PAID / UNPAID / OUTCOME UNKNOWN - the state off
+// `payDonation`'s answer and the line the page paints from it.
+out += '         donationPaidState: donationPaidState, donationPaidLine: donationPaidLine,\n';
+// AND THE SAME LINE FROM THE TAB'S NOTES ALONE, for a round link that cannot be
+// reached - no signer node, no set, nothing asked of a wallet.
+out += '         donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,\n';
+// WHERE THE STAKE WENT, AFTER SETTLEMENT: the signer nodes' hold state, the hold's
+// amount and the round's pool, asked of every settlement signer node, and its line.
+out += '         settlementBy: settlementBy,\n';
+// THE STAKE THE PAGE DEALS, and the signer nodes it is dealt to. `stakeFor` was in
+// this bundle already and had ZERO CALLERS - the page joined with 32
+// random bytes where `sha256(P)` belongs and 32 zero bytes where the shares
+// belong. `fetchSettlementSignerNodes` is what stops it being dealt to the wrong
+// committee: `contract.nodes` is the UNION of the role committees, and shares
+// sealed to a game-verify signer node are a stake nobody can open at payout.
+out += '         stakeFor: stakeFor, fetchSettlementSignerNodes: fetchSettlementSignerNodes,\n';
+out += '         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,\n';
+out += '         awaitAttestedClaimKey: awaitAttestedClaimKey,\n';
+// THE THRESHOLD THE STAKE IS DEALT AT - the round's (2 of 2, 5 of 7), the
+// same rule the node's door and settle read, never the slot count (M3.3-26).
+out += '         sharesNeededFor: sharesNeededFor,\n';
+// THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
+// hand-over of the lock it made to every signer node.
+out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
+// AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one per seed and federation; the top-up is its own act, before the
+// stake, and the stake is spent from it.
+out += '         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,\n';
+out += '         withdrawPlayerWallet: withdrawPlayerWallet,\n';
+out += '         saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,\n';
+// AND THE ROUND'S CLOSE, which ends a reloaded tab's resume (keptLockUse beforeClose)
+out += '         roundEndMs: roundEndMs,\n';
+out += '         ledgerRows: ledgerRows, ledgerReadSavedStakes: ledgerReadSavedStakes, ledgerHistory: ledgerHistory,\n';
+out += '         depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,\n';
+out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,\n';
+// AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
+// contract to this seed's key spent into the tab's wallet, and its line.
+out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,\n';
+// AND THE PLAYER'S OWN STAKE BACK BY THE SIGNER NODES' FORFEIT, after the window, and its line.
+out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
+// AND WHAT THE TAB STILL HAS TO COLLECT, kept per round, so a reload collects too.
+out += '         saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,\n';
+out += '         browserSeedHexes: browserSeedHexes, recordsToCollect: recordsToCollect, collectLines: collectLines,\n';
+// AND 6d's DESTINATION: the tab's round wallet withdrawn over Lightning to the player's own.
+out += '         tabLockWallet: tabLockWallet, withdrawCollected: withdrawCollected, withdrawLine: withdrawLine, makeInvoice: makeInvoice,\n';
+out += '         invoiceQrSvg: invoiceQrSvg,\n';
+// AND THE LOCK QUOTES ASKED AHEAD, while the lobby shows a paid round (the join's 2-3 s).
+out += '         warmLockQuotes: warmLockQuotes,\n';
+// AND A LOCK NO SIGNER NODE WILL SETTLE, BACK BY THE PLAYER'S KEY AFTER ITS EXPIRY, from the tab's record.
+out += '         refundKept: refundKept, refundLine: refundLine,\n';
+// AND NOTHING SPENT BEFORE THE PLAYER WITHDRAWS: the look that spends nothing, and the collect
+// that happens only inside a withdraw, in one action. (join's owedLine is the hold panel's.)
+out += '         lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,\n';
+// THE LOBBY (M3.3-34): a link that names nodes and no round lists what they
+// hold, every row checked against its own contract; Join is the join link.
+out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,\n';
+out += '         fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,\n';
+out += '         SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,\n';
+// AND ONE FREE ROUND AND ONE PAYING ROUND LISTED, NEVER TWO OF EITHER, with the paying one's stake.
+out += '         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,\n';
+out += '         isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,\n';
+out += '         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,\n';
+out += '         EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,\n';
+// AND THE DAILY'S OWN LOBBY AT THE BARE ROOT, from daily.json beside the page.
+out += '         dailyLobbySearch: dailyLobbySearch,\n';
+// WHO THE TAB IS IN THE LOBBY (M3.3-34): the generated key's public half, the
+// name made from it, and the player's own name over it.
+out += '         tabIdentity: tabIdentity, setPlayerName: setPlayerName, generatedName: generatedName, identityProofFor: identityProofFor, presenceProofFor: presenceProofFor,\n';
+// AND THE OTHERS' NAMES (M3.3-34): this tab's signed record for its signer nodes, and
+// the round's records fetched and checked before a name is drawn.
+out += '         nameRecordFor: nameRecordFor, postName: postName, namesOf: namesOf, checkedNames: checkedNames, shownNameOf: shownNameOf,\n';
+out += '         boardNames: boardNames,\n';
+// THE WALLET THE PAGE RENDERS. `tabWallet` holds the connection per tab,
+// `spendLog` is what §24A.1 requires a client to show, and `spentLine` turns it
+// into one sentence - so the page renders a total it did not add up.
+out += '         tabWallet: tabWallet, spendLog: spendLog, spentLine: spentLine,\n';
+// A STAKE THAT CAME BACK (its hold CANCELLED or EXPIRED) is written into the log as
+// returned, so the running total counts only what left the wallet and stayed gone.
+// WHAT THE ENTRY COSTS, AS 22A's TRANSPARENCY LIST: the commitment, the fee and
+// the donation out of it, the net stake, and what the wallet is asked. The
+// page renders it; the subtraction is `netStakeMsat`'s.
+out += '         parseConnection: parseConnection,\n';
+// WHAT THE WALLET WILL STILL LET THIS CONNECTION SPEND. Asked for, never read
+// off the connection string - NIP-47's URI carries no budget, and the field
+// that pretended it did is gone.
+out += '         walletBudget: walletBudget, budgetLine: budgetLine,\n';
+out += '         decodeRoundContract: decodeRoundContract, decodeEntryContract: decodeEntryContract,\n';
+// COPY GAME REPLAY: the link, and the endpoint as the https origin it names.
+out += '         replayLinkFor: replayLinkFor, httpsOfEndpoint: httpsOfEndpoint,\n';
+// WHERE A WINNER'S WINNINGS ARE SENT (ruled 2026-09-23): the run-over hook's one question, the resend at every load,
+// and the address check the bridge's signing call makes before it signs anything.
+out += '         askForWinnings: askForWinnings, resendWinnings: resendWinnings, winningsAddressOf: winningsAddressOf,\n';
+out += '         winningsQualify: winningsQualify,\n';
+// A MARKET (kanban #206 slice 2, §0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
+out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
+out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
+// A HEAD-TO-HEAD ROUND (kanban #233): the hidden move, its commitment, its reveal, and the reveals the seats hold
+out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
+out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
+out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
+
+mkdirSync(OUT, { recursive: true });
+writeFileSync(OUT + 'arena-client.js', out);
+// The package is "type": "module", so Node would read this as ESM and an ESM
+// file with no export statements has an empty namespace - exactly the empty
+// object require() would otherwise hand back.
+writeFileSync(OUT + 'package.json', JSON.stringify({ type: 'commonjs' }, null, 1) + '\n');
+console.log(`dist/arena-client.js  ${(out.length / 1024).toFixed(1)} KB  from ${order.length} modules`);

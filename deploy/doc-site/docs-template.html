@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitcoin Arena Docs</title>
+<meta name="description" content="Bitcoin Arena developer documentation: how the decentralized, non-custodial engine works, the node API, and how to build a game or a prediction market.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#07090d; --panel:#0e131b; --line:#1d2633; --text:#e8edf3; --dim:#8d99a8; --btc:#f7931a; --gold:#ffd166; --bull:#2fd38a; --cyan:#4fd1ff; --bear:#ff5d5d; }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 76px; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 400 16px/1.65 Inter, system-ui, sans-serif; }
+  a { color: var(--cyan); text-decoration: none; } a:hover { text-decoration: underline; }
+  h1, h2, h3 { font-family: "Space Grotesk", Inter, sans-serif; letter-spacing: -0.015em; line-height: 1.15; }
+  h1 { font-size: clamp(34px, 5vw, 54px); margin: 0 0 12px; }
+  h2 { font-size: clamp(26px, 3.4vw, 36px); margin: 64px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h3 { font-size: 21px; margin: 32px 0 8px; }
+  p, li { color: #cdd5de; } li { margin: 4px 0; }
+  code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13.5px; }
+  :not(pre) > code { background: #121a24; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #ffe0b3; }
+  pre { background: #05070a; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; overflow-x: auto; line-height: 1.55; color: #d6dee7; }
+  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: rgba(7,9,13,.8); border-bottom: 1px solid var(--line); }
+  nav.top .in { display: flex; align-items: center; gap: 18px; height: 60px; width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
+  .brand { display: flex; align-items: center; gap: 10px; font: 700 18px "Space Grotesk"; color: var(--text); }
+  .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; }
+  .brand span { color: var(--dim); font-weight: 500; }
+  nav.top .r { margin-left: auto; display: flex; gap: 16px; font-size: 14px; }
+  .layout { width: min(1280px, calc(100% - 32px)); margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
+  aside { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 90px); overflow: auto; padding: 24px 0; font-size: 14.5px; }
+  aside b { display: block; margin: 18px 0 6px; color: var(--dim); font: 600 12px Inter; letter-spacing: .12em; text-transform: uppercase; }
+  aside a { display: block; padding: 4px 0; color: #c3cdd8; }
+  main { padding: 40px 0 120px; min-width: 0; }
+  .lead { font-size: 19px; color: #c9d2dc; max-width: 70ch; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 8px; }
+  .pill { padding: 6px 12px; border-radius: 999px; font: 600 13px Inter; border: 1px solid rgba(247,147,26,.5); background: rgba(247,147,26,.12); color: #ffd9a6; }
+  .note { border-left: 3px solid var(--gold); background: rgba(255,209,102,.06); padding: 12px 16px; border-radius: 0 10px 10px 0; margin: 18px 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin: 18px 0; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
+  .box h4 { margin: 0 0 6px; font: 700 16px "Space Grotesk"; color: var(--text); }
+  .box p { margin: 0; font-size: 14.5px; }
+  .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; counter-reset: s; margin: 18px 0; }
+  .flow div { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14.5px; color: #cdd5de; }
+  .flow div::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--btc); color: #1a0f00; font: 700 13px Inter; margin-right: 8px; }
+  ol.steps { padding-left: 0; list-style: none; counter-reset: st; }
+  ol.steps > li { counter-increment: st; position: relative; padding-left: 44px; margin: 26px 0; }
+  ol.steps > li::before { content: counter(st); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 9px; background: #18212d; border: 1px solid var(--line); color: var(--gold); display: grid; place-items: center; font: 700 15px "Space Grotesk"; }
+  ol.steps > li > b { font: 700 18px "Space Grotesk"; color: var(--text); }
+  .tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; margin: 14px 0 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th { text-align: left; background: #0b1017; color: var(--dim); font-weight: 600; padding: 10px 12px; position: sticky; top: 0; }
+  td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: top; color: #cdd5de; }
+  td.ep { white-space: nowrap; }
+  .m { display: inline-block; min-width: 46px; text-align: center; padding: 1px 6px; border-radius: 6px; font: 700 11.5px "JetBrains Mono"; margin-right: 4px; }
+  .m-get { background: rgba(47,211,138,.15); color: var(--bull); } .m-post { background: rgba(247,147,26,.15); color: var(--btc); }
+  .m-put { background: rgba(79,209,255,.15); color: var(--cyan); } .m-options, .m-ws, .m-upgrade { background: #18212d; color: var(--dim); }
+  details { margin: 12px 0; } summary { cursor: pointer; color: var(--gold); font-weight: 600; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { display: none; } }
+</style>
+</head>
+<body>
+<nav class="top"><div class="in">
+  <a class="brand" href="#top"><i>₿</i>Bitcoin Arena <span>Docs</span></a>
+  <div class="r"><a href="https://bitcoin-arena.io/">Home</a><a href="https://arena.btc-logistics-core.pages.dev/">Play</a></div>
+</div></nav>
+
+<div class="layout">
+<aside>
+  <b>Start</b>
+  <a href="#how">How Bitcoin Arena works</a>
+  <a href="#words">The words used here</a>
+  <b>Nodes</b>
+  <a href="#node">What a node does</a>
+  <a href="#run">Run a node</a>
+  <b>Node API</b>
+  <a href="#api">How to call a node</a>
+  <a href="#api-dev">For game and market builders</a>
+  <a href="#api-player">For pages and players</a>
+  <a href="#api-ops">For operators</a>
+  <a href="#api-n2n">Between nodes</a>
+  <b>Build</b>
+  <a href="#game">Implement a game</a>
+  <a href="#h2h">Implement a head-to-head game</a>
+  <a href="#market">Implement a prediction market</a>
+  <a href="#money">Where the money goes</a>
+</aside>
+
+<main id="top">
+  <h1>Bitcoin Arena developer docs</h1>
+  <div class="pills"><span class="pill">Decentralized</span><span class="pill">Non-custodial</span><span class="pill">Settles in Bitcoin</span></div>
+  <p class="lead">Bitcoin Arena is an engine for games and prediction markets played for bitcoin. It has no central server and no company holding money: a federation of independent nodes takes the stakes, decides every result and pays the winners. This page explains how that works, every request a node answers, and how to build your own game or market on it.</p>
+  <div class="note">Bitcoin Arena runs on Bitcoin <b>testnet4</b> and on private test chains today. Everything here uses test coins. Mainnet is not live.</div>
+
+  <h2 id="how">How Bitcoin Arena works</h2>
+  <div class="flow">
+    <div>A game or market is published by its developer: a signed record of its rules.</div>
+    <div>Nodes choose which games they host and open <b>rounds</b> of them.</div>
+    <div>A player joins a round and stakes sats over Lightning. The stake is locked by the federation, not by any one party.</div>
+    <div>The nodes decide the result: they replay every game run, or check the signed outcome of a market.</div>
+    <div>The federation pays the winners, the nodes and the donations, exactly as the rules say.</div>
+  </div>
+  <div class="grid">
+    <div class="box"><h4>Decentralized</h4><p>There is no server to switch off. Any node can host any game, and a committee of nodes decides each round.</p></div>
+    <div class="box"><h4>Non-custodial</h4><p>No company, developer or single node holds players' sats. Stakes sit in locks of a federation (Fedimint) and move only as the round's result says.</p></div>
+    <div class="box"><h4>Checked, not trusted</h4><p>Game runs are replayed by independent nodes from the player's inputs. A run that does not replay to the same score is not paid.</p></div>
+    <div class="box"><h4>No approval</h4><p>A game exists once its developer signs it. Nobody has to accept it; node operators decide what they host.</p></div>
+  </div>
+
+  <h3 id="words">The words used here</h3>
+  <ul>
+    <li><b>Round</b>: one match of a game or one market, with a start, an entry close and a stake. Every round has a 32-byte <b>round id</b>.</li>
+    <li><b>Entry</b>: a player's place in a round, with their stake.</li>
+    <li><b>Node</b> (also <b>signer node</b>): one running <code>arena-node</code> server. Its operator chooses the games it hosts.</li>
+    <li><b>Committee</b>: the nodes drawn for one round. They run it and sign its results and payouts.</li>
+    <li><b>Federation</b> and <b>guardians</b>: the Fedimint federation that holds the stakes; its guardians are nodes that each hold one of its keys.</li>
+    <li><b>Manifest</b>: the developer's signed record of a game or market: its rules, its client files, how it pays out. Its hash is the <b>game id</b>.</li>
+    <li><b>Replayed</b> game: the result is a run the nodes replay. <b>Attested</b> game (a prediction market): the result is an outcome signed by the people or services the developer named (its <b>attestors</b>).</li>
+    <li><b>Head-to-head</b> game: each player hides a move, all moves are revealed after entry close, and the game's rule decides between them (<a href="#h2h">Rock Paper Scissors</a>). A round is played only when all its players entered.</li>
+  </ul>
+
+  <h2 id="node">What a node does</h2>
+  <p>A node is a small Node.js server. Together the nodes are Bitcoin Arena; there is no other server. A node:</p>
+  <ul>
+    <li>lists the games it hosts and the rounds it holds;</li>
+    <li>takes players' entries and the proof that their stake is locked;</li>
+    <li>replays the runs of a replayed game, or checks the attestation of a market;</li>
+    <li>signs results and the payout table with the other nodes of the committee;</li>
+    <li>as a guardian, holds one key of the federation that keeps the stakes.</li>
+  </ul>
+  <p>For that work the nodes of a round share the round's <b>node fee</b> (5% of every paid stake today). It is split three ways: the nodes that replay the runs, the nodes that sign the payouts, and the guardians that hold the money. A node operator gets a share of the fees of every round their node serves.</p>
+
+  <h3 id="run">Run a node</h3>
+  <p>You need a computer that is always on with a public HTTPS address (a tunnel works), Node.js 24, the Bitcoin Arena source, and a Bitcoin node (<code>bitcoind</code>) of the same network, testnet4 today, so your node reads the chain itself. For the guardian role you also need <code>fedimintd</code> and a seat in the federation.</p>
+<pre># start a node on port 8080 with its database in round.db
+node packages/arena-node/src/main.js 8080 round.db
+
+# the same, with the first game (Tick Tock, Next Block) hosted
+node packages/nextblock/bin/node.mjs 8080 round.db</pre>
+  <p>The node is configured by environment variables. The ones that matter first:</p>
+  <div class="tbl"><table><thead><tr><th>Setting</th><th>What it does</th></tr></thead><tbody>
+    <tr><td><code>ARENA_BIND</code></td><td>The address to listen on (default <code>127.0.0.1</code>; put a reverse proxy or tunnel in front).</td></tr>
+    <tr><td><code>ARENA_GAMES</code></td><td>The games this node hosts: a comma-separated list of modules that each export <code>GAME</code>. With none, the node hosts no game.</td></tr>
+    <tr><td><code>ARENA_BITCOIND_URL</code>, <code>ARENA_BITCOIND_COOKIE</code></td><td>Your <code>bitcoind</code>'s RPC address and cookie (set both). The network follows this node.</td></tr>
+    <tr><td><code>ARENA_DONATION_NETWORK</code></td><td><code>testnet4</code> or <code>regtest</code>: which donation recipients the node uses.</td></tr>
+    <tr><td><code>ARENA_SERIES_FILE</code></td><td>The published round series this node writes rounds for.</td></tr>
+    <tr><td><code>ARENA_STAKE_LOCK_BIN</code>, <code>ARENA_FEDERATION_CLIENT_DIR</code></td><td>The federation client the node uses to check and settle stake locks.</td></tr>
+    <tr><td><code>ARENA_PEERS</code></td><td>The other nodes this node talks to directly.</td></tr>
+    <tr><td><code>ARENA_LND_*</code>, <code>ARENA_LNCLI</code></td><td>The Lightning node for deposits and payouts, when this node runs one.</td></tr>
+  </tbody></table></div>
+  <p>Open <code>/dashboard</code> on your node to see its rounds, its committee seats and its share of the fees per day, month and game.</p>
+
+  <h2 id="api">The node API</h2>
+  <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are {{NALL}} in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
+  <ul>
+    <li>Round ids, entry ids and keys are hex strings in the query: <code>?round=&lt;64 hex&gt;</code>.</li>
+    <li>Answers are JSON, or binary when they are a protocol record (a round contract, a manifest, an attestation). Binary records are encoded and decoded with <code>packages/arena-protocol</code>.</li>
+    <li>Ask several nodes, not one: every node of the committee answers for itself, and the page compares them.</li>
+  </ul>
+
+  <h3 id="api-dev">For game and market builders ({{NDEV}})</h3>
+  <p>The requests you will use to list your game, read its rounds, follow results and, for a market, report the outcome.</p>
+  {{DEV}}
+
+  <h3 id="api-player">For pages and players ({{NPLAYER}})</h3>
+  <p>What the game page uses to show the lobby, join, lock a stake and collect winnings.</p>
+  {{PLAYER}}
+
+  <h3 id="api-ops">For operators ({{NOPS}})</h3>
+  {{OPS}}
+
+  <h3 id="api-n2n">Between nodes ({{NN2N}})</h3>
+  <p>Signing ceremonies, shares and gossip between the nodes of a committee. You do not call these yourself; they are listed so nothing is hidden.</p>
+  <details><summary>Show the {{NN2N}} node-to-node requests</summary>
+  {{N2N}}
+  </details>
+
+  <h2 id="game">Implement a game</h2>
+  <p>A game is four things: its <b>rules</b> (a small core every node can run and get the same result), its <b>client</b> (the web page the player sees), its <b>donation key</b> (where your share of the donations goes) and its <b>manifest</b> (your signed record of all of it). The example below is a whole game called <code>coin-count</code>: each tick the player presses a number, and the score is the sum.</p>
+  <ol class="steps">
+    <li><b>Write the rules as pure arithmetic</b>
+      <p>Nodes on different machines must reach the same score bit for bit. So the core may use only integers (or fixed-point), the round's seed and the player's inputs: no clock, no <code>Math.random</code>, no network, no files. Every core has the same small interface:</p>
+<pre>// core.js - coin-count
+export const CORE = {
+  name: 'coin-count',
+  RUN_TICKS: 600,                                   // the longest run a round may ask
+  runTicksFits: (t) =&gt; Number.isInteger(t) &amp;&amp; t &gt;= 1 &amp;&amp; t &lt;= 600,
+  INPUT_WORDS: 5,                                   // a tick carries five input numbers
+  start: (seedWord, config, { runTicks }) =&gt; ({ seed: seedWord | 0, sum: 0, ticks: 0, length: runTicks }),
+  eventsOf: () =&gt; ({ count: { liquidations: 0, loads: 0, samples: 0, tapes: 0 }, before() {} }),
+  step(st, words) { if (st.ticks &lt; st.length) { st.sum += words[0] | 0; st.ticks++; } },
+  stateHash: (st) =&gt; sha256(`coin-count:${st.seed}:${st.sum}:${st.ticks}:${st.length}`),
+  result: (st) =&gt; ({ outcome: st.ticks &lt; st.length ? null : 'DELIVERED', score: st.sum }),
+};</pre>
+      <p>The core's id is the SHA-256 of its file. A config (a set of rule numbers) is named by its hash too.</p></li>
+    <li><b>Write the client: what the player sees</b>
+      <p>Your client is a web page at <code>games/&lt;game name&gt;/index.html</code> beside the Bitcoin Arena page. The page runs it only if its SHA-256 is in your manifest, so a client changed by one byte is refused. It gets the engine as <code>window.parent.ARENA_GAME</code>; stakes, locks, the wallet and the seed stay the engine's, so your client never touches a key.</p>
+<pre>const A = window.parent.ARENA_GAME;
+A.rows();          // this game's open rounds: id, line, joinable, entry close
+A.identity();      // the player's name and key fingerprint (the same in every game)
+A.join(roundId);   // join, through the engine's own join and stake
+A.back();          // back to the list of games</pre></li>
+    <li><b>Make your donation key: where your share is paid</b>
+<pre>node packages/arena-donor/bin/arena-donor.mjs init ./my-game-dev --label "coin-count dev"
+# prints recipientPk: the key your game's donation set names</pre>
+      <p>The same tool later collects your donations from the federation and pays them to your own Lightning node.</p></li>
+    <li><b>Make your developer key</b>
+<pre>node packages/arena-donor/bin/arena-donor.mjs game-key ./my-game-dev
+# writes ./my-game-dev/game-dev.pkcs8 (readable only by you) and prints your public key</pre>
+      <p>This Ed25519 key signs your game and every later version of it. Keep it safe; a node never sees it.</p></li>
+    <li><b>Write the manifest</b>
+<pre>// body.mjs - coin-count, version 1
+import { RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from './packages/arena-protocol/src/manifest.js';
+import { donationSetId } from './packages/arena-protocol/src/donation.js';
+const hex = (h) =&gt; Uint8Array.from(Buffer.from(h, 'hex'));
+export const DONATION_SET = [{ recipientPk: hex('02…your recipientPk…'), label: 'coin-count dev', shareBps: 10000 }];
+export const BODY = {
+  gameName: 'coin-count', version: 1, parentManifestId: NO_PARENT,
+  resultType: RESULT_TYPE.REPLAY, payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4,
+  minScore: 1, runTicksMax: 600, roundPeriodMs: 0n,
+  cores: [{ hash: hex('…sha256 of core.js…'), configs: [hex('…sha256 of your config…')] }],
+  clients: [hex('…sha256 of games/coin-count/index.html…')],
+  gameDonationSetId: donationSetId(DONATION_SET),
+};</pre></li>
+    <li><b>Sign it</b>
+<pre>node packages/arena-donor/bin/arena-donor.mjs sign ./my-game-dev body.mjs
+# {"step":"signed","game":"coin-count","version":1,"gameId":"…","file":"./my-game-dev/coin-count-manifest.hex"}</pre>
+      <p>That id is your game. Change one byte of the manifest and the id changes too.</p></li>
+    <li><b>Hand it to the nodes</b>
+      <p>A node loads a game from a module that exports <code>GAME</code>, listed in its <code>ARENA_GAMES</code>. It checks every piece against the manifest at start and refuses a game that does not match.</p>
+<pre>// coin-count/game.js
+export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
+  cores: new Map([[CORE_HASH, { name: 'coin-count', hash: CORE_HASH, url: CORE_URL, adapter: CORE,
+    configs: new Map([[CONFIG_HASH, {}]]) }]]),
+  donationSet: DONATION_SET };</pre>
+      <p>Then ask node operators to host it. Each decides alone; the game appears in the lobby of every page whose nodes host it. Check it with <code>GET /games</code> on their nodes.</p></li>
+    <li><b>Test on your own machine</b>
+      <p><code>packages/arena-node/tools/games-regtest.mjs</code> starts a private test chain with two nodes hosting two games and serves the page, so you see the game picker, your client and a join with test coins.</p></li>
+    <li><b>Ship updates</b>
+      <p>An update is a new manifest with the same key, <code>version</code> + 1 and the old game id as <code>parentManifestId</code>. Rounds already written keep the manifest they named.</p></li>
+  </ol>
+  <div class="note">Paid rounds of a replayed game need the game on the page's list of known games (with its cores and configs), because that list ships with the page. A newly signed game plays free rounds first.</div>
+
+  <h2 id="h2h">Implement a head-to-head game</h2>
+  <p>In a replayed game every run is checked on its own, so one player's score can never depend on what another player did. A <b>head-to-head game</b> is for the games where it does: each player picks a move in secret, all moves are shown together, and the game's rule decides who won. The engine does the hiding, the showing, the checking and the money; your game only says what beats what. The example is the real <b>Rock Paper Scissors</b> (<code>packages/rock-paper-scissors</code>).</p>
+  <div class="tbl"><table><thead><tr><th>Result type</th><th>The result comes from</th><th>Example</th></tr></thead><tbody>
+    <tr><td><code>REPLAY</code> (1)</td><td>each player's own run, replayed by every node</td><td>Tick Tock, Next Block</td></tr>
+    <tr><td><code>ATTESTED</code> (2)</td><td>an outcome signed by the attestors the game names</td><td>a prediction market</td></tr>
+    <tr><td><code>HEAD_TO_HEAD</code> (3)</td><td>all players' revealed moves together, decided by the game's rule</td><td>Rock Paper Scissors</td></tr>
+  </tbody></table></div>
+  <h3>A round, step by step</h3>
+  <ol class="steps">
+    <li><b>Hide.</b> Before entry close the player enters with a <b>commitment</b> instead of a move: <code>H(round id ‖ session key ‖ move ‖ salt)</code>, with a fresh 32-byte salt. Nobody can read the move from it, and nobody can copy it: it names the entry's own session key.</li>
+    <li><b>Wait for the other players.</b> A round seats exactly the game's <code>players</code>. A further entry is refused (<i>"that round already seats … 2 players"</i>).</li>
+    <li><b>Reveal.</b> Between entry close and the round's end, each player sends its move and salt to every node (<code>POST /reveal</code>). A node takes it only if it hashes to that entry's commitment.</li>
+    <li><b>Decide.</b> At the round's end every node pulls the other nodes' reveals (<code>GET /reveals</code>), hands all the moves to the game's rule, and signs each player's result, exactly as it signs a replayed run. Same moves, same rule, so every node signs the same result.</li>
+    <li><b>Pay.</b> The result goes through the normal settlement, unchanged:</li>
+  </ol>
+  <div class="tbl"><table><thead><tr><th>What happened</th><th>Result the nodes sign</th><th>Money</th></tr></thead><tbody>
+    <tr><td>You won</td><td>DELIVERED, score 2</td><td>your stake back plus the losers' stakes</td></tr>
+    <tr><td>A draw</td><td>DELIVERED, score 1</td><td>everyone keeps their own stake</td></tr>
+    <tr><td>You lost</td><td>FAILED</td><td>your stake goes to the winner</td></tr>
+    <tr><td>You did not reveal</td><td>FORFEIT</td><td>your stake goes to the winner (a lone revealer wins)</td></tr>
+    <tr><td>Fewer players than the game needs entered</td><td>VOID for everyone</td><td>not played: every stake comes back</td></tr>
+  </tbody></table></div>
+  <h3>Build it</h3>
+  <ol class="steps">
+    <li><b>Write the rule</b>
+      <p>One function: it gets the moves of the players who revealed and says WIN, DRAW or LOSS for each. Like a core it must be pure: same moves, same answer, on every machine.</p>
+<pre>// plugin/decide.js - Rock Paper Scissors: 0 rock, 1 paper, 2 scissors
+export const DECIDE = {
+  name: 'rock-paper-scissors decide v1',
+  decide(moves) {                                   // [{ key, move }]  -&gt;  { [key]: 'WIN' | 'DRAW' | 'LOSS' }
+    const shown = [...new Set(moves.map((m) =&gt; m.move))];
+    const out = {};
+    if (shown.length !== 2) { for (const m of moves) out[m.key] = 'DRAW'; return out; }
+    const beats = (a, b) =&gt; (a - b + 3) % 3 === 1;
+    const winning = beats(shown[0], shown[1]) ? shown[0] : shown[1];
+    for (const m of moves) out[m.key] = m.move === winning ? 'WIN' : 'LOSS';
+    return out;
+  },
+};</pre>
+      <p>Its id is the SHA-256 of its file, and the manifest names it in <code>cores[]</code>, so a node installs and checks it just like a replay core.</p></li>
+    <li><b>Write the manifest</b>
+<pre>export const BODY = {
+  gameName: 'rock-paper-scissors', version: 1, parentManifestId: NO_PARENT,
+  resultType: RESULT_TYPE.HEAD_TO_HEAD,
+  cores: [{ hash: sha256(decide.js), configs: [sha256('rock-paper-scissors-config:v1')] }],
+  runTicksMax: 0,                                   // no run
+  payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4,
+  minScore: 2,                                      // a win scores 2, a draw 1
+  players: 2,                                       // 2 to 16: a round is played only with all of them
+  moveCount: 3,                                     // 2 to 32 moves
+  revealWindowMs: 120000n,                          // 10 s to 1 h: the longest a round may give for reveals
+  roundPeriodMs: 0n, clients: [sha256(games/rock-paper-scissors/index.html)], gameDonationSetId,
+};</pre>
+      <p>Sign it and hand it to the nodes exactly as in <a href="#game">Implement a game</a> (<code>arena-donor sign</code>, a module exporting <code>GAME</code>, listed in <code>ARENA_GAMES</code>).</p></li>
+    <li><b>Write the client</b>
+      <p>Besides <code>rows</code>, <code>identity</code> and <code>back</code>, a head-to-head client gets these from <code>window.parent.ARENA_GAME</code>. The salt, the stake and the keys stay the engine's.</p>
+<pre>const A = window.parent.ARENA_GAME;
+A.headToHead;          // { players, moveCount } - or null for another kind of game
+A.hide(roundId, move); // enter the round with this move hidden
+A.hidden(roundId);     // this tab's hidden move in that round (kept in the tab until revealed)
+A.hiddenAll();         // every move this tab hid in this game - a round leaves the rows at its entry close
+A.reveal(roundId);     // after entry close: send the move and salt to every node
+A.reveals(roundId);    // the moves the nodes hold: { [entryId]: move }
+A.result(roundId);     // the round as the nodes hold it: entries, each signed outcome and how many nodes signed it</pre>
+      <p>Show the players <code>A.result</code>, the signed result, not a verdict your page worked out itself. Rock Paper Scissors' client shows "waiting for an opponent (1 of 2)" before entry close, reveals at entry close, and then "You win - signed by 2 nodes".</p></li>
+    <li><b>Keep it apart from other games</b>
+      <p>A page shows one game's rounds at a time: on nodes that host Tick Tock, Next Block and Rock Paper Scissors, the truck's lobby lists only its own rounds, and Rock Paper Scissors loads none of the truck.</p></li>
+    <li><b>Try it on your own machine</b>
+<pre>ARENA_PAGE=&lt;a page with games/rock-paper-scissors/index.html&gt; node packages/rock-paper-scissors/tools/demo-regtest.mjs ./work
+# a private test chain, two nodes hosting both games, one free round always open; prints the lobby link</pre>
+      <p>Open the link twice in two browser profiles (two players) and add <code>&amp;game=rock-paper-scissors</code>.</p></li>
+  </ol>
+
+  <h2 id="market">Implement a prediction market</h2>
+  <p>A market is a round where players pick one outcome and the right picks share the stakes of the wrong ones. It uses the same custody, nodes and settlement as a game, but there is no core and no run: the result is the outcome reported by the attestors you name.</p>
+  <ol class="steps">
+    <li><b>Choose the question, the outcomes and who reports the result</b>
+      <p>2 to 16 outcomes, for example <code>['up', 'down']</code>. Then 1 to 16 <b>attestors</b>: Ed25519 keys of the people or services that report the outcome (for example three price-feed operators), and how many of them must sign the same outcome (for example 2 of 3). Players see who decides before they stake.</p></li>
+    <li><b>Write the manifest</b>
+      <p>The same as a game's, with these differences:</p>
+<pre>export const BODY = {
+  gameName: 'btc-up-down', version: 1, parentManifestId: NO_PARENT,
+  resultType: RESULT_TYPE.ATTESTED,          // the result is an outcome, not a replayed run
+  payoutRule: PAYOUT_RULE.PARI_MUTUEL,       // the right picks share the wrong picks' stakes
+  outcomes: ['up', 'down'],
+  attestors: [KEY_A, KEY_B, KEY_C],          // 32-byte Ed25519 public keys
+  attestThreshold: 2,                        // 2 of the 3 must sign the same outcome
+  cores: [], runTicksMax: 0,                 // nothing to run
+  clients: [hex('…sha256 of games/btc-up-down/index.html…')],
+  gameDonationSetId: donationSetId(DONATION_SET),
+  // … roundPeriodMs and the rest as for a game
+};</pre>
+      <p>Sign it and hand it to the nodes exactly as for a game (steps 4, 6 and 7 above). Your client shows the outcomes; the page's own pick sheet takes the stake and the pick.</p></li>
+    <li><b>Players pick and stake</b>
+      <p>An entry into a market round carries a <b>pick</b>, the index of one outcome. Nodes refuse a pick that is out of range, and any pick once they hold a valid result for that round.</p></li>
+    <li><b>Report the outcome</b>
+      <p>After the entry close, your attestors sign the round's outcome and anyone posts it to the nodes. What they sign is the id of <code>{ round id, outcome index, observed time in ms }</code>:</p>
+<pre>import { createPrivateKey, sign } from 'node:crypto';
+import { attestationBodyId, encodeAttestation } from './packages/arena-protocol/src/attested.js';
+
+const body = { roundId, outcome: 0, observedAtMs: BigInt(Date.now()) };   // 0 = 'up'
+const digest = Buffer.from(attestationBodyId(body));
+const signatures = [attestorA, attestorB].map((a) =&gt; ({
+  key: a.publicKey,                                                     // 32 bytes
+  signature: new Uint8Array(sign(null, digest, a.privateKey)),          // Ed25519, 64 bytes
+}));
+const attestation = encodeAttestation({ ...body, signatures });
+
+for (const node of committeeNodes)
+  await fetch(`${node}/outcome?round=${roundIdHex}`, { method: 'POST', body: attestation });</pre>
+      <p>Each node checks that the attestation is for this round, that the outcome exists, and that enough of the named attestors signed it. It answers why when it refuses.</p></li>
+    <li><b>Follow it</b>
+      <p><code>GET /outcome?round=…</code> answers the round's state: <code>OPEN</code> (no result yet), <code>ATTESTED</code> (one outcome, with the payout table) or <code>DISPUTED</code>. The round settles once a result has stood for the objection window (600 s) with nothing contradicting it.</p></li>
+    <li><b>If attestors contradict themselves</b>
+      <p>Two valid attestations of different outcomes for one round are the proof that the attestors disagreed. The round is <code>DISPUTED</code> and pays out on neither outcome; the stakes go back to their players by the refund path.</p></li>
+  </ol>
+  <h3>How a market pays out (pari-mutuel)</h3>
+  <ul>
+    <li>A market's fees are its own, set in its manifest: 0.5% to the nodes and 0.5% donation by default, at most 5% each and 10% together. Its <b>net stake</b> in the pool is the stake less those fees: a 1 sat pick at 1% stakes 0.99 sat on the odds.</li>
+    <li><b>The fees are due when an order fills</b>, for winners and losers alike; a pick fills at the round's entry close. Before that, an order can be cancelled at no cost: the player signs <code>POST /cancel</code>, and its stake and fee locks come back at once. The fees sit in the fee lock until the market resolves; then the nodes take their part and the donation is paid to the protocol developers' and the market developer's keys.</li>
+    <li>Every entry that picked the winning outcome gets its net stake back plus its share of the losing pool: <code>losing pool × its net stake ÷ all winning net stakes</code>, rounded down; the millisats left over go one each to the winners.</li>
+    <li>If nobody picked the winning outcome, or the market is void, everything goes back: every stake and every fee. A market is void if its attestors contradict each other, or if no outcome stands by its deadline.</li>
+    <li>There is no house and no counterparty: the wrong picks pay the right ones.</li>
+  </ul>
+  <h3>Bitcoin Up or Down, every 15 minutes</h3>
+  <p>The first market follows Polymarket's <i>BTC Up or Down 15m</i>. There is one market per quarter hour with two outcomes, <b>Up</b> and <b>Down</b>. Up wins if the time-weighted average BTC price over the window is at or above the price at its start (the <i>price to beat</i>); a tie is Up. The attestors apply that rule to the prices they read (<code>upDownOutcome</code> in <code>packages/arena-protocol/src/up-down.js</code>) and sign the outcome.</p>
+  <p>Trading uses signed limit orders. Prices are in whole cents (0.01 to 0.99), an order buys at least 5 shares, and a share pays 1 sat if its side wins. An Up buyer at 0.73 and a Down buyer at 0.27 together fund a share. The nodes clear each batch of orders at one price that every node computes the same way (<code>clearBatch</code> in <code>order-book.js</code>). The fee is charged on the part of an order that filled, when it fills; what has not filled can be cancelled at no cost.</p>
+  <p>The example market <code>btc-close</code> (three outcomes, three attestors, 2 of 3) lives in <code>packages/arena-node/test/plugins/market/</code> with its own client, and <code>packages/arena-client/tools/market-live.sh</code> runs it on a private test chain end to end.</p>
+
+  <h2 id="money">Where the money goes</h2>
+  <p>Every paid entry is split the same way, fixed by the protocol. A 10,000 sat stake with the default donation:</p>
+  <div class="tbl"><table><thead><tr><th>Part</th><th>Share</th><th>Goes to</th></tr></thead><tbody>
+    <tr><td>In play</td><td>90%</td><td>the round: what is won or lost</td></tr>
+    <tr><td>Node fee</td><td>5%</td><td>the nodes that ran the round: replay, settlement, guardians, a third each</td></tr>
+    <tr><td>Donation, half</td><td>2.5%</td><td>the game's developer</td></tr>
+    <tr><td>Donation, half</td><td>2.5%</td><td>the protocol developers</td></tr>
+  </tbody></table></div>
+  <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. Free rounds pay neither. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
+</main>
+</div>
+</body>
+</html>

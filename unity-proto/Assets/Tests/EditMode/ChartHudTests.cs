@@ -7,7 +7,7 @@ using L = Blwp.Layout;
 
 /// <summary>
 /// WAR_TACTICS.md §0.3: the HUD's one chart, painted from the CORE'S chart words (Tests/Fixtures/chart-words.txt,
-/// written by packages/core/tools/chart-fixture.mjs). One chart, nothing under it, Tab switches its range, YOU goes
+/// written by packages/nextblock/tools/chart-fixture.mjs). One chart, nothing under it, Tab switches its range, YOU goes
 /// where the core's truck is, the assault column is there exactly while the core's assault word says so.
 /// </summary>
 public class ChartHudTests

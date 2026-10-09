@@ -357,7 +357,7 @@ public class VehicleTests
     /// which is the authority, and PhysX is never the simulator (multiplayer_p2p.md).
     ///
     /// So what is checked here is the client's half of the ruling: the four boundary colliders are
-    /// GONE from the scene. The clamp itself is the core's and is measured in `packages/core` - men
+    /// GONE from the scene. The clamp itself is the core's and is measured in `packages/nextblock` - men
     /// written to twice HALF come back inside in one step - because a PhysX rigidbody driven here has
     /// no core behind it and proves nothing about a rule the core owns.
     /// </summary>

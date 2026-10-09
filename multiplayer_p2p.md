@@ -226,7 +226,7 @@ RULED HERE, so nothing of a player's is lost in the rename:
   `blwp-*` to `arena-*`;
 - browser storage keys move from `blwp.*` to `arena.*` by **migration**: the
   client reads the old key, writes the new one, and deletes the old one only
-  once the new one reads back - a player's seed (`blwp.player.seed`) and
+  once the new one reads back - a player's seed (`arena.player.seed`) and
   wallet survive the rename;
 - player-visible text never says BLWP or BTC Logistics again.
 
@@ -257,7 +257,7 @@ GameManifest {
   game_name                       // "nextblock"
   game_dev_pubkey                 // the developer's key; it signs this body
   version, parent_manifest_id     // 0 for the first; an update names the one it replaces
-  result_type                     // REPLAY (a replayed run) - the only one in Arena v1 (§0A.7)
+  result_type                     // REPLAY (a replayed run), or ATTESTED (an outcome its attestors sign, §0A.7a)
   cores[]                         // sim core hashes this game runs (the sim_wasm_hash of §5)
   configs[]                       // config hashes per core (§27A.7.5)
   run_ticks_max, round_period     // what a round of it may ask
@@ -265,6 +265,8 @@ GameManifest {
   min_score
   clients[]                       // client build hashes (for nextblock the WebGL build)
   game_donation_set               // recipients and shares, as §22A's donation set
+  outcomes[], attestors[],        // ATTESTED only (§0A.7a): the outcomes a round may end in, the
+    attest_threshold              //   attestor keys, and how many of them must sign (k of n)
   signature                       // by game_dev_pubkey over all of the above
 }
 game_id = H(GameManifest)
@@ -324,13 +326,304 @@ confirmation before a stake.
 
 ## 0A.7 Beyond games
 
-The engine is not only a game engine: later, contests whose result is an
-attested outcome - a price, an event - can use the same custody and
-settlement, for example **prediction markets**. In Arena v1 the only
-`result_type` is `REPLAY`; an `ATTESTED` type, its objection and its payout
-rules (binary, pari-mutuel) are a later revision (board #206). Nothing in
-Arena v1 may assume that a result is a replayed run outside the code that handles
-`REPLAY`.
+The engine is not only a game engine: contests whose result is an attested
+outcome - a price, an event - use the same custody and settlement, for
+example **prediction markets**. The `result_type` of a manifest says which
+kind a game is: `REPLAY` (a replayed run, §10) or `ATTESTED` (§0A.7a).
+Nothing in the engine may assume that a result is a replayed run outside the
+code that handles `REPLAY`.
+
+## 0A.7a Non-replay plugins: attested results *(RULED, the owner 2026-10-07, board #206)*
+
+**Result source.** A round of an `ATTESTED` game has no core, no config and
+no run: its manifest lists no cores, `run_ticks_max` 0, no rank curve and no
+`min_score`, and a round of it names 32 zero bytes as its `sim_wasm_hash`
+and `config_hash`. Its result is an **outcome**, one of the manifest's
+`outcomes[]` (2 to 16 labels), signed by its **attestors**: a set of 1 to 16
+keys named in the manifest, of which `attest_threshold` (k of n) must sign.
+**The game dev chooses the attestors** (RULED): they are in the manifest the
+game dev signs, so a player sees who decides the outcome before staking.
+They are not the round's signer nodes reading a feed.
+
+```text
+OutcomeAttestation {
+  round_id
+  outcome                         // index into the manifest's outcomes[]
+  observed_at_ms                  // when the attestors saw it
+  signatures[]                    // { attestor key, signature over H(the three fields above) }
+}
+```
+
+**The entry carries a pick, not a run.** An entry into an attested round
+backs one outcome by its index (`pick`, after the entry's other fields; an
+entry without one keeps its bytes and its id). It still locks its stake, its
+fee and its donation exactly as any paying entry (§0A.8, §23.1). It plays no
+run, sends no batch and no mark, and no worker replays it. A seat refuses an
+entry with no pick, a pick out of range, a pick into a replayed round, and
+**any pick once it holds a standing attestation for that round** - a pick made
+after the outcome is known is a copy.
+
+**What verify means without a replay.** A seat takes an attestation at
+`POST /outcome?round=<id>` and holds it only if it stands:
+- it is for that round;
+- its outcome is one the manifest names;
+- at least `attest_threshold` distinct keys **the manifest names** signed it;
+- every signature on it verifies.
+
+Each refusal is by name. Nothing else of the world is checked: the seats do
+not know the price; they know who the game dev said may say it. `GET
+/outcome?round=` answers the round's state: `OPEN` (none held), `ATTESTED`
+(one outcome) with its table, or `DISPUTED`.
+
+**What an objection is.** Two attestations for one round, each standing on
+its own, naming **different** outcomes. The seat holds both: the pair is the
+proof that the attestors contradicted themselves, the round is `DISPUTED`,
+**and it settles on neither outcome** - no table is built from it. (What a
+disputed round's stakes do then, and whether attestors post a bond the proof
+slashes, is a later ruling; until then they stay locked and expire back to
+their players under §23.1's refund path.)
+
+**The payout rule: pari-mutuel** (RULED: no counterparty - the losers pay the
+winners). Out of each entry's stake come the market's fees: its manifest's,
+0.5 % nodes + 0.5 % donation by default (§0A.7b.3), **due once the entry is
+in the round at its entry close, paid out at resolution** (the owner
+2026-10-09): a market entry's fee lock holds both, it makes no donation
+outputs at entry, and before entry close it can be cancelled at no cost. The rest is its net stake in the pool. With outcome `o`:
+- every entry that picked `o` gets its own net stake back plus
+  `floor(losing_pool x its_net / winning_net)`, where `losing_pool` is the sum
+  of the other entries' net stakes and `winning_net` the sum of the winners';
+- the msats the floors leave go one each to the winners in entry-id order;
+- if nobody picked `o`, every entry's net stake goes back to it;
+- fees + donations + payouts = the gross, to the msat.
+
+The settlement seats build this table from the stored entries' picks and the
+held outcome **without running any game code**. A manifest of an attested
+game must pick `PARI_MUTUEL`; a replayed game must pick `RANK_CURVE`.
+
+**Slices.** Slice 1 (board #206): the manifest type, the pick, the
+attestation and its refusals, the dispute, and the table - all read at
+`GET /outcome` and `/api/rounds`; an attested round's settlement is **held**,
+nothing of it moves. Slice 2: the settlement transaction paying that table
+(the winners' payouts, the fee locks to the seats, as §22A), the page's pick
+UI, and a regtest round.
+
+### Sketch: a prediction market on the same custody and settlement
+
+"Where does BTC close on Friday?" A game dev publishes manifest `btc-close`:
+- outcomes `above 100k`, `between`, `below 90k`;
+- three attestor keys (say three independent price-feed operators), threshold 2;
+- `PARI_MUTUEL`;
+- its own donation set.
+
+Nodes that choose to host it list it (§0A.4) and need install nothing: there
+is no core.
+
+1. A series of rounds opens as for any game (§5A.5). Each round's entry
+   window closes before Friday's close, its `end` after it.
+2. A player picks `below 90k` and stakes 10,000 sat (market default fees,
+   §0A.7b.3):
+   - a 100 sat fee lock: 50 sat for the nodes and 50 sat donation, half to
+     the protocol devs and half to `btc-close`'s dev, due at entry close and
+     paid out at resolution;
+   - a 9,900 sat stake lock to the round's claim key.
+3. After the close, two of the three operators sign `{round_id, 2, t}` and
+   anyone posts it to the seats. Each seat checks the two signatures against
+   the manifest and holds it.
+4. The seats build the pari-mutuel table, and the round's settlement pays it
+   (slice 2): the losing stake locks are claimed into the winners' payouts,
+   and the fee locks to the seats.
+5. With three keys and k = 2, two standing attestations of different
+   outcomes need at least one key to have signed both. That key's two
+   signatures are the proof: the round is `DISPUTED`, and nothing is paid out
+   of it.
+
+## 0A.7b The market we build first: "Bitcoin Up or Down - 15 minutes" *(the owner 2026-10-09: "match this polymarket market", board #235/#278)*
+
+The model is Polymarket's series **BTC Up or Down 15m**
+(polymarket.com/event/btc-updown-15m-1791598500, read 2026-10-09 from its
+public API). One market per quarter hour, on the clock (UTC), each with two
+outcomes. Its rule, verbatim:
+
+> This market will resolve to "Up" if the time-weighted average price (TWAP)
+> of Bitcoin ... of the time range specified in the title is greater than or
+> equal to the price at the beginning of that range. Otherwise, it will
+> resolve to "Down". (Source: the Chainlink BTC/USD TWAP 60 s data stream.)
+
+| | Polymarket | Bitcoin Arena |
+|---|---|---|
+| market | one per 15 min window, a recurring series, open ~24 h before its window | one **market round** per 15 min window of a market series (off the games' 90 s grid, §0A.7b.4) |
+| outcomes | Up, Down | `outcomes[] = [Up, Down]`, indexes 0 and 1 |
+| price to beat | the price at the window's start | the same: the feed's reading in force at the window's start |
+| rule | Up if the window's TWAP >= the price to beat, else Down | the same, **a tie is Up**; `up-down.js` `upDownOutcome` is the rule as a pure function |
+| who resolves | UMA / Polymarket from Chainlink | the market's **attestors** (§0A.7a), k of n, each applying `upDownOutcome` to the feed samples it read, signing `{round, outcome, observed_at}` |
+| trading | a central limit order book matched continuously: tick 0.01, minimum 5 shares, a share pays $1 | **signed standing limit orders cleared every second at one uniform price** (§0A.7b.2): tick 0.01, minimum 5 shares, **a share pays 1 sat** |
+| fees | taker only, 0.07 x p(1-p) per share, maker rebate | **the owner's rulings instead** (§0A.7b.3): the market's own rate, 1 % by default (0.5 % nodes + 0.5 % donation), due when an order fills, paid out at resolution |
+| custody | USDC on Polygon | the federation's locks (§23.1); no house, no counterparty but the other side's orders |
+
+**0A.7b.1 Resolution.** At the window's end each attestor reads its feed
+samples ([{at_ms, price}], integer prices) and computes the price to beat
+(the reading in force at the window's start) and the time-weighted average
+over [start, end), each reading weighted by how long it stood inside the
+window. Up if `TWAP >= price to beat`, else Down. The comparison is exact
+(integers, no float), so two honest attestors reading the same samples sign
+the same outcome. Seats refuse an attestation observed before the window's
+end (`resolveAfterCloseMs`, §0A.7a terms). With no standing outcome by the
+deadline (`deadlineAfterResolveMs`) the market is VOID and everything comes
+back. The source rule is in the manifest's terms as text (`sourceRule`), and
+the market dev names the attestors: they are not Chainlink, and a player sees
+who they are before trading.
+
+**0A.7b.2 The book.** Complete sets: 1 sat of collateral pays 1 sat to
+whichever side wins, so an Up buyer at price p and a Down buyer at 1 - p
+together fund a set. An order is `{round, player key, outcome, limit price,
+stake (fees included), nonce, expiry}`, signed by the player over its id. A price is
+a whole cent (tick 0.01 on a scale of 100,000), and an order buys at least 5
+shares at its limit. The seats agree only on **which** orders are in a batch.
+`order-book.js` `clearBatch` is a pure function of that set, so every seat
+clears it the same way: no arrival order, nothing to front-run.
+- **The price** is the Up price that matches the most payout; then the
+  smaller imbalance; then the lower price.
+- **The short side** fills whole. **The long side** fills better limits
+  first, and the marginal limit is shared pro rata, the leftover msat one
+  each in order-id order.
+- **What does not fill** is not charged: its stake and its fee come back.
+  What fills pays its fee (§0A.7b.3).
+
+**Standing orders, every second** (the owner 2026-10-09: "Order batches alle 1s,
+wenn möglich alle 0.5s"). A player places a limit order at any time, and it
+is matched in the next batch. **Batches run every 0.5 s** (`BATCH_MS`;
+measured, §0A.7b.5: seven seats agreed every batch's set in at most 275 ms
+with real round trips, inside the half second; 1 s was the fallback). What has
+not filled **stands** in the book for the batches after, until it fills, its
+player cancels it (at no cost), or its expiry passes. An order names
+`expiry_ms` in its signed bytes: 0 stands until filled or cancelled
+(Polymarket's GTC), a time stands until then (GTD). An order that fills over
+several batches is one position. Polymarket matches each order the moment it
+arrives because one operator orders them all. Here seven seats would have to
+agree on the order of every single order, and whoever orders them can
+front-run. A batch only needs the seats to agree on **which** orders are in
+it, and everyone in it gets the same price. Measured: `clearBatch` clears
+5,000 orders in 27 ms (at most 99 candidate prices at a 0.01 tick).
+
+Selling a position before resolution (Polymarket's sell button) is a later
+slice: a sell of Up at p is an order matched against a buy of Up at >= p in
+the same batch.
+
+**0A.7b.3 Fees (the owner 2026-10-09).** A market's fees are its manifest's:
+0.5 % to the nodes and 0.5 % donation by default, at most 5 % each and 10 %
+together.
+- **The fee falls due when an order fills** ("when an order is filled, the
+  fee is of course due too"), on the filled part only. In a pari-mutuel
+  market round an entry fills at the round's entry close.
+- **What has not filled can be cancelled at no cost**: the player signs a
+  cancel with the entry's session key (`POST /cancel`), every seat drops the
+  entry from the round, and both its locks come back at once by the return
+  door (`GET /forfeit`, and `GET /forfeit?lock=fee` for the fee lock). After
+  entry close a cancel is refused: the order is in, and its fee is due.
+- The fees sit in the order's fee lock until the market resolves. Then the
+  nodes take their part and the donation is paid to the protocol devs' and
+  the market dev's keys, from winners and losers alike.
+- A VOID market, or a pari-mutuel round nobody picked right, gives everything
+  back (rulings "refund at the deadline", "refund the fees too").
+- Example: 1 sat on Up pays 0.01 sat in fees once it fills, and 0.99 sat buys
+  the odds. At an Up price of 0.73 that is 0.99 / 0.73 = 1.356 sat of payout
+  if Up wins.
+
+**0A.7b.4 Still to build.** Market rounds on their own 15 min period
+instead of the 90 s grid, with lock expiry per round (window end + deadline
++ objection window). The batch record signed by the seats. Cancel at the
+seats and the immediate return of a cancelled order's stake and fee locks.
+Positions as locks and the payout per share. The reference attestor daemon
+(three price sources, `upDownOutcome`). Selling before resolution. The
+market page: Up/Down prices, the price to beat, the order entry, positions.
+
+**0A.7b.5 How the seats agree a batch** (kanban #278 step 4). A page posts
+a signed order to every seat (`POST /order`), and each seat keeps it with the
+time it arrived. Batch k takes what reached any seat before its cutoff,
+(k + 1) x the interval in ms since the epoch, so every seat names the same k
+from its clock. Its **leader** is the round's seat k mod n, so leadership
+rotates: a seat that is down only moves its batches' orders into the next
+leader's batch, which takes everything before its own cutoff.
+1. A little after the cutoff (100 ms grace, so an order posted just before it
+   has landed), the leader asks every seat for its unbatched orders
+   (`GET /batch-proposal`) and takes their union, checking each order again.
+2. It hands the set and its signature over `batchId` (round, k, the order ids)
+   to every seat (`POST /batch`).
+3. Each seat checks the leader is the round's seat k mod n, every order, that
+   none of them is in another batch there, and that it signed no other set
+   for (round, k). It keeps the orders it lacked, marks the set as batch k,
+   and answers its own signature over the same id.
+
+Every seat that signed holds the same set, and `bookBatch` clears it the same
+way (`GET /book`). Measured with seven seats on one host, every seat-to-seat
+request delayed by a round trip measured to a live seat through its tunnel
+(p50 56 ms, max 106 ms):
+
+| interval | batches | agreed p50 | p95 | max |
+|---|---|---|---|---|
+| 0.5 s | 20 | 225 ms | 275 ms | 275 ms |
+| 1 s | 20 | 221 ms | 267 ms | 267 ms |
+
+Every batch was held and signed by all seven seats, and all seven cleared
+the 40 batches identically. Orders backed by locks, the certificate and the
+void are §0A.7b.6.
+
+**0A.7b.6 Positions backed by locks** (kanban #278, comment 1127; the owner
+2026-10-09: "Pick (a)").
+
+**Orders and locks:**
+- **An order is an entry** with a limit price and an expiry after its pick
+  (marker `0xa9`). The player locks first: its stake lock is its budget less
+  1 %, its fee lock is the 1 %.
+- An order is tradable at a seat once that seat verified both locks with the
+  federation. A leader batches only orders tradable at at least the threshold
+  of seats.
+- No seat holds the money. A lock moves whole: claimed whole, or returned
+  whole.
+- Only **certified** batches (at least the threshold of seats' signatures)
+  are in the book (`book-ledger.js`, a pure function of them).
+- A batch that can no longer reach the threshold is **void** (enough seats
+  declined it, each signing that it never will). Until then the book waits
+  for it.
+- Cancels and sells travel inside a batch. In a batch, new orders join first,
+  then cancels take their orders' rest out, then expiries, then sells, then
+  the clear.
+
+**What each event does to an order's locks:**
+
+| event | in the federation | in every seat's book | return door |
+|---|---|---|---|
+| match certified | nothing moves | fill recorded | closed (a whole return would hand back filled money) |
+| match not certified | nothing moves | no fill; the orders wait (a void batch's go into the next) | unchanged; while pending: "in a batch not decided yet" |
+| cancel, unfilled | stake and fee lock back at once, whole | out of the book | open once the batch carrying the cancel is certified |
+| cancel, partly filled | nothing until settlement | the rest leaves the book | closed; the rest is paid at settlement (a) |
+| sell | nothing | Up and Down shares close into sets; the buyer gets the shares | closed; the proceeds are paid at settlement (a) |
+| resolution | every lock with a fill claimed whole in one settlement | | locks with no fill come back whole |
+
+**A sell** of s shares of an outcome at ≥ p is a buy of s of the other
+outcome at ≤ 1 − p, paid for by the shares already held. Its cost is owed out
+of the complete sets it closes, and its fee is the market's rate of the
+proceeds.
+
+**At settlement** each claimed order is paid:
+- its winnings (every winning share paid out of the pool of all collateral);
+- less its sells' debt and fee;
+- plus the unspent rest of its budget;
+- plus the part of its fee lock its fills did not use (the fee due is
+  `fee lock × filled cost ÷ budget`).
+
+The nodes get their part of the fees due (`nodeBps` of the whole rate,
+evenly over the round's seats), and the donation the rest. A filled order's
+stake secret is released for this settlement whoever won; an unfilled one's
+stays sealed.
+
+Measured (`order-locks.test.js`, 7 seats, measured round trips): every case
+above. 8 filled orders settled with 16 locks claimed, 80,000 msat paid out of
+80,000 claimed, and a partly filled cancel paid exactly its 1,819 msat rest.
+`order-batch.test.js` on locked orders: certified at all seven p50 297 ms,
+max 344 ms, so 0.5 s holds (with the 100 ms grace). A batch that must first
+void or certify an earlier one took up to 532 ms; the book is then one batch
+late.
 
 ## 0A.8 The money: 10% of the gross stake
 
@@ -627,7 +920,7 @@ round key - so every client shows the same string for one player in the lobby,
 on the board and in every round:
 `taggedHash('BLWP/v1/DISPLAY_NAME', identityPubkey)` → `adjective-animal-NNNN`
 (64 adjectives, 64 animals, four-digit number). Locked in
-`packages/protocol/src/display-name.js`, the only wordlist that names a
+`packages/arena-protocol/src/display-name.js`, the only wordlist that names a
 player. The name is **changeable**: a custom
 name lives next to the secret in the browser, may be published to the round's
 seats as a player-signed display record (the other players' pages verify it
@@ -640,7 +933,7 @@ a key set pays inside the federation, §22A) is the player **public key as
 hex**, not the display name (the owner 2026-09-08). It is omitted if
 `commentAllowed` is under 64 characters.
 
-**Browser key (M3).** The secret is stored in the browser (`blwp.player.v1`)
+**Browser key (M3).** The secret is stored in the browser (`arena.player.v1`)
 with a backup download/import the player triggers. It is never uploaded to a
 node.
 
@@ -766,13 +1059,13 @@ no globally authoritative multiplayer physics server is required.
 
 # 3. The whole architecture
 
-One downloadable server package, `blwp-node`, plus the browser client.
+One downloadable server package, `arena-node`, plus the browser client.
 
 ```text
 OPEN SOURCE CLIENT
       |
       v
-blwp-node software
+arena-node software
       |
       +-- 7 selected GAME/VERIFY role slots      5-of-7 agreement
       |
@@ -811,12 +1104,12 @@ operators simultaneously and forfeit five bonds to do it.
 /client-unity
 /sim-core
 /protocol
-/blwp-node
+/arena-node
 /replayer
 /test-vectors
 ```
 
-`/blwp-node` contains all server-side capabilities: entry and checkpoint
+`/arena-node` contains all server-side capabilities: entry and checkpoint
 handling, transcript storage, replay and signing, and optional Lightning
 settlement support. No proprietary daemon is required.
 
@@ -2308,7 +2601,7 @@ rewritten.
 
 # 8. One downloadable BLWP node software
 
-One open-source package, `blwp-node`. Depending on enabled roles, an
+One open-source package, `arena-node`. Depending on enabled roles, an
 installation can accept and timestamp entries, receive checkpoints and
 transcripts, store enough data for replay, replay and sign results, and
 participate in threshold Lightning settlement.
@@ -2867,8 +3160,8 @@ Past `final_after` (`finality.js resultFinality`):
   expiry (§23.2).
 
 Measured live on the free pair, for a late result, a split and a late
-posting (two test faults, off by default: `BLWP_TEST_DISSENT_FILE` with
-`<entry> first`, and `BLWP_TEST_LATE_POSTING_FILE`).
+posting (two test faults, off by default: `ARENA_TEST_DISSENT_FILE` with
+`<entry> first`, and `ARENA_TEST_LATE_POSTING_FILE`).
 
 ---
 
@@ -3201,9 +3494,9 @@ of its published inputs is slashable.
 # 21. Settlement role of the same node software
 
 ```text
-blwp-node --roles game_verify
-blwp-node --roles settlement
-blwp-node --roles game_verify,settlement
+arena-node --roles game_verify
+arena-node --roles settlement
+arena-node --roles game_verify,settlement
 ```
 
 **GAME/VERIFY role:** receives entries and checkpoints; stores transcripts;
@@ -4908,7 +5201,7 @@ in the networking sense. Nodes are reachable servers with a declared
 `endpoint`; players are browsers, which can open connections and never
 accept them. The "P2P" in this document means **no central provider**, not
 peers behind routers finding each other. A browser can never be a node,
-which is why `blwp-node` is separate software.
+which is why `arena-node` is separate software.
 
 Two consequences that are cheaper to know now than in month four:
 
@@ -5849,11 +6142,20 @@ So bonds carry. A bond created under an ancestor is valid in the census of
 network `n+1` when its operator publishes a **re-affirmation**:
 
 ```text
-OP_RETURN  "BLW"  FORK  network_id(n+1)[0:8]  schnorr_sig(bond key)
+OP_RETURN  "ARN"  FORK  network_id(n+1)[0:8]  schnorr_sig(bond key)
+           3      1     8                     64                = 76 bytes
+FORK = 0x46 ('F'); the signature is the bond's node key over
+  taggedHash("ARENA/v1/Reaffirmation", network_id(n+1) || bond_txid || bond_vout)
 ```
 
 One small transaction, the same shape as a vote (§27A.7.3). It moves no
-capital, spends no bond, and starts no new maturity clock.
+capital, spends no bond, and starts no new maturity clock. It names no
+outpoint: the signature binds it to one bond, and a census tries it against
+the ancestor bonds it found, as a tally tries a vote (kanban #209:
+`reaffirm.js`; it also pays this network's marker dust, so it is findable as
+an advertisement update is). The ancestor's bonds are found by the ancestor's
+marker and read by its advertisement layout and id (`ancestor.js`); one that
+is not re-affirmed is named in the census and not counted.
 
 **It is opt-in, per operator, and that is not a detail.** A vote decides
 what the successor *is*; it does not decide whose capital serves it.
@@ -6007,7 +6309,7 @@ simplification was trying to avoid. Bond-weighted stateless sortition
    deferred, not optional, not behind a flag.
 9. No central internal player balance.
 10. `FINAL` losses cannot later become refunds due to an infrastructure attack.
-11. One public `blwp-node` package for all roles.
+11. One public `arena-node` package for all roles.
 12. 5% node fee (Bitcoin Arena; 2% under BLWP) distributed deterministically to eligible selected slots and guardians.
 13. Developer donation optional at protocol level and possibly 0%.
 14. No privileged developer admin key.
@@ -6046,7 +6348,7 @@ Developer disappears tomorrow.
 Can someone download/build the client?   YES
 Can someone host the client?             YES
 Can users create rounds?                 YES
-Can anyone download/run blwp-node?       YES
+Can anyone download/run arena-node?       YES
 Can nodes enable either/both roles?      YES
 Can existing rounds finish?              YES
 Can stakes be refunded if nothing runs?  YES (stake-lock expiry, §23), while
@@ -6175,7 +6477,7 @@ committee nor outcome).
 ```text
                   GITHUB / MIRRORS
                         |
-          ONE OPEN-SOURCE blwp-node PACKAGE
+          ONE OPEN-SOURCE arena-node PACKAGE
                   (bonded operators)
                         |
           +-------------+-------------+
@@ -6207,7 +6509,7 @@ UNITY WEBGL CLIENT -> deterministic WASM -> committee
 
 # 37. Final principle
 
-> There is one open-source `blwp-node` package that anyone can download and,
+> There is one open-source `arena-node` package that anyone can download and,
 > with a bond on Bitcoin, register — and that bond output *is* the census
 > entry, so everyone derives the same eligible set from chain state.
 > Committees are selected deterministically, with weight linear in the bond,

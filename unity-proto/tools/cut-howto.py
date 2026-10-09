@@ -19,7 +19,7 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent.parent
 WHOLE = HERE / 'Assets/Art/Resources/lobby-howto.png'
-OUT = HERE / 'Assets/WebGLTemplates/BtcLogistics'
+OUT = HERE / 'Assets/WebGLTemplates/NextBlock'
 # x0, y0, x1, y1 in the whole - the measured boxes (DailyLobby.PanelBoxes)
 BOXES = [(32, 80, 699, 625), (726, 82, 1440, 625), (23, 650, 711, 1019), (752, 653, 1429, 1020)]
 

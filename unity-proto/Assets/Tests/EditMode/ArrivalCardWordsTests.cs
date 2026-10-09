@@ -231,7 +231,7 @@ public class ArrivalCardWordsTests
     }
 
     // THE CARD'S PRODUCT IS THE CORE'S SCORE (the owner 2026-09-25: "load C x danger E x speed T x 1000 = S"). The 72
-    // DELIVERED runs of packages/core/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
+    // DELIVERED runs of packages/nextblock/test/fixtures/arrival-card-runs.json - the core's own words, kept current by
     // core/test/arrival-card-runs.test.js - go through the real formatter; the four decimals are read back off the
     // printed row and their product must round to the printed S, which must be the core's S_DELIVERED and the SCORE line's.
     [System.Serializable] class CardRun { public float lane; public int seed, state, exposure, elapsed, cargo, delivered, e5, t5, c5; }
@@ -240,7 +240,7 @@ public class ArrivalCardWordsTests
     [Test]
     public void TheCardsProductIsTheCoresScore()
     {
-        string path = System.IO.Path.Combine(Application.dataPath, "../../packages/core/test/fixtures/arrival-card-runs.json");
+        string path = System.IO.Path.Combine(Application.dataPath, "../../packages/nextblock/test/fixtures/arrival-card-runs.json");
         var runs = JsonUtility.FromJson<CardRuns>(System.IO.File.ReadAllText(path)).runs;
         Assert.AreEqual(72, runs.Length);
         // T and C both move in the fixture (its cargo word is a FIXTURE WRITE, not a player input - this core has none)
@@ -341,7 +341,7 @@ public class ArrivalCardWordsTests
         StringAssert.Contains("_copiedAt < 0f && Blwp.BlwpCore.ReplayCopied", hud);
         string lib = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "Plugins/WebGL/blwp.jslib"));
         StringAssert.Contains("c === window.BLWP_REPLAY_URL", lib);
-        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("await navigator.clipboard.writeText(link.url); window.BLWP_REPLAY_COPIED = link.url;", page);
     }
 
@@ -360,7 +360,7 @@ public class ArrivalCardWordsTests
             "the score block draws under the card");
         StringAssert.Contains("if (watch == null) return;\n        // not under the result card", hud.Replace("\r\n", "\n"));
         StringAssert.Contains("if (ArrivalShowing) return;", hud);
-        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/BtcLogistics/index.html"));
+        string page = System.IO.File.ReadAllText(System.IO.Path.Combine(Application.dataPath, "WebGLTemplates/NextBlock/index.html"));
         StringAssert.Contains("window.BLWP_CARD_UP = true;", page);
         // the node strip still steps aside under the card; since the console (427bab76) it also tells the Console button so
         StringAssert.Contains("if (!window.BLWP_ROUND || window.BLWP_CARD_UP || window.BLWP_LOADOUT_OPEN) { el.style.display = 'none'; consoleHas('players', false); return; }", page);

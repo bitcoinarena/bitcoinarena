@@ -1,0 +1,20 @@
+{
+  "name": "nextblock",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic simulation core. Integer arithmetic only.",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "guard": "node tools/check-determinism.js",
+    "hash": "node tools/hash-core.js",
+    "tables": "node tools/gen-tables.js",
+    "test": "node --test --test-timeout=120000 test/*.test.js",
+    "engines": "bash tools/run-engines.sh",
+    "versions": "bash tools/run-versions.sh",
+    "arch": "bash tools/run-arch.sh",
+    "acceptance": "npm run guard && npm test && npm run engines && npm run versions && npm run arch"
+  }
+}

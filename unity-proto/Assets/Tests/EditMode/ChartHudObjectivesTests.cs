@@ -7,8 +7,8 @@ using L = Blwp.Layout;
 /// <summary>
 /// THE CHART DRAWS THE CORE'S OBJECTIVES, AND ONLY THEM (kanban #29, WAR_TACTICS.md §4.11 and its §0 client row): HIGH, LOW and
 /// OPEN at the points the core writes - its candle's centre and the seam over it - in the core's own words, read from
-/// packages/core/test/fixtures/chart-objectives.json (chartView's GROUND view on the core this tree builds, written by
-/// packages/core/tools/chart-objectives-fixture.mjs, never typed here). An absent OPEN draws nothing; one candle that is both
+/// packages/nextblock/test/fixtures/chart-objectives.json (chartView's GROUND view on the core this tree builds, written by
+/// packages/nextblock/tools/chart-objectives-fixture.mjs, never typed here). An absent OPEN draws nothing; one candle that is both
 /// HIGH and LOW is one marker, "HIGH/LOW". Objectives are read by index (0 HIGH, 1 LOW, 2 OPEN), the core's own order.
 /// </summary>
 public class ChartHudObjectivesTests
@@ -23,7 +23,7 @@ public class ChartHudObjectivesTests
 
     static Fixture Load()
     {
-        string path = System.IO.Path.Combine(Application.dataPath, "../../packages/core/test/fixtures/chart-objectives.json");
+        string path = System.IO.Path.Combine(Application.dataPath, "../../packages/nextblock/test/fixtures/chart-objectives.json");
         return JsonUtility.FromJson<Fixture>(System.IO.File.ReadAllText(path));
     }
 

@@ -693,7 +693,7 @@ namespace Blwp
         ///
         /// A distance against the core's OWN radius, which is the same test the
         /// core makes before it applies a dose. It is not a second bowl: the
-        /// falloff, the rate and the dose all stay in `packages/core`, and
+        /// falloff, the rate and the dose all stay in `packages/nextblock`, and
         /// nothing here computes damage. The renderer is asking where the hole
         /// is, not how much it hurts.
         /// </summary>

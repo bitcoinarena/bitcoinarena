@@ -492,7 +492,35 @@ public class CombatFx : MonoBehaviour
         // the dead hold their last pose rather than jogging on the ground
         foreach (var a in body.GetComponentsInChildren<Animator>(true)) Destroy(a);
         foreach (var c in body.GetComponentsInChildren<Collider>(true)) Destroy(c);
+        StillBody(body);
         return wrapper.transform;
+    }
+
+    // THE DEAD ARE NOT SKINNED (kanban #266): WebGL skins on the CPU, every visible SkinnedMeshRenderer, every frame - and a
+    // body never moves. In a named profile of the 7 s after 100 % (Pixel 7a profile, 10x CPU) Unity's skinned-mesh update was
+    // 590-629 ms, DeformSkinnedMesh 438-501 ms. A body is the raw soldier prefab with no controller, so each holds the same
+    // stored pose: that pose is baked once per mesh, and a body draws it as an ordinary mesh with its own materials.
+    readonly Dictionary<Mesh, Mesh> _stillPose = new Dictionary<Mesh, Mesh>();
+    void StillBody(GameObject body)
+    {
+        foreach (var smr in body.GetComponentsInChildren<SkinnedMeshRenderer>(true))
+        {
+            if (smr.sharedMesh == null) continue;
+            if (!_stillPose.TryGetValue(smr.sharedMesh, out var still))
+            {
+                still = new Mesh { name = smr.sharedMesh.name + " (still)" };
+                smr.BakeMesh(still);
+                still.RecalculateBounds();
+                _stillPose[smr.sharedMesh] = still;
+            }
+            var go = smr.gameObject;
+            var mats = smr.sharedMaterials;
+            var cast = smr.shadowCastingMode; bool receive = smr.receiveShadows; bool on = smr.enabled;
+            DestroyImmediate(smr);
+            go.AddComponent<MeshFilter>().sharedMesh = still;
+            var mr = go.AddComponent<MeshRenderer>();
+            mr.sharedMaterials = mats; mr.shadowCastingMode = cast; mr.receiveShadows = receive; mr.enabled = on;
+        }
     }
 
     ParticleSystem _fire, _smoke;

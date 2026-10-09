@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 /// <summary>
-/// FIVE TESTS THAT USED TO LIVE HERE NOW LIVE IN `packages/core/test`.
+/// FIVE TESTS THAT USED TO LIVE HERE NOW LIVE IN `packages/nextblock/test`.
 ///
 /// `RunScore` had a second scoring formula for when no core is answering, and
 /// in the editor no core ever is - so these were measuring Unity's arithmetic

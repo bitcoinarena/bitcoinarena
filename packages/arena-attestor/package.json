@@ -1,0 +1,7 @@
+{
+ "name": "arena-attestor",
+ "version": "0.0.1",
+ "type": "module",
+ "private": true,
+ "description": "An attestor of a Bitcoin Arena market: reads its price sources, applies the market's rule at each window's end, signs, trades signatures with the other attestors, and posts the attestation to every seat."
+}

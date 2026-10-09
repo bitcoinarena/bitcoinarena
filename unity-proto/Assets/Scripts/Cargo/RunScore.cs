@@ -71,7 +71,7 @@ public class RunScore : MonoBehaviour
     /// tests were measuring Unity's arithmetic and calling it the score. The
     /// rules they carried - an empty bed collapses a built score, the apron
     /// banks nothing, a wreck banks nothing, the seam pays more than the quiet
-    /// lane for the same ground - now live in `packages/core/test`, where the
+    /// lane for the same ground - now live in `packages/nextblock/test`, where the
     /// core actually runs, each with a mutant that kills it.
     ///
     /// With no core answering these read zero, and that is the honest answer:
@@ -391,9 +391,9 @@ public class RunScore : MonoBehaviour
 }
 
 /// <summary>
-/// THE CORE'S SCORE FACTORS, formed from its three score words exactly as packages/core/src/rules/score.js's scoreOf forms
+/// THE CORE'S SCORE FACTORS, formed from its three score words exactly as packages/nextblock/src/rules/score.js's scoreOf forms
 /// them - so their product, times 1000, is the core's score (to its rounding). Read by the arrival card; nothing here
-/// scores. The constants are the core's, and packages/core/test/arrival-card-factors.test.js fails if they drift.
+/// scores. The constants are the core's, and packages/nextblock/test/arrival-card-factors.test.js fails if they drift.
 /// </summary>
 public static class CoreScoreFactors
 {
