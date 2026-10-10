@@ -7330,6 +7330,18 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  '647425b6e6a053a0e29ff6fc188b4b3b64360b7703cf956a0c2e62d96bcc8ae9': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
+      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
 });
 
 // ---- arena-protocol/src/known-game.js
@@ -8176,6 +8188,13 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked } = {}
  * and reads nothing off the round itself.
  */
 const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
+/**
+ * WHAT THIS ENTRY STAKES (kanban #237): an order in a paid market round brings its own amount - the page sets it on its
+ * round object as `orderStakeMsat`, beside the contract's fields, so the round's id and bytes are untouched - and every
+ * other entry stakes the round's stake_msat.
+ */
+const stakeOf = (round) => (round && round.orderStakeMsat !== undefined && round.orderStakeMsat !== null
+  ? BigInt(round.orderStakeMsat) : BigInt((round && round.stakeMsat) || 0n));
 
 /**
  * DOES THIS ROUND'S STAKE GO INTO A FEDERATION LOCK? A paying round that names a
@@ -8682,7 +8701,7 @@ function feeLockOf(stakeLock, round) {
   if (!f.fields || !f.fields.paymentImage || f.fields.paymentImage.kind !== 'hash'
     || toHex(f.fields.paymentImage.bytes) !== toHex(sha256(f.preimage)))
     throw new Error('that fee lock is not locked to H(F) of the F it hands over');
-  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round));
+  const want = entryFeeMsat(stakeOf(round), feeBpsForRound(round));
   if (f.fields.amountMsat !== want) throw new Error(`that fee lock holds ${f.fields.amountMsat} msat and the entry's fee is ${want}`);
   return f;
 }
@@ -8701,7 +8720,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   if (typeof donationMsat !== 'bigint' || donationMsat < 0n)
     throw new Error('a donation is a BigInt millisatoshi amount, 0 or more');
   {
-    const stakeMsat = BigInt(round.stakeMsat || 0n);
+    const stakeMsat = stakeOf(round);
     const feeBps = feeBpsForRound(round);
     const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBps), donationMsat }, { feeBps });
     if (!fee.ok) throw new Error(fee.why);
@@ -8791,7 +8810,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
     ...(order ? { limitPrice, orderExpiryMs } : {}),
-    stakeMsat: BigInt(round.stakeMsat || 0n),
+    stakeMsat: stakeOf(round),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
     // hold is for what is left once the fee and the donation are out.
@@ -8805,7 +8824,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     //
     // A free round is 2% of nothing, which is nothing, so the same line is
     // right for both and there is no branch to get wrong.
-    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round)),
+    feeMsat: entryFeeMsat(stakeOf(round), feeBpsForRound(round)),
     donationMsat,
     joinTick,
   };
@@ -10643,7 +10662,7 @@ function lockLine(stakeLock) {
  * have held 98000 msat where the signer node wants 96000.
  */
 const lockAmountMsat = (round, donationMsat = 0n) => {
-  const stakeMsat = BigInt(round.stakeMsat || 0n);
+  const stakeMsat = stakeOf(round);
   return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBpsForRound(round)), donationMsat });
 };
 
@@ -10828,7 +10847,8 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
   if (feeRule && feeRule.baseMsat > 0n)
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
-  const feeGate = feeLockPays({ contract: round, fees: feeRule, feeBps: feeBpsForRound(round) });
+  // its fee lock on what this entry stakes: an order's own amount (kanban #237), else the round's
+  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (the owner 2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
@@ -11080,7 +11100,7 @@ function resumeDeposits({ client, storage, federationId, onClaimed = () => {} } 
 async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
-  const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
+  const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
     storage, federationId: round.federationId, sizeOf: (n) => roundsDepositMsat(n, locks, LockClient) });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   return offer;
@@ -11129,8 +11149,8 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     // deposit before it, asked for at once.
     if (askDeposit) {
       const short = (n.need !== null ? n.need : n.floor) - have;
-      const restMsat = prev || shortOnlyByFees(have, short, round.stakeMsat) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
-      const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit,
+      const restMsat = prev || shortOnlyByFees(have, short, stakeOf(round)) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
+      const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
@@ -11153,7 +11173,7 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     // own wallet. A credit that still falls short is topped up by this loop's next deposit.
     // GROSS (GROSS-INVOICE-2053): the invoice is the round's stake, never the shortfall less fee and donation
     const plan = estimateDeposit
-      ? { invoice_msat: String(BigInt(round.stakeMsat || 0n) > 0n ? BigInt(round.stakeMsat) : asked), credited_msat: String(asked), gateway: '' }
+      ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
     const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
@@ -21195,6 +21215,11 @@ const NO = 1;
 // order buys at least 5 shares at its limit - one share pays 1 sat here, as one pays $1 there
 const TICK = 1000n;
 const MIN_SHARES = 5n;
+// AN ORDER BRINGS ITS OWN AMOUNT (kanban #237, the owner 2026-10-10: market and limit orders, "Für market Orders"): in a paid
+// market round an order's stake is the player's - from 1 sat up to this cap - and the round's stake_msat is only what a
+// plain pick stakes. Its shares follow (MIN_SHARES at its limit, as Polymarket's minimum).
+const MIN_ORDER_MSAT = 1000n;
+const MAX_ORDER_MSAT = 100000000n;   // 100,000 sat
 const SHARE_MSAT = 1000n;
 
 const obIs32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -21488,6 +21513,7 @@ function batchDeclineId({ roundId, k }) {
 
 
 
+
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
 /**
@@ -21570,7 +21596,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
  * stake and entry close as the round's contract says them, and the signer nodes to ask for its outcome.
  */
 function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = false }) {
-  return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(round.stakeMsat), entryCloseMs: String(round.entryCloseMs),
+  return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
     nodes: [...nodes], confirmed: !!confirmed };
 }
 

@@ -49,4 +49,16 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  '647425b6e6a053a0e29ff6fc188b4b3b64360b7703cf956a0c2e62d96bcc8ae9': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
+      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
 });

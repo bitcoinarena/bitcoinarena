@@ -30,7 +30,7 @@ import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
-import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES } from '../../arena-protocol/src/order-book.js';
+import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES, MIN_ORDER_MSAT, MAX_ORDER_MSAT } from '../../arena-protocol/src/order-book.js';
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
@@ -485,7 +485,14 @@ export class Round {
     // `node_fee_bps`, and `genesis.js` writes that into the genesis parameters
     // - so a round naming a config has already committed to the rate, and a
     // second copy here would be a second place for it to drift.
-    if (contract.stakeMsat !== asks.stakeMsat)
+    // AN ORDER IN A PAID MARKET ROUND STAKES ITS OWN AMOUNT (kanban #237, order-book.js MIN_ORDER_MSAT .. MAX_ORDER_MSAT); every
+    // other entry stakes exactly the round's
+    const ownAmount = contract.limitPrice !== undefined && contract.limitPrice !== null && asks.stakeMsat > 0n
+      && (() => { const g = pluginForRound(asks, this.plugins); return g.ok && !!g.attested; })();
+    if (ownAmount) {
+      if (typeof contract.stakeMsat !== 'bigint' || contract.stakeMsat < MIN_ORDER_MSAT || contract.stakeMsat > MAX_ORDER_MSAT)
+        throw new Error(`an order stakes ${MIN_ORDER_MSAT} to ${MAX_ORDER_MSAT} msat, and that one names ${contract.stakeMsat}`);
+    } else if (contract.stakeMsat !== asks.stakeMsat)
       throw new Error(
         `that round asks a stake of ${asks.stakeMsat} msat and that entry names `
         + `${contract.stakeMsat}`);
@@ -496,7 +503,7 @@ export class Round {
     // (entryFeeBpsOf, 1 % by default) and its donation field 0
     const feeBps = feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
     const fee = feeMatchesEntry({
-      stakeMsat: asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
+      stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
     }, { feeBps, donationInFee: feeGame.ok && donationInFee(feeGame.plugin.manifest) });
     if (!fee.ok) throw new Error(fee.why);
     const donationCap = feeGame.ok ? donationBpsOf(feeGame.plugin.manifest) : null;
