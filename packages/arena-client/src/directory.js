@@ -28,8 +28,9 @@
 // as many chains as it is given - nothing fetches yet, and until something does,
 // a client is only as sure as the chain it was handed.
 import {
-  acceptAdvert, mostWork, chainWork, blockHashOf, BITCOIN_MAINNET_GENESIS,
+  acceptAdvert, mostWork, chainWork, blockHashOf, BITCOIN_MAINNET_GENESIS, TESTNET4_ANCHOR,
 } from '../../arena-protocol/src/chain.js';
+import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { agreedChain } from './headers.js';
 import { askForBond } from './bond.js';
 
@@ -211,8 +212,17 @@ export const PROVIDERS_NEEDED = 2;
 /** How long the client waits on a provider before giving up on it. */
 export const PROVIDER_WAIT_MS = 10000;
 
+/**
+ * THE BLOCK A CLIENT ANCHORS A ROUND'S CHAIN TO, by the round's own network id (kanban #209): the client's constants, never
+ * a page's. Testnet4: block 154000; any other network: mainnet's genesis, as before.
+ */
+export function chainAnchorFor(networkId) {
+  if (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4)) return TESTNET4_ANCHOR;
+  return BITCOIN_MAINNET_GENESIS;
+}
+
 export async function discover({
-  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved,
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId,
 }) {
   // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
   //
@@ -311,7 +321,7 @@ export async function discover({
   let reusedChain = !!chain;
   if (!chain) {
     chain = await agreedChain(headers, {
-      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      anchor: chainAnchorFor(networkId), ask,
       least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
     });
     if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
@@ -339,7 +349,7 @@ export async function discover({
     const bondWhy = bond.why, bondRefused = bond.refused;
     reusedChain = false;
     const fresh = await agreedChain(headers, {
-      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      anchor: chainAnchorFor(networkId), ask,
       least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
     });
     if (!fresh.ok) return { ok: false, why: `no bond: ${bondWhy}`, refused: bondRefused };
