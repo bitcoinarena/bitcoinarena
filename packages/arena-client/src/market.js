@@ -92,10 +92,39 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
   }));
   const took = entries.filter((x) => x.status === 201).map((x) => x.node);
   if (!took.length) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
-  const lock = stakeLock ? await handLock({ entryId: eid, fields: stakeLock.fields, nodes: took, needed: took.length, fetcher }) : null;
-  const feeLock = stakeLock && stakeLock.feeLock ? await handLock({ entryId: eid, fields: stakeLock.feeLock.fields, nodes: took, needed: took.length, fetcher, door: 'fee-lock' }) : null;
-  return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock, feeLock };
+  if (!stakeLock) return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: null, feeLock: null };
+  // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (kanban #237, measured on the regtest market
+  // stack): handed once, at once, while the federation was still accepting the lock, every seat that looked first refused it
+  // and none was asked again - so the order was tradable nowhere (a batch needs 5 seats holding its locks). The first pass
+  // after acceptance is awaited; the seats still refusing are asked again in the background until the round's entry closes
+  // (`stakeLock.handUntilMs`) or LOCK_HAND_MS passes - `handing` is that whole.
+  if (stakeLock.accepted && typeof stakeLock.accepted.then === 'function') {
+    try { await stakeLock.accepted; } catch (e) { return { ok: false, entryId: toHex(eid), entries, why: `the stake lock was not accepted: ${e.message}` }; }
+  }
+  const kinds = [{ door: 'lock', fields: stakeLock.fields }, ...(stakeLock.feeLock ? [{ door: 'fee-lock', fields: stakeLock.feeLock.fields }] : [])];
+  const tookLock = new Map(kinds.map((k) => [k.door, new Set()]));
+  const said = {};
+  const pass = async () => {
+    await Promise.all(kinds.map(async (k) => {
+      const left = took.filter((n) => !tookLock.get(k.door).has(n));
+      if (!left.length) return;
+      const r = await handLock({ entryId: eid, fields: k.fields, nodes: left, needed: 0, fetcher, door: k.door });
+      for (const x of r.said) if (x.status === 201) tookLock.get(k.door).add(x.node);
+      said[k.door] = { committed: tookLock.get(k.door).size, needed: took.length, said: r.said };
+    }));
+  };
+  await pass();
+  const until = Math.max(Date.now() + LOCK_HAND_MS_PICK, Number(stakeLock.handUntilMs || 0));
+  const handing = (async () => {
+    for (let pause = 1000; Date.now() < until && kinds.some((k) => tookLock.get(k.door).size < took.length); pause = Math.min(pause * 2, 15000)) {
+      await new Promise((r) => setTimeout(r, pause));
+      await pass();
+    }
+    return said;
+  })();
+  return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: said.lock || null, feeLock: said['fee-lock'] || null, handing };
 }
+const LOCK_HAND_MS_PICK = 120000;
 
 /**
  * THE TAB'S RECORD OF A PICK (what the lobby's market lines are made of): its round, entry and pick, its market's game, its
