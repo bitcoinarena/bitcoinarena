@@ -943,7 +943,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // "404 this node holds no such round" to the claim key, and the round could
     // not be played at all. A committee member that was never told of the round
     // is not a committee member.
-    for (const node of [a, b, ...rest]) {
+    // ALL OF THEM AT ONCE (kanban #293, measured on the paid regtest stack: one after another, each seat's first "no chain
+    // view" and its 3 s retry added up - 11-20 s an opening, and 8 s head-to-head rounds closed 11-20 s apart)
+    await Promise.all([a, b, ...rest].map(async (node, at) => {
       // ATTACHED, A NODE READS A ROUND'S VIEW OFF ITS OWN BITCOIND THE FIRST TIME IT IS ASKED (main.js chainFor) and
       // refuses until it has it: asked again, 3 s apart, for up to five minutes - that refusal only.
       let r, why = '';
@@ -957,8 +959,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         await new Promise((res) => setTimeout(res, 3000));
       }
       if (!r.ok) throw new Error(`${node.port} refused the round: ${why}`);
-      opened.push(toHex(new Uint8Array(await r.arrayBuffer())));
-    }
+      opened[at] = toHex(new Uint8Array(await r.arrayBuffer()));
+    }));
     const rid = toHex(roundId(c));
     if (opened.some((o) => o !== rid))
       throw new Error(`the ${opened.length} daemons named the round differently: ` + opened.join(' '));
@@ -1330,3 +1332,37 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   console.log('Ctrl-C stops the daemons.');
 }
+
+// HEAD-TO-HEAD ROUNDS BACK TO BACK, NO HOLE (kanban #292, #293; the owner 2026-10-10: no series, "8 second rounds with no delays
+// at all, seamless"): one round closing every `windowMs` on a grid kept `leadMs` ahead. Each round's committee time is
+// `committeeAheadMs` before its close - more than 5 s ahead, so with ARENA_PUBLISH_AHEAD=1 it is published ahead and posted at
+// once (measured on the demo seats: 1.9 s an opening, 135 of 135 closes 8.0 s apart); its beacon comes from the chain's own
+// blocks and each seat assigns it ~65 s after committee time, before its window. Opening one round per tick fell behind the
+// grid (12-23 s an opening); this opens until the grid is `leadMs` ahead.
+export function keepBackToBack(round, { fields, windowMs = 8000n, leadMs = 150000n, committeeAheadMs = 140000n, everyMs = 2000,
+  kind = {}, onOpen = () => {}, onError = () => {} }) {
+  if (!PUBLISH_AHEAD) throw new Error('rounds back to back are published ahead: set ARENA_PUBLISH_AHEAD=1');
+  let lastClose = 0n, opening = false;
+  const keep = async () => {
+    if (opening) return;
+    opening = true;
+    try {
+      for (let n = 0; n < 40; n++) {
+        const now = BigInt(Date.now());
+        if (lastClose > now + leadMs + windowMs) break;
+        // the next on the grid; after a stop (or at the start) the grid begins again leadMs ahead
+        const want = lastClose + windowMs > now + leadMs ? lastClose + windowMs : now + leadMs;
+        const committeeAtMs = want - committeeAheadMs;
+        // openNext starts a round MIN_ENTRY_WINDOW_MS after its committee time: the entry window after that start closes on `want`
+        const id = await round.openNext({ ...kind, fields, committeeAtMs, entryAfterStartMs: Number(want - (committeeAtMs + MIN_ENTRY_WINDOW_MS)) });
+        const held = round.rounds().find((r) => r.id === id);
+        lastClose = held ? BigInt(held.entryCloseMs) : want;
+        onOpen({ id, entryCloseMs: lastClose, tookMs: Date.now() - Number(now) });
+      }
+    } catch (e) { onError(e); } finally { opening = false; }
+  };
+  keep();
+  const timer = setInterval(keep, everyMs);
+  return { stop: () => clearInterval(timer) };
+}
+

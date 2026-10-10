@@ -11,10 +11,10 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { standUpRound } from '../../arena-node/tools/round-2of2.mjs';
+import { standUpRound, keepBackToBack } from '../../arena-node/tools/round-2of2.mjs';
 import { bitcoindRpc } from '../../arena-node/src/chain-rpc.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
-import { ROCK_PAPER_SCISSORS, RPS_DECIDE_CORE } from '../plugin/rock-paper-scissors.js';
+import { ROCK_PAPER_SCISSORS, RPS_DECIDE_CORE, RPS_ROUND_FIELDS } from '../plugin/rock-paper-scissors.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 import { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } from '../../arena-node/test/plugins/updown/index.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
@@ -36,10 +36,8 @@ try { cli('createwallet', 'blwp'); } catch { try { cli('loadwallet', 'blwp'); } 
 if (Number(cli('getblockcount')) < 101) cli('generatetoaddress', '101', cli('getnewaddress'));
 const rpc = bitcoindRpc({ url: `http://127.0.0.1:${RPC}/`, cookiePath: join(rt, 'regtest', '.cookie') });
 
-// A ROCK PAPER SCISSORS ROUND: its game, its decide adapter and config; no run - its 600 ticks and 300-tick deadline make the
-// reveal window (entry close to the round's end) about 20 s, inside the game's 120 s
-const RPS_FIELDS = { gameId: ROCK_PAPER_SCISSORS.gameId, simCoreHash: fromHex(RPS_DECIDE_CORE.hash),
-  configHash: fromHex([...RPS_DECIDE_CORE.configs.keys()][0]), blockTicks: 600, startDeadlineTicks: 300, minScore: 2 };
+// A ROCK PAPER SCISSORS ROUND: its fields as the plugin names them (RPS_ROUND_FIELDS)
+const RPS_FIELDS = RPS_ROUND_FIELDS;
 // AND THE UP/DOWN MARKET (kanban #278, #236): the seats also host the test market btc-updown-15m (Polymarket's BTC Up or Down
 // 15m: its own 15-minute period, its terms, 2 of 3 attestors with test keys) and run it as a series, below; each seat runs
 // its order book for those rounds (GET /book?round=). Regtest only: test keys, free rounds.
@@ -58,34 +56,12 @@ say({ step: 'up', nodes: round.nodes, lobby: round.lobbyUrl });
 // 8 S (#291, the owner 2026-10-09: "reduce the round length to 8 seconds")
 const WINDOW_MS = 8000n;
 const LEAD_MS = 150000n;
-// BACK TO BACK, NO HOLE (kanban #292, measured 2026-10-10 10:52Z: closes 14-23 s apart for 8 s rounds - 6-15 s with no round,
-// "The next round opens in a moment"): each opening waited for its committee time and mined six blocks (12-23 s), so the grid
-// fell behind at every round and `want` jumped to now + LEAD_MS. Now each round's committee time is COMMITTEE_AHEAD_MS before
-// its close - over 5 s ahead, so it is published ahead (ARENA_PUBLISH_AHEAD=1 in this tool's environment, checked at its start) and posted in about a second - its
-// beacon comes from the chain's own 10 s blocks and both seats assign it ~95 s after committee time, before its window opens.
-// And it keeps opening until the grid is LEAD_MS ahead, not one round per tick.
-const COMMITTEE_AHEAD_MS = 140000n;
-let lastClose = 0n, opening = false;
-const keep = async () => {
-  if (opening) return;
-  opening = true;
-  try {
-    for (let n = 0; n < 40; n++) {
-      const now = BigInt(Date.now());
-      if (lastClose > now + LEAD_MS + WINDOW_MS) break;
-      // the next on the grid; after a stop (or at the start) the grid begins again LEAD_MS ahead
-      const want = lastClose + WINDOW_MS > now + LEAD_MS ? lastClose + WINDOW_MS : now + LEAD_MS;
-      const committeeAtMs = want - COMMITTEE_AHEAD_MS;
-      // openNext starts a round MIN_ENTRY_WINDOW_MS (60 s) after its committee time: the entry window after that start lands its close on `want`
-      const id = await round.openNext({ fields: RPS_FIELDS, committeeAtMs, entryAfterStartMs: Number(want - (committeeAtMs + 60000n)) });
-      const held = round.rounds().find((r) => r.id === id);
-      lastClose = held ? BigInt(held.entryCloseMs) : want;
-      say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(lastClose)).toISOString(), tookMs: Date.now() - Number(now) });
-    }
-  } catch (e) { say({ step: 'not opened', why: e.message }); } finally { opening = false; }
-};
-await keep();
-setInterval(keep, 2000);
+// BACK TO BACK, NO HOLE (kanban #292, measured 2026-10-10 10:52Z: closes 14-23 s apart for 8 s rounds): round-2of2's
+// keepBackToBack - published ahead, the 8 s grid kept 150 s ahead
+keepBackToBack(round, { fields: RPS_FIELDS, windowMs: WINDOW_MS, leadMs: LEAD_MS,
+  onOpen: ({ id, entryCloseMs, tookMs }) => say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), tookMs }),
+  onError: (e) => say({ step: 'not opened', why: e.message }) });
+
 // THE 15-MINUTE SERIES (kanban #236, the owner 2026-10-09: "one round per UTC quarter hour ... Open at least one quarter hour
 // ahead; orders until the window ends"): a round for every window ending within the next 45 minutes - opened at least 15 min
 // before its window starts - its entries closing exactly at its window's end (the market's period grid, which every seat
