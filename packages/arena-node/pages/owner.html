@@ -120,6 +120,12 @@ async function area() {
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Donations</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
+    <h2>Games from other seats</h2><div class="card" id="store">
+      <p>Install a game another seat hosts. This seat takes it only if its manifest is signed by its developer, every file is the
+      one the manifest names, and its code passes the scan (no network, no files, no process, no eval). It runs from this seat's
+      next start; to be drawn for its rounds, this seat's advertisement must name it.</p>
+      <label>Another seat's address</label><input id="from" placeholder="https://seat.example" autocomplete="off" autocapitalize="none">
+      <button id="look">Look</button><div class="err" id="perr"></div><div id="offer"></div><div id="installed"></div></div>
     <h2>Sign a game or market</h2><div class="card">
       <p>Your developer key, made from the same 24 words: <b id="devkey"></b>. A game or market you sign here names it as its developer;
       an update of it is signed by it again.</p>
@@ -132,6 +138,7 @@ async function area() {
   $('forget').onclick = () => { if (confirm('Forget the 24 words on this browser? You need them written down to come back.')) forget(); };
   donations();
   leavePanel();
+  storePanel(games);
   // SIGN A GAME OR MARKET (kanban #276 step 4): signed here as the developer's command-line client signs it
   const devSeed = C.devSeedFromSeed(readSeed());
   const devPub = C.devPubkeyOf(devSeed);
@@ -172,6 +179,31 @@ async function leavePanel() {
   };
   if ($('go')) $('go').onclick = () => { if (confirm('Leave: this seat takes no new round from now and serves the ones it holds. Continue?')) act('leave'); };
   if ($('stay')) $('stay').onclick = () => act('stay');
+}
+// THE PLUGIN STORE (kanban #276 step 5): what another seat hosts that this one does not, installed by this seat after its
+// checks (GET <seat>/games, POST /owner/plugins/install signed by the owner)
+async function storePanel(hostedHere) {
+  const here = new Set((hostedHere || []).map((g) => g.id));
+  const showInstalled = async () => {
+    try { const p = await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json();
+      $('installed').innerHTML = p.installed.length ? '<p class="sub">Installed here:</p>' + p.installed.map((g) => `<div class="row"><span>${esc(g.title || g.name)}</span><b>${g.running ? 'running' : 'from the next start'}</b></div>`).join('') : '';
+    } catch { /* the list is optional */ }
+  };
+  showInstalled();
+  $('look').onclick = async () => {
+    $('perr').textContent = ''; $('offer').innerHTML = '';
+    const from = $('from').value.trim().replace(/\/+$/, '');
+    let got;
+    try { got = await (await fetch(from + '/games', { cache: 'no-store' })).json(); } catch (e) { $('perr').textContent = 'That seat did not answer: ' + e.message; return; }
+    const games = (got.games || []).filter((g) => !here.has(g.id));
+    if (!games.length) { $('offer').innerHTML = '<p class="sub">That seat hosts nothing this seat does not already host.</p>'; return; }
+    $('offer').innerHTML = games.map((g) => `<div class="row"><span>${esc(g.title || g.name)} · ${esc(g.id.slice(0, 12))}…${g.attested ? ' · market' : ''}</span><b><button data-game="${esc(g.id)}">Install</button></b></div>`).join('');
+    for (const b of $('offer').querySelectorAll('button[data-game]')) b.onclick = async () => {
+      b.disabled = true; b.textContent = 'checking…';
+      try { const r = await post('/owner/plugins/install', signed('install', { game: b.dataset.game, from })); b.textContent = 'installed ✓'; window.OWNER_INSTALLED = r; showInstalled(); }
+      catch (e) { b.textContent = 'refused'; $('perr').textContent = e.message; }
+    };
+  };
 }
 // THE DEV CLIENT (kanban #276 step 3): what this seat verified for the protocol developers and for each game it hosts, in
 // sat to the msat, per round and per UTC day (GET /owner/donations, from the seat's own donation index)

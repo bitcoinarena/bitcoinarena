@@ -8,5 +8,7 @@ import { UPDOWN_TN4_MANIFEST_HEX } from './updown-tn4-manifest.js';
 export const UPDOWN_TN4_MANIFEST = decodeManifest(fromHex(UPDOWN_TN4_MANIFEST_HEX));
 export const UPDOWN_TN4_GAME_ID = gameIdOf(UPDOWN_TN4_MANIFEST);
 export const UPDOWN_TN4 = Object.freeze({ name: 'btc-updown-15m', manifest: UPDOWN_TN4_MANIFEST, gameId: UPDOWN_TN4_GAME_ID,
-  cores: new Map(), title: 'Bitcoin Up or Down', donationSet: TESTNET4_DONATION_SET_KEYS.recipients });
+  cores: new Map(), title: 'Bitcoin Up or Down', donationSet: TESTNET4_DONATION_SET_KEYS.recipients,
+  // its client (the regtest market's, frozen by hash), for the plugin store (kanban #276 step 5)
+  clientUrls: [new URL('../../arena-node/test/plugins/updown/client/index.html', import.meta.url).href] });
 export const GAME = UPDOWN_TN4;
