@@ -17,7 +17,9 @@
 // AND WHAT A LAUNCHER USED TO HAND ITS IN-PROCESS NODES, for nodes that run as their own processes (attach, the owner
 // 2026-09-29: the seven blwp-tn4-node units own the guardians; tools/run-testnet4-paid.mjs ARENA_ATTACH=1):
 //     ARENA_CLOSE_AT_END=1         this node closes every round that is over, itself
-//     ARENA_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name
+//     ARENA_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name - and
+//                                 the chain this seat reads, for the network store (kanban #276)
+//     ARENA_FEDERATION_INVITE      the federation invite this seat hands out with its network (GET /network)
 //     ARENA_ATTACH_PROOF_DIR       the launcher's headers.bin and bond.json, served on GET /headers and GET /bond,
 //                                 read at every ask (the launcher writes them once the nodes are up)
 //     ARENA_GAMES                  the games this node hosts: registration modules, comma-separated, each exporting GAME
@@ -128,6 +130,9 @@ if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
 // ON REGTEST THE KEY SET WHEN ASKED (kanban #237): ARENA_REGTEST_DONATION_SET=keys - a market whose own game set pays keys
 // (the Up/Down test market) settles only beside a protocol set that pays keys too ("never one of each"); every other
 // regtest tool keeps the LNURL set
+// THE CHAIN THIS SEAT READS, as its network's genesis names it (kanban #276: the network store takes no package for another chain)
+if (net) options.chain = net === 'regtest' ? 'bitcoin-regtest' : 'bitcoin-testnet4';
+if (process.env.ARENA_FEDERATION_INVITE) options.federationInvite = process.env.ARENA_FEDERATION_INVITE.trim();
 if (net) options.donationSets = net === 'regtest' ? (process.env.ARENA_REGTEST_DONATION_SET === 'keys' ? [TEST_DONATION_SET_KEYS_REGTEST] : [TEST_DONATION_SET_REGTEST]) : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
 // ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id

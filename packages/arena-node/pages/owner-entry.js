@@ -13,3 +13,6 @@ export { devSeedFromSeed, devPubkeyOf, bodyFromJson, signManifestWithSeed } from
 export { checkPackage, checkUpdate, scanSource } from '../src/plugin-check.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 export const verifyEd25519 = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
+// THE NETWORK STORE'S CHECKS IN THE PAGE (kanban #276): federation invite, donation sets, series and chain, each against its
+// own authority - the report the owner reads before Install; the seat runs the same and its trial
+export { checkNetworkPackage, checkNetworkUpdate } from '../src/network-check.js';

@@ -16,7 +16,7 @@
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES } from '../../arena-protocol/src/series.js';
+import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries } from '../../arena-protocol/src/series.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -44,6 +44,8 @@ import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
 import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
 import { checkUpdate } from './plugin-check.js';
+import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
@@ -88,7 +90,7 @@ import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
-import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation } from '../../arena-protocol/src/authority.js';
+import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
 import { donationSetId, donationOutputsExpected, encodeDonationSet } from '../../arena-protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
@@ -257,8 +259,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OWNER (kanban #276, owner.js): `{ store }` - where the owner's public key and the claim code are kept
   // (files beside the database, from main.js). Without it the node has no owner area and /owner answers 404.
   owner: ownerFiles = null,
-  // WHERE THE PLUGIN STORE KEEPS INSTALLED GAMES (kanban #276 step 5; main.js: <db>.plugins), loaded at start
+  // WHERE THE PLUGIN STORE KEEPS INSTALLED GAMES (kanban #276 step 5; main.js: <db>.plugins), loaded at start; installed
+  // networks are kept in its networks/ directory
   pluginsDir = null,
+  // THE CHAIN THIS SEAT READS, as its genesis names it ('bitcoin-regtest', 'bitcoin-testnet4'; main.js from ARENA_DONATION_NETWORK):
+  // a network package for another chain is refused (network-check.js). Null: this seat takes no network package.
+  chain = null,
+  // THE FEDERATION INVITE THIS SEAT HANDS OUT WITH ITS NETWORK (GET /network; main.js ARENA_FEDERATION_INVITE), until an
+  // installed network package names another
+  federationInvite = null,
   // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
   // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's gateway holds.
   federation = null,
@@ -2226,6 +2235,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const seriesIds = () => { const all = new Set(); for (const w of writers) for (const x of w.ids()) all.add(x); return all; };
   let seriesTimer = null;
   let seriesVersion = 0;               // bumped when a series is added or dropped while running: the listing's verdicts are read again
+  const storeSeries = new Set();       // series ids an installed network package holds (kanban #276): the series file does not drop them
   const takeNewSeries = () => {
     if (typeof seriesReload !== 'function') return;
     let now;
@@ -2250,12 +2260,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // written and listed until a restart): its writer stops, its stored rounds stay in the store but are offered nowhere
     for (let i = writers.length - 1; i >= 0; i--) {
       const id = toHex(writers[i].id);
-      if (named.has(id)) continue;
+      if (named.has(id) || storeSeries.has(id)) continue;   // a series a network package brought is the store's, not the file's
       writers.splice(i, 1); droppedSeries.add(id); seriesVersion++;
       console.log(`[series] ${id.slice(0, 16)}: taken out of the series file - no longer held; its rounds are offered nowhere`);
     }
   };
-  if (writers.length || typeof seriesReload === 'function') {
+  // THE WRITER'S TIMER, started once: at start when a series is held or a file can add one, else when the network store
+  // first holds one (kanban #276: no restart)
+  let seriesTimerStarted = false;
+  const startSeriesTimer = () => {
+    if (seriesTimerStarted || shuttingDown) return;
+    seriesTimerStarted = true;
     // IN SLICES OF ~150 ms (a seat's start held its loop 21-33 s here, answering no join): what is left is written on
     // the next turn of the loop, the soonest rounds first.
     let sliceQueued = false;
@@ -2301,6 +2316,151 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     writeAll();
     seriesTimer = setInterval(writeAll, seriesEveryMs);
     seriesTimer.unref();
+  };
+  if (writers.length || typeof seriesReload === 'function') startSeriesTimer();
+
+  // THE NETWORK STORE ON THIS SEAT (kanban #276, the owner 2026-10-10: networks are updated from the owner page like games; a
+  // seat's network settings are its federation invite, the donation sets in force, its series and the chain it reads). A
+  // network package is taken from another seat - checked (network-check.js: each of the four against its own authority),
+  // tried (every series' first and last round through this seat's own doors), kept on disk in <plugins>/networks/<network
+  // id> and ACTIVATED AT ONCE: its signed sets join the sets this seat checks rounds against, its series are written and
+  // held, its invite is the one GET /network hands out. One package per network id; an update replaces it.
+  const networksDir = pluginsDir ? joinPath(pluginsDir, 'networks') : null;
+  const baseSetIds = new Set(donationSets.map((x) => { try { return toHex(donationSetBodyId(x)); } catch { return ''; } }));
+  const networksHeld = new Map();          // network id hex -> { pkg, report, seriesIds: Set, setIds: Set }
+  const inviteFor = (nid) => (networksHeld.has(nid) ? networksHeld.get(nid).pkg.invite : federationInvite);
+  const hostsGameHex = (id) => hosted.has(id);
+  const verifyNet = (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
+  // THIS SEAT'S NETWORK AS A PACKAGE: its chain's network, the sets and rotations it holds, the series it holds, its invite
+  const ownNetwork = (nidHex) => {
+    const nid = fromHex(nidHex);
+    const mine = (t) => t.networkId instanceof Uint8Array && toHex(t.networkId) === nidHex;
+    const held = new Set(writers.map((w) => toHex(w.id)));
+    return networkPackageOf({ chain, networkId: nid, invite: inviteFor(nidHex), sets: donationSets, rotations: donationRotations,
+      series: series.filter((t) => mine(t) && held.has(toHex(seriesId(t)))) });
+  };
+  const chainNetworkId = () => { if (!chain) return null; const n = { 'bitcoin-regtest': NETWORK_ID_REGTEST, 'bitcoin-testnet4': NETWORK_ID_TESTNET4 }[chain]; return n ? toHex(n) : null; };
+  // THE SEAT'S TRIAL: every series' first and last round derived, and each taken by this seat's own checks - the series
+  // derivation, the game, core and config hosted here, and the donation set in force at its census height (with this
+  // seat's own sets and the package's together) the one it names
+  const networkTrial = (report) => {
+    const lines = [];
+    const sets = [...donationSets, ...report.sets], rots = [...donationRotations, ...report.rotations];
+    const keys = donationKeysForNetworkId(fromHex(report.networkId));
+    for (const t of report.series) {
+      const sid = toHex(seriesId(t)), tag = sid.slice(0, 12) + '…';
+      const count = Number.isInteger(t.seriesCutFrom) ? t.seriesCutFrom : (Number.isInteger(t.seriesCount) ? t.seriesCount : roundsPerSeries(t.seriesPeriodMs ?? undefined));
+      let why = null;
+      for (const i of [...new Set([0, count - 1])]) {
+        let c; try { c = seriesRound(t, i); } catch (e) { why = `round ${i} does not derive: ${e.message}`; break; }
+        const sc = seriesRoundCheck(c, [t]);
+        if (!sc.ok) { why = `round ${i}: ${sc.why}`; break; }
+        const pr = pluginForRound(c, hosted);
+        if (!pr.ok) { why = `round ${i}: ${pr.why}`; break; }
+        if (c.stakeMsat > 0n && keys) {
+          const f = donationSetInForce({ networkId: c.networkId, authority: keys.authority, recovery: keys.recovery, sets, rotations: rots, height: c.censusHeight, verify: verifyNet });
+          if (!f.ok || toHex(donationSetId(f.recipients)) !== toHex(c.donationSetId)) { why = `round ${i}: with this seat's own sets, serial ${f.serial} is in force at ${c.censusHeight}, not the set it names`; break; }
+        }
+      }
+      lines.push({ check: `series ${tag} rounds pass this seat's doors`, ok: !why, detail: why || `rounds 0 and ${count - 1}: series, game ${pluginForRound(seriesRound(t, 0), hosted).plugin?.name || ''}, donation set in force` });
+    }
+    return lines;
+  };
+  const checkOnSeat = (pkg) => {
+    const r = checkNetworkPackage(pkg, { verify: verifyNet, seatChain: chain, hostsGame: hostsGameHex });
+    if (!r.ok) return r;
+    const lines = networkTrial(r);
+    r.checks.push(...lines);
+    const bad = lines.find((x) => !x.ok);
+    return bad ? { ...r, ok: false, why: `the trial refuses it: ${bad.detail}` } : r;
+  };
+  const activateNetwork = (pkg, r) => {
+    const prev = networksHeld.get(r.networkId);
+    const setIds = new Set(prev ? prev.setIds : []);
+    const have = new Set(donationSets.map((x) => toHex(donationSetBodyId(x))));
+    for (const x of r.sets) { const id = toHex(donationSetBodyId(x)); if (!have.has(id)) { donationSets.push(x); have.add(id); setIds.add(id); } }
+    const haveRot = new Set(donationRotations.map((x) => toHex(authorityRotationId(x))));
+    for (const x of r.rotations) { const id = toHex(authorityRotationId(x)); if (!haveRot.has(id)) { donationRotations.push(x); haveRot.add(id); } }
+    inForceKept.clear();
+    const seriesIdsHeld = new Set(prev ? prev.seriesIds : []);
+    const held = new Set(writers.map((w) => toHex(w.id)));
+    for (const t of r.series) {
+      const id = toHex(seriesId(t));
+      seriesIdsHeld.add(id);
+      if (held.has(id)) continue;
+      refusedSeries.delete(id);
+      if (refuseSeries(t)) continue;
+      const w = seriesWriter(round, t);
+      if (!series.some((x) => toHex(seriesId(x)) === id)) series.push(t);
+      writers.push(w); held.add(id); storeSeries.add(id); droppedSeries.delete(id); seriesVersion++;
+      console.log(`[networks] series ${id.slice(0, 16)} held from network package ${r.id.slice(0, 16)}: written from now, no restart`);
+    }
+    networksHeld.set(r.networkId, { pkg, report: r, seriesIds: seriesIdsHeld, setIds });
+    if (writers.length) startSeriesTimer();
+  };
+  const topSerialOf = (nid) => { let top = -1n; for (const x of donationSets) if (toHex(x.networkId) === nid && x.serial > top) top = x.serial; return top; };
+  async function takeNetwork({ network, from, update = false }) {
+    if (!networksDir) return { ok: false, status: 409, why: 'this seat keeps no installed networks (no plugins directory)' };
+    from = String(from || '').replace(/\/+$/, '');
+    if (!/^[0-9a-f]{64}$/.test(network) || !/^https?:\/\//.test(from)) return { ok: false, status: 400, why: 'name a network id and the seat to take it from' };
+    if (!update && networksHeld.has(network)) return { ok: false, status: 409, why: 'this seat already holds a package of that network: update it' };
+    if (update && !networksHeld.has(network)) return { ok: false, status: 409, why: 'this seat holds no package of that network to update' };
+    let pkg;
+    try { const r = await fetch(`${from}/network?network=${network}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+    catch (e) { return { ok: false, status: 502, why: `that seat did not hand the network over: ${e.message}` }; }
+    const v = checkOnSeat(pkg);
+    // the report as JSON: its lines and ids, not the decoded sets and series (BigInts)
+    const plain = (x) => ({ ...x, sets: undefined, rotations: undefined, series: undefined });
+    if (!v.ok) { console.log(`[networks] refused ${network.slice(0, 16)} from ${from}: ${v.why}`); return { ...plain(v), status: 422 }; }
+    if (v.networkId !== network) return { ...plain(v), ok: false, status: 422, why: `that package is network ${v.networkId.slice(0, 16)}, not ${network.slice(0, 16)}` };
+    if (update) {
+      const u = checkNetworkUpdate({ networkId: network, chain, topSerial: topSerialOf(network) }, v);
+      if (!u.ok) return { ...plain(v), ok: false, status: 422, why: u.why };
+    }
+    mkdirSync(joinPath(networksDir, network), { recursive: true });
+    writeFileSync(joinPath(networksDir, network, 'package.json'), JSON.stringify(pkg));
+    activateNetwork(pkg, v);
+    console.log(`[networks] ${update ? 'updated' : 'installed'} network ${network.slice(0, 16)} (package ${v.id.slice(0, 16)}) from ${from}: ${v.sets.length} set(s), ${v.series.length} series, federation ${String(v.federationId).slice(0, 16)} - in force now`);
+    return { ...plain(v), ok: true, network, from, running: true, update,
+      held: { sets: v.sets.length, series: v.series.map((t) => toHex(seriesId(t))), federationId: v.federationId } };
+  }
+  // A NETWORK PACKAGE OFF THIS SEAT: not while a round that depends on it - one of its series, or naming a set only it
+  // brought - is unfinished here; then its series are no longer written or offered, its own sets go, its invite goes
+  function removeNetwork(network) {
+    const held = networksHeld.get(network);
+    if (!held) return { ok: false, status: 409, why: 'only a network installed from the store can be removed here' };
+    const ownSets = new Set([...held.setIds].filter((id) => !baseSetIds.has(id)));
+    const ownSetRecipientIds = new Set(donationSets.filter((x) => ownSets.has(toHex(donationSetBodyId(x)))).map((x) => toHex(donationSetId(x.recipients))));
+    const nowMs = round.now();
+    let open = 0;
+    for (const r of round.db.prepare('SELECT contract FROM rounds').all()) {
+      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+      const dep = (c.seriesId instanceof Uint8Array && held.seriesIds.has(toHex(c.seriesId))) || ownSetRecipientIds.has(toHex(c.donationSetId));
+      if (!dep) continue;
+      let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); }
+      if (nowMs < end + Number(c.objectionWindowMs)) open++;
+    }
+    if (open) return { ok: false, status: 409, why: `${open} round(s) that depend on that network package are not finished on this seat: it is removed once they are` };
+    for (let i = writers.length - 1; i >= 0; i--) {
+      const id = toHex(writers[i].id);
+      if (!held.seriesIds.has(id) || !storeSeries.has(id)) continue;
+      writers.splice(i, 1); storeSeries.delete(id); droppedSeries.add(id); seriesVersion++;
+    }
+    for (let i = donationSets.length - 1; i >= 0; i--) if (ownSets.has(toHex(donationSetBodyId(donationSets[i])))) donationSets.splice(i, 1);
+    inForceKept.clear();
+    networksHeld.delete(network);
+    renameSync(joinPath(networksDir, network), joinPath(networksDir, `.removed-${Date.now()}-${network}`));
+    console.log(`[networks] removed network ${network.slice(0, 16)}`);
+    return { ok: true, network, removed: true };
+  }
+  // THE INSTALLED NETWORKS AT START: each checked and tried again before it is held (a package that no longer stands is not)
+  if (networksDir && existsSync(networksDir)) {
+    for (const id of readdirSync(networksDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
+      let pkg; try { pkg = JSON.parse(readFileSync(joinPath(networksDir, id, 'package.json'), 'utf8')); } catch (e) { console.error(`[networks] ${id.slice(0, 16)}: ${e.message}`); continue; }
+      const v = checkOnSeat(pkg);
+      if (!v.ok || v.networkId !== id) { console.error(`[networks] installed network ${id.slice(0, 16)} refused: ${v.why || 'another network id'}`); continue; }
+      activateNetwork(pkg, v);
+    }
   }
 
   // THE ANNOUNCED ROUNDS (ROUNDS-EP-1612 / ROUNDS-HTML-1617): every round held that has not ended, with ISO-8601 UTC
@@ -2598,6 +2758,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             devKey: toHex(g.manifest.gameDevPubkey), installed: !!(pluginsDir && existsSync(joinPath(pluginsDir, toHex(g.gameId)))), supersededBy: superseded.get(toHex(g.gameId)) || null })),
             installed, settings: owner.storeSettings() });
         }
+        // THE NETWORK STORE'S VIEW OF THIS SEAT (kanban #276): the chain it reads, its own network's four settings, and the
+        // network packages installed from the store
+        if (req.method === 'GET' && url.pathname === '/owner/network') {
+          const nid = chainNetworkId();
+          const four = (r, invite) => ({ chain: r.chain, networkId: r.networkId, invite, federationId: r.federationId,
+            sets: r.sets.map((x) => ({ serial: String(x.serial), validFrom: x.validFrom, id: toHex(donationSetBodyId(x)), recipients: x.recipients.length })),
+            series: r.series.map((t) => ({ id: toHex(seriesId(t)), game: toHex(t.gameId), startMs: Number(t.startTimeMs), held: writers.some((w) => toHex(w.id) === toHex(seriesId(t))) })) });
+          let own = null;
+          if (nid && inviteFor(nid)) { try { const p = ownNetwork(nid); const r = checkNetworkPackage(p, { verify: verifyNet, seatChain: chain }); own = { id: p.id, ...four(r, p.invite) }; } catch (e) { own = { why: e.message }; } }
+          return answer(200, { chain, networkId: nid, own,
+            installed: [...networksHeld.values()].map((h) => ({ network: h.report.networkId, id: h.report.id, ...four(h.report, h.pkg.invite) })) });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
           const newest = new Map();
           for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
@@ -2625,6 +2797,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const a = owner.authorize(body, 'remove');
           if (!a.ok) return answer(a.status, a);
           const r = removeGame(String((body.args && body.args.game) || '').toLowerCase());
+          return answer(r.status || (r.ok ? 200 : 409), r);
+        }
+        // INSTALL, UPDATE, REMOVE A NETWORK PACKAGE (kanban #276): signed by the owner, checked (network-check.js + the seat's
+        // trial) and in force at once
+        if (url.pathname === '/owner/network/install' || url.pathname === '/owner/network/update') {
+          const action = url.pathname.endsWith('install') ? 'network-install' : 'network-update';
+          const a = owner.authorize(body, action);
+          if (!a.ok) return answer(a.status, a);
+          const args = body.args || {};
+          const r = await takeNetwork({ network: String(args.network || '').toLowerCase(), from: String(args.from || ''), update: action === 'network-update' });
+          return answer(r.status || (r.ok ? 200 : 422), r);
+        }
+        if (url.pathname === '/owner/network/remove') {
+          const a = owner.authorize(body, 'network-remove');
+          if (!a.ok) return answer(a.status, a);
+          const r = removeNetwork(String((body.args && body.args.network) || '').toLowerCase());
           return answer(r.status || (r.ok ? 200 : 409), r);
         }
         if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
@@ -2982,6 +3170,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // it hashes to the game id beside it; nothing here is trusted for itself.
       // A HOSTED GAME AS A PACKAGE (kanban #276 step 5, plugin-package.js): what another seat's plugin store installs - its
       // signed manifest, donation set, decide adapters' sources and clients; the installing seat checks every byte
+      // THIS SEAT'S NETWORK AS A PACKAGE (kanban #276, network-check.js): what another seat's network store installs - its
+      // chain, the signed donation sets and rotations it holds, the series it holds and its federation invite
+      if (req.method === 'GET' && url.pathname === '/network') {
+        const nid = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
+        if (!chain || !/^[0-9a-f]{64}$/.test(nid) || nid !== chainNetworkId()) return text(res, 404, 'this seat holds no such network');
+        if (!inviteFor(nid)) return text(res, 409, 'this seat names no federation invite for its network');
+        let pkg; try { pkg = ownNetwork(nid); } catch (e) { return text(res, 500, `this seat's network could not be packaged: ${e.message}`); }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(pkg));
+      }
       if (req.method === 'GET' && url.pathname === '/plugin') {
         const g = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
         if (!g) return text(res, 404, 'this seat hosts no such game');

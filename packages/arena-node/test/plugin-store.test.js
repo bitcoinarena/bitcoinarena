@@ -196,3 +196,94 @@ test('install, update and remove from the owner, each running at once (no restar
     assert.equal((await (await fetch(`${B}/owner/plugins`)).json()).hosted.find((g) => g.id === id2).supersededBy, id3);
   } finally { await a.close(); await b.close(); await c.close(); }
 });
+
+// ---- the network store (letter 2026-10-10: federation invite, donation sets, series and chain, on the same check-then-install
+// path as games; each against its own authority) ----
+import { checkNetworkPackage, networkPackageId } from '../src/network-check.js';
+import { inviteForGuardians } from '../src/invite.js';
+import { HOSTED } from './plugins/hosted.js';
+import { NEXTBLOCK_GAME_ID, TRUCK_CORE_HASH, TRUCK_V3_CONFIG_HASH } from '../../nextblock/plugin/nextblock.js';
+import { seriesTemplate, seriesIndexAt, seriesId as seriesIdOf } from '../../arena-protocol/src/series.js';
+import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
+import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
+import { decodeDonationSetBody } from '../../arena-protocol/src/authority.js';
+
+// the regtest serial-2 set (series-donation-in-force.test.js), in force from 900100, signed by the regtest authority
+const SET2 = { ...decodeDonationSetBody(Uint8Array.from(Buffer.from('1400019855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b380000000000000002000dbc040099100001000200466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a68736170647679306e387265381a0b00466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a687361706476673764706667710d05', 'hex'))),
+  signature: Uint8Array.from(Buffer.from('f007229c5185a12eeed3310cd5722b576d39121927ef6cdf9624fb868ac61e200cdf60274fbb68cd6f46425d05ba611c989d06e4f606e9ef3b34f33244332e0b', 'hex')) };
+const netSeries = (nodes) => seriesTemplate({
+  networkId: NETWORK_ID_REGTEST, configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 1, gameVerifySlots: 2, settlementSlots: 2,
+  gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, committeeTimeMs: 0n, randomnessRule: 'bitcoin-block-hash', startTimeMs: 0n, entryCloseMs: 0n,
+  objectionWindowMs: 600000n, custody: 'FEDERATION', slashMinimumServed: 20, slashRemainder: 'SPLIT',
+  federationId: TEST_FEDERATION_ID, stakeExpiryBlocks: 144, publicationRelays: ['wss://r.example'],
+  donationSetId: donationSetId(SET2.recipients), censusHeight: 900100, censusRoot: new Uint8Array(32).fill(2), stakeMsat: 100000n,
+  bondMinSats: 50000n, blockTicks: 4920, exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
+  timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4, nodes,
+}, seriesIndexAt(NETWORK_ID_REGTEST, Date.now()) + 1);
+
+test('a network package: one whose invite, donation sets, series and chain match is installed and in force at once; a mismatch is refused on its line', async () => {
+  const invite = inviteForGuardians(TEST_FEDERATION_ID, [{ url: 'ws://127.0.0.1:1/', peer: 0 }]);
+  const a0 = await serve(openStore(), { plugins: HOSTED, port: 0 });
+  const nodes = [a0.round.pubkey, new Uint8Array(32).fill(8)]; await a0.close();
+  const series = netSeries(nodes), sid = toHex(seriesIdOf(series));
+  const a = await serve(openStore(), { plugins: HOSTED, port: 0, chain: 'bitcoin-regtest', federationInvite: invite, donationSets: [TEST_DONATION_SET_REGTEST, SET2], series: [series], seriesEveryMs: 100 });
+  const dir = mkdtempSync(join(tmpdir(), 'arena-plugins-'));
+  const secret = ownerSecretFromSeed(new Uint8Array(32).fill(7));
+  const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
+  const owner = { store: { read: () => rec, write: (o) => Object.assign(rec, o), writeCode: () => {} } };
+  // B reads regtest and holds only serial 1 and no series; C reads testnet4
+  const b = await serve(openStore(), { plugins: HOSTED, port: 0, pluginsDir: dir, chain: 'bitcoin-regtest', donationSets: [TEST_DONATION_SET_REGTEST], seriesEveryMs: 100, owner });
+  const c = await serve(openStore(), { plugins: HOSTED, port: 0, pluginsDir: mkdtempSync(join(tmpdir(), 'arena-plugins-')), chain: 'bitcoin-testnet4', owner });
+  try {
+    const A = `http://127.0.0.1:${a.port}`, B = `http://127.0.0.1:${b.port}`, C = `http://127.0.0.1:${c.port}`;
+    const net = toHex(NETWORK_ID_REGTEST);
+    const pkg = await (await fetch(`${A}/network?network=${net}`)).json();
+    assert.deepEqual([pkg.manifest.chain, pkg.manifest.federationId, pkg.manifest.series], ['bitcoin-regtest', toHex(TEST_FEDERATION_ID), [sid]]);
+    // THE PAGE'S REPORT: every line passed for B (regtest, hosts nextblock)
+    const page = checkNetworkPackage(pkg, { verify: verifyEd25519, seatChain: 'bitcoin-regtest', hostsGame: (id) => id === toHex(NEXTBLOCK_GAME_ID) });
+    assert.equal(page.ok, true, page.why);
+    for (const want of [/chain is this seat's chain/, /invite's federation is the one its manifest names/, /donation set serial 2 is signed by the network's donation authority/,
+      /series .* names a donation set this package carries, the one in force/, /series .* is of a game this seat hosts/]) assert.ok(page.checks.some((x) => want.test(x.check) && x.ok), String(want));
+    // A MISMATCH, each failing on its own line: a set the manifest does not name, a signature that does not verify, another chain
+    const firstBad = (r) => r.checks.find((x) => !x.ok).check;
+    const named = { ...pkg, manifest: { ...pkg.manifest, donationSets: [pkg.manifest.donationSets[0], 'ab'.repeat(32)] } };
+    named.id = networkPackageId(named.manifest);
+    assert.match(firstBad(checkNetworkPackage(named, { verify: verifyEd25519, seatChain: 'bitcoin-regtest' })), /donation set serial 2 is the one its manifest names/);
+    const sig = pkg.donationSets[1].signature, forged = { ...pkg, donationSets: [pkg.donationSets[0], { ...pkg.donationSets[1], signature: (sig[0] === '0' ? '1' : '0') + sig.slice(1) }] };
+    assert.match(firstBad(checkNetworkPackage(forged, { verify: verifyEd25519, seatChain: 'bitcoin-regtest' })), /donation set serial 2 is signed by the network's donation authority/);
+    assert.match(firstBad(checkNetworkPackage(pkg, { verify: verifyEd25519, seatChain: 'bitcoin-testnet4' })), /its chain is this seat's chain/);
+    // THE SEAT: C (testnet4) refuses it by that line; B takes it, signed by its owner, and it is in force without a restart
+    const req = (node, action, args) => signOwnerRequest({ node, action, args, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+    const post = async (base, path, body) => { const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return [r.status, await r.json()]; };
+    const nodeOf = async (base) => (await (await fetch(`${base}/owner`)).json()).node;
+    let [st, j] = await post(C, '/owner/network/install', req(await nodeOf(C), 'network-install', { network: net, from: A }));
+    assert.equal(st, 422);
+    assert.match(j.why, /its chain is this seat's chain: bitcoin-regtest, and this seat reads bitcoin-testnet4/);
+    const nodeB = await nodeOf(B);
+    assert.equal((await (await fetch(`${B}/series`)).json()).series.length, 0, 'B holds no series before');
+    [st, j] = await post(B, '/owner/network/install', req(nodeB, 'install', { network: net, from: A }));
+    assert.equal(st, 401, 'a request signed for another action');
+    [st, j] = await post(B, '/owner/network/install', req(nodeB, 'network-install', { network: net, from: A }));
+    assert.equal(st, 200, j.why);
+    assert.ok(j.checks.some((x) => /rounds pass this seat's doors/.test(x.check) && x.ok), 'the seat\'s trial');
+    const view = await (await fetch(`${B}/owner/network`)).json();
+    assert.deepEqual(view.installed.map((x) => [x.network, x.federationId, x.sets.map((s) => s.serial), x.series.map((s) => [s.id, s.held])]),
+      [[net, toHex(TEST_FEDERATION_ID), ['1', '2'], [[sid, true]]]], 'listed as installed');
+    let held = [];
+    for (let i = 0; i < 50 && !held.length; i++) { await new Promise((r) => setTimeout(r, 100)); held = (await (await fetch(`${B}/series`)).json()).series.filter((x) => x.written > 0); }
+    assert.deepEqual(held.map((x) => x.series), [sid], 'its series written at once - no restart');
+    // REMOVE: refused while a round of its series is unfinished here
+    [st, j] = await post(B, '/owner/network/remove', req(nodeB, 'network-remove', { network: net }));
+    assert.equal(st, 409);
+    assert.match(j.why, /depend on that network package are not finished/);
+    // THE NEXT START: the kept package checked and tried again, and held
+    await b.close();
+    const b2 = await serve(openStore(), { plugins: HOSTED, port: 0, pluginsDir: dir, chain: 'bitcoin-regtest', donationSets: [TEST_DONATION_SET_REGTEST], seriesEveryMs: 100, owner });
+    try {
+      const again = await (await fetch(`http://127.0.0.1:${b2.port}/owner/network`)).json();
+      assert.deepEqual(again.installed.map((x) => x.series.map((s) => [s.id, s.held])), [[[sid, true]]], 'held again at the next start');
+    } finally { await b2.close(); }
+    console.log('  FACTS:', JSON.stringify({ pageLines: page.checks.length, held: held[0].written }));
+  } finally { await a.close(); await b.close(); await c.close(); }
+});
