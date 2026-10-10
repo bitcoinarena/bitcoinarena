@@ -5085,6 +5085,16 @@ const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
 /**
+ * TESTNET4'S ANCHOR (kanban #209, the owner 2026-10-10: "A"): block 154000 (000000000071bdcfebf7356cac050858e1044bbbbeb10705bba51052da193495), below every bond the testnet4 seats
+ * carried from the ancestor (154172). Its genesis would mean 12.5 MB of headers per session on a phone; a block a player
+ * trusts because it is compiled into the client is what genesis is on mainnet. Chosen by the round's own network id
+ * (arena-client directory.js chainAnchorFor), never by a page.
+ */
+const TESTNET4_ANCHOR = fromHex(
+  '953419da5210a5bb0507b1bebb4b04e1580805ac6c35f7ebcfbd710000000000');
+const TESTNET4_ANCHOR_HEIGHT = 154000;
+
+/**
  * And the eighty bytes themselves, so a chain can actually START here.
  *
  * The hash above is enough to REFUSE with; this is what an honest chain has to
@@ -8453,10 +8463,12 @@ function bondProvider(where, { fetcher = fetch } = {}) {
     const r = await readWithOneRetry(fetcher, where, opts);
     if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
     const o = await r.json();
+    const proof = (x) => ({ transaction: fromHex(x.hex), branch: (x.merkle || []).map(fromHex), position: x.pos | 0 });
+    // A CARRIED BOND (kanban #209): the ancestor bond, and beside it its re-affirmation and its advertisement update
     return {
-      transaction: fromHex(o.hex),
-      branch: (o.merkle || []).map(fromHex),
-      position: o.pos | 0,
+      ...proof(o),
+      ...(o.update && o.update.hex ? { update: proof(o.update) } : {}),
+      ...(o.reaffirm && o.reaffirm.hex ? { reaffirm: proof(o.reaffirm) } : {}),
     };
   };
   get.tag = origin(where);
@@ -14870,7 +14882,9 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
         }),
       ]);
       const seen = provenBond({ chain, ...offer });
-      if (seen.ok) return { ...seen, from: at, refused };
+      // A CARRIED BOND'S OTHER TWO PROOFS travel with it (kanban #209): its re-affirmation and its advertisement update,
+      // proved where the endpoint is read (directory.js reach), not here
+      if (seen.ok) return { ...seen, update: offer.update || null, reaffirm: offer.reaffirm || null, from: at, refused };
       refused.push(`provider ${at}: ${seen.why}`);
     } catch (e) {
       refused.push(`provider ${at}: ${e.message}`);
@@ -14882,6 +14896,311 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
       ? 'no provider proved that bond into the chain'
       : 'no providers to ask for the bond',
     refused,
+  };
+}
+
+// ---- arena-protocol/src/advert-update.js
+// AN ADVERTISEMENT UPDATE, NOT A NEW BOND (multiplayer_p2p.md §5A.2; the owner 2026-09-28: "Advertisement updates, not new
+// bonds. Spec 5A.2 is the path. Bond 0c82db59 stays the bond").
+//
+// "A new advertisement is an update, not a new bond. The bond commits, at its creation, to the node's first
+// advertisement. Every later one is an advertisement update: one small transaction that pays the BOND_MARKER dust (so
+// it is findable, as a bond is), carries OP_RETURN "ARN" ADV bond_outpoint H(NodeAdvertisement), carries the body in
+// its witness (§25.1), and is signed by node_pubkey. It spends no bond and starts no maturity clock. The census reads,
+// for each unspent bond, the newest valid update confirmed at or below census_height, else the advertisement the bond
+// committed to at creation. An update whose node_pubkey is not the bond's is not an update of that bond."
+//
+// THE KIND BYTE IS OURS, as ROUND's 'R' and SERIES' 'S' are: ADV is 0x41, 'A'. The payload is 72 bytes:
+//   "ARN" 'A' || bond txid (32, the byte order parseTransaction computes) || bond vout (u32 LE) || H(advertisement)
+// The signed body travels in the witness exactly as a bond's does, in pieces the carrier script drops.
+//
+// WHAT THIS FILE DOES NOT DO: check the signature. The protocol package carries no curve; every reader passes its own
+// BIP-340 verify, as the census's advertisement check does, and an update nobody verified is never applied.
+
+
+
+const ADVERT_UPDATE_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x41]);     // "ARN" 'A'
+const ADVERT_UPDATE_BYTES = 4 + 32 + 4 + 32;
+
+const sameUpdateBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** The 72 bytes an update's OP_RETURN carries. */
+function advertUpdatePayload({ bondTxid, bondVout, advertIdBytes }) {
+  if (!(bondTxid instanceof Uint8Array) || bondTxid.length !== 32) throw new TypeError('an update names a 32-byte bond txid');
+  if (!Number.isInteger(bondVout) || bondVout < 0) throw new TypeError('an update names the bond output index');
+  if (!(advertIdBytes instanceof Uint8Array) || advertIdBytes.length !== 32) throw new TypeError('an update commits to a 32-byte advertisement id');
+  const out = new Uint8Array(ADVERT_UPDATE_BYTES);
+  out.set(ADVERT_UPDATE_MAGIC, 0);
+  out.set(bondTxid, 4);
+  new DataView(out.buffer).setUint32(36, bondVout, true);
+  out.set(advertIdBytes, 40);
+  return out;
+}
+
+/** The payload's fields, or null for any other commitment. */
+function readAdvertUpdatePayload(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== ADVERT_UPDATE_BYTES || !sameUpdateBytes(bytes.subarray(0, 4), ADVERT_UPDATE_MAGIC)) return null;
+  return { bondTxid: bytes.slice(4, 36), bondVout: new DataView(bytes.buffer, bytes.byteOffset).getUint32(36, true), advertId: bytes.slice(40, 72) };
+}
+
+/**
+ * What an update transaction says: the bond it updates, the advertisement it commits to, its signature and txid - or
+ * why it is not an update. It must pay the network's marker, carry exactly the payload, and carry in its witness the
+ * signed body whose id the payload names. The signature is the caller's to check.
+ */
+function readAdvertUpdate(transaction, { network = 'regtest' } = {}) {
+  let tx;
+  try { tx = typeof transaction === 'object' && transaction.outputs ? transaction : parseTransaction(transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+  const payloads = commitmentsOf(tx).map(readAdvertUpdatePayload).filter(Boolean);
+  if (payloads.length !== 1) return { ok: false, why: payloads.length ? 'that transaction names more than one update' : 'that transaction carries no advertisement update' };
+  if (!paysBondMarker(tx, network)) return { ok: false, why: 'an update pays the bond marker, and that transaction does not' };
+  const p = payloads[0];
+  let taken = null;
+  for (const item of witnessRunsOf(tx)) {
+    try {
+      const { body, signature } = splitSignedAdvert(item);
+      const advert = decodeAdvert(body);
+      if (sameUpdateBytes(advertId(advert), p.advertId)) { taken = { advert, signature }; break; }
+    } catch { /* not a signed body */ }
+  }
+  if (!taken) return { ok: false, why: 'the update commits to an advertisement its witness does not carry' };
+  return { ok: true, txid: tx.txid, bondTxid: p.bondTxid, bondVout: p.bondVout, advert: taken.advert,
+    advertId: p.advertId, signature: taken.signature, nodePubkey: taken.advert.nodePubkey };
+}
+
+/**
+ * An update, proved into a header, for the bond `{ txid, vout, nodePubkey }`, signed by that key (`verify(sig, msg,
+ * key)`). The answer carries the update; the caller keeps the newest by height and position.
+ */
+async function acceptAdvertUpdate({ transaction, header, branch, position, network, bond, verify }) {
+  const read = readAdvertUpdate(transaction, { network });
+  if (!read.ok) return read;
+  if (header && !provesTransaction(header, read.txid, branch, position)) return { ok: false, why: 'the update is not in that block' };
+  return checkAgainstBond(read, bond, verify);
+}
+
+/** The rule every reader applies to a read update: it names this bond, by this bond's key, signed by that key. */
+async function checkAgainstBond(read, bond, verify) {
+  // A MISSING OR MALFORMED BOND IS REFUSED BY NAME: measured before, no bond threw "Cannot read properties of undefined
+  // (reading 'txid')" here and in acceptAdvertUpdate.
+  if (!bond || !(bond.txid instanceof Uint8Array) || bond.txid.length !== 32 || !Number.isInteger(bond.vout) || bond.vout < 0
+      || !(bond.nodePubkey instanceof Uint8Array) || bond.nodePubkey.length !== 32)
+    return { ok: false, why: 'no bond { txid, vout, nodePubkey } was given, so the update is an update of nothing' };
+  if (!sameUpdateBytes(read.bondTxid, bond.txid) || read.bondVout !== bond.vout) return { ok: false, why: 'the update names another bond' };
+  if (!sameUpdateBytes(read.nodePubkey, bond.nodePubkey)) return { ok: false, why: 'an update whose node key is not the bond\'s is not an update of that bond' };
+  if (typeof verify !== 'function') return { ok: false, why: 'no signature check was given, so no update is applied' };
+  if (!await verify(read.signature, read.advertId, read.nodePubkey)) return { ok: false, why: 'the update is not signed by the bond\'s node key' };
+  return { ok: true, ...read };
+}
+
+/**
+ * THE NEWEST VALID UPDATE PER BOND, from blocks (a chain view: { blocks: [{ transactions }], firstHeight }), at or
+ * below `atHeight`, for the census's entries ({ txid, vout, pubkey }). `verify` is synchronous here, as the census is.
+ * Answers Map(outpoint key -> { advert, advertId, txid, height, position }).
+ */
+function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } = {}) {
+  const found = new Map();
+  // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
+  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
+  const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
+  view.blocks.forEach((block, i) => {
+    const height = view.firstHeight + i;
+    if (height > atHeight) return;
+    (block.transactions || []).forEach((raw, position) => {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { return; }
+      if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;
+      const read = readAdvertUpdate(tx, { network });
+      if (!read.ok) return;
+      const key = `${Array.from(read.bondTxid).join(',')}:${read.bondVout}`;
+      const e = want.get(key);
+      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) return;
+      let signed = false;
+      try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
+      if (!signed) return;
+      const had = found.get(key);
+      if (!had || height > had.height || (height === had.height && position > had.position))
+        found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });
+    });
+  });
+  return found;
+}
+
+// ---- arena-protocol/src/reaffirm.js
+// A BOND OF THE ANCESTOR, RE-AFFIRMED FOR THIS NETWORK (multiplayer_p2p.md §27A.8.3, spec 0A.9; kanban #209).
+//
+// "A bond created under an ancestor is valid in the census of network n+1 when its operator publishes a
+// re-affirmation: OP_RETURN "ARN" FORK network_id(n+1)[0:8] schnorr_sig(bond key). One small transaction, the same shape as
+// a vote (§27A.7.3). It moves no capital, spends no bond, and starts no new maturity clock." Opt-in, per operator.
+//
+// THE KIND BYTE IS OURS, as ROUND's 'R', SERIES' 'S' and ADV's 'A' are: FORK is 0x46, 'F'. The payload is 76 bytes:
+//   "ARN" 'F' || network_id[0:8] || BIP-340 signature (64)
+// The signature is by the bond's node key (the node_pubkey its advertisement names, as an update's and a vote's are) over
+//   taggedHash(ARENA/v1/Reaffirmation, network_id (32) || bond txid (32, parseTransaction's order) || bond vout (u32, the
+//   protocol encoding's big-endian))
+// so a signature names one bond of one network: an operator with two bonds re-affirms each, and the bytes carry no
+// outpoint - a verifier tries them against the ancestor bonds it found, as a vote's tally does.
+//
+// WHAT THIS FILE DOES NOT DO: check a signature. The protocol package carries no curve; the census is handed the same
+// BIP-340 verify it checks updates with, and an unchecked re-affirmation carries nothing.
+
+
+
+
+const REAFFIRM_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x46]);     // "ARN" 'F'
+const REAFFIRM_BYTES = 4 + 8 + 64;
+
+const sameReaffirmBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const bytes32 = (x, what) => { if (!(x instanceof Uint8Array) || x.length !== 32) throw new TypeError(`${what} is 32 bytes`); };
+
+/** What the bond's node key signs: this network, this bond. */
+function reaffirmationMessage({ networkId, bondTxid, bondVout }) {
+  bytes32(networkId, 'a network id'); bytes32(bondTxid, 'a bond txid');
+  if (!Number.isInteger(bondVout) || bondVout < 0) throw new TypeError('a re-affirmation names the bond output index');
+  const w = new Writer();
+  w.bytes32(networkId); w.bytes32(bondTxid); w.u32(bondVout);
+  return taggedHash(TAG.reaffirmation, w.finish());
+}
+
+/** The 76 bytes a re-affirmation's OP_RETURN carries. */
+function reaffirmationPayload({ networkId, signature }) {
+  bytes32(networkId, 'a network id');
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new TypeError('a re-affirmation carries a 64-byte signature');
+  const out = new Uint8Array(REAFFIRM_BYTES);
+  out.set(REAFFIRM_MAGIC, 0);
+  out.set(networkId.subarray(0, 8), 4);
+  out.set(signature, 12);
+  return out;
+}
+
+/** The payload's fields, or null for any other commitment. */
+function readReaffirmationPayload(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== REAFFIRM_BYTES || !sameReaffirmBytes(bytes.subarray(0, 4), REAFFIRM_MAGIC)) return null;
+  return { networkPrefix: bytes.slice(4, 12), signature: bytes.slice(12, 76) };
+}
+
+/**
+ * WHICH ANCESTOR BONDS ARE RE-AFFIRMED FOR `networkId`, from a chain view's blocks at or below `atHeight`: for each entry
+ * ({ txid, vout, pubkey, height }), the first re-affirmation at or above the bond's own height whose signature `verify`
+ * (BIP-340: verify(sig, msg, key)) accepts under the entry's node key for this network and this bond.
+ * Answers Map(outpoint key "txid bytes joined by ','" + ":" + vout -> { txid, height, position }).
+ */
+function reaffirmedBonds(view, entries, { atHeight, networkId, verify } = {}) {
+  const found = new Map();
+  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries) || !entries.length) return found;
+  bytes32(networkId, 'a network id');
+  const prefix = networkId.subarray(0, 8);
+  const keyOf = (e) => `${Array.from(e.txid).join(',')}:${e.vout}`;
+  view.blocks.forEach((block, i) => {
+    const height = view.firstHeight + i;
+    if (height > atHeight) return;
+    (block.transactions || []).forEach((raw, position) => {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { return; }
+      for (const c of commitmentsOf(tx)) {
+        const p = readReaffirmationPayload(c);
+        if (!p || !sameReaffirmBytes(p.networkPrefix, prefix)) continue;
+        for (const e of entries) {
+          const key = keyOf(e);
+          if (found.has(key) || height < e.height) continue;
+          let ok = false;
+          try { ok = !!verify(p.signature, reaffirmationMessage({ networkId, bondTxid: e.txid, bondVout: e.vout }), e.pubkey); } catch { ok = false; }
+          if (ok) found.set(key, { txid: tx.txid, height, position });
+        }
+      }
+    });
+  });
+  return found;
+}
+
+// ---- arena-protocol/src/ancestor-endpoint.js
+// THE ENDPOINT OF A CARRIED BOND (kanban #209, measured 2026-10-10 05:35Z: a paid join on testnet4 was refused at the
+// session - "no proven endpoint: the bond output commits to a different advertisement").
+//
+// §0A.9: bonds cross from the BLWP ancestor without a spend. The bond output stays where it is and keeps committing to its
+// ANCESTOR advertisement; its operator re-affirms it for the new network (an "ARNF" payload signed by the bond's key) and
+// then names its Bitcoin Arena terms - endpoint, hosted games - in an advertisement update ("ARNA", signed by the same key).
+// The census reads it that way (reaffirm.js, advert-update.js). The door a PLAYER walks through read only the first half:
+// a bond that commits to an Arena advertisement. So no seat with a carried bond could be reached.
+//
+// This is the second half, from raw bytes only, as `acceptAdvert` is: the bond, its re-affirmation and its update, each
+// proved into a header of the chain the client agreed, read out of their own outputs and witnesses. Nothing here checks a
+// signature (this package carries no crypto): the answer names the update's signature over its id, as `acceptAdvert`
+// names an advertisement's, and lists the two more a client must verify - the ancestor body's and the re-affirmation's -
+// all three by the bond's node key. `arena-client` refuses the session unless every one verifies.
+
+
+
+
+
+
+
+// the networks with an ancestor, by the marker names the protocol uses, and the id a re-affirmation names for each
+const ANCESTOR_NETWORK_IDS = Object.freeze({ testnet: NETWORK_ID_TESTNET4, regtest: NETWORK_ID_REGTEST });
+const sameBytesAE = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+function parsedAE(proof, what) {
+  if (!proof || !(proof.transaction instanceof Uint8Array)) return { why: `no ${what} was given` };
+  try { return { tx: parseTransaction(proof.transaction) }; } catch (e) { return { why: `the ${what} is not a transaction: ${e.message}` }; }
+}
+const headerOfAE = (chain, txid, proof) => chain.find((h) => provesTransaction(h, txid, proof.branch || [], proof.position | 0)) || null;
+
+/**
+ * `chain`: the agreed headers; the bond as `{ transaction, branch, position }`, and `update` and `reaffirm` in the same
+ * shape. Answers { ok, endpoint, nodePubkey, signature, advertId, advert, txid, bondVout, header, checks: [{ what,
+ * signature, message, key }] } or { ok: false, why }.
+ */
+function acceptAncestorEndpoint({ chain, transaction, branch, position, update, reaffirm }) {
+  if (!Array.isArray(chain) || !chain.length) return { ok: false, why: 'no chain to prove the bond into' };
+  const b = parsedAE({ transaction }, 'bond');
+  if (!b.tx) return { ok: false, why: b.why };
+  const header = headerOfAE(chain, b.tx.txid, { branch, position });
+  if (!header) return { ok: false, why: 'the bond is not in any block of that chain' };
+  const network = Object.keys(ANCESTOR_NETWORK_IDS).find((n) => paysMarkerProgram(b.tx, ancestorMarker(n)));
+  if (!network) return { ok: false, why: 'the bond output commits to a different advertisement, and it is no carried ancestor bond either' };
+
+  // 1. THE ANCESTOR BODY THE BOND COMMITS TO: who the node is, and which output is its bond
+  const commitments = commitmentsOf(b.tx).filter((c) => c.length === 32);
+  let body = null;
+  for (const item of witnessRunsOf(b.tx)) {
+    try {
+      const s = splitSignedAdvert(item);
+      if (commitments.some((c) => sameBytesAE(c, ancestorAdvertId(s.body)))) { body = { ...s, advert: decodeAncestorAdvert(s.body) }; break; }
+    } catch { /* not a signed body */ }
+  }
+  if (!body) return { ok: false, why: 'the ancestor bond carries no advertisement its output commits to' };
+  const seen = recognizeBond(b.tx, body.advert.bondVout, body.advert, { network, ancestor: true });
+  if (!seen.ok) return { ok: false, why: seen.why };
+  const nodePubkey = body.advert.nodePubkey;
+  const bondVout = body.advert.bondVout;
+
+  // 2. ITS RE-AFFIRMATION FOR THIS NETWORK: without one an ancestor bond does not count here
+  const r = parsedAE(reaffirm, 're-affirmation');
+  if (!r.tx) return { ok: false, why: `an ancestor bond counts only re-affirmed: ${r.why}` };
+  if (!headerOfAE(chain, r.tx.txid, reaffirm)) return { ok: false, why: 'the re-affirmation is not in any block of that chain' };
+  if (!paysBondMarker(r.tx, network)) return { ok: false, why: 'a re-affirmation pays the bond marker, and that transaction does not' };
+  const prefix = ANCESTOR_NETWORK_IDS[network].subarray(0, 8);
+  const payload = commitmentsOf(r.tx).map(readReaffirmationPayload).find((p) => p && sameBytesAE(p.networkPrefix, prefix));
+  if (!payload) return { ok: false, why: 'that transaction re-affirms nothing for this network' };
+
+  // 3. ITS ADVERTISEMENT UPDATE: the endpoint and the hosted games, for this bond, by this bond's key
+  const u = parsedAE(update, 'advertisement update');
+  if (!u.tx) return { ok: false, why: `an ancestor bond names its endpoint in an update: ${u.why}` };
+  if (!headerOfAE(chain, u.tx.txid, update)) return { ok: false, why: 'the advertisement update is not in any block of that chain' };
+  const read = readAdvertUpdate(u.tx, { network });
+  if (!read.ok) return { ok: false, why: read.why };
+  if (!sameBytesAE(read.bondTxid, b.tx.txid) || read.bondVout !== bondVout) return { ok: false, why: 'the update names another bond' };
+  if (!sameBytesAE(read.nodePubkey, nodePubkey)) return { ok: false, why: 'the update is by another key than the bond\'s' };
+
+  return {
+    ok: true, endpoint: read.advert.endpoint, nodePubkey, signature: read.signature, advertId: read.advertId, advert: read.advert,
+    txid: b.tx.txid, bondVout, bondSats: seen.valueSats, header,
+    checks: [
+      { what: 'the ancestor advertisement the bond commits to', signature: body.signature, message: ancestorAdvertId(body.body), key: nodePubkey },
+      { what: 'the re-affirmation', signature: payload.signature,
+        message: reaffirmationMessage({ networkId: ANCESTOR_NETWORK_IDS[network], bondTxid: b.tx.txid, bondVout }), key: nodePubkey },
+    ],
   };
 }
 
@@ -14918,7 +15237,9 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
 
 
 
+
 const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bond that held), see discover
+
 
 
 /**
@@ -14965,7 +15286,7 @@ function isSocketAddress(endpoint) {
  * this that takes an empty list and shrugs is the version that ships.
  */
 function reach({
-  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network,
+  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network, update, reaffirm,
 }) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
@@ -14989,6 +15310,20 @@ function reach({
   }
 
   let refusal = 'the transaction is not in any block of that chain';
+  // A CARRIED BOND (kanban #209, §0A.9): an ancestor bond with its re-affirmation and its advertisement update, all three
+  // proved into this chain; the three signatures by the bond's key are listed for Client.at to verify (`checks`)
+  if (update || reaffirm) {
+    const carried = acceptAncestorEndpoint({ chain: headers, transaction, branch, position, update, reaffirm });
+    if (carried.ok) {
+      if (!committee.some((n) => toHex(n) === toHex(carried.nodePubkey)))
+        return { ok: false, why: `the advertisement is for ${toHex(carried.nodePubkey)}, which is not on this round's committee` };
+      if (!isSocketAddress(carried.endpoint))
+        return { ok: false, why: `the advertisement's endpoint ${JSON.stringify(carried.endpoint)} is not a secure socket address` };
+      return { ok: true, endpoint: carried.endpoint, nodePubkey: carried.nodePubkey, signature: carried.signature,
+        advertId: carried.advertId, txid: carried.txid, blockHash: blockHashOf(carried.header), work, from, checks: carried.checks };
+    }
+    refusal = carried.why;
+  }
   for (const header of headers) {
     // The bond option travels with it: a page holding the network's
     // arbitration set and a curve can have the output key rebuilt, and one
@@ -15080,8 +15415,17 @@ const PROVIDERS_NEEDED = 2;
 /** How long the client waits on a provider before giving up on it. */
 const PROVIDER_WAIT_MS = 10000;
 
+/**
+ * THE BLOCK A CLIENT ANCHORS A ROUND'S CHAIN TO, by the round's own network id (kanban #209): the client's constants, never
+ * a page's. Testnet4: block 154000; any other network: mainnet's genesis, as before.
+ */
+function chainAnchorFor(networkId) {
+  if (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4)) return TESTNET4_ANCHOR;
+  return BITCOIN_MAINNET_GENESIS;
+}
+
 async function discover({
-  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved,
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId,
 }) {
   // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
   //
@@ -15180,7 +15524,7 @@ async function discover({
   let reusedChain = !!chain;
   if (!chain) {
     chain = await agreedChain(headers, {
-      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      anchor: chainAnchorFor(networkId), ask,
       least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
     });
     if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
@@ -15208,7 +15552,7 @@ async function discover({
     const bondWhy = bond.why, bondRefused = bond.refused;
     reusedChain = false;
     const fresh = await agreedChain(headers, {
-      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      anchor: chainAnchorFor(networkId), ask,
       least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
     });
     if (!fresh.ok) return { ok: false, why: `no bond: ${bondWhy}`, refused: bondRefused };
@@ -15224,6 +15568,8 @@ async function discover({
     position: bond.position,
     signedAdvert,
     committee,
+    update: bond.update || undefined,
+    reaffirm: bond.reaffirm || undefined,
   });
   if (!seen.ok) return seen;
   return {
@@ -16358,7 +16704,8 @@ class Client {
           + 'opened the page: two things that agree with each other are not Bitcoin');
     }
 
-    const seen = await discover({ ...discovery, committee: contract.nodes });
+    // THE ANCHOR FOLLOWS THE ROUND'S NETWORK (kanban #209), read off the contract the round id was just checked against
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.
@@ -16376,6 +16723,12 @@ class Client {
     if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
       throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
         + 'is not signed by the node it names');
+    // A CARRIED BOND (kanban #209): its ancestor advertisement and its re-affirmation are signed by the same key, or the
+    // endpoint its update names is not that bond's
+    for (const c of seen.checks || []) {
+      if (!await verify(c.signature, c.message, c.key))
+        throw new Error(`${c.what} for ${toHex(c.key)} is not signed by that node`);
+    }
 
     const client = new Client({
       base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,

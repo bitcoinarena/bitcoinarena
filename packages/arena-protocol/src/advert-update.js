@@ -21,7 +21,7 @@ import { paysBondMarker, provesTransaction } from './chain.js';
 export const ADVERT_UPDATE_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x41]);     // "ARN" 'A'
 export const ADVERT_UPDATE_BYTES = 4 + 32 + 4 + 32;
 
-const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const sameUpdateBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** The 72 bytes an update's OP_RETURN carries. */
 export function advertUpdatePayload({ bondTxid, bondVout, advertIdBytes }) {
@@ -38,7 +38,7 @@ export function advertUpdatePayload({ bondTxid, bondVout, advertIdBytes }) {
 
 /** The payload's fields, or null for any other commitment. */
 export function readAdvertUpdatePayload(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== ADVERT_UPDATE_BYTES || !same(bytes.subarray(0, 4), ADVERT_UPDATE_MAGIC)) return null;
+  if (!(bytes instanceof Uint8Array) || bytes.length !== ADVERT_UPDATE_BYTES || !sameUpdateBytes(bytes.subarray(0, 4), ADVERT_UPDATE_MAGIC)) return null;
   return { bondTxid: bytes.slice(4, 36), bondVout: new DataView(bytes.buffer, bytes.byteOffset).getUint32(36, true), advertId: bytes.slice(40, 72) };
 }
 
@@ -60,7 +60,7 @@ export function readAdvertUpdate(transaction, { network = 'regtest' } = {}) {
     try {
       const { body, signature } = splitSignedAdvert(item);
       const advert = decodeAdvert(body);
-      if (same(advertId(advert), p.advertId)) { taken = { advert, signature }; break; }
+      if (sameUpdateBytes(advertId(advert), p.advertId)) { taken = { advert, signature }; break; }
     } catch { /* not a signed body */ }
   }
   if (!taken) return { ok: false, why: 'the update commits to an advertisement its witness does not carry' };
@@ -86,8 +86,8 @@ export async function checkAgainstBond(read, bond, verify) {
   if (!bond || !(bond.txid instanceof Uint8Array) || bond.txid.length !== 32 || !Number.isInteger(bond.vout) || bond.vout < 0
       || !(bond.nodePubkey instanceof Uint8Array) || bond.nodePubkey.length !== 32)
     return { ok: false, why: 'no bond { txid, vout, nodePubkey } was given, so the update is an update of nothing' };
-  if (!same(read.bondTxid, bond.txid) || read.bondVout !== bond.vout) return { ok: false, why: 'the update names another bond' };
-  if (!same(read.nodePubkey, bond.nodePubkey)) return { ok: false, why: 'an update whose node key is not the bond\'s is not an update of that bond' };
+  if (!sameUpdateBytes(read.bondTxid, bond.txid) || read.bondVout !== bond.vout) return { ok: false, why: 'the update names another bond' };
+  if (!sameUpdateBytes(read.nodePubkey, bond.nodePubkey)) return { ok: false, why: 'an update whose node key is not the bond\'s is not an update of that bond' };
   if (typeof verify !== 'function') return { ok: false, why: 'no signature check was given, so no update is applied' };
   if (!await verify(read.signature, read.advertId, read.nodePubkey)) return { ok: false, why: 'the update is not signed by the bond\'s node key' };
   return { ok: true, ...read };
@@ -114,7 +114,7 @@ export function newestUpdates(view, entries, { atHeight, network = 'regtest', ve
       if (!read.ok) return;
       const key = `${Array.from(read.bondTxid).join(',')}:${read.bondVout}`;
       const e = want.get(key);
-      if (!e || !same(read.nodePubkey, e.pubkey) || height < e.height) return;
+      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) return;
       let signed = false;
       try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
       if (!signed) return;

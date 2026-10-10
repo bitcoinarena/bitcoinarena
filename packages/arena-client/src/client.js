@@ -346,7 +346,8 @@ export class Client {
           + 'opened the page: two things that agree with each other are not Bitcoin');
     }
 
-    const seen = await discover({ ...discovery, committee: contract.nodes });
+    // THE ANCHOR FOLLOWS THE ROUND'S NETWORK (kanban #209), read off the contract the round id was just checked against
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.
@@ -364,6 +365,12 @@ export class Client {
     if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
       throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
         + 'is not signed by the node it names');
+    // A CARRIED BOND (kanban #209): its ancestor advertisement and its re-affirmation are signed by the same key, or the
+    // endpoint its update names is not that bond's
+    for (const c of seen.checks || []) {
+      if (!await verify(c.signature, c.message, c.key))
+        throw new Error(`${c.what} for ${toHex(c.key)} is not signed by that node`);
+    }
 
     const client = new Client({
       base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,

@@ -596,10 +596,12 @@ export function bondProvider(where, { fetcher = fetch } = {}) {
     const r = await readWithOneRetry(fetcher, where, opts);
     if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
     const o = await r.json();
+    const proof = (x) => ({ transaction: fromHex(x.hex), branch: (x.merkle || []).map(fromHex), position: x.pos | 0 });
+    // A CARRIED BOND (kanban #209): the ancestor bond, and beside it its re-affirmation and its advertisement update
     return {
-      transaction: fromHex(o.hex),
-      branch: (o.merkle || []).map(fromHex),
-      position: o.pos | 0,
+      ...proof(o),
+      ...(o.update && o.update.hex ? { update: proof(o.update) } : {}),
+      ...(o.reaffirm && o.reaffirm.hex ? { reaffirm: proof(o.reaffirm) } : {}),
     };
   };
   get.tag = origin(where);
