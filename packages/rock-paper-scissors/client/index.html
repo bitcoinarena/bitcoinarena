@@ -859,8 +859,63 @@
     // a round's last CLOSING_MS took no taps (buttons off) and the next round was offered only from its own window - so for
     // 1.5 s of every 8 s a tap did nothing. Now the next round takes the table CLOSING_MS before this one closes: a tap
     // always lands in a round with at least 1.5 s of entry left, and there is never a moment without buttons.
-    const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > CLOSING_MS && r.entryCloseMs - Date.now() <= WINDOW_MS + CLOSING_MS)
-      .sort((x, y) => x.entryCloseMs - y.entryCloseMs)[0] || null;
+    // SEATING BEGIN - TABLES (kanban #293, the owner 2026-10-10: "When one player is waiting, one round is being opened. A 2nd
+    // player joins that round. A 3rd player gets a second round, the 4th player joins that round. 5th player gets the 3rd round
+    // and so on"): each slot of the grid holds several rounds side by side (the seats' keeper, tablesNeeded). Every page
+    // orders a slot's tables by round id, so all see the same table 1, 2, 3. A pair goes on at its own place in the next slot,
+    // and that place is kept for it; anyone else sits down where one player waits, else at an empty table.
+    // `slot`: [{ id, joined }] of the rounds taking picks now; `prevSlot`: the slot before as this page last saw it;
+    // `mineId`: this tab's round in it. Pure - the node tests run it as it is written here (test/seating.test.js).
+    function seatAt(slot, { prevSlot = null, mineId = null } = {}) {
+      const byId = (x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
+      const now = [...(slot || [])].sort(byId), before = prevSlot ? [...prevSlot].sort(byId) : [];
+      // places count over every table of the slot; only a table that takes entries now (`open` not false) can be sat at
+      const open = (r) => !!r && r.open !== false && r.joined < 2;
+      // THE PAIRS OF THE SLOT BEFORE, in their order, take the first places of this one - pair j at place j - whatever the
+      // number of tables (measured with 5 bots: places kept by position moved when the slot grew from 3 tables to 4, and a
+      // pair was split); everyone else sits after them, where one player waits first, else at an empty table
+      const pairs = before.filter((r) => r.joined >= 2);
+      const j = mineId ? pairs.findIndex((r) => r.id === mineId) : -1;
+      if (j >= 0 && open(now[j])) return now[j];
+      const free = now.slice(pairs.length).filter(open);
+      return free.find((r) => r.joined === 1) || free.find((r) => r.joined === 0) || now.find(open) || null;
+    }
+    // SEATING END
+    // EACH SLOT AS LAST SEEN, by its entry close (its tables and how many sat at each), for the seating of the slot after it
+    const slotsSeen = new Map();
+    // A TABLE'S PLAYERS AS ITS SEAT HOLDS THEM NOW (kanban #293, measured with 5 bots: the signed listing's `joined` waits for
+    // its row to be signed again - 0 for a table a player had entered 1.2 s before - and pairs were split on it): read from the
+    // seat's /api/round-result, every second for the tables of this slot and the one before, and again at a tap
+    const liveSeat = new Map(); // round id -> players
+    const seatsOf = (id) => { try { return window.parent.BLWP_ROW_NODES ? window.parent.BLWP_ROW_NODES(id) : []; } catch { return []; } };
+    const liveCount = (ids, timeoutMs = 2000) => Promise.all(ids.map(async (id) => {
+      const n = seatsOf(id)[0];
+      if (!n) return;
+      try {
+        const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+        if (r.ok) { const j = await r.json(); liveSeat.set(id, (j.players || []).length); }
+      } catch { /* the listing's count stands */ }
+    }));
+    const joinedNow = (r) => Math.max(joinedOf(r.line), liveSeat.has(r.id) ? liveSeat.get(r.id) : 0);
+    const prevFrozen = new Map();   // slot close -> the slot before it, as seen when this slot was first seated
+    const offered = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > CLOSING_MS && r.entryCloseMs - Date.now() <= WINDOW_MS + CLOSING_MS);
+    const openRound = (rows, mineId) => {
+      for (const r of rows) if (r.entryCloseMs) { const k = String(r.entryCloseMs); const m = slotsSeen.get(k) || new Map(); m.set(r.id, { id: r.id, joined: joinedNow(r) }); slotsSeen.set(k, m); }
+      for (const k of [...slotsSeen.keys()]) if (Number(k) < Date.now() - 60000) slotsSeen.delete(k);
+      const can = offered(rows);
+      if (!can.length) return null;
+      const close = Math.min(...can.map((r) => r.entryCloseMs));
+      const canIds = new Set(can.map((r) => r.id));
+      const slot = rows.filter((r) => r.entryCloseMs === close).map((r) => ({ id: r.id, joined: joinedNow(r), open: canIds.has(r.id), row: r }));
+      // THE SLOT BEFORE, FROZEN the first time this slot is seated (measured with bots: its counts change once its rounds
+      // close, and two partners tapping seconds apart read different pairs - every table was reshuffled): at the switch, 1.5 s
+      // before its close, its entries are final (nobody enters it then)
+      if (!prevFrozen.has(close)) { const before = [...slotsSeen.keys()].map(Number).filter((k) => k < close).sort((x, y) => y - x)[0];
+        prevFrozen.set(close, before !== undefined ? [...slotsSeen.get(String(before)).values()].map((x) => ({ ...x })) : null);
+        for (const k of [...prevFrozen.keys()]) if (k < Date.now() - 60000) prevFrozen.delete(k); }
+      const got = seatAt(slot, { prevSlot: prevFrozen.get(close), mineId });
+      return got ? got.row : null;
+    };
     // WHO SITS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You are alone"): this
     // tab says it is here to the table's seats every 2 s (ARENA_GAME.here) and keeps who else is - the banner reads that, not
     // the moves already in
@@ -910,6 +965,8 @@
       if (refreshing) return;
       refreshing = true;
       try {
+        const near = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs && r.entryCloseMs > Date.now() - WINDOW_MS && r.entryCloseMs <= Date.now() + 2 * WINDOW_MS + CLOSING_MS);
+        await liveCount(near.map((r) => r.id));
         const h = lastHidden();
         if (h) {
           const id = h.roundIdHex, players = (A.headToHead && A.headToHead.players) || 2;
@@ -931,7 +988,7 @@
     const TAPS = window.RPS_TAPS = [];
     let tapped = null;          // the tap going in: { id, move, closeMs, rec } - the buttons stay chosen through every redraw
     const note = (text) => { const n = el('div', 'demo-label'); n.textContent = text; document.body.append(n); setTimeout(() => n.remove(), 2600); };
-    const tap = (id, i, closeMs, g, b) => {
+    const tap = async (id, i, closeMs, g, b) => {
       if (tapped && tapped.id === id) return;
       for (const x of g.querySelectorAll('button')) x.disabled = true;
       b.classList.add('chosen');
@@ -939,6 +996,12 @@
       const rec = { at: Date.now(), round: id, move: i, leftMs: closeMs - Date.now(), answer: null, why: null, landedMs: null, lost: null };
       TAPS.push(rec);
       tapped = { id, move: i, closeMs, rec };
+      // AT THE TAP, THE SLOT'S TABLES COUNTED LIVE AND THE TABLE CHOSEN AGAIN (at most 400 ms): two players who come at once
+      // must not both take the seat beside the one waiting (a refused one would still go on to the next table)
+      const sameSlot = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs === closeMs);
+      await liveCount(sameSlot.map((r) => r.id), 400);
+      const again = openRound(A.allRows ? A.allRows() : A.rows(), (lastHidden() || {}).roundIdHex || null);
+      if (again && again.id !== id && again.entryCloseMs === closeMs) { rec.moved = { from: id, to: again.id }; id = again.id; rec.round = id; tapped.id = id; }
       let ok = false;
       try { ok = A.hide(id, i); } catch (e) { rec.why = e.message; }
       let said = null; try { said = window.parent.BLWP_JOIN_ANSWER; } catch { /* another origin */ }
@@ -954,7 +1017,16 @@
       const r = tapped.rec;
       if (A.hidden(tapped.id)) { r.landedMs = Date.now() - r.at; tapped = null; return; }
       let j = null; try { j = window.parent.BLWP_JOIN; } catch { /* another origin */ }
-      if (j && j.round === tapped.id && j.state === 'refused') { r.lost = 'refused: ' + (j.why || ''); tapped = null; note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return; }
+      if (j && j.round === tapped.id && j.state === 'refused') {
+        // A FULL TABLE (two players came for one seat at once): the tap goes to the next open table of the same slot
+        if (/already seats/.test(j.why || '') && !r.reseated) {
+          const other = offered(A.allRows ? A.allRows() : A.rows()).filter((x) => x.entryCloseMs === tapped.closeMs && x.id !== tapped.id && joinedOf(x.line) < 2)
+            .sort((x, y) => (x.id < y.id ? -1 : 1));
+          const to = other.find((x) => joinedOf(x.line) === 1) || other[0];
+          if (to) { r.reseated = { from: tapped.id, to: to.id }; tapped = { ...tapped, id: to.id }; r.round = to.id; A.hide(to.id, tapped.move); return; }
+        }
+        r.lost = 'refused: ' + (j.why || ''); tapped = null; note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return;
+      }
       if (Date.now() > tapped.closeMs + 3000) { r.lost = 'the round closed before it went in'; tapped = null; }
     };
     // NO REDRAW UNDER A FINGER (#292): a redraw between a finger's down and up replaced the button under it, and no click came
@@ -1016,7 +1088,7 @@
       // onto the stage, when it is signed
       if (last && last.phase === 'wait' && Date.now() < last.closeMs - CLOSING_MS) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
       else {
-        const row = openRound(rows);
+        const row = openRound(rows, h ? h.roundIdHex : null);
         const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase === 'wait' ? 'reveal' : last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
         if (row) lookHere(row.id);
         // A MOVE NOBODY ANSWERED STAYS IN (the owner 2026-10-09 playtest: "pick, the Wait screen comes, then back to Pick -
