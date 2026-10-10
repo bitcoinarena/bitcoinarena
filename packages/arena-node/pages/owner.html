@@ -118,6 +118,7 @@ async function area() {
       <div class="row"><span>Node key</span><b>${esc(state.node.slice(0, 16))}…</b></div>
       <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
+    <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Donations</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
     <h2>Sign a game or market</h2><div class="card">
       <p>Your developer key, made from the same 24 words: <b id="devkey"></b>. A game or market you sign here names it as its developer;
@@ -130,6 +131,7 @@ async function area() {
   $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
   $('forget').onclick = () => { if (confirm('Forget the 24 words on this browser? You need them written down to come back.')) forget(); };
   donations();
+  leavePanel();
   // SIGN A GAME OR MARKET (kanban #276 step 4): signed here as the developer's command-line client signs it
   const devSeed = C.devSeedFromSeed(readSeed());
   const devPub = C.devPubkeyOf(devSeed);
@@ -144,6 +146,32 @@ async function area() {
       $('copy').onclick = () => { navigator.clipboard.writeText(out.hex).then(() => { $('copy').textContent = 'Copied ✓'; }, () => { $('mhex').select(); }); };
     } catch (e) { $('serr').textContent = e.message; }
   };
+}
+// LEAVE WITHOUT BEING SLASHED (kanban #276 step 2): from the moment the owner signs Leave this seat takes no new round and
+// serves the ones it holds to their end; it is free once the last is past its objection window and settled. Custody: only if
+// the federation keeps its threshold without this guardian.
+const when = (ms) => new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
+async function leavePanel() {
+  let st;
+  try { st = await (await fetch(at('/owner/leave'), { cache: 'no-store' })).json(); }
+  catch (e) { $('leave').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const free = st.freeNow ? 'now' : st.freeAtMs ? when(st.freeAtMs) : 'once its last paying round is settled';
+  $('leave').innerHTML = `
+    <div class="row"><span>State</span><b>${st.leaving ? 'leaving since ' + when(st.leavingAtMs) : 'taking rounds'}</b></div>
+    <div class="row"><span>Rounds it still serves</span><b>${st.owed}</b></div>
+    <div class="row"><span>Free to stop</span><b>${esc(free)}</b></div>
+    <div class="row"><span>Custody</span><b>${st.custody.guardian ? (st.custody.allowed ? 'may leave' : 'may NOT leave') : 'none'}</b></div>
+    <p class="sub">${esc(st.custody.why)}</p>
+    <p class="sub">Leaving is never a slash: a seat is slashed only for a false or double signature, or a fee for service it did not give.
+      From Leave on it takes no new round and serves the ones it holds to their end, so nobody loses a round.</p>
+    <div class="err" id="lerr"></div>
+    ${st.leaving ? '<button id="stay">Stay: take rounds again</button>' : '<button class="primary" id="go">Leave</button>'}`;
+  const act = async (action) => {
+    $('lerr').textContent = '';
+    try { await post('/owner/' + action, signed(action)); leavePanel(); } catch (e) { $('lerr').textContent = e.message; }
+  };
+  if ($('go')) $('go').onclick = () => { if (confirm('Leave: this seat takes no new round from now and serves the ones it holds. Continue?')) act('leave'); };
+  if ($('stay')) $('stay').onclick = () => act('stay');
 }
 // THE DEV CLIENT (kanban #276 step 3): what this seat verified for the protocol developers and for each game it hosts, in
 // sat to the msat, per round and per UTC day (GET /owner/donations, from the seat's own donation index)

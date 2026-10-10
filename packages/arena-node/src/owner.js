@@ -68,7 +68,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     return { ok: true };
   };
   return {
-    state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null }),
+    state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null, leavingAtMs: owner && owner.leaving ? owner.leaving.atMs : null }),
     /** The first owner, with the claim code from the node's log. */
     claim(req) {
       if (owner) return { ok: false, status: 409, why: 'this node already has an owner' };
@@ -83,6 +83,24 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       log(`[owner] claimed by ${req.pubkey}`);
       return { ok: true, owner: owner.pubkey };
     },
+    /** LEAVE (kanban #276 step 2): from now this seat takes no new round; it serves the ones it holds. Kept with the owner. */
+    leave(req) {
+      const a = this.authorize(req, 'leave');
+      if (!a.ok) return a;
+      if (owner.leaving) return { ok: true, leavingAtMs: owner.leaving.atMs, already: true };
+      owner = { ...owner, leaving: { atMs: nowMs() } };
+      store.write(owner);
+      log(`[owner] leaving from ${new Date(owner.leaving.atMs).toISOString()}: no new rounds; the held ones are served to their end`);
+      return { ok: true, leavingAtMs: owner.leaving.atMs };
+    },
+    /** STAY: the leave taken back; new rounds are taken again. */
+    stay(req) {
+      const a = this.authorize(req, 'stay');
+      if (!a.ok) return a;
+      if (owner.leaving) { const { leaving, ...rest } = owner; owner = rest; store.write(owner); log('[owner] staying: new rounds are taken again'); void leaving; }
+      return { ok: true, leavingAtMs: null };
+    },
+    leavingAtMs: () => (owner && owner.leaving ? owner.leaving.atMs : null),
     /** Any owner action: the signature, the time, and that the key is the owner's. */
     authorize(req, action) {
       if (!owner) return { ok: false, status: 409, why: 'this node has no owner yet' };
