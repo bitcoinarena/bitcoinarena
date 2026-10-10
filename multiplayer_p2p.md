@@ -272,9 +272,15 @@ GameManifest {
 game_id = H(GameManifest)
 ```
 
-Published like a series (§5A.5): `OP_RETURN "ARN" GAME game_id` on Bitcoin,
-the body in the same transaction's witness, so any node or client can read
-it off the chain and nothing has to be served. A manifest whose signature
+**Published by being served, anchored by the seats that host it** *(RULED,
+2026-10-10, kanban #333; replaces the earlier `OP_RETURN "ARN" GAME game_id`
+publication)*: every seat that hosts a game serves its manifest body (`GET
+/games`), and a reader checks it alone - `H(body) = game_id` and the
+developer's signature - so serving needs no trust. On chain, a game is named
+by the advertisements of the seats that host it (`hosted_games`, §5A.3), which
+the census already reads; a manifest no seat serves is a game no seat hosts.
+No transaction per manifest: an update (a new client hash is a new manifest)
+costs nothing on chain, and nothing about a round changes. A manifest whose signature
 does not verify, or whose `parent_manifest_id` names a manifest of another
 `game_dev_pubkey`, is not a game. **An update is a new manifest** signed by
 the same key with the old id as its parent; rounds name the exact manifest
@@ -378,10 +384,14 @@ not know the price; they know who the game dev said may say it. `GET
 **What an objection is.** Two attestations for one round, each standing on
 its own, naming **different** outcomes. The seat holds both: the pair is the
 proof that the attestors contradicted themselves, the round is `DISPUTED`,
-**and it settles on neither outcome** - no table is built from it. (What a
-disputed round's stakes do then, and whether attestors post a bond the proof
-slashes, is a later ruling; until then they stay locked and expire back to
-their players under §23.1's refund path.)
+**and it settles on neither outcome** - no table is built from it.
+*(RULED, 2026-10-10, kanban #334)* **A disputed round is VOID at once:** every
+stake lock and fee lock comes back whole by the return door (the seats' forfeit
+to each player's own key), no fee is taken, and nobody waits for a lock's
+expiry. **Attestors post a bond the contradiction proof slashes - before
+mainnet** (with the node bonds' enforcement, #307); on testnet there is no
+attestor bond, and the proof is published so the market's developer can drop
+the attestor from the next manifest.
 
 **The payout rule: pari-mutuel** (RULED: no counterparty - the losers pay the
 winners). Out of each entry's stake come the market's fees: its manifest's,
