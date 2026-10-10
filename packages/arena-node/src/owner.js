@@ -14,7 +14,7 @@
 // the owner and the code is gone. Nobody reaching the public address can claim a node without access to its machine.
 //
 // This file is shared: the node checks with it, and the owner page signs with it (bundled into pages/owner-client.js).
-import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { utf8Encode } from '../../arena-protocol/src/utf8.js';
 
 export const OWNER_MESSAGE_TAG = 'arena/node-owner/v1';
@@ -35,6 +35,22 @@ export function signOwnerRequest({ node, action, args = {}, atMs = Date.now(), s
   return { pubkey: toHex(pubkeyOf(secret)), action, args, atMs, sig: toHex(sig) };
 }
 
+// LOGIN WITH NOSTR (kanban #277, the owner 2026-10-10: "277 contains a login with Nostr feature for node claiming instead of
+// generating your own seed"): the owner key IS a Nostr key (both BIP-340), so an nsec signs requests as above; a browser
+// extension (NIP-07) or a remote signer (NIP-46) signs only events, so its request is one: kind 27235 (NIP-98, HTTP auth),
+// tagged with this node (u = arena-owner:<node key>), the action (method) and the SHA-256 of the arguments (payload), at the
+// request's time. The node checks the event's id and signature and those tags; the pubkey is the event's.
+export const OWNER_EVENT_KIND = 27235;
+const nostrIdOf = (e) => toHex(sha256(utf8Encode(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content]))));
+export const ownerPayloadHash = (args = {}) => toHex(sha256(utf8Encode(JSON.stringify(args))));
+/** The event template a Nostr signer signs for an owner request; the request is { action, args, nostr: <signed event> }. */
+export const ownerEventTemplate = ({ node, action, args = {}, atMs = Date.now() }) => ({ kind: OWNER_EVENT_KIND, created_at: Math.floor(Number(atMs) / 1000),
+  tags: [['u', `arena-owner:${node}`], ['method', String(action)], ['payload', ownerPayloadHash(args)]], content: '' });
+export async function signOwnerEvent({ node, action, args = {}, atMs = Date.now(), signEvent }) {
+  const nostr = await signEvent(ownerEventTemplate({ node, action, args, atMs }));
+  return { action, args, nostr };
+}
+
 const newCode = () => {
   const b = globalThis.crypto.getRandomValues(new Uint8Array(12));
   return [...b].map((x) => CODE_ALPHABET[x % CODE_ALPHABET.length]).join('').replace(/(.{4})(?=.)/g, '$1-');
@@ -53,8 +69,28 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     store.writeCode(code);
     log(`[owner] this node has no owner yet. Claim it at /Dashboard/owner with the code ${code}`);
   }
+  // A REQUEST AS A NOSTR EVENT (above): its id, its signature, this node, this action, these arguments, and its time
+  const checkEvent = (req, action) => {
+    const e = req.nostr;
+    if (!e || typeof e !== 'object' || e.kind !== OWNER_EVENT_KIND || !Array.isArray(e.tags)) return { ok: false, why: `a Nostr owner request is a kind ${OWNER_EVENT_KIND} event` };
+    if (!/^[0-9a-f]{64}$/.test(String(e.pubkey)) || !/^[0-9a-f]{128}$/.test(String(e.sig)) || !/^[0-9a-f]{64}$/.test(String(e.id))) return { ok: false, why: 'an event names its id, pubkey and sig in hex' };
+    const tag = (k) => { const t = e.tags.find((x) => Array.isArray(x) && x[0] === k); return t ? String(t[1]) : null; };
+    if (tag('u') !== `arena-owner:${node}`) return { ok: false, why: 'that event is for another node' };
+    if (tag('method') !== action) return { ok: false, why: `this door takes the action "${action}"` };
+    if (tag('payload') !== ownerPayloadHash(req.args || {})) return { ok: false, why: 'that event signs other arguments' };
+    if (!Number.isInteger(e.created_at) || Math.abs(nowMs() - e.created_at * 1000) > OWNER_WINDOW_MS) return { ok: false, why: 'the request is not from the last two minutes (check the clock)' };
+    for (const [s, t] of used) if (nowMs() - t > 2 * OWNER_WINDOW_MS) used.delete(s);
+    if (used.has(e.id)) return { ok: false, why: 'this request was already sent' };
+    if (nostrIdOf(e) !== e.id) return { ok: false, why: 'the event\'s id is not its hash' };
+    let good = false;
+    try { good = verify(fromHex(e.sig), fromHex(e.id), fromHex(e.pubkey)); } catch { good = false; }
+    if (!good) return { ok: false, why: 'the signature does not check' };
+    used.set(e.id, e.created_at * 1000);
+    return { ok: true, pubkey: e.pubkey };
+  };
   const check = (req, action) => {
     if (!req || typeof req !== 'object') return { ok: false, why: 'an owner request is a JSON object' };
+    if (req.nostr) return checkEvent(req, action);
     if (req.action !== action) return { ok: false, why: `this door takes the action "${action}"` };
     if (!/^[0-9a-f]{64}$/.test(String(req.pubkey)) || !/^[0-9a-f]{128}$/.test(String(req.sig))) return { ok: false, why: 'a pubkey (32 bytes) and a signature (64 bytes), hex' };
     const at = Number(req.atMs);
@@ -65,7 +101,7 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     try { good = verify(fromHex(req.sig), ownerMessage({ node, action, args: req.args || {}, atMs: at }), fromHex(req.pubkey)); } catch { good = false; }
     if (!good) return { ok: false, why: 'the signature does not check' };
     used.set(req.sig, at);
-    return { ok: true };
+    return { ok: true, pubkey: req.pubkey };
   };
   return {
     state: () => ({ node, claimed: !!owner, owner: owner ? owner.pubkey : null, claimedAtMs: owner ? owner.claimedAtMs : null, leavingAtMs: owner && owner.leaving ? owner.leaving.atMs : null }),
@@ -76,11 +112,11 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       if (!c.ok) return { ...c, status: 401 };
       const given = String((req.args && req.args.code) || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!code || given !== code.replace(/-/g, '')) return { ok: false, status: 403, why: 'that is not this node\'s claim code (it is in the node\'s log)' };
-      owner = { pubkey: req.pubkey, claimedAtMs: nowMs() };
+      owner = { pubkey: c.pubkey, claimedAtMs: nowMs(), ...(req.nostr ? { via: 'nostr' } : {}) };
       store.write(owner);
       store.writeCode(null);
       code = null;
-      log(`[owner] claimed by ${req.pubkey}`);
+      log(`[owner] claimed by ${c.pubkey}${req.nostr ? ' (a Nostr signer)' : ''}`);
       return { ok: true, owner: owner.pubkey };
     },
     /** LEAVE (kanban #276 step 2): from now this seat takes no new round; it serves the ones it holds. Kept with the owner. */
@@ -118,8 +154,8 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       if (!owner) return { ok: false, status: 409, why: 'this node has no owner yet' };
       const c = check(req, action);
       if (!c.ok) return { ...c, status: 401 };
-      if (req.pubkey !== owner.pubkey) return { ok: false, status: 403, why: 'that key is not this node\'s owner' };
-      return { ok: true };
+      if (c.pubkey !== owner.pubkey) return { ok: false, status: 403, why: 'that key is not this node\'s owner' };
+      return { ok: true, pubkey: c.pubkey };
     },
   };
 }

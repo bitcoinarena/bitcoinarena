@@ -39,13 +39,38 @@ const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt
 const view = (html) => { $('view').innerHTML = html; };
 const readSeed = () => { try { const h = localStorage.getItem(STORE); return h && /^[0-9a-f]{64}$/.test(h) ? C.fromHex(h) : null; } catch { return null; } };
 const keepSeed = (seed) => { try { localStorage.setItem(STORE, C.toHex(seed)); return true; } catch { return false; } };
-const forget = () => { try { localStorage.removeItem(STORE); } catch {} start(); };
-let state = null;
-const signed = (action, args = {}) => {
+// LOGIN WITH NOSTR (kanban #277, the owner 2026-10-10: "a login with Nostr feature for node claiming instead of generating your
+// own seed"): the owner key is the Nostr key itself. An nsec signs owner requests as the words' key does; an extension
+// (NIP-07) or a remote signer (NIP-46: bunker://, or a code a phone signer scans) signs each request as a Nostr event.
+// Kept per node address in this browser: { how: 'nsec', secret } | { how: 'extension', pubkey } | { how: 'bunker', bunker, client }
+const NSTORE = 'arena-owner-nostr:' + BASE;
+const readNostr = () => { try { const j = JSON.parse(localStorage.getItem(NSTORE) || 'null'); return j && j.how ? j : null; } catch { return null; } };
+const keepNostr = (o) => { try { localStorage.setItem(NSTORE, JSON.stringify(o)); return true; } catch { return false; } };
+const forget = () => { try { localStorage.removeItem(STORE); localStorage.removeItem(NSTORE); } catch {} me = null; start(); };
+let state = null, me = null;     // me: { how, pubkey, sign(action, args) -> request, devSeed, words }
+async function identity() {
+  if (me) return me;
   const seed = readSeed();
-  return C.signOwnerRequest({ node: state.node, action, args, secret: C.ownerSecretFromSeed(seed), sign: C.sign, pubkeyOf: C.pubkeyOf });
-};
+  const plain = (secret) => (action, args) => C.signOwnerRequest({ node: state.node, action, args, secret, sign: C.sign, pubkeyOf: C.pubkeyOf });
+  if (seed) { const secret = C.ownerSecretFromSeed(seed); return (me = { how: 'words', pubkey: C.toHex(C.pubkeyOf(secret)), sign: plain(secret), devSeed: C.devSeedFromSeed(seed), words: true }); }
+  const n = readNostr();
+  if (!n) return null;
+  if (n.how === 'nsec') { const secret = C.fromHex(n.secret); return (me = { how: 'nsec', pubkey: C.toHex(C.pubkeyOf(secret)), sign: plain(secret), devSeed: C.devSeedFromSeed(secret) }); }
+  const viaEvent = (signEvent) => (action, args) => C.signOwnerEvent({ node: state.node, action, args, signEvent });
+  if (n.how === 'extension') {
+    const x = await C.extensionSigner(window.nostr);
+    if (n.pubkey && x.pubkey !== n.pubkey) throw new Error('your Nostr extension now holds another key than the one this browser signed in with');
+    return (me = { how: 'extension', pubkey: x.pubkey, sign: viaEvent((t) => x.signEvent(t)) });
+  }
+  if (n.how === 'bunker') {
+    const b = await C.bunkerSigner(n.bunker, { clientSecret: C.fromHex(n.client), onauth: (u) => window.open(u, '_blank') });
+    return (me = { how: 'bunker', pubkey: b.pubkey, sign: viaEvent((t) => b.signEvent(t)) });
+  }
+  return null;
+}
+const signed = async (action, args = {}) => (await identity()).sign(action, args);
 const post = async (path, body) => {
+  body = await body;
   const r = await fetch(at(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const t = await r.text();
   let j = null; try { j = JSON.parse(t); } catch {}
@@ -57,9 +82,55 @@ const post = async (path, body) => {
 function welcome() {
   view(`<div class="card"><h3>Your owner key</h3>
     <p>The owner of this node is a key made from <b>24 words</b>. This browser keeps them; anyone with them is the owner.</p>
-    <button class="primary" id="make">Create new 24 words</button><button id="restore">I have my 24 words</button></div>`);
+    <button class="primary" id="make">Create new 24 words</button><button id="restore">I have my 24 words</button>
+    <button id="nostr">Login with Nostr</button></div>`);
   $('make').onclick = () => make(globalThis.crypto.getRandomValues(new Uint8Array(32)));
   $('restore').onclick = restore;
+  $('nostr').onclick = nostrLogin;
+}
+// 1c. LOGIN WITH NOSTR: an extension, a remote signer (bunker:// or a code to scan), an nsec, or a new account
+function nostrLogin() {
+  view(`<div class="card"><h3>Login with Nostr</h3>
+    <p>Your Nostr key becomes this node's owner key - no 24 words to make. Requests are signed by your extension or signer each time.</p>
+    <button class="primary" id="ext">Browser extension (Alby, nos2x…)</button>
+    <button id="scan">Phone signer (Amber…): show a code</button><div id="qr"></div>
+    <label>Or a bunker link</label><input id="bunker" placeholder="bunker://… or you@your-bunker" autocomplete="off" autocapitalize="none" spellcheck="false">
+    <button id="bk">Connect the bunker</button>
+    <label>Or your nsec (only on a device you trust - it is kept in this browser)</label><input id="nsec" type="password" placeholder="nsec1…" autocomplete="off" autocapitalize="none">
+    <button id="ns">Log in with the nsec</button> <button id="newacct">New to Nostr? Create an account</button>
+    <div class="err" id="err"></div><button id="back">Back</button></div>`);
+  $('back').onclick = welcome;
+  const fail = (e) => { $('err').textContent = e && e.message ? e.message : String(e); };
+  const done = (o, signer) => { if (!keepNostr(o)) return fail('This browser does not let the page keep it (private mode?)'); me = null; window.OWNER_NOSTR = { how: o.how, pubkey: signer.pubkey }; start(); };
+  $('ext').onclick = async () => { try { const x = await C.extensionSigner(window.nostr); done({ how: 'extension', pubkey: x.pubkey }, x); } catch (e) { fail(e); } };
+  $('bk').onclick = async () => {
+    try { const client = globalThis.crypto.getRandomValues(new Uint8Array(32)); const b = await C.bunkerSigner($('bunker').value, { clientSecret: client, onauth: (u) => window.open(u, '_blank') });
+      done({ how: 'bunker', bunker: $('bunker').value.trim(), client: C.toHex(client) }, b); } catch (e) { fail(e); }
+  };
+  $('scan').onclick = async () => {
+    try {
+      const client = globalThis.crypto.getRandomValues(new Uint8Array(32));
+      const c = C.nostrConnect({ url: location.origin, clientSecret: client, onauth: (u) => window.open(u, '_blank') });
+      $('qr').innerHTML = `<div style="background:#fff;padding:8px;border-radius:10px;max-width:240px">${C.textQrSvg(c.uri)}</div><p class="sub">Scan it with your signer, or <a href="${esc(c.uri)}">open it on this phone</a>. Waiting…</p>`;
+      window.OWNER_CONNECT_URI = c.uri;
+      const b = await c.signer;
+      // kept as a bunker link to the signer that answered, with this page's client key, so it reconnects next time
+      done({ how: 'bunker', bunker: `bunker://${b.bunker.bp.pubkey}?${b.bunker.bp.relays.map((r) => 'relay=' + encodeURIComponent(r)).join('&')}`, client: C.toHex(client) }, b);
+    } catch (e) { fail(e); }
+  };
+  $('ns').onclick = () => { try { const x = C.signerFromNsec($('nsec').value); done({ how: 'nsec', secret: C.toHex(x.secret) }, x); } catch (e) { fail(e); } };
+  $('newacct').onclick = () => {
+    const a = C.newAccount();
+    view(`<div class="card"><h3>Your new Nostr account</h3>
+      <div class="warn"><b>Save this key now</b> - in a password manager or on paper. It is your Nostr account and this node's owner key. Nobody can recover it for you.</div>
+      <div class="words" style="display:block;font:14px ui-monospace,monospace;word-break:break-all;padding:10px">${esc(a.nsec)}</div>
+      <label><input type="checkbox" id="saved" style="width:auto"> I saved my key</label>
+      <div class="err" id="err"></div><button class="primary" id="ok" disabled>Continue</button><button id="back">Back</button></div>`);
+    window.OWNER_NEW_NSEC = a.nsec;
+    $('saved').onchange = () => { $('ok').disabled = !$('saved').checked; };
+    $('back').onclick = nostrLogin;
+    $('ok').onclick = () => done({ how: 'nsec', secret: C.toHex(a.signer.secret) }, a.signer);
+  };
 }
 // 1a. NEW WORDS: shown once, written down, three of them typed back
 function make(seed) {
@@ -107,12 +178,13 @@ function claim(mine) {
 }
 // 3. THE OWNER AREA
 async function area() {
-  let me;
+  let me;     // the node's answer to the login, as before (the identity is the outer \`me\` behind signed())
   try { me = await post('/owner/login', signed('login')); }
   catch (e) { view(`<div class="card"><h3>Could not sign in</h3><p class="err">${esc(e.message)}</p><button id="again">Try again</button></div>`); $('again').onclick = start; return; }
   const games = me.games || [];
   view(`<div class="card"><h3>Signed in as the owner <span class="ok">✓</span></h3>
       <div class="row"><span>Owner key</span><b>${esc(state.owner.slice(0, 16))}…</b></div>
+      <div class="row"><span>Signed in with</span><b>${esc({ words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' }[(await identity()).how])}${(await identity()).how === 'words' ? '' : ' · ' + esc(C.npubOf(state.owner).slice(0, 20)) + '…'}</b></div>
       <div class="row"><span>Owner since</span><b>${new Date(state.claimedAtMs).toISOString().slice(0, 16).replace('T', ' ')} UTC</b></div></div>
     <h2>This node</h2><div class="card">
       <div class="row"><span>Node key</span><b>${esc(state.node.slice(0, 16))}…</b></div>
@@ -139,16 +211,20 @@ async function area() {
       <label>The manifest body (JSON: 32-byte values in hex, big numbers as decimal strings; leave out gameDevPubkey - it is yours)</label>
       <textarea id="body" rows="8" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder='{ "gameName": "my-game", "version": 1, "resultType": "HEAD_TO_HEAD", ... }'></textarea>
       <div class="err" id="serr"></div><button class="primary" id="sign">Sign</button><div id="signed"></div></div>
-    <h2>Your 24 words</h2><div class="card"><p>They are kept in this browser only.</p>
-      <button id="show">Show them</button><button id="forget">Forget them on this browser</button><div id="shown"></div></div>`);
-  $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
-  $('forget').onclick = () => { if (confirm('Forget the 24 words on this browser? You need them written down to come back.')) forget(); };
+    ${(await identity()).words ? `<h2>Your 24 words</h2><div class="card"><p>They are kept in this browser only.</p>
+      <button id="show">Show them</button><button id="forget">Forget them on this browser</button><div id="shown"></div></div>`
+      : `<h2>Your Nostr login</h2><div class="card"><p>This browser keeps your login${(await identity()).how === 'nsec' ? ' and your nsec' : ''}. Your key stays with your ${(await identity()).how === 'nsec' ? 'nsec - keep it written down' : 'signer'}.</p>
+      <button id="forget">Sign out on this browser</button></div>`}`);
+  if ($('show')) $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
+  $('forget').onclick = () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); };
   donations();
   leavePanel();
   storePanel();
   networkPanel();
   // SIGN A GAME OR MARKET (kanban #276 step 4): signed here as the developer's command-line client signs it
-  const devSeed = C.devSeedFromSeed(readSeed());
+  // the developer key comes from the words or the nsec; a signer never gives its secret out, so it signs no game here
+  const devSeed = (await identity()).devSeed;
+  if (!devSeed) { $('sign').disabled = true; $('devkey').textContent = 'none with a Nostr signer - sign games with your 24 words or your nsec'; return; }
   const devPub = C.devPubkeyOf(devSeed);
   $('devkey').textContent = C.toHex(devPub);
   $('sign').onclick = () => {
@@ -350,13 +426,14 @@ async function start() {
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
   catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; return; }
   $('who').textContent = 'Node ' + state.node;
-  const seed = readSeed();
-  if (!seed) return welcome();
-  const mine = C.toHex(C.pubkeyOf(C.ownerSecretFromSeed(seed)));
+  let id = null;
+  try { id = await identity(); } catch (e) { view(`<div class="card"><h3>Your Nostr login did not answer</h3><p class="err">${esc(e.message)}</p><button id="again">Try again</button> <button id="out">Sign out on this browser</button></div>`); $('again').onclick = () => { me = null; start(); }; $('out').onclick = forget; return; }
+  if (!id) return welcome();
+  const mine = id.pubkey;
   if (!state.claimed) return claim(mine);
   if (state.owner !== mine) {
-    view(`<div class="card"><h3>These words are not this node's owner</h3><p>This node belongs to another key. Restore the right 24 words, or forget these.</p>
-      <button id="forget">Forget these words</button></div>`);
+    view(`<div class="card"><h3>This key is not this node's owner</h3><p>This node belongs to another key. Sign in with the right 24 words or Nostr key, or forget this one.</p>
+      <button id="forget">Sign out on this browser</button></div>`);
     $('forget').onclick = forget; return;
   }
   return area();
