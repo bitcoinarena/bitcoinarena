@@ -539,7 +539,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const set = owner.storeSettings();
     if (!set.autoUpdate || !set.sources.length) return;
     for (const from of set.sources) {
-      let got; try { got = await (await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) })).json(); } catch { continue; }
+      let got; try { got = await (await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) })).json(); } catch { got = { games: [] }; }
       for (const g of got.games || []) {
         if (hosted.has(g.id)) continue;
         let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
@@ -549,6 +549,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!u.ok) continue;
         const r = await takeGame({ game: g.id, from, replaces: parent });
         console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
+      }
+      // AND EACH INSTALLED NETWORK (kanban #276): a newer package of it at a source seat - another package id, the same
+      // federation - is taken as an update would be (checked, tried, never a lower donation serial). A package naming ANOTHER
+      // federation is not taken automatically: it would make this seat's federation draining (succession), which is the
+      // owner's own act from the owner page
+      for (const [nid, held] of networksHeld) {
+        let pkg; try { const r = await fetch(`${from}/network?network=${nid}`, { signal: AbortSignal.timeout(10000) }); if (!r.ok) continue; pkg = await r.json(); } catch { continue; }
+        if (!pkg || !pkg.manifest || pkg.id === held.report.id) continue;
+        if (pkg.manifest.federationId !== held.report.federationId) {
+          console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: not taken - it names federation ${String(pkg.manifest.federationId).slice(0, 16)}, a succession is the owner's to take`);
+          continue;
+        }
+        const r = await takeNetwork({ network: nid, from, update: true });
+        console.log(`[networks] automatic update of ${nid.slice(0, 16)} from ${from}: ${r.ok ? `taken (package ${String(r.id).slice(0, 16)})` : r.why}`);
       }
     }
   };
