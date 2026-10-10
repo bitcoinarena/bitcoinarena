@@ -978,7 +978,7 @@
             if (!revealing.has(id)) { revealing.add(id); A.reveal(id).then((x) => { if (!x.ok) revealing.delete(id); }); }
             reveals = await A.reveals(id);
           }
-          seen.set(id, { held, reveals });
+          seen.set(id, { held, reveals, at: Date.now() });   // when the seats were read: before or after the close
         }
       } catch (e) { console.warn('[rps] the seats could not be read: ' + e.message); } finally { refreshing = false; }
       paint();
@@ -1092,8 +1092,13 @@
       // even if it takes multiple rounds"): CLOSING_MS before the close the next round took the table and showed its buttons,
       // and only once the seats said this tab was alone did the move carry over and the wait come back. Alone in its round,
       // the move holds the table to the close; then it carries on (below) while someone is at the table
-      const waiting = last && last.phase === 'wait' && (Date.now() < last.closeMs - CLOSING_MS || (last.them === 0 && Date.now() - here.seenAt < 15000));
-      if (waiting) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
+      // ... and past the close until the seats have been read after it (measured: 230-240 ms of buttons at each turn, between
+      // the close and the read that said this tab was alone, when the move carries on)
+      const readAfterClose = last && (seen.get(last.id) || {}).at >= last.closeMs;
+      const company = Date.now() - here.seenAt < 15000;
+      const waiting = last && ((last.phase === 'wait' && (Date.now() < last.closeMs - CLOSING_MS || (last.them === 0 && company)))
+        || (last.them === 0 && company && !readAfterClose && Date.now() - last.closeMs < 5000 && (last.phase === 'reveal' || last.phase === 'alone') && !last.verdict));
+      if (waiting) { lookHere(last.id); state = { ...last, phase: 'wait', openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
       else {
         const row = openRound(rows, h ? h.roundIdHex : null);
         const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase === 'wait' ? 'reveal' : last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
@@ -1104,8 +1109,7 @@
         // an opponent plays it or CARRY_MS have passed since it was picked
         // ... but only while someone else is at the table (the owner 2026-10-09 21:08 playtest: "when nobody is in the game and the
         // timer runs out, you do not get back to the select screen"): alone, the round ends and the pick screen comes back
-        const company = Date.now() - here.seenAt < 15000;
-        if (last && last.phase === 'alone' && company && row && row.id !== last.id && !tapped && (!carry || (carry.toId !== row.id && Date.now() - carry.at > CARRY_RETRY_MS))) {
+        if (last && last.phase === 'alone' && company && row && row.id !== last.id && !tapped && (!carry || carry.toId !== row.id || Date.now() - carry.at > CARRY_RETRY_MS)) {   // a new round at once; the same one again after CARRY_RETRY_MS (measured: the wait between two carries was ~8 s, so a turn just under it showed the buttons)
           const since = carry && carry.toId === last.id ? carry.since : last.closeMs - WINDOW_MS;
           if (Date.now() - since < CARRY_MS) { carry = { move: last.move, since, toId: row.id, closeMs: row.entryCloseMs, at: Date.now() }; A.hide(row.id, last.move); }
         }
@@ -1115,7 +1119,14 @@
           : { phase: 'none', prev, scoreboard };
       }
       const key = JSON.stringify(state);
-      if (key !== drawnKey && !(touching && Date.now() - touching < 1500)) { drawnKey = key; draw(state); }
+      if (key !== drawnKey && !(touching && Date.now() - touching < 1500)) {
+        drawnKey = key; draw(state);
+        // EVERY SCREEN CHANGE, with what decided it (window.RPS_STATES, for the measurement and the console)
+        const ST = window.RPS_STATES = window.RPS_STATES || [];
+        ST.push({ at: Date.now(), phase: state.phase, id: (state.id || '').slice(0, 8), last: last ? last.phase : null, lastId: last ? last.id.slice(0, 8) : null,
+          them: last ? last.them : null, readAfterClose: !!(last && (seen.get(last.id) || {}).at >= last.closeMs), carry: carry ? carry.toId.slice(0, 8) : null });
+        if (ST.length > 400) ST.splice(0, ST.length - 400);
+      }
       // the moment this table gives way: CLOSING_MS before its close
       const at = state.closeMs ? state.closeMs - CLOSING_MS : null;
       if (at && at !== switchAt && at > Date.now()) { switchAt = at; clearTimeout(switchTimer); switchTimer = setTimeout(paint, at - Date.now() + 20); }
