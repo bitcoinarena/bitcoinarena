@@ -207,7 +207,7 @@ reading "3 peg-in: {\"ok\":true,\"gatewayA\":{\"beforeMsat\":$BEFORE_A,\"afterMs
 
 # ---- 4. THE SEATS HOLD THE SERIES (as the live seats do: attach units with ARENA_SERIES_FILE), THE PAGE'S PROOF AND LINK ----
 stop_nodes
-SEAT_ENV="ARENA_SERIES_FILE=$H/series/series.txt ARENA_ATTACH_PROOF_DIR=$H/paid/attach-proof ARENA_FUNDED_ROUNDS_FILE=$H/paid/funded-rounds.txt \
+SEAT_ENV="${SERIES_GAME:+$([ "$SERIES_GAME" = updown ] && echo ARENA_REGTEST_DONATION_SET=keys)} ARENA_SERIES_FILE=$H/series/series.txt ARENA_ATTACH_PROOF_DIR=$H/paid/attach-proof ARENA_FUNDED_ROUNDS_FILE=$H/paid/funded-rounds.txt \
   ARENA_BITCOIND_URL=$ARENA_BITCOIND_URL ARENA_BITCOIND_COOKIE=$ARENA_BITCOIND_COOKIE"
 touch $H/paid/funded-rounds.txt
 start_nodes
