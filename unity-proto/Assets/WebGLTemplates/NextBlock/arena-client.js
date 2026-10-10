@@ -5085,6 +5085,16 @@ const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
 /**
+ * TESTNET4'S ANCHOR (kanban #209, the owner 2026-10-10: "A"): block 154000 (000000000071bdcfebf7356cac050858e1044bbbbeb10705bba51052da193495), below every bond the testnet4 seats
+ * carried from the ancestor (154172). Its genesis would mean 12.5 MB of headers per session on a phone; a block a player
+ * trusts because it is compiled into the client is what genesis is on mainnet. Chosen by the round's own network id
+ * (arena-client directory.js chainAnchorFor), never by a page.
+ */
+const TESTNET4_ANCHOR = fromHex(
+  '953419da5210a5bb0507b1bebb4b04e1580805ac6c35f7ebcfbd710000000000');
+const TESTNET4_ANCHOR_HEIGHT = 154000;
+
+/**
  * And the eighty bytes themselves, so a chain can actually START here.
  *
  * The hash above is enough to REFUSE with; this is what an honest chain has to
@@ -15227,6 +15237,7 @@ function acceptAncestorEndpoint({ chain, transaction, branch, position, update, 
 
 
 
+
 const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bond that held), see discover
 
 
@@ -15404,8 +15415,17 @@ const PROVIDERS_NEEDED = 2;
 /** How long the client waits on a provider before giving up on it. */
 const PROVIDER_WAIT_MS = 10000;
 
+/**
+ * THE BLOCK A CLIENT ANCHORS A ROUND'S CHAIN TO, by the round's own network id (kanban #209): the client's constants, never
+ * a page's. Testnet4: block 154000; any other network: mainnet's genesis, as before.
+ */
+function chainAnchorFor(networkId) {
+  if (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4)) return TESTNET4_ANCHOR;
+  return BITCOIN_MAINNET_GENESIS;
+}
+
 async function discover({
-  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved,
+  headers, bonds, anchor, committee, signedAdvert, ask, least, timeoutMs, proved, networkId,
 }) {
   // THE RULES ARE THE CLIENT'S. THE PAGE SAYS WHERE TO ASK, AND NOTHING ELSE.
   //
@@ -15504,7 +15524,7 @@ async function discover({
   let reusedChain = !!chain;
   if (!chain) {
     chain = await agreedChain(headers, {
-      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      anchor: chainAnchorFor(networkId), ask,
       least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
     });
     if (!chain.ok) return { ok: false, why: `no chain: ${chain.why}`, refused: chain.refused };
@@ -15532,7 +15552,7 @@ async function discover({
     const bondWhy = bond.why, bondRefused = bond.refused;
     reusedChain = false;
     const fresh = await agreedChain(headers, {
-      anchor: BITCOIN_MAINNET_GENESIS, ask,
+      anchor: chainAnchorFor(networkId), ask,
       least: PROVIDERS_NEEDED, timeoutMs: PROVIDER_WAIT_MS,
     });
     if (!fresh.ok) return { ok: false, why: `no bond: ${bondWhy}`, refused: bondRefused };
@@ -16684,7 +16704,8 @@ class Client {
           + 'opened the page: two things that agree with each other are not Bitcoin');
     }
 
-    const seen = await discover({ ...discovery, committee: contract.nodes });
+    // THE ANCHOR FOLLOWS THE ROUND'S NETWORK (kanban #209), read off the contract the round id was just checked against
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.

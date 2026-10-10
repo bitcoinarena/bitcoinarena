@@ -346,7 +346,8 @@ export class Client {
           + 'opened the page: two things that agree with each other are not Bitcoin');
     }
 
-    const seen = await discover({ ...discovery, committee: contract.nodes });
+    // THE ANCHOR FOLLOWS THE ROUND'S NETWORK (kanban #209), read off the contract the round id was just checked against
+    const seen = await discover({ ...discovery, committee: contract.nodes, networkId: contract.networkId });
     // WHICH PROVIDER, AND WHY (M3.3-27): `discover` hands back each provider's
     // own refusal, and the door used to drop it - the rehearsal's flake read
     // "only 1 of 2 providers gave a chain" and nothing more.

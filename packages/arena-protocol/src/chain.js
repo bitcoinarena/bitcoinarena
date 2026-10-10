@@ -55,6 +55,16 @@ export const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
 
 /**
+ * TESTNET4'S ANCHOR (kanban #209, the owner 2026-10-10: "A"): block 154000 (000000000071bdcfebf7356cac050858e1044bbbbeb10705bba51052da193495), below every bond the testnet4 seats
+ * carried from the ancestor (154172). Its genesis would mean 12.5 MB of headers per session on a phone; a block a player
+ * trusts because it is compiled into the client is what genesis is on mainnet. Chosen by the round's own network id
+ * (arena-client directory.js chainAnchorFor), never by a page.
+ */
+export const TESTNET4_ANCHOR = fromHex(
+  '953419da5210a5bb0507b1bebb4b04e1580805ac6c35f7ebcfbd710000000000');
+export const TESTNET4_ANCHOR_HEIGHT = 154000;
+
+/**
  * And the eighty bytes themselves, so a chain can actually START here.
  *
  * The hash above is enough to REFUSE with; this is what an honest chain has to
