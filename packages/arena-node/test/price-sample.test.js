@@ -43,3 +43,21 @@ test('one sample every 5 s of round time: sample k at the tick 5 k seconds into 
   assert.equal(sampleTick(1), 300, '5 s at 60.0147 ticks a second');
   assert.equal(sampleTick(12), 3600);
 });
+
+test('a batch\'s prices against the committee: each attestation stands, the sample at its tick is its price; bare ones refused when required', async () => {
+  const { checkBatchPrices, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
+  const rid = b32(9);
+  const signAll = (id) => seats.slice(0, 5).map((s) => [s.pk, schnorr.sign(id, s.sk)]);
+  const cents = 8297193;
+  const att = [300, 0, cents, signAll(priceSampleId({ roundId: rid, tick: 300, priceCents: cents }))];
+  const batch = { samples: [[300, centsToTapeUnits(cents)]], tapes: [], attests: [att] };
+  assert.equal(centsToTapeUnits(cents), 21240814, '256 a dollar, half up');
+  const ok = checkBatchPrices({ batch, roundId: rid, committee, threshold: 5, verify, require: true });
+  assert.equal(ok.ok, true, ok.why);
+  assert.match(checkBatchPrices({ batch: { ...batch, samples: [[300, centsToTapeUnits(cents) + 1]] }, roundId: rid, committee, threshold: 5, verify }).why, /not the attested/);
+  assert.match(checkBatchPrices({ batch: { ...batch, attests: [[300, 0, cents, att[3].slice(0, 4)]] }, roundId: rid, committee, threshold: 5, verify }).why, /not attested: 4 of the committee/);
+  assert.match(checkBatchPrices({ batch: { ...batch, attests: [[301, 0, cents, att[3]]], samples: [[301, centsToTapeUnits(cents)]] }, roundId: rid, committee, threshold: 5, verify }).why, /not attested/, 'signed for tick 300, played at 301');
+  const bare = { samples: [[600, 2124000]], tapes: [] };
+  assert.equal(checkBatchPrices({ batch: bare, roundId: rid, committee, threshold: 5, verify }).ok, true, 'not required: a bare sample passes (slice 3 turns it on)');
+  assert.match(checkBatchPrices({ batch: bare, roundId: rid, committee, threshold: 5, verify, require: true }).why, /without the committee's attestation/);
+});
