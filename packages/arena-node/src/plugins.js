@@ -55,7 +55,9 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
       // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it; kanban #203)
       roundWarnings: typeof p.roundWarnings === 'function' ? p.roundWarnings : null,
       // the game dev's donation set, checked above against the manifest
-      donationSet: p.donationSet }));
+      donationSet: p.donationSet,
+      // the client files the game ships (kanban #276 step 5: the plugin store packages them, checked against the manifest)
+      clientUrls: Array.isArray(p.clientUrls) ? [...p.clientUrls] : [] }));
   }
   return out;
 }
