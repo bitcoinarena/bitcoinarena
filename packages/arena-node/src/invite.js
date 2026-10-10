@@ -63,7 +63,7 @@ export function readInvite(invite) {
   for (let n = 0; n < b[0]; n++) {
     const variant = b[i], len = b[i + 1], body = b.subarray(i + 2, i + 2 + len);
     if (variant === 0) guardians.push({ url: new TextDecoder().decode(body.subarray(1, 1 + body[0])), peer: body[1 + body[0]] });
-    if (variant === 1) federationId = Buffer.from(body).toString('hex');
+    if (variant === 1) federationId = Array.from(body, (x) => x.toString(16).padStart(2, '0')).join('');   // no Buffer: the owner page reads invites too
     i += 2 + len;
   }
   return { guardians, federationId };
