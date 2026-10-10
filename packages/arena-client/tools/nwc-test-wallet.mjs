@@ -15,10 +15,14 @@ const lncli = (...a) => new Promise((res, rej) => execFile(env.LNCLI, [`--lnddir
   (e, out, err) => (e ? rej(new Error(String(err || e.message).trim().slice(0, 200))) : res(String(out)))));
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const pool = new SimplePool();
-const sk = generateSecretKey(), pk = getPublicKey(sk), app = generateSecretKey();
+const unhex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
+const sk = env.WALLET_SK ? unhex(env.WALLET_SK) : generateSecretKey(), pk = getPublicKey(sk), app = env.APP_SK ? unhex(env.APP_SK) : generateSecretKey();
 await Promise.allSettled(pool.publish([RELAY], finalizeEvent({ kind: 13194, created_at: Math.floor(Date.now() / 1000), content: 'pay_invoice get_balance get_info', tags: [['encryption', 'nip44_v2 nip04']] }, sk)));
 const appPk = getPublicKey(app);
-pool.subscribeMany([RELAY], { kinds: [23194], '#p': [pk], since: Math.floor(Date.now() / 1000) - 5 }, { onevent: async (ev) => {
+// SUBSCRIBED AGAIN WHENEVER THE RELAY DROPS THE CONNECTION (measured: the service exited silently when it did - nothing else
+// kept it alive), and kept alive by a timer
+setInterval(() => {}, 1 << 30);
+const listen = () => pool.subscribeMany([RELAY], { kinds: [23194], '#p': [pk], since: Math.floor(Date.now() / 1000) - 5 }, { onclose: () => { say({ step: 'relay closed - subscribing again' }); setTimeout(listen, 2000); }, onevent: async (ev) => {
   if (ev.pubkey !== appPk) return;                       // only the app this link was made for
   const use44 = ev.tags.some((t) => t[0] === 'encryption' && t[1] === 'nip44_v2');
   const ck = nip44.getConversationKey(sk, ev.pubkey);
@@ -43,5 +47,6 @@ pool.subscribeMany([RELAY], { kinds: [23194], '#p': [pk], since: Math.floor(Date
   const content = use44 ? nip44.encrypt(text, ck) : await nip04.encrypt(sk, ev.pubkey, text);
   await Promise.allSettled(pool.publish([RELAY], finalizeEvent({ kind: 23195, created_at: Math.floor(Date.now() / 1000), content, tags: [['p', ev.pubkey], ['e', ev.id]] }, sk)));
 } });
+listen();
 const hex = (b) => Buffer.from(b).toString('hex');
 say({ step: 'up', link: `nostr+walletconnect://${pk}?relay=${encodeURIComponent(RELAY)}&secret=${hex(app)}` });
