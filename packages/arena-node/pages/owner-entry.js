@@ -6,3 +6,5 @@ export { ownerSecretFromSeed, signOwnerRequest } from '../src/owner.js';
 export { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 export const sign = (message, secret) => schnorr.sign(message, secret);
 export const pubkeyOf = (secret) => schnorr.getPublicKey(secret);
+// SIGN NEW GAMES AND MARKETS (step 4): the owner's developer key from the same words, and the signer arena-donor's matches
+export { devSeedFromSeed, devPubkeyOf, bodyFromJson, signManifestWithSeed } from '../src/owner-dev.js';
