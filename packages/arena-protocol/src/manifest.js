@@ -342,6 +342,13 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
  * naming 0 asks no period and runs on any.
  */
 export function seriesPeriodFits(m, periodMs = ROUND_PERIOD_MS) {
-  if (m.roundPeriodMs === 0n || m.roundPeriodMs === BigInt(periodMs)) return { ok: true };
+  // A MARKET'S SERIES RUNS ON ITS OWN round_period (kanban #236/#237, §0A.7b.4: "Market rounds on their own 15 min period
+  // instead of the 90 s grid"), if a day holds a whole number of its rounds; the answer names it. Every other game is on
+  // the network's 90 s grid, as before: a round_period of 0 or 90 s.
+  if (m.resultType === RESULT_TYPE.ATTESTED && m.roundPeriodMs > 0n) {
+    if (86400000n % m.roundPeriodMs !== 0n) return { ok: false, why: `market "${m.gameName}" runs every ${m.roundPeriodMs} ms, and a day does not hold a whole number of those` };
+    return { ok: true, periodMs: m.roundPeriodMs };
+  }
+  if (m.roundPeriodMs === 0n || m.roundPeriodMs === BigInt(periodMs)) return { ok: true, periodMs: BigInt(periodMs) };
   return { ok: false, why: `game "${m.gameName}" runs every ${m.roundPeriodMs} ms, and this network's series run every ${periodMs} ms` };
 }
