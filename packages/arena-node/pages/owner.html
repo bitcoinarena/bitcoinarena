@@ -126,6 +126,13 @@ async function area() {
       the rounds it holds. To be drawn for a game's rounds, this seat's advertisement must name it.</p>
       <label>Another seat's address</label><input id="from" placeholder="https://seat.example" autocomplete="off" autocapitalize="none">
       <button id="look">Look</button><div class="err" id="perr"></div><div id="offer"></div><div id="installed"></div></div>
+    <h2>Networks</h2><div class="card" id="nets">
+      <p>A seat's network is four settings, each signed or fixed by whoever has authority over it: its chain, the donation sets in
+      force, its series and its federation invite. Check runs every check in this browser and shows it; the seat checks again,
+      tries every series' rounds at its own doors, and only then takes it - at once, no restart.</p>
+      <div id="netmine"><p class="sub">reading this seat's network…</p></div>
+      <label>Another seat's address</label><input id="nfrom" placeholder="https://seat.example" autocomplete="off" autocapitalize="none">
+      <button id="nlook">Look</button><div class="err" id="nerr"></div><div id="noffer"></div></div>
     <h2>Sign a game or market</h2><div class="card">
       <p>Your developer key, made from the same 24 words: <b id="devkey"></b>. A game or market you sign here names it as its developer;
       an update of it is signed by it again.</p>
@@ -139,6 +146,7 @@ async function area() {
   donations();
   leavePanel();
   storePanel();
+  networkPanel();
   // SIGN A GAME OR MARKET (kanban #276 step 4): signed here as the developer's command-line client signs it
   const devSeed = C.devSeedFromSeed(readSeed());
   const devPub = C.devPubkeyOf(devSeed);
@@ -246,6 +254,76 @@ async function storePanel() {
           box.innerHTML = report(res) + `<p class="ok">${parent ? 'Updated' : 'Installed'} - running now ✓</p>`;
           reload();
         } catch (e) { t.textContent = 'refused'; box.insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); }
+      };
+    };
+  };
+}
+// THE NETWORK STORE (kanban #276, letter 2026-10-10: federation invite, donation sets, series and chain, on the game store's
+// check-then-install path): this seat's four settings and who signs each; another seat's network package listed with the four,
+// Check in this browser line by line, then Install or Update; Remove (refused by the seat while a round that depends on it is open)
+const WHO = {
+  chain: 'the network\'s genesis - its network id commits to the chain',
+  sets: 'the network\'s donation authority (Ed25519); a new authority only by its recovery key',
+  series: 'the protocol\'s series rules: this network, the genesis grid and lead, the set in force, a game this seat hosts',
+  invite: 'the federation - the id its guardians\' config hashes to, the one every series names; its guardians\' bonds are counted per round',
+};
+const fourRows = (n) => `
+  <div class="row"><span>Chain</span><b>${esc(n.chain || '')}</b></div><p class="sub">Signed by: ${WHO.chain}</p>
+  <div class="row"><span>Donation sets</span><b>${(n.sets || []).map((x) => `serial ${esc(x.serial)} from block ${esc(x.validFrom)}`).join(', ') || 'none'}</b></div><p class="sub">Signed by: ${WHO.sets}</p>
+  <div class="row"><span>Series</span><b>${(n.series || []).map((x) => `${esc(x.id.slice(0, 12))}… ${x.startMs ? when(x.startMs) : ''}${x.held === false ? ' (not held)' : ''}`).join('<br>') || 'none'}</b></div><p class="sub">Signed by: ${WHO.series}</p>
+  <div class="row"><span>Federation invite</span><b>${n.federationId ? 'federation ' + esc(String(n.federationId).slice(0, 16)) + '…' : 'none'}</b></div><p class="sub">Signed by: ${WHO.invite}</p>`;
+async function networkPanel() {
+  let mine = { chain: null, own: null, installed: [] }, games = [];
+  const reload = async () => {
+    try { mine = await (await fetch(at('/owner/network'), { cache: 'no-store' })).json(); } catch { /* shown as empty */ }
+    try { games = (await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json()).hosted.map((g) => g.id); } catch { games = []; }
+    const inst = mine.installed.map((n) => `<div class="card"><div class="row"><span>Installed · network ${esc(n.network.slice(0, 12))}… · package ${esc(n.id.slice(0, 12))}…</span>
+      <b><button data-nremove="${esc(n.network)}">Remove</button></b></div>${fourRows(n)}</div>`).join('');
+    $('netmine').innerHTML = `<div class="row"><span>This seat reads</span><b>${esc(mine.chain || 'no chain named')}</b></div>
+      ${mine.own && !mine.own.why ? `<p class="sub">This seat's network now:</p>${fourRows(mine.own)}` : ''}${inst}`;
+    for (const b of $('netmine').querySelectorAll('button[data-nremove]')) b.onclick = async () => {
+      $('nerr').textContent = '';
+      try { await post('/owner/network/remove', signed('network-remove', { network: b.dataset.nremove })); reload(); } catch (e) { $('nerr').textContent = e.message; }
+    };
+  };
+  await reload();
+  const report = (r) => `<div class="report">${r.checks.map((c) => `<div class="row"><span>${c.ok ? '✓' : '✗'} ${esc(c.check)}</span><b class="sub">${esc(c.detail || '')}</b></div>`).join('')}
+    ${r.ok ? '' : `<p class="err">${esc(r.why)}</p>`}</div>`;
+  $('nlook').onclick = async () => {
+    $('nerr').textContent = ''; $('noffer').innerHTML = '';
+    const from = $('nfrom').value.trim().replace(/\/+$/, '');
+    let pkg;
+    try { const r = await fetch(from + '/network', { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); pkg = await r.json(); }
+    catch (e) { $('nerr').textContent = 'That seat did not hand its network over: ' + e.message; return; }
+    const m = pkg.manifest || {};
+    const installed = mine.installed.find((n) => n.network === m.networkId);
+    $('noffer').innerHTML = `<div class="card"><div class="row"><span>${esc(pkg.title || m.chain)} · package ${esc(String(pkg.id || '').slice(0, 12))}…</span>
+      <b><button id="ncheck">Check${installed ? ' update' : ''}</button></b></div>
+      <div class="row"><span>Chain</span><b>${esc(m.chain)}</b></div>
+      <div class="row"><span>Donation sets</span><b>${(m.donationSets || []).length} · ${(m.donationSets || []).map((x) => esc(x.slice(0, 10)) + '…').join(', ')}</b></div>
+      <div class="row"><span>Series</span><b>${(m.series || []).length} · ${(m.series || []).map((x) => esc(x.slice(0, 10)) + '…').join(', ')}</b></div>
+      <div class="row"><span>Federation invite</span><b>${esc(String(pkg.invite || '').slice(0, 24))}… · federation ${esc(String(m.federationId).slice(0, 12))}…</b></div>
+      <div id="nrep"></div></div>`;
+    $('ncheck').onclick = () => {
+      const r = C.checkNetworkPackage(pkg, { verify: C.verifyEd25519, seatChain: mine.chain, hostsGame: (id) => games.includes(id) });
+      let u = { ok: true };
+      if (r.ok && installed) {
+        const top = installed.sets.reduce((a, x) => (BigInt(x.serial) > a ? BigInt(x.serial) : a), -1n);
+        u = C.checkNetworkUpdate({ networkId: installed.network, chain: installed.chain, topSerial: top }, r);
+      }
+      window.OWNER_NETWORK_REPORT = { network: m.networkId, ok: r.ok && u.ok, checks: r.checks, why: r.why || u.why };
+      $('nrep').innerHTML = report(r) + (u.ok ? '' : `<p class="err">${esc(u.why)}</p>`)
+        + (r.ok && u.ok ? `<button class="primary" id="ntake">${installed ? 'Update' : 'Install'}</button><p class="sub">The seat checks it again and tries its series at its own doors first.</p>` : '');
+      const t = $('ntake');
+      if (t) t.onclick = async () => {
+        t.disabled = true; t.textContent = 'the seat is checking…';
+        try {
+          const res = installed ? await post('/owner/network/update', signed('network-update', { network: m.networkId, from }))
+            : await post('/owner/network/install', signed('network-install', { network: m.networkId, from }));
+          window.OWNER_NETWORK_INSTALLED = res;
+          $('nrep').innerHTML = report(res) + `<p class="ok">${installed ? 'Updated' : 'Installed'} - in force now ✓</p>`;
+          reload();
+        } catch (e) { t.textContent = 'refused'; $('nrep').insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); }
       };
     };
   };
