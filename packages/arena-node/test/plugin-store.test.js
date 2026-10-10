@@ -208,6 +208,7 @@ import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { decodeDonationSetBody } from '../../arena-protocol/src/authority.js';
+import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 
 // the regtest serial-2 set (series-donation-in-force.test.js), in force from 900100, signed by the regtest authority
 const SET2 = { ...decodeDonationSetBody(Uint8Array.from(Buffer.from('1400019855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b380000000000000002000dbc040099100001000200466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a68736170647679306e387265381a0b00466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a687361706476673764706667710d05', 'hex'))),
@@ -286,4 +287,46 @@ test('a network package: one whose invite, donation sets, series and chain match
     } finally { await b2.close(); }
     console.log('  FACTS:', JSON.stringify({ pageLines: page.checks.length, held: held[0].written }));
   } finally { await a.close(); await b.close(); await c.close(); }
+});
+
+test('succession at the seat: a network package naming a successor federation makes the old one draining - its series stop, a new paying round naming it is refused', async () => {
+  const OLD_FED = new Uint8Array(32).fill(0xcd);
+  const inviteNew = inviteForGuardians(TEST_FEDERATION_ID, [{ url: 'ws://127.0.0.1:1/', peer: 0 }]);
+  const inviteOld = inviteForGuardians(OLD_FED, [{ url: 'ws://127.0.0.1:2/', peer: 0 }]);
+  const nodes = [new Uint8Array(32).fill(7), new Uint8Array(32).fill(8)];
+  const succ = netSeries(nodes), oldSeries = { ...netSeries(nodes), federationId: OLD_FED };
+  const a = await serve(openStore(), { plugins: HOSTED, port: 0, chain: 'bitcoin-regtest', federationInvite: inviteNew, donationSets: [TEST_DONATION_SET_REGTEST, SET2], series: [succ], seriesEveryMs: 100 });
+  const dir = mkdtempSync(join(tmpdir(), 'arena-plugins-'));
+  const secret = ownerSecretFromSeed(new Uint8Array(32).fill(7));
+  const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
+  const owner = { store: { read: () => rec, write: (o) => Object.assign(rec, o), writeCode: () => {} } };
+  const opts = { plugins: HOSTED, port: 0, pluginsDir: dir, chain: 'bitcoin-regtest', federationInvite: inviteOld, donationSets: [TEST_DONATION_SET_REGTEST, SET2], series: [oldSeries], seriesEveryMs: 100, owner };
+  const b = await serve(openStore(), opts);
+  try {
+    const A = `http://127.0.0.1:${a.port}`, B = `http://127.0.0.1:${b.port}`;
+    const held = async (base) => (await (await fetch(`${base}/series`)).json()).series.map((x) => x.series).sort();
+    const oldId = toHex(seriesIdOf(oldSeries)), succId = toHex(seriesIdOf(succ));
+    assert.deepEqual(await held(B), [oldId], 'B writes the old federation\'s series before');
+    const post = (c) => fetch(`${B}/round`, { method: 'POST', body: encodeRoundContract(c) });
+    const node = (await (await fetch(`${B}/owner`)).json()).node;
+    const req = signOwnerRequest({ node, action: 'network-install', args: { network: toHex(NETWORK_ID_REGTEST), from: A }, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+    const r = await fetch(`${B}/owner/network/install`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req) });
+    assert.equal(r.status, 200, (await r.clone().json()).why);
+    const view = await (await fetch(`${B}/owner/network`)).json();
+    assert.deepEqual(view.draining.map((d) => [d.federationId, d.successor]), [[toHex(OLD_FED), toHex(TEST_FEDERATION_ID)]]);
+    assert.deepEqual(await held(B), [succId], 'the old series no longer written; the successor\'s is');
+    const refused = await post(oldSeries);
+    const why = await refused.text();
+    assert.equal(refused.status, 409);
+    assert.match(why, /federation cdcdcdcdcdcdcdcd is draining since .*its successor is debd8c007b89b0f1/);
+    // THE NEXT START keeps it draining
+    await b.close();
+    const b2 = await serve(openStore(), { ...opts, port: 0 });
+    try {
+      const again = await (await fetch(`http://127.0.0.1:${b2.port}/owner/network`)).json();
+      assert.deepEqual(again.draining.map((d) => d.federationId), [toHex(OLD_FED)]);
+      assert.deepEqual(await held(`http://127.0.0.1:${b2.port}`), [succId]);
+    } finally { await b2.close(); }
+    console.log('  FACTS:', JSON.stringify({ refused: why.slice(0, 160) }));
+  } finally { await a.close(); await b.close(); }
 });
