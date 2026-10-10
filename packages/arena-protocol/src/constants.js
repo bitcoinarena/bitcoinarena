@@ -231,6 +231,10 @@ export const ROUND_PERIOD_MS = 90000n;
 export const TYPE_GAME_MANIFEST = 0x1c;
 // AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
 export const TYPE_OUTCOME_ATTESTATION = 0x1d;
+// AN ATTESTED PRICE SAMPLE (§11, kanban #311): the committee's word on the price a run plays against at one tick - and the
+// 64 prices before the start, as one tape - so the player never chooses the price.
+export const TYPE_PRICE_SAMPLE = 0x1e;
+export const TYPE_PRICE_TAPE = 0x1f;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -366,6 +370,8 @@ export const TAG = {
   presence: 'ARENA/v1/Presence',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
+  priceSample: 'ARENA/v1/PriceSample',
+  priceTape: 'ARENA/v1/PriceTape',
 };
 
 /**
