@@ -101,6 +101,18 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
       return { ok: true, leavingAtMs: null };
     },
     leavingAtMs: () => (owner && owner.leaving ? owner.leaving.atMs : null),
+    /** THE STORE'S SETTINGS (kanban #276 step 5, the owner 2026-10-10: "updates can be automatic, that is a setting"): signed. */
+    settings(req) {
+      const a = this.authorize(req, 'settings');
+      if (!a.ok) return a;
+      const args = req.args || {};
+      const sources = Array.isArray(args.sources) ? args.sources.map(String).map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https?:\/\/[^\s]+$/.test(u)).slice(0, 20) : [];
+      owner = { ...owner, settings: { autoUpdate: !!args.autoUpdate, sources } };
+      store.write(owner);
+      log(`[owner] store settings: automatic updates ${owner.settings.autoUpdate ? 'on' : 'off'}, ${sources.length} source seat(s)`);
+      return { ok: true, settings: owner.settings };
+    },
+    storeSettings: () => (owner && owner.settings ? owner.settings : { autoUpdate: false, sources: [] }),
     /** Any owner action: the signature, the time, and that the key is the owner's. */
     authorize(req, action) {
       if (!owner) return { ok: false, status: 409, why: 'this node has no owner yet' };
