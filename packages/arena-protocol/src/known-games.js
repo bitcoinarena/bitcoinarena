@@ -97,6 +97,14 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  '4cf2bfcbb9f44821f8f108d4b3860b8615b12a0b390b695158a526a6e5a9f2c0': Object.freeze({
+    name: 'rock-paper-scissors',
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   '672415c814e61b47ce038cd7f9a9431be8b41123c59502c371d5cd6a79c7684f': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
