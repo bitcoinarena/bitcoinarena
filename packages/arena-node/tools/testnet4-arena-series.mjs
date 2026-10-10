@@ -33,6 +33,9 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { seriesTemplate, seriesLeadIsValid, seriesId, seriesPublicationPayload, seriesClockFor, genesisSeriesStart, SERIES_MAX_MS } from '../../arena-protocol/src/series.js';
 import { bondSetFor } from '../src/curve.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { UPDOWN_TN4 } from '../../btc-updown/plugin/btc-updown.js';
+import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
+import { seriesRound, roundsPerSeries } from '../../arena-protocol/src/series.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 
 const [outDir, send] = process.argv.slice(2);
@@ -72,9 +75,22 @@ if (cut > tipMtp && !dryAtTip) {
 let H = tip; if (!dryAtTip) while (mtpOf(H) > cut) H--;
 
 // 3. THE ARENA CONTRACT: the BLWP series' fields, on testnet4's Arena id, nextblock, the key set in force
+// SERIES_GAME=updown (kanban #293): the Bitcoin Up or Down market on testnet4 (game 672415c8) - no core, no config, no score;
+// the same seats, federation, relays and stake as Tick Tock's
+const UPDOWN = env.SERIES_GAME === 'updown';
 const contract = {
   ...base, networkId: NETWORK_ID_TESTNET4, gameId: NEXTBLOCK.gameId,
   donationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients), censusHeight: H, censusRoot: new Uint8Array(32),
+  ...(UPDOWN ? { gameId: UPDOWN_TN4.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0 } : {}),
+};
+// ON ITS OWN PERIOD (§0A.7b.4), its locks spanning the latest window of its day (lock-expiry.js marketExpiryBlocks)
+const marketShape = (t) => {
+  if (!UPDOWN) return t;
+  t.seriesPeriodMs = UPDOWN_TN4.manifest.roundPeriodMs;
+  const need = marketExpiryBlocks(seriesRound(t, roundsPerSeries(t.seriesPeriodMs) - 1), UPDOWN_TN4.manifest.marketTerms);
+  if (!need.ok) throw new Error(need.why);
+  t.stakeExpiryBlocks = need.blocks;
+  return t;
 };
 delete contract.seriesId;
 // THE CENSUS AT H, as the seats derive it, from testnet4's blocks
@@ -83,7 +99,7 @@ const blocks = [];
 for (let h = from; h <= H; h++) { const { header, transactions } = splitBlock(fromHex(cli('getblock', cli('getblockhash', String(h)), '0'))); blocks.push({ header, transactions }); }
 const view = { blocks, firstHeight: from };
 const byTxid = new Map(); for (const b of blocks) for (const raw of b.transactions) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* */ } }
-const template0 = seriesTemplate(contract, k);
+const template0 = marketShape(seriesTemplate(contract, k));
 const census = deriveCensus(view, { contract: decodeRoundContract(encodeRoundContract(template0)), bond: bondSetFor('testnet4'),
   resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
   verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
@@ -101,7 +117,7 @@ if (env.ARENA_FEDERATION_READ_DIR) {
   say({ step: 'guardians', federation: String(j.federation_id).slice(0, 16), threshold: Number(j.threshold), ok: bonded.ok, bonded: bonded.bonded ?? null, why: bonded.why || null });
   if (!bonded.ok) throw new Error(`the seats would refuse every paid round of this series (§23.6): ${bonded.why}`);
 }
-const template = seriesTemplate({ ...contract, censusRoot: census.root }, k);
+const template = marketShape(seriesTemplate({ ...contract, censusRoot: census.root }, k));
 const lead = seriesLeadIsValid(template);
 if (!lead.ok) throw new Error(lead.why);
 if (template.committeeTimeMs <= tipMtp + 3600000n) throw new Error('committee_time is not an hour past the tip\'s median: the publication could miss its beacon');
