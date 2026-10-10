@@ -493,6 +493,37 @@
       background: #0d1218; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
     #blwp-settings select { width: 100%; font-weight: 700; font-size: 17px; color: #f7931a; }
     /* THE SEED, A SMALL MODAL OVER SETTINGS: 24 numbered words in a grid, then Verify one word at a time. */
+    /* THE WALLET SCREEN (kanban #277, the owner 2026-10-10: "a new loading screen in each game - create a new wallet or restore
+       wallet ... Also Login with Nostr"): shown at start in a browser that holds no wallet; above the loading screen */
+    #arena-wallet-start { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at top, #1d2733 0%, #0b0f14 70%); padding: 16px; box-sizing: border-box;
+      font: 15px/1.4 system-ui, sans-serif; color: #e8eaed; overflow-y: auto; }
+    #arena-wallet-start .ws-box { width: 100%; max-width: 420px; background: #141a21; border: 1px solid #2a3442; border-radius: 16px;
+      padding: 20px 18px; box-sizing: border-box; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+    #arena-wallet-start h2 { margin: 0 0 6px; font-size: 21px; color: #f7931a; }
+    #arena-wallet-start .ws-sub { margin: 0 0 16px; color: #a9b3c1; font-size: 14px; }
+    #arena-wallet-start button { display: block; width: 100%; box-sizing: border-box; font: 600 16px system-ui, sans-serif; padding: 13px 14px;
+      margin: 0 0 10px; border-radius: 11px; border: 1px solid #3a4655; background: #1c2430; color: #e8eaed; cursor: pointer; text-align: left; }
+    #arena-wallet-start button small { display: block; font-weight: 400; font-size: 12.5px; color: #a9b3c1; margin-top: 2px; }
+    #arena-wallet-start button.primary { background: #f7931a; border-color: #f7931a; color: #1b1000; }
+    #arena-wallet-start button.primary small { color: #3b2400; }
+    #arena-wallet-start button.nostr { background: #2a1f3d; border-color: #8e5cf2; }
+    #arena-wallet-start button.link { background: none; border: 0; color: #a9b3c1; text-align: center; font-weight: 500; padding: 8px; }
+    #arena-wallet-start button:disabled { opacity: .55; cursor: default; }
+    #arena-wallet-start input, #arena-wallet-start textarea { width: 100%; box-sizing: border-box; font: 15px ui-monospace, monospace; padding: 11px;
+      border-radius: 10px; border: 1px solid #3a4655; background: #0b0f14; color: #e8eaed; margin: 0 0 10px; }
+    #arena-wallet-start textarea { min-height: 96px; }
+    #arena-wallet-start .ws-why { color: #ff8a80; min-height: 1.3em; font-size: 14px; margin: 0 0 8px; }
+    #arena-wallet-start .ws-note { color: #a9b3c1; font-size: 13px; margin: 0 0 10px; }
+    #arena-wallet-start .ws-warn { border-left: 3px solid #f7931a; background: rgba(247,147,26,.08); padding: 9px 11px; border-radius: 0 9px 9px 0;
+      font-size: 14px; margin: 0 0 10px; }
+    #arena-wallet-start .ws-key { font: 13px ui-monospace, monospace; word-break: break-all; background: #0b0f14; border: 1px solid #3a4655;
+      border-radius: 9px; padding: 10px; margin: 0 0 10px; user-select: all; }
+    #arena-wallet-start .ws-qr { background: #fff; border-radius: 10px; padding: 8px; width: 220px; max-width: 70vw; margin: 0 auto 10px; }
+    #arena-wallet-start .ws-qr svg { display: block; width: 100%; height: auto; }
+    #arena-wallet-start input[type=checkbox] { width: 20px; height: 20px; margin: 0; flex: 0 0 auto; }
+    #arena-wallet-start label.ws-check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; margin: 0 0 12px; }
+    #arena-wallet-start .ws-or { text-align: center; color: #6b7685; font-size: 12px; margin: 4px 0 10px; }
     #blwp-seed-modal { position: fixed; inset: 0; z-index: 45; display: none; align-items: center; justify-content: center;
       background: rgba(0,0,0,0.6); padding: 14px; box-sizing: border-box; font: 15px/1.35 system-ui, sans-serif; color: #e8eaed; }
     #blwp-seed-modal .modal-box { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; box-sizing: border-box;
@@ -626,6 +657,48 @@
     if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); else window.BLWP_SETTINGS_EARLY = true;
   });
   </script>
+  <div id="arena-wallet-start" role="dialog" aria-modal="true" aria-labelledby="ws-title">
+    <div class="ws-box">
+      <h2 id="ws-title">Your wallet</h2>
+      <p class="ws-sub">It holds what you play with and what you win, in this browser. Keep its 24 words - or your Nostr key - to open it anywhere.</p>
+      <div id="ws-main">
+        <button id="ws-new" type="button" class="primary">Create a new wallet<small>New 24 words - write them down, verify them if you like</small></button>
+        <button id="ws-restore" type="button">Restore a wallet<small>Your 24 words, or your seed</small></button>
+        <button id="ws-nostr" type="button" class="nostr">Login with Nostr<small>Your Nostr account is your wallet: extension, phone signer or nsec</small></button>
+      </div>
+      <div id="ws-restore-pane" style="display:none">
+        <textarea id="ws-restore-text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="your 24 words, or your seed (64 hex)"></textarea>
+        <div class="ws-why" id="ws-restore-why"></div>
+        <button id="ws-restore-go" type="button" class="primary">Restore</button>
+        <button id="ws-restore-back" type="button" class="link">Back</button>
+      </div>
+      <div id="ws-nostr-pane" style="display:none">
+        <button id="ws-nostr-ext" type="button">Browser extension<small>Alby, nos2x and others (NIP-07)</small></button>
+        <button id="ws-nostr-connect" type="button">Phone signer<small>Amber and others: scan a code (NIP-46)</small></button>
+        <div id="ws-nostr-qrbox" style="display:none"><div class="ws-qr" id="ws-nostr-qr"></div>
+          <p class="ws-note">Scan with your signer, or <a id="ws-nostr-open" href="#" style="color:#c9a8ff">open it on this phone</a>. Waiting for it to answer…</p></div>
+        <input id="ws-bunker" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="bunker://… or you@your-bunker">
+        <button id="ws-nostr-bunker" type="button">Connect a bunker<small>nsec.app, nsecBunker, Amber's bunker link</small></button>
+        <div class="ws-or">or, only on a device you trust</div>
+        <input id="ws-nsec" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="nsec1…">
+        <button id="ws-nostr-nsec" type="button">Log in with my nsec</button>
+        <button id="ws-nostr-new" type="button">New to Nostr? Create an account</button>
+        <div class="ws-why" id="ws-nostr-why"></div>
+        <button id="ws-nostr-back" type="button" class="link">Back</button>
+      </div>
+      <div id="ws-newacct-pane" style="display:none">
+        <div class="ws-warn"><b>This is your Nostr account and your wallet.</b> Save this key now - in a password manager or on paper. Nobody can recover it for you, and anyone who has it owns your account and your winnings.</div>
+        <div class="ws-key" id="ws-newacct-nsec"></div>
+        <button id="ws-newacct-copy" type="button">Copy the key</button>
+        <input id="ws-newacct-name" maxlength="40" autocomplete="off" placeholder="your name in the game (optional)">
+        <label class="ws-check"><input type="checkbox" id="ws-newacct-saved"> I saved my key</label>
+        <div class="ws-why" id="ws-newacct-why"></div>
+        <button id="ws-newacct-go" type="button" class="primary" disabled>Continue</button>
+        <button id="ws-newacct-back" type="button" class="link">Back</button>
+      </div>
+      <div id="ws-busy" class="ws-note" style="display:none"></div>
+    </div>
+  </div>
   <div id="blwp-seed-modal" role="dialog" aria-modal="true">
     <div class="modal-box">
       <div id="blwp-seed-words">
@@ -4979,6 +5052,111 @@
           ? (document.getElementById('stage').textContent = 'The game\'s nodes are not reachable right now - try again in a moment.')
           : document.body.appendChild(script)))
       .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
+  </script>
+  <script>
+    // THE WALLET SCREEN (kanban #277, the owner 2026-10-10: "Introduce a new loading screen in each game - create a new wallet or
+    // restore wallet. When creating a new wallet user may choose create new seed (24 words) with the existing process to create
+    // new seed and to verify it (optional). Also Login with Nostr at this stage"). Shown at start when this tab holds no
+    // wallet seed and the browser keeps none it could take (blwpSeedKeeper ran before this). Its three ways in:
+    //   - Create: the tab's new seed (tabSeed), then the 24-word dialog with its optional verify - the existing process;
+    //   - Restore: the 24 words or the seed (BLWP_RESTORE_SEED, as Settings does);
+    //   - Nostr (window.ARENA_NOSTR, loaded only now): the account's game seed - from its NIP-78 event, else derived from an
+    //     nsec or new for a signer - becomes this tab's seed (BLWP_RESTORE_SEED); a signer-made seed shows its 24 words next.
+    (function () {
+      const $ = (id) => document.getElementById(id);
+      const box = $('arena-wallet-start');
+      let held = null; try { held = sessionStorage.getItem('arena.player.seed'); } catch { held = 'no storage'; }
+      const already = !!held;
+      window.ARENA_WALLET_SCREEN = { shown: !already };
+      // AFTER A NOSTR LOGIN WHOSE SEED A SIGNER MADE: its 24 words are the only offline copy - shown once, after the reload
+      let words = null; try { words = sessionStorage.getItem('arena.nostr.showWords'); sessionStorage.removeItem('arena.nostr.showWords'); } catch { words = null; }
+      if (words && already) setTimeout(() => { const b = $('blwp-phrase-show'); if (b) b.click(); }, 600);
+      if (already) return;
+      box.style.display = 'flex';
+      const panes = (which) => { for (const id of ['ws-main', 'ws-restore-pane', 'ws-nostr-pane', 'ws-newacct-pane']) $(id).style.display = id === which ? '' : 'none'; };
+      const busy = (text) => { $('ws-busy').style.display = text ? '' : 'none'; $('ws-busy').textContent = text || ''; };
+      const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
+      // CREATE: the existing process - the seed made here, then the dialog with its 24 words and its optional verify
+      $('ws-new').onclick = () => {
+        let seed = null;
+        try { seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { busy('This browser cannot keep a wallet: ' + e.message); return; }
+        if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();
+        window.ARENA_WALLET_SCREEN.made = 'new';
+        done();
+        const b = $('blwp-phrase-show'); if (b) b.click();
+      };
+      $('ws-restore').onclick = () => { panes('ws-restore-pane'); $('ws-restore-text').focus(); };
+      $('ws-restore-back').onclick = () => panes('ws-main');
+      $('ws-restore-go').onclick = () => {
+        const got = window.BLWP_RESTORE_SEED ? window.BLWP_RESTORE_SEED($('ws-restore-text').value) : { ok: false, why: 'the page is still loading - try again' };
+        $('ws-restore-why').textContent = got.ok ? 'restored - opening your wallet' : got.why;
+      };
+      // NOSTR: its bundle only now
+      let N = null;
+      const nostr = () => (N ? Promise.resolve(N) : new Promise((res, rej) => {
+        const sc = document.createElement('script'); sc.src = 'arena-nostr.js';
+        sc.onload = () => (window.ARENA_NOSTR ? res(N = window.ARENA_NOSTR) : rej(new Error('the Nostr login did not load')));
+        sc.onerror = () => rej(new Error('the Nostr login did not load')); document.head.appendChild(sc);
+      }));
+      const why = (e) => { busy(''); $('ws-nostr-why').textContent = e && e.message ? e.message : String(e); };
+      const buttons = (on) => { for (const b of $('ws-nostr-pane').querySelectorAll('button')) b.disabled = !on; };
+      // THE ACCOUNT'S SEED, made this tab's: the page reloads with it (BLWP_RESTORE_SEED)
+      async function login(signer, how) {
+        busy('Reading your wallet from Nostr…');
+        const got = await N.seedFor(signer);
+        const hex = Array.from(got.seed, (b) => b.toString(16).padStart(2, '0')).join('');
+        let profile = null; try { profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
+        try { localStorage.setItem('arena.nostr', JSON.stringify({ npub: N.npubOf(signer.pubkey), how, name: profile && profile.name || null, at: Date.now() })); } catch { /* shown once */ }
+        if (got.created && got.from === 'random') { try { sessionStorage.setItem('arena.nostr.showWords', '1'); } catch { /* none */ } }
+        window.ARENA_WALLET_SCREEN.nostr = { how, created: got.created, from: got.from, relays: got.relays, npub: N.npubOf(signer.pubkey) };
+        try { await signer.close(); } catch { /* gone */ }
+        busy(got.created ? 'Your wallet is made and kept on Nostr - opening it' : 'Your wallet is back - opening it');
+        const r = window.BLWP_RESTORE_SEED ? window.BLWP_RESTORE_SEED(hex) : { ok: false, why: 'the page is still loading' };
+        if (!r.ok) why(new Error(r.why));
+      }
+      const attempt = (how, make) => async () => {
+        $('ws-nostr-why').textContent = ''; buttons(false);
+        try { await nostr(); await login(await make(), how); } catch (e) { why(e); } finally { buttons(true); }
+      };
+      $('ws-nostr').onclick = () => { panes('ws-nostr-pane'); nostr().catch(why); };
+      $('ws-nostr-back').onclick = () => { panes('ws-main'); busy(''); };
+      $('ws-nostr-ext').onclick = attempt('extension', () => N.extensionSigner(window.nostr));
+      $('ws-nostr-bunker').onclick = attempt('bunker', () => N.bunkerSigner($('ws-bunker').value, { onauth: (u) => window.open(u, '_blank') }));
+      $('ws-nostr-nsec').onclick = attempt('nsec', () => N.signerFromNsec($('ws-nsec').value));
+      $('ws-nostr-connect').onclick = async () => {
+        $('ws-nostr-why').textContent = '';
+        try {
+          await nostr();
+          const c = N.nostrConnect({ url: location.origin, onauth: (u) => window.open(u, '_blank') });
+          $('ws-nostr-qr').innerHTML = N.textQrSvg(c.uri);
+          $('ws-nostr-open').href = c.uri;
+          $('ws-nostr-qrbox').style.display = '';
+          window.ARENA_WALLET_SCREEN.connectUri = c.uri;
+          buttons(false); $('ws-nostr-back').disabled = false;
+          await login(await c.signer, 'nostrconnect');
+        } catch (e) { why(e); } finally { buttons(true); }
+      };
+      // A NEW NOSTR ACCOUNT: its key shown, "I saved my key" before anything else; its name published, its seed derived
+      let fresh = null;
+      $('ws-nostr-new').onclick = async () => {
+        try { await nostr(); } catch (e) { why(e); return; }
+        fresh = N.newAccount();
+        $('ws-newacct-nsec').textContent = fresh.nsec;
+        $('ws-newacct-saved').checked = false; $('ws-newacct-go').disabled = true;
+        panes('ws-newacct-pane');
+      };
+      $('ws-newacct-saved').onchange = () => { $('ws-newacct-go').disabled = !$('ws-newacct-saved').checked; };
+      $('ws-newacct-copy').onclick = () => { navigator.clipboard.writeText(fresh.nsec).then(() => { $('ws-newacct-copy').textContent = 'Copied ✓'; }, () => {}); };
+      $('ws-newacct-back').onclick = () => { fresh = null; panes('ws-nostr-pane'); };
+      $('ws-newacct-go').onclick = async () => {
+        $('ws-newacct-why').textContent = ''; $('ws-newacct-go').disabled = true;
+        try {
+          const name = $('ws-newacct-name').value.trim();
+          if (name) await N.publishProfile(fresh.signer, name);
+          await login(fresh.signer, 'new');
+        } catch (e) { $('ws-newacct-why').textContent = e.message; $('ws-newacct-go').disabled = false; busy(''); }
+      };
+    })();
   </script>
 </body>
 </html>
