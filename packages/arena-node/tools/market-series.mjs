@@ -23,13 +23,15 @@ import { stakeLockPort } from '../src/stake-lock-port.js';
 import { bondSetFor } from '../src/curve.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { MARKET } from '../test/plugins/market/index.js';
+import { UPDOWN, UPDOWN_TERMS } from '../test/plugins/updown/index.js';
+import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { encodeRoundContract, decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { seriesTemplate, seriesLeadIsValid, seriesId, seriesPublicationPayload, genesisSeriesStart, SERIES_MAX_MS } from '../../arena-protocol/src/series.js';
+import { seriesTemplate, seriesLeadIsValid, seriesId, seriesRound, roundsPerSeries, seriesPublicationPayload, genesisSeriesStart, SERIES_MAX_MS } from '../../arena-protocol/src/series.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
@@ -41,7 +43,8 @@ if (ports.length !== 7) throw new Error('seven seats');
 const host = '127.0.0.1';
 const storeOf = (i) => `${env.SEAT_DIR}/node-${i + 1}.db`;
 const keyOf = (i) => { const db = openStore(storeOf(i)); try { return nodeIdentity(db); } finally { if (db.close) db.close(); } };
-const HOSTED = [NEXTBLOCK.gameId, MARKET.registration.gameId].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
+// THE UP/DOWN MARKET TOO (kanban #236/#237): every seat hosts it, and SERIES_GAME=updown publishes its 15-minute series
+const HOSTED = [NEXTBLOCK.gameId, MARKET.registration.gameId, UPDOWN.registration.gameId].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 const rt = regtest(cli, { network: 'regtest', wallet: env.WALLET || 'tn4rt' });
 const lock = stakeLockPort({ bin: env.LOCK_BIN, dataDir: env.CLIENT_DIR });
 
@@ -96,8 +99,21 @@ if (mode === 'bonds') {
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20, timeFloor: 30, timeCeil: 150,
     minScore: 0, rankNumerator: 3, rankDenominator: 4, nodes,
     ...(env.SERIES_GAME === 'nextblock' ? { gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, minScore: 1 } : {}),
+    // SERIES_GAME=updown (kanban #236/#237): the Up/Down market's series - its locks outlive a whole window (390 blocks at
+    // the least, lock-expiry.js marketExpiryBlocks), its rounds every 15 minutes
+    ...(env.SERIES_GAME === 'updown' ? { gameId: UPDOWN.registration.gameId, stakeExpiryBlocks: 600 } : {}),
   };
   const template = seriesTemplate(contract, k);
+  // ON ITS OWN PERIOD (§0A.7b.4): the id published is the one the seats derive (series-writer.js stamps the same)
+  if (env.SERIES_GAME === 'updown') {
+    template.seriesPeriodMs = UPDOWN.registration.manifest.roundPeriodMs;
+    // ITS LOCKS SPAN THE LATEST ROUND OF ITS DAY: committee time (72 h before the series) to that window's end, the void
+    // deadline and the objection window (lock-expiry.js marketExpiryBlocks) - measured: 600 blocks refused at the page,
+    // "its locks must last 28650 blocks"
+    const need = marketExpiryBlocks(seriesRound(template, roundsPerSeries(template.seriesPeriodMs) - 1), UPDOWN_TERMS);
+    if (!need.ok) throw new Error(need.why);
+    template.stakeExpiryBlocks = need.blocks;
+  }
   const lead = seriesLeadIsValid(template);
   if (!lead.ok) throw new Error(lead.why);
   // THE CENSUS AT THE TIP, from the chain the seats read (the bonds are six deep here)

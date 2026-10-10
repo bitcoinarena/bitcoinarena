@@ -37,4 +37,16 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     attested: Object.freeze({ outcomes: Object.freeze(['above 100k','between','below 90k']), attestors: Object.freeze(['54c08074d9d9fdabed70d5ad9f7d46fbb84370b277cd88fbd96bd87de3fa01d2', 'c7e6f51dba95e5b0ea999a066d17244963a47af07d8b87d2f36b5e0a2f14477d', 'd7abf30bda6d21708f7498e7a972436d22584c0624741d4cc5385faa396b8f61']),
       threshold: 2, devKey: 'd372fd794e1c9af6e1fc819b5d1f033f65b79a95ad46c1c660c32eb429d7848f', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
   }),
+  'fc4e9ec3d268b5dd89078ffa68f4f51cb8eaea601e6c705c428e5fd92c9d09ab': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'ce97df184bd2a5281886159c2a23b954d158f94c1e41bc10bafc46cf912ae37a',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['128a875bfbe1b6f7a426ad0dabc8b87288e1ca18b2aee2a8a13872f372bf4779', '1dd88fb738cb409f2ec319c6efd32f63a4f4c4288890a0c1b6d8e4d2ca5530de', '89c9eba543b9dcbd6aa66006e5ebe865de391c78e391dc3b51a55f99d0027fa3']),
+      threshold: 2, devKey: 'e47762fea394d539fe33a117bb410e318e8ae6c0e23d333babe3bed0e8e998d8', networks: Object.freeze(['9855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b38']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
 });
