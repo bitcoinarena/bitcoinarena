@@ -40,6 +40,7 @@ import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { createOwner } from './owner.js';
+import { donationReport } from './owner-donations.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
@@ -2474,6 +2475,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!owner) return text(res, 404, 'this node runs without an owner area');
         const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (req.method === 'GET' && url.pathname === '/owner') return answer(200, owner.state());
+        // THE DEV CLIENT (step 3, owner-donations.js): what this seat verified for the protocol developers' set (the newest
+        // serial it holds per network) and for each hosted game's developer set - public, as GET /donations is
+        if (req.method === 'GET' && url.pathname === '/owner/donations') {
+          const newest = new Map();
+          for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
+          return answer(200, donationReport({ protocolSets: [...newest.values()],
+            games: [...hosted.values()].map((g) => ({ name: g.name, title: g.title, gameId: g.gameId, donationSet: g.donationSet })),
+            rowsFor: (key) => round.donationsFor(key, 0) }));
+        }
         if (req.method !== 'POST') return text(res, 404, 'no such owner door');
         let body;
         try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return answer(400, { ok: false, why: 'an owner request is JSON' }); }
