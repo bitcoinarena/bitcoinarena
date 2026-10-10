@@ -41,6 +41,7 @@ import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
+import { leaveStatus, takesRound } from './owner-leave.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
@@ -2176,8 +2177,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       takeNewSeries();
       const until = Date.now() + 150;
       let more = false;
+      // A LEAVING SEAT WRITES NO NEW SERIES ROUND (kanban #276 step 2): the rounds already written are served
+      const leaving = owner && owner.leavingAtMs() !== null;
       for (const w of writers) {
-        const added = w.write(round.now(), until);
+        const added = leaving ? 0 : w.write(round.now(), until);
         if (w.more) more = true;
         if (added) console.log(`[series] ${toHex(w.id).slice(0, 16)}: ${added} round(s) written, ${w.summary(round.now()).ahead} ahead to +72 h`);
         // AND ITS SIGNER NODES ASSIGNED, as POST /round assigns a posted round's (the owner 2026-09-30, measured on testnet4:
@@ -2477,6 +2480,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (req.method === 'GET' && url.pathname === '/owner') return answer(200, owner.state());
         // THE DEV CLIENT (step 3, owner-donations.js): what this seat verified for the protocol developers' set (the newest
         // serial it holds per network) and for each hosted game's developer set - public, as GET /donations is
+        // WHAT A LEAVING SEAT STILL OWES (step 2, owner-leave.js): the rounds it holds on a committee and is not free of yet,
+        // and the custody check - its federation's guardians and threshold, through its stake-lock port
+        if (req.method === 'GET' && url.pathname === '/owner/leave') {
+          const nowMs = round.now();
+          const rows = round.db.prepare('SELECT round_id, contract FROM rounds').all();
+          const rounds = [];
+          for (const r of rows) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            const rid = new Uint8Array(r.round_id);
+            let endMs; try { endMs = Number(roundEndMs(c)); } catch { endMs = Number(c.entryCloseMs); }
+            const k = round.lockSettlement(rid);
+            rounds.push({ id: toHex(rid), endMs, objectionWindowMs: Number(c.objectionWindowMs), assigned: round.signerNodes(rid).length > 0,
+              paying: c.stakeMsat > 0n, entries: round.entriesOf(rid).length, settlementAccepted: !!(k && k.state === 'ACCEPTED') });
+          }
+          let custody = null;
+          if (guardian && stakeLocks && typeof stakeLocks.guardians === 'function') {
+            try { const g = await stakeLocks.guardians(); custody = { guardian: true, keys: g.keys || [], threshold: g.threshold }; }
+            catch (e) { custody = { guardian: true, keys: [], threshold: Infinity, why: e.message }; }
+          }
+          return answer(200, leaveStatus({ rounds, nowMs, leavingAtMs: owner.leavingAtMs(), custody }));
+        }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
           const newest = new Map();
           for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
@@ -2488,6 +2512,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let body;
         try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return answer(400, { ok: false, why: 'an owner request is JSON' }); }
         if (url.pathname === '/owner/claim') { const r = owner.claim(body); return answer(r.ok ? 200 : r.status, r); }
+        // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
+        if (url.pathname === '/owner/leave') { const r = owner.leave(body); return answer(r.ok ? 200 : r.status, r); }
+        if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/login') {
           const r = owner.authorize(body, 'login');
           if (!r.ok) return answer(r.status, r);
@@ -2553,6 +2580,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
         // round is refused by the same game rather than as a round nobody heard of
         { const refused = unhostedRefusal(contract); if (refused) return text(res, 409, refused); }
+        // A SEAT WHOSE OWNER SAID LEAVE (kanban #276 step 2) takes no round formed after it - one it already holds it serves
+        if (owner && !takesRound(contract, owner.leavingAtMs()) && !round.get(roundIdOf(contract)))
+          return text(res, 409, `this seat is leaving (since ${new Date(owner.leavingAtMs()).toISOString()}): it takes no new round, and serves the ones it holds`);
         { const why = offerRefusal(contract); if (why) return text(res, 409, `series round refused: ${why}`); }
         // PICK B (arena-protocol/src/old-series.js): testnet4's id before genesis_series_start opens a round of series 3cfbe516
         // and nothing else.
