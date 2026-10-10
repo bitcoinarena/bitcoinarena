@@ -639,7 +639,10 @@ export class Client {
     const kinds = [{ door: 'lock', fields: this.stakeLock.fields, key: 'lockHanded' }];
     if (this.stakeLock.feeLock) kinds.push({ door: 'fee-lock', fields: this.stakeLock.feeLock.fields, key: 'feeLockHanded' });
     const took = new Map(kinds.map((k) => [k.door, new Set()]));
-    const until = Date.now() + LOCK_HAND_MS;
+    // A MARKET ORDER'S LOCKS ARE HANDED UNTIL ITS ROUND'S ENTRY CLOSES (kanban #237, measured on the regtest stack: three
+    // seats refused a stake lock while the federation was still accepting it, the 120 s ran out, and the order sat at 4 of 7
+    // seats - a batch needs 5 signers, each holding the order's locks - so it never traded): `handUntilMs` from the page
+    const until = Math.max(Date.now() + LOCK_HAND_MS, Number(this.stakeLock.handUntilMs || 0));
     for (let pause = 300; ; pause = Math.min(pause * 2, 3000)) {
       await Promise.all(kinds.map(async (k) => {
         const left = nodes.filter((n) => !took.get(k.door).has(n));

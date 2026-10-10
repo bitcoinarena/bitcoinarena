@@ -26,6 +26,7 @@ import { MARKET } from '../test/plugins/market/index.js';
 import { UPDOWN, UPDOWN_TERMS } from '../test/plugins/updown/index.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
+import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { encodeRoundContract, decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -101,7 +102,7 @@ if (mode === 'bonds') {
     ...(env.SERIES_GAME === 'nextblock' ? { gameId: NEXTBLOCK.gameId, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, minScore: 1 } : {}),
     // SERIES_GAME=updown (kanban #236/#237): the Up/Down market's series - its locks outlive a whole window (390 blocks at
     // the least, lock-expiry.js marketExpiryBlocks), its rounds every 15 minutes
-    ...(env.SERIES_GAME === 'updown' ? { gameId: UPDOWN.registration.gameId, stakeExpiryBlocks: 600 } : {}),
+    ...(env.SERIES_GAME === 'updown' ? { gameId: UPDOWN.registration.gameId, stakeExpiryBlocks: 600, donationSetId: donationSetId(TEST_DONATION_SET_KEYS_REGTEST.recipients) } : {}),
   };
   const template = seriesTemplate(contract, k);
   // ON ITS OWN PERIOD (§0A.7b.4): the id published is the one the seats derive (series-writer.js stamps the same)

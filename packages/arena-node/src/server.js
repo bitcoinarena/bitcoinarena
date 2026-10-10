@@ -393,6 +393,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // no ACCEPTED settlement, every 5 s while any is waiting - each asked to settle; the settlement itself holds one that is
   // not final yet, or DISPUTED, so a round is only ever settled on a final outcome. Started by the first attestation held.
   let attestedSweep = null;
+  const attestedWhy = new Map();
   const settleAttestedSoon = () => {
     if (attestedSweep || !settlements) return;
     attestedSweep = setInterval(async () => {
@@ -402,6 +403,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const rid of waiting) {
         const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
         if (got && got.state && got.state !== 'HELD') console.log(`[outcome] ${toHex(rid).slice(0, 16)} settlement: ${got.state} - ${got.why || ''}`);
+        // WHY A FINAL ROUND IS NOT SETTLED, said once per reason (kanban #237: a paid market round final for minutes, its
+        // settlement silent - the sweep logged only answers with a state, and a plan's refusal carries none)
+        else if (got && !got.ok && !got.state && got.why) {
+          const k = toHex(rid), was = attestedWhy.get(k);
+          if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
+        }
       }
     }, 5000);
     if (attestedSweep.unref) attestedSweep.unref();
