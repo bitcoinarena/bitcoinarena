@@ -44,6 +44,8 @@ const RPS_FIELDS = { gameId: ROCK_PAPER_SCISSORS.gameId, simCoreHash: fromHex(RP
 // 15m: its own 15-minute period, its terms, 2 of 3 attestors with test keys) and run it as a series, below; each seat runs
 // its order book for those rounds (GET /book?round=). Regtest only: test keys, free rounds.
 // THE SEATS' STORES ON DISK (kanban #280): a restart keeps their rounds and keys - the Up/Down series and its measurement go on
+// PUBLISHED AHEAD OR NOT AT ALL (kanban #292): without it every 8 s round takes 12-23 s to open and the rounds have holes
+if (env.ARENA_PUBLISH_AHEAD !== '1') { console.error('set ARENA_PUBLISH_AHEAD=1: the rounds are opened ahead (kanban #292)'); process.exit(2); }
 mkdirSync(join(dir, 'seats'), { recursive: true });
 const round = await standUpRound({ host: '127.0.0.1', portA: 21651, portB: 21652, rpc, cli, page: env.ARENA_PAGE, store: join(dir, 'seats'),
   plugins: [NEXTBLOCK, ROCK_PAPER_SCISSORS, UPDOWN.registration], closeAtEnd: true });
@@ -56,19 +58,30 @@ say({ step: 'up', nodes: round.nodes, lobby: round.lobbyUrl });
 // 8 S (#291, the owner 2026-10-09: "reduce the round length to 8 seconds")
 const WINDOW_MS = 8000n;
 const LEAD_MS = 150000n;
+// BACK TO BACK, NO HOLE (kanban #292, measured 2026-10-10 10:52Z: closes 14-23 s apart for 8 s rounds - 6-15 s with no round,
+// "The next round opens in a moment"): each opening waited for its committee time and mined six blocks (12-23 s), so the grid
+// fell behind at every round and `want` jumped to now + LEAD_MS. Now each round's committee time is COMMITTEE_AHEAD_MS before
+// its close - over 5 s ahead, so it is published ahead (ARENA_PUBLISH_AHEAD=1 in this tool's environment, checked at its start) and posted in about a second - its
+// beacon comes from the chain's own 10 s blocks and both seats assign it ~95 s after committee time, before its window opens.
+// And it keeps opening until the grid is LEAD_MS ahead, not one round per tick.
+const COMMITTEE_AHEAD_MS = 140000n;
 let lastClose = 0n, opening = false;
 const keep = async () => {
-  const now = BigInt(Date.now());
-  if (opening || lastClose > now + LEAD_MS + WINDOW_MS) return;
+  if (opening) return;
   opening = true;
   try {
-    // 15 s after the last close, never sooner - and never less than LEAD_MS ahead (the seats must hold it before its window)
-    const want = lastClose + WINDOW_MS > now + LEAD_MS ? lastClose + WINDOW_MS : now + LEAD_MS;
-    // openNext starts a round 60 s after its committee time (now + 2 s): the entry window after that start lands its close on `want`
-    const id = await round.openNext({ fields: RPS_FIELDS, entryAfterStartMs: Number(want - (BigInt(Date.now()) + 62000n)) });
-    const held = round.rounds().find((r) => r.id === id);
-    lastClose = held ? BigInt(held.entryCloseMs) : want;
-    say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(lastClose)).toISOString() });
+    for (let n = 0; n < 40; n++) {
+      const now = BigInt(Date.now());
+      if (lastClose > now + LEAD_MS + WINDOW_MS) break;
+      // the next on the grid; after a stop (or at the start) the grid begins again LEAD_MS ahead
+      const want = lastClose + WINDOW_MS > now + LEAD_MS ? lastClose + WINDOW_MS : now + LEAD_MS;
+      const committeeAtMs = want - COMMITTEE_AHEAD_MS;
+      // openNext starts a round MIN_ENTRY_WINDOW_MS (60 s) after its committee time: the entry window after that start lands its close on `want`
+      const id = await round.openNext({ fields: RPS_FIELDS, committeeAtMs, entryAfterStartMs: Number(want - (committeeAtMs + 60000n)) });
+      const held = round.rounds().find((r) => r.id === id);
+      lastClose = held ? BigInt(held.entryCloseMs) : want;
+      say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(lastClose)).toISOString(), tookMs: Date.now() - Number(now) });
+    }
   } catch (e) { say({ step: 'not opened', why: e.message }); } finally { opening = false; }
 };
 await keep();

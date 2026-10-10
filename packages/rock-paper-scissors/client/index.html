@@ -59,6 +59,7 @@
   .moves button span { display: block; font-size: 42px; margin-bottom: 6px; }
   .moves button:hover { border-color: var(--btc); } .moves button:active { transform: scale(0.96); }
   .moves button:disabled { opacity: 0.4; }
+  .moves button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }   /* a tap fires at once: no double-tap zoom wait (#292) */
   .moves { position: relative; } .moves button span.ic { display: block; width: 88px; height: 88px; margin: -10px auto -4px; font-size: 0; }
   .moves canvas.hand-icons { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
   .moves button.chosen, .moves button.chosen:disabled { opacity: 1; border-color: var(--btc); box-shadow: 0 0 0 3px rgba(247,147,26,0.25); }
@@ -854,7 +855,11 @@
     // ITS LAST 1.5 S THE TABLE STAYS, CLOSING (#291): a pick then might not land before the close, so the moves are off -
     // but the table is not swapped for an empty screen, and the next round's own 8 s have begun by then
     const CLOSING_MS = 1500;
-    const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > 300 && r.entryCloseMs - Date.now() <= WINDOW_MS - 50)   // the clock rounds up: at most 0:08
+    // NO GAP AND NO DEAD BUTTONS (#292, the owner 2026-10-10: "Rounds must run seamlessly ... Every tap on an option must fire"):
+    // a round's last CLOSING_MS took no taps (buttons off) and the next round was offered only from its own window - so for
+    // 1.5 s of every 8 s a tap did nothing. Now the next round takes the table CLOSING_MS before this one closes: a tap
+    // always lands in a round with at least 1.5 s of entry left, and there is never a moment without buttons.
+    const openRound = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > CLOSING_MS && r.entryCloseMs - Date.now() <= WINDOW_MS + CLOSING_MS)
       .sort((x, y) => x.entryCloseMs - y.entryCloseMs)[0] || null;
     // WHO SITS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You are alone"): this
     // tab says it is here to the table's seats every 2 s (ARENA_GAME.here) and keeps who else is - the banner reads that, not
@@ -896,16 +901,81 @@
       window.RPS_VERDICT_SHOWN = { word, at: Date.now() };
     };
     let kept = null;            // the match score of this tab's newest decided round (below)
-    const paint = async () => {
+    // WHAT THE SEATS SAID OF THIS TAB'S LAST ROUND, kept (#292): the table is drawn from this, never while waiting on a seat -
+    // a paint that awaited the result and the reveals (two network reads) put the next round's buttons up late, every round
+    const seen = new Map();     // round id -> { held, reveals }
+    let refreshing = false;
+    const lastHidden = () => { const mine = A.hiddenAll().filter((x) => Date.now() < Number(x.entryCloseMs) + 120000); return mine.length ? mine[mine.length - 1] : null; };
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const h = lastHidden();
+        if (h) {
+          const id = h.roundIdHex, players = (A.headToHead && A.headToHead.players) || 2;
+          const held = await A.result(id);
+          const was = seen.get(id) || {};
+          let reveals = was.reveals || {};
+          const entries = held ? held.entries : [];
+          if (Date.now() >= Number(h.entryCloseMs) && !(entries.length && entries.length < players)) {
+            if (!revealing.has(id)) { revealing.add(id); A.reveal(id).then((x) => { if (!x.ok) revealing.delete(id); }); }
+            reveals = await A.reveals(id);
+          }
+          seen.set(id, { held, reveals });
+        }
+      } catch (e) { console.warn('[rps] the seats could not be read: ' + e.message); } finally { refreshing = false; }
+      paint();
+    };
+    // EVERY TAP, KEPT (#292: "it does not always accept taps"): what it was, how long before its round's close, what the page
+    // answered, and when the seats held it - window.RPS_TAPS, for the measurement and for the console
+    const TAPS = window.RPS_TAPS = [];
+    let tapped = null;          // the tap going in: { id, move, closeMs, rec } - the buttons stay chosen through every redraw
+    const note = (text) => { const n = el('div', 'demo-label'); n.textContent = text; document.body.append(n); setTimeout(() => n.remove(), 2600); };
+    const tap = (id, i, closeMs, g, b) => {
+      if (tapped && tapped.id === id) return;
+      for (const x of g.querySelectorAll('button')) x.disabled = true;
+      b.classList.add('chosen');
+      if (stage) { stage.preview(i); stage.iconChosen(i); }
+      const rec = { at: Date.now(), round: id, move: i, leftMs: closeMs - Date.now(), answer: null, why: null, landedMs: null, lost: null };
+      TAPS.push(rec);
+      tapped = { id, move: i, closeMs, rec };
+      let ok = false;
+      try { ok = A.hide(id, i); } catch (e) { rec.why = e.message; }
+      let said = null; try { said = window.parent.BLWP_JOIN_ANSWER; } catch { /* another origin */ }
+      rec.answer = !!ok;
+      if (said && said.round === id) rec.why = said.why;
+      // REFUSED AT ONCE: said, and the buttons come back - never a move that looks chosen and went nowhere
+      if (!ok) { rec.lost = 'refused: ' + (rec.why || 'no answer'); tapped = null; note('That tap did not go in (' + (rec.why || 'refused') + ') - tap again'); }
+      drawnKey = null; paint();
+    };
+    // A TAP IN FLIGHT: in once this tab holds its hidden move; lost if the page refused the join or the round closed first
+    const settleTap = () => {
+      if (!tapped) return;
+      const r = tapped.rec;
+      if (A.hidden(tapped.id)) { r.landedMs = Date.now() - r.at; tapped = null; return; }
+      let j = null; try { j = window.parent.BLWP_JOIN; } catch { /* another origin */ }
+      if (j && j.round === tapped.id && j.state === 'refused') { r.lost = 'refused: ' + (j.why || ''); tapped = null; note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return; }
+      if (Date.now() > tapped.closeMs + 3000) { r.lost = 'the round closed before it went in'; tapped = null; }
+    };
+    // NO REDRAW UNDER A FINGER (#292): a redraw between a finger's down and up replaced the button under it, and no click came
+    let touching = 0;
+    document.addEventListener('pointerdown', () => { touching = Date.now(); }, true);
+    const untouch = () => setTimeout(() => { touching = 0; }, 0);
+    document.addEventListener('pointerup', untouch, true);
+    document.addEventListener('pointercancel', untouch, true);
+    // THE NEXT ROUND TAKES THE TABLE ON TIME (#292): a paint at that very moment, not at the next second's
+    let switchAt = null, switchTimer = null;
+    const paint = () => {
+      settleTap();
       // every listed round of this game (the page's allRows), so the soonest to close is the one offered
       const rows = A.allRows ? A.allRows() : A.rows();
       const players = (A.headToHead && A.headToHead.players) || 2;
-      const mine = A.hiddenAll().filter((h) => Date.now() < Number(h.entryCloseMs) + 120000);
-      const h = mine.length ? mine[mine.length - 1] : null;
-      // THE LAST ROUND THIS TAB PLAYED, as the seats hold it
+      const h = lastHidden();
+      // THE LAST ROUND THIS TAB PLAYED, as the seats last said
       let last = null;
       if (h) {
-        const held = await A.result(h.roundIdHex);
+        const got = seen.get(h.roundIdHex) || {};
+        const held = got.held;
         const entries = held ? held.entries : [];
         const closeMs = Number(h.entryCloseMs);
         const row = rows.find((r) => r.id === h.roundIdHex);
@@ -913,8 +983,7 @@
         if (Date.now() < closeMs) last.phase = 'wait';
         else if (entries.length && entries.length < players) last.phase = 'alone';
         else {
-          if (!revealing.has(h.roundIdHex)) { revealing.add(h.roundIdHex); A.reveal(h.roundIdHex).then((x) => { if (!x.ok) revealing.delete(h.roundIdHex); }); }
-          const all = await A.reveals(h.roundIdHex);
+          const all = got.reveals || {};
           const theirs = Object.entries(all).filter(([e]) => e !== h.entryIdHex).map(([, m]) => m);
           const me = entries.find((e) => e.entry === h.entryIdHex);
           last.theirs = theirs.length ? theirs[0] : null;
@@ -935,18 +1004,20 @@
           if (mine >= 0) last.score = { me: m.score[mine], them: m.score[1 - mine], themName: (m.names || [])[1 - mine] || 'them', themKey: m.identities[1 - mine], played: m.played };
         }
       }
-      // WHILE A ROUND OF THIS TAB IS STILL BEING PLAYED (picked, waiting, revealing), that round is the table; once it is
-      // decided (or not played), the next open round is, with the last result beside it
       let state;
       // THE MATCH GOES ON while this tab played within the last minute and its last round was played: its score stays up
       // kept from the newest decided round: while the next is picked and waited for, its own record is not there yet, and the
       // board - and whose name the banner gives - must not drop out between moves
       if (last && last.score && (!kept || last.closeMs >= kept.closeMs)) kept = { ...last.score, closeMs: last.closeMs };
       const scoreboard = kept && kept.played && Date.now() - kept.closeMs <= MATCH_CONTINUE_MS ? kept : null;
-      if (last && (last.phase === 'wait' || last.phase === 'reveal')) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
+      // ONLY A ROUND STILL TAKING ENTRIES HOLDS THE TABLE, and only until the next one takes over CLOSING_MS before its close
+      // (#292): its result used to hold the table ("reveal") until the seats had signed, so the next round - already taking
+      // picks - had no buttons; now the next round is the table on time and the last one's result comes into its strip, and
+      // onto the stage, when it is signed
+      if (last && last.phase === 'wait' && Date.now() < last.closeMs - CLOSING_MS) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
       else {
         const row = openRound(rows);
-        const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
+        const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase === 'wait' ? 'reveal' : last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
         if (row) lookHere(row.id);
         // A MOVE NOBODY ANSWERED STAYS IN (the owner 2026-10-09 playtest: "pick, the Wait screen comes, then back to Pick -
         // sometimes it works and the selection is really locked"): a round that closed with this tab alone in it was not
@@ -955,17 +1026,20 @@
         // ... but only while someone else is at the table (the owner 2026-10-09 21:08 playtest: "when nobody is in the game and the
         // timer runs out, you do not get back to the select screen"): alone, the round ends and the pick screen comes back
         const company = Date.now() - here.seenAt < 15000;
-        if (last && last.phase === 'alone' && company && row && row.id !== last.id && (!carry || (carry.toId !== row.id && Date.now() - carry.at > CARRY_RETRY_MS))) {
+        if (last && last.phase === 'alone' && company && row && row.id !== last.id && !tapped && (!carry || (carry.toId !== row.id && Date.now() - carry.at > CARRY_RETRY_MS))) {
           const since = carry && carry.toId === last.id ? carry.since : last.closeMs - WINDOW_MS;
           if (Date.now() - since < CARRY_MS) { carry = { move: last.move, since, toId: row.id, closeMs: row.entryCloseMs, at: Date.now() }; A.hide(row.id, last.move); }
         }
         if (carry && carry.toId === (row && row.id) && Date.now() - carry.at < CARRY_RETRY_MS && !(h && h.roundIdHex === carry.toId))
           state = { phase: 'wait', id: carry.toId, move: carry.move, closeMs: carry.closeMs, openMs: carry.closeMs - WINDOW_MS, them: 0, carried: true, scoreboard, here: hereAt(carry.toId) };
-        else state = row ? { phase: 'pick', closing: row.entryCloseMs - Date.now() < CLOSING_MS, id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
+        else state = row ? { phase: 'pick', chosen: tapped && tapped.id === row.id ? tapped.move : null, id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
           : { phase: 'none', prev, scoreboard };
       }
       const key = JSON.stringify(state);
-      if (key !== drawnKey) { drawnKey = key; draw(state); }
+      if (key !== drawnKey && !(touching && Date.now() - touching < 1500)) { drawnKey = key; draw(state); }
+      // the moment this table gives way: CLOSING_MS before its close
+      const at = state.closeMs ? state.closeMs - CLOSING_MS : null;
+      if (at && at !== switchAt && at > Date.now()) { switchAt = at; clearTimeout(switchTimer); switchTimer = setTimeout(paint, at - Date.now() + 20); }
       if (live) tickClock(live.clock, live.closeMs, live.openMs);
       tickDue();
     };
@@ -985,9 +1059,9 @@
       kind.className = 'chip ' + (s.free ? 'free' : 'paid');
       kind.textContent = s.free ? 'FREE' : 'PAID';
       // THE LAST RESULT, as a strip above the next table: your move, theirs, and how it went
-      if (s.prev && (s.prev.phase === 'result' || s.prev.phase === 'alone')) {
+      if (s.prev && (s.prev.phase === 'result' || s.prev.phase === 'alone' || s.prev.phase === 'reveal')) {
         const p = s.prev;
-        const words = p.phase === 'alone' ? ['draw', 'not played'] : ({ win: ['win', 'won'], loss: ['loss', 'lost'], forfeit: ['loss', 'lost'], draw: ['draw', 'draw'], void: ['draw', 'not played'] }[p.verdict] || ['draw', '']);
+        const words = p.phase === 'reveal' ? ['draw', 'result coming…'] : p.phase === 'alone' ? ['draw', 'not played'] : ({ win: ['win', 'won'], loss: ['loss', 'lost'], forfeit: ['loss', 'lost'], draw: ['draw', 'draw'], void: ['draw', 'not played'] }[p.verdict] || ['draw', '']);
         view.append(el('div', 'last ' + words[0], '<span>last round</span><b>' + MOVES[p.move][1] + '</b><i>vs</i><b>' + (p.theirs === null || p.theirs === undefined ? '∅' : MOVES[p.theirs][1]) + '</b><em>' + words[1] + '</em>'));
       }
       // THE SCORE ACROSS ROUNDS, big, while the match goes on (kanban #280)
@@ -1044,12 +1118,12 @@
       if (s.phase === 'pick') {
         table.append(seat('you', 'empty', '?'), middle, seat(s.joined ? 'opponent in' : 'opponent', s.joined ? 'in' : 'empty', s.joined ? '✓' : '?'));
         put(table);
-        card.append(el('div', 'pick', s.closing ? 'Closing - the next round starts in a moment' : 'Pick - your opponent cannot see it until the round closes'));
+        card.append(el('div', 'pick', s.chosen !== null && s.chosen !== undefined ? 'Your ' + MOVES[s.chosen][0] + ' is going in…' : 'Pick - your opponent cannot see it until the round closes'));
         const g = el('div', 'moves');
         MOVES.forEach(([name, icon], i) => {
           const b = el('button', '', stage ? '<span class="ic"></span>' + name : '<span>' + icon + '</span>' + name); b.type = 'button';
-          if (s.closing) b.disabled = true;
-          b.addEventListener('click', () => { for (const x of g.querySelectorAll('button')) x.disabled = true; b.classList.add('chosen'); if (stage) { stage.preview(i); stage.iconChosen(i); } A.hide(s.id, i); });
+          if (s.chosen !== null && s.chosen !== undefined) { b.disabled = true; if (s.chosen === i) b.classList.add('chosen'); }
+          b.addEventListener('click', () => tap(s.id, i, s.closeMs, g, b));
           if (stage) { b.addEventListener('pointerenter', () => { stage.iconHover(i); if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { stage.iconHover(null); if (!b.disabled) stage.preview(null); }); }
           g.append(b);
         });
@@ -1101,7 +1175,10 @@
     };
     loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); if (DEMO) runDemo(); }).catch((e) => { stageFailed = true; drawnKey = null; console.warn('[rps] no 3D stage: ' + e.message); paint(); });
     paint();
-    setInterval(paint, 1000);
+    // the table from what is known, four times a second (no network); what the seats say, once a second
+    setInterval(paint, 250);
+    refresh();
+    setInterval(refresh, 1000);
   }
 </script>
 </body>
