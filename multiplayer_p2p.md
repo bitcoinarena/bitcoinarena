@@ -534,8 +534,10 @@ together.
   the odds. At an Up price of 0.73 that is 0.99 / 0.73 = 1.356 sat of payout
   if Up wins.
 
-**0A.7b.4 Still to build.** Market rounds on their own 15 min period
-instead of the 90 s grid, with lock expiry per round (window end + deadline
+**0A.7b.4 Still to build.** ~~Market rounds on their own 15 min period
+instead of the 90 s grid~~ (AS BUILT 2026-10-10, kanban #236/#237: a market's series runs on
+its manifest's `round_period` - 96 rounds a day for 15 min - and every other game's series stays on the 90 s grid with
+its id unchanged; `series.js` reads the period off the template, `series-writer.js` stamps it from the manifest), with lock expiry per round (window end + deadline
 + objection window). The batch record signed by the seats. Cancel at the
 seats and the immediate return of a cancelled order's stake and fee locks.
 Positions as locks and the payout per share. The reference attestor daemon
