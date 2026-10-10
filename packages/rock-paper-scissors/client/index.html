@@ -1086,7 +1086,14 @@
       // (#292): its result used to hold the table ("reveal") until the seats had signed, so the next round - already taking
       // picks - had no buttons; now the next round is the table on time and the last one's result comes into its strip, and
       // onto the stage, when it is signed
-      if (last && last.phase === 'wait' && Date.now() < last.closeMs - CLOSING_MS) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
+      // A PICK THE OPPONENT HAS NOT ANSWERED YET KEEPS THE WAIT SCREEN THROUGH THE SWITCH (the owner 2026-10-10 playtest: "my choice
+      // is shown in the wait screen, then it returns back to the pick screen, wanting me to pick again. Then suddenly it goes
+      // back to the wait with the already set up choice. It should not show the pick screen until the opponent has chosen,
+      // even if it takes multiple rounds"): CLOSING_MS before the close the next round took the table and showed its buttons,
+      // and only once the seats said this tab was alone did the move carry over and the wait come back. Alone in its round,
+      // the move holds the table to the close; then it carries on (below) while someone is at the table
+      const waiting = last && last.phase === 'wait' && (Date.now() < last.closeMs - CLOSING_MS || (last.them === 0 && Date.now() - here.seenAt < 15000));
+      if (waiting) { lookHere(last.id); state = { ...last, openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
       else {
         const row = openRound(rows, h ? h.roundIdHex : null);
         const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase === 'wait' ? 'reveal' : last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
