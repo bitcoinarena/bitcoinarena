@@ -43,6 +43,15 @@ const lateJoinOf = (template) => {
 };
 export const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
 export const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
+
+// A SERIES RUNS ON ITS GAME'S OWN round_period (kanban #236/#237, §0A.7b.4 "Market rounds on their own 15 min period
+// instead of the 90 s grid"): a template may carry `seriesPeriodMs` - the node sets it from the game's manifest
+// (series-writer.js) - and every function here reads the period, and the day's round count, off the template. A template
+// without one is on the 90 s grid, as every series before this: its id, rounds and count are unchanged.
+const periodOf = (template, periodMs) => (periodMs !== undefined && periodMs !== null ? BigInt(periodMs)
+  : (template && template.seriesPeriodMs !== undefined && template.seriesPeriodMs !== null ? BigInt(template.seriesPeriodMs) : ROUND_PERIOD_MS));
+/** A day's rounds on a period: 960 on 90 s, 96 on 15 min. */
+export const roundsPerSeries = (periodMs = ROUND_PERIOD_MS) => Number(SERIES_MAX_MS / BigInt(periodMs));
 const HOUR = 3600000n;
 // THE WRITER'S HORIZON IS 72 h ON EVERY NETWORK (TN24-1405): the schedule is laid 72 h ahead whatever the clock below.
 export const SERIES_WRITE_AHEAD_MS = 72n * HOUR;
@@ -109,7 +118,7 @@ export function seriesLeadIsValid(template) {
   const lead = template.startTimeMs - template.committeeTimeMs;
   // A TAIL (the 82/90 fork, the owner 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
   // inside its day and running to that day's end, on testnet4 only, with a committee lead of at least 12 h.
-  if (Number.isInteger(template.seriesCount) && template.seriesCount !== ROUNDS_PER_SERIES) return tailIsValid(template, lead);
+  if (Number.isInteger(template.seriesCount) && template.seriesCount !== roundsPerSeries(periodOf(template))) return tailIsValid(template, lead);
   const min = seriesClockFor(template.networkId).leadMinMs;
   if (lead < min)
     return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
@@ -141,7 +150,7 @@ function tailIsValid(template, lead) {
 }
 
 /** A contract without its series fields: what a series' template is. */
-const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, ...rest } = c; void _s; void _i; void _n; void _c; return rest; };
+const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, ...rest } = c; void _s; void _i; void _n; void _c; void _p; return rest; };
 
 /**
  * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, the owner 2026-10-01): a template may carry `seriesCount` - a tail's
@@ -149,11 +158,12 @@ const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount
  * is in the template's bytes; the count is in its series id (H(template || period || count)), the cut is the node's.
  */
 const countOf = (template, count) => (count !== undefined ? count
-  : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : ROUNDS_PER_SERIES));
+  : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
 export const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
 
 /** series_id = H(template || round_period || round_count), tagged. */
-export function seriesId(template, { periodMs = ROUND_PERIOD_MS, count } = {}) {
+export function seriesId(template, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
   const body = encodeRoundContract(withoutSeries(template));
   const bytes = new Uint8Array(body.length + 12);
@@ -164,7 +174,8 @@ export function seriesId(template, { periodMs = ROUND_PERIOD_MS, count } = {}) {
 }
 
 /** Round `i` of the series, derived: start = series_start + i * 90 s, entry closing at that start. */
-export function seriesRound(template, i, { periodMs = ROUND_PERIOD_MS, count } = {}) {
+export function seriesRound(template, i, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
   if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
   const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
@@ -185,7 +196,8 @@ export function seriesRound(template, i, { periodMs = ROUND_PERIOD_MS, count } =
  * held to one length (the truck before the fork, 180 s) is that core's own and was posted before the rule.
  */
 export const SERIES_RESULT_CARD_MS = 8000n;
-export function seriesRunFits(template, { periodMs = ROUND_PERIOD_MS } = {}) {
+export function seriesRunFits(template, { periodMs } = {}) {
+  periodMs = periodOf(template, periodMs);
   let runMs;
   try { runMs = msForTicks(template.blockTicks).ms; } catch (e) { return { ok: false, why: `the series names no run length: ${e.message}` }; }
   const most = BigInt(periodMs) - SERIES_RESULT_CARD_MS;
@@ -194,7 +206,7 @@ export function seriesRunFits(template, { periodMs = ROUND_PERIOD_MS } = {}) {
   return { ok: true, runMs: BigInt(runMs) };
 }
 
-export function seriesRoundCheck(contract, templates, { periodMs = ROUND_PERIOD_MS, count: given } = {}) {
+export function seriesRoundCheck(contract, templates, { periodMs, count: given } = {}) {
   if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
   const t = (templates || []).find((x) => sameBytes(seriesId(x, { periodMs, count: given }), contract.seriesId));
   const count = t ? countOf(t, given) : ROUNDS_PER_SERIES;
@@ -205,7 +217,7 @@ export function seriesRoundCheck(contract, templates, { periodMs = ROUND_PERIOD_
   // REPLACED FROM ITS CUT (the 82/90 tail): a held series cut at index C takes no round from C on - a tail carries them.
   if (Number.isInteger(t.seriesCutFrom) && contract.roundIndex >= t.seriesCutFrom)
     return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} is replaced from index ${t.seriesCutFrom} by its 82 s tail: not announced, entered, locked or settled` };
-  const derived = seriesRound(t, contract.roundIndex, { periodMs, count });
+  const derived = seriesRound(t, contract.roundIndex, { periodMs: periodOf(t, periodMs), count });
   if (contract.startTimeMs !== derived.startTimeMs || contract.entryCloseMs !== derived.entryCloseMs
     || contract.committeeTimeMs !== derived.committeeTimeMs)
     return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
@@ -216,7 +228,8 @@ export function seriesRoundCheck(contract, templates, { periodMs = ROUND_PERIOD_
 }
 
 /** The indices of the series' rounds whose start lies in [fromMs, toMs]. */
-export function seriesRoundsWithin(template, fromMs, toMs, { periodMs = ROUND_PERIOD_MS, count } = {}) {
+export function seriesRoundsWithin(template, fromMs, toMs, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
   const p = BigInt(periodMs), s = template.startTimeMs, from = BigInt(fromMs), to = BigInt(toMs);
   if (to < s) return [];
