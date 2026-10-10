@@ -2557,7 +2557,16 @@
             donationMsat: donation.donationMsat, joinTick: 0,
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         entry.commit = BLWPCLIENT.moveCommitment({ roundId: entry.roundId, sessionPubkey, move: hidden.move, salt: hidden.salt });
-        const sent = await BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes });
+        // HELD WHEN THE SEATS TOOK THE ENTRY (kanban #293): the move is the tab's once all its seats answered 201; the locks are
+        // handed to them while the guardians accept, in the background - the join no longer waits on the 7 seats' lock checks
+        // (measured: counted at 6.5 s median, the entry taken at ~2.8 s), and the next round's tap is not held as "busy"
+        let entriesIn = null;
+        const tookEntries = new Promise((res) => { entriesIn = res; });
+        const all = BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
+        all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
+        const sent = await tookEntries;
+        all.then((done) => { if (done && done.lock) console.log('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' seats'
+          + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[blwp] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }
         rememberHidden({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, move: hidden.move, saltHex: BLWPCLIENT.toHex(hidden.salt),
@@ -4606,6 +4615,17 @@
         for (const r of (window.BLWP_LOBBY || [])) {
           if (r.free || !r.raw || !r.raw.contract || !BLWPCLIENT.roundLocks(r.raw.contract)) continue;
           try { prepRound(r.id, r.raw.contract, (testnet ? testnet.named : named).nodes); } catch { /* the join asks itself */ }
+        }
+        // A HEAD-TO-HEAD GAME'S TABLES (kanban #293, measured: a paid tap read the round's donation set, signer nodes and claim
+        // key after the tap - ~2.7 s of it): every paid table of the slot on screen and the next one is read now, while it is
+        // offered, and its join takes them from here (ROUND_PREP)
+        if (window.ARENA_GAME && window.ARENA_GAME.headToHead) {
+          const soon = Date.now() + 20000;
+          for (const r of (window.BLWP_LOBBY_ROWS || [])) {
+            const c = r.contract;
+            if (r.free || !c || !r.joinable || !BLWPCLIENT.roundLocks(c) || Number(c.entryCloseMs) > soon || Number(c.entryCloseMs) < Date.now()) continue;
+            try { prepRound(r.id, c, (window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(r.id) : null) || (testnet ? testnet.named : named).nodes); } catch { /* the join asks itself */ }
+          }
         }
       };
       // THE PLAYER WALLET IS OPENED IN THE LOBBY, BEFORE PLAY (INSTANT-1527, the owner 2026-09-30 15:23: "PLAY to the deposit

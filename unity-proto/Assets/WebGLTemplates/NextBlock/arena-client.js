@@ -21647,7 +21647,10 @@ function pickSheet({ market, contract = null, stakeMsat = contract ? contract.st
  * HAND A PICK TO THE ROUND'S SEATS (no session, no run): the entry to every seat, then its stake lock and fee lock as the
  * client hands them (`handLock`). Answers each seat's word and the entry id.
  */
-async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
+// `onEntries` (kanban #293, measured on the paid regtest stack: a paid head-to-head tap was counted only after the guardians
+// accepted its lock and the 7 seats had each checked it - 6.5 s median at load 30-47; the seats had taken the entry at ~2.8 s):
+// called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
+async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   const entries = await Promise.all(nodes.map(async (node) => {
@@ -21657,6 +21660,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
     } catch (e) { return { node, status: 0, why: e.message }; }
   }));
   const took = entries.filter((x) => x.status === 201).map((x) => x.node);
+  if (onEntries) { try { onEntries({ entryId: toHex(eid), entries }); } catch { /* the caller's own fault */ } }
   if (!took.length) return { ok: false, entryId: toHex(eid), entries, why: entries.map((x) => `${x.node}: ${x.why}`).join('; ') };
   if (!stakeLock) return { ok: took.length === nodes.length, entryId: toHex(eid), entries, lock: null, feeLock: null };
   // THE LOCKS ONCE THE GUARDIANS ACCEPTED THEM, AND AGAIN TO A SEAT THAT REFUSED (kanban #237, measured on the regtest market
