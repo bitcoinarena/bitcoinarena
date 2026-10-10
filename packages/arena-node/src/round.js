@@ -12,6 +12,7 @@ import {
   encodeRoundContract, roundId, encodeEntryContract, entryId, decodeEntryContract,
   decodeRoundContract, roundWindowsAreValid, lastTickOfRun, sittingSeatsFitTheSlots } from '../../arena-protocol/src/contracts.js';
 import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/batch.js';
+import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS } from '../../arena-protocol/src/contracts.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
@@ -614,6 +615,16 @@ export class Round {
     const head = this.head(b.roundId, b.entryId);
     if (!seen && !same(b.previousHash, head))
       throw new Error('the batch does not follow the chain head');
+
+    // AND THE PRICES IT PLAYED, WHERE IT CARRIES THE COMMITTEE'S WORD ON THEM (§11, kanban #311): an attestation that
+    // does not stand, or a sample that is not the attested price at its tick, refuses the batch - the player never
+    // chooses the price. (A batch with none is taken as before; a round whose contract names a feed requires them later.)
+    if (b.attests && b.attests.length) {
+      const c = decodeRoundContract(new Uint8Array(round.contract));
+      const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: receiptsNeeded(c.nodes.length),
+        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
+      if (!prices.ok) throw new Error(prices.why);
+    }
 
     // AND IT MUST NOT BE LONGER THAN THE ROUND. `blockTicks` is a field of
     // the contract this node already stores, so the ceiling comes from the
