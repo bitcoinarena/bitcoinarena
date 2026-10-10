@@ -2,6 +2,8 @@
 // round per UTC quarter hour (its manifest's period, 900 000 ms), Up when the 60 s average at the window's end is at or above
 // the 60 s average at its start (a tie Up; Chainlink's TWAP 60 s stream read at both ends, kanban #236 comment 1154), outcome by 2 of its 3 attestors, refused before the window's end, VOID 10 minutes after it with no
 // outcome. Its developer and attestor keys are TEST keys (testDevKey's words): regtest only.
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { testAttestedGame, testDevKey } from '../sign.js';
 import { UP_DOWN_OUTCOMES } from '../../../../arena-protocol/src/up-down.js';
 
@@ -17,7 +19,10 @@ export const UPDOWN_TERMS = Object.freeze({
 });
 // the attestors' words, in the order A, B, C (the manifest lists their keys sorted)
 export const UPDOWN_ATTESTOR_WORDS = Object.freeze(['updown attestor A', 'updown attestor B', 'updown attestor C']);
+// THE MARKET'S OWN CLIENT (kanban #237 step 2), pinned by its hash: the Arena page runs only these bytes for this market
+export const UPDOWN_CLIENT_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_FILE)).digest();
 export const UPDOWN = testAttestedGame({ name: 'btc-updown-15m', outcomes: [...UP_DOWN_OUTCOMES], attestors: [...UPDOWN_ATTESTOR_WORDS],
-  threshold: 2, marketTerms: UPDOWN_TERMS, roundPeriodMs: UPDOWN_PERIOD_MS });
+  threshold: 2, marketTerms: UPDOWN_TERMS, roundPeriodMs: UPDOWN_PERIOD_MS, clients: [new Uint8Array(UPDOWN_CLIENT_HASH)] });
 /** Each attestor's key by its letter: { A: { key, pubkey }, ... } (testDevKey of `attestor: <word>`, as testAttestedGame derives them). */
 export const UPDOWN_ATTESTOR_KEYS = Object.freeze(Object.fromEntries(UPDOWN_ATTESTOR_WORDS.map((w) => [w.slice(-1), testDevKey(`attestor: ${w}`)])));
