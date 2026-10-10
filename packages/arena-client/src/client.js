@@ -364,6 +364,12 @@ export class Client {
     if (!await verify(seen.signature, seen.advertId, seen.nodePubkey))
       throw new Error(`the advertisement for ${toHex(seen.nodePubkey)} `
         + 'is not signed by the node it names');
+    // A CARRIED BOND (kanban #209): its ancestor advertisement and its re-affirmation are signed by the same key, or the
+    // endpoint its update names is not that bond's
+    for (const c of seen.checks || []) {
+      if (!await verify(c.signature, c.message, c.key))
+        throw new Error(`${c.what} for ${toHex(c.key)} is not signed by that node`);
+    }
 
     const client = new Client({
       base: seen.endpoint.replace(/^ws/, 'http'), core, sign, verify,

@@ -36,6 +36,7 @@ import { askForBond } from './bond.js';
 const BONDS_KEPT = new WeakMap();   // proof headers -> (bond providers -> a bond that held), see discover
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { acceptAncestorEndpoint } from '../../arena-protocol/src/ancestor-endpoint.js';
 
 /**
  * Is this a socket address at all?
@@ -81,7 +82,7 @@ export function isSocketAddress(endpoint) {
  * this that takes an empty list and shrugs is the version that ships.
  */
 export function reach({
-  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network,
+  chain, chains, transaction, signedAdvert, branch, position, committee, bond, network, update, reaffirm,
 }) {
   if (!committee || !committee.length)
     return { ok: false, why: 'no committee to check the node against' };
@@ -105,6 +106,20 @@ export function reach({
   }
 
   let refusal = 'the transaction is not in any block of that chain';
+  // A CARRIED BOND (kanban #209, §0A.9): an ancestor bond with its re-affirmation and its advertisement update, all three
+  // proved into this chain; the three signatures by the bond's key are listed for Client.at to verify (`checks`)
+  if (update || reaffirm) {
+    const carried = acceptAncestorEndpoint({ chain: headers, transaction, branch, position, update, reaffirm });
+    if (carried.ok) {
+      if (!committee.some((n) => toHex(n) === toHex(carried.nodePubkey)))
+        return { ok: false, why: `the advertisement is for ${toHex(carried.nodePubkey)}, which is not on this round's committee` };
+      if (!isSocketAddress(carried.endpoint))
+        return { ok: false, why: `the advertisement's endpoint ${JSON.stringify(carried.endpoint)} is not a secure socket address` };
+      return { ok: true, endpoint: carried.endpoint, nodePubkey: carried.nodePubkey, signature: carried.signature,
+        advertId: carried.advertId, txid: carried.txid, blockHash: blockHashOf(carried.header), work, from, checks: carried.checks };
+    }
+    refusal = carried.why;
+  }
   for (const header of headers) {
     // The bond option travels with it: a page holding the network's
     // arbitration set and a curve can have the output key rebuilt, and one
@@ -340,6 +355,8 @@ export async function discover({
     position: bond.position,
     signedAdvert,
     committee,
+    update: bond.update || undefined,
+    reaffirm: bond.reaffirm || undefined,
   });
   if (!seen.ok) return seen;
   return {
