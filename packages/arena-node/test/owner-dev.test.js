@@ -8,7 +8,7 @@ import { ownerSecretFromSeed } from '../src/owner.js';
 import { signManifest, gameDevKey } from '../../arena-donor/src/manifest-sign.js';
 import { encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { BODY as UPDOWN_TN4_BODY } from '../../btc-updown/plugin/manifest-body.mjs';
+import { BODY as RPS_BODY } from '../../rock-paper-scissors/plugin/manifest-body.mjs';
 
 const seed = new Uint8Array(32).fill(7);
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -23,11 +23,11 @@ test('the developer key is the owner\'s own, from the same 24 words, and not the
   assert.notEqual(toHex(devSeedFromSeed(new Uint8Array(32).fill(8))), toHex(dev));
 });
 
-test('a market signed in the page is byte for byte the command-line client\'s: same body, same key', () => {
+test('a game signed in the page is byte for byte the command-line client\'s: same body, same key', () => {
   const devSeed = devSeedFromSeed(seed);
   const pub = devPubkeyOf(devSeed);
-  // the testnet4 Up/Down market's body, with this owner's key as its developer
-  const json = { ...asJson(UPDOWN_TN4_BODY), gameDevPubkey: undefined };
+  // Rock Paper Scissors' body, with this owner's key as its developer
+  const json = { ...asJson(RPS_BODY), gameDevPubkey: undefined };
   const body = bodyFromJson(json, { devPubkey: pub });
   const page = signManifestWithSeed(body, devSeed);
   const cli = signManifest(body, gameDevKey(Buffer.concat([PKCS8_ED25519, Buffer.from(devSeed)])));
@@ -38,10 +38,10 @@ test('a market signed in the page is byte for byte the command-line client\'s: s
 
 test('a body naming another developer, or one that does not stand, is refused by name', () => {
   const devSeed = devSeedFromSeed(seed);
-  const other = bodyFromJson({ ...asJson(UPDOWN_TN4_BODY) });   // the real market's developer key, not this owner's
+  const other = bodyFromJson({ ...asJson(RPS_BODY) });   // the real market's developer key, not this owner's
   assert.throws(() => signManifestWithSeed(other, devSeed), /another developer key/);
-  assert.throws(() => bodyFromJson({ ...asJson(UPDOWN_TN4_BODY), roundPeriodMs: '15 minutes' }), /roundPeriodMs is a whole number/);
-  assert.throws(() => bodyFromJson({ ...asJson(UPDOWN_TN4_BODY), clients: ['abc'] }), /clients\[0\] is 32 bytes in hex/);
-  const bad = bodyFromJson({ ...asJson(UPDOWN_TN4_BODY), gameDevPubkey: undefined, attestThreshold: 9 }, { devPubkey: devPubkeyOf(devSeed) });
-  assert.throws(() => signManifestWithSeed(bad, devSeed), /threshold/);
+  assert.throws(() => bodyFromJson({ ...asJson(RPS_BODY), roundPeriodMs: '15 minutes' }), /roundPeriodMs is a whole number/);
+  assert.throws(() => bodyFromJson({ ...asJson(RPS_BODY), clients: ['abc'] }), /clients\[0\] is 32 bytes in hex/);
+  const bad = bodyFromJson({ ...asJson(RPS_BODY), gameDevPubkey: undefined, players: 99 }, { devPubkey: devPubkeyOf(devSeed) });
+  assert.throws(() => signManifestWithSeed(bad, devSeed), /seats 2 to/);
 });
