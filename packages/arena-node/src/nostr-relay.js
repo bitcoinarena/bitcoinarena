@@ -7,6 +7,7 @@
 //   30078  app data (NIP-78): the player's game seed, NIP-44-encrypted to the player's own key - only they can read it
 //   24133  NIP-46 remote signing (a bunker or Amber talking to the page): ephemeral, passed on, never kept
 //   22242  NIP-42 auth: ephemeral
+//   13194, 23194, 23195  NIP-47 wallet connect: a wallet's info (kept, replaceable), requests and answers (ephemeral)
 // Every event's id is recomputed and its signature checked (BIP-340) before anything is kept or passed on.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -14,7 +15,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer } from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242]);
+export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195]);   // + NIP-47 (wallet connect)
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
@@ -70,7 +71,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   const clients = new Set();
-  const info = { name, description, supported_nips: [1, 11, 42, 46, 65, 78], software: 'arena-node/nostr-relay', version: '1',
+  const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 65, 78], software: 'arena-node/nostr-relay', version: '1',
     limitation: { max_message_length: MAX_EVENT_BYTES, max_subscriptions: MAX_SUBS, max_filters: MAX_FILTERS, max_limit: MAX_LIMIT }, kinds };
   const server = createServer((req, res) => {
     // NIP-11: the information document; anything else is a short page

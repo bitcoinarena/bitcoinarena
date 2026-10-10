@@ -66,6 +66,6 @@ test('the relay keeps the game\'s events, signed, newest of each replaceable one
     d.ws.close();
     // NIP-11
     const info = await (await fetch(`http://127.0.0.1:${r.port}/`, { headers: { accept: 'application/nostr+json' } })).json();
-    assert.deepEqual(info.supported_nips, [1, 11, 42, 46, 65, 78]);
+    assert.deepEqual(info.supported_nips, [1, 11, 42, 46, 47, 65, 78]);
   } finally { c.ws.close(); await r.close(); }
 });
