@@ -27,6 +27,11 @@ export const NO = 1;
 // order buys at least 5 shares at its limit - one share pays 1 sat here, as one pays $1 there
 export const TICK = 1000n;
 export const MIN_SHARES = 5n;
+// AN ORDER BRINGS ITS OWN AMOUNT (kanban #237, the owner 2026-10-10: market and limit orders, "Für market Orders"): in a paid
+// market round an order's stake is the player's - from 1 sat up to this cap - and the round's stake_msat is only what a
+// plain pick stakes. Its shares follow (MIN_SHARES at its limit, as Polymarket's minimum).
+export const MIN_ORDER_MSAT = 1000n;
+export const MAX_ORDER_MSAT = 100000000n;   // 100,000 sat
 export const SHARE_MSAT = 1000n;
 
 const obIs32 = (b) => b instanceof Uint8Array && b.length === 32;
