@@ -42,7 +42,8 @@ import { dashboardData, dashboardHtml } from './dashboard.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
-import { packageOf, verifyPackage, installPackage } from './plugin-package.js';
+import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
+import { checkUpdate } from './plugin-check.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
@@ -99,10 +100,10 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
-import { encodeManifest, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
-import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../arena-protocol/src/rerun.js';
@@ -460,6 +461,89 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (windowChain) round.chainView = windowChain;
   else if (chainFor) round.chainView = (rid, contract) => chainFor({ contract, roundIdBytes: rid });
 
+  // THE PLUGIN STORE ON THIS SEAT (kanban #276 step 5): a game taken from another seat - fetched, checked byte for byte and
+  // scanned, run in the sandbox, kept on disk and ACTIVATED AT ONCE (the round store, the doors and the ghosts all read
+  // `hosted`; no restart). An update must be the installed game's next version by the same developer; the version it
+  // replaces stays hosted for the rounds it already holds, and new rounds use the new one.
+  const superseded = new Map();     // old game id -> the id that replaced it
+  // A GAME'S EARLIER VERSIONS, oldest first: from its own chain (an installed update's) and from the versions hosted here
+  const chainOf = (g) => {
+    const byId = new Map((g.ancestors || []).map((m) => [toHex(gameIdOf(m)), m]));
+    for (let parent = toHex(g.manifest.parentManifestId); !/^0+$/.test(parent) && hosted.has(parent);) {
+      const m = hosted.get(parent).manifest;
+      if (!byId.has(parent)) byId.set(parent, m);
+      parent = toHex(m.parentManifestId);
+    }
+    return [...byId.values()].sort((x, y) => x.version - y.version);
+  };
+  const hostedParent = (id) => { const g = hosted.get(toHex(id)); return g ? g.manifest : null; };
+  const installedInfo = (id) => { const g = hosted.get(id); return g ? { gameId: id, devKey: toHex(g.manifest.gameDevPubkey), version: g.manifest.version, parent: toHex(g.manifest.parentManifestId) } : null; };
+  async function takeGame({ game, from, replaces = null }) {
+    if (!pluginsDir) return { ok: false, status: 409, why: 'this seat keeps no installed games (no plugins directory)' };
+    from = String(from || '').replace(/\/+$/, '');
+    if (!/^[0-9a-f]{64}$/.test(game) || !/^https?:\/\//.test(from)) return { ok: false, status: 400, why: 'name a game id and the seat to take it from' };
+    if (hosted.has(game)) return { ok: false, status: 409, why: 'this seat already hosts that game' };
+    if (replaces !== null && !hosted.has(replaces)) return { ok: false, status: 409, why: 'this seat does not host the game that version would replace' };
+    let pkg;
+    try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+    catch (e) { return { ok: false, status: 502, why: `that seat did not hand the game over: ${e.message}` }; }
+    const v = verifyPackage(pkg, { verify: verifyEd25519, want: game, parentOf: hostedParent });
+    if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return { ...v, status: 422 }; }
+    // the package kept with its whole chain, so it stands at the next start even once its old version is removed
+    if (replaces !== null) { const chain = [...chainOf(hosted.get(replaces)), hosted.get(replaces).manifest]; pkg = { ...pkg, ancestors: chain.map((m) => toHex(encodeManifest(m))) }; }
+    if (replaces !== null) {
+      const u = checkUpdate(installedInfo(replaces), v);
+      if (!u.ok) { console.log(`[plugins] refused update ${game.slice(0, 16)} of ${replaces.slice(0, 16)}: ${u.why}`); return { ...v, ok: false, status: 422, why: u.why }; }
+    }
+    const at = installPackage(pluginsDir, pkg, game);
+    let reg;
+    try { reg = await registrationFromPackage(at, pkg); } catch (e) { return { ok: false, status: 500, why: `kept, but it does not load: ${e.message}` }; }
+    const entry = hostedPlugins([reg]).get(game);
+    hosted.set(game, entry);
+    if (replaces !== null) superseded.set(replaces, game);
+    console.log(`[plugins] ${replaces ? `updated ${replaces.slice(0, 16)} to` : 'installed'} ${v.name} v${v.version} (${game.slice(0, 16)}) from ${from}: running now`);
+    return { ...v, ok: true, game, from, installedAt: at, running: true, replaces };
+  }
+  // A GAME OFF THIS SEAT: only an installed one, and not while a round of it is unfinished here (its players are owed it)
+  function removeGame(game) {
+    if (!pluginsDir || !existsSync(joinPath(pluginsDir, game))) return { ok: false, status: 409, why: 'only a game installed from the store can be removed here' };
+    const nowMs = round.now();
+    let open = 0;
+    for (const r of round.db.prepare('SELECT round_id, contract FROM rounds').all()) {
+      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+      if (toHex(c.gameId) !== game) continue;
+      let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); }
+      if (nowMs < end + Number(c.objectionWindowMs)) open++;
+    }
+    if (open) return { ok: false, status: 409, why: `${open} round(s) of that game are not finished on this seat: it is removed once they are` };
+    hosted.delete(game);
+    superseded.delete(game);
+    renameSync(joinPath(pluginsDir, game), joinPath(pluginsDir, `.removed-${Date.now()}-${game}`));
+    console.log(`[plugins] removed ${game.slice(0, 16)}`);
+    return { ok: true, game, removed: true };
+  }
+  // AUTOMATIC UPDATES (the owner's setting): every 10 minutes the source seats are asked for a newer version of each game
+  // hosted here - same developer, the hosted one as its parent, a higher version - and it is taken as an update would be
+  const autoUpdate = async () => {
+    if (!owner || !pluginsDir) return;
+    const set = owner.storeSettings();
+    if (!set.autoUpdate || !set.sources.length) return;
+    for (const from of set.sources) {
+      let got; try { got = await (await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) })).json(); } catch { continue; }
+      for (const g of got.games || []) {
+        if (hosted.has(g.id)) continue;
+        let m; try { m = decodeManifest(fromHex(g.manifest)); } catch { continue; }
+        const parent = toHex(m.parentManifestId);
+        if (!hosted.has(parent) || superseded.has(parent)) continue;
+        const u = checkUpdate(installedInfo(parent), { devKey: toHex(m.gameDevPubkey), parent, version: m.version });
+        if (!u.ok) continue;
+        const r = await takeGame({ game: g.id, from, replaces: parent });
+        console.log(`[plugins] automatic update of ${parent.slice(0, 16)} from ${from}: ${r.ok ? 'taken' : r.why}`);
+      }
+    }
+  };
+  const autoUpdateTimer = setInterval(() => { autoUpdate().catch((e) => console.error(`[plugins] automatic update: ${e.message}`)); }, Number(process.env.ARENA_AUTO_UPDATE_MS || 600000));
+  if (autoUpdateTimer.unref) autoUpdateTimer.unref();
   // THE DONATION SET A ROUND NAMES, AS THIS SIGNER NODE CAN STAND BEHIND IT (M3.2 6e):
   // one of the handed sets whose recipients hash to the id the round's contract
   // names, for the round's network, in force at the round's census height, and
@@ -2507,10 +2591,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
           const installed = [];
-          if (pluginsDir && existsSync(pluginsDir)) for (const id of readdirSync(pluginsDir)) {
+          if (pluginsDir && existsSync(pluginsDir)) for (const id of readdirSync(pluginsDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
             try { const p = JSON.parse(readFileSync(joinPath(pluginsDir, id, 'package.json'), 'utf8')); installed.push({ id, name: p.name, title: p.title, running: hosted.has(id) }); } catch { /* not a package */ }
           }
-          return answer(200, { hosted: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title })), installed });
+          return answer(200, { hosted: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title, version: g.manifest.version,
+            devKey: toHex(g.manifest.gameDevPubkey), installed: !!(pluginsDir && existsSync(joinPath(pluginsDir, toHex(g.gameId)))), supersededBy: superseded.get(toHex(g.gameId)) || null })),
+            installed, settings: owner.storeSettings() });
         }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
           const newest = new Map();
@@ -2525,24 +2611,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/owner/claim') { const r = owner.claim(body); return answer(r.ok ? 200 : r.status, r); }
         // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
         if (url.pathname === '/owner/leave') { const r = owner.leave(body); return answer(r.ok ? 200 : r.status, r); }
-        // INSTALL A GAME FROM ANOTHER SEAT (step 5): signed by the owner, { game, from }; fetched, checked byte for byte against
-        // its manifest and scanned before anything is written; it runs from this seat's next start
-        if (url.pathname === '/owner/plugins/install') {
-          const a = owner.authorize(body, 'install');
+        // INSTALL, UPDATE, REMOVE (kanban #276 step 5, the owner 2026-10-10: like an App Store, from the browser, no restart): each
+        // signed by the owner; a game is fetched from another seat, checked (plugin-check.js + the trial run) and activated at once
+        if (url.pathname === '/owner/plugins/install' || url.pathname === '/owner/plugins/update') {
+          const action = url.pathname.endsWith('install') ? 'install' : 'update';
+          const a = owner.authorize(body, action);
           if (!a.ok) return answer(a.status, a);
-          if (!pluginsDir) return answer(409, { ok: false, why: 'this seat keeps no installed games (no plugins directory)' });
-          const game = String((body.args && body.args.game) || '').toLowerCase(), from = String((body.args && body.args.from) || '').replace(/\/+$/, '');
-          if (!/^[0-9a-f]{64}$/.test(game) || !/^https?:\/\//.test(from)) return answer(400, { ok: false, why: 'install names a game id and the seat to take it from' });
-          if (hosted.has(game)) return answer(409, { ok: false, why: 'this seat already hosts that game' });
-          let pkg;
-          try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
-          catch (e) { return answer(502, { ok: false, why: `that seat did not hand the game over: ${e.message}` }); }
-          const v = verifyPackage(pkg, { verify: verifyEd25519, want: game });
-          if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return answer(422, v); }
-          const at = installPackage(pluginsDir, pkg, game);
-          console.log(`[plugins] installed ${v.name} (${game.slice(0, 16)}) from ${from} into ${at}: it runs from the next start`);
-          return answer(200, { ok: true, game, name: v.name, from, installedAt: at, activeFrom: 'the next start of this seat' });
+          const args = body.args || {};
+          const r = await takeGame({ game: String(args.game || '').toLowerCase(), from: String(args.from || ''), replaces: action === 'update' ? String(args.replaces || '').toLowerCase() : null });
+          return answer(r.status || (r.ok ? 200 : 422), r);
         }
+        if (url.pathname === '/owner/plugins/remove') {
+          const a = owner.authorize(body, 'remove');
+          if (!a.ok) return answer(a.status, a);
+          const r = removeGame(String((body.args && body.args.game) || '').toLowerCase());
+          return answer(r.status || (r.ok ? 200 : 409), r);
+        }
+        if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/login') {
           const r = owner.authorize(body, 'login');
@@ -2900,7 +2985,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/plugin') {
         const g = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
         if (!g) return text(res, 404, 'this seat hosts no such game');
-        let pkg; try { pkg = packageOf(g); } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
+        let pkg; try { pkg = packageOf(g, { ancestors: chainOf(g) }); } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
         if (!pkg) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
         return res.end(JSON.stringify(pkg));
@@ -5137,6 +5222,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
+        clearInterval(autoUpdateTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);
         settlements.stop();
