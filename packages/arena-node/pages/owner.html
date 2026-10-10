@@ -279,7 +279,10 @@ async function networkPanel() {
     try { games = (await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json()).hosted.map((g) => g.id); } catch { games = []; }
     const inst = mine.installed.map((n) => `<div class="card"><div class="row"><span>Installed · network ${esc(n.network.slice(0, 12))}… · package ${esc(n.id.slice(0, 12))}…</span>
       <b><button data-nremove="${esc(n.network)}">Remove</button></b></div>${fourRows(n)}</div>`).join('');
-    $('netmine').innerHTML = `<div class="row"><span>This seat reads</span><b>${esc(mine.chain || 'no chain named')}</b></div>
+    // A DRAINING FEDERATION (custody succession, §23A.6): no new round or deposit names it here; its successor takes them
+    const draining = (mine.draining || []).map((d) => `<div class="row"><span>Draining since ${when(d.sinceMs)}</span>
+      <b>federation ${esc(d.federationId.slice(0, 12))}… → successor ${esc(d.successor.slice(0, 12))}…</b></div>`).join('');
+    $('netmine').innerHTML = `<div class="row"><span>This seat reads</span><b>${esc(mine.chain || 'no chain named')}</b></div>${draining}
       ${mine.own && !mine.own.why ? `<p class="sub">This seat's network now:</p>${fourRows(mine.own)}` : ''}${inst}`;
     for (const b of $('netmine').querySelectorAll('button[data-nremove]')) b.onclick = async () => {
       $('nerr').textContent = '';
