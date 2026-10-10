@@ -147,6 +147,24 @@ test('the pick: the entry carries it, every seat is handed the entry, the stake 
   for (const s of ['seat-a', 'seat-b']) for (const door of ['/entry', '/lock', '/fee-lock']) assert.ok(posts.includes(`${s}${door}`), `${s}${door} not handed`);
 });
 
+test('a hidden move is the tab\'s once the seats took its entry: onEntries before the guardians accept, the locks after (kanban #293)', async () => {
+  const seed = b32(3);
+  const round = { ...CONTRACT, id: ROUND_ID, custody: 'FEDERATION', federationId: b32(9), stakeMsat: 0n };
+  const entry = { ...entryFor(round, { seed, curve: (await import('../src/page-curve.js')).pageCurve, random: () => b32(5), pick: 1 }), roundId: ROUND_ID, sessionPubkey: b32(6) };
+  const order = [];
+  const fetcher = async (url) => { order.push(new URL(url).pathname); return { status: 201, ok: true, text: async () => '', arrayBuffer: async () => new ArrayBuffer(0) }; };
+  let accept;
+  const lock = { fields: { paymentImage: { kind: 'point', bytes: new Uint8Array(33).fill(2) }, amountMsat: 900000n, claimPk: new Uint8Array(33).fill(2), refundPk: new Uint8Array(33).fill(2), expiration: 300 },
+    accepted: new Promise((r) => { accept = r; }) };
+  const p = submitPick({ entry, stakeLock: lock, nodes: ['http://seat-a', 'http://seat-b'], fetcher, onEntries: (x) => order.push('onEntries:' + x.entries.filter((e) => e.status === 201).length) });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(order, ['/entry', '/entry', 'onEntries:2'], 'the entries out and counted, and no lock handed before the guardians accepted it');
+  accept({});
+  const sent = await p;
+  assert.equal(sent.ok, true);
+  assert.equal(order.filter((x) => x === '/lock').length, 2, 'the lock handed to both seats after acceptance');
+});
+
 test('picked: the join of a pick ends \'picked\' before the session\'s globals - and Unity adopts only joining/joined', () => {
   const then = PAGE.indexOf("if (window.BLWP_PICKED && window.BLWP_PICKED.round === id) {");
   const entryBranch = PAGE.indexOf("if (window.BLWP_ENTRY && Number(window.BLWP_ENTRY.joinTick) > 0", then);
@@ -237,3 +255,4 @@ test('an order brings its own amount (kanban #237): orderStakeMsat beside the co
   assert.equal(e.stakeMsat, 2500000n);
   assert.equal(e.feeMsat, 25000n, '1 % of the order\'s own amount');
 });
+
