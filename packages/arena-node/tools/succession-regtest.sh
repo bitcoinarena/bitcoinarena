@@ -44,6 +44,7 @@ ecash() { cl $1 info 2>/dev/null | js 'o=>Number(o.total_amount_msat)'; }
 gwecash() { gw get-balances | js "o=>((o.ecash_balances||[]).find(b=>b.federation_id==='$1')||{}).ecash_balance_msats||0"; }
 audit() { cl $1 --our-id 0 --password probe admin audit 2>/dev/null | js 'o=>JSON.stringify(Object.fromEntries(Object.entries(o.module_summaries).map(([k,v])=>[v.kind||k,Number(v.net_assets)])))'; }
 MINE=""
+nowms() { node -e 'process.stdout.write(String(Date.now()))'; }   # GNU date's %3N is not on macOS
 t0=$(date +%s)
 
 # ---- 1. THE OLD FEDERATION, ONE GATEWAY ----
@@ -63,7 +64,7 @@ for p in p1 p2; do
   alice payinvoice --force "$INVOICE" > $P/$p-pay.out 2>&1
   cl $p module lnv2 await-receive "$OP" > /dev/null 2>&1
 done
-BOB_INV0=$(bob listinvoices | js 'o=>o.invoices.length'); ALICE_PAY0=$(alice listpayments | js 'o=>o.payments.length')
+BOB_INV0=$(bob listpayments | js 'o=>o.payments.length'); ALICE_PAY0=$(alice listpayments | js 'o=>o.payments.length'); BOB_CH0=$(bob channelbalance | js 'o=>o.local_balance.sat')
 BEFORE=$(printf '{"p1":%s,"p2":%s,"gatewayOld":%s,"auditOld":%s}' "$(ecash p1)" "$(ecash p2)" "$(gwecash $FED1)" "$(audit client)")
 echo "BEFORE $BEFORE"
 
@@ -103,7 +104,7 @@ echo "successor $FED2 (4 guardians: 3 seated first + 1 drawn) up; gateway A in b
 MOVES=""
 for p in p1 p2; do
   have=$(ecash $p); mkdir -p $P/${p}n; cl ${p}n join "$INV2" >/dev/null
-  t=$(date +%s%3N); amt=$have; ok=""
+  t=$(nowms); amt=$have; ok=""
   for try in 1 2 3; do
     R=$(cl ${p}n module lnv2 receive $amt --gateway http://127.0.0.1:30170 2>&1)
     INVOICE=$(echo "$R" | grep -oE 'lnbcrt[0-9a-z]+' | head -1); ROP=$(echo "$R" | grep -oE '[0-9a-f]{64}' | head -1)
@@ -113,22 +114,32 @@ for p in p1 p2; do
     echo "$SENT $GOT" | grep -qi 'success\|claimed\|funded' && { ok=1; break; }
     amt=$(( amt * 99 / 100 ))     # a fee the send must cover: 1 % less, again
   done
-  MOVES="$MOVES{\"player\":\"$p\",\"oldBefore\":$have,\"moved\":$amt,\"ms\":$(( $(date +%s%3N) - t )),\"send\":\"${SENT:0:80}\",\"receive\":\"${GOT:0:80}\",\"oldAfter\":$(ecash $p),\"successor\":$(ecash ${p}n)},"
+  MOVES="$MOVES{\"player\":\"$p\",\"oldBefore\":$have,\"moved\":$amt,\"ms\":$(( $(nowms) - t )),\"send\":\"${SENT:0:80}\",\"receive\":\"${GOT:0:80}\",\"oldAfter\":$(ecash $p),\"successor\":$(ecash ${p}n)},"
 done
-BOB_INV1=$(bob listinvoices | js 'o=>o.invoices.length'); ALICE_PAY1=$(alice listpayments | js 'o=>o.payments.length')
+BOB_INV1=$(bob listpayments | js 'o=>o.payments.length'); ALICE_PAY1=$(alice listpayments | js 'o=>o.payments.length'); BOB_CH1=$(bob channelbalance | js 'o=>o.local_balance.sat')
+BOB_SETTLED=$(bob listinvoices | js 'o=>o.invoices.filter(i=>i.state==="SETTLED").length')
 echo "MOVES [${MOVES%,}]"
 
 # ---- 5. THE OLD FEDERATION EMPTIED: the gateway's old e-cash pegged out ----
 GWOLD=$(gwecash $FED1)
 ADDR=$(bc getnewaddress)
-PEGOUT=$(gw ecash pegout --federation-id $FED1 --amount all --address $ADDR 2>&1 | tr -d '\n ')
+# "all" leaves the federation's wallet a change below dust when the gateway holds nearly all of it (measured: "Invalid request");
+# then 1,000 sat less at a time, and what is left behind is the dust the old federation cannot pay out (§23A.6 step 4)
+PEGOUT=""; LEFT=0
+for keep in 1000000 5000000 20000000 50000000 0; do   # "all" last: tried first it was aborted and held the e-cash (measured)
+  if [ $keep = 0 ]; then A=all; else A=$(( (GWOLD - keep) / 1000 * 1000 )); fi   # whole sats: the CLI refuses a part of one
+  PEGOUT=$(gw ecash pegout --federation-id $FED1 --amount $A --address $ADDR 2>&1 | tr -d '\n ')
+  echo "$PEGOUT" | grep -q txid && { LEFT=$keep; break; }
+  bc generatetoaddress 1 $MINE >/dev/null; sleep 3
+done
 bc generatetoaddress 12 $MINE >/dev/null; sleep 5; bc generatetoaddress 6 $MINE >/dev/null; sleep 3
 AFTER=$(printf '{"p1Old":%s,"p2Old":%s,"p1Successor":%s,"p2Successor":%s,"gatewayOldBeforePegout":%s,"gatewayOld":%s,"gatewaySuccessor":%s,"auditOld":%s,"auditSuccessor":%s}' \
   "$(ecash p1)" "$(ecash p2)" "$(ecash p1n)" "$(ecash p2n)" "$GWOLD" "$(gwecash $FED1)" "$(gwecash $FED2)" "$(audit client)" "$(audit client2)")
 echo "AFTER $AFTER"
 
 # ---- 6. THE OLD GUARDIANS' BONDS SPENT AT MATURITY ----
-BONDS=$(cd $HERE/.. && BITCOIN_BIN=$B BTC_DATADIR=$P/btc RPC=30101 GUARDIANS=4 node tools/succession-bonds.mjs 2>&1 | grep '^BONDS ' | cut -c7-)
+BONDS=$(cd $HERE/.. && BITCOIN_BIN=$B BTC_DATADIR=$P/btc RPC=30101 GUARDIANS=4 node tools/succession-bonds.mjs > $P/bonds.out 2>&1; grep '^BONDS ' $P/bonds.out | cut -c7-)
+[ -n "$BONDS" ] || { echo "BONDS FAILED:"; tail -15 $P/bonds.out; }
 echo "BONDS ${BONDS:-none}"
-echo "SUCCESSION $(printf '{"old":"%s","successor":"%s","before":%s,"moves":[%s],"onePath":{"gateway":"http://127.0.0.1:30170","bobInvoices":[%s,%s],"alicePayments":[%s,%s]},"pegout":"%s","after":%s,"bonds":%s,"seconds":%s}' \
-  "$FED1" "$FED2" "$BEFORE" "${MOVES%,}" "$BOB_INV0" "$BOB_INV1" "$ALICE_PAY0" "$ALICE_PAY1" "${PEGOUT:0:120}" "$AFTER" "${BONDS:-null}" "$(( $(date +%s) - t0 ))")"
+echo "SUCCESSION $(printf '{"old":"%s","successor":"%s","before":%s,"moves":[%s],"onePath":{"gateway":"http://127.0.0.1:30170","bobPayments":[%s,%s],"alicePayments":[%s,%s],"bobChannelSat":[%s,%s],"bobSettledInvoices":%s},"pegoutLeftMsat":%s,"pegout":"%s","after":%s,"bonds":%s,"seconds":%s}' \
+  "$FED1" "$FED2" "$BEFORE" "${MOVES%,}" "$BOB_INV0" "$BOB_INV1" "$ALICE_PAY0" "$ALICE_PAY1" "$BOB_CH0" "$BOB_CH1" "${BOB_SETTLED:-0}" "$LEFT" "${PEGOUT:0:120}" "$AFTER" "${BONDS:-null}" "$(( $(date +%s) - t0 ))")"
