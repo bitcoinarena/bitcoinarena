@@ -40,6 +40,12 @@ import { splitSignedAdvert } from '../../arena-protocol/src/advert.js';
 import { witnessRunsOf } from '../../arena-protocol/src/tx.js';
 
 const env = process.env;
+// THE GAMES EACH SEAT HOSTS (kanban #293, the owner 2026-10-10: the seven seats name Tick Tock, Rock Paper Scissors and Bitcoin Up
+// or Down): ARENA_HOSTED_GAMES, game ids in hex, comma-separated - written sorted, as an advertisement lists them; unset,
+// nextblock's alone (as the #209 updates). A seat serves a game's rounds only if its advert in the round's census names it.
+const HOSTED = (env.ARENA_HOSTED_GAMES ? env.ARENA_HOSTED_GAMES.split(',').map((x) => fromHex(x.trim())) : [NEXTBLOCK.gameId])
+  .sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
+if (!HOSTED.every((g) => g.length === 32) || new Set(HOSTED.map(toHex)).size !== HOSTED.length) throw new Error('ARENA_HOSTED_GAMES: 32-byte game ids, each once');
 const publish = process.argv.includes('--publish');
 const updateOnly = process.argv.includes('--update-only');
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
@@ -124,7 +130,7 @@ for (let n = 1; n <= 7; n++) {
   if (!bond.ancestor) throw new Error(`node ${n}: its bond is not the BLWP network's - nothing to re-affirm (already Arena's?)`);
   const blwp = newestAncestorUpdateOf(bond, pubkey);
   const base = blwp ? blwp.advert : bond.bondAdvert;
-  const advert = { ...base, hostedGames: [NEXTBLOCK.gameId], timestamp: BigInt(Date.now()) };
+  const advert = { ...base, hostedGames: HOSTED, timestamp: BigInt(Date.now()) };
   const g = guardiansOk(advert);
   if (!g.ok) throw new Error(`node ${n}: the update ${g.why}`);
   say({ node: n, carries: blwp ? `BLWP update ${blwp.txid.slice(0, 16)} at ${blwp.height}` : `bond advertisement at ${bond.height}`,
@@ -185,7 +191,7 @@ for (const p of plans) {
   const read = readAdvertUpdate(fromHex(u.hex), { network: 'testnet4' });
   const checked = read.ok ? await checkAgainstBond(read, { txid: bondTxid, vout: p.bond.vout, nodePubkey: p.pubkey }, verify) : read;
   if (!checked.ok) throw new Error(`node ${p.n}: the update does not read back: ${checked.why}`);
-  if (toHex(checked.advert.hostedGames[0] || new Uint8Array()) !== toHex(NEXTBLOCK.gameId)) throw new Error(`node ${p.n}: the update hosts another game`);
+  if (checked.advert.hostedGames.map(toHex).join(',') !== HOSTED.map(toHex).join(',')) throw new Error(`node ${p.n}: the update hosts other games than ${HOSTED.map((g) => toHex(g).slice(0, 8)).join(', ')}`);
   const gr = guardiansOk(checked.advert);
   if (!gr.ok || (federation && !gr.keys.length)) throw new Error(`node ${p.n}: the update as read back ${gr.why || 'names none of the federation\'s guardians'}`);
   built.push({ n: p.n, bond: `${p.bond.txid}:${p.bond.vout}`, reaffirmation: r, update: u });
