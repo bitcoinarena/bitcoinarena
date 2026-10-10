@@ -36,6 +36,7 @@ import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { entryFeeMsat, feeBpsOf, entryFeeBpsOf } from '../../arena-protocol/src/fee.js';
 import { cancelId, BATCH_MS } from '../../arena-protocol/src/order-book.js';
 import { OrderBook } from './order-batch.js';
+import { PriceFeed } from './price-feed.js';
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
@@ -294,6 +295,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE MARKET ORDER BOOK'S BATCHES (kanban #278 step 4): the interval - 0.5 s, measured to hold (order-book.js BATCH_MS) -
   // and whether this seat leads its batches on its own clock: on by default; a test that drives `orderBook.lead` turns it off
   orderBatchMs = Number(BATCH_MS), orderBatchTimer = true,
+  // THE COMMITTEE'S PRICE FEED (§11, kanban #311): off by default (a harness seat reads no exchange); `true` reads Coinbase
+  // every 5 s and leads/signs the attested samples of the price rounds it holds; `{ readPrice }` injects the reader
+  priceFeed = false,
   // §15 AT THE DOOR (ALL-BUT-MIN-1727): how often the walk-away door is swept; on wherever the node closes its own rounds.
   doorSweepMs = closeAtEnd ? 5000 : 0,
   // THE SERIES THIS NODE WRITES AHEAD (NODE72-1131): series templates (arena-protocol/src/series.js `seriesTemplate`), each
@@ -1074,6 +1078,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (orderBatchTimeout.unref) orderBatchTimeout.unref();
   };
   if (orderBatchTimer) scheduleOrderBatch();
+  // A PRICE ROUND: a replayed game whose world moves with the price - nextblock (§0.5A, §11); attested markets and
+  // head-to-head games have no front
+  const priceRound = (c) => { const f = pluginForRound(c, hosted); return f.ok && !f.attested && f.plugin && (f.plugin.name === 'nextblock' || (f.plugin.manifest && f.plugin.manifest.gameName === 'nextblock')); };
+  const prices = new PriceFeed(round, { priceRound, now: () => round.now(),
+    ...(priceFeed && typeof priceFeed === 'object' && priceFeed.readPrice ? { readPrice: priceFeed.readPrice } : {}),
+    peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
+  let priceTimeout = null;
+  if (priceFeed) {
+    const schedulePrices = () => {
+      priceTimeout = setTimeout(async () => {
+        const out = await prices.beat().catch((e) => [['error', { ok: false, why: e.message }]]);
+        for (const [what, got] of out) if (!got.ok) console.log(`[prices] ${what}: ${got.why}`);
+        if (priceTimeout) schedulePrices();
+      }, 5000 - (Date.now() % 5000) + 300);
+      if (priceTimeout.unref) priceTimeout.unref();
+    };
+    schedulePrices();
+  }
   const settlements = new LockSettlement(round, {
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook,
     peersFor: (rid) => {
@@ -4052,6 +4074,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // void of a batch that can no longer be certified (POST /batch-void-ask, POST /batch-void), and every certified batch
       // for a seat that missed one (GET /book-certificates). For anyone: the book as this seat clears it (GET /book), and a
       // player's sell of shares its entry holds (POST /sell, its session key; matched in a batch, paid at settlement).
+      // THE COMMITTEE'S PRICE SAMPLES (§11, kanban #311): sign one this seat read too, keep one that stands, list what it holds
+      if (req.method === 'GET' && url.pathname === '/price-samples') {
+        const rh = String(url.searchParams.get('round') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(rh)) return text(res, 400, 'GET /price-samples?round=<id>&since=<tick>');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(prices.list(rh, Number(url.searchParams.get('since') || 0) || 0)));
+      }
+      if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested')) {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
+        const got = url.pathname === '/price-sign' ? prices.sign(body) : prices.hold(body);
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       if (req.method === 'GET' && (url.pathname === '/batch-proposal' || url.pathname === '/book' || url.pathname === '/book-certificates')) {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
@@ -5468,6 +5504,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(settleRecoverTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
+        if (priceTimeout) { clearTimeout(priceTimeout); priceTimeout = null; }
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
