@@ -16,3 +16,6 @@ export const verifyEd25519 = (sig, msg, key) => { try { return ed25519.verify(si
 // THE NETWORK STORE'S CHECKS IN THE PAGE (kanban #276): federation invite, donation sets, series and chain, each against its
 // own authority - the report the owner reads before Install; the seat runs the same and its trial
 export { checkNetworkPackage, checkNetworkUpdate } from '../src/network-check.js';
+// LOGIN WITH NOSTR (kanban #277): an owner request as a Nostr event, and the Nostr signers (extension, remote, nsec, new account)
+export { signOwnerEvent } from '../src/owner.js';
+export { extensionSigner, bunkerSigner, nostrConnect, signerFromNsec, newAccount, npubOf, textQrSvg } from '../../arena-client/nostr/entry.js';
