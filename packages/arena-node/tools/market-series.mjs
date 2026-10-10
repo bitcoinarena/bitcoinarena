@@ -24,6 +24,7 @@ import { bondSetFor } from '../src/curve.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { MARKET } from '../test/plugins/market/index.js';
 import { UPDOWN, UPDOWN_TERMS } from '../test/plugins/updown/index.js';
+import { ROCK_PAPER_SCISSORS } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
@@ -45,7 +46,8 @@ const host = '127.0.0.1';
 const storeOf = (i) => `${env.SEAT_DIR}/node-${i + 1}.db`;
 const keyOf = (i) => { const db = openStore(storeOf(i)); try { return nodeIdentity(db); } finally { if (db.close) db.close(); } };
 // THE UP/DOWN MARKET TOO (kanban #236/#237): every seat hosts it, and SERIES_GAME=updown publishes its 15-minute series
-const HOSTED = [NEXTBLOCK.gameId, MARKET.registration.gameId, UPDOWN.registration.gameId].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
+// AND ROCK PAPER SCISSORS (kanban #293): every seat hosts it, and PAID_RPS=1 keeps paid rounds of it on the 8 s grid
+const HOSTED = [NEXTBLOCK.gameId, MARKET.registration.gameId, UPDOWN.registration.gameId, ROCK_PAPER_SCISSORS.gameId].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 const rt = regtest(cli, { network: 'regtest', wallet: env.WALLET || 'tn4rt' });
 const lock = stakeLockPort({ bin: env.LOCK_BIN, dataDir: env.CLIENT_DIR });
 
