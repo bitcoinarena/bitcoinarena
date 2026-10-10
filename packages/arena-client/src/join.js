@@ -297,6 +297,13 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
  * and reads nothing off the round itself.
  */
 export const roundPays = (round) => !!round && BigInt(round.stakeMsat || 0n) > 0n;
+/**
+ * WHAT THIS ENTRY STAKES (kanban #237): an order in a paid market round brings its own amount - the page sets it on its
+ * round object as `orderStakeMsat`, beside the contract's fields, so the round's id and bytes are untouched - and every
+ * other entry stakes the round's stake_msat.
+ */
+export const stakeOf = (round) => (round && round.orderStakeMsat !== undefined && round.orderStakeMsat !== null
+  ? BigInt(round.orderStakeMsat) : BigInt((round && round.stakeMsat) || 0n));
 
 /**
  * DOES THIS ROUND'S STAKE GO INTO A FEDERATION LOCK? A paying round that names a
@@ -803,7 +810,7 @@ function feeLockOf(stakeLock, round) {
   if (!f.fields || !f.fields.paymentImage || f.fields.paymentImage.kind !== 'hash'
     || toHex(f.fields.paymentImage.bytes) !== toHex(sha256(f.preimage)))
     throw new Error('that fee lock is not locked to H(F) of the F it hands over');
-  const want = entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round));
+  const want = entryFeeMsat(stakeOf(round), feeBpsForRound(round));
   if (f.fields.amountMsat !== want) throw new Error(`that fee lock holds ${f.fields.amountMsat} msat and the entry's fee is ${want}`);
   return f;
 }
@@ -822,7 +829,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   if (typeof donationMsat !== 'bigint' || donationMsat < 0n)
     throw new Error('a donation is a BigInt millisatoshi amount, 0 or more');
   {
-    const stakeMsat = BigInt(round.stakeMsat || 0n);
+    const stakeMsat = stakeOf(round);
     const feeBps = feeBpsForRound(round);
     const fee = feeMatchesEntry({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBps), donationMsat }, { feeBps });
     if (!fee.ok) throw new Error(fee.why);
@@ -912,7 +919,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
     ...(order ? { limitPrice, orderExpiryMs } : {}),
-    stakeMsat: BigInt(round.stakeMsat || 0n),
+    stakeMsat: stakeOf(round),
     // THE NODE FEE, AND IT IS 2% OF THIS ENTRY'S OWN STAKE - taken OUT of it,
     // never on top (22A). The stake is the one number the wallet commits; the
     // hold is for what is left once the fee and the donation are out.
@@ -926,7 +933,7 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     //
     // A free round is 2% of nothing, which is nothing, so the same line is
     // right for both and there is no branch to get wrong.
-    feeMsat: entryFeeMsat(BigInt(round.stakeMsat || 0n), feeBpsForRound(round)),
+    feeMsat: entryFeeMsat(stakeOf(round), feeBpsForRound(round)),
     donationMsat,
     joinTick,
   };

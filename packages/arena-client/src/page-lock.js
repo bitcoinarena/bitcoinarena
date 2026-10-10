@@ -20,7 +20,7 @@ import { taggedHash, toHex, fromHex, sha256 } from '../../arena-protocol/src/has
 import { TAG } from '../../arena-protocol/src/constants.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
-import { feeBpsForRound } from './join.js';
+import { feeBpsForRound, stakeOf } from './join.js';
 import { refundKeyOf, lockFieldsToJson, lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
@@ -94,7 +94,7 @@ export function lockLine(stakeLock) {
  * have held 98000 msat where the signer node wants 96000.
  */
 export const lockAmountMsat = (round, donationMsat = 0n) => {
-  const stakeMsat = BigInt(round.stakeMsat || 0n);
+  const stakeMsat = stakeOf(round);
   return netStakeMsat({ stakeMsat, feeMsat: entryFeeMsat(stakeMsat, feeBpsForRound(round)), donationMsat });
 };
 
@@ -279,7 +279,8 @@ async function locksFor(round, client, donationMsat, donationRecipients = null) 
   if (feeRule && feeRule.baseMsat > 0n)
     throw new Error(`no stake is locked to this round: its federation charges a base fee of ${feeRule.baseMsat} msat `
       + 'on every input and output - a federation for BLWP runs with disable_base_fees (FEDERATION.md)');
-  const feeGate = feeLockPays({ contract: round, fees: feeRule, feeBps: feeBpsForRound(round) });
+  // its fee lock on what this entry stakes: an order's own amount (kanban #237), else the round's
+  const feeGate = feeLockPays({ contract: { ...round, stakeMsat: stakeOf(round) }, fees: feeRule, feeBps: feeBpsForRound(round) });
   // A FEDERATION WITH NO FEES (0/0) quotes every lock exactly - its amount in whole notes - so the stake check needs no
   // allowance on top (the owner 2026-10-01: the 2 sat "reserve" made one 100 sat round ask 100.352 + 2.006)
   const zeroFees = !!feeRule && feeRule.baseMsat === 0n && feeRule.ppm === 0n;
@@ -531,7 +532,7 @@ export function resumeDeposits({ client, storage, federationId, onClaimed = () =
 export async function settingsDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], donationMsat = 0n, donationRecipients = null, onDeposit = () => {}, onClaimed = () => {} } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
-  const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
+  const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit,
     storage, federationId: round.federationId, sizeOf: (n) => roundsDepositMsat(n, locks, LockClient) });
   offer.claimed.then((d) => { depositRow(storage, round, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
   return offer;
@@ -580,8 +581,8 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     // deposit before it, asked for at once.
     if (askDeposit) {
       const short = (n.need !== null ? n.need : n.floor) - have;
-      const restMsat = prev || shortOnlyByFees(have, short, round.stakeMsat) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
-      const offer = depositOffer({ client, stakeMsat: round.stakeMsat, haveMsat: have, needMsat: n.need, gateways, onDeposit,
+      const restMsat = prev || shortOnlyByFees(have, short, stakeOf(round)) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
+      const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
@@ -604,7 +605,7 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     // own wallet. A credit that still falls short is topped up by this loop's next deposit.
     // GROSS (GROSS-INVOICE-2053): the invoice is the round's stake, never the shortfall less fee and donation
     const plan = estimateDeposit
-      ? { invoice_msat: String(BigInt(round.stakeMsat || 0n) > 0n ? BigInt(round.stakeMsat) : asked), credited_msat: String(asked), gateway: '' }
+      ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
     const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
     const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };

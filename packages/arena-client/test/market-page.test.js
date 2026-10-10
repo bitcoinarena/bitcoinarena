@@ -226,3 +226,14 @@ test('the order (kanban #237): the entry carries its pick, limit price and expir
   assert.throws(() => entryFor(round, { seed, curve, random: () => b32(5), pick: 0, limitPrice: 0 }), /a limit price is a whole number/);
   assert.throws(() => entryFor(round, { seed, curve, random: () => b32(5), pick: 0, limitPrice: 1.5 }), /a limit price is a whole number/);
 });
+
+test('an order brings its own amount (kanban #237): orderStakeMsat beside the contract is what the entry stakes and pays its fee on', async () => {
+  const { stakeOf } = await import('../src/join.js');
+  const round = { ...CONTRACT, id: ROUND_ID, stakeMsat: 0n };
+  assert.equal(stakeOf(round), 0n);
+  assert.equal(stakeOf({ ...round, orderStakeMsat: 2500000n }), 2500000n);
+  const curve = (await import('../src/page-curve.js')).pageCurve;
+  const e = entryFor({ ...round, orderStakeMsat: 2500000n }, { seed: b32(3), curve, random: () => b32(5), pick: 0, limitPrice: 52000 });
+  assert.equal(e.stakeMsat, 2500000n);
+  assert.equal(e.feeMsat, 25000n, '1 % of the order\'s own amount');
+});

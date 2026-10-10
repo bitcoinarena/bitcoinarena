@@ -56,6 +56,7 @@ import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
+import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
@@ -114,7 +115,10 @@ if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
   // by id (22A), so the rounds already written keep theirs
   // AND, FROM ITS valid_from (154965), TESTNET4'S SET OF KEYS (serial 3; the owner 2026-10-03, FEDERATION.md "Donations in the
 // federation"): every round whose census reaches it names it; the rounds already written keep the set they named
-if (net) options.donationSets = net === 'regtest' ? [TEST_DONATION_SET_REGTEST] : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
+// ON REGTEST THE KEY SET WHEN ASKED (kanban #237): ARENA_REGTEST_DONATION_SET=keys - a market whose own game set pays keys
+// (the Up/Down test market) settles only beside a protocol set that pays keys too ("never one of each"); every other
+// regtest tool keeps the LNURL set
+if (net) options.donationSets = net === 'regtest' ? (process.env.ARENA_REGTEST_DONATION_SET === 'keys' ? [TEST_DONATION_SET_KEYS_REGTEST] : [TEST_DONATION_SET_REGTEST]) : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
 // ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
 // is taken over that count) and `cut=N` for a series replaced from round N by its tail.
