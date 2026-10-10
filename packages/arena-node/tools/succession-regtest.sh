@@ -23,7 +23,8 @@ B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
 L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 PAY_MSAT=${PAY_MSAT:-300000000}       # 300,000 sat per player
-bcn() { $B/bitcoin-cli -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp "$@"; }
+# the run's own datadir: a bitcoin.conf of the machine (the test host's names testnet4) must not reach these calls
+bcn() { $B/bitcoin-cli -datadir=$P/btc -regtest -rpcport=30101 -rpcuser=blwp -rpcpassword=blwp "$@"; }
 bc() { bcn -rpcwallet=probe "$@"; }
 stop() {
   for pid in $(cut -d' ' -f1 $P/pids 2>/dev/null); do kill -TERM -- -$pid 2>/dev/null; done
@@ -127,7 +128,7 @@ AFTER=$(printf '{"p1Old":%s,"p2Old":%s,"p1Successor":%s,"p2Successor":%s,"gatewa
 echo "AFTER $AFTER"
 
 # ---- 6. THE OLD GUARDIANS' BONDS SPENT AT MATURITY ----
-BONDS=$(cd $HERE/.. && BITCOIN_BIN=$B RPC=30101 GUARDIANS=4 node tools/succession-bonds.mjs 2>&1 | grep '^BONDS ' | cut -c7-)
+BONDS=$(cd $HERE/.. && BITCOIN_BIN=$B BTC_DATADIR=$P/btc RPC=30101 GUARDIANS=4 node tools/succession-bonds.mjs 2>&1 | grep '^BONDS ' | cut -c7-)
 echo "BONDS ${BONDS:-none}"
 echo "SUCCESSION $(printf '{"old":"%s","successor":"%s","before":%s,"moves":[%s],"onePath":{"gateway":"http://127.0.0.1:30170","bobInvoices":[%s,%s],"alicePayments":[%s,%s]},"pegout":"%s","after":%s,"bonds":%s,"seconds":%s}' \
   "$FED1" "$FED2" "$BEFORE" "${MOVES%,}" "$BOB_INV0" "$BOB_INV1" "$ALICE_PAY0" "$ALICE_PAY1" "${PEGOUT:0:120}" "$AFTER" "${BONDS:-null}" "$(( $(date +%s) - t0 ))")"

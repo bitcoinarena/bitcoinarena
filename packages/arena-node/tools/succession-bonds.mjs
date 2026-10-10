@@ -12,7 +12,7 @@ import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { chainFactsAt } from '../../arena-protocol/src/census.js';
 
 const B = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
-const cli = (...a) => execFileSync(`${B}/bitcoin-cli`, ['-regtest', `-rpcport=${process.env.RPC || 30101}`, `-rpcuser=${process.env.RPCUSER || 'blwp'}`,
+const cli = (...a) => execFileSync(`${B}/bitcoin-cli`, [...(process.env.BTC_DATADIR ? [`-datadir=${process.env.BTC_DATADIR}`] : []), '-regtest', `-rpcport=${process.env.RPC || 30101}`, `-rpcuser=${process.env.RPCUSER || 'blwp'}`,
   `-rpcpassword=${process.env.RPCPASS || 'blwp'}`, ...a], { encoding: 'utf8' }).trim();
 const w = (...a) => cli('-rpcwallet=bonds', ...a);
 const big = (b) => BigInt('0x' + toHex(b));
