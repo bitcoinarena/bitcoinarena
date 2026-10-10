@@ -22,7 +22,7 @@ import { parseTransaction, commitmentsOf } from './tx.js';
 export const REAFFIRM_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x46]);     // "ARN" 'F'
 export const REAFFIRM_BYTES = 4 + 8 + 64;
 
-const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const sameReaffirmBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 const bytes32 = (x, what) => { if (!(x instanceof Uint8Array) || x.length !== 32) throw new TypeError(`${what} is 32 bytes`); };
 
 /** What the bond's node key signs: this network, this bond. */
@@ -47,7 +47,7 @@ export function reaffirmationPayload({ networkId, signature }) {
 
 /** The payload's fields, or null for any other commitment. */
 export function readReaffirmationPayload(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== REAFFIRM_BYTES || !same(bytes.subarray(0, 4), REAFFIRM_MAGIC)) return null;
+  if (!(bytes instanceof Uint8Array) || bytes.length !== REAFFIRM_BYTES || !sameReaffirmBytes(bytes.subarray(0, 4), REAFFIRM_MAGIC)) return null;
   return { networkPrefix: bytes.slice(4, 12), signature: bytes.slice(12, 76) };
 }
 
@@ -71,7 +71,7 @@ export function reaffirmedBonds(view, entries, { atHeight, networkId, verify } =
       try { tx = parseTransaction(raw); } catch { return; }
       for (const c of commitmentsOf(tx)) {
         const p = readReaffirmationPayload(c);
-        if (!p || !same(p.networkPrefix, prefix)) continue;
+        if (!p || !sameReaffirmBytes(p.networkPrefix, prefix)) continue;
         for (const e of entries) {
           const key = keyOf(e);
           if (found.has(key) || height < e.height) continue;
