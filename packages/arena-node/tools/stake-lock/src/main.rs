@@ -215,13 +215,60 @@ async fn main() -> anyhow::Result<()> {
         "lock" => lock(&a, &client, lnv2, &api).await,
         "redeem" => redeem(&a, &client, lnv2, &api).await,
         "settle" => settle(&a, &client, lnv2, &api).await,
-        "status" => status(&a, &api).await,
-        "fees" => fees(&client, lnv2).await,
-        "guardians" => guardians(&client).await,
-        "gateways" => gateways(&client, &api).await,
+        "status" => { println!("{}", status(&a, &api).await?); Ok(()) }
+        "fees" => { println!("{}", fees(&client, lnv2).await?); Ok(()) }
+        "guardians" => { println!("{}", guardians(&client).await?); Ok(()) }
+        "gateways" => { println!("{}", gateways(&client, &api).await?); Ok(()) }
+        // THE SEAT'S READ-ONLY QUESTIONS, ONE CLIENT FOR ALL OF THEM (kanban #293, measured 2026-10-10 on the test host's paid
+        // RPS stack: a process per question opened the client's database and reached the guardians each time - dozens of
+        // them at 60-80 % CPU each with 8 s paid rounds, the machine at load 50 and a paid tap past 1.5 s): this process
+        // stays, the client open, and answers one JSON request per stdin line - { "id", "mode", "args": { name: value } } ->
+        // { "id", "ok", "result" | "error" }. Only status, fees, guardians, gateways and id: nothing that moves money.
+        "serve" => serve(&client, lnv2, &api).await,
         "send" => send(&a, &client).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send or id"),
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve or id"),
     }
+}
+
+async fn serve(client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match std::io::BufRead::read_line(&mut stdin.lock(), &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => { if tx.send(line.clone()).is_err() { break; } }
+            }
+        }
+    });
+    println!("{}", serde_json::json!({ "mode": "serve", "ready": true, "federation_id": client.federation_id().to_string() }));
+    while let Some(line) = rx.recv().await {
+        let req: serde_json::Value = match serde_json::from_str(line.trim()) { Ok(v) => v, Err(e) => {
+            println!("{}", serde_json::json!({ "id": null, "ok": false, "error": format!("not JSON: {e}") })); continue; } };
+        let id = req.get("id").cloned().unwrap_or(serde_json::Value::Null);
+        let mode = req.get("mode").and_then(|m| m.as_str()).unwrap_or("").to_owned();
+        let mut a: Args = HashMap::new();
+        if let Some(o) = req.get("args").and_then(|v| v.as_object()) {
+            for (k, v) in o { a.insert(k.clone(), v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())); }
+        }
+        let got = match mode.as_str() {
+            "status" => status(&a, api).await,
+            "fees" => fees(client, lnv2).await,
+            "guardians" => guardians(client).await,
+            "gateways" => gateways(client, api).await,
+            "id" => match need(&a, "expiration").and_then(|e| e.parse::<u64>().map_err(Into::into)) {
+                Ok(exp) => stake_contract(&a, exp).map(|c| serde_json::json!({ "mode": "id", "contract_id": c.contract_id().0.to_string() })),
+                Err(e) => Err(e),
+            },
+            other => Err(anyhow!("serve answers status, fees, guardians, gateways and id - not {other}")),
+        };
+        let out = match got { Ok(v) => serde_json::json!({ "id": id, "ok": true, "result": v }),
+            Err(e) => serde_json::json!({ "id": id, "ok": false, "error": format!("{e:#}") }) };
+        println!("{out}");
+    }
+    Ok(())
 }
 
 /// WINNINGS SENT: A GATEWAY IS ASKED TO PAY ONE OUTGOING CONTRACT'S INVOICE (§23.6; "winnings are always sent",
@@ -286,7 +333,7 @@ async fn send(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
 /// that does not answer, or answers that it does not serve this federation, is listed with `live: false`.
 /// Two URLs in front of one Lightning node carry one key and are one gateway; counting them is the
 /// caller's (`gatewaysAreIndependent`), not this tool's. Read-only: nothing is paid or registered.
-async fn gateways(client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<()> {
+async fn gateways(client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<serde_json::Value> {
     let lnv2 = client.get_first_module::<fedimint_lnv2_client::LightningClientModule>()?;
     let urls = lnv2.list_gateways(None).await.map_err(|e| anyhow!("the guardians did not list gateways: {e:?}"))?;
     let mut listed = Vec::new();
@@ -308,14 +355,13 @@ async fn gateways(client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<(
             Err(e) => serde_json::json!({ "url": url.to_string(), "live": false, "why": format!("{e:?}") }),
         });
     }
-    println!("{}", serde_json::json!({
+    Ok(serde_json::json!({
         "mode": "gateways",
         "federation_id": client.federation_id().to_string(),
         // THE FEDERATION'S OWN HEIGHT, the consensus block count a contract's expiration is measured against.
         "block_count": block_count(api).await?,
         "gateways": listed,
-    }));
-    Ok(())
+    }))
 }
 
 /// THE FEDERATION'S GUARDIANS, OFF ITS OWN CONFIG (the owner 2026-09-15 07:33: every guardian
@@ -325,7 +371,7 @@ async fn gateways(client: &ClientHandle, api: &DynModuleApi) -> anyhow::Result<(
 /// fedimint 0.12 hashes the endpoints into the federation id (calculate_federation_id), so the
 /// id fixes n and the threshold; the keys come with the config the stock client downloaded
 /// and checked on join. Read-only: nothing is sent.
-async fn guardians(client: &ClientHandle) -> anyhow::Result<()> {
+async fn guardians(client: &ClientHandle) -> anyhow::Result<serde_json::Value> {
     let config = client.config().await;
     let n = config.global.api_endpoints.to_num_peers();
     let keys = config
@@ -337,14 +383,13 @@ async fn guardians(client: &ClientHandle) -> anyhow::Result<()> {
         .iter()
         .map(|(peer, key)| serde_json::json!({ "peer": peer.to_string(), "key": key.to_string() }))
         .collect();
-    println!("{}", serde_json::json!({
+    Ok(serde_json::json!({
         "mode": "guardians",
         "federation_id": client.federation_id().to_string(),
         "guardians": n.total(),
         "threshold": n.threshold(),
         "keys": listed,
-    }));
-    Ok(())
+    }))
 }
 
 async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
@@ -478,18 +523,17 @@ async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
 
 /// What the guardians hold at an outpoint, and their block count - for a
 /// caller waiting on the guardians' count to reach an expiry.
-async fn status(a: &Args, api: &DynModuleApi) -> anyhow::Result<()> {
+async fn status(a: &Args, api: &DynModuleApi) -> anyhow::Result<serde_json::Value> {
     let op = outpoint(need(a, "outpoint")?)?;
     let count = block_count(api).await?;
     let stored = stored_at(api, op).await?;
-    println!("{}", serde_json::json!({ "mode": "status", "block_count": count, "stored": stored_json(stored) }));
-    Ok(())
+    Ok(serde_json::json!({ "mode": "status", "block_count": count, "stored": stored_json(stored) }))
 }
 
 /// THE GUARDIANS' OWN LNv2 FEE RULE, off the federation's config: `base +
 /// amount * ppm / 1e6` on every input and every output (lnv2-common config.rs).
 /// The seats read it before they size a settlement's payouts.
-async fn fees(client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<()> {
+async fn fees(client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<serde_json::Value> {
     let config = client.config().await;
     let fee = config
         .modules
@@ -498,8 +542,7 @@ async fn fees(client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<(
         .cast::<LightningClientConfig>()?
         .fee_consensus
         .clone();
-    println!("{}", serde_json::json!({ "mode": "fees", "fee_ppm": fee.parts_per_million, "fee_base_msat": fee.base.msats }));
-    Ok(())
+    Ok(serde_json::json!({ "mode": "fees", "fee_ppm": fee.parts_per_million, "fee_base_msat": fee.base.msats }))
 }
 
 async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
