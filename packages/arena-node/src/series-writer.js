@@ -21,10 +21,13 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
   if (!lead.ok) throw new Error(`series refused: ${lead.why}`);
   // AND ITS RUN FITS ITS SLOT (the 82/90 fork): on a core that takes the round's run length, at most 82 s of 90.
   const runs = round && round.plugins ? pluginForRound(template, round.plugins) : null;
-  // AND ITS GAME RUNS ON THIS NETWORK'S SERIES GRID (kanban #202: the manifest's round_period is read)
+  // AND ITS GAME'S round_period (kanban #202; a market's own, #236/#237)
   if (runs && runs.ok) {
     const period = seriesPeriodFits(runs.plugin.manifest);
     if (!period.ok) throw new Error(`series refused: ${period.why}`);
+    // ON ITS GAME'S OWN PERIOD (§0A.7b.4): stamped on the template, so its id, its rounds and its day's count follow it
+    // wherever the node reads this series (series.js periodOf); a 90 s game's series is exactly what it was
+    if (period.periodMs !== 90000n) template.seriesPeriodMs = period.periodMs;
   }
   if (runs && runs.ok && runs.core && !Number.isInteger(runs.core.fixedRunTicks)) {
     const fits = seriesRunFits(template);
