@@ -74,8 +74,15 @@ test('the node writes every round of the next 72 hours, the one 72 h out among t
   const tookMs = Date.now() - t0;
   try {
     const expected = series.reduce((n, t) => n + seriesRoundsWithin(t, BigInt(NOW), BigInt(NOW) + SERIES_LEAD_MIN_MS).length, 0);
-    const summary = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
-    const written = summary.series.reduce((n, x) => n + x.written, 0);
+    // THE WRITER RUNS IN ~150 ms SLICES (one turn of the loop each): under a loaded test run the last slices land after the
+    // first read, so the count is read until it stops short of nothing (measured: 2839 of 2880 at the first read, 6 files at once)
+    let summary, written = 0;
+    for (const until = Date.now() + 30000; ;) {
+      summary = await (await fetch(`http://127.0.0.1:${s.port}/series`)).json();
+      written = summary.series.reduce((n, x) => n + x.written, 0);
+      if (written >= expected || Date.now() > until) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
     assert.equal(written, expected);
     const last = summary.series.map((x) => x.last).filter(Boolean).sort((a, b) => (BigInt(a.startTimeMs) < BigInt(b.startTimeMs) ? -1 : 1)).at(-1);
     const lastStart = BigInt(last.startTimeMs);
