@@ -11,7 +11,7 @@
 // It runs the tool once per question, as the node's lndPort (node-start.js) runs lncli: the
 // federation is the tool's business, and a daemon that linked the client
 // crates in would be a daemon in Rust.
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CLIENT_DIR'];
@@ -25,6 +25,60 @@ const run = (bin, args, timeoutMs) => new Promise((done, fail) => {
 });
 
 const outpointArg = (o) => `${toHex(o.txid)}:${o.outIdx}`;
+
+// ONE LONG-LIVED TOOL FOR THE READ-ONLY QUESTIONS (kanban #293, measured 2026-10-10 on the test host's paid RPS stack: a process
+// per question opened the client's database and reached the guardians each time - with 8 s paid rounds, dozens of them at
+// 60-80 % CPU each, the machine at load 50 and a paid tap past 1.5 s at p95). `blwp-stake-lock --mode serve` keeps its client
+// open and answers one JSON line per question. A binary without that mode (an older build), a tool that exits, or a question
+// it does not answer in time: the question is asked the old way, one run, and the next start of the server waits a minute.
+export function stakeLockServer({ bin, dataDir, timeoutMs = 60000, spawnFn = spawn, now = () => Date.now() }) {
+  let child = null, ready = null, buf = '', n = 0, downUntil = 0;
+  const waiting = new Map();
+  const fail = (why) => { for (const [, w] of waiting) w.reject(new Error(why)); waiting.clear(); child = null; ready = null; downUntil = now() + 60000; };
+  const start = () => {
+    if (ready) return ready;
+    if (now() < downUntil) return Promise.reject(new Error('the stake-lock server is down for a minute'));
+    ready = new Promise((resolve, reject) => {
+      let up = false;
+      const c = spawnFn(bin, ['--mode', 'serve', '--data-dir', dataDir], { stdio: ['pipe', 'pipe', 'ignore'] });
+      child = c;
+      c.on('error', (e) => { if (!up) reject(e); fail(e.message); });
+      c.on('exit', (code) => { if (!up) reject(new Error(`the stake-lock server exited (${code}) - an older binary has no serve mode`)); fail(`the stake-lock server exited (${code})`); });
+      c.stdout.setEncoding('utf8');
+      c.stdout.on('data', (d) => {
+        buf += d;
+        for (let i = buf.indexOf('\n'); i >= 0; i = buf.indexOf('\n')) {
+          const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+          if (!line.startsWith('{')) continue;
+          let j; try { j = JSON.parse(line); } catch { continue; }
+          if (j.mode === 'serve' && j.ready) { up = true; resolve(c); continue; }
+          const w = waiting.get(j.id);
+          if (!w) continue;
+          waiting.delete(j.id); clearTimeout(w.timer);
+          if (j.ok) w.resolve(j.result); else w.reject(new Error(`blwp-stake-lock: ${j.error}`));
+        }
+      });
+      setTimeout(() => { if (!up) { reject(new Error('the stake-lock server did not come up')); try { c.kill(); } catch { /* gone */ } } }, timeoutMs).unref?.();
+    });
+    ready.catch(() => {});
+    return ready;
+  };
+  return {
+    async ask(mode, args) {
+      const c = await start();
+      const id = ++n;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`the stake-lock server did not answer ${mode} in ${timeoutMs} ms`)); }, timeoutMs);
+        timer.unref?.();
+        waiting.set(id, { resolve, reject, timer });
+        c.stdin.write(JSON.stringify({ id, mode, args }) + '\n');
+      });
+    },
+    close() { if (child) { try { child.kill(); } catch { /* gone */ } } fail('closed'); },
+  };
+}
+// the flags of a one-run call as the server's args: ['--a', 'x', '--b', 'y'] -> { a: 'x', b: 'y' }
+const argsOf = (flags) => { const o = {}; for (let i = 0; i + 1 < flags.length; i += 2) o[flags[i].replace(/^--/, '')] = flags[i + 1]; return o; };
 
 /** The tool's arguments for a contract's fields - the same flags its lock mode takes. */
 export function contractArgs(f) {
@@ -60,17 +114,24 @@ export const keptFor = (ms, fn, now = () => Date.now()) => {
 // after another, ~1.3 s apart, 13-19 s after it was held (measured on testnet4, rounds 1a21b8d0 and 1537ed99). `readDataDir`
 // (a copy of the joined directory, one per seat) answers status, guardians, gateways and fees, which submit nothing; send and
 // settle, which do, stay on `dataDir`.
-export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs = 60000, keepMs = 60000, now = () => Date.now() }) {
+export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs = 60000, keepMs = 60000, now = () => Date.now(), serve = true, spawnFn = spawn }) {
+  // THE READ-ONLY QUESTIONS THROUGH ONE SERVER on the read directory; a failed server question is asked the old way
+  const server = serve ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs, spawnFn, now }) : null;
+  const read = async (flags) => {
+    if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
+    return run(bin, flags, timeoutMs);
+  };
   const port = {
+    close() { if (server) server.close(); },
     async status(outpoint) {
-      const j = await run(bin, ['--mode', 'status', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)], timeoutMs);
+      const j = await read(['--mode', 'status', '--data-dir', readDataDir, '--outpoint', outpointArg(outpoint)]);
       return {
         blockCount: Number(j.block_count),
         stored: j.stored ? { contractId: String(j.stored.contract_id), blocksLeft: Number(j.stored.blocks_left) } : null,
       };
     },
     async contractId(fields) {
-      const j = await run(bin, ['--mode', 'id', ...contractArgs(fields)], timeoutMs);
+      const j = await read(['--mode', 'id', ...contractArgs(fields)]);
       return String(j.contract_id);
     },
     /**
@@ -81,7 +142,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     // POST /round - each player's PLAY - ran the stock client for the guardian set, ~0.5 s a round open; it changes in days.
     guardians() { return guardiansKept(); },
     async guardiansRead() {
-      const j = await run(bin, ['--mode', 'guardians', '--data-dir', readDataDir], timeoutMs);
+      const j = await read(['--mode', 'guardians', '--data-dir', readDataDir]);
       return { federationId: fromHex(String(j.federation_id)), guardians: Number(j.guardians), threshold: Number(j.threshold),
         keys: (j.keys || []).map((k) => fromHex(String(k.key))) };
     },
@@ -92,7 +153,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
      */
     gateways() { return gatewaysKept(); },
     async gatewaysRead() {
-      const j = await run(bin, ['--mode', 'gateways', '--data-dir', readDataDir], timeoutMs);
+      const j = await read(['--mode', 'gateways', '--data-dir', readDataDir]);
       return { federationId: fromHex(String(j.federation_id)),
         height: j.block_count === undefined ? null : Number(j.block_count),
         gateways: (j.gateways || []).map((g) => ({ url: String(g.url), live: g.live === true,
@@ -119,7 +180,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     fees() { return feesKept(); },
     async feesRead() {
-      const j = await run(bin, ['--mode', 'fees', '--data-dir', readDataDir], timeoutMs);
+      const j = await read(['--mode', 'fees', '--data-dir', readDataDir]);
       return { ppm: BigInt(j.fee_ppm), baseMsat: BigInt(j.fee_base_msat) };
     },
     /**
