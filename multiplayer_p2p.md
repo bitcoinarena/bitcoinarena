@@ -544,6 +544,15 @@ Positions as locks and the payout per share. The reference attestor daemon
 (three price sources, `upDownOutcome`). Selling before resolution. The
 market page: Up/Down prices, the price to beat, the order entry, positions.
 
+**0A.7b.4a Each order brings its own amount; market and limit orders** (AS BUILT 2026-10-10, kanban #237; the owner 2026-10-10:
+"Make the larger protocol change as needed to support both market and limit orders"). In a paid market round an order's
+stake is the player's own, 1 sat to 100,000 sat (`order-book.js` MIN_ORDER_MSAT, MAX_ORDER_MSAT); the round's
+`stake_msat` is what a plain pick stakes. The seat checks the order's 1 % fee on its own amount. A **limit order** names a
+price, a size and an expiry (none: it stands until the round's entry close). A **market order** is an order at most 10c
+over the price now with a 60 s expiry: it fills at its batch's one clearing price, and what does not fill expires and comes
+back at settlement. Both go through the same entry, deposit and locks; the page hands their locks to every seat until
+entry close, since a batch needs 5 seats holding an order's locks.
+
 **0A.7b.5 How the seats agree a batch** (kanban #278 step 4). A page posts
 a signed order to every seat (`POST /order`), and each seat keeps it with the
 time it arrived. Batch k takes what reached any seat before its cutoff,

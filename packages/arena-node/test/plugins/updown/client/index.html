@@ -120,7 +120,9 @@ if (!A || !A.market) {
       if (!(amt >= MIN_SAT && amt <= MAX_SAT)) return { why: `an amount of ${MIN_SAT} to ${MAX_SAT.toLocaleString('en-US')} sats` };
       const shares = Math.floor(net(amt) / (priceOf(pick) / 100));
       if (Math.floor(net(amt) / (p / 100)) < MIN_SHARES) return { why: `at this price an order is at least ${Math.ceil(MIN_SHARES * p / 100 / (1 - FEE_BPS / 10000))} sats` };
-      return { stakeSat: amt, limitCents: p, expiryMs: 0, shares, win: shares };
+      // A MARKET ORDER DOES NOT REST: what its first batches do not fill expires 60 s on - time for its locks to reach the seats
+      // and a batch to clear - and comes back at settlement (book-ledger.js: an expired rest is refunded whole)
+      return { stakeSat: amt, limitCents: p, expiryMs: Date.now() + 60000, shares, win: shares };
     }
     const lp = Math.floor(Number($('lp').value)), sh = Math.floor(Number($('sh').value));
     if (!(lp >= 1 && lp <= 99)) return { why: 'a limit price of 1 to 99¢' };
