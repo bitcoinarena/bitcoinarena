@@ -10,7 +10,7 @@
 // the round fits the manifest (run length, rank curve, min_score). Nothing here imports a game: `replay.js` drives the
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { manifestStands, roundFitsManifest, isAttested, isHeadToHead } from '../../arena-protocol/src/manifest.js';
+import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 
@@ -23,6 +23,8 @@ import { verifyEd25519 } from './ed25519.js';
 export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {}) {
   if (registrations instanceof Map) return registrations;
   const byId = new Map(registrations.map((p) => { try { return [toHex(p.gameId), p.manifest]; } catch { return [null, null]; } }));
+  // AN INSTALLED UPDATE CARRIES ITS ANCESTORS' MANIFESTS (kanban #276 step 5): its parent stands even when no longer hosted
+  for (const p of registrations) for (const a of (p && p.ancestors) || []) { try { const k = toHex(gameIdOf(a)); if (!byId.has(k)) byId.set(k, a); } catch { /* not a manifest */ } }
   const out = new Map();
   for (const p of registrations) {
     if (!p || !p.manifest || !(p.cores instanceof Map)) throw new Error('a game is handed to a node as { name, manifest, gameId, cores }');
@@ -57,7 +59,9 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
       // the game dev's donation set, checked above against the manifest
       donationSet: p.donationSet,
       // the client files the game ships (kanban #276 step 5: the plugin store packages them, checked against the manifest)
-      clientUrls: Array.isArray(p.clientUrls) ? [...p.clientUrls] : [] }));
+      clientUrls: Array.isArray(p.clientUrls) ? [...p.clientUrls] : [],
+      // its earlier versions' signed manifests (an installed update's chain), oldest first
+      ancestors: Array.isArray(p.ancestors) ? [...p.ancestors] : [] }));
   }
   return out;
 }
