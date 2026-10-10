@@ -555,7 +555,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     : null;
   const source = rpc || localCall;
   const beacon = source ? chainBeacon({ call: source, window: 400 }) : null;
-  const randomnessFor = beacon ? beacon.for : undefined;
+  // A ROUND POSTED AHEAD IS READ WHEN IT IS FIRST ASKED ABOUT (kanban #292), as the seat daemon does (main.js randomnessFor):
+  // `beacon.for` only answers what was read, and nothing here read a round published ahead - the demo's 8 s rounds posted
+  // ahead stayed "this node has no beacon for that round" and were never joinable
+  const randomnessFor = beacon ? (q) => { const got = beacon.for(q); if (!got && q && q.contract) beacon.refresh(q.contract).catch(() => {}); return got; } : undefined;
 
   // AN OLDER ROUND GETS A VIEW THAT REACHES BACK TO IT (M3.3-34). The signer nodes'
   // view begins 20 below the bonds this start posted, and every start posts
@@ -1059,6 +1062,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // second one 6 s later. Now is later than that tip, so the rule still holds.
     const tip = await tipHeader();
     let committee = (BigInt(Math.max(blockTimeOf(tip), Math.floor(Date.now() / 1000))) + 2n) * 1000n;
+    // `kind.committeeAtMs` (kanban #292): a committee time further ahead - with ARENA_PUBLISH_AHEAD the round is mined into a
+    // block and posted at once, and the chain's own block clock names its beacon later. Without it every opening waited for
+    // its committee time and mined six blocks: 12-23 s each, so 8 s head-to-head rounds could not follow each other
+    if (kind.committeeAtMs !== undefined && BigInt(kind.committeeAtMs) > committee) committee = BigInt(kind.committeeAtMs);
     let start = committee + MIN_ENTRY_WINDOW_MS;
     // `kind.entryAfterStartMs` (kanban #233): this kind's own entry window after its start - a head-to-head round closes its
     // entries a couple of minutes in, not when the first round's (a 30-minute nextblock window) would
