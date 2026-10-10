@@ -9,6 +9,7 @@
 //   the join ends in state `picked` - Unity does not take it over.
 // - The outcome is the seats' GET /outcome, but believed only once its attestation verifies against the attestors the page
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
+import { stakeOf } from './join.js';
 import { decodeManifest, gameIdOf, isAttested, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
@@ -101,7 +102,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch }) {
  * stake and entry close as the round's contract says them, and the signer nodes to ask for its outcome.
  */
 export function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = false }) {
-  return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(round.stakeMsat), entryCloseMs: String(round.entryCloseMs),
+  return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
     nodes: [...nodes], confirmed: !!confirmed };
 }
 

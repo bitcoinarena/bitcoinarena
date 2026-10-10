@@ -2115,6 +2115,9 @@
       if (marketHere && marketHere.fee) named.round.feeBps = marketHere.fee.nodeBps + marketHere.fee.donationBps;
       // ITS TERMS (kanban #236): the lock span its rounds name is checked by them before anything is locked (lock-expiry.js)
       if (marketHere && marketHere.terms) named.round.marketTerms = marketHere.terms;
+      // AN ORDER'S OWN AMOUNT (kanban #237: market and limit orders): the deposit, both locks and the entry stake it - set beside
+      // the contract's fields, so the round's id and bytes are the round's (arena-client join.js stakeOf)
+      { const ord = pickFor(named.roundIdHex); if (ord && ord.limitPrice && ord.stakeMsat) named.round.orderStakeMsat = BigInt(ord.stakeMsat); }
       const donation = marketHere && marketHere.fee
         ? { bps: 0, donationMsat: 0n, inFee: marketHere.fee.donationBps }
         : pays && donationSet
@@ -4271,8 +4274,10 @@
         // lock as a pick; the round's cleared book; this tab's orders; cancel one (signed with its kept session key, posted to
         // every seat of its round). Which outcome is which, and how a price is shown, is the client's.
         market: game.attested ? {
-          order: (id, pick, limitPrice, orderExpiryMs = 0) => {
-            window.BLWP_PICK_CHOSEN = { round: id, pick, label: String(pick), gameId: game.id, confirmed: false, limitPrice, orderExpiryMs };
+          // `stakeMsat` (kanban #237): the order's own amount, msat - from 1 sat to the cap (order-book.js); none: the round's stake
+          order: (id, pick, limitPrice, orderExpiryMs = 0, stakeMsat = null) => {
+            window.BLWP_PICK_CHOSEN = { round: id, pick, label: String(pick), gameId: game.id, confirmed: false, limitPrice, orderExpiryMs,
+              ...(stakeMsat !== null && stakeMsat !== undefined ? { stakeMsat: String(stakeMsat) } : {}) };
             return window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false;
           },
           book: async (id) => {
