@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bitcoin Up or Down · 15 min</title>
+<!-- THE MARKET'S OWN CLIENT (kanban #237 step 2): btc-updown-15m, pinned by its manifest's clients[] and run by the Arena page in
+     its frame, as Rock Paper Scissors is. window.parent.ARENA_GAME hands it the lobby's rows of this market (one round per
+     15-minute window - the market is the round), and market.{order, book, orders, cancel}: an order is a pick at most a limit
+     price, placed through the page's own join and lock. One phone screen, no scrolling. The live BTC price and the price to
+     beat shown here are Coinbase's, for the eye; the outcome is what the market's attestors sign. -->
+<style>
+  :root { --bg:#0b0e14; --card:#151a24; --line:#263042; --text:#e8edf3; --dim:#8d99a8; --up:#2fd38a; --down:#ff5a6a; --btc:#f7931a; color-scheme:dark; }
+  * { box-sizing:border-box; } html,body { margin:0; height:100%; }
+  body { background:radial-gradient(80% 50% at 50% 0%, rgba(247,147,26,.12), transparent 60%), var(--bg); color:var(--text);
+    font:15px/1.4 system-ui,-apple-system,sans-serif; display:flex; flex-direction:column; padding:max(10px,env(safe-area-inset-top)) 12px 10px; gap:8px; overflow:hidden; }
+  header { display:flex; align-items:center; gap:8px; }
+  header button { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:10px; padding:6px 10px; font:600 14px system-ui; }
+  header h1 { font:800 17px system-ui; margin:0; flex:1; } .chip { font:700 11px system-ui; letter-spacing:.06em; padding:4px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px 12px; }
+  .q { font:700 16px system-ui; } .sub { color:var(--dim); font-size:13px; }
+  .prices { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px; text-align:center; }
+  .prices b { display:block; font:700 17px system-ui; font-variant-numeric:tabular-nums; } .prices span { color:var(--dim); font-size:11.5px; }
+  .left { font-variant-numeric:tabular-nums; }
+  .sides { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .side { border-radius:14px; padding:10px; border:2px solid var(--line); background:var(--card); color:var(--text); font:800 18px system-ui; text-align:center; cursor:pointer; }
+  .side small { display:block; font:600 12px system-ui; color:var(--dim); margin-top:2px; }
+  .side.up.on { border-color:var(--up); background:rgba(47,211,138,.12); } .side.down.on { border-color:var(--down); background:rgba(255,90,106,.12); }
+  .side.up b { color:var(--up); } .side.down b { color:var(--down); }
+  .form { display:grid; grid-template-columns:1fr 1fr; gap:8px; } label { font-size:12px; color:var(--dim); display:block; margin-bottom:2px; }
+  input { width:100%; padding:9px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--text); font:600 16px system-ui; }
+  .place { width:100%; padding:12px; border:0; border-radius:12px; background:linear-gradient(135deg,var(--btc),#ffb347); color:#1a0f00; font:800 16px system-ui; }
+  .place:disabled { opacity:.45; } .fee { color:var(--dim); font-size:12px; margin-top:4px; } .err { color:var(--down); font-size:13px; min-height:1em; }
+  .list { flex:1; min-height:0; overflow:auto; } .list h3 { margin:0 0 4px; font:700 12px system-ui; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
+  .row { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid var(--line); font-size:13.5px; } .row:last-child { border:0; }
+  .row button { background:none; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:2px 8px; font-size:12px; }
+  a { color:#7cc4ff; } .none { color:var(--dim); text-align:center; padding:30px 10px; }
+</style></head><body>
+<header><button id="back">← Games</button><h1>Bitcoin Up or Down</h1><span class="chip" id="kind">…</span></header>
+<div id="view" style="display:contents"></div>
+<script>
+const A = window.parent && window.parent.ARENA_GAME;
+const $ = (id) => document.getElementById(id);
+const SCALE = 100000, TICK = 1000, PERIOD_MS = 15 * 60000;
+const usd = (c) => (c === null || c === undefined ? '…' : '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const hhmm = (ms) => new Date(ms).toISOString().slice(11, 16);
+const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+if (!A || !A.market) {
+  $('view').innerHTML = '<div class="none">This market runs inside the Bitcoin Arena page, which hands it the market.</div>';
+} else {
+  window.UPDOWN_CLIENT = { hash: A.clientHash, game: A.game.id, state: {} };
+  $('back').onclick = () => A.back();
+  const outcomes = A.game.outcomes.length ? A.game.outcomes : ['Up', 'Down'];
+  $('view').innerHTML = `
+    <div class="card"><div class="q" id="q">…</div><div class="sub"><span class="left" id="left"></span> · <a id="poly" target="_blank" rel="noopener">same window on Polymarket</a></div>
+      <div class="prices"><div><b id="beat">…</b><span>price to beat</span></div><div><b id="now">…</b><span>BTC now</span></div><div><b id="delta">…</b><span>change</span></div></div></div>
+    <div class="sides"><button class="side up" id="s0"><b>▲ ${esc(outcomes[0])}</b><small id="p0">book …</small></button><button class="side down" id="s1"><b>▼ ${esc(outcomes[1])}</b><small id="p1">book …</small></button></div>
+    <div class="card"><div class="form"><div><label>Stake</label><input id="stake" disabled></div><div><label>Limit price (¢ per 1-sat share)</label><input id="limit" inputmode="numeric" value="50"></div></div>
+      <div class="fee">Fee 1 %: 0.5 % nodes + 0.5 % donation, due only when the market resolves; all back if it is void.</div>
+      <div class="err" id="err"></div><button class="place" id="place" disabled>Pick Up or Down</button></div>
+    <div class="card list"><h3>My orders</h3><div id="mine"></div><h3 style="margin-top:8px">Results</h3><div id="results"></div></div>`;
+  let pick = null, current = null, live = { now: null, beat: null, beatFor: null };
+  const side = (i) => { pick = i; $('s0').classList.toggle('on', i === 0); $('s1').classList.toggle('on', i === 1); draw(); };
+  $('s0').onclick = () => side(0); $('s1').onclick = () => side(1);
+  // THE WINDOW NOW TRADING: the round of this market whose entry closes next (its window is the period before that)
+  const windowNow = () => {
+    const rows = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs && r.entryCloseMs > Date.now()).sort((x, y) => x.entryCloseMs - y.entryCloseMs);
+    return rows[0] || null;
+  };
+  // THE PRICES, for the eye: Coinbase's spot, and its 1-minute candles' close in the minute before the window's start
+  async function prices() {
+    try { const j = await (await fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot', { cache: 'no-store' })).json(); live.now = Math.round(Number(j.data.amount) * 100); } catch {}
+    if (current && live.beatFor !== current.id) {
+      const start = current.entryCloseMs - PERIOD_MS;
+      if (Date.now() >= start) {
+        try {
+          const iso = (ms) => new Date(ms).toISOString();
+          const c = await (await fetch(`https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60&start=${iso(start - 60000)}&end=${iso(start)}`)).json();
+          const before = c.filter((x) => x[0] * 1000 < start).sort((a, b) => b[0] - a[0])[0];
+          if (before) { live.beat = Math.round(before[4] * 100); live.beatFor = current.id; }
+        } catch {}
+      } else { live.beat = null; }
+    }
+    draw();
+  }
+  let book = null;
+  async function readBook() { if (current) { try { book = await A.market.book(current.id); } catch { book = null; } } draw(); }
+  function draw() {
+    current = windowNow();
+    if (!current) { $('q').textContent = 'No window is open on these nodes right now.'; $('place').disabled = true; return; }
+    const start = current.entryCloseMs - PERIOD_MS;
+    $('kind').textContent = current.free ? 'FREE' : 'PAID';
+    $('q').textContent = `BTC up or down, ${hhmm(start)}–${hhmm(current.entryCloseMs)} UTC?`;
+    $('left').textContent = (Date.now() < start ? 'opens in ' + mmss(start - Date.now()) + ', ' : '') + 'closes in ' + mmss(current.entryCloseMs - Date.now());
+    $('poly').href = 'https://polymarket.com/event/btc-updown-15m-' + Math.floor(start / 1000);
+    $('beat').textContent = Date.now() < start ? 'at ' + hhmm(start) : usd(live.beat);
+    $('now').textContent = usd(live.now);
+    const d = live.now !== null && live.beat !== null && Date.now() >= start ? live.now - live.beat : null;
+    $('delta').textContent = d === null ? '–' : (d >= 0 ? '▲ ' : '▼ ') + usd(Math.abs(d));
+    $('delta').style.color = d === null ? '' : d >= 0 ? 'var(--up)' : 'var(--down)';
+    // the book: the last cleared batch's price for Up, and 1 - it for Down
+    const last = book && book.batches && book.batches.length ? book.batches[book.batches.length - 1] : null;
+    const pUp = last && last.price !== undefined ? Number(last.price) / SCALE : null;
+    $('p0').textContent = pUp === null ? 'no trade yet' : 'last ' + Math.round(pUp * 100) + '¢';
+    $('p1').textContent = pUp === null ? 'no trade yet' : 'last ' + Math.round((1 - pUp) * 100) + '¢';
+    $('stake').value = current.free ? 'free round' : (current.stakeSats || 0) + ' sats';
+    const cents = Number($('limit').value);
+    const okPrice = Number.isInteger(cents) && cents >= 1 && cents <= 99;
+    $('place').disabled = pick === null || !okPrice || current.free;
+    $('place').textContent = current.free ? 'Orders need a paid round' : pick === null ? 'Pick Up or Down' : `Buy ${outcomes[pick]} at most ${cents}¢`;
+    // my orders, and the results the page keeps for this tab's picks
+    const mine = A.market.orders();
+    $('mine').innerHTML = mine.length ? mine.slice(-4).reverse().map((o) => `<div class="row"><span>${esc(outcomes[o.pick] || o.pick)} ≤ ${Math.round(o.limitPrice / TICK)}¢ · ${hhmm(o.entryCloseMs - PERIOD_MS)}</span>`
+      + `<span>${o.cancelled ? 'cancelled' : o.entryCloseMs > Date.now() ? `<button data-cancel="${o.entry}">cancel</button>` : 'closed'}</span></div>`).join('') : '<div class="sub">No orders yet.</div>';
+    const lines = (A.state().picks || []).filter((l) => l && l.text).slice(-3);
+    $('results').innerHTML = lines.length ? lines.map((l) => `<div class="row"><span>${esc(l.text)}</span></div>`).join('') : '<div class="sub">Results of your windows show here.</div>';
+    window.UPDOWN_CLIENT.state = { round: current.id, free: current.free, window: [start, current.entryCloseMs], beat: live.beat, now: live.now, pick, orders: mine.length };
+  }
+  $('limit').oninput = draw;
+  $('mine').onclick = async (e) => {
+    const id = e.target && e.target.dataset && e.target.dataset.cancel; if (!id) return;
+    e.target.disabled = true; const r = await A.market.cancel(id); $('err').textContent = r.ok ? '' : 'Cancel refused: ' + (r.why || (r.seats || []).map((s) => s.why).join('; ')); draw();
+  };
+  $('place').onclick = () => {
+    $('err').textContent = '';
+    const cents = Number($('limit').value);
+    const ok = A.market.order(current.id, pick, cents * TICK);
+    if (ok === false) $('err').textContent = 'The page did not take the order.';
+    setTimeout(draw, 500);
+  };
+  draw(); prices(); readBook();
+  setInterval(draw, 1000); setInterval(prices, 5000); setInterval(readBook, 3000);
+}
+</script>
+</body></html>
