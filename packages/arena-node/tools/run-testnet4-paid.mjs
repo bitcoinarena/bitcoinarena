@@ -28,7 +28,7 @@ import { inviteForGuardians, readInvite } from '../src/invite.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { standUpRound, keepBackToBack } from './round-2of2.mjs';
+import { standUpRound, keepBackToBack, tableCounter } from './round-2of2.mjs';
 import { ROCK_PAPER_SCISSORS, RPS_ROUND_FIELDS } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 // PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
@@ -143,6 +143,8 @@ round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stak
 // runner's stake and custody (ARENA_PUBLISH_AHEAD=1 in this runner's environment)
 if (env.PAID_RPS === '1')
   keepBackToBack(round, { fields: RPS_ROUND_FIELDS,
+    tables: (() => { const count = tableCounter({ min: Number(env.RPS_MIN_TABLES || 3), spare: 1, gameId: toHex(ROCK_PAPER_SCISSORS.gameId) });
+      return async () => { try { const d = await (await fetch(`http://127.0.0.1:${pa}/rounds`)).json(); return count(d.rounds || [], Date.now()); } catch { return 3; } }; })(),
     onOpen: ({ id, entryCloseMs, tookMs }) => say({ rps: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), stakeMsat: String(stakeMsat), tookMs }),
     onError: (e) => say({ rpsNotOpened: e.message }) });
 const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };
