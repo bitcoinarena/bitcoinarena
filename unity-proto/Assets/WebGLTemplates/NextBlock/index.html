@@ -3090,7 +3090,12 @@
             // kanban #187: with Settings alone, a round kept at 2% under Settings 3% was quoted 1% of its stake too much)
             const donationMsat = BLWPCLIENT.depositDonationMsat({ roundIdHex: ctx.roundIdHex, stake: ctx.roundStake,
               settingsBps: donationBps(), storage: window.sessionStorage });
-            const offer = await BLWPCLIENT.settingsDepositOffer({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
+            // A MARKET ROUND'S LOCK SPAN BY ITS MARKET'S TERMS, as the lobby's warm-up and the join check it (kanban #237/#277,
+            // measured on the regtest market: Settings -> Deposit said "that round names stake_expiry_blocks 34770 where §23.1
+            // rules 144" and offered no deposit at all)
+            const market = BLWPCLIENT.marketForRound ? BLWPCLIENT.marketForRound(ctx.round) : null;
+            const depRound = market && market.terms ? Object.assign({}, ctx.round, { marketTerms: market.terms }) : ctx.round;
+            const offer = await BLWPCLIENT.settingsDepositOffer({ round: depRound, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
               storage: vault(), gateways: ctx.gateways, donationMsat,
               donationRecipients: window.BLWP_DONATION_TARGET || null, onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
