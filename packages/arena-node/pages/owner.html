@@ -199,7 +199,7 @@ async function storePanel() {
     const rows = mine.hosted.map((g) => `<div class="row"><span>${esc(g.title || g.name)} v${g.version}${g.supersededBy ? ' · replaced by ' + esc(g.supersededBy.slice(0, 8)) + '…' : ''}</span>
       <b>${g.installed ? `<button data-remove="${esc(g.id)}">Remove</button>` : 'built in'}</b></div>`).join('');
     $('installed').innerHTML = `<p class="sub">Games on this seat:</p>${rows || '<p class="sub">none</p>'}
-      <label><input type="checkbox" id="auto" ${mine.settings.autoUpdate ? 'checked' : ''}> Update games automatically</label>
+      <label><input type="checkbox" id="auto" ${mine.settings.autoUpdate ? 'checked' : ''}> Update games and networks automatically (a network naming another federation is never taken by itself)</label>
       <label>From these seats (one address per line)</label><textarea id="srcs" rows="2" autocomplete="off" autocapitalize="none">${esc((mine.settings.sources || []).join('\n'))}</textarea>
       <button id="saveset">Save</button>`;
     for (const b of $('installed').querySelectorAll('button[data-remove]')) b.onclick = async () => {

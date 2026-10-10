@@ -330,3 +330,40 @@ test('succession at the seat: a network package naming a successor federation ma
     console.log('  FACTS:', JSON.stringify({ refused: why.slice(0, 160) }));
   } finally { await a.close(); await b.close(); }
 });
+
+test('automatic network updates: a newer package of the same network and federation is taken by itself; one naming another federation is left to the owner', async () => {
+  const inviteF = inviteForGuardians(TEST_FEDERATION_ID, [{ url: 'ws://127.0.0.1:1/', peer: 0 }]);
+  const inviteG = inviteForGuardians(new Uint8Array(32).fill(0xee), [{ url: 'ws://127.0.0.1:3/', peer: 0 }]);
+  const nodes = [new Uint8Array(32).fill(7), new Uint8Array(32).fill(8)];
+  const series = netSeries(nodes);
+  // A1: serial 1 only, no series; A2: the same federation, serials 1 and 2 and a series; A3: another federation
+  const a1 = await serve(openStore(), { plugins: HOSTED, port: 0, chain: 'bitcoin-regtest', federationInvite: inviteF, donationSets: [TEST_DONATION_SET_REGTEST] });
+  const a2 = await serve(openStore(), { plugins: HOSTED, port: 0, chain: 'bitcoin-regtest', federationInvite: inviteF, donationSets: [TEST_DONATION_SET_REGTEST, SET2], series: [series], seriesEveryMs: 100 });
+  const a3 = await serve(openStore(), { plugins: HOSTED, port: 0, chain: 'bitcoin-regtest', federationInvite: inviteG, donationSets: [TEST_DONATION_SET_REGTEST, SET2] });
+  const dir = mkdtempSync(join(tmpdir(), 'arena-plugins-'));
+  const secret = ownerSecretFromSeed(new Uint8Array(32).fill(7));
+  const rec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
+  process.env.ARENA_AUTO_UPDATE_MS = '300';
+  const b = await serve(openStore(), { plugins: HOSTED, port: 0, pluginsDir: dir, chain: 'bitcoin-regtest', donationSets: [TEST_DONATION_SET_REGTEST], seriesEveryMs: 100,
+    owner: { store: { read: () => rec, write: (o) => Object.assign(rec, o), writeCode: () => {} } } });
+  delete process.env.ARENA_AUTO_UPDATE_MS;
+  try {
+    const url = (s) => `http://127.0.0.1:${s.port}`, B = url(b), net = toHex(NETWORK_ID_REGTEST);
+    const node = (await (await fetch(`${B}/owner`)).json()).node;
+    const req = (action, args) => signOwnerRequest({ node, action, args, secret, sign: (m, k) => schnorr.sign(m, k), pubkeyOf: (k) => schnorr.getPublicKey(k) });
+    const post = async (path, body) => { const r = await fetch(B + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); return [r.status, await r.json()]; };
+    let [st, j] = await post('/owner/network/install', req('network-install', { network: net, from: url(a1) }));
+    assert.equal(st, 200, j.why);
+    const view = async () => (await (await fetch(`${B}/owner/network`)).json());
+    assert.deepEqual((await view()).installed[0].sets.map((s) => s.serial), ['1']);
+    // the owner turns automatic updates on, A3 (another federation) first, then A2
+    [st, j] = await post('/owner/settings', req('settings', { autoUpdate: true, sources: [url(a3), url(a2)] }));
+    assert.equal(st, 200);
+    let v;
+    for (let i = 0; i < 50; i++) { await new Promise((r) => setTimeout(r, 100)); v = await view(); if (v.installed[0].sets.length === 2) break; }
+    assert.deepEqual(v.installed[0].sets.map((s) => s.serial), ['1', '2'], 'A2\'s newer package taken by itself');
+    assert.deepEqual(v.installed[0].series.map((s) => [s.id, s.held]), [[toHex(seriesIdOf(series)), true]], 'its series held, no restart');
+    assert.equal(v.installed[0].federationId, toHex(TEST_FEDERATION_ID), 'A3\'s other federation was not taken');
+    assert.deepEqual(v.draining, [], 'and nothing is draining');
+  } finally { for (const s of [a1, a2, a3, b]) await s.close(); }
+});
