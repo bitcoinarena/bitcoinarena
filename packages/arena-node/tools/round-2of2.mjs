@@ -1339,8 +1339,37 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 // once (measured on the demo seats: 1.9 s an opening, 135 of 135 closes 8.0 s apart); its beacon comes from the chain's own
 // blocks and each seat assigns it ~65 s after committee time, before its window. Opening one round per tick fell behind the
 // grid (12-23 s an opening); this opens until the grid is `leadMs` ahead.
+// TABLES (kanban #293, the owner 2026-10-10: "When one player is waiting, one round is being opened. A 2nd player joins that
+// round. A 3rd player gets a second round, the 4th player joins that round. 5th player gets the 3rd round and so on"): a
+// round cannot be opened the moment a player comes (its committee needs a beacon 6 deep), so each slot of the grid holds
+// `tables()` rounds side by side, opened ahead as one. Table k's committee time is k ms before table 0's - the one field
+// that tells two tables of one slot apart (the same close, so every table of a slot plays the same 8 s).
+export function tablesNeeded(rows, nowMs, { windowMs = 8000, spare = 1, gameId = null } = {}) {
+  // the tables in play: the rounds of the slot taking picks now (and the next) that someone entered
+  const now = Number(nowMs);
+  const live = (rows || []).filter((r) => (!gameId || (r.game && r.game.id === gameId)) && Number(r.entryCloseMs) > now
+    && Number(r.entryCloseMs) <= now + 2 * Number(windowMs));
+  const bySlot = new Map();
+  for (const r of live) { const k = String(r.entryCloseMs); bySlot.set(k, (bySlot.get(k) || 0) + (Number(r.joined) > 0 ? 1 : 0)); }
+  const inPlay = Math.max(0, ...bySlot.values());
+  return inPlay + Math.max(0, spare);
+}
+// AND REMEMBERED (kanban #293, measured with 5 bots on the demo seats: a slot's table count read from the slots taking picks at
+// the moment it was opened - 150 s before it plays - stayed 1 for 20 slots after five players came and then swung 1-2-3, and
+// pairs were split for lack of tables): at least `min` tables a slot, and the busiest in-play count of the last `holdMs` plus
+// the spare - a burst of up to `min` players' pairs is seated at once, and a table count does not drop while a match goes on.
+export function tableCounter({ min = 3, spare = 1, holdMs = 120000, windowMs = 8000, gameId = null } = {}) {
+  const seen = [];
+  return (rows, nowMs) => {
+    const now = Number(nowMs);
+    seen.push([now, tablesNeeded(rows, now, { windowMs, spare: 0, gameId }) - 0]);
+    while (seen.length && seen[0][0] < now - holdMs) seen.shift();
+    const peak = Math.max(0, ...seen.map(([, n]) => n));
+    return Math.max(min, peak + Math.max(1, spare));
+  };
+}
 export function keepBackToBack(round, { fields, windowMs = 8000n, leadMs = 150000n, committeeAheadMs = 140000n, everyMs = 2000,
-  kind = {}, onOpen = () => {}, onError = () => {} }) {
+  kind = {}, tables = () => 1, onOpen = () => {}, onError = () => {} }) {
   if (!PUBLISH_AHEAD) throw new Error('rounds back to back are published ahead: set ARENA_PUBLISH_AHEAD=1');
   let lastClose = 0n, opening = false;
   const keep = async () => {
@@ -1352,12 +1381,17 @@ export function keepBackToBack(round, { fields, windowMs = 8000n, leadMs = 15000
         if (lastClose > now + leadMs + windowMs) break;
         // the next on the grid; after a stop (or at the start) the grid begins again leadMs ahead
         const want = lastClose + windowMs > now + leadMs ? lastClose + windowMs : now + leadMs;
-        const committeeAtMs = want - committeeAheadMs;
-        // openNext starts a round MIN_ENTRY_WINDOW_MS after its committee time: the entry window after that start closes on `want`
-        const id = await round.openNext({ ...kind, fields, committeeAtMs, entryAfterStartMs: Number(want - (committeeAtMs + MIN_ENTRY_WINDOW_MS)) });
-        const held = round.rounds().find((r) => r.id === id);
-        lastClose = held ? BigInt(held.entryCloseMs) : want;
-        onOpen({ id, entryCloseMs: lastClose, tookMs: Date.now() - Number(now) });
+        const n = Math.max(1, Math.floor(Number(await tables())) || 1);
+        let close = want;
+        for (let k = 0; k < n; k++) {
+          const committeeAtMs = want - committeeAheadMs - BigInt(k);
+          // openNext starts a round MIN_ENTRY_WINDOW_MS after its committee time: the entry window after that start closes on `want`
+          const id = await round.openNext({ ...kind, fields, committeeAtMs, entryAfterStartMs: Number(want - (committeeAtMs + MIN_ENTRY_WINDOW_MS)) });
+          const held = round.rounds().find((r) => r.id === id);
+          close = held ? BigInt(held.entryCloseMs) : want;
+          onOpen({ id, entryCloseMs: close, table: k, tables: n, tookMs: Date.now() - Number(now) });
+        }
+        lastClose = close;
       }
     } catch (e) { onError(e); } finally { opening = false; }
   };

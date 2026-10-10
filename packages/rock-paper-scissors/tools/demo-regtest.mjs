@@ -11,7 +11,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { standUpRound, keepBackToBack } from '../../arena-node/tools/round-2of2.mjs';
+import { standUpRound, keepBackToBack, tableCounter } from '../../arena-node/tools/round-2of2.mjs';
 import { bitcoindRpc } from '../../arena-node/src/chain-rpc.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { ROCK_PAPER_SCISSORS, RPS_DECIDE_CORE, RPS_ROUND_FIELDS } from '../plugin/rock-paper-scissors.js';
@@ -58,8 +58,12 @@ const WINDOW_MS = 8000n;
 const LEAD_MS = 150000n;
 // BACK TO BACK, NO HOLE (kanban #292, measured 2026-10-10 10:52Z: closes 14-23 s apart for 8 s rounds): round-2of2's
 // keepBackToBack - published ahead, the 8 s grid kept 150 s ahead
-keepBackToBack(round, { fields: RPS_FIELDS, windowMs: WINDOW_MS, leadMs: LEAD_MS,
-  onOpen: ({ id, entryCloseMs, tookMs }) => say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), tookMs }),
+// TABLES (kanban #293): as many rounds a slot as the tables in play now, plus one spare - read off seat A's own listing
+const countTables = tableCounter({ min: Number(env.RPS_MIN_TABLES || 3), spare: 1, windowMs: Number(WINDOW_MS), gameId: toHex(ROCK_PAPER_SCISSORS.gameId) });
+const rpsTables = async () => { try { const d = await (await fetch('http://127.0.0.1:21651/rounds')).json();
+  return countTables(d.rounds || [], Date.now()); } catch { return 3; } };
+keepBackToBack(round, { fields: RPS_FIELDS, windowMs: WINDOW_MS, leadMs: LEAD_MS, tables: rpsTables,
+  onOpen: ({ id, entryCloseMs, table, tables, tookMs }) => say({ step: 'opened', game: 'rock-paper-scissors', round: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), table, tables, tookMs }),
   onError: (e) => say({ step: 'not opened', why: e.message }) });
 
 // THE 15-MINUTE SERIES (kanban #236, the owner 2026-10-09: "one round per UTC quarter hour ... Open at least one quarter hour
