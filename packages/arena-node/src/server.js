@@ -45,6 +45,7 @@ import { leaveStatus, takesRound } from './owner-leave.js';
 import { packageOf, verifyPackage, installPackage, registrationFromPackage } from './plugin-package.js';
 import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
+import { readInvite } from './invite.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -2132,6 +2133,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AND EVERY ROUND OF THE NEXT 72 HOURS, WRITTEN (NODE72-1131). A series that leaves less than the 72 h lead is
   // refused at start, by name, rather than written short.
   // NOT ONE NAMING A DONATION SET OTHER THAN THE ONE IN FORCE (kanban #191): not written, not held - said once, by name
+  // A DRAINING FEDERATION (kanban #276 custody succession, §23A.6 step 2): once this seat takes a network package whose
+  // invite names a successor, the federation it named before is DRAINING here - no new paying round, series round, entry or
+  // deposit names it; the rounds already holding stakes in it settle there. federation id hex -> { successor, sinceMs }
+  const drainingFeds = new Map();
+  const drainingRefusal = (contract) => {
+    if (!contract || !(contract.stakeMsat > 0n) || !(contract.federationId instanceof Uint8Array)) return null;
+    const d = drainingFeds.get(toHex(contract.federationId));
+    return d ? `federation ${toHex(contract.federationId).slice(0, 16)} is draining since ${new Date(d.sinceMs).toISOString()} (its successor is ${d.successor.slice(0, 16)}): no new round or deposit names it` : null;
+  };
   const refusedSeries = new Set();
   const refuseSeries = (t) => {
     // A SERIES OF A GAME THIS NODE DOES NOT HOST (kanban #204): not written, said by name, and every round it derives
@@ -2146,7 +2156,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return true;
     }
-    const why = donationInForceRefusal(t);
+    const why = donationInForceRefusal(t) || drainingRefusal(t);
     if (!why) return false;
     const id = toHex(seriesId(t));
     if (!refusedSeries.has(id)) { refusedSeries.add(id); console.error(`[series] ${id.slice(0, 16)} not written: ${why}`); }
@@ -2180,7 +2190,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return refuseFile.ids.has(id) ? `this signer node's operator refuses round ${id.slice(0, 16)} (refuse-rounds file)` : null;
   };
   const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract)
-    || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null);
+    || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null);
   const seriesRefusalOfRound = (rid) => {
     const row = rid ? round.get(rid) : null;
     if (!row) return null;
@@ -2374,8 +2384,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const bad = lines.find((x) => !x.ok);
     return bad ? { ...r, ok: false, why: `the trial refuses it: ${bad.detail}` } : r;
   };
+  // THE FEDERATION THIS SEAT NAMED BEFORE A PACKAGE NAMING A SUCCESSOR: draining from now (§23A.6 step 2), kept beside the
+  // package so the next start keeps it draining; the series naming it are no longer written
+  const fedOf = (invite) => { try { return invite ? readInvite(invite).federationId : null; } catch { return null; } };
+  const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true) => {
+    if (!oldFed || oldFed === successor || drainingFeds.has(oldFed)) return;
+    drainingFeds.set(oldFed, { successor, sinceMs });
+    for (let i = writers.length - 1; i >= 0; i--) {
+      const t = series.find((x) => toHex(seriesId(x)) === toHex(writers[i].id));
+      if (!t || toHex(t.federationId) !== oldFed || !(t.stakeMsat > 0n)) continue;
+      const id = toHex(writers[i].id);
+      writers.splice(i, 1); droppedSeries.add(id); seriesVersion++;
+      console.log(`[networks] series ${id.slice(0, 16)} names draining federation ${oldFed.slice(0, 16)}: no longer written or offered`);
+    }
+    if (keep && networksDir) {
+      const file = joinPath(networksDir, nid, 'draining.json');
+      let all = {}; try { all = JSON.parse(readFileSync(file, 'utf8')); } catch { all = {}; }
+      all[oldFed] = { successor, sinceMs };
+      writeFileSync(file, JSON.stringify(all));
+    }
+    console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining: its successor is ${successor.slice(0, 16)} - no new round or deposit names it`);
+  };
   const activateNetwork = (pkg, r) => {
     const prev = networksHeld.get(r.networkId);
+    const before = fedOf(inviteFor(r.networkId));
     const setIds = new Set(prev ? prev.setIds : []);
     const have = new Set(donationSets.map((x) => toHex(donationSetBodyId(x))));
     for (const x of r.sets) { const id = toHex(donationSetBodyId(x)); if (!have.has(id)) { donationSets.push(x); have.add(id); setIds.add(id); } }
@@ -2396,6 +2428,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       console.log(`[networks] series ${id.slice(0, 16)} held from network package ${r.id.slice(0, 16)}: written from now, no restart`);
     }
     networksHeld.set(r.networkId, { pkg, report: r, seriesIds: seriesIdsHeld, setIds });
+    if (before && before !== r.federationId) markDraining(r.networkId, before, r.federationId);
     if (writers.length) startSeriesTimer();
   };
   const topSerialOf = (nid) => { let top = -1n; for (const x of donationSets) if (toHex(x.networkId) === nid && x.serial > top) top = x.serial; return top; };
@@ -2413,6 +2446,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const plain = (x) => ({ ...x, sets: undefined, rotations: undefined, series: undefined });
     if (!v.ok) { console.log(`[networks] refused ${network.slice(0, 16)} from ${from}: ${v.why}`); return { ...plain(v), status: 422 }; }
     if (v.networkId !== network) return { ...plain(v), ok: false, status: 422, why: `that package is network ${v.networkId.slice(0, 16)}, not ${network.slice(0, 16)}` };
+    if (drainingFeds.has(v.federationId)) return { ...plain(v), ok: false, status: 422, why: `its federation ${v.federationId.slice(0, 16)} is draining here (its successor is ${drainingFeds.get(v.federationId).successor.slice(0, 16)}): a package naming it is not taken` };
     if (update) {
       const u = checkNetworkUpdate({ networkId: network, chain, topSerial: topSerialOf(network) }, v);
       if (!u.ok) return { ...plain(v), ok: false, status: 422, why: u.why };
@@ -2457,6 +2491,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (networksDir && existsSync(networksDir)) {
     for (const id of readdirSync(networksDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
       let pkg; try { pkg = JSON.parse(readFileSync(joinPath(networksDir, id, 'package.json'), 'utf8')); } catch (e) { console.error(`[networks] ${id.slice(0, 16)}: ${e.message}`); continue; }
+      try { for (const [fed, d] of Object.entries(JSON.parse(readFileSync(joinPath(networksDir, id, 'draining.json'), 'utf8')))) markDraining(id, fed, d.successor, d.sinceMs, false); } catch { /* none draining */ }
       const v = checkOnSeat(pkg);
       if (!v.ok || v.networkId !== id) { console.error(`[networks] installed network ${id.slice(0, 16)} refused: ${v.why || 'another network id'}`); continue; }
       activateNetwork(pkg, v);
@@ -2768,6 +2803,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let own = null;
           if (nid && inviteFor(nid)) { try { const p = ownNetwork(nid); const r = checkNetworkPackage(p, { verify: verifyNet, seatChain: chain }); own = { id: p.id, ...four(r, p.invite) }; } catch (e) { own = { why: e.message }; } }
           return answer(200, { chain, networkId: nid, own,
+            draining: [...drainingFeds.entries()].map(([federationId, d]) => ({ federationId, successor: d.successor, sinceMs: d.sinceMs })),
             installed: [...networksHeld.values()].map((h) => ({ network: h.report.networkId, id: h.report.id, ...four(h.report, h.pkg.invite) })) });
         }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
