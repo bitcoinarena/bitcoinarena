@@ -33,7 +33,7 @@ test('status and id hand the tool the outpoint and every field of the contract, 
       status: { mode: 'status', block_count: 777, stored: { contract_id: 'ab'.repeat(32), blocks_left: 190 } },
       id: { mode: 'id', contract_id: 'cd'.repeat(32) },
     });
-    const port = stakeLockPort({ bin: t.bin, dataDir: '/client/dir' });
+    const port = stakeLockPort({ serve: false, bin: t.bin, dataDir: '/client/dir' });
     const st = await port.status({ txid: b(0x11), outIdx: 3n });
     assert.deepEqual(st, { blockCount: 777, stored: { contractId: 'ab'.repeat(32), blocksLeft: 190 } });
     const f = { paymentImage: { kind: 'point', bytes: b(0x02, 33) }, amountMsat: 98000n, claimPk: b(0x03, 33), refundPk: b(0x02, 33), expiration: 967 };
@@ -50,7 +50,7 @@ test('no lock at the outpoint reads as none, and a tool that fails is an error, 
   const dir = mkdtempSync(join(tmpdir(), 'stake-lock-port-'));
   try {
     const t = fakeTool(dir, { status: { mode: 'status', block_count: 5, stored: null } });
-    const port = stakeLockPort({ bin: t.bin, dataDir: '/d' });
+    const port = stakeLockPort({ serve: false, bin: t.bin, dataDir: '/d' });
     assert.deepEqual(await port.status({ txid: b(1), outIdx: 0n }), { blockCount: 5, stored: null });
     await assert.rejects(port.contractId({ paymentImage: { kind: 'point', bytes: b(2, 33) }, amountMsat: 1n, claimPk: b(3, 33), refundPk: b(2, 33), expiration: 1 }),
       /blwp-stake-lock: Error: no mode id/);
@@ -76,7 +76,7 @@ test('gateways and fees are read once a minute however often they are asked', as
       fees: { mode: 'fees', fee_ppm: 1000, fee_base_msat: 2000 },
     });
     let clock = 1_000_000;
-    const port = stakeLockPort({ bin: t.bin, dataDir: '/d', now: () => clock });
+    const port = stakeLockPort({ serve: false, bin: t.bin, dataDir: '/d', now: () => clock });
     const asks = [];
     for (let i = 0; i < 10; i++) asks.push(port.gateways(), port.fees());
     const answers = await Promise.all(asks);
@@ -106,7 +106,7 @@ test('status, guardians, gateways and fees read their own client directory; send
       gateways: { mode: 'gateways', federation_id: 'aa'.repeat(32), gateways: [] },
       fees: { mode: 'fees', fee_ppm: 0, fee_base_msat: 0 },
     });
-    const port = stakeLockPort({ bin: t.bin, dataDir: '/shared', readDataDir: '/mine' });
+    const port = stakeLockPort({ serve: false, bin: t.bin, dataDir: '/shared', readDataDir: '/mine' });
     await port.status({ txid: b(1), outIdx: 0n }); await port.gateways(); await port.fees();
     const dirs = t.argv().map((a) => a[a.indexOf('--data-dir') + 1]);
     assert.deepEqual(dirs, ['/mine', '/mine', '/mine']);
