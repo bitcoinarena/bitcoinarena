@@ -115,8 +115,12 @@ GAMES="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." 
 SEAT_ENV=""
 start_nodes() {
   i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1))
+    # EACH SEAT READS LOCKS THROUGH ITS OWN COPY OF THE JOINED CLIENT (as the testnet4 seats do, client-lock-tn4-read-N; kanban
+    # #237): through one shared directory the seven seats' status reads queued one at a time, a second player's stake lock
+    # stayed unseen at four seats past the 12-block lock-height rule (4 min at a block every 20 s), and the order never traded
+    READ=""; if [ -n "$SEAT_ENV" ]; then rm -rf $H/client-read-$i; cp -R $CLIENT_DIR $H/client-read-$i; READ="ARENA_FEDERATION_CLIENT_READ_DIR=$H/client-read-$i"; fi
     ( cd "$HERE/.." && HOME=$FORK_HOME ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR ARENA_CLOSE_AT_END=1 \
-      ARENA_DONATION_NETWORK=regtest ARENA_GAMES=$GAMES env $SEAT_ENV setsid "$NODE" src/main.js $p $H/node-$i.db > $H/node-$i.log 2>&1 < /dev/null & echo "$! node-$i" >> $PIDS )
+      ARENA_DONATION_NETWORK=regtest ARENA_GAMES=$GAMES env $SEAT_ENV $READ setsid "$NODE" src/main.js $p $H/node-$i.db > $H/node-$i.log 2>&1 < /dev/null & echo "$! node-$i" >> $PIDS )
   done
   for p in ${NODE_PORTS//,/ }; do until_ "node $p" 120 curl -s -o /dev/null --max-time 3 http://127.0.0.1:$p/identity; done
 }
