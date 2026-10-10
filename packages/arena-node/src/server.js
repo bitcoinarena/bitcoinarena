@@ -42,6 +42,7 @@ import { dashboardData, dashboardHtml } from './dashboard.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
+import { packageOf, verifyPackage, installPackage } from './plugin-package.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
@@ -101,7 +102,7 @@ import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.j
 import { encodeManifest, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
-import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../arena-protocol/src/rerun.js';
@@ -255,6 +256,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OWNER (kanban #276, owner.js): `{ store }` - where the owner's public key and the claim code are kept
   // (files beside the database, from main.js). Without it the node has no owner area and /owner answers 404.
   owner: ownerFiles = null,
+  // WHERE THE PLUGIN STORE KEEPS INSTALLED GAMES (kanban #276 step 5; main.js: <db>.plugins), loaded at start
+  pluginsDir = null,
   // THE FEDERATION'S RECEIVING SIDE (V1's pool is a FEDERATION, the owner 2026-09-11): `receive({
   // amountMsat })` answers `{ request }`, an LNv2 invoice the federation's gateway holds.
   federation = null,
@@ -2501,6 +2504,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           return answer(200, leaveStatus({ rounds, nowMs, leavingAtMs: owner.leavingAtMs(), custody }));
         }
+        // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
+        if (req.method === 'GET' && url.pathname === '/owner/plugins') {
+          const installed = [];
+          if (pluginsDir && existsSync(pluginsDir)) for (const id of readdirSync(pluginsDir)) {
+            try { const p = JSON.parse(readFileSync(joinPath(pluginsDir, id, 'package.json'), 'utf8')); installed.push({ id, name: p.name, title: p.title, running: hosted.has(id) }); } catch { /* not a package */ }
+          }
+          return answer(200, { hosted: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title })), installed });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
           const newest = new Map();
           for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
@@ -2514,6 +2525,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/owner/claim') { const r = owner.claim(body); return answer(r.ok ? 200 : r.status, r); }
         // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
         if (url.pathname === '/owner/leave') { const r = owner.leave(body); return answer(r.ok ? 200 : r.status, r); }
+        // INSTALL A GAME FROM ANOTHER SEAT (step 5): signed by the owner, { game, from }; fetched, checked byte for byte against
+        // its manifest and scanned before anything is written; it runs from this seat's next start
+        if (url.pathname === '/owner/plugins/install') {
+          const a = owner.authorize(body, 'install');
+          if (!a.ok) return answer(a.status, a);
+          if (!pluginsDir) return answer(409, { ok: false, why: 'this seat keeps no installed games (no plugins directory)' });
+          const game = String((body.args && body.args.game) || '').toLowerCase(), from = String((body.args && body.args.from) || '').replace(/\/+$/, '');
+          if (!/^[0-9a-f]{64}$/.test(game) || !/^https?:\/\//.test(from)) return answer(400, { ok: false, why: 'install names a game id and the seat to take it from' });
+          if (hosted.has(game)) return answer(409, { ok: false, why: 'this seat already hosts that game' });
+          let pkg;
+          try { const r = await fetch(`${from}/plugin?game=${game}`, { signal: AbortSignal.timeout(15000) }); if (!r.ok) throw new Error(`${r.status} ${(await r.text()).trim()}`); pkg = await r.json(); }
+          catch (e) { return answer(502, { ok: false, why: `that seat did not hand the game over: ${e.message}` }); }
+          const v = verifyPackage(pkg, { verify: verifyEd25519, want: game });
+          if (!v.ok) { console.log(`[plugins] refused ${game.slice(0, 16)} from ${from}: ${v.why}`); return answer(422, v); }
+          const at = installPackage(pluginsDir, pkg, game);
+          console.log(`[plugins] installed ${v.name} (${game.slice(0, 16)}) from ${from} into ${at}: it runs from the next start`);
+          return answer(200, { ok: true, game, name: v.name, from, installedAt: at, activeFrom: 'the next start of this seat' });
+        }
         if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/login') {
           const r = owner.authorize(body, 'login');
@@ -2866,6 +2895,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE GAMES THIS NODE HOSTS (kanban #208): each with its signed manifest, so a lobby lists the games first and a page
       // loads a game's client only from files whose hashes that manifest names (clients[]). A page takes a manifest only if
       // it hashes to the game id beside it; nothing here is trusted for itself.
+      // A HOSTED GAME AS A PACKAGE (kanban #276 step 5, plugin-package.js): what another seat's plugin store installs - its
+      // signed manifest, donation set, decide adapters' sources and clients; the installing seat checks every byte
+      if (req.method === 'GET' && url.pathname === '/plugin') {
+        const g = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
+        if (!g) return text(res, 404, 'this seat hosts no such game');
+        let pkg; try { pkg = packageOf(g); } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
+        if (!pkg) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(JSON.stringify(pkg));
+      }
       if (req.method === 'GET' && url.pathname === '/games') {
         const games = [...hosted.values()].map((p) => ({ id: toHex(p.gameId), name: p.name, title: p.title || p.name,
           icon: p.icon ? `game-icon?game=${toHex(p.gameId)}` : null, attested: p.manifest.resultType === RESULT_TYPE.ATTESTED,

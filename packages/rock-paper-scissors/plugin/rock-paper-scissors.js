@@ -19,7 +19,9 @@ export const RPS_CLIENT_FILE = new URL('../client/index.html', import.meta.url);
 
 export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', manifest: RPS_MANIFEST, gameId: RPS_GAME_ID,
   cores: new Map([[RPS_DECIDE_CORE.hash, RPS_DECIDE_CORE]]), title: 'Rock Paper Scissors',
-  donationSet: TESTNET4_DONATION_SET_KEYS.recipients });
+  donationSet: TESTNET4_DONATION_SET_KEYS.recipients,
+  // its client, so the plugin store can hand the game to another seat (kanban #276 step 5)
+  clientUrls: [new URL('../client/index.html', import.meta.url).href] });
 
 /** What a launcher loads from this module (ARENA_GAMES): the registration. */
 export const GAME = ROCK_PAPER_SCISSORS;

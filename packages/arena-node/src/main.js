@@ -95,6 +95,16 @@ for (const at of (process.env.ARENA_GAMES || '').split(',').map((x) => x.trim())
   if (!m.GAME) throw new Error(`ARENA_GAMES names ${at}, which exports no GAME`);
   games.push(m.GAME);
 }
+// AND THE GAMES ITS OWNER INSTALLED FROM OTHER SEATS (kanban #276 step 5, plugin-package.js): each package checked again -
+// manifest, donation set, every file's hash, the scan - before it is loaded; a refused one is said and left out
+const pluginsDir = process.env.ARENA_PLUGINS_DIR || `${path}.plugins`;
+{
+  const { loadInstalled } = await import('./plugin-package.js');
+  const { verifyEd25519 } = await import('./ed25519.js');
+  const got = await loadInstalled(pluginsDir, { verify: verifyEd25519 });
+  for (const r of got.refused) console.error(`[games] installed game refused: ${r.dir}: ${r.why}`);
+  for (const g of got.registrations) if (!games.some((x) => Buffer.from(x.gameId).equals(Buffer.from(g.gameId)))) games.push(g);
+}
 console.log(`[games] hosting ${games.length ? games.map((g) => g.name).join(', ') : 'none (ARENA_GAMES names no game)'}`);
 // WHAT THIS DAEMON FUNDS (M3.3-31): the paying rounds its operator names, and
 // entries into them - off by default, so an unnamed round is still 402.
@@ -104,7 +114,7 @@ const ownerFiles = { store: {
   write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
   writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
 } };
-const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
 {
