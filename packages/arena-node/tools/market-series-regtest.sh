@@ -111,7 +111,7 @@ INVITE=$(grep -o '"invite":"[^"]*"' "$LOG" | tail -1 | cut -d'"' -f4)
 [ -n "$INVITE" ] && [ "$INVITE" != "(none written)" ] || die "the founding wrote no invite"
 echo "$INVITE" > $H/invite-code
 mkdir -p $H/paid/attach-proof $H/series
-GAMES="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." && pwd)/test/plugins/market/game.js,$(cd "$HERE/.." && pwd)/test/plugins/updown/game.js"
+GAMES="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." && pwd)/test/plugins/market/game.js,$(cd "$HERE/.." && pwd)/test/plugins/updown/game.js,$(cd "$HERE/.." && pwd)/../rock-paper-scissors/plugin/rock-paper-scissors.js"
 SEAT_ENV=""
 start_nodes() {
   i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1))
@@ -213,7 +213,7 @@ touch $H/paid/funded-rounds.txt
 start_nodes
 WSS=""; for p in ${NODE_PORTS//,/ }; do WSS="$WSS ARENA_WSS_$p=ws://127.0.0.1:$p"; done
 ( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
-  ARENA_FEDERATION_INVITE_FILE=$H/invite-code ARENA_RECIPIENT_PORT=$RECIP ARENA_TN4_DATADIR=$BTC_DIR ARENA_ATTACH=1 PAID_MARKET=1 \
+  ARENA_FEDERATION_INVITE_FILE=$H/invite-code ARENA_RECIPIENT_PORT=$RECIP ARENA_TN4_DATADIR=$BTC_DIR ARENA_ATTACH=1 PAID_MARKET=1 PAID_RPS=${PAID_RPS:-0} ARENA_PUBLISH_AHEAD=${PAID_RPS:-0} \
   ARENA_PAID_STAKE_MSAT=${STAKE_MSAT:-1000000} setsid "$NODE" tools/run-testnet4-paid.mjs > $H/paid.out 2>&1 < /dev/null & echo "$! node-paid" >> $PIDS )
 paidup() { grep -q '"paid":"up"' $H/paid.out; }
 until_ "run-testnet4-paid.mjs (attach) writes the proof and the link" 1500 paidup

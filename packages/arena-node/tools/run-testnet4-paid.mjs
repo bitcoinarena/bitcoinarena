@@ -28,7 +28,8 @@ import { inviteForGuardians, readInvite } from '../src/invite.js';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { standUpRound } from './round-2of2.mjs';
+import { standUpRound, keepBackToBack } from './round-2of2.mjs';
+import { ROCK_PAPER_SCISSORS, RPS_ROUND_FIELDS } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 // PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -114,7 +115,7 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
   guardianChain: { bitcoindUrl: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE, call: chainCall },
   // the signed test set names 18777, which the live Daily holds; this committee answers on its own door
   donationRecipients: { port: Number(env.ARENA_RECIPIENT_PORT || 18787) },
-  ...(env.PAID_MARKET === '1' ? { plugins: [NEXTBLOCK, MARKET.registration],
+  ...(env.PAID_MARKET === '1' ? { plugins: [NEXTBLOCK, MARKET.registration, ...(env.PAID_RPS === '1' ? [ROCK_PAPER_SCISSORS] : [])],
     roundFields: { gameId: MARKET.registration.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32) } } : {}) });
 say({ paid: 'up', network, custody: round.contract.custody, stakeMsat: String(stakeMsat),
   federation: toHex(fed.federationId), guardians: fed.keys.length, threshold: fed.threshold,
@@ -137,6 +138,13 @@ console.log(round.lobbyUrl);
 // 1.5-3 h gap every 6 h with no paid round to join.
 round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
+// PAID ROCK PAPER SCISSORS BACK TO BACK (kanban #293, the owner 2026-10-10: head-to-head needs no series, and a paid round is
+// still paid - 100 sats as Tick Tock's): PAID_RPS=1 keeps a paying RPS round closing every 8 s, published ahead, at this
+// runner's stake and custody (ARENA_PUBLISH_AHEAD=1 in this runner's environment)
+if (env.PAID_RPS === '1')
+  keepBackToBack(round, { fields: RPS_ROUND_FIELDS,
+    onOpen: ({ id, entryCloseMs, tookMs }) => say({ rps: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), stakeMsat: String(stakeMsat), tookMs }),
+    onError: (e) => say({ rpsNotOpened: e.message }) });
 const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
