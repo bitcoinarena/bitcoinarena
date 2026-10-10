@@ -8,3 +8,4 @@ export function textQrSvg(text, { cellSize = 4, margin = 4 } = {}) {
   qr.make();
   return qr.createSvgTag({ cellSize, margin, scalable: true });
 }
+export * from './nwc.js';
