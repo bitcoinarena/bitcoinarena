@@ -75,3 +75,37 @@ export function attestationStands({ id, sigs, committee, threshold, verify }) {
 
 /** Sample k of a run (k = 0, 1, ... every 5 s of round time) is applied at this tick - the network's tick rate (tick.js). */
 export const sampleTick = (k) => Number(ticksForMs(BigInt(k) * BigInt(PRICE_SAMPLE_EVERY_MS)).ticks);
+
+/** The tape's unit is 256 a dollar (batch.js); a signed price is in cents. One rule, rounded half up, on both sides. */
+export const centsToTapeUnits = (c) => Math.floor((c * 256 + 50) / 100);
+
+/**
+ * THE PRICES A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (§11, kanban #311): every attestation the batch
+ * carries must stand (`attestationStands`) for this round, and the sample (or the tape) at its tick must be its price in
+ * the tape's unit. `require`: also refuse a sample or a tape that carries no attestation (a round whose contract names a
+ * feed - slice 3). Answers { ok, attested: n } or { ok: false, why }.
+ */
+export function checkBatchPrices({ batch, roundId, committee, threshold, verify, require = false }) {
+  const attests = batch.attests || [];
+  const at = (list, tick) => (list || []).filter((x) => x[0] === tick);
+  for (const [tick, kind, cents, sigs] of attests) {
+    const id = kind === 0 ? priceSampleId({ roundId, tick, priceCents: cents }) : priceTapeId({ roundId, tick, prices: cents });
+    const s = attestationStands({ id, sigs: sigs.map(([key, signature]) => ({ key, signature })), committee, threshold, verify });
+    if (!s.ok) return { ok: false, why: `the ${kind === 0 ? 'sample' : 'tape'} at tick ${tick} is not attested: ${s.why}` };
+    if (kind === 0) {
+      const played = at(batch.samples, tick);
+      if (played.length !== 1 || played[0][1] !== centsToTapeUnits(cents))
+        return { ok: false, why: `the sample at tick ${tick} is not the attested ${cents} cents (${centsToTapeUnits(cents)} in the tape's unit)` };
+    } else {
+      const played = at(batch.tapes, tick);
+      if (played.length !== 1 || played[0].slice(1).some((p, i) => p !== centsToTapeUnits(cents[i])))
+        return { ok: false, why: `the tape at tick ${tick} is not the attested tape` };
+    }
+  }
+  if (require) {
+    const has = (kind, tick) => attests.some((a) => a[1] === kind && a[0] === tick);
+    const bare = (batch.samples || []).find((x) => !has(0, x[0])) ? 'sample' : (batch.tapes || []).find((x) => !has(1, x[0])) ? 'tape' : null;
+    if (bare) return { ok: false, why: `a ${bare} without the committee's attestation: the player never chooses the price (§11)` };
+  }
+  return { ok: true, attested: attests.length };
+}

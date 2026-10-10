@@ -48,6 +48,13 @@ import { PROTOCOL_VERSION, TYPE_INPUT_BATCH, TAG } from './constants.js';
 /** The prices a live tape carries: the core's SAMPLES. */
 export const TAPE_PRICES = 64;
 
+/**
+ * AND THE COMMITTEE'S SIGNATURES ON THEM (§11, kanban #311): `[tick, kind, cents, sigs]` - kind 0 the sample at that
+ * tick (cents: its price), kind 1 the tape (cents: its 64 prices) - each sig `[key32, sig64]` of the round's committee
+ * over priceSampleId / priceTapeId. A fourth optional tail after the rooms, written only when there is one: every batch
+ * before it keeps its bytes and its id. At most one sample and one tape a batch, each with at most MAX_ATTEST_SIGS.
+ */
+export const MAX_ATTEST_SIGS = 9;
 /** How many words of input a tick carries. The core's `step` arity. */
 export const INPUT_WORDS = 5;
 
@@ -93,12 +100,23 @@ export function encodeInputBatch(b) {
   // (empty) when this one is, so the three read back unambiguously.
   const rooms = loads.filter((l) => l.length > 3 && l[3] !== undefined && l[3] !== null).map((l) => [l[0], l[3] | 0]);
   if (new Set(rooms.map((r) => r[0])).size !== rooms.length) throw new Error('a batch carries one room a load tick');
-  if (samples.length || tapes.length || rooms.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (tapes.length || rooms.length) w.vec(tapes, (l, ww) => {
+  const attests = [...(b.attests || [])].sort((x, y) => x[1] - y[1] || x[0] - y[0]);
+  if (attests.filter((a) => a[1] === 0).length > 1 || attests.filter((a) => a[1] === 1).length > 1 || attests.some((a) => a[1] !== 0 && a[1] !== 1))
+    throw new Error('a batch carries at most one attested sample and one attested tape');
+  if (samples.length || tapes.length || rooms.length || attests.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (tapes.length || rooms.length || attests.length) w.vec(tapes, (l, ww) => {
     if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
     ww.u32(l[0]); for (let i = 1; i <= TAPE_PRICES; i++) ww.i32(l[i]);
   });
-  if (rooms.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (rooms.length || attests.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (attests.length) w.vec(attests, (a, ww) => {
+    const [tick, kind, cents, sigs] = a;
+    ww.u32(tick); ww.u8(kind);
+    if (kind === 0) ww.i32(cents);
+    else { if (!Array.isArray(cents) || cents.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); for (const c of cents) ww.i32(c); }
+    if (!Array.isArray(sigs) || sigs.length > MAX_ATTEST_SIGS) throw new Error(`an attestation carries at most ${MAX_ATTEST_SIGS} signatures`);
+    ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); w3.bytes(sg[1], 64); });
+  });
   return w.finish();
 }
 
@@ -127,7 +145,15 @@ export function decodeInputBatch(bytes) {
     b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
     b.tapes = r.at < bytes.length ? r.vec((rr) => { const t = [rr.u32()]; for (let i = 0; i < TAPE_PRICES; i++) t.push(rr.i32()); return t; }) : [];
     var rooms = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
+    b.attests = r.at < bytes.length ? r.vec((rr) => {
+      const tick = rr.u32(); const kind = rr.u8();
+      const cents = kind === 0 ? rr.i32() : kind === 1 ? Array.from({ length: TAPE_PRICES }, () => rr.i32()) : (() => { throw new Error('kind'); })();
+      const sigs = rr.vec((r3) => [r3.bytes32(), r3.bytes(64)]);
+      if (sigs.length > MAX_ATTEST_SIGS) throw new Error('sigs');
+      return [tick, kind, cents, sigs];
+    }) : [];
   } catch { throw new Error('trailing bytes after the batch'); }
+  if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
   for (const [at, room] of rooms) {
     const l = b.loads.filter((x) => x[0] === at);
@@ -168,7 +194,11 @@ const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
  */
 export const MAX_INPUT_BATCH_BYTES =
   BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
-  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8 + 2 + (4 + 4 * TAPE_PRICES);
+  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8 + 2 + (4 + 4 * TAPE_PRICES)
+  // the rooms (a load's bed fill, 2026-10-04), one a load at most
+  + 2 + MAX_BATCH_TICKS * 8
+  // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each
+  + 2 + (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 96) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * 96);
 
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>
