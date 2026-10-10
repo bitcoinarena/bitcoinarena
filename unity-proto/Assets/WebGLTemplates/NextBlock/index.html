@@ -3138,6 +3138,76 @@
       custom.append(field);
       const amount = add('div', 'dep-amount');
       const why = add('div', 'dep-why');
+      // PAY WITH MY WALLET (kanban #277, the owner 2026-10-10: "nwc for deposits is part of the scope"): the player's own wallet
+      // pays this invoice over Nostr Wallet Connect (NIP-47) - its link pasted once, kept in this browser (arena.nwc). Connected,
+      // it is the DEFAULT (the owner 2026-10-10: "If possible and nwc provides a balance of the connected wallet automatically
+      // display it and also default it"): first, above the QR, the wallet's balance beside it (get_balance) - the QR stays for
+      // any other wallet. It pays only when tapped.
+      const nwc = add('div', 'dep-nwc');
+      nwc.style.cssText = 'margin:8px 0 4px;display:flex;flex-direction:column;gap:6px';
+      const nwcPay = document.createElement('button'); nwcPay.type = 'button'; nwcPay.className = 'dep-nwc-pay'; nwcPay.disabled = true;
+      nwcPay.style.cssText = 'font:600 15px system-ui,sans-serif;padding:11px;border-radius:10px;border:1px solid #8e5cf2;background:#2a1f3d;color:#efe7ff;cursor:pointer';
+      const nwcLink = document.createElement('input'); nwcLink.type = 'text'; nwcLink.autocomplete = 'off'; nwcLink.spellcheck = false;
+      nwcLink.placeholder = 'nostr+walletconnect://… from your wallet\'s "connect an app"';
+      nwcLink.style.cssText = 'display:none;font:13px ui-monospace,monospace;padding:9px;border-radius:9px;border:1px solid #3a4655;background:#0b0f14;color:#e8eaed';
+      const nwcNote = document.createElement('div'); nwcNote.style.cssText = 'font-size:12.5px;color:#a9b3c1';
+      nwc.append(nwcPay, nwcLink, nwcNote);
+      const nwcUri = () => { try { return localStorage.getItem('arena.nwc') || ''; } catch { return ''; } };
+      const nwcPaint = () => {
+        const u = nwcUri();
+        nwcPay.textContent = u ? 'Pay with my wallet (Nostr Wallet Connect)' : 'Connect my wallet to pay in one tap (Nostr Wallet Connect)';
+        nwcLink.style.display = 'none';
+        nwcNote.innerHTML = '';
+        if (u) { nwcNote.textContent = 'Wallet connected in this browser · '; const x = document.createElement('a'); x.href = '#'; x.textContent = 'disconnect'; x.style.color = '#c9a8ff';
+          x.onclick = (e) => { e.preventDefault(); try { localStorage.removeItem('arena.nwc'); } catch { /* none */ } nwcPaint(); }; nwcNote.appendChild(x); }
+      };
+      let nwcBalanceMsat = null;
+      const nwcReadBalance = async () => {
+        const u = nwcUri(); if (!u || !window.ARENA_NOSTR_LOAD) return;
+        try {
+          const N = await window.ARENA_NOSTR_LOAD();
+          const b = await N.nwcBalance(u, { timeoutMs: 15000 });
+          nwcBalanceMsat = BigInt(b);
+          window.ARENA_NWC = { ...(window.ARENA_NWC || {}), balanceMsat: String(b) };
+          nwcFit();
+        } catch (e) { nwcBalanceMsat = null; if (nwcUri()) nwcNote.firstChild && (nwcNote.firstChild.textContent = 'Wallet connected (its balance is not shared: ' + (e.code || 'no answer') + ') · '); }
+      };
+      // THE BALANCE AGAINST THIS INVOICE: shown, and the button off when it cannot cover it
+      let nwcWant = null;
+      const nwcFit = () => {
+        if (nwcBalanceMsat === null || !nwcUri()) return;
+        const enough = nwcWant === null || nwcBalanceMsat >= nwcWant;
+        nwcPay.textContent = enough ? `Pay with my wallet · ${sats(nwcBalanceMsat)} in it` : `My wallet has ${sats(nwcBalanceMsat)} - not enough for this`;
+        if (!enough) nwcPay.disabled = true;
+      };
+      nwcPaint();
+      if (nwcUri()) { nwcPay.style.background = '#8e5cf2'; nwcPay.style.color = '#fff'; nwcReadBalance(); }
+      nwcPay.addEventListener('click', async () => {
+        const N = await (window.ARENA_NOSTR_LOAD ? window.ARENA_NOSTR_LOAD() : Promise.reject(new Error('the wallet connection did not load'))).catch((e) => { nwcNote.textContent = e.message; return null; });
+        if (!N) return;
+        let u = nwcUri();
+        if (!u) {
+          if (nwcLink.style.display === 'none') { nwcLink.style.display = ''; nwcLink.focus(); nwcPay.textContent = 'Connect and pay'; nwcNote.textContent = 'Your wallet\'s link lets this page ask it to pay; your wallet decides, and you can disconnect it there.'; return; }
+          u = nwcLink.value.trim();
+          try { N.parseNwc(u); } catch (e) { nwcNote.textContent = e.message; return; }
+          nwcPay.disabled = true; nwcNote.textContent = 'Asking your wallet …';
+          try { const i = await N.nwcGetInfo(u, { timeoutMs: 20000 }); try { localStorage.setItem('arena.nwc', u); } catch { /* the session only */ } window.ARENA_NWC = { connected: true, alias: i.alias || null, network: i.network || null }; }
+          catch (e) { if (!/does not|unknown|NOT_IMPLEMENTED/i.test(e.code || e.message)) { nwcNote.textContent = e.message; nwcPay.disabled = false; return; } try { localStorage.setItem('arena.nwc', u); } catch { /* none */ } }
+        }
+        const invoice = current;
+        if (!invoice) { nwcNote.textContent = 'No invoice yet - pick an amount first'; return; }
+        nwcPay.disabled = true;
+        status.set(2, 'Your wallet is paying this invoice over Nostr Wallet Connect …', 'busy');
+        const t0 = Date.now();
+        try {
+          const r = await N.nwcPay(u, invoice, { timeoutMs: 60000 });
+          window.ARENA_NWC = { ...(window.ARENA_NWC || {}), paid: invoice.slice(0, 24), ms: Date.now() - t0, preimage: r.preimage.slice(0, 16) };
+          nwcNote.textContent = 'Paid by your wallet - waiting for the e-cash …';
+        } catch (e) {
+          window.ARENA_NWC = { ...(window.ARENA_NWC || {}), failed: e.message };
+          status.set(2, 'Your wallet did not pay: ' + e.message + ' - you can still pay the invoice above from any wallet.', 'fail');
+        } finally { nwcPay.disabled = false; nwcPaint(); nwcReadBalance(); }
+      });
       const qr = add('div', 'blwp-deposit-qr');
       qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,28vh);margin:6px auto;line-height:0';
       const qrHold = (words) => { qr.innerHTML = ''; const h = document.createElement('div'); h.className = 'qr-hold'; h.textContent = words; qr.appendChild(h); };
@@ -3195,7 +3265,7 @@
           if (mine !== token) return;
           current = d.invoice;
           qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
-          box.textContent = d.invoice; copy.disabled = false;
+          box.textContent = d.invoice; copy.disabled = false; nwcPay.disabled = false; nwcWant = BigInt(d.amountMsat); nwcFit();
           status.set(2, `Waiting for your Lightning payment of ${sats(d.amountMsat)}` + (d.gateway ? ` via ${host(d.gateway)}` : '') + ' \u2026', 'busy');
         } catch (e) {
           if (mine !== token) return;
@@ -5062,6 +5132,13 @@
     //   - Restore: the 24 words or the seed (BLWP_RESTORE_SEED, as Settings does);
     //   - Nostr (window.ARENA_NOSTR, loaded only now): the account's game seed - from its NIP-78 event, else derived from an
     //     nsec or new for a signer - becomes this tab's seed (BLWP_RESTORE_SEED); a signer-made seed shows its 24 words next.
+    // THE NOSTR BUNDLE, LOADED ONCE AND ONLY WHEN ASKED (the wallet screen, the deposit dialog's wallet connect)
+    window.ARENA_NOSTR_LOAD = (() => { let p = null; return () => (p = p || new Promise((res, rej) => {
+      if (window.ARENA_NOSTR) return res(window.ARENA_NOSTR);
+      const sc = document.createElement('script'); sc.src = 'arena-nostr.js';
+      sc.onload = () => (window.ARENA_NOSTR ? res(window.ARENA_NOSTR) : rej(new Error('the Nostr login did not load')));
+      sc.onerror = () => { p = null; rej(new Error('the Nostr login did not load')); }; document.head.appendChild(sc);
+    })); })();
     (function () {
       const $ = (id) => document.getElementById(id);
       const box = $('arena-wallet-start');
@@ -5093,11 +5170,7 @@
       };
       // NOSTR: its bundle only now
       let N = null;
-      const nostr = () => (N ? Promise.resolve(N) : new Promise((res, rej) => {
-        const sc = document.createElement('script'); sc.src = 'arena-nostr.js';
-        sc.onload = () => (window.ARENA_NOSTR ? res(N = window.ARENA_NOSTR) : rej(new Error('the Nostr login did not load')));
-        sc.onerror = () => rej(new Error('the Nostr login did not load')); document.head.appendChild(sc);
-      }));
+      const nostr = () => window.ARENA_NOSTR_LOAD().then((x) => (N = x));
       const why = (e) => { busy(''); $('ws-nostr-why').textContent = e && e.message ? e.message : String(e); };
       const buttons = (on) => { for (const b of $('ws-nostr-pane').querySelectorAll('button')) b.disabled = !on; };
       // THE ACCOUNT'S SEED, made this tab's: the page reloads with it (BLWP_RESTORE_SEED)
