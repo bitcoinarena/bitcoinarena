@@ -246,3 +246,23 @@ test('a round closing entry at its start keeps the old door: no time limit at en
   now = Number(c.startTimeMs) + 600000;
   assert.ok(r.enter(entryFor(rid)));
 });
+
+test('a batch that carries the committee\'s word on its price (kanban #311): taken when it stands and is the price played; refused otherwise', async () => {
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
+  const { receiptsNeeded } = await import('../../arena-protocol/src/genesis.js');
+  const sks = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0x30 + n)); const seats = sks.map((sk) => schnorr.getPublicKey(sk));
+  const need = receiptsNeeded(7);
+  const r = fresh(), c = { ...contract(), nodes: seats };
+  const rid = r.open(c); const eid = r.enter(entryFor(rid));
+  const words = [[65536, 0, 0, 0, 0], [65536, 0, 0, 0, 0]];
+  const cents = 8297193;
+  const att = (priceCents, n = need) => [1, 0, priceCents, sks.slice(0, n).map((sk, i) => [seats[i], schnorr.sign(priceSampleId({ roundId: rid, tick: 1, priceCents }), sk)])];
+  const bad = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: words, liquidations: [], samples: [[1, centsToTapeUnits(cents) + 7]], attests: [att(cents)] };
+  assert.throws(() => r.batch(encodeInputBatch(bad)), /not the attested 8297193 cents/);
+  const short = { ...bad, samples: [[1, centsToTapeUnits(cents)]], attests: [att(cents, need - 1)] };
+  assert.throws(() => r.batch(encodeInputBatch(short)), new RegExp(`not attested: ${need - 1} of the committee signed it`));
+  const good = { ...bad, samples: [[1, centsToTapeUnits(cents)]] };
+  r.batch(encodeInputBatch(good));
+  assert.equal(r.transcript(rid, eid).ticks.length, 2, 'taken');
+});
