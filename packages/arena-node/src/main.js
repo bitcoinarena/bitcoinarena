@@ -17,6 +17,7 @@
 // AND WHAT A LAUNCHER USED TO HAND ITS IN-PROCESS NODES, for nodes that run as their own processes (attach, the owner
 // 2026-09-29: the seven blwp-tn4-node units own the guardians; tools/run-testnet4-paid.mjs ARENA_ATTACH=1):
 //     ARENA_CLOSE_AT_END=1         this node closes every round that is over, itself
+//     ARENA_PRICE_FEED=1           this node reads BTC/USD every 5 s and signs the price samples of its nextblock rounds (§11)
 //     ARENA_DONATION_NETWORK       regtest | testnet4: the network's signed test donation set, which the rounds name - and
 //                                 the chain this seat reads, for the network store (kanban #276)
 //     ARENA_FEDERATION_INVITE      the federation invite this seat hands out with its network (GET /network)
@@ -119,6 +120,8 @@ const ownerFiles = { store: {
 const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
+// THE COMMITTEE'S PRICE FEED (§11, kanban #311): read BTC/USD every 5 s and lead / sign the attested price samples
+if (process.env.ARENA_PRICE_FEED === '1') options.priceFeed = true;
 {
   const net = process.env.ARENA_DONATION_NETWORK;
   if (net && net !== 'regtest' && net !== 'testnet4') { console.error(`ARENA_DONATION_NETWORK is regtest or testnet4, not ${net}`); process.exit(2); }
