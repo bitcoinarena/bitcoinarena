@@ -111,7 +111,7 @@ INVITE=$(grep -o '"invite":"[^"]*"' "$LOG" | tail -1 | cut -d'"' -f4)
 [ -n "$INVITE" ] && [ "$INVITE" != "(none written)" ] || die "the founding wrote no invite"
 echo "$INVITE" > $H/invite-code
 mkdir -p $H/paid/attach-proof $H/series
-GAMES="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." && pwd)/test/plugins/market/game.js"
+GAMES="$(cd "$HERE/.." && pwd)/../nextblock/plugin/nextblock.js,$(cd "$HERE/.." && pwd)/test/plugins/market/game.js,$(cd "$HERE/.." && pwd)/test/plugins/updown/game.js"
 SEAT_ENV=""
 start_nodes() {
   i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1))
