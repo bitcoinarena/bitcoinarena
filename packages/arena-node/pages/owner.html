@@ -119,18 +119,38 @@ async function area() {
       <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Donations</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
+    <h2>Sign a game or market</h2><div class="card">
+      <p>Your developer key, made from the same 24 words: <b id="devkey"></b>. A game or market you sign here names it as its developer;
+      an update of it is signed by it again.</p>
+      <label>The manifest body (JSON: 32-byte values in hex, big numbers as decimal strings; leave out gameDevPubkey - it is yours)</label>
+      <textarea id="body" rows="8" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder='{ "gameName": "my-game", "version": 1, "resultType": "HEAD_TO_HEAD", ... }'></textarea>
+      <div class="err" id="serr"></div><button class="primary" id="sign">Sign</button><div id="signed"></div></div>
     <h2>Your 24 words</h2><div class="card"><p>They are kept in this browser only.</p>
       <button id="show">Show them</button><button id="forget">Forget them on this browser</button><div id="shown"></div></div>`);
   $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
   $('forget').onclick = () => { if (confirm('Forget the 24 words on this browser? You need them written down to come back.')) forget(); };
   donations();
+  // SIGN A GAME OR MARKET (kanban #276 step 4): signed here as the developer's command-line client signs it
+  const devSeed = C.devSeedFromSeed(readSeed());
+  const devPub = C.devPubkeyOf(devSeed);
+  $('devkey').textContent = C.toHex(devPub);
+  $('sign').onclick = () => {
+    $('serr').textContent = ''; $('signed').innerHTML = '';
+    try {
+      const out = C.signManifestWithSeed(C.bodyFromJson($('body').value, { devPubkey: devPub }), devSeed);
+      $('signed').innerHTML = `<div class="row"><span>Game id</span><b>${esc(out.gameId.slice(0, 16))}…</b></div>
+        <label>The signed manifest (hex)</label><textarea id="mhex" rows="5" readonly>${esc(out.hex)}</textarea><button id="copy">Copy</button>`;
+      window.OWNER_SIGNED = out;
+      $('copy').onclick = () => { navigator.clipboard.writeText(out.hex).then(() => { $('copy').textContent = 'Copied ✓'; }, () => { $('mhex').select(); }); };
+    } catch (e) { $('serr').textContent = e.message; }
+  };
 }
 // THE DEV CLIENT (kanban #276 step 3): what this seat verified for the protocol developers and for each game it hosts, in
 // sat to the msat, per round and per UTC day (GET /owner/donations, from the seat's own donation index)
 const sat = (msat) => { const m = BigInt(msat); const w = (m / 1000n).toLocaleString('en-US'); const f = m % 1000n; return (f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w) + ' sat'; };
 async function donations() {
   let r;
-  try { r = await (await fetch('/owner/donations', { cache: 'no-store' })).json(); }
+  try { r = await (await fetch(at('/owner/donations'), { cache: 'no-store' })).json(); }
   catch (e) { $('dons').innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
   if (!r.sets || !r.sets.length) { $('dons').innerHTML = '<div class="card"><p>This seat deals with no donation set yet.</p></div>'; return; }
   $('dons').innerHTML = `<div class="card"><div class="row"><span>In all, verified by this seat</span><b>${sat(r.totalMsat)}</b></div></div>` + r.sets.map((s) => `<div class="card">
