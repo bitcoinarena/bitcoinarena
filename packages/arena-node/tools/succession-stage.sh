@@ -67,7 +67,8 @@ for pair in "bob carol" "carol bob"; do FROM=${pair% *} TO=${pair#* }
   until_ "$FROM connects $TO" 60 peered
   openx() { ln_ $FROM openchannel --node_key=$KEY2 --local_amt=4000000 --push_amt=2000000 > $H/open-$FROM-$TO.out 2>&1; }
   until_ "$FROM opens a channel to $TO" 120 openx
-  bc generatetoaddress 1 $MINE >/dev/null
+  # 6 blocks: the channel confirmed before the next open (lnd keeps one pending channel per peer - run 8 stopped there)
+  bc generatetoaddress 6 $MINE >/dev/null
 done
 bc generatetoaddress 6 $MINE >/dev/null
 activeBC() { [ "$(ln_ bob listchannels | grep -c '"active": *true')" -ge 2 ] && [ "$(ln_ carol listchannels | grep -c '"active": *true')" -ge 2 ]; }
