@@ -181,7 +181,13 @@ try {
   // SEATED BEFORE ANYTHING IS PAID (§5A.7): wait for the seating close, then the page's own certificate check
   const close = Number(seatingCloseMs(c)) + 5000;
   if (Date.now() < close) { log({ step: 'waiting for the seating', closeAt: new Date(close).toISOString() }); await new Promise((r) => setTimeout(r, close - Date.now())); }
-  const seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve });
+  // THE CERTIFICATE MAY COME A LITTLE AFTER THE CLOSE: every seated seat's signature is gathered (measured 21:11Z under load:
+  // none 11 s after the close, all 7 seats holding it a minute later) - asked again every 5 s, until 150 s before entry close
+  let seated = null;
+  for (;;) {
+    try { seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve }); break; }
+    catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
+  }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   const moves = [Number(env.MOVE_1 ?? 0), Number(env.MOVE_2 ?? 2)];   // 0 rock, 1 paper, 2 scissors (the game's own numbering)
