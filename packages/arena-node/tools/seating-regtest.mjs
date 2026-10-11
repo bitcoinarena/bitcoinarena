@@ -141,7 +141,8 @@ const newRound = (tag) => {
   const now = BigInt(Date.now());
   const committeeTimeMs = now + 20000n;
   const startTimeMs = committeeTimeMs + 320000n;          // seating closes at committee + 200 s, PRESENT from committee + 140 s
-  return { ...base, committeeTimeMs, startTimeMs, entryCloseMs: startTimeMs, publicationRelays: [`wss://r.example/${tag}`] };
+  // the contract as a seat reads it (decoded: protocolVersion and every default filled), as the client is handed it
+  return decodeRoundContract(encodeRoundContract({ ...base, committeeTimeMs, startTimeMs, entryCloseMs: startTimeMs, publicationRelays: [`wss://r.example/${tag}`] }));
 };
 const listing = async (i, rid) => {
   const r = await http(i, '/rounds?next=64').catch(() => null);
@@ -167,16 +168,20 @@ const certOf = async (i, rid, role) => {
 const untilClose = async (c, extraMs) => { const left = Number(seatingCloseMs(c)) - Date.now() + extraMs; if (left > 0) await wait(left); };
 const enter = async (c, rid, seatedSettlement, live) => {
   const preimage = secretScalar(); const eph = rand(32); const player = schnorr.getPublicKey(rand(32));
-  const dealt = await dealHandout({ preimage, signerNodes: seatedSettlement.map(fromHex), roundId: rid, playerPubkey: player, ephemeralSecret: eph,
-    ephemeralPubkey: feldmanGroup.pointX(eph), coefficients: Array.from({ length: 4 }, () => scalarFrom32(rand(32)) % FIELD), needed: 5, curve: feldmanGroup });
-  if (!dealt.ok) return { handout: dealt.why };
+  // a round with fewer than 5 seated has no committee to deal a 5-of handout to: the entry goes without one (the seat's
+  // seating gate answers before any handout is read)
+  let dealt;
+  try {
+    dealt = await dealHandout({ preimage, signerNodes: seatedSettlement.map(fromHex), roundId: rid, playerPubkey: player, ephemeralSecret: eph,
+      ephemeralPubkey: feldmanGroup.pointX(eph), coefficients: Array.from({ length: 4 }, () => scalarFrom32(rand(32)) % FIELD), needed: 5, curve: feldmanGroup });
+  } catch (e) { dealt = { ok: false, why: e.message, handout: { commitments: [new Uint8Array(33).fill(2)] } }; }
   const entry = { roundId: rid, playerPubkey: player, sessionPubkey: b32(4), stakeMsat: 0n, feeMsat: 0n, donationMsat: 0n, joinTick: 0,
-    stakeCommitment: sha256(preimage), vssSharesRef: handoutId(dealt.handout),
+    stakeCommitment: sha256(preimage), vssSharesRef: dealt.ok ? handoutId(dealt.handout) : b32(0),
     worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? b32(0) : b32(9), stakePoint: dealt.handout.commitments[0],
     feePreimage: b32(0), stakeLockOutpoint: { txid: b32(0), outIdx: 0n }, feeLockOutpoint: { txid: b32(0), outIdx: 0n }, claimKeyAttestationRef: b32(0) };
   const out = [];
   for (const i of live) {
-    await http(i, '/handout', { method: 'POST', body: encodeHandout(dealt.handout) }).catch(() => null);
+    if (dealt.ok) await http(i, '/handout', { method: 'POST', body: encodeHandout(dealt.handout) }).catch(() => null);
     const r = await http(i, '/entry', { method: 'POST', body: encodeEntryContract(entry) }).catch(() => null);
     out.push({ seat: i + 1, status: r ? r.status : 'down', said: r ? (await r.text()).slice(0, 120) : '' });
   }
