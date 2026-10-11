@@ -235,6 +235,9 @@ export const TYPE_OUTCOME_ATTESTATION = 0x1d;
 // 64 prices before the start, as one tape - so the player never chooses the price.
 export const TYPE_PRICE_SAMPLE = 0x1e;
 export const TYPE_PRICE_TAPE = 0x1f;
+// A FEDERATION'S RECORD (§23A.4, kanban #321): signed by its guardians, it decides whether a client may deposit into it,
+// and whether a seat names it in a new round - OPEN, DRAINING, CRITICAL, CLOSED, HALTED.
+export const TYPE_FEDERATION_RECORD = 0x20;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -352,6 +355,8 @@ export const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
+  // a federation record's id, the bytes its guardians sign (kanban #321, federation-record.js)
+  federationRecord: 'ARENA/v1/FederationRecord',
   // kanban #276: a game's description and website, signed by its developer key beside its manifest (game-info.js)
   gameInfo: 'ARENA/v1/GameInfo',
   // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.

@@ -47,6 +47,7 @@ import { packageOf, verifyPackage, installPackage, registrationFromPackage } fro
 import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
+import { federationRecords } from './federation-records.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -366,6 +367,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
+  let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2238,6 +2240,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const drainingRefusal = (contract) => {
     if (!contract || !(contract.stakeMsat > 0n) || !(contract.federationId instanceof Uint8Array)) return null;
     const d = drainingFeds.get(toHex(contract.federationId));
+    // AND BY ITS GUARDIANS' OWN RECORD (§23A.4, kanban #321): DRAINING, CRITICAL, CLOSED or HALTED names no new round
+    const byRecord = fedRecords ? fedRecords.draining(toHex(contract.federationId)) : null;
+    if (!d && byRecord) return `federation ${toHex(contract.federationId).slice(0, 16)} is ${byRecord} by its guardians' signed record: no new round or deposit names it`;
     return d ? `federation ${toHex(contract.federationId).slice(0, 16)} is draining since ${new Date(d.sinceMs).toISOString()} (its successor is ${d.successor.slice(0, 16)}): no new round or deposit names it` : null;
   };
   const refusedSeries = new Set();
@@ -2485,6 +2490,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEDERATION THIS SEAT NAMED BEFORE A PACKAGE NAMING A SUCCESSOR: draining from now (§23A.6 step 2), kept beside the
   // package so the next start keeps it draining; the series naming it are no longer written
   const fedOf = (invite) => { try { return invite ? readInvite(invite).federationId : null; } catch { return null; } };
+  // THE FEDERATION RECORDS (kanban #321): signed here when this node guards one, gathered from the guardians, mirrored at
+  // GET /federations; gathered every ARENA_FEDERATION_RECORD_MS (10 min)
+  const inviteOfFed = (fidHex) => {
+    const all = [federationInvite, ...[...networksHeld.values()].map((h) => h.pkg.invite)].filter(Boolean);
+    return all.find((inv) => String(fedOf(inv) || '').toLowerCase() === fidHex) || null;
+  };
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null,
+    leavingAtMs: () => (owner ? owner.leavingAtMs() : null) });
+  const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
+  const recordTimer = setInterval(() => { fedRecords.gatherAll(inviteFedId).then((r) => { for (const x of r) if (x.ok === false) console.log(`[federations] ${String(x.federation || '').slice(0, 16)}: ${x.why}`); }, () => {}); },
+    Number(process.env.ARENA_FEDERATION_RECORD_MS || 600000));
+  if (recordTimer.unref) recordTimer.unref();
   const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true) => {
     if (!oldFed || oldFed === successor || drainingFeds.has(oldFed)) return;
     drainingFeds.set(oldFed, { successor, sinceMs });
@@ -4897,6 +4914,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ slashHeight: height, tipHeight: at.tipHeight, owing }));
       }
 
+      // THIS GUARDIAN'S SIGNATURE OVER ITS FEDERATION'S RECORD (§23A.4, kanban #321), with `gone` named: the same body
+      // with those guardians gone - and its own word on whether it is leaving, signed
+      if (req.method === 'GET' && url.pathname === '/federation-record') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'a federation id, 32 bytes hex');
+        const goneHex = String(url.searchParams.get('gone') || '').split(',').filter(Boolean).map((x) => x.toLowerCase());
+        const r = goneHex.length ? fedRecords.mySignatureWithGone(fid, goneHex) : fedRecords.mySignature(fid);
+        res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(r));
+      }
+      // EVERY FEDERATION RECORD THIS SEAT HOLDS, signed by the threshold of its bonded guardians (§23A.4: "every seat
+      // mirrors the newest record of every federation its census knows"); ?fresh=1 gathers again now
+      if (req.method === 'GET' && url.pathname === '/federations') {
+        if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: fedRecords.list() }));
+      }
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -5590,6 +5624,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
+        clearInterval(recordTimer);
         clearInterval(networkGamesTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);

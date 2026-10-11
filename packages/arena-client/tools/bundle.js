@@ -51,6 +51,8 @@ walk(SRC + 'bip39.js');
 walk(SRC + 'join.js');
 // AND THE COMMITTEE THE CLIENT BUILDS ITSELF (kanban #296, spec 5A.6): what a paid join deals the stake to
 walk(SRC + 'committee.js');
+// AND WHAT IT BELIEVES ABOUT A FEDERATION (kanban #321): the guardians' signed record, checked against that census
+walk(SRC + 'federations.js');
 // AND THE LOBBY (M3.3-34): what a page with no round in its link lists - the
 // named nodes' rounds, each checked against its own contract.
 walk(SRC + 'lobby.js');
@@ -208,7 +210,7 @@ out += '         lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobb
 out += '         fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,\n';
 out += '         SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,\n';
 // AND ONE FREE ROUND AND ONE PAYING ROUND LISTED, NEVER TWO OF EITHER, with the paying one's stake.
-out += '         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,\n';
+out += '         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationSays: federationSays, FEDERATION_ALLOWS: FEDERATION_ALLOWS, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,\n';
 out += '         isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,\n';
 out += '         nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,\n';
 out += '         EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,\n';
