@@ -23,7 +23,7 @@ import {
   TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
-  TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD,
+  TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
 } from './constants.js';
 
 /**
@@ -76,6 +76,8 @@ export const FRAMES = new Map([
   [TYPE_PRICE_TAPE, { name: 'PriceTape', authority: true }],
   // A federation's record (§23A.4, kanban #321): it decides deposits and which federation a new round may name.
   [TYPE_FEDERATION_RECORD, { name: 'FederationRecord', authority: true }],
+  [TYPE_PRESENT, { name: 'Present', authority: true }],
+  [TYPE_SEATING, { name: 'Seating', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],
