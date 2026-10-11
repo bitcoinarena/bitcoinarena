@@ -62,7 +62,12 @@ let k = env.SERIES_K !== undefined ? Number(env.SERIES_K) : Number((tipMtp - g) 
 if (env.SERIES_K === undefined) while (startOf(k) - censusLeadMs > tipMtp || startOf(k) - committeeLeadMs <= tipMtp + 3600000n) {
   if (startOf(k) - committeeLeadMs <= tipMtp + 3600000n) k++; else break;
 }
-const cut = startOf(k) - censusLeadMs;
+// SERIES_CENSUS_AT_TIP=1 (the owner 2026-10-11 ~06:30Z: "mach es früher als 36, so früh wie möglich. Du hast mein Go"):
+// the census is the tip at publication, not the block at start - 36 h - so a series is published as soon as its
+// committee_time is an hour ahead, not 12 h later. The seats hold only the 24 h committee lead (seriesLeadIsValid); the
+// 36 h cut was the publisher's own, chosen so the beacon sits above the census (still true: committee_time >= tip + 1 h).
+const atTip = env.SERIES_CENSUS_AT_TIP === '1';
+const cut = atTip ? tipMtp : startOf(k) - censusLeadMs;
 // DRY_AT_TIP=1: the whole path checked now, the census taken at the tip instead of at the cut - never with --send
 const dryAtTip = env.DRY_AT_TIP === '1';
 if (dryAtTip && send === '--send') throw new Error('DRY_AT_TIP is a check only; it never publishes');
@@ -72,7 +77,7 @@ if (cut > tipMtp && !dryAtTip) {
   process.exit(3);
 }
 // the census: the highest block whose MTP <= the cut
-let H = tip; if (!dryAtTip) while (mtpOf(H) > cut) H--;
+let H = tip; if (!dryAtTip && !atTip) while (mtpOf(H) > cut) H--;
 
 // 3. THE ARENA CONTRACT: the BLWP series' fields, on testnet4's Arena id, nextblock, the key set in force
 // SERIES_GAME=updown (kanban #293): the Bitcoin Up or Down market on testnet4 (game 672415c8) - no core, no config, no score;
