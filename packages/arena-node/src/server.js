@@ -91,6 +91,7 @@ import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
+import { gameLive } from './game-live.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
@@ -1192,6 +1193,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
   // blocks - asked for, never invented, the same way the randomness is.
+  const liveNow = gameLive(round);
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
     // The same beacon the verifier reads: one source, so a node cannot assign
@@ -3362,8 +3364,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // ITS KIND, VERSION AND SIGNED INFO (kanban #276): what the network store lists; the info's signature travels with it,
           // so a reader checks it against the manifest's developer key rather than taking it from this seat
           type: gameTypeOf(p.manifest), version: p.manifest.version, info: p.info || null,
+          // WHO PLAYS IT HERE NOW (kanban #338): its live rounds and the players in them, from this seat's own store
+          live: liveNow()[toHex(p.gameId)] || { rounds: 0, players: 0 },
           manifest: toHex(encodeManifest(p.manifest)) }));
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=10', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), games }));
       }
       if (req.method === 'GET' && url.pathname === '/rounds' && /text\/html/.test(String(req.headers.accept || ''))) {
