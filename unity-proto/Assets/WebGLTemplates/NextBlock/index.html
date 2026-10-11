@@ -4813,7 +4813,7 @@
           const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/h2h-want?game=' + game.id, { method: 'POST', signal: AbortSignal.timeout(5000) })
             .then((r) => r.status).catch(() => 0)));
           window.ARENA_H2H_WANT = { at: Date.now(), open: false, said };
-          console.log('[arena] no ' + game.name + ' round is open: asked the seats for one (' + said.filter((x) => x === 200).length + ' of ' + nodes.length + ')');
+          console.log('[arena] no ' + game.name + ' round is open: asked the signer nodes for one (' + said.filter((x) => x === 200).length + ' of ' + nodes.length + ')');
         };
         ask(); window.ARENA_H2H_WANT_TIMER = setInterval(ask, 30000);
       }
