@@ -796,6 +796,10 @@ const TYPE_PRICE_TAPE = 0x1f;
 // A FEDERATION'S RECORD (§23A.4, kanban #321): signed by its guardians, it decides whether a client may deposit into it,
 // and whether a seat names it in a new round - OPEN, DRAINING, CRITICAL, CLOSED, HALTED.
 const TYPE_FEDERATION_RECORD = 0x20;
+// RESERVE SEATS (§5A.7, kanban #301): a drawn node's word that it is present for a round and role, and the seating its
+// seated nodes all sign - which nodes serve the round. Two seatings for one round and role are equivocation.
+const TYPE_PRESENT = 0x21;
+const TYPE_SEATING = 0x22;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -933,6 +937,9 @@ const TAG = {
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',
+  // §5A.7 reserve seats (kanban #301)
+  seatPresent: 'ARENA/v1/SeatPresent',
+  seating: 'ARENA/v1/Seating',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
@@ -2252,10 +2259,14 @@ function sittingSeatsFitTheSlots(c) {
   const gv = Number.isInteger(c.gameVerifySlots) ? c.gameVerifySlots : 0;
   const st = Number.isInteger(c.settlementSlots) ? c.settlementSlots : 0;
   const slots = Math.max(gv, st);
-  if (seats > slots)
+  // RESERVE SEATS (§5A.7, kanban #301; decision A: the contract names the draw): a round may name its draw - two reserves
+  // over the seats, 9 for 7 and 3 for 2 (sortition.js drawnForRole) - and its seating certificate says who sits
+  const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
+  const drawn = Math.min(slots + 2, 2 * t - 1);
+  if (seats > drawn)
     return { ok: false, seats, slots,
       why: `that round seats ${seats} signer nodes on ${gv}/${st} slots: 22A pays the seats the census `
-        + 'seated, and a fee lock sized for more of them pays seats that never sat' };
+        + `seated, and a fee lock sized for more of them pays seats that never sat (a round names at most its draw, ${drawn})` };
   return { ok: true, seats, slots, why: '' };
 }
 
@@ -8103,6 +8114,10 @@ function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = 
 function receiptsNeeded(slots) {
   if (slots === 2) return 2;
   if (slots === 7) return 5;
+  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats, kanban #301): 9 drawn for 7 seats, 3 for 2 - the threshold is the
+  // seats', never more of the drawn than the seats need
+  if (slots === 9) return 5;
+  if (slots === 3) return 2;
   throw new Error(`no committee threshold for ${slots} slots`);
 }
 
@@ -19840,6 +19855,160 @@ function backupLine(storage, seed) {
 
 
 
+// ---- arena-protocol/src/seating.js
+// RESERVE SEATS (multiplayer_p2p.md §5A.7, RULED the owner 2026-09-28; kanban #301).
+//
+// A node drawn up to 72 h ahead may be offline when its round comes, so each role draws more nodes than it seats
+// (sortition.js drawCommittee: 9 for 7 seats) and seats the ones that show up:
+//
+//   present = drawn nodes that signed PRESENT(round_id, role, node_pubkey) before seating_close = start_time - 120 s
+//   seated  = the first min(slots, |present|) present nodes in score order
+//   a round opens for entries iff |seated| >= threshold
+//
+// The seated nodes sign SEATING(round_id, role, seated list); a seating is valid only with the signature of EVERY node it
+// seats, and each node signs at most one per round and role. Two valid seatings for one round and role always share a
+// signer (2 x threshold > drawn), so two certificates are proof of equivocation by that signer: the round is void (§13C)
+// and the signer's bond is slashable (§5A.3B). A client enters a round only with a certificate it checked against the draw
+// it computes itself (client-committee.js). The round contract is unchanged (the owner 2026-10-11, decision A): it names the
+// round; who serves it is this certificate.
+
+
+
+/** seating_close is this long before the round's start: round i+1 is seated before round i (90 s earlier) starts. */
+const SEATING_LEAD_MS = 120000n;
+const ROLE_BYTE = Object.freeze({ game: 1, settlement: 2 });
+const roleOfSeat = (b) => Object.keys(ROLE_BYTE).find((k) => ROLE_BYTE[k] === b);
+const SEATING_ROLES = Object.freeze(['game', 'settlement']);
+
+/** When a round's seating closes: start_time - 120 s. */
+const seatingCloseMs = (contract) => BigInt(contract.startTimeMs) - SEATING_LEAD_MS;
+
+/** The threshold a seated committee needs (receiptsNeeded): 5 of 7, 2 of 2. */
+const seatedThreshold = (slots) => (slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1);
+
+const is32Seat = (b) => b instanceof Uint8Array && b.length === 32;
+const sameBytesSeat = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+const cmpSeat = (a, b) => { for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i]; return 0; };
+
+// ---- PRESENT ----
+function presentBody({ roundId, role, nodePubkey }) {
+  if (!is32Seat(roundId) || !is32Seat(nodePubkey) || !ROLE_BYTE[role]) throw new Error('a PRESENT names a round, a role and a node key');
+  const w = new Writer();
+  w.u8(TYPE_PRESENT); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]); w.bytes32(nodePubkey);
+  return w.finish();
+}
+const presentId = (p) => taggedHash(TAG.seatPresent, presentBody(p));
+/** A node's PRESENT, signed with its node key: `sign(messageId)` answers 64 bytes. */
+function signPresent({ roundId, role, nodePubkey }, sign) {
+  const body = presentBody({ roundId, role, nodePubkey });
+  return Uint8Array.from([...body, ...sign(taggedHash(TAG.seatPresent, body))]);
+}
+function decodePresent(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PRESENT) throw new Error('that is not a PRESENT');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('a PRESENT of another protocol version');
+  const roundId = r.bytes32(); const role = roleOfSeat(r.u8()); const nodePubkey = r.bytes32(); const signature = r.bytes(64);
+  if (!role) throw new Error('a PRESENT for no role');
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the PRESENT');
+  return { roundId, role, nodePubkey, signature };
+}
+/** A PRESENT that stands: decodes, names this round, and is signed by the node it names. */
+function verifyPresent(bytes, { roundId, verify }) {
+  let p; try { p = decodePresent(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  if (roundId && !sameBytesSeat(p.roundId, roundId)) return { ok: false, why: 'that PRESENT names another round' };
+  let good = false; try { good = verify(p.signature, presentId(p), p.nodePubkey); } catch { good = false; }
+  return good ? { ok: true, present: p } : { ok: false, why: 'that PRESENT is not signed by the node it names' };
+}
+
+// ---- SEATED: who serves ----
+/**
+ * THE SEATED, from the draw (node keys in score order) and the keys a node holds a PRESENT from: the first min(slots,
+ * |present|) present ones in score order. A node seats itself only in that order - a node ranked below a present one is
+ * seated only if that one is too.
+ */
+function seatedFrom({ drawn, present, slots }) {
+  const held = new Set([...present].map((k) => (typeof k === 'string' ? k : toHex(k))));
+  return drawn.filter((k) => held.has(toHex(k))).slice(0, slots);
+}
+
+// ---- SEATING ----
+function seatingBody({ roundId, role, seated }) {
+  if (!is32Seat(roundId) || !ROLE_BYTE[role] || !Array.isArray(seated) || !seated.every(is32Seat)) throw new Error('a SEATING names a round, a role and its seated node keys');
+  const w = new Writer();
+  w.u8(TYPE_SEATING); w.u16(PROTOCOL_VERSION); w.bytes32(roundId); w.u8(ROLE_BYTE[role]);
+  w.vec(seated, (k, ww) => ww.bytes32(k));
+  return w.finish();
+}
+const seatingId = (s) => taggedHash(TAG.seating, seatingBody(s));
+/** One seated node's signature over a seating. */
+const signSeating = (s, sign) => sign(seatingId(s));
+/** THE CERTIFICATE: the body and every signature over it, sorted by node key. */
+function encodeSeatingCertificate({ roundId, role, seated, signatures }) {
+  const w = new Writer();
+  const body = seatingBody({ roundId, role, seated });
+  w.bytes(body, body.length);
+  const sigs = [...signatures].sort((a, b) => cmpSeat(a.nodePubkey, b.nodePubkey));
+  w.vec(sigs, (x, ww) => { ww.bytes32(x.nodePubkey); ww.bytes(x.signature, 64); });
+  return w.finish();
+}
+function decodeSeatingCertificate(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_SEATING) throw new Error('that is not a SEATING');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('a SEATING of another protocol version');
+  const roundId = r.bytes32(); const role = roleOfSeat(r.u8());
+  if (!role) throw new Error('a SEATING for no role');
+  const seated = r.vec((rr) => rr.bytes32());
+  const signatures = r.vec((rr) => ({ nodePubkey: rr.bytes32(), signature: rr.bytes(64) }));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the SEATING');
+  return { roundId, role, seated, signatures };
+}
+
+/**
+ * A CERTIFICATE THAT STANDS for this round and role, against the draw the checker computed itself: the seated are drawn
+ * nodes, in score order, no more than the slots and at least the threshold, each once - and EVERY seated node signed it.
+ */
+function verifySeating(bytes, { roundId, role, drawn, slots, verify }) {
+  let c; try { c = decodeSeatingCertificate(bytes); } catch (e) { return { ok: false, why: e.message }; }
+  if (roundId && !sameBytesSeat(c.roundId, roundId)) return { ok: false, why: 'that seating names another round' };
+  if (role && c.role !== role) return { ok: false, why: `that seating is for ${c.role}, not ${role}` };
+  const t = seatedThreshold(slots);
+  if (c.seated.length > slots) return { ok: false, why: `that seating seats ${c.seated.length}, more than the round's ${slots} seats` };
+  if (c.seated.length < t) return { ok: false, why: `that seating seats ${c.seated.length}, fewer than the ${t} a round needs: it opens no entries` };
+  const rank = new Map(drawn.map((k, i) => [toHex(k), i]));
+  let last = -1;
+  for (const k of c.seated) {
+    const i = rank.get(toHex(k));
+    if (i === undefined) return { ok: false, why: `that seating seats ${toHex(k).slice(0, 16)}, which the draw did not draw` };
+    if (i <= last) return { ok: false, why: 'that seating is not in score order (or seats a node twice)' };
+    last = i;
+  }
+  const id = seatingId(c);
+  const by = new Map(c.signatures.map((x) => [toHex(x.nodePubkey), x.signature]));
+  for (const k of c.seated) {
+    const sig = by.get(toHex(k));
+    if (!sig) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)} did not sign that seating` };
+    let good = false; try { good = verify(sig, id, k); } catch { good = false; }
+    if (!good) return { ok: false, why: `seated node ${toHex(k).slice(0, 16)}'s signature on that seating does not verify` };
+  }
+  return { ok: true, seating: c, id };
+}
+
+/**
+ * TWO SEATINGS FOR ONE ROUND AND ROLE (§5A.7): each valid against the same draw, and different - proof of equivocation by
+ * every node that signed both. Answers those nodes (never empty while 2 x threshold > drawn).
+ */
+function seatingEquivocation(a, b, check) {
+  const x = verifySeating(a, check), y = verifySeating(b, check);
+  if (!x.ok) return { ok: false, why: `the first seating does not stand: ${x.why}` };
+  if (!y.ok) return { ok: false, why: `the second seating does not stand: ${y.why}` };
+  if (!sameBytesSeat(x.seating.roundId, y.seating.roundId) || x.seating.role !== y.seating.role) return { ok: false, why: 'those seatings are for different rounds or roles' };
+  if (sameBytesSeat(x.id, y.id)) return { ok: false, why: 'that is one seating twice, not two' };
+  const inB = new Set(y.seating.seated.map(toHex));
+  const both = x.seating.seated.filter((k) => inB.has(toHex(k)));
+  if (!both.length) return { ok: false, why: 'those seatings share no signer' };
+  return { ok: true, signers: both, roundId: x.seating.roundId, role: x.seating.role };
+}
+
 // ---- arena-protocol/src/federation-slash.js
 // WHAT A FEDERATION'S BONDS COVER, AND WHERE A SLASHED ONE GOES.
 //
@@ -21553,6 +21722,192 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
   };
 }
 
+// ---- arena-protocol/src/sortition.js
+// Committee selection: bond-weighted, linear, and decided in integers.
+
+
+
+
+
+
+/**
+ * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
+ *
+ * 5A.7 sizes the two pools, not the four roles - "GAME/VERIFY: 7 slots,
+ * threshold 5; SETTLEMENT: 7 slots, threshold 5" - so the mapping is the one
+ * 22A already uses for the fee shares, imported rather than written twice: a
+ * second copy of a protocol mapping is a second place for it to drift.
+ *
+ * A role with no pool has no committee, and that is answered rather than
+ * silently given zero signer nodes.
+ */
+function slotsForRole(contract, role) {
+  const pool = poolOfRole(role);
+  if (pool === GAME_VERIFY) return contract.gameVerifySlots;
+  if (pool === SETTLEMENT) return contract.settlementSlots;
+  return undefined;
+}
+
+/**
+ * A node's ticket for a role. Deterministic, and unchooseable in advance
+ * because the committee seed is not known when the bond is funded.
+ */
+function ticketFor(committeeSeed, entry, role) {
+  const w = new Writer();
+  w.bytes32(committeeSeed);
+  w.bytes32(entry.txid);
+  w.u32(entry.vout);
+  w.u8(roleByte(role));
+  return bytesToBigInt(taggedHash(TAG.ticket, w.finish()));
+}
+
+/**
+ * Selection weight: LINEAR in the bond, floored, never below one.
+ *
+ * A comment rather than a line of code, because square root looks like the
+ * obvious anti-whale choice and somebody will try to reintroduce it. Under
+ * sqrt, four nodes at 1x have total weight 4 against one node at 4x with
+ * weight 2 - so splitting a bond DOUBLES a node's chances, which is the exact
+ * opposite of what the anti-whale intent wanted.
+ */
+function weightOf(bondSats, bondMin) {
+  if (bondMin <= 0n) throw new Error('bondMin must be positive');
+  const w = bondSats / bondMin;
+  return w < 1n ? 1n : w;
+}
+
+/**
+ * Selects `slots` entries for a role.
+ *
+ * The score is ticket/weight, and it is NEVER computed. Cross-multiplied
+ * BigInts instead: a float comparison here is a consensus bug whose only
+ * symptom is two nodes disagreeing when their scores are close, which is the
+ * worst failure profile there is - rare, unreproducible, and load-dependent.
+ */
+/**
+ * HOW MANY A ROLE DRAWS (§5A.7 reserve seats, RULED 2026-09-28; kanban #301): more nodes than it seats, so a drawn node that
+ * is offline when its round comes is replaced - two reserves over the seats, capped where two seatings could stop sharing a
+ * signer (`2 x threshold > drawn`): 9 for 7 seats (threshold 5), 3 for 2 (threshold 2). The census may hold fewer.
+ */
+function drawnForRole(contract, role) {
+  const slots = slotsForRole(contract, role);
+  if (!Number.isInteger(slots)) return undefined;
+  const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
+  return Math.min(slots + 2, 2 * t - 1);
+}
+
+function selectCommittee({ entries, contract, role, exclude, committeeSeed, count }) {
+  // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
+  //
+  // All three used to be arguments. Section 6 on the slot counts: "echoed for
+  // readability; MUST equal genesis_parameters... A contract disagreeing with
+  // the network it names is invalid, NOT A SMALLER COMMITTEE." Nobody had to
+  // forge a census to shrink one - a smaller `slots` did it. And the seed
+  // decides who wins the tickets, while `bondMin` normalises the weights, so a
+  // caller free to choose either chose the committee as surely as the seed.
+  const slots = slotsForRole(contract, role);
+  if (!Number.isInteger(slots))
+    throw new Error(`that round names no committee size for ${role}`);
+  // THE SEED IS THE BEACON'S, AND IT IS AN ARGUMENT.
+  //
+  // It used to be read off `contract.committeeSeed` - thirty-two bytes the
+  // round's AUTHOR wrote - so the lottery was a function of a value the
+  // creator chose. Measured on a fixed census of eight bonded nodes with two
+  // slots: 34 offline candidate seeds were enough to assign a chosen pair, and
+  // since the assigned set became the only trusted list that is the whole
+  // committee. That is v4.4's grinding attack, which 5A.5 exists to close:
+  //
+  //   committee_seed = H(census_root_gv || census_root_settle
+  //                      || round_id || round_randomness)
+  //
+  // and the spec's Round Contract (v4.6.2) carries `randomness_rule`,
+  // `committee_time` and `entry_open_time` - and NO
+  // committee seed, because a contract cannot name one: `round_id` hashes the
+  // contract, so a contract carrying the seed derived from its own id has no
+  // fixed point. Measured, six iterations, never equal.
+  //
+  // So the caller brings the seed its beacon produced. No fallback to the
+  // field: a caller with no beacon gets a refusal, because "I have no
+  // randomness" and "the committee is whatever the contract says" must never
+  // be the same answer.
+  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
+    throw new Error('a committee is drawn on the seed its beacon produced, not on one a contract names');
+  // A POSITIVE FLOOR, because the weight is bond/floor and a floor of zero is
+  // not a small floor - it is a division by zero, and `weightOf` threw from
+  // underneath here rather than this answering. It is also the thing 5A.3
+  // warns about: a floor of nothing makes identity free, "the flaw that made
+  // v4.4 unsafe".
+  if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
+    throw new Error('that round names no positive bond floor to weigh against');
+  const bondMin = contract.bondMinSats;
+
+  // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
+  //
+  // Without this the function ended in `slice(0, slots)`, so a census with one
+  // eligible node and a contract naming two slots gave back a COMMITTEE OF
+  // ONE - silently, with no refusal anywhere - which is the thing section 13
+  // exists to prevent arriving through the front door. `census_min_nodes` is
+  // the network's own answer to "too small", and on all three networks it is
+  // at least the slot count, so meeting it also means there are enough nodes
+  // to fill the signer nodes.
+  //
+  // BEFORE EXCLUSIONS, on purpose: `exclude` is for a re-draw, and excluding a
+  // node does not unbond it. What is measured here is the census, not the
+  // attempt.
+  const enough = meetsCensusMinimum(entries, contract, role);
+  if (!enough.ok) throw new Error(enough.why);
+
+  const excluded = new Set((exclude || []).map((e) => outpointKey(e)));
+
+  // ONE NODE KEY, ONE SEAT (RULED the owner 2026-09-30, after testnet4 round 5eaa0966: a census still holding extra bond
+  // rows under two node keys seated node 7 and node 4 twice in the game pool and node 2 twice in settlement, and the
+  // stake's handout could not be dealt - "two signer nodes of that handout are one key"). A node key is drawn at most
+  // once: all its bonds for the role count as ONE entry - their sats summed into its weight, its ticket drawn on its
+  // lowest outpoint - so extra bond rows under one key never fill two seats. An outpoint excluded for a re-draw
+  // excludes its key.
+  const keyOf = (e) => toHex(e.pubkey);
+  const out = new Set(entries.filter((e) => excluded.has(outpointKey(e))).map(keyOf));
+  const byKey = new Map();
+  for (const e of entries) {
+    // the role, and for game/verify the round's game hosted (census.js eligibleFor; kanban #204)
+    if (!eligibleFor(e, contract, role) || out.has(keyOf(e))) continue;
+    const had = byKey.get(keyOf(e));
+    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
+    had.bondSats += e.bondSats;
+    if (compareEntries(e, had.entry) < 0) had.entry = e;
+  }
+  // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
+  // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
+
+  const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
+    entry,
+    ticket: ticketFor(committeeSeed, entry, role),
+    weight: weightOf(bondSats, bondMin),
+  }));
+
+  scored.sort((a, b) => {
+    const left = a.ticket * b.weight;
+    const right = b.ticket * a.weight;
+    if (left < right) return -1;
+    if (left > right) return 1;
+    // A tie is astronomically unlikely and must still be decided the same way
+    // everywhere, so it falls back to the census order.
+    return compareEntries(a.entry, b.entry);
+  });
+
+  // `count` is the reserve draw (drawCommittee, §5A.7): the same order, more of it
+  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.entry);
+}
+
+/** THE DRAW (§5A.7): the role's `drawnForRole` lowest scores, in score order - of whom at most `slots` are seated. */
+const drawCommittee = (args) => selectCommittee({ ...args, count: drawnForRole(args.contract, args.role) });
+
+const outpointKey = (e) => {
+  let s = '';
+  for (let i = 0; i < 32; i++) s += e.txid[i].toString(16).padStart(2, '0');
+  return s + ':' + e.vout;
+};
+
 // ---- arena-protocol/src/beacon.js
 // THE COMMITTEE SEED, AND WHY IT CANNOT BE A NUMBER THE ROUND'S CREATOR KNOWS.
 //
@@ -21887,176 +22242,6 @@ function beaconIsTheChains(contract, beacon, view) {
   return { ok: true, height: named.height, hash: named.hash, timeMs: named.timeMs, depth: named.depth };
 }
 
-// ---- arena-protocol/src/sortition.js
-// Committee selection: bond-weighted, linear, and decided in integers.
-
-
-
-
-
-
-/**
- * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
- *
- * 5A.7 sizes the two pools, not the four roles - "GAME/VERIFY: 7 slots,
- * threshold 5; SETTLEMENT: 7 slots, threshold 5" - so the mapping is the one
- * 22A already uses for the fee shares, imported rather than written twice: a
- * second copy of a protocol mapping is a second place for it to drift.
- *
- * A role with no pool has no committee, and that is answered rather than
- * silently given zero signer nodes.
- */
-function slotsForRole(contract, role) {
-  const pool = poolOfRole(role);
-  if (pool === GAME_VERIFY) return contract.gameVerifySlots;
-  if (pool === SETTLEMENT) return contract.settlementSlots;
-  return undefined;
-}
-
-/**
- * A node's ticket for a role. Deterministic, and unchooseable in advance
- * because the committee seed is not known when the bond is funded.
- */
-function ticketFor(committeeSeed, entry, role) {
-  const w = new Writer();
-  w.bytes32(committeeSeed);
-  w.bytes32(entry.txid);
-  w.u32(entry.vout);
-  w.u8(roleByte(role));
-  return bytesToBigInt(taggedHash(TAG.ticket, w.finish()));
-}
-
-/**
- * Selection weight: LINEAR in the bond, floored, never below one.
- *
- * A comment rather than a line of code, because square root looks like the
- * obvious anti-whale choice and somebody will try to reintroduce it. Under
- * sqrt, four nodes at 1x have total weight 4 against one node at 4x with
- * weight 2 - so splitting a bond DOUBLES a node's chances, which is the exact
- * opposite of what the anti-whale intent wanted.
- */
-function weightOf(bondSats, bondMin) {
-  if (bondMin <= 0n) throw new Error('bondMin must be positive');
-  const w = bondSats / bondMin;
-  return w < 1n ? 1n : w;
-}
-
-/**
- * Selects `slots` entries for a role.
- *
- * The score is ticket/weight, and it is NEVER computed. Cross-multiplied
- * BigInts instead: a float comparison here is a consensus bug whose only
- * symptom is two nodes disagreeing when their scores are close, which is the
- * worst failure profile there is - rare, unreproducible, and load-dependent.
- */
-function selectCommittee({ entries, contract, role, exclude, committeeSeed }) {
-  // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
-  //
-  // All three used to be arguments. Section 6 on the slot counts: "echoed for
-  // readability; MUST equal genesis_parameters... A contract disagreeing with
-  // the network it names is invalid, NOT A SMALLER COMMITTEE." Nobody had to
-  // forge a census to shrink one - a smaller `slots` did it. And the seed
-  // decides who wins the tickets, while `bondMin` normalises the weights, so a
-  // caller free to choose either chose the committee as surely as the seed.
-  const slots = slotsForRole(contract, role);
-  if (!Number.isInteger(slots))
-    throw new Error(`that round names no committee size for ${role}`);
-  // THE SEED IS THE BEACON'S, AND IT IS AN ARGUMENT.
-  //
-  // It used to be read off `contract.committeeSeed` - thirty-two bytes the
-  // round's AUTHOR wrote - so the lottery was a function of a value the
-  // creator chose. Measured on a fixed census of eight bonded nodes with two
-  // slots: 34 offline candidate seeds were enough to assign a chosen pair, and
-  // since the assigned set became the only trusted list that is the whole
-  // committee. That is v4.4's grinding attack, which 5A.5 exists to close:
-  //
-  //   committee_seed = H(census_root_gv || census_root_settle
-  //                      || round_id || round_randomness)
-  //
-  // and the spec's Round Contract (v4.6.2) carries `randomness_rule`,
-  // `committee_time` and `entry_open_time` - and NO
-  // committee seed, because a contract cannot name one: `round_id` hashes the
-  // contract, so a contract carrying the seed derived from its own id has no
-  // fixed point. Measured, six iterations, never equal.
-  //
-  // So the caller brings the seed its beacon produced. No fallback to the
-  // field: a caller with no beacon gets a refusal, because "I have no
-  // randomness" and "the committee is whatever the contract says" must never
-  // be the same answer.
-  if (!(committeeSeed instanceof Uint8Array) || committeeSeed.length !== 32)
-    throw new Error('a committee is drawn on the seed its beacon produced, not on one a contract names');
-  // A POSITIVE FLOOR, because the weight is bond/floor and a floor of zero is
-  // not a small floor - it is a division by zero, and `weightOf` threw from
-  // underneath here rather than this answering. It is also the thing 5A.3
-  // warns about: a floor of nothing makes identity free, "the flaw that made
-  // v4.4 unsafe".
-  if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
-    throw new Error('that round names no positive bond floor to weigh against');
-  const bondMin = contract.bondMinSats;
-
-  // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
-  //
-  // Without this the function ended in `slice(0, slots)`, so a census with one
-  // eligible node and a contract naming two slots gave back a COMMITTEE OF
-  // ONE - silently, with no refusal anywhere - which is the thing section 13
-  // exists to prevent arriving through the front door. `census_min_nodes` is
-  // the network's own answer to "too small", and on all three networks it is
-  // at least the slot count, so meeting it also means there are enough nodes
-  // to fill the signer nodes.
-  //
-  // BEFORE EXCLUSIONS, on purpose: `exclude` is for a re-draw, and excluding a
-  // node does not unbond it. What is measured here is the census, not the
-  // attempt.
-  const enough = meetsCensusMinimum(entries, contract, role);
-  if (!enough.ok) throw new Error(enough.why);
-
-  const excluded = new Set((exclude || []).map((e) => outpointKey(e)));
-
-  // ONE NODE KEY, ONE SEAT (RULED the owner 2026-09-30, after testnet4 round 5eaa0966: a census still holding extra bond
-  // rows under two node keys seated node 7 and node 4 twice in the game pool and node 2 twice in settlement, and the
-  // stake's handout could not be dealt - "two signer nodes of that handout are one key"). A node key is drawn at most
-  // once: all its bonds for the role count as ONE entry - their sats summed into its weight, its ticket drawn on its
-  // lowest outpoint - so extra bond rows under one key never fill two seats. An outpoint excluded for a re-draw
-  // excludes its key.
-  const keyOf = (e) => toHex(e.pubkey);
-  const out = new Set(entries.filter((e) => excluded.has(outpointKey(e))).map(keyOf));
-  const byKey = new Map();
-  for (const e of entries) {
-    // the role, and for game/verify the round's game hosted (census.js eligibleFor; kanban #204)
-    if (!eligibleFor(e, contract, role) || out.has(keyOf(e))) continue;
-    const had = byKey.get(keyOf(e));
-    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
-    had.bondSats += e.bondSats;
-    if (compareEntries(e, had.entry) < 0) had.entry = e;
-  }
-  // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
-  // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
-
-  const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
-    entry,
-    ticket: ticketFor(committeeSeed, entry, role),
-    weight: weightOf(bondSats, bondMin),
-  }));
-
-  scored.sort((a, b) => {
-    const left = a.ticket * b.weight;
-    const right = b.ticket * a.weight;
-    if (left < right) return -1;
-    if (left > right) return 1;
-    // A tie is astronomically unlikely and must still be decided the same way
-    // everywhere, so it falls back to the census order.
-    return compareEntries(a.entry, b.entry);
-  });
-
-  return scored.slice(0, slots).map((s) => s.entry);
-}
-
-const outpointKey = (e) => {
-  let s = '';
-  for (let i = 0; i < 32; i++) s += e.txid[i].toString(16).padStart(2, '0');
-  return s + ':' + e.vout;
-};
-
 // ---- arena-protocol/src/client-committee.js
 // THE CLIENT BUILDS THE COMMITTEE ITSELF (kanban #296, spec 5A.6: "a client MUST NOT take a census, a committee or an
 // endpoint on the word of any API"). Until this the page asked every node GET /committee and took the set when they
@@ -22229,11 +22414,15 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
   const seeded = committeeSeedFromBeacon(contract, { roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
   if (!seeded.ok) return { ok: false, why: seeded.why };
   const committees = {};
+  // THE DRAW (§5A.7 reserve seats, kanban #301): more than the seats, in score order - a seating certificate is checked
+  // against it, and the committee is who that certificate seats; before one, the draw's first slots
+  const drawn = {};
   for (const role of roles) {
-    try { committees[role] = selectCommittee({ entries: census.entries, contract, role, committeeSeed: seeded.seed }).map((e) => e.pubkey); }
+    try { drawn[role] = drawCommittee({ entries: census.entries, contract, role, committeeSeed: seeded.seed }).map((e) => e.pubkey); }
     catch (e) { return { ok: false, why: `the ${role} committee cannot be drawn: ${e.message}` }; }
+    committees[role] = drawn[role].slice(0, slotsForRole(contract, role));
   }
-  return { ok: true, committees, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
+  return { ok: true, committees, drawn, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
     checkedCensus: { root: census.root, entries: census.entries } };
 }
 
@@ -22247,6 +22436,8 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+
+
 
 
 
@@ -22336,6 +22527,30 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   if (!got.ok) return got;
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus);
+  // THE SEATING (§5A.7 reserve seats, kanban #301): each role's certificate, asked of the seats and checked against the draw
+  // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
+  // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
+  // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before #301).
+  got.seating = {};
+  for (const role of roles) {
+    let spoke = false; const refused = [];
+    let found = null;
+    for (const u of nodes) {
+      try {
+        const r = await fetcher(`${baseOf(u)}/seating?round=${roundIdHex}&role=${role}`);
+        const body = await r.text();
+        if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
+        if (!r.ok) continue;
+        spoke = true;
+        const cert = JSON.parse(body).cert;
+        const v = verifySeating(fromHex(cert), { roundId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        if (v.ok) { found = { seated: v.seating.seated, from: u }; break; }
+        refused.push(`${u}: ${v.why}`);
+      } catch { /* that seat says nothing */ }
+    }
+    got.seating[role] = found ? found : spoke ? { missing: true, refused } : null;
+    if (found) got.committees[role] = found.seated;
+  }
   const seats = [];
   if (compare) {
     const mine = got.committees.settlement.map(toHex).sort().join(',');
@@ -22361,6 +22576,11 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
 async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
   const got = await clientCommittee(roundIdHex, contract, nodes, opts);
   if (!got.ok) throw new Error(`this client could not build the round's committee itself: ${got.why}`);
+  // NO ENTRY WITHOUT A CHECKED SEATING where the seats seat (§5A.7): the stake is dealt to who a certificate seats
+  for (const role of ['game', 'settlement']) {
+    const st = got.seating && got.seating[role];
+    if (st && st.missing) throw new Error(`that round is not seated: no seating certificate for its ${role} role stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
+  }
   const answered = got.seats.filter((s) => s.agrees !== null);
   if (answered.length && !answered.some((s) => s.agrees))
     throw new Error('every node that answered names another settlement committee than the one this client derived from the chain');
@@ -23335,7 +23555,9 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
         said.get(id).push({ node, key: nodeKey, joined: Number(x.joined) || 0, playing: Number(x.playing) || 0,
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
-          names: Array.isArray(x.names) ? x.names : [] });
+          names: Array.isArray(x.names) ? x.names : [],
+          // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
+          committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); if (e && e.silent) unanswered.push(String(node)); }
   }
@@ -23372,8 +23594,15 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       c.counts = !!(c.signed && c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere);
       if (c.counts) agreeing.add(c.key);
     }
+    // THE SEATED (§5A.7): where the seats seat, the row lists who a certificate seats - and is not joined before one stands
+    const seatingSaid = counts.map((c) => c.committee).filter((x) => x && x.seated);
+    const seatedBy = seatingSaid.find((x) => x.seated.game && x.seated.settlement) || null;
+    const seating = !seatingSaid.length ? null : seatedBy
+      ? { state: 'seated', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
+      : { state: seatingSaid.some((x) => x.equivocated) ? 'equivocated' : 'pending' };
     rows.push({
       id, phase,
+      seating,
       free: !pays,
       wallet: pays ? 'federation-lock' : 'none',
       stakeMsat: contract.stakeMsat,
@@ -23383,7 +23612,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
       signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
-      joinable: phase === 'open' && agreeing.size >= needed,
+      joinable: phase === 'open' && agreeing.size >= needed && (!seating || seating.state === 'seated'),
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
@@ -23552,7 +23781,11 @@ function lobbyLine(row, nowMs = Date.now()) {
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.signerNodesAgree} more` : '');
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
-  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}`
+  // RESERVE SEATS (§5A.7): who is seated, of how many drawn
+  const seat = !row.seating ? '' : row.seating.state === 'seated'
+    ? ` · seated: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
+    : row.seating.state === 'equivocated' ? ' · two seatings: the round is void' : ' · not seated yet';
+  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
 
@@ -25134,6 +25367,65 @@ async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch }) {
   return out;
 }
 
+// ---- arena-protocol/src/game-info.js
+// A GAME'S DESCRIPTION AND WEBSITE, SIGNED BY ITS DEVELOPER (kanban #276, the owner 2026-10-11: "Das Manifest soll auch eine
+// Description und Webseite haben die signiert wird, die hier angezeigt wird"; and ~06:55Z: "Mach es so dass beide hashes
+// akzeptiert werden - mit URL und ohne URL, mit Description und ohne").
+//
+// THEY TRAVEL BESIDE THE MANIFEST, NOT IN ITS BYTES. game_id = H(manifest body || signature) (manifest.js gameIdOf), and
+// the seats' advertisements, every published series and every market name those ids. So the info is its own small object:
+// the developer key the manifest names signs H(game_id || description || website), and a manifest with it and the same
+// manifest without it are one game with one id. An info whose signature does not stand is shown as unsigned, never trusted.
+
+
+
+const GAME_INFO_DESCRIPTION_MAX = 500;
+const GAME_INFO_WEBSITE_MAX = 200;
+const GAME_INFO_SIGNATURE_BYTES = 64;
+
+/** Refused by name: a description of 0..500 characters, a website that is empty or an https:// address of up to 200. */
+function gameInfoFits({ description = '', website = '' } = {}) {
+  if (typeof description !== 'string' || description.length > GAME_INFO_DESCRIPTION_MAX)
+    return { ok: false, why: `a game's description is a string of at most ${GAME_INFO_DESCRIPTION_MAX} characters` };
+  if (typeof website !== 'string' || website.length > GAME_INFO_WEBSITE_MAX || (website !== '' && !/^https:\/\/[^\s/]+(\/\S*)?$/.test(website)))
+    return { ok: false, why: `a game's website is empty or an https:// address of at most ${GAME_INFO_WEBSITE_MAX} characters` };
+  return { ok: true };
+}
+
+/** The digest the developer key signs: this game's id, then its description and website. */
+function gameInfoDigest(gameId, info) {
+  if (!(gameId instanceof Uint8Array) || gameId.length !== 32) throw new Error('a game id is 32 bytes');
+  const fits = gameInfoFits(info);
+  if (!fits.ok) throw new Error(fits.why);
+  const w = new Writer();
+  w.bytes32(gameId); w.str(info.description || ''); w.str(info.website || '');
+  return taggedHash(TAG.gameInfo, w.finish());
+}
+
+/**
+ * WHAT A READER SHOWS for a game: its description and website when the manifest's developer key signed them for this game
+ * id, else nothing of them (`signed: false` and why). `info` is { description, website, signature (hex or bytes) }.
+ */
+function gameInfoStands(info, { gameId, manifest, verify } = {}) {
+  if (!info) return { ok: false, signed: false, why: 'this game carries no description' };
+  let sig;
+  try { sig = info.signature instanceof Uint8Array ? info.signature : fromHex(String(info.signature || '')); } catch { sig = null; }
+  if (!sig || sig.length !== GAME_INFO_SIGNATURE_BYTES) return { ok: false, signed: false, why: 'its description carries no 64-byte signature' };
+  let digest;
+  try { digest = gameInfoDigest(gameId, info); } catch (e) { return { ok: false, signed: false, why: e.message }; }
+  let good = false;
+  try { good = verify(sig, digest, manifest.gameDevPubkey) === true; } catch { good = false; }
+  if (!good) return { ok: false, signed: false, why: `its description is not signed by the developer key ${toHex(manifest.gameDevPubkey).slice(0, 16)}` };
+  return { ok: true, signed: true, description: info.description || '', website: info.website || '' };
+}
+
+/** The info as JSON carries it: the two strings and the signature in hex. */
+const gameInfoJson = (info) => (info ? { description: info.description || '', website: info.website || '',
+  signature: info.signature instanceof Uint8Array ? toHex(info.signature) : String(info.signature || '') } : null);
+
+/** What the network store calls a manifest's kind: a replayed or head-to-head game, or an attested market (§0A.7a). */
+const gameTypeOf = (m) => (m && m.resultType === 2 ? 'market' : m && m.resultType === 3 ? 'head-to-head game' : 'game');
+
 // ---- arena-client/src/games.js
 // THE GAMES FIRST, THEN THE GAME'S CLIENT (kanban #208, the owner 2026-10-06: "the lobby lists the games the reachable nodes
 // host, then that game's rounds; the page loads the plugin's client by the manifest's hash; one wallet and one seed across
@@ -25146,6 +25438,7 @@ async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch }) {
 //   manifest's clients[] - the same hashes the repo's client list pins and client-hash.mjs checks from outside the page. A
 //   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
 //   (sessionStorage / localStorage) are the one the player already has.
+
 
 
 
@@ -25175,9 +25468,20 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS }
         byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
           icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),
           known: Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, id), devKey: toHex(manifest.gameDevPubkey),
-          manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [] });
+          manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [],
+          // ITS SIGNED DESCRIPTION, AS HANDED (kanban #338): checked against the developer key by checkedGameInfo, never taken
+          info: g.info && typeof g.info === 'object' ? g.info : null,
+          // WHO PLAYS IT NOW: the highest any seat says - the seats of a committee hold the same entries, so a sum would count
+          // each player once per seat
+          live: { rounds: 0, players: 0 } });
       }
-      byId.get(id).nodes.push(node);
+      const got = byId.get(id);
+      got.nodes.push(node);
+      if (!got.info && g.info && typeof g.info === 'object') got.info = g.info;
+      if (g.live && typeof g.live === 'object') {
+        got.live.rounds = Math.max(got.live.rounds, Number(g.live.rounds) || 0);
+        got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
+      }
     }
   }
   const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
@@ -25203,6 +25507,20 @@ async function gameClientFile({ game, url, digest, fetcher = fetch }) {
   const hash = toHex(new Uint8Array(await digest(bytes)));
   if (!pinned.has(hash)) return { ok: false, why: `${url} hashes to ${hash.slice(0, 16)}, which ${game.name}'s manifest does not name: not run` };
   return { ok: true, bytes, hash };
+}
+
+/**
+ * A GAME'S SIGNED DESCRIPTION AND WEBSITE (kanban #338, game-info.js #276): kept only when the manifest's developer key signed
+ * them - `verifyEd25519(sig, msg, pub)` may be async (the browser's). Anything else answers null and is not shown.
+ */
+async function checkedGameInfo(game, verifyEd25519) {
+  const info = game && game.info;
+  if (!info || typeof info.description !== 'string' || typeof verifyEd25519 !== 'function') return null;
+  let digest, sig;
+  try { digest = gameInfoDigest(fromHex(game.id), info); sig = fromHex(String(info.signature || '')); } catch { return null; }
+  let good = false;
+  try { good = (await verifyEd25519(sig, digest, game.manifest.gameDevPubkey)) === true; } catch { good = false; }
+  return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null } : null;
 }
 
 return { Client: Client, markState: markState, catchUpCore: catchUpCore,
@@ -25256,7 +25574,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          refundKept: refundKept, refundLine: refundLine,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
-         fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
+         fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
          lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationSays: federationSays, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
