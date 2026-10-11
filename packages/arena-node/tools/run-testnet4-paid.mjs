@@ -79,7 +79,8 @@ if (network === 'testnet4') {
 const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
 const wallet = env.ARENA_TN4_WALLET || 'testnet';
 const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
-  [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8' }).trim();
+  // a testnet4 block is read whole as hex: past the 1 MB default buffer (ENOBUFS, measured 2026-10-11 on a 1.4 MB block)
+  [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).trim();
 const rpc = bitcoindRpc({ url: `${env.ARENA_BITCOIND_URL.replace(/\/$/, '')}/wallet/${wallet}`, cookiePath: env.ARENA_BITCOIND_COOKIE });
 const chainCall = bitcoindRpc({ url: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE });
 
