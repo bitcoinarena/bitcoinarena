@@ -92,6 +92,8 @@ import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
+import { seatingAgent } from './seating-agent.js';
+import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
 import { donationSetId, donationOutputsExpected, encodeDonationSet } from '../../arena-protocol/src/donation.js';
@@ -246,7 +248,7 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
   return { result: 'lost', netMsat: String(-BigInt(entry.stakeMsat)) };
 }
 
-export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
+export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
@@ -1198,6 +1200,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
   });
+  // RESERVE SEATS (§5A.7, kanban #301): ARENA_SEATING=1 - each role draws 9 for 7 seats, the drawn sign PRESENT before
+  // start - 120 s, the seated sign one SEATING certificate, and a round takes entries only with it (seating-agent.js)
+  const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
+    sign: (digest) => schnorr.sign(digest, round.identity.secret),
+    verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    log: (m) => console.log(m) }) : null;
+  if (seating) roster.seatedFor = seating.seatedFor;
+  const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
+  if (seatingTimer) seatingTimer.unref();
 
   // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
   // the close is the event and this is what listens for it. The world secret
@@ -2623,7 +2634,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const kept = committeeDrawn.get(toHex(rid));
     if (kept) return kept;
     const drawn = committeeDraw(rid);
-    if (drawn.drawn) committeeDrawn.set(toHex(rid), drawn);
+    // with reserve seats the committee is who the certificate seats: kept only once both roles are seated
+    if (drawn.drawn && (!seating || (drawn.seated && drawn.seated.game && drawn.seated.settlement))) committeeDrawn.set(toHex(rid), drawn);
     return drawn;
   };
   const committeeDraw = (rid) => {
@@ -2633,6 +2645,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
     // WHAT IT WAS DRAWN FROM: the census's bond entries and its distinct node keys - a key sits once (sortition.js).
     return { drawn: true, game: keys(game), settlement: keys(settlement), eligibleEntries: game.eligible,
+      // RESERVE SEATS (§5A.7): whether each role's committee is a seating certificate's, and the drawn beyond the seats
+      ...(seating ? { seated: { game: game.seated, settlement: settlement.seated }, drawnCount: { game: game.drawn.length, settlement: settlement.drawn.length },
+        drawn: { game: game.drawn.map((e) => toHex(e.pubkey)), settlement: settlement.drawn.map((e) => toHex(e.pubkey)) },
+        equivocated: Object.values(seating.stateOf(rid)).some((x) => x && x.equivocated) } : {}),
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
@@ -3575,6 +3591,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const game = refusedGameOf.get(toHex(contract.roundId));
           if (game) return text(res, 409, `entry refused: this node does not host game ${game.slice(0, 16)} (§0A.4), the game that round plays`); }
         { const why = offerRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
+        // RESERVE SEATS (§5A.7, kanban #301): a round takes entries only once both roles are seated by a certificate this
+        // node holds - and never after two seatings (equivocation: the round is void)
+        if (seating) {
+          const st = seating.stateOf(contract.roundId);
+          if (Object.values(st).some((x) => x && x.equivocated)) return text(res, 409, 'entry refused: that round has two seatings - equivocation, the round is void (§5A.7)');
+          if (!st.game || !st.settlement) return text(res, 409, 'entry refused: that round is not seated yet - no seating certificate for its game and settlement roles (§5A.7)');
+        }
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
@@ -4926,6 +4949,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // EVERY FEDERATION RECORD THIS SEAT HOLDS, signed by the threshold of its bonded guardians (§23A.4: "every seat
       // mirrors the newest record of every federation its census knows"); ?fresh=1 gathers again now
+      // RESERVE SEATS (§5A.7, kanban #301): PRESENT in and out, this node's seating signature, the certificate, a proof of
+      // equivocation
+      const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+      // A CERTIFICATE HANDED OVER (§5A.7: "a node that sees two certificates for one round publishes both"): kept if it
+      // stands against this node's draw; one that differs from the one held is the proof of equivocation
+      if (seating && req.method === 'POST' && url.pathname === '/seating') {
+        let rid, role, k;
+        try { const c = decodeSeatingCertificate(await read(req)); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
+        catch (e) { return text(res, 400, `not a seating certificate: ${e.message}`); }
+        if (!k.ok) return text(res, 409, k.why);
+        return json(res, k.equivocation ? 200 : 201, k);
+      }
+      if (seating && req.method === 'POST' && url.pathname === '/present') {
+        const r = seating.takePresent(await read(req));
+        return r.ok ? text(res, 201, 'present kept') : text(res, 409, r.why);
+      }
+      if (seating && req.method === 'GET' && ['/present', '/seating', '/seating-sig', '/seating-equivocation'].includes(url.pathname)) {
+        let rid; try { rid = fromHex(url.searchParams.get('round') || ''); } catch { rid = null; }
+        if (!rid || rid.length !== 32) return text(res, 400, 'name a round: ?round=<64 hex>');
+        const role = url.searchParams.get('role');
+        if (url.pathname === '/present') return json(res, 200, { presents: seating.presentsOf(rid) });
+        if (url.pathname === '/seating-equivocation') return json(res, 200, { equivocations: seating.equivocationOf(rid) });
+        if (role !== 'game' && role !== 'settlement') return text(res, 400, 'name a role: game or settlement');
+        if (url.pathname === '/seating-sig') { const m = seating.mySignature(rid, role); return m ? json(res, 200, m) : text(res, 404, 'this node signed no seating for that round and role'); }
+        const cert = seating.certOf(rid, role);
+        return cert ? json(res, 200, { cert }) : text(res, 404, 'no seating certificate for that round and role here');
+      }
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
