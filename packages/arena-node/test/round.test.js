@@ -128,7 +128,7 @@ test('a batch for a round or an entry the node has not got is refused', () => {
 // core it is handed. Since kanban #202 (a game is a plugin) NO engine file imports a core at all: the launcher, main.js,
 // imports the game's registration (core/plugin/nextblock.js) and hands it to serve(), and plugins.js passes each round's
 // core on. Measured before the split: the one file that did both was replay.js; before #202, cores.js imported the cores.
-test('the node imports no core and registers no game, and only replay.js steps a core', async () => {
+test('the node imports no core and registers no game, and only the sandbox\'s driver steps a core', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
   const imports = [];
   const registrations = [];
@@ -146,12 +146,14 @@ test('the node imports no core and registers no game, and only replay.js steps a
   assert.deepEqual(imports, [], 'an engine file imports a core');
   // since kanban #203 not even the launcher: main.js hosts what ARENA_GAMES names, nextblock's bin/node.mjs names nextblock
   assert.deepEqual(registrations, [], 'an engine file registers a game');
-  assert.deepEqual(steps, ['replay.js'], 'a core is stepped somewhere other than the replay, or nowhere');
+  // since kanban #328 (spec §0A.6) the one door is core-driver.js, run inside the core's sandbox; replay.js hands it the run
+  assert.deepEqual(steps, ['core-driver.js'], 'a core is stepped somewhere other than the sandbox\'s driver, or nowhere');
 
-  // and that door replays a finished transcript - it does not tick anything
-  const src = readFileSync(new URL('../src/replay.js', import.meta.url).pathname, 'utf8');
-  assert.ok(!/setInterval|setTimeout|requestAnimationFrame/.test(src),
-    'the replay door runs a clock, which is a live second simulator');
+  // and that door replays a finished transcript - neither it nor replay.js ticks anything
+  for (const f of ['replay.js', 'core-driver.js']) {
+    const src = readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8');
+    assert.ok(!/setInterval|setTimeout|requestAnimationFrame/.test(src), `${f} runs a clock, which is a live second simulator`);
+  }
 });
 
 test('opening or joining twice is the same round and the same player', () => {
