@@ -11044,6 +11044,28 @@ function phraseWalletEntries(storage, seedHex, federationIdHex = null, { ancesto
   return n;
 }
 
+/**
+ * THIS BROWSER FORGETS ONE PHRASE'S WALLETS (kanban #337, the owner 2026-10-11: "Im settings screen gibt es die Möglichkeit
+ * seinen Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"): every player wallet database the phrase's
+ * secrets name - per federation this browser keeps a history for, and the ancestor's - and its recover mark. Nothing is
+ * sent and nothing is spent; the notes are the federation's, and the same 24 words (or the Nostr key that keeps them)
+ * recover them in any browser (markSeedRecover). Answers how many entries went.
+ */
+function forgetPhrase(storage, seedHex) {
+  if (!storage || !/^[0-9a-f]{64}$/i.test(String(seedHex || ''))) return 0;
+  const seed = fromHex(String(seedHex).toLowerCase());
+  const keys = storageKeys(storage);
+  const ids = new Set();
+  for (const f of keys.map((k) => /^arena\.ledger\.([0-9a-f]{64})$/i.exec(k)).filter(Boolean).map((m) => m[1].toLowerCase()))
+    for (const make of [walletSecretFor, ancestorWalletSecretFor]) {
+      try { ids.add(`arena.walletdb.${f.slice(0, 16)}.${toHex(sha256(make(seed, fromHex(f)))).slice(0, 16)}.`); } catch { /* not this kind */ }
+    }
+  let n = 0;
+  for (const k of keys) if ([...ids].some((p) => k.startsWith(p))) { storage.removeItem(k); n++; }
+  if (storage.getItem(recoverMarkKey(seed)) !== null) { storage.removeItem(recoverMarkKey(seed)); n++; }
+  return n;
+}
+
 /** WHERE THE PLAYER WALLET IS KEPT: the tab's storage, under the federation and the secret's hash, never the secret. */
 function walletStoreFor(storage, federationId, secret) {
   const prefix = `arena.walletdb.${toHex(federationId).slice(0, 16)}.${toHex(sha256(secret)).slice(0, 16)}.`;
@@ -22345,7 +22367,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
