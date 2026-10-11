@@ -22599,6 +22599,37 @@ function readInvite(invite) {
   return { guardians, federationId };
 }
 
+// ---- arena-protocol/src/test-federation.js
+// THE TEST FEDERATION (M3 W7, 2026-09-15): the one federation id the fixtures and the protocol
+// vectors name for a stake-lock round that runs against a stand-in federation - the test lock port,
+// never a federation that holds money. A round that takes a stake into a FEDERATION must name
+// which one (§23.6); a test round names this one, the id its stand-in federation carries, and not
+// an id typed into the round. It is bonded nowhere: no census lists its guardians, so
+// federationIsBonded refuses it, as it must.
+
+const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERATION - a stand-in federation for tests and vectors, never one that holds money'));
+
+// ---- arena-protocol/src/known-federations.js
+// THE FEDERATIONS THIS CLIENT LETS A PLAYER DEPOSIT AND STAKE INTO WITHOUT ASKING (spec §23.6, kanban #318): "federation_id
+// is on the client's known-good list, or the client shows it and its guardians and requires an explicit confirmation -
+// the same rule as sim_wasm_hash (§5)". By federation id (the hash of its configuration). Adding one is a reviewed code
+// change, like adding a game core to known-games.js - never a setting, a query parameter or a seat's word.
+
+
+const KNOWN_GOOD_FEDERATIONS = Object.freeze({
+  // Bitcoin Arena testnet4: seven guardians, one per seat, 5 of 7 (§23A.1, RULED the owner 2026-09-27); its record #321
+  '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e': Object.freeze({ name: 'Arena testnet4', network: 'testnet4', nominal: 7, threshold: 5 }),
+  // the regtest stand-in every test and vector uses (test-federation.js) - never one that holds money
+  [toHex(TEST_FEDERATION_ID)]: Object.freeze({ name: 'regtest test federation', network: 'regtest', nominal: 4, threshold: 3 }),
+});
+
+/** Is this federation on the list? `federationId` as 32 bytes or 64 hex. */
+function federationIsKnown(federationId) {
+  const hex = federationId instanceof Uint8Array ? toHex(federationId) : String(federationId || '').toLowerCase();
+  return Object.prototype.hasOwnProperty.call(KNOWN_GOOD_FEDERATIONS, hex);
+}
+const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowerCase()] || null;
+
 // ---- arena-client/src/federations.js
 // WHAT THIS CLIENT BELIEVES ABOUT A FEDERATION (spec §23A.4, kanban #321): its guardians' newest signed record, read from
 // the round's nodes (GET /federations) and checked against the census this client checked itself (committee.js, #296) -
@@ -22660,6 +22691,39 @@ function federationSays(status) {
     CLOSED: 'This federation is closed: its successor holds everything.',
     unverified: 'No signed record of this federation could be checked: nothing about it is taken on trust.',
   })[status] || '';
+}
+
+// ---- the known-good list and the player's own confirmation (kanban #318, spec §23.6) ----
+
+
+/** Every guardian of `federationIdHex` in a census this client checked: operator, node key, guardian endpoint, bond. */
+function guardianRowsOf(census, federationIdHex) {
+  const fid = String(federationIdHex).toLowerCase();
+  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const rows = [];
+  for (const e of census || []) {
+    const g = ((e.advert && e.advert.guardianOf) || []).find((x) => hex(x.federationId) === fid);
+    if (g) rows.push({ operator: (e.advert && e.advert.operatorId) || '', nodeKey: hex(e.pubkey), guardianKey: hex(g.guardianKey),
+      endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: String(e.bondSats) });
+  }
+  return rows.sort((a, b) => (a.nodeKey < b.nodeKey ? -1 : 1));
+}
+
+const CONFIRM_KEY = 'arena.fed.confirmed.';
+/** This browser's own confirmation of a federation not on the list: asked once, kept until Forget. */
+const federationConfirmed = (storage, fidHex) => { try { return !!storage.getItem(CONFIRM_KEY + String(fidHex).toLowerCase()); } catch { return false; } };
+function confirmFederation(storage, fidHex, nowMs = Date.now()) { storage.setItem(CONFIRM_KEY + String(fidHex).toLowerCase(), String(nowMs)); }
+function forgetFederation(storage, fidHex) { storage.removeItem(CONFIRM_KEY + String(fidHex).toLowerCase()); }
+function confirmedFederations(storage) {
+  const out = [];
+  try { for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k && k.startsWith(CONFIRM_KEY)) out.push({ federation: k.slice(CONFIRM_KEY.length), atMs: Number(storage.getItem(k)) }); } } catch { /* none */ }
+  return out;
+}
+
+/** Does this invite name the round's federation? The stock Fedimint client checks the config hash itself when it joins. */
+function inviteNamesFederation(invite, federationIdHex) {
+  let f; try { f = readInvite(invite).federationId; } catch { return false; }
+  return !!f && String(f).toLowerCase() === String(federationIdHex).toLowerCase();
 }
 
 // ---- arena-protocol/src/match.js
@@ -25194,7 +25258,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationSays: federationSays, FEDERATION_ALLOWS: FEDERATION_ALLOWS, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationSays: federationSays, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,

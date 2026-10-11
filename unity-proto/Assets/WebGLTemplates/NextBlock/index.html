@@ -514,6 +514,13 @@
     body.arena-fed-critical #blwp-deposit-go, body.arena-fed-critical #arena-wb-deposit,
     body.arena-fed-closed #blwp-deposit-go, body.arena-fed-closed #arena-wb-deposit,
     body.arena-fed-halted #blwp-money-actions button, body.arena-fed-halted #arena-wb-deposit, body.arena-fed-halted #arena-wb-withdraw { display: none; }
+    #arena-fed-confirm { position: fixed; inset: 0; z-index: 70; display: none; align-items: center; justify-content: center; background: rgba(5,8,12,.78); padding: 16px; }
+    #arena-fed-confirm .afc-box { width: 100%; max-width: 460px; max-height: 90vh; overflow: auto; background: #141a21; border: 1px solid #2a3442; border-radius: 16px; padding: 20px; color: #e6edf5; font: 15px system-ui, sans-serif; }
+    #arena-fed-confirm h2 { margin: 0 0 6px; color: #f7931a; font-size: 20px; }
+    #arena-fed-confirm .afc-sub { color: #a9b3c1; margin: 0 0 12px; }
+    #arena-fed-confirm .afc-row { display: flex; justify-content: space-between; gap: 10px; margin: 4px 0; font-size: 14px; } #arena-fed-confirm .afc-row b { font: 13px ui-monospace, monospace; word-break: break-all; text-align: right; }
+    #arena-fed-confirm .afc-guardians { margin: 10px 0; font-size: 13px; } #arena-fed-confirm .afc-g { border-top: 1px solid #2a3442; padding: 6px 0; } #arena-fed-confirm .afc-g code { font: 12px ui-monospace, monospace; color: #a9b3c1; word-break: break-all; }
+    #arena-fed-confirm .afc-buttons { display: flex; gap: 10px; margin-top: 12px; } #arena-fed-confirm button { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #3a4655; background: #1c2430; color: #e6edf5; font: 600 15px system-ui; } #arena-fed-confirm button.primary { background: #f7931a; border-color: #f7931a; color: #1b1000; }
     #arena-wallet-start { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center;
       background: radial-gradient(ellipse at top, #1d2733 0%, #0b0f14 70%); padding: 16px; box-sizing: border-box;
       font: 15px/1.4 system-ui, sans-serif; color: #e8eaed; overflow-y: auto; }
@@ -694,6 +701,12 @@
       </div>
       <div class="muted" id="arena-acct-why"></div>
     </section>
+    <!-- FEDERATIONS THIS BROWSER CONFIRMED (kanban #318, §23.6): not on the page's known-good list, trusted by the player -->
+    <section class="settings-card" id="arena-set-federations">
+      <h3>Federations you confirmed</h3>
+      <div class="muted">Federations not on this page's known-good list that you chose to trust. Forget one and the page asks again.</div>
+      <div id="arena-fed-confirmed"></div>
+    </section>
     <!-- THE COMMUNITY (kanban #277, the owner 2026-10-09: "Armada is the Discord"): the Bitcoin Arena community on Armada, an
          encrypted, open-source Discord alternative on Nostr - its public invite link (Share to Discover, published from the
          game's Armada key ~/.config/blwp/armada) -->
@@ -712,6 +725,17 @@
     if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); else window.BLWP_SETTINGS_EARLY = true;
   });
   </script>
+  <!-- A FEDERATION NOT ON THE KNOWN-GOOD LIST (kanban #318, §23.6): shown with its guardians, confirmed or not used -->
+  <div id="arena-fed-confirm" role="dialog" aria-modal="true" aria-labelledby="afc-title" style="display:none">
+    <div class="afc-box">
+      <h2 id="afc-title">Trust this federation?</h2>
+      <p class="afc-sub">This federation is not on this page's known-good list. Its guardians hold your deposit and your stake.</p>
+      <div class="afc-row"><span>Federation</span><b id="afc-id"></b></div>
+      <div class="afc-row"><span>Status</span><b id="afc-status"></b></div>
+      <div class="afc-guardians" id="afc-guardians"></div>
+      <div class="afc-buttons"><button type="button" id="afc-trust" class="primary">I trust this federation</button><button type="button" id="afc-cancel">Cancel</button></div>
+    </div>
+  </div>
   <div id="arena-wallet-start" role="dialog" aria-modal="true" aria-labelledby="ws-title">
     <div class="ws-box">
       <h2 id="ws-title">Your wallet</h2>
@@ -2425,6 +2449,11 @@
       if (pays) {
         let signerNodes = null;
         try {
+          // A FEDERATION NOT ON THE LIST IS SHOWN AND CONFIRMED BEFORE ANYTHING IS LOCKED (kanban #318, §23.6)
+          if (window.ARENA_FEDERATION_GATE) {
+            const gate = await window.ARENA_FEDERATION_GATE({ round: named.round, invite: named.federation, roundIdHex: named.roundIdHex, nodes: named.nodes });
+            if (!gate.ok) throw new Error(gate.why);
+          }
           signerNodes = await joinStep('clientSettlementSignerNodes', () => prepRound(named.roundIdHex, named.round, named.nodes).signer);
         } catch (e) {
           // REFUSED BY NAME rather than joined silently. A paying round whose
@@ -3231,6 +3260,58 @@
     // It imports it from the protocol"): Settings' buttons, the wallet bar over a game's own client and that client's
     // ARENA_GAME.wallet all open these two - the same round tabs, the same invoice, the same withdraw panel. `say` writes
     // why not where it was asked; the answer is { ok, why }.
+    // A FEDERATION ON THE KNOWN-GOOD LIST, OR SHOWN AND CONFIRMED (kanban #318, spec §23.6). The invite must name the
+    // round's federation (the stock Fedimint client checks the config hash when it joins); a federation on the list passes;
+    // one this browser confirmed passes; any other is shown - its id, its signed status (#321), every guardian from the
+    // census this client checked itself (#296) - and used only after "I trust this federation". Asked once per browser.
+    window.ARENA_FEDERATION_GATE = async ({ round, invite, roundIdHex, nodes }) => {
+      const fid = round && round.federationId ? Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('') : null;
+      if (!fid) return { ok: true };
+      if (invite && !BLWPCLIENT.inviteNamesFederation(invite, fid)) return { ok: false, why: `That invite names another federation than the round's ${fid.slice(0, 16)}: nothing is deposited or staked.` };
+      if (BLWPCLIENT.federationIsKnown(fid)) return { ok: true, known: true };
+      if (BLWPCLIENT.federationConfirmed(localStorage, fid)) return { ok: true, confirmed: true };
+      let census = BLWPCLIENT.checkedCensusFor(round);
+      if (!census && roundIdHex && nodes && nodes.length) {
+        try { await BLWPCLIENT.clientCommittee(roundIdHex, round, nodes, { curve: window.BLWP_CURVE, compare: false }); } catch { /* shown without guardians */ }
+        census = BLWPCLIENT.checkedCensusFor(round);
+      }
+      const rows = census ? BLWPCLIENT.guardianRowsOf(census, fid) : [];
+      const fed = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === fid ? window.ARENA_FED_STATUS : null;
+      const $ = (id) => document.getElementById(id);
+      $('afc-id').textContent = fid;
+      $('afc-status').textContent = fed ? `${fed.status}${fed.signers ? ` · ${fed.signers} of ${fed.nominal} guardians signed` : ''}` : 'no signed record read';
+      const list = $('afc-guardians'); list.textContent = '';
+      if (!rows.length) list.textContent = 'Its guardians could not be read from the census.';
+      for (const g of rows) {
+        const d = document.createElement('div'); d.className = 'afc-g';
+        d.innerHTML = `<b></b> · bond <span></span> sat<br><code></code><br><code></code>`;
+        d.querySelector('b').textContent = g.operator || '(no operator name)';
+        d.querySelector('span').textContent = Number(g.bondSats).toLocaleString('en-US');
+        const codes = d.querySelectorAll('code'); codes[0].textContent = 'node ' + g.nodeKey; codes[1].textContent = g.endpoint || '(no endpoint)';
+        list.appendChild(d);
+      }
+      window.ARENA_FED_CONFIRM_SHOWN = { federation: fid, guardians: rows.length };
+      const box = $('arena-fed-confirm'); box.style.display = 'flex';
+      const trusted = await new Promise((done) => { $('afc-trust').onclick = () => done(true); $('afc-cancel').onclick = () => done(false); });
+      box.style.display = 'none';
+      if (!trusted) return { ok: false, why: 'This federation is not on this page\'s known-good list and was not confirmed: nothing is deposited or staked.' };
+      BLWPCLIENT.confirmFederation(localStorage, fid);
+      if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED();
+      return { ok: true, confirmed: true, asked: true };
+    };
+    window.ARENA_PAINT_CONFIRMED = () => {
+      const el = document.getElementById('arena-fed-confirmed'); if (!el) return;
+      el.textContent = '';
+      const list = BLWPCLIENT.confirmedFederations(localStorage);
+      if (!list.length) { el.innerHTML = '<div class="muted">none</div>'; return; }
+      for (const c of list) {
+        const d = document.createElement('div'); d.className = 'name-row';
+        const t = document.createElement('code'); t.textContent = c.federation.slice(0, 16) + '…';
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Forget'; b.dataset.federation = c.federation;
+        b.addEventListener('click', () => { BLWPCLIENT.forgetFederation(localStorage, c.federation); window.ARENA_PAINT_CONFIRMED(); });
+        d.append(t, b); el.appendChild(d);
+      }
+    };
     // THE FEDERATION'S STATUS, SHOWN (kanban #321): under CRITICAL only Withdraw and Move stay; the note says why
     window.ARENA_PAINT_FEDERATION = () => {
       const fed = window.ARENA_FED_STATUS; const note = document.getElementById('arena-fed-note');
@@ -3260,6 +3341,12 @@
       // joining the federation - 58 s on the regtest market stack - showed nothing at all until the modal came)
       say('Opening your wallet and making the invoice \u2026');
       return (async () => {
+        // A FEDERATION NOT ON THE LIST IS SHOWN AND CONFIRMED FIRST (kanban #318); Move takes notes out, so it is not asked
+        if (which === 'deposit' && window.ARENA_FEDERATION_GATE) {
+          const lob = window.BLWP_LEDGER_LOBBY || {};
+          const gate = await window.ARENA_FEDERATION_GATE({ round: ctx.round, invite: ctx.invite, roundIdHex: ctx.roundIdHex, nodes: lob.nodes || [] });
+          if (!gate.ok) { say(gate.why); return { ok: false, why: gate.why }; }
+        }
         try {
           const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
           // THE ROUNDS ARE SIZED AS THE JOIN SIZES THEM: with the donation the join will write - this round's kept choice
@@ -3703,7 +3790,7 @@
     // SETTINGS: three things and a Close, and the phrase is only shown when asked for.
     const settingsPanel = () => document.getElementById('blwp-settings');
     // THE GEAR'S CLICK IS TAKEN BY THE EARLY SCRIPT UNDER THE PANEL (kanban #200), which opens it and calls this to fill it
-    window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); };
+    window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
     // THE OTHER WALLETS THIS BROWSER KEEPS (the owner 2026-10-02: "now fix the balances" - his 402 sat sat in another kept
     // phrase's wallet while this tab showed 0; seven phrases in one browser, three of them holding sats). Every kept phrase
     // with a wallet here, other than this tab's, is opened read-only (20 s each at most), its balance shown, and offered:
