@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Bitcoin Up or Down</title>
+  <!-- the square icon (kanban #338), on the page's dark ground like Tick Tock's: a price, and the two sides of the market -->
+  <rect width="512" height="512" rx="112" fill="#0d1014"/>
+  <!-- candles along the price -->
+  <g stroke-linecap="round">
+    <path d="M118 300v80M174 250v84M230 282v74M286 214v84M342 178v80M398 140v86" stroke="#5c6672" stroke-width="6"/>
+    <rect x="104" y="318" width="28" height="44" rx="5" fill="#3fb950"/>
+    <rect x="160" y="266" width="28" height="50" rx="5" fill="#3fb950"/>
+    <rect x="216" y="292" width="28" height="40" rx="5" fill="#f85149"/>
+    <rect x="272" y="230" width="28" height="52" rx="5" fill="#3fb950"/>
+    <rect x="328" y="192" width="28" height="48" rx="5" fill="#3fb950"/>
+    <rect x="384" y="154" width="28" height="54" rx="5" fill="#f7931a"/>
+  </g>
+  <!-- the price line over them -->
+  <path d="M96 342L174 290L230 312L286 254L342 216L414 172" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- up or down: the two sides -->
+  <g transform="translate(150 132)">
+    <circle r="54" fill="#3fb950"/>
+    <path d="M0 26V-24M-22 -2L0 -26L22 -2" fill="none" stroke="#0d1014" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <g transform="translate(372 392)">
+    <circle r="54" fill="#f85149"/>
+    <path d="M0 -26V24M-22 2L0 26L22 2" fill="none" stroke="#0d1014" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- the coin the market is about -->
+  <circle cx="414" cy="172" r="20" fill="#f7931a" stroke="#0d1014" stroke-width="6"/>
+</svg>
