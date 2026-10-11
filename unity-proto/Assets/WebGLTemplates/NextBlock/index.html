@@ -668,6 +668,25 @@
       </div>
       <div class="muted" id="blwp-seed-restore-why"></div>
     </section>
+    <!-- DELETE THIS ACCOUNT FROM THIS BROWSER (kanban #337, the owner 2026-10-11: "Im settings screen gibt es die Möglichkeit seinen
+         Account wieder zu löschen um sich mit Nostr oder ähnlich einzuloggen"): this tab's phrase, its wallets' data and the
+         Nostr login are forgotten here, and the start screen comes back - log in with Nostr, restore or create. Nothing is
+         sent or spent: the same 24 words or Nostr key bring the wallet back in any browser. -->
+    <section class="settings-card" id="arena-set-account">
+      <h3>Account</h3>
+      <div class="muted" id="arena-acct-who"></div>
+      <button id="arena-acct-delete" type="button">Delete this account from this browser</button>
+      <div id="arena-acct-confirm" style="display:none">
+        <div class="muted" id="arena-acct-holds"></div>
+        <label class="muted" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="checkbox" id="arena-acct-saved" style="width:auto;margin:2px 0 0">
+          <span>I have my 24 words or my Nostr key. Without them the money in this wallet cannot be opened again.</span></label>
+        <div class="name-row">
+          <button id="arena-acct-go" type="button" class="primary" disabled>Delete and log in again</button>
+          <button id="arena-acct-cancel" type="button">Cancel</button>
+        </div>
+      </div>
+      <div class="muted" id="arena-acct-why"></div>
+    </section>
     <!-- THE COMMUNITY (kanban #277, the owner 2026-10-09: "Armada is the Discord"): the Bitcoin Arena community on Armada, an
          encrypted, open-source Discord alternative on Nostr - its public invite link (Share to Discover, published from the
          game's Armada key ~/.config/blwp/armada) -->
@@ -1212,7 +1231,9 @@
       if (!tab) { tab = random(); T.setItem('arena.tab.id', tab); }
       const heldBy = (hex) => { try { return JSON.parse(L.getItem(HELD + hex.slice(0, 16)) || 'null'); } catch { return null; } };
       const free = (hex) => { const h = heldBy(hex); return !h || h.tab === tab || now() - h.at > 12000; };
-      if (!/^[0-9a-f]{64}$/i.test(T.getItem(KEY) || '')) {
+      // A TAB WHOSE ACCOUNT WAS JUST DELETED (kanban #337) takes no kept phrase: it opens on the start screen, to log in again
+      const fresh = T.getItem('arena.wallet.fresh') === '1';
+      if (!fresh && !/^[0-9a-f]{64}$/i.test(T.getItem(KEY) || '')) {
         // THE KEPT PHRASE WITH A WALLET FIRST (the owner 2026-10-02: "I should have more than 0 sats on my wallet" - a tab took the
         // first free kept phrase, an empty one, and showed 0 beside the history of the phrase that had deposited): among the
         // free ones, the one whose player wallet keeps the most in this browser; then the order they were kept in.
@@ -1249,6 +1270,7 @@
       const beat = () => {
         const cur = T.getItem(KEY);
         if (!/^[0-9a-f]{64}$/i.test(cur || '')) return;
+        T.removeItem('arena.wallet.fresh');                // logged in again: this tab is a player like any other
         lockPhrase(cur);
         const l = read();
         if (!l.some((x) => x.hex === cur)) { l.push({ hex: cur, from: T.getItem(FROM) === 'imported' ? 'imported' : 'minted', at: now() }); L.setItem(LIST, JSON.stringify(l)); }
@@ -3792,6 +3814,53 @@
       location.reload();
       return got;
     };
+    // DELETE THIS ACCOUNT FROM THIS BROWSER (kanban #337): refused during a live run in this tab, as a restore is. This tab's
+    // phrase leaves the tab and the browser's kept list, its wallets' data goes (BLWPCLIENT.forgetPhrase), the Nostr login is
+    // forgotten, and the tab reloads to the start screen (arena.wallet.fresh: no other kept phrase is taken for it).
+    window.ARENA_DELETE_ACCOUNT = () => {
+      if (window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing === false) return { ok: false, why: 'A round is running in this tab - finish it first.' };
+      let L; try { L = vault(); } catch { L = null; }
+      const cur = (sessionStorage.getItem('arena.player.seed') || '').toLowerCase();
+      let forgot = 0;
+      try { if (L && /^[0-9a-f]{64}$/.test(cur)) forgot = BLWPCLIENT.forgetPhrase(L, cur); } catch (e) { return { ok: false, why: 'This wallet\'s data could not be removed: ' + e.message }; }
+      try {
+        if (L) {
+          let kept = []; try { kept = JSON.parse(L.getItem('arena.seeds') || '[]'); } catch { kept = []; }
+          L.setItem('arena.seeds', JSON.stringify(kept.filter((x) => String(x.hex || '').toLowerCase() !== cur)));
+          if (cur) L.removeItem('arena.seed.held.' + cur.slice(0, 16));
+          L.removeItem('arena.nostr');
+        }
+        try { localStorage.removeItem('arena.nostr'); } catch { /* none */ }
+        sessionStorage.removeItem('arena.player.seed'); sessionStorage.removeItem('arena.player.seed.from'); sessionStorage.removeItem('arena.nostr.showWords');
+        sessionStorage.setItem('arena.wallet.fresh', '1');
+      } catch (e) { return { ok: false, why: 'This account could not be removed: ' + e.message }; }
+      console.log('[arena] account deleted from this browser: ' + forgot + ' wallet entries');
+      return { ok: true, forgot };
+    };
+    (function accountCard() {
+      const $ = (id) => document.getElementById(id);
+      const who = () => {
+        let n = null; try { n = JSON.parse(localStorage.getItem('arena.nostr') || 'null'); } catch { n = null; }
+        $('arena-acct-who').textContent = n && n.npub ? 'Logged in with Nostr: ' + (n.name ? n.name + ' · ' : '') + n.npub.slice(0, 16) + '…' : 'This wallet\'s key is its 24 words, kept in this browser.';
+      };
+      who();
+      $('arena-acct-delete').addEventListener('click', () => {
+        const b = window.BLWP_WALLET_BALANCE;
+        $('arena-acct-holds').textContent = b && Number.isFinite(b.sats)
+          ? 'This wallet holds ' + b.sats.toLocaleString('en-US') + ' sat' + (b.pending ? ' and ' + b.pending.toLocaleString('en-US') + ' sat pending' : '') + '. Withdraw it first, or keep your 24 words or Nostr key to open it again.'
+          : 'Keep your 24 words or Nostr key: they open this wallet again in any browser.';
+        $('arena-acct-saved').checked = false; $('arena-acct-go').disabled = true; $('arena-acct-why').textContent = '';
+        $('arena-acct-confirm').style.display = ''; $('arena-acct-delete').style.display = 'none';
+      });
+      $('arena-acct-saved').addEventListener('change', () => { $('arena-acct-go').disabled = !$('arena-acct-saved').checked; });
+      $('arena-acct-cancel').addEventListener('click', () => { $('arena-acct-confirm').style.display = 'none'; $('arena-acct-delete').style.display = ''; });
+      $('arena-acct-go').addEventListener('click', () => {
+        const r = window.ARENA_DELETE_ACCOUNT();
+        if (!r.ok) { $('arena-acct-why').textContent = r.why; return; }
+        $('arena-acct-why').textContent = 'Deleted from this browser - opening the start screen';
+        location.reload();
+      });
+    })();
     document.getElementById('blwp-seed-use').addEventListener('click', () => {
       const why = document.getElementById('blwp-seed-restore-why');
       const got = window.BLWP_RESTORE_SEED(document.getElementById('blwp-seed-restore').value);
