@@ -112,6 +112,25 @@ export function arbitrationSpend({ bond, proofId, slashHeight, hint = new Uint8A
     amounts: { players, nodes, developers } };
 }
 
+/**
+ * THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B "escrow into the federation", kanban #307): the arbitration set spends an
+ * escrow output a slash paid (`escrowOutput`'s one k-of-m leaf) to the federation's peg-in address - the whole output less
+ * the fee, one output - and the e-cash claimed from it is what the players' locks are made from. Signed as path B is:
+ * `arbitrationSighash(built, escrow.leaf)`, `arbitrationWitness` with the escrow's control block.
+ *
+ *   escrow   { txid (internal byte order), vout, value (sat, BigInt), script (the escrow's P2TR scriptPubKey) }
+ *   toScript the peg-in address's scriptPubKey
+ */
+export function escrowSpend({ escrow, toScript, feeSats }) {
+  if (typeof feeSats !== 'bigint' || feeSats < 0n) return { ok: false, why: 'the fee is BigInt satoshi' };
+  if (!escrow || typeof escrow.value !== 'bigint' || !(escrow.script instanceof Uint8Array)) return { ok: false, why: 'the escrow is { txid, vout, value: BigInt sat, script }' };
+  if (!(toScript instanceof Uint8Array) || !toScript.length) return { ok: false, why: 'no peg-in script to pay' };
+  const value = escrow.value - feeSats;
+  if (value < P2TR_DUST_SATS) return { ok: false, why: `the escrow of ${escrow.value} sat less a ${feeSats} sat fee is ${value} sat, below dust` };
+  const tx = { version: 2, locktime: 0, inputs: [{ txid: escrow.txid, vout: escrow.vout, sequence: 0xfffffffd }], outputs: [{ value, script: toScript, pays: 'the federation\'s peg-in' }] };
+  return { ok: true, tx, prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats }, amounts: { pegIn: value } };
+}
+
 /** What each arbitration key signs: the BIP-341 script-path sighash of the spend's one input under the slash leaf. */
 export function arbitrationSighash(built, leaf) {
   return tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: leaf });
