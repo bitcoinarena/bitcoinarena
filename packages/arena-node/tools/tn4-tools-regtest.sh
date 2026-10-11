@@ -125,7 +125,7 @@ echo "$! miner" >> $PIDS
 say "chain at $(bcn getblockcount); lnds alice, bob, carol synced; channels alice->bob, alice->carol; a block every 20 s"
 
 # ---- 1. THE FEDERATION: testnet4-found.mjs, then the seven nodes with their guardians ----
-export PATH=$FORK_BIN:$(dirname "$NODE"):/usr/bin:/bin HOME_REAL=$HOME
+export PATH=$FORK_BIN:$(dirname "$NODE"):${SHIM_DIR:+$SHIM_DIR:}/usr/bin:/bin HOME_REAL=$HOME   # SHIM_DIR: timeout/setsid on a macOS
 FOUND_ARGS=""; i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1)); FOUND_ARGS="$FOUND_ARGS $p:$H/node-$i.db"; done
 ( cd "$HERE/.." && HOME=$FORK_HOME timeout 900 "$NODE" tools/testnet4-found.mjs $FOUND_ARGS ) >> "$LOG" 2>&1 || die "testnet4-found.mjs failed"
 INVITE=$(grep -o '"invite":"[^"]*"' "$LOG" | tail -1 | cut -d'"' -f4)
@@ -238,5 +238,7 @@ until_ "lnaddr" 30 curl -s -o /dev/null --max-time 3 http://127.0.0.1:$LNADDR/.w
 LNADDR_PUBLIC=http://localhost:$LNADDR LNADDR_LND_DIR=$H/bob LNADDR_LND_RPC=127.0.0.1:${LRPC[bob]} "$NODE" "$HERE/tn4-tools-regtest.mjs" lnaddr >> "$LOG" 2>&1 \
   || die "reading 6 failed (above)"
 reading "6 lightning address: $(grep '"reading":6' "$LOG" | tail -1)"
+
+[ "${SUCCESSION:-}" = 1 ] && . "$HERE/succession-stage.sh"   # kanban #325: the successor, the drain, the notes moved
 
 say "ALL SIX READINGS TAKEN"
