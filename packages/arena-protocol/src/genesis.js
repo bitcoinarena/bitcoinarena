@@ -70,7 +70,7 @@ export function encodeGenesisParameters(p) {
   // not compute two different networks.
   if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
     throw new Error(`genesis names ${p.arbitrationM} arbitration signer nodes and lists a different number`);
-  w.vec([...p.arbitrationKeys].sort(compare32), (k, ww) => ww.bytes32(k), { sortedBy: compare32 });
+  w.vec([...p.arbitrationKeys].sort(compareGenesis32), (k, ww) => ww.bytes32(k), { sortedBy: compareGenesis32 });
   w.u32(p.noticePeriod);
   w.bytes32(p.bondMarker);
   w.str(p.randomnessSource);
@@ -129,7 +129,7 @@ export function testnetShape(chain, marker, arbitrationKeys, federation, genesis
 }
 
 /** Two 32-byte keys in byte order, so a set is a set and not an arrangement. */
-function compare32(a, b) {
+function compareGenesis32(a, b) {
   for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
   return 0;
 }

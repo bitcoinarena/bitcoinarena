@@ -20,6 +20,8 @@ var BLWP_CURVE_EXPORTS = (() => {
   // src/page-curve.js
   var page_curve_exports = {};
   __export(page_curve_exports, {
+    bondCombine: () => bondCombine,
+    bondTweakPoint: () => bondTweakPoint,
     combinePoints: () => combinePoints,
     ecdhShared: () => ecdhShared,
     pageCurve: () => pageCurve,
@@ -2762,13 +2764,27 @@ var BLWP_CURVE_EXPORTS = (() => {
     return Uint8Array.from(x.match(/../g).map((h) => parseInt(h, 16)));
   };
   var signSchnorr = (message, secret) => schnorr.sign(message, secret);
+  var bondTweakPoint = (P, t) => {
+    const Q = schnorr.utils.lift_x(big(P)).add(secp256k1.Point.BASE.multiply(big(t)));
+    return { outputKey: schnorr.utils.pointToBytes(Q), parity: Number(Q.toAffine().y & 1n) };
+  };
+  var bondCombine = (terms) => {
+    let sum = null;
+    for (const { key, coefficient } of terms) {
+      const p = schnorr.utils.lift_x(big(key)).multiply(big(coefficient));
+      sum = sum === null ? p : sum.add(p);
+    }
+    return schnorr.utils.pointToBytes(sum);
+  };
   var pageCurve = {
     pointX,
     ecdhShared,
     pointFromScalar,
     combinePoints,
     verify,
-    signSchnorr
+    signSchnorr,
+    bondTweakPoint,
+    bondCombine
   };
   return __toCommonJS(page_curve_exports);
 })();
