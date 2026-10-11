@@ -35,8 +35,10 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
   const opts = { n: 2, stakeMsat: STAKE, round: ROUND, alignCloseMs: P, stakeExpiryFor: expiryFor };
   const w = await lockRound({ ...opts, endMs: testNow() + 1800000,
     serveOpts: { plugins: [NEXTBLOCK, UPDOWN.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST], orderBatchTimer: false } });
-  skipTo(windowOpen(w));
   const base = (d) => `http://127.0.0.1:${d.port}`;
+  // THE LISTING SAYS SO TOO: closed at the committee time, open from the window's start
+  const listedOpen = async (x) => { const b = await (await fetch(`${base(x.a)}/rounds`)).json(); const r = b.rounds.find((y) => y.id === toHex(x.rid)); return r && { entryOpen: r.entryOpen, windowStartMs: r.windowStartMs }; };
+  skipTo(Number(w.c.committeeTimeMs) + 100);
   const post = (d, path, body) => fetch(`${base(d)}${path}`, { method: 'POST', body }).then(async (r) => `${r.status} ${(await r.text()).trim()}`);
   const back = (x, e, lock = '') => fetch(`${base(x.a)}/forfeit?round=${toHex(x.rid)}&entry=${toHex(e.eid)}${lock}`).then(async (r) => (r.status === 200 ? '200' : `${r.status} ${(await r.text()).trim()}`));
   const batch = async (x) => {
@@ -65,6 +67,9 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
   };
   const facts = {};
   try {
+    skipTo(windowOpen(w));
+    const inside = await listedOpen(w);
+    assert.deepEqual(inside, { entryOpen: true, windowStartMs: String(w.c.entryCloseMs - UPDOWN_PERIOD_MS) });
     // 1. THE MARKET'S OWN CLOCK AND THE LOCK SPAN AT THE ROUND DOOR
     const need = marketExpiryBlocks(w.c, UPDOWN_TERMS);
     const offGrid = await post(w.a, '/round', encodeRoundContract({ ...w.c, entryCloseMs: w.c.entryCloseMs + 1000n, stakeExpiryBlocks: expiryFor({ ...w.c, entryCloseMs: w.c.entryCloseMs + 1000n }) }));

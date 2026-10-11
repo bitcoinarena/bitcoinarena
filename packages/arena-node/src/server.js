@@ -2830,8 +2830,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
       // the window's signature of this row for these facts (windowSigs)
       const sig = sigOf.get(id);
+      // A MARKET is open in its window only (the owner 2026-10-11): from entry_close - period, never from its committee time
+      const marketWindow = marketWindowFor(c);
+      const opensMs = marketWindow && marketWindow.startMs > c.committeeTimeMs ? marketWindow.startMs : c.committeeTimeMs;
       listed.push({
-        id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
+        id, phase, entryOpen: nowMs >= opensMs && nowMs < c.entryCloseMs,
+        ...(marketWindow ? { windowStartMs: String(marketWindow.startMs) } : {}),
         // THE ROUND'S GAME (kanban #204): its id and the name this node hosts it under
         game: gameOfContract(c),
         // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
