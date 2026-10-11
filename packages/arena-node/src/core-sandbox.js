@@ -36,6 +36,20 @@ export const STEP_MS = 30000;
 export const ASK_MS = 2000;
 /** Loading a core: its thread started and its modules' top level evaluated. */
 export const LOAD_MS = 10000;
+// ITS MEMORY (kanban #343, spec §0A.6): time alone did not bound it - measured, a core that allocated in a loop took the node
+// to 2.9 GB before a 20 s deadline ended it. Three limits, each measured on the card:
+/** The bytes of typed arrays and ArrayBuffers alive in one core's sandbox (core-host.js counts them; the core's real need
+ *  is 0.28 MB for a whole 10800-tick replay, so 64 MB is about 228 times it). */
+export const ARRAY_BUDGET = 64 * 1024 * 1024;
+/** The V8 heap of the core's thread: its arrays, objects and strings. Past it only that thread dies. */
+export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16 });
+/** THE BACKSTOP: how far this process may grow while one call into a core runs - read between 50 ms slices of the wait. */
+export const RSS_BACKSTOP = 512 * 1024 * 1024;
+const SLICE_MS = 50;
+/** After a core is ended: how long the node waits, in slices, for its memory to come back before it answers. */
+const GIVE_BACK_MS = 3000;
+/** A process that shrank by this, or is back within it of where the call began, has its core's memory back. */
+const GIVE_BACK_SLACK = 64 * 1024 * 1024;
 const DEADLINE = { replay: 'callMs', stepTo: 'stepMs' };
 
 /** A core's files as nextblock's hash-core.js hashes a tree: every .js below root, sorted, `rel \0 bytes \0`. */
@@ -102,22 +116,57 @@ const plain = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => (Array
  * and answers it revived. A core that does not load (an import outside its files, a top level that throws or does not stop)
  * is refused here, before it is ever asked anything; a core that misses a deadline is ended and refused from then on.
  */
-export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry } = {}) {
-  const ctrl = new Int32Array(new SharedArrayBuffer(4));
+export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
+  arrayBudget = ARRAY_BUDGET, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
+  const ctrl = new Int32Array(new SharedArrayBuffer(8));   // [0] the answer flag, [1] only slept on
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL('./core-host.js', import.meta.url), {
-    execArgv: ['--experimental-vm-modules', '--disable-warning=ExperimentalWarning'], env: {},
-    workerData: { files: [...files], entry, name, port: port2, ctrl: ctrl.buffer }, transferList: [port2],
+    execArgv: ['--experimental-vm-modules', '--disable-warning=ExperimentalWarning'], env: {}, resourceLimits: { ...heap },
+    workerData: { files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget }, transferList: [port2],
   });
   worker.unref(); port1.unref();
   worker.on('error', () => { /* said by the deadline or the answer */ });
   let ended = null;
-  const end = (why) => { ended = why; worker.terminate().catch(() => {}); };
-  /** Wait for the core thread's next answer, or end it at the deadline. */
+  const rss = () => process.memoryUsage.rss();
+  /** END THE CORE'S THREAD, and wait - in slices - until this process is back near where the call began: the memory goes with
+   *  the thread, before the node answers (a blocked thread hears no 'exit' event, so it is read off the process). */
+  const end = (why, from = null) => {
+    ended = why;
+    worker.terminate().catch(() => {});
+    if (from === null) return;
+    // DONE WHEN THE PROCESS STOPS SHRINKING (measured on macOS: the thread's teardown gives its arrays back within ~100 ms,
+    // and the allocator then keeps the freed pages for reuse - three attacks in a row held 576 MB, not three times it - so
+    // "back to where the call began" is never reached there); at most GIVE_BACK_MS
+    const t0 = Date.now();
+    const peak = rss();
+    let low = peak, lowAt = t0;
+    while (Date.now() - t0 < GIVE_BACK_MS) {
+      Atomics.wait(ctrl, 1, 0, 20);
+      const now = rss();
+      if (now < low - 1048576) { low = now; lowAt = Date.now(); }
+      else if (Date.now() - lowAt >= 100 && (low < peak - GIVE_BACK_SLACK || low <= from + GIVE_BACK_SLACK || Date.now() - t0 >= 300)) break;
+    }
+    lastGiveBack = { ms: Date.now() - t0, peakMb: Math.round(peak / 1048576), rssMb: Math.round(rss() / 1048576), fromMb: Math.round(from / 1048576) };
+  };
+  let lastGiveBack = null;
+  /** Wait for the core thread's next answer in 50 ms slices: past the deadline, or past the backstop, the thread is ended. */
   const wait = (ms, what) => {
-    const r = Atomics.wait(ctrl, 0, 0, ms);
+    const from = rss();
+    const until = Date.now() + ms;
+    let r = 'timed-out';
+    for (;;) {
+      const left = until - Date.now();
+      if (left <= 0) break;
+      r = Atomics.wait(ctrl, 0, 0, Math.min(SLICE_MS, left));
+      if (r !== 'timed-out') break;
+      const grew = rss() - from;
+      if (grew > rssBackstop) {
+        end(`the core grew this node by ${Math.round(grew / 1048576)} MB in ${what}, past the ${Math.round(rssBackstop / 1048576)} MB a call may: its thread was ended, and it is not run again`, from);
+        throw new Error(ended);
+      }
+    }
     if (r === 'timed-out') {
-      end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
+      end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`, from);
       throw new Error(ended);
     }
     Atomics.store(ctrl, 0, 0);
@@ -132,12 +181,16 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (ended) throw new Error(ended);
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
+    const from = rss();
     const a = wait(ms, op);
+    // A CORE AT ITS ARRAY BUDGET IS ENDED, not asked again: it could catch the refusal and keep going, and what it holds goes
+    // with its thread
+    if (!a.ok && /asked for more than \d+ MB of arrays/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`, from); throw new Error(ended); }
     if (!a.ok) throw new Error(a.why);
     return revive(a.json);
   };
   const meta = call('meta');
-  return Object.freeze({ call, meta, end: () => end('ended by the node') });
+  return Object.freeze({ call, meta, end: () => end('ended by the node'), givenBack: () => lastGiveBack });
 }
 
 /** Does this core draw a picture (a ghost)? false only when its sandbox says it does not; null when it does not load. */
