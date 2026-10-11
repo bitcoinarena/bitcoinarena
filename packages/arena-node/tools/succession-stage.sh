@@ -42,7 +42,10 @@ for p in $(pgrep -f "tools/run-testnet4-paid.mjs"); do ps -E -ww -o command= -p 
 portsHeld() { for p in ${NODE_PORTS//,/ }; do curl -s -o /dev/null --max-time 2 http://127.0.0.1:$p/identity && return 0; done; return 1; }
 for i in $(seq 1 30); do portsHeld || break; sleep 2; done
 if portsHeld; then for p in $(pgrep -f "tools/run-testnet4-paid.mjs"); do ps -E -ww -o command= -p $p 2>/dev/null | grep -q "$H" && kill -KILL $p; done; sleep 3; fi
-( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
+# A TEST OWNER for A's seats (kanban #321): the CRITICAL stage below signs two owner leaves with its secret
+OWNER_SECRET=${OWNER_SECRET:-1111111111111111111111111111111111111111111111111111111111111111}
+OWNER_PUB=$("$NODE" --input-type=module -e "import { schnorr } from '@noble/curves/secp256k1.js'; console.log(Buffer.from(schnorr.getPublicKey(Buffer.from('$OWNER_SECRET', 'hex'))).toString('hex'))")
+( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TEST_OWNER_PUBKEY=$OWNER_PUB ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
   ARENA_FEDERATION_INVITE_FILE=$H/invite-code ARENA_RECIPIENT_PORT=$RECIP ARENA_TN4_DATADIR=$BTC_DIR ARENA_DRAINING=$FED:$FED_B ARENA_FEDERATION_RECORD_MS=15000 PAID_FIRST=0 \
   setsid "$NODE" tools/run-testnet4-paid.mjs > $H/paid2.out 2>&1 < /dev/null & echo "$! node-paid2" >> $PIDS )
 paidup2() { grep -q '"paid":"up"' $H/paid2.out; }
@@ -73,3 +76,10 @@ say "channels bob<->carol open and active"
   PAYER_DIR=$H/alice PAYER_RPC=127.0.0.1:${LRPC[alice]} NETWORK=regtest SEAT_RECORD=1 HOME=$FORK_HOME timeout 900 "$NODE" tools/succession-move.mjs ) > $H/move.out 2>&1; MOVE_RC=$?
 cat $H/move.out >> "$LOG"
 reading "S4 notes moved: {\"exit\":$MOVE_RC,\"record\":$(grep '"step":"A record"' $H/move.out | tail -1 || echo null),\"moved\":$(grep '"step":"moved"' $H/move.out | tail -1 || echo null)}"
+# ---- 9. CRITICAL (kanban #321, §23A.1 / 23A.4): two of A's seven seats leave by their owner's signed leave; A's record then
+# says CRITICAL (reserve 0 - a worse band than DRAINING, which it keeps), and the client offers only Withdraw and Move
+( cd "$HERE/.." && NODES=$NODE_PORTS LEAVE=6,7 OWNER_SECRET=$OWNER_SECRET WAIT_S=600 timeout 700 "$NODE" tools/critical-leave.mjs ) > $H/critical.out 2>&1; CRIT_RC=$?
+cat $H/critical.out >> "$LOG"
+reading "C1 two leave, A critical: {\"exit\":$CRIT_RC,\"leaves\":[$(grep '"step":"leave"' $H/critical.out | paste -sd, -)],\"record\":$(grep '"step":"record"' $H/critical.out | tail -1 || echo null)}"
+# the stack held for a look (the page's CRITICAL view): HOLD_S seconds before the stop
+[ -n "${HOLD_S:-}" ] && { say "holding the stack $HOLD_S s"; sleep "$HOLD_S"; }
