@@ -110,6 +110,8 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
   // OR AN ENTRY CLOSE AT A WALL-CLOCK INSTANT (ISO), the window then fitted to it once committee_time is known
   ...(env.ARENA_ENTRY_CLOSE_AT ? { entryCloseAtMs: Date.parse(env.ARENA_ENTRY_CLOSE_AT) } : {}),
   signerNode: { closeAtEnd: true, stakeLocks: lock },
+  // PAID_FIRST=0 (kanban #293, the RPS grid): no round of its own - only the grid keeper below publishes
+  openFirst: env.PAID_FIRST !== '0',
   ...(env.ARENA_ATTACH === '1' ? { attach: { fundedFile: env.ARENA_FUNDED_ROUNDS_FILE || join(home, 'paid', 'funded-rounds.txt'),
     proofDir: env.ARENA_ATTACH_PROOF_DIR || join(home, 'paid', 'attach-proof') } } : {}),
   guardianChain: { bitcoindUrl: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE, call: chainCall },
@@ -123,6 +125,7 @@ say({ paid: 'up', network, custody: round.contract.custody, stakeMsat: String(st
 // THE FUNDED GATEWAY STAYS IN THE LINK (the owner 2026-09-30 14:30 and the leadMs letter): a start used to write the link
 // without `gateway=`, and a page opened on it deposits through whichever gateway the lock client picks. The gateway the
 // link already named is kept.
+if (round.id) {
 let lobbyUrl = round.lobbyUrl;
 try {
   const had = new URL(readFileSync(join(home, 'paid', 'lobby-url.txt'), 'utf8').trim()).searchParams.get('gateway');
@@ -138,6 +141,39 @@ console.log(round.lobbyUrl);
 // 1.5-3 h gap every 6 h with no paid round to join.
 round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
+}
+// PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
+// waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
+// read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
+// grid is published: committee_time 40 min past the tip's median time (so the publication confirms below its beacon), the
+// first close 105 min from now - or 8 s after the last grid's, when that is later, so a table plays on without a hole.
+// RPS_GRID_NOW=1 publishes the first grid without waiting for a page's ask.
+if (env.PAID_RPS_GRID === '1') {
+  const slots = Number(env.RPS_GRID_SLOTS || 225), tables = Number(env.RPS_GRID_TABLES || 2);
+  const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 105 * 60000);
+  let lastCloseMs = 0, busy = false, now1 = env.RPS_GRID_NOW === '1';
+  const gid = toHex(ROCK_PAPER_SCISSORS.gameId);
+  const look = async () => {
+    if (busy) return;
+    let wantAt = 0;
+    try { wantAt = (await (await fetch(`http://127.0.0.1:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
+    if (now1) { wantAt = Date.now(); now1 = false; }
+    if (Date.now() - wantAt > 180000 || lastCloseMs > Date.now() + aheadMs) return;
+    busy = true;
+    try {
+      const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
+      const committee = Math.max(mtp, Date.now()) + 40 * 60000 + 500;
+      const firstClose = Math.max(Date.now() + leadMs, lastCloseMs + 8000);
+      say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
+      const got = await round.openGrid({ fields: RPS_ROUND_FIELDS, stakeMsat }, { slots, tables, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+        onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
+      say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
+        rounds: got.rounds, posted: got.posted, lastClose: got.lastCloseMs ? new Date(Number(got.lastCloseMs)).toISOString() : undefined });
+      if (got.ok) lastCloseMs = Number(got.lastCloseMs);
+    } catch (e) { say({ rpsGridNotOpened: e.message }); } finally { busy = false; }
+  };
+  look(); setInterval(look, 30000);
+}
 // PAID ROCK PAPER SCISSORS BACK TO BACK (kanban #293, the owner 2026-10-10: head-to-head needs no series, and a paid round is
 // still paid - 100 sats as Tick Tock's): PAID_RPS=1 keeps a paying RPS round closing every 8 s, published ahead, at this
 // runner's stake and custody (ARENA_PUBLISH_AHEAD=1 in this runner's environment)
