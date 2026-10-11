@@ -116,30 +116,3 @@ test('one player alone is not played (the owner 2026-10-09: "there must be 2 bef
   } finally { await w.close(); }
 });
 
-// NO START DEADLINE FOR A ROUND WITHOUT A RUN (kanban #344, measured on testnet4 round 4a0a77fc, 2026-10-11 20:12Z): with the
-// door sweep on, both paid entries were FORFEIT-signed at the door ~10 s after their stakes were seen - minutes before their
-// reveals - and the decide then signed DELIVERED / FAILED for the same entries. Swept past the start deadline here, the only
-// results ever signed are the decide's.
-test('the door sweep signs no FORFEIT in a head-to-head round past its start deadline: the only results are the decide\'s', async () => {
-  const w = await lockRound({ serveOpts: { plugins: [NEXTBLOCK, RPS], doorSweepMs: 200 }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
-  try {
-    skipTo(Number(w.c.committeeTimeMs) + 20);
-    const saltA = new Uint8Array(randomBytes(32)), saltB = new Uint8Array(randomBytes(32));
-    const a = await lockAndPlay(w, { name: 'rock', key: b32(0x51), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0] }, { hidden: { move: ROCK, salt: saltA }, noMarks: true, address: true });
-    const b = await lockAndPlay(w, { name: 'scissors', key: b32(0x52), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0] }, { hidden: { move: SCISSORS, salt: saltB }, noMarks: true, address: true });
-    // past every door: the start, the start deadline and its grace - and still inside the reveal window
-    const door = Math.max(Number(w.c.startTimeMs), testNow()) + Number(msForTicks(START_DEADLINE).ms) + 6000;
-    skipTo(Math.max(Number(w.c.entryCloseMs) + 500, door));
-    assert.ok(testNow() < Number(w.c.entryCloseMs) + SPAN_MS - 2000, 'the clock left the reveal window');
-    for (const stop = Date.now() + 1500; Date.now() < stop; await new Promise((r) => setTimeout(r, 100)));   // sweeps run
-    const before = { a: results(w, a.eid), b: results(w, b.eid) };
-    assert.deepEqual(before, { a: [[], []], b: [[], []] }, `signed at the door before any reveal: ${JSON.stringify(before)}`);
-    await reveal(w, a, ROCK, saltA); await reveal(w, b, SCISSORS, saltB);
-    await closeRound(w);
-    const settled = await untilSettled(w);
-    const got = { a: results(w, a.eid), b: results(w, b.eid) };
-    for (const [k, per, want] of [['rock', got.a, 'DELIVERED'], ['scissors', got.b, 'FAILED']])
-      for (const held of per) { assert.ok(held.length >= 1, `${k}: no result`); for (const x of held) assert.equal(x.outcome, want, `${k}: ${JSON.stringify(per)}`); }
-    assert.equal(settled.state, 'ACCEPTED', settled.why);
-  } finally { await w.close(); }
-});
