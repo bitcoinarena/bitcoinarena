@@ -3276,7 +3276,12 @@
         census = BLWPCLIENT.checkedCensusFor(round);
       }
       const rows = census ? BLWPCLIENT.guardianRowsOf(census, fid) : [];
-      const fed = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === fid ? window.ARENA_FED_STATUS : null;
+      let fed = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === fid ? window.ARENA_FED_STATUS : null;
+      // THE SIGNED STATUS (#321), asked of the seats here when no join asked it yet - a deposit is opened before any join
+      if (!fed && census && nodes && nodes.length) {
+        try { fed = { ...(await BLWPCLIENT.federationStatus({ federationIdHex: fid, nodes, census, verify: window.BLWP_CURVE.verify })), federation: fid }; }
+        catch { /* shown as not read */ }
+      }
       const $ = (id) => document.getElementById(id);
       $('afc-id').textContent = fid;
       $('afc-status').textContent = fed ? `${fed.status}${fed.signers ? ` · ${fed.signers} of ${fed.nominal} guardians signed` : ''}` : 'no signed record read';

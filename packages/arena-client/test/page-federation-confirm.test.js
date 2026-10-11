@@ -44,7 +44,7 @@ function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const document = { getElementById: (id) => (els[id] = els[id] || node(id)), createElement: node };
   const window = { ARENA_FED_STATUS: status, BLWP_CURVE: {}, BLWP_LEDGER_LOBBY: { nodes: ['https://seat.example'] } };
   const asked = [];
-  const BLWPCLIENT = { ...fed, checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
+  const BLWPCLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
     depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => ({}) };
   const did = [];
   const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'localStorage', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
@@ -150,6 +150,15 @@ test('the census is read by the client itself when it has none yet, and the paid
   await p.answer(false);
   await asking;
   assert.deepEqual(p.asked, ['committee']);
+});
+
+test('with no status read by a join yet, the modal asks the seats for the signed one itself', async () => {
+  const p = page({ checked: census(UNKNOWN) });
+  const asking = p.gate({ round: round(UNKNOWN), invite: invite(UNKNOWN), roundIdHex: 'ab', nodes: ['https://seat.example'] });
+  await p.answer(false);
+  await asking;
+  assert.deepEqual(p.asked, ['status']);
+  assert.equal(p.els['afc-status'].textContent, 'OPEN \u00b7 6 of 7 guardians signed');
   const join = HTML.indexOf("const gate = await window.ARENA_FEDERATION_GATE({ round: named.round, invite: named.federation");
   const lock = HTML.indexOf("signerNodes = await joinStep('clientSettlementSignerNodes'");
   assert.ok(join > 0 && join < lock, 'the join asks before the signer nodes and the lock');
