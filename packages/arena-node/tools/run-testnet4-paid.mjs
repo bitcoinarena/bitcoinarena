@@ -37,6 +37,13 @@ import { MARKET } from '../test/plugins/market/index.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { donationSetInForce } from '../../arena-protocol/src/authority.js';
+import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
+import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
+import { TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
@@ -163,11 +170,25 @@ if (env.PAID_RPS_GRID === '1') {
     busy = true;
     try {
       const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
-      // 60 min past the tip's median: the median climbs about 20 min a block, so the publication has three blocks to confirm in
-      const committee = Math.max(mtp, Date.now()) + 60 * 60000 + 500;
-      const firstClose = Math.max(Date.now() + leadMs, lastCloseMs + 8000);
+      // 45 min past the tip's median: the median climbs about 20 min a block, so the publication has two blocks to confirm in
+      // before the median passes it. On testnet4 the median runs ahead of the clock (74 min at 18:01Z), and a round starts
+      // only after its committee time - so the first close is also at least 5 min past it (measured 17:54-17:59Z: with the
+      // committee 60 min past a median 2 h ahead, every grid started before its committee time and none was published)
+      const committee = mtp + 45 * 60000 + 500;
+      const firstClose = Math.max(Date.now() + leadMs, committee + 5 * 60000, lastCloseMs + 8000);
+      // THE DONATION SET IN FORCE AT THE GRID'S CENSUS HEIGHT, as every seat checks it (server.js donationSetFor; measured
+      // 17:54Z: grid 474c23f1 named the harness's older set and seat 31281 refused its first round - "at census height
+      // 156098 this network's donation set in force is serial 3")
+      const keys = donationKeysForNetworkId(round.contract.networkId);
+      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+        rotations: [], height: round.contract.censusHeight,
+        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+      const donationSetId = idOfDonationSet(forced.recipients);
       say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
-      const got = await round.openGrid({ fields: RPS_ROUND_FIELDS, stakeMsat }, { slots, tables, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      say({ rpsGrid: 'donation set', serial: forced.serial, id: toHex(donationSetId).slice(0, 16), censusHeight: round.contract.censusHeight });
+      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId }, stakeMsat }, { slots, tables, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
         rounds: got.rounds, posted: got.posted, lastClose: got.lastCloseMs ? new Date(Number(got.lastCloseMs)).toISOString() : undefined });
