@@ -10,6 +10,7 @@
 // stops when the queue empties. Nothing here polls, nothing ticks, and nothing
 // here reaches the core: `replay.js` remains the only file in this daemon that
 // does, and this file only decides which runs are handed to it.
+import { sandboxFor } from './core-sandbox.js';
 import { windowsOf } from '../../arena-protocol/src/window.js';
 import { dissentsOn, dissentsFirstOn, postsLateOn, LATE_POSTING_AFTER_MS } from './test-dissent.js';
 import { ReplayPool } from './pool.js';
@@ -663,9 +664,11 @@ export class Verifier {
       await this.carryReveals(roundIdBytes, entries, found.plugin.manifest.moveCount);
       const held = new Map(this.round.revealsOf(roundIdBytes).map((r) => [hex(r.entryId), r]));
       const list = entries.map(({ entryId }) => { const r = held.get(hex(entryId)); return { key: hex(entryId), move: r ? r.move : null }; });
-      const adapter = found.core && found.core.adapter;
-      if (!adapter || typeof adapter.decide !== 'function') throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
-      return { held, results: headToHeadResults(list, (moves, config) => adapter.decide(moves, config), found.config, { players: found.plugin.manifest.players }) };
+      // DECIDED IN THE CORE'S SANDBOX (kanban #328, §0A.6): the moves in as JSON, the verdicts out as JSON
+      let box = null;
+      try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
+      if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
+      return { held, results: headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }) };
     })();
     return entries.map(({ entryId, entry }) => decided.then(({ held, results }) => {
       const r = results[hex(entryId)];

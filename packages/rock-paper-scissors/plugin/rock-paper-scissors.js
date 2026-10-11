@@ -3,7 +3,7 @@
 // and donation set. The engine imports none of this; it reads the game through its manifest and the adapter it is handed.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { DECIDE } from './decide.js';
+import { createRequire } from 'node:module';
 import { RPS_MANIFEST_HEX } from './rps-manifest.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
@@ -14,8 +14,13 @@ const sha = (b) => createHash('sha256').update(b).digest('hex');
 export const RPS_MANIFEST = decodeManifest(fromHex(RPS_MANIFEST_HEX));
 export const RPS_GAME_ID = gameIdOf(RPS_MANIFEST);
 const DECIDE_URL = new URL('./decide.js', import.meta.url);
-export const RPS_DECIDE_CORE = Object.freeze({ name: DECIDE.name, hash: sha(readFileSync(DECIDE_URL)), url: DECIDE_URL.href, adapter: DECIDE,
-  configs: new Map([[sha('rock-paper-scissors-config:v1'), {}]]) });
+// THE REGISTRATION IMPORTS NO CORE (kanban #328, spec §0A.6): a node loads this module in its own thread, and runs the decide
+// adapter only in its sandbox (arena-node/src/core-sandbox.js) from the file DECIDE_URL names, checked against its hash.
+// `adapter` is the file imported natively for a player's own use (tests, tools): not enumerable, loaded only when asked for.
+const requireCore = createRequire(import.meta.url);
+export const RPS_DECIDE_NAME = 'rock-paper-scissors decide v1';
+export const RPS_DECIDE_CORE = Object.freeze(Object.defineProperty({ name: RPS_DECIDE_NAME, hash: sha(readFileSync(DECIDE_URL)), url: DECIDE_URL.href,
+  configs: new Map([[sha('rock-paper-scissors-config:v1'), {}]]) }, 'adapter', { get: () => requireCore('./decide.js').DECIDE, enumerable: false }));
 export const RPS_CLIENT_FILE = new URL('../client/index.html', import.meta.url);
 
 export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', manifest: RPS_MANIFEST, gameId: RPS_GAME_ID, info: INFO,
