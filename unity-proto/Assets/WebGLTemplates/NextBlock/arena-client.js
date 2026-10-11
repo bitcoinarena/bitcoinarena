@@ -2262,7 +2262,7 @@ function sittingSeatsFitTheSlots(c) {
   // RESERVE SEATS (§5A.7, kanban #301; decision A: the contract names the draw): a round may name its draw - two reserves
   // over the seats, 9 for 7 and 3 for 2 (sortition.js drawnForRole) - and its seating certificate says who sits
   const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
-  const drawn = Math.min(slots + 2, 2 * t - 1);
+  const drawn = slots < 1 ? 0 : Math.min(slots + 2, 2 * t - 1);
   if (seats > drawn)
     return { ok: false, seats, slots,
       why: `that round seats ${seats} signer nodes on ${gv}/${st} slots: 22A pays the seats the census `
@@ -22579,7 +22579,7 @@ async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {
   // NO ENTRY WITHOUT A CHECKED SEATING where the seats seat (§5A.7): the stake is dealt to who a certificate seats
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    if (st && st.missing) throw new Error(`that round is not seated: no seating certificate for its ${role} role stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
+    if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const answered = got.seats.filter((s) => s.agrees !== null);
   if (answered.length && !answered.some((s) => s.agrees))
@@ -23598,7 +23598,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     const seatingSaid = counts.map((c) => c.committee).filter((x) => x && x.seated);
     const seatedBy = seatingSaid.find((x) => x.seated.game && x.seated.settlement) || null;
     const seating = !seatingSaid.length ? null : seatedBy
-      ? { state: 'seated', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
+      ? { state: 'named', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
       : { state: seatingSaid.some((x) => x.equivocated) ? 'equivocated' : 'pending' };
     rows.push({
       id, phase,
@@ -23612,7 +23612,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
       signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
-      joinable: phase === 'open' && agreeing.size >= needed && (!seating || seating.state === 'seated'),
+      joinable: phase === 'open' && agreeing.size >= needed && (!seating || seating.state === 'named'),
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
@@ -23782,9 +23782,9 @@ function lobbyLine(row, nowMs = Date.now()) {
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
   // RESERVE SEATS (§5A.7): who is seated, of how many drawn
-  const seat = !row.seating ? '' : row.seating.state === 'seated'
-    ? ` · seated: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
-    : row.seating.state === 'equivocated' ? ' · two seatings: the round is void' : ' · not seated yet';
+  const seat = !row.seating ? '' : row.seating.state === 'named'
+    ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
+    : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }

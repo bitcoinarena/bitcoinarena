@@ -1263,7 +1263,7 @@
         if (P.heard) return;
         P.heard = true; P.feed = !!feed;
         var held = P.held; P.held = {};
-        if (P.feed) { P.active = true; console.log('[arena] the seats run the committee\'s price: this run plays attested samples only (the seeded tape until they come)'); return; }
+        if (P.feed) { P.active = true; console.log('[arena] the signer nodes run the committee\'s price: this run plays attested samples only (the seeded tape until they come)'); return; }
         ['tape', 'sample'].forEach(function (k) { var h = held[k]; if (h) { try { h[0].apply(h[1], h[2]); } catch (e) { /* that core is gone */ } } });
       }
       P.heard_ = heard;
@@ -2084,7 +2084,7 @@
           throw new Error(BLWPCLIENT.federationSays(window.ARENA_FED_STATUS.status));
         window.ARENA_COMMITTEE_LAST = { round: roundIdHex, ms: sn.derived.ms, headers: sn.derived.headers, census: { entries: sn.derived.census.entries },
           beacon: sn.derived.beacon.height, seats: sn.derived.seats.map((x) => ({ node: x.node, agrees: x.agrees })) };
-        console.log(`[arena] committee built by this client for ${roundIdHex.slice(0, 8)}: ${sn.signerNodes.length} settlement seats, census of ${sn.derived.census.entries}, `
+        console.log(`[arena] committee built by this client for ${roundIdHex.slice(0, 8)}: ${sn.signerNodes.length} settlement signer nodes, census of ${sn.derived.census.entries}, `
           + `beacon ${sn.derived.beacon.height}, ${sn.agreed} node(s) agree${sn.refused.length ? ', ' + sn.refused.length + ' differ: ' + sn.refused.join('; ') : ''} (${sn.derived.ms.total} ms)`);
         return sn;
       });
@@ -2799,7 +2799,7 @@
         const all = BLWPCLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
         const sent = await tookEntries;
-        all.then((done) => { if (done && done.lock) console.log('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' seats'
+        all.then((done) => { if (done && done.lock) console.log('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
           + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[blwp] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[blwp] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         if (!sent.entries.some((x) => x.status === 201)) { window.BLWP_JOIN_REFUSED = 'the signer nodes refused the entry: ' + sent.why; return; }

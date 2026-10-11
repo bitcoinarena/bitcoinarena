@@ -124,7 +124,10 @@ const plain = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => (Array
 let supervisor = null;
 function supervisorOf() {
   if (!supervisor) {
-    const worker = new Worker(new URL('./core-supervisor.js', import.meta.url), { env: {}, workerData: { arenaCoreSupervisor: true } });
+    // no flags of the process (the core thread names its own): a worker refuses --input-type, and a node started with
+    // `node --input-type=module -e` lost its supervisor and waited out every core's load deadline
+    const worker = new Worker(new URL('./core-supervisor.js', import.meta.url), { env: {}, workerData: { arenaCoreSupervisor: true },
+      execArgv: [] });
     worker.unref();
     worker.on('error', (e) => { console.log(`[sandbox] the core supervisor failed: ${e && e.message}`); supervisor = null; });
     const { port1, port2 } = new MessageChannel();

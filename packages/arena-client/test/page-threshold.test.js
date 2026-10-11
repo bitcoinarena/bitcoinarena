@@ -47,14 +47,14 @@ test('postHandout counts against the threshold the stake was dealt at, not a fla
 
 test('"committed" counts against the same rule: stakeSeenNeeded is sharesNeededFor', () => {
   for (const slots of [2, 7]) assert.equal(stakeSeenNeeded({ settlementSlots: slots }), sharesNeededFor({ settlementSlots: slots }));
-  assert.throws(() => stakeSeenNeeded({ settlementSlots: 3 }), /no committee threshold for 3 slots/,
+  assert.throws(() => stakeSeenNeeded({ settlementSlots: 4 }), /no committee threshold for 4 slots/,
     'the client counts a stake committed on a committee the node has no threshold for');
 });
 
 test('the round\'s stakes open at 2 of 2 and 5 of 7, and nothing else is a threshold', () => {
   assert.equal(sharesNeededFor({ settlementSlots: 2 }), 2);
   assert.equal(sharesNeededFor({ settlementSlots: 7 }), 5, 'seven signer nodes are dealt all seven again');
-  assert.throws(() => sharesNeededFor({ settlementSlots: 3 }), /no committee threshold for 3 slots/);
+  assert.throws(() => sharesNeededFor({ settlementSlots: 4 }), /no committee threshold for 4 slots/);
 });
 
 test('the bundle the page loads hands it that rule, and the template carries that bundle', async () => {
