@@ -280,18 +280,53 @@
     /* THE GAMES FIRST (kanban #208): when the lobby's nodes host more than one game, the player picks one before anything of
        a game loads - nextblock goes on to Unity, any other game's own client is loaded by its manifest's hashes. Above the
        loading screen (z 40); below the pick sheet's invoice (z 38 is the sheet, which a game's client opens over itself) */
-    #arena-games { position: fixed; inset: 0; z-index: 37; display: none; align-items: center; justify-content: center;
-      background: #0d1014; font-family: system-ui, sans-serif; color: #e6edf3; padding: 16px; box-sizing: border-box; }
+    /* THE GAME CHOOSER AS TILES (kanban #338, the owner 2026-10-11: "Huebscher machen, mit Kacheln. Logo, description anzeigen
+       wenn vorhanden. Zwischen prediction market und Games unterscheiden. Anzeigen wieviele nodes das haben und wieviele
+       spieler insgesamt drin sind"): two groups, a tile per game - its logo, its developer-signed description, its type, and
+       the nodes and players it has - one column on a phone, up to three on a wide screen */
+    #arena-games { position: fixed; inset: 0; z-index: 37; display: none; justify-content: center; overflow-y: auto;
+      background: radial-gradient(1200px 600px at 50% -10%, #1b2230 0%, #0d1014 60%); font-family: system-ui, sans-serif; color: #e6edf3;
+      padding: 28px 16px 40px; box-sizing: border-box; }
     #arena-games.show { display: flex; }
-    #arena-games .box { width: min(520px, 100%); }
-    #arena-games h2 { margin: 0 0 14px; font-size: 20px; }
-    #arena-games button.game { display: flex; align-items: center; gap: 12px; width: 100%; margin: 0 0 10px; padding: 12px 14px;
-      background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-left: 3px solid #f7931a; border-radius: 6px;
-      font: 600 16px/1.3 system-ui, sans-serif; text-align: left; cursor: pointer; }
-    #arena-games button.game img { width: 40px; height: 40px; flex: none; }
-    #arena-games button.game .sub { display: block; color: #8b949e; font: 400 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    #arena-games .box { width: min(980px, 100%); }
+    #arena-games .brand { color: #f7931a; font: 700 12px/1 system-ui, sans-serif; letter-spacing: .18em; text-transform: uppercase; margin: 0 0 8px; }
+    #arena-games h2 { margin: 0 0 6px; font-size: 26px; font-weight: 750; }
+    #arena-games .lead { margin: 0 0 22px; color: #8b949e; font-size: 14px; }
+    #arena-games .group { margin: 0 0 26px; }
+    #arena-games .group h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: #8b949e; }
+    #arena-games .group h3::after { content: ''; flex: 1; height: 1px; background: #262c36; }
+    #arena-games .grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+    @media (min-width: 560px) { #arena-games .grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (min-width: 900px) { #arena-games .grid { grid-template-columns: repeat(3, 1fr); } }
+    #arena-games button.tile { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 16px; text-align: left; cursor: pointer;
+      background: linear-gradient(180deg, #171d26, #12171e); color: #e6edf3; border: 1px solid #2a313c; border-radius: 16px;
+      font: 400 14px/1.45 system-ui, sans-serif; box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 8px 24px rgba(0,0,0,.25);
+      transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease; min-height: 210px; }
+    #arena-games button.tile:hover, #arena-games button.tile:focus-visible { transform: translateY(-2px); border-color: #f7931a; outline: none;
+      box-shadow: 0 0 0 1px rgba(247,147,26,.35), 0 12px 32px rgba(0,0,0,.35); }
+    #arena-games button.tile.market:hover, #arena-games button.tile.market:focus-visible { border-color: #3fb950; box-shadow: 0 0 0 1px rgba(63,185,80,.35), 0 12px 32px rgba(0,0,0,.35); }
+    #arena-games .head { display: flex; align-items: center; gap: 12px; }
+    #arena-games .logo { width: 56px; height: 56px; flex: none; border-radius: 14px; background: #0d1014; display: grid; place-items: center; overflow: hidden;
+      font: 800 24px system-ui, sans-serif; color: #f7931a; border: 1px solid #262c36; }
+    #arena-games .logo img { width: 100%; height: 100%; display: block; }
+    #arena-games .name { font: 700 17px/1.25 system-ui, sans-serif; }
+    #arena-games .badge { display: inline-block; margin-top: 4px; padding: 2px 8px; border-radius: 999px; font: 600 11px/1.6 system-ui, sans-serif;
+      letter-spacing: .04em; background: rgba(247,147,26,.14); color: #f7a64a; }
+    #arena-games .market .badge { background: rgba(63,185,80,.14); color: #56d364; }
+    #arena-games .desc { color: #c9d1d9; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 3.9em; }
+    #arena-games .desc.none { color: #6e7681; font-style: italic; }
+    #arena-games .signed { color: #8b949e; font-size: 12px; }
+    #arena-games .signed a { color: #f7931a; text-decoration: none; }
+    #arena-games .stats { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; }
+    #arena-games .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: #0d1014; border: 1px solid #262c36;
+      font: 600 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; }
+    #arena-games .chip i { width: 7px; height: 7px; border-radius: 50%; background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+    #arena-games .chip.idle i { background: #6e7681; box-shadow: none; }
+    #arena-games .warn { color: #f0b72f; font: 400 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    #arena-games .play { position: absolute; top: 16px; right: 16px; color: #f7931a; font: 700 13px system-ui, sans-serif; opacity: .85; }
+    #arena-games .market .play { color: #56d364; }
     #arena-games .why { color: #f0b72f; font-size: 13px; white-space: pre-wrap; }
-    #arena-games .more { margin-top: 14px; font-size: 14px; }
+    #arena-games .more { margin-top: 8px; font-size: 14px; }
     #arena-games .more a, #arena-platform a { color: #f7931a; }
     /* THE PLATFORM PAGE'S LINK ON THE LOADING SCREEN (kanban #208, the owner 2026-10-08 11:38) */
     #arena-platform { margin-top: 10px; font: 13px/1.4 system-ui, sans-serif; text-align: center; padding: 0 16px; }
@@ -1101,7 +1136,7 @@
   })();
   </script>
 
-  <div id="arena-games"><div class="box"><h2>Choose a game</h2><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div></div></div>
+  <div id="arena-games"><div class="box"><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div></div></div>
   <div id="boot">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div><div class="dots"><i></i><i></i><i></i></div></div>
     <script>
@@ -4693,16 +4728,48 @@
         const list = el.querySelector('.list');
         list.textContent = '';
         game = await new Promise((chosen) => {
-          for (const g of got.games) {
-            const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.dataset.game = g.id;
-            if (g.icon) { const i = document.createElement('img'); i.src = g.icon; i.alt = ''; b.append(i); }
-            const t = document.createElement('span'); t.textContent = g.title;
-            const sub = document.createElement('span'); sub.className = 'sub';
-            sub.textContent = (g.attested ? 'market' : 'game') + ' \u00b7 ' + g.nodes.length + ' node' + (g.nodes.length === 1 ? '' : 's')
-              + (g.known ? '' : ' \u00b7 not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16));
-            t.append(sub); b.append(t);
-            b.addEventListener('click', () => chosen(g));
-            list.append(b);
+          // THE TILES (kanban #338): games first, then prediction markets; each its logo, type, signed description and players
+          const typeOf = (g) => (g.attested ? 'market' : g.manifest && g.manifest.resultType === 3 ? 'head-to-head' : 'game');
+          const groups = [['Games', got.games.filter((g) => !g.attested)], ['Prediction markets', got.games.filter((g) => g.attested)]];
+          for (const [label, games] of groups) {
+            if (!games.length) continue;
+            const sec = document.createElement('section'); sec.className = 'group';
+            const h = document.createElement('h3'); h.textContent = label + ' \u00b7 ' + games.length; sec.append(h);
+            const grid = document.createElement('div'); grid.className = 'grid'; sec.append(grid);
+            for (const g of games) {
+              const kind = typeOf(g);
+              const b = document.createElement('button'); b.type = 'button'; b.className = 'tile game ' + (kind === 'market' ? 'market' : 'play-game'); b.dataset.game = g.id;
+              const head = document.createElement('div'); head.className = 'head';
+              const logo = document.createElement('div'); logo.className = 'logo';
+              if (g.icon) { const i = document.createElement('img'); i.src = g.icon; i.alt = ''; i.onerror = () => { logo.textContent = (g.title || '?').slice(0, 1); }; logo.append(i); }
+              else logo.textContent = (g.title || '?').slice(0, 1);
+              const who = document.createElement('div');
+              const name = document.createElement('div'); name.className = 'name'; name.textContent = g.title;
+              const badge = document.createElement('span'); badge.className = 'badge';
+              badge.textContent = kind === 'market' ? 'Prediction market' : kind === 'head-to-head' ? 'Head-to-head game' : 'Game';
+              who.append(name, badge); head.append(logo, who);
+              const play = document.createElement('span'); play.className = 'play'; play.textContent = (kind === 'market' ? 'Trade' : 'Play') + ' \u2192';
+              const desc = document.createElement('div'); desc.className = 'desc none'; desc.textContent = 'No signed description.';
+              const signed = document.createElement('div'); signed.className = 'signed';
+              const stats = document.createElement('div'); stats.className = 'stats';
+              const chip = (text, idle) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); const dot = document.createElement('i'); c.append(dot, document.createTextNode(text)); return c; };
+              const live = g.live || { rounds: 0, players: 0 };
+              stats.append(chip(g.nodes.length + ' node' + (g.nodes.length === 1 ? '' : 's'), false),
+                chip(live.players + ' player' + (live.players === 1 ? '' : 's'), !live.players),
+                chip(live.rounds + ' live round' + (live.rounds === 1 ? '' : 's'), !live.rounds));
+              b.append(play, head, desc, signed, stats);
+              if (!g.known) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = 'Not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16); b.append(w); }
+              // THE DESCRIPTION ONLY WHEN ITS DEVELOPER SIGNED IT (game-info.js, #276): checked here, never taken from a seat
+              if (BLWPCLIENT.checkedGameInfo) BLWPCLIENT.checkedGameInfo(g, pageEd25519Verify).then((info) => {
+                if (!info) return;
+                desc.className = 'desc'; desc.textContent = info.description;
+                signed.textContent = '\u2713 signed by its developer';
+                if (info.website) { const a = document.createElement('a'); a.href = info.website; a.target = '_blank'; a.rel = 'noopener'; a.textContent = new URL(info.website).host; a.addEventListener('click', (e) => e.stopPropagation()); signed.append(' \u00b7 ', a); }
+              }).catch(() => {});
+              b.addEventListener('click', () => chosen(g));
+              grid.append(b);
+            }
+            list.append(sec);
           }
           el.classList.add('show');
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
