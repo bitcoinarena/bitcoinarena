@@ -163,14 +163,18 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       for (const fid of federationsOf(b.census)) { try { out.push({ federation: toHex(fid), ...(await gather(fid, inviteFederationId)) }); } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); } }
       return out;
     },
-    list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes) })),
+    list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
+      // the successor's guardian pool takes this drain's seated guardians (predecessorGuardians), shown with the record
+      ...(k.record && k.record.successorId && k.record.successorId.some((x) => x) ? { successor: toHex(k.record.successorId) } : {}) })),
     draining: (fidHex) => draining.get(fidHex) || null,
     // THE DRAIN IS PAID (§23A.6 step 5, kanban #325): the seated guardians of every federation whose verified record says
-    // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody.
+    // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody. One that fell to
+    // CRITICAL while draining is still drained by its seated guardians, and paid ("until its record is CLOSED"); a HALTED one
+    // serves nothing
     predecessorGuardians(fidHex) {
       const out = [];
       for (const [, k] of kept) {
-        if (k.status !== 'DRAINING' || !k.record || toHex(k.record.successorId) !== String(fidHex).toLowerCase()) continue;
+        if (!['DRAINING', 'CRITICAL'].includes(k.status) || !k.record || toHex(k.record.successorId) !== String(fidHex).toLowerCase()) continue;
         const gone = new Set((k.record.gone || []).map((g) => toHex(g.peerKey)));
         for (const g of k.record.guardians || []) if (!gone.has(toHex(g.peerKey))) out.push(g.nodePubkey);
       }

@@ -113,6 +113,13 @@ test('a successor named: the seven sign DRAINING with successor_id, and the succ
   assert.equal(g1.status, 'DRAINING');
   assert.equal(one.seats[0].predecessorGuardians(NEW).length, 6, 'the one gone is not paid');
 
+  // two gone of seven while draining: CRITICAL (reserve 0), and the five still seated are still paid until CLOSED
+  const two = seven({ successor: NEW, leaving: [3, 4] });
+  const gc = await two.seats[0].gather(FED, inviteFederationId);
+  assert.equal(gc.status, 'CRITICAL');
+  assert.equal(two.seats[0].predecessorGuardians(NEW).length, 5, 'a CRITICAL drain pays its five seated');
+  assert.equal(two.seats[0].list()[0].successor, NEW, 'the record shows the successor it names');
+
   const done = seven({ successor: NEW, closed: true });
   const g2 = await done.seats[0].gather(FED, inviteFederationId);
   assert.deepEqual([g2.ok, g2.status], [true, 'CLOSED'], g2.why);
