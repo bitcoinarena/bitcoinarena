@@ -618,11 +618,14 @@ export class Round {
 
     // AND THE PRICES IT PLAYED, WHERE IT CARRIES THE COMMITTEE'S WORD ON THEM (§11, kanban #311): an attestation that
     // does not stand, or a sample that is not the attested price at its tick, refuses the batch - the player never
-    // chooses the price. (A batch with none is taken as before; a round whose contract names a feed requires them later.)
-    if (b.attests && b.attests.length) {
+    // chooses the price. A batch with none is taken as before - unless this seat runs the committee's feed for the round
+    // (`pricesRequired`, slice 3): then a bare sample or tape is the player choosing the price and is refused; a run with no
+    // samples at all plays the seeded tape (front_mode = SIM) and stands.
+    const requirePrices = !!(this.pricesRequired && this.pricesRequired(round.contract));
+    if ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length)))) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.nodes.length); } catch { return c.nodes.length; } })(),
-        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
+        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices });
       if (!prices.ok) throw new Error(prices.why);
     }
 

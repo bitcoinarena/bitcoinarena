@@ -268,3 +268,27 @@ test('a batch that carries the committee\'s word on its price (kanban #311): tak
   r.batch(encodeInputBatch(good));
   assert.equal(r.transcript(rid, eid).ticks.length, 2, 'taken');
 });
+
+test('a seat running the committee\'s feed for the round (kanban #311 slice 3) refuses a bare price; a batch with no price, or an attested one, is taken', async () => {
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
+  const { receiptsNeeded } = await import('../../arena-protocol/src/genesis.js');
+  const sks = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0x40 + n)); const seats = sks.map((sk) => schnorr.getPublicKey(sk));
+  const r = fresh(), c = { ...contract(), nodes: seats };
+  const rid = r.open(c); const eid = r.enter(entryFor(rid));
+  const w = [65536, 0, 0, 0, 0];
+  const cents = 8297193;
+  const bare = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: [w], liquidations: [], samples: [[0, centsToTapeUnits(cents)]] };
+  r.pricesRequired = () => false;
+  assert.doesNotThrow(() => r.batch(encodeInputBatch(bare)), 'a seat without the feed takes a bare price as before');
+  const r2 = fresh(); const rid2 = r2.open(c); const eid2 = r2.enter(entryFor(rid2));
+  r2.pricesRequired = (contractBytes) => contractBytes instanceof Uint8Array || Buffer.isBuffer(contractBytes);
+  const b = { ...bare, roundId: rid2, entryId: eid2 };
+  assert.throws(() => r2.batch(encodeInputBatch(b)), /a sample without the committee's attestation: the player never chooses the price/);
+  assert.throws(() => r2.batch(encodeInputBatch({ ...b, samples: [], tapes: [[0, ...Array(64).fill(1)]] })), /a tape without the committee's attestation/);
+  const sim = { ...b, samples: [] };
+  r2.batch(encodeInputBatch(sim));                                                    // no price at all: the seeded tape (SIM)
+  const att = [1, 0, cents, sks.slice(0, receiptsNeeded(7)).map((sk, i) => [seats[i], schnorr.sign(priceSampleId({ roundId: rid2, tick: 1, priceCents: cents }), sk)])];
+  r2.batch(encodeInputBatch({ ...b, previousHash: r2.head(rid2, eid2), firstTick: 1, samples: [[1, centsToTapeUnits(cents)]], attests: [att] }));
+  assert.equal(r2.transcript(rid2, eid2).ticks.length, 2, 'the SIM batch and the attested one are taken');
+});
