@@ -184,6 +184,29 @@ until_ "both gateways hold e-cash" 600 credited
 reading "3 peg-in: {\"ok\":true,\"gatewayA\":{\"beforeMsat\":$BEFORE_A,\"afterMsat\":$(ecash $GWA $H/gw-a/password)},\"gatewayB\":{\"beforeMsat\":$BEFORE_B,\"afterMsat\":$(ecash $GWB $H/gw-b/password)}}"
 [ "$BEFORE_A" = 0 ] && [ "$BEFORE_B" = 0 ] || die "a gateway held e-cash before its peg-in"
 
+# ---- 7. THE ARBITER'S PEG-IN (kanban #307, spec §5A.3: "the arbitration set pegs it into the round's federation"): its own
+# client joined to the federation, a peg-in address (stake-lock --mode pegin-address), a payment to it, the claim once the
+# federation has seen it confirmed (--mode pegin-claim) - the e-cash the shares are then locked from. PEGIN_BIN names the build.
+# PEGIN_ONLY=1 takes it right after reading 7 (lock latency), on the federation as it stands, and stops there.
+pegin() {
+if [ -n "${PEGIN_BIN:-}" ]; then
+  ARB=$H/arbiter; mkdir -p $ARB
+  HOME=$FORK_HOME timeout 120 $FORK_BIN/fedimint-cli --data-dir $ARB join-federation "$(cat $H/invite-code)" >> "$LOG" 2>&1
+  rm -f $H/miner-pause
+  PA=$(HOME=$FORK_HOME timeout 300 $PEGIN_BIN --mode pegin-address --data-dir $ARB 2>>"$LOG" | grep '"mode":"pegin-address"')
+  reading "7a pegin address: ${PA:-null}"
+  ADDR=$(echo "$PA" | js 'o=>o.address')
+  [ -n "$ADDR" ] || die "reading 7 failed: no peg-in address"
+  T0=$(date +%s)
+  TXID=$(bc sendtoaddress "$ADDR" 0.001)
+  say "sent 0.001 BTC to the peg-in address: $TXID"
+  bc generatetoaddress 12 $(bc getnewaddress) >/dev/null
+  PC=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
+  reading "7b pegin claim: {\"claim\":${PC:-null},\"seconds\":$(( $(date +%s) - T0 )),\"txid\":\"$TXID\"}"
+  [ -n "$PC" ] || die "reading 7 failed: no claim"
+fi
+}
+
 # ---- 7 (kanban #178). THE STAKE LOCK'S ACCEPTANCE TIME: lock-latency-regtest.mjs, 20 locks through the page's wasm lock
 # client on this federation (alice pays the deposit through a gateway); submit -> accepted on one clock, the 200 ms line.
 # Recorded, not a stop: the run goes on to the paid round whatever it measures. LOCK_LATENCY_ONLY=1 stops after it.
@@ -192,6 +215,7 @@ reading "3 peg-in: {\"ok\":true,\"gatewayA\":{\"beforeMsat\":$BEFORE_A,\"afterMs
 cat $H/latency.out >> "$LOG"
 reading "7 lock latency: {\"exit\":$LAT_RC,\"summary\":$(grep '"step":"summary"' $H/latency.out | tail -1 || echo null)}"
 [ "${LOCK_LATENCY_ONLY:-}" = 1 ] && { say "LOCK_LATENCY_ONLY: stopping after reading 7"; exit 0; }
+[ "${PEGIN_ONLY:-}" = 1 ] && { pegin; say "PEGIN_ONLY: stopping after readings 7a and 7b"; exit 0; }
 
 # ---- 4. THE PAID ROUND: run-testnet4-paid.mjs, which starts the seven nodes itself and posts their bonds ----
 stop_nodes
@@ -239,24 +263,6 @@ LNADDR_PUBLIC=http://localhost:$LNADDR LNADDR_LND_DIR=$H/bob LNADDR_LND_RPC=127.
   || die "reading 6 failed (above)"
 reading "6 lightning address: $(grep '"reading":6' "$LOG" | tail -1)"
 
-# ---- 7. THE ARBITER'S PEG-IN (kanban #307, spec §5A.3: "the arbitration set pegs it into the round's federation"): its own
-# client joined to the federation, a peg-in address (stake-lock --mode pegin-address), a payment to it, the claim once the
-# federation has seen it confirmed (--mode pegin-claim) - the e-cash the shares are then locked from. PEGIN_BIN names the build.
-if [ -n "${PEGIN_BIN:-}" ]; then
-  ARB=$H/arbiter; mkdir -p $ARB
-  HOME=$FORK_HOME timeout 120 $FORK_BIN/fedimint-cli --data-dir $ARB join-federation "$(cat $H/invite-code)" >> "$LOG" 2>&1
-  rm -f $H/miner-pause
-  PA=$(HOME=$FORK_HOME timeout 300 $PEGIN_BIN --mode pegin-address --data-dir $ARB 2>>"$LOG" | grep '"mode":"pegin-address"')
-  reading "7a pegin address: ${PA:-null}"
-  ADDR=$(echo "$PA" | js 'o=>o.address')
-  [ -n "$ADDR" ] || die "reading 7 failed: no peg-in address"
-  T0=$(date +%s)
-  TXID=$(bc sendtoaddress "$ADDR" 0.001)
-  say "sent 0.001 BTC to the peg-in address: $TXID"
-  bc generatetoaddress 12 $(bc getnewaddress) >/dev/null
-  PC=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
-  reading "7b pegin claim: {\"claim\":${PC:-null},\"seconds\":$(( $(date +%s) - T0 )),\"txid\":\"$TXID\"}"
-  [ -n "$PC" ] || die "reading 7 failed: no claim"
-fi
+[ -n "${PEGIN_ONLY:-}" ] || pegin
 
 say "ALL SIX READINGS TAKEN"
