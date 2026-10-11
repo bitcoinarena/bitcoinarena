@@ -469,6 +469,41 @@ export class Roster {
   }
 
   /**
+   * THE ROUND'S WHOLE CENSUS AS EVIDENCE A CLIENT CHECKS ITSELF (kanban #296, spec 5A.6): each entry's bond transaction
+   * and the merkle branch that puts it in a block of this node's view, with the update and the re-affirmation the census
+   * applied to it. The client proves each into headers it agreed, rebuilds every entry and compares their root with the
+   * round's census_root (arena-protocol client-committee.js) - so this node can withhold, never forge, and a withheld or
+   * altered entry is a root that does not match.
+   */
+  censusEvidenceFor(roundIdBytes) {
+    const census = this.censusFor(roundIdBytes);
+    if (!census.ok) return census;
+    const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
+    const view = this.chainFor({ contract, roundIdBytes });
+    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
+    if (!where) {
+      where = new Map();
+      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
+        let txids;
+        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
+        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
+      }
+      if (view && typeof view === 'object') whereOf.set(view, where);
+    }
+    const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
+      position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
+    const entries = [];
+    for (const e of census.entries) {
+      const bond = proof(e.txid);
+      if (!bond) return { ok: false, why: `this node's view does not hold bond ${toHex(e.txid).slice(0, 16)}` };
+      const update = e.updatedBy ? proof(e.updatedBy.txid) : null;
+      const reaffirm = e.reaffirmedBy && e.reaffirmedBy.txid ? proof(e.reaffirmedBy.txid) : null;
+      entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}) });
+    }
+    return { ok: true, root: toHex(census.root), censusHeight: contract.censusHeight, entries };
+  }
+
+  /**
    * EVERY SIGNER NODE THIS ROUND HAS, over the roles its contract names slots for.
    *
    * A contract carries one flat `nodes` list, so the assigned set is the union

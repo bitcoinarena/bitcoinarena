@@ -26,14 +26,14 @@ import { TAG, networkOf } from './constants.js';
 import { genesisFor } from './genesis.js';
 import { blockHashOf, blockTimeOf, chainWork } from './chain.js';
 
-const cat = (...parts) => {
+const cat_beacon = (...parts) => {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let at = 0;
   for (const p of parts) { out.set(p, at); at += p.length; }
   return out;
 };
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
+const is32_beacon = (b) => b instanceof Uint8Array && b.length === 32;
 
 // committeeSeedFrom lives in committee-seed.js (one copy; seed.js needs it for the round's world)
 export { committeeSeedFrom } from './committee-seed.js';
@@ -123,7 +123,7 @@ export function beaconIsAfterRound(contract, { height, timeMs } = {}) {
 export function committeeSeedFromBeacon(contract, { roundId, randomness, height, timeMs }) {
   const later = beaconIsAfterRound(contract, { height, timeMs });
   if (!later.ok) return later;
-  if (!is32(contract.censusRoot))
+  if (!is32_beacon(contract.censusRoot))
     return { ok: false, why: 'that round names no census root' };
 
   // ONE ROOT WHERE THE SPEC NAMES TWO. 5A.5 hashes the game/verify root and
