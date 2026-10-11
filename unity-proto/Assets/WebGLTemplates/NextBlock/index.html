@@ -2754,8 +2754,16 @@
     // newest round is the one painted and withdrawn.
     let payoutAsking = false;
     const roundWallets = new Map();
+    // A MARKET ROUND'S LOCK SPAN BY ITS MARKET'S TERMS, for every collect too (kanban #336, measured 2026-10-11 by the bots on
+    // the regtest Up/Down market: a filled order's payout and an unfilled order's return were never collected - "owed: no
+    // stake is locked to this round: that round names stake_expiry_blocks 34770 where §23.1 rules 144", every 5 s - the
+    // kept record's contract carries no terms, as the deposit's did before moneyContext set them)
+    function withMarketTerms(round) {
+      const market = round && BLWPCLIENT.marketForRound ? BLWPCLIENT.marketForRound(round) : null;
+      return market && market.terms && !round.marketTerms ? Object.assign({}, round, { marketTerms: market.terms }) : round;
+    }
     function roundAsk(r, LockClient) {
-      return { round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
+      return { round: withMarketTerms(r.round), roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
         curve: window.BLWP_CURVE, LockClient, storage: vault(), nodes: r.nodes, order: Number(r.order) || 0 };
     }
     // ONE TAB AT A TIME USES A KEPT ROUND'S WALLET (spec §24): its database is shared by every
@@ -2977,7 +2985,7 @@
           noteStakeBack(older.roundIdHex, lo);
           const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
-            console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
+            console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + (older.order ? ' order ' + older.order : '') + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
             stakeBack.delete(older.roundIdHex);
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
@@ -2985,7 +2993,7 @@
           } else if (lo.final && lo.inTabMsat === 0n) {
             BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
             stakeBack.delete(older.roundIdHex);
-            collectNote(older.roundIdHex.slice(0, 8), 'older round MARKED DONE: ' + BLWPCLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
+            collectNote(older.roundIdHex.slice(0, 8) + (older.order ? '.o' + older.order : ''), 'older round MARKED DONE: ' + BLWPCLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
           return true;
           });
@@ -3008,7 +3016,7 @@
         if (look) {   // collectIntoPlayerWallet collects only what is owed (payout, stake back, refund)
           const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, lcn) });
           if (c.collected) {
-            console.log('[blwp] owed, collected into the player wallet: ' + c.creditedMsat + ' msat');
+            console.log('[blwp] owed (round ' + newest.roundIdHex.slice(0, 8) + (newest.order ? ' order ' + newest.order : '') + '), collected into the player wallet: ' + c.creditedMsat + ' msat');
             BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0);
             stakeBack.delete(newest.roundIdHex);
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
@@ -3022,7 +3030,7 @@
           BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0);
           stakeBack.delete(newest.roundIdHex);
           console.log('[blwp] owed: ' + line);
-          collectNote(newest.roundIdHex.slice(0, 8), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
+          collectNote(newest.roundIdHex.slice(0, 8) + (newest.order ? '.o' + newest.order : ''), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
         }
         return true;
         });

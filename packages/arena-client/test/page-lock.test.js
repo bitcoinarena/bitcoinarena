@@ -1909,3 +1909,38 @@ test('a tab\'s orders in one market round (kanban #336): each its own key, its o
   const after = savedCollects(storage);
   assert.deepEqual(after.filter((r) => r.done).map((r) => r.order), [1], 'only order 1 is done');
 });
+
+test('an order the book never filled comes back whole (kanban #336): its stake lock and its fee lock, both redeemed by forfeit; a fee the seats keep is left', async () => {
+  const signerNodes = [0x21, 0x22].map((n) => pageCurve.pointX(b32(n)));
+  const order = 1;
+  const player = playerFor({ ...round, id: rid }, { seed, curve: pageCurve, order });
+  const stake = await stakeFor({ ...round, id: rid }, { signerNodes, curve: pageCurve, random: (n) => new Uint8Array(n).fill(9), playerPubkey: player.pubkey, needed: 2 });
+  const refund = refundKeyOf(player.pubkey);
+  const fields = { paymentImage: { kind: 'point', bytes: stake.stakePoint }, amountMsat: 54450n, claimPk: CLAIM, refundPk: refund, expiration: 464 };
+  const feeFields = { paymentImage: { kind: 'hash', bytes: b32(0x66) }, amountMsat: 550n, claimPk: CLAIM, refundPk: refund, expiration: 464 };
+  const tab = tabStorage();
+  saveLock(tab, { roundId: rid, playerPubkey: player.pubkey, stake, lock: { outpoint: { txid: b32(0xd1), outIdx: 0n }, fields,
+    feeLock: { preimage: b32(0x67), outpoint: { txid: b32(0xd2), outIdx: 0n }, fields: feeFields } } });
+  const SIG = 'ab'.repeat(64), FEE_SIG = 'cd'.repeat(64);
+  const seats = (feeStatus) => async (url) => {
+    if (url.includes('/stake-lock'))
+      return new Response(JSON.stringify(url.includes(`refund=${toHex(refund)}`) ? [{ entryId: 'ee'.repeat(32), outpoint: `${toHex(b32(0xd1))}:0`, fields: lockFieldsToJson(fields) }] : []), { status: 200 });
+    if (url.includes('/forfeit') && url.includes('lock=fee'))
+      return feeStatus === 200 ? new Response(JSON.stringify({ signature: FEE_SIG, contractId: 'c2', claimPk: toHex(CLAIM) }), { status: 200 })
+        : new Response('a fee lock comes back at once only for a cancelled order or a refunded market', { status: 409 });
+    if (url.includes('/forfeit')) return new Response(JSON.stringify({ signature: SIG, contractId: 'c1', claimPk: toHex(CLAIM) }), { status: 200 });
+    return new Response('no', { status: 404 });
+  };
+  const calls = [];
+  class Fake {
+    static async join() { return new Fake(); }
+    async redeem(txid, outIdx, f, sig, key) { calls.push({ txid, sig, key, amount: JSON.parse(f).amountMsat }); return JSON.stringify({ accepted: true, amount_msat: Number(JSON.parse(f).amountMsat) }); }
+  }
+  const got = await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake, storage: tab, nodes: ['http://a.test'], fetcher: seats(200), order });
+  assert.deepEqual(calls.map((c) => [c.txid, c.sig, c.key, String(c.amount)]),
+    [[toHex(b32(0xd1)), SIG, toHex(player.secret), '54450'], [toHex(b32(0xd2)), FEE_SIG, toHex(player.secret), '550']], 'the stake and the fee, each by its forfeit, under the order\'s own key');
+  assert.deepEqual(got.redeems.map((r) => !!r.fee), [false, true]);
+  calls.length = 0;
+  await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake, storage: tab, nodes: ['http://a.test'], fetcher: seats(409), order });
+  assert.deepEqual(calls.map((c) => String(c.amount)), ['54450'], 'a filled order\'s fee is the seats\': only the stake is redeemed');
+});
