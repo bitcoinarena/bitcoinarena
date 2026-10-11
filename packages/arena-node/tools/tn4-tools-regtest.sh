@@ -125,7 +125,7 @@ echo "$! miner" >> $PIDS
 say "chain at $(bcn getblockcount); lnds alice, bob, carol synced; channels alice->bob, alice->carol; a block every 20 s"
 
 # ---- 1. THE FEDERATION: testnet4-found.mjs, then the seven nodes with their guardians ----
-export PATH=$FORK_BIN:$(dirname "$NODE"):/usr/bin:/bin HOME_REAL=$HOME
+export PATH=$FORK_BIN:$(dirname "$NODE"):${SHIM_DIR:+$SHIM_DIR:}/usr/bin:/bin HOME_REAL=$HOME   # SHIM_DIR: timeout/setsid on a macOS
 FOUND_ARGS=""; i=0; for p in ${NODE_PORTS//,/ }; do i=$((i+1)); FOUND_ARGS="$FOUND_ARGS $p:$H/node-$i.db"; done
 ( cd "$HERE/.." && HOME=$FORK_HOME timeout 900 "$NODE" tools/testnet4-found.mjs $FOUND_ARGS ) >> "$LOG" 2>&1 || die "testnet4-found.mjs failed"
 INVITE=$(grep -o '"invite":"[^"]*"' "$LOG" | tail -1 | cut -d'"' -f4)
