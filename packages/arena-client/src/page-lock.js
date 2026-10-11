@@ -1850,3 +1850,53 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
   const committed = said.filter((s) => s.status === 201).length;
   return { ok: committed >= needed, committed, needed, said };
 }
+
+/**
+ * THE NOTES FOLLOW THE FEDERATION'S SUCCESSOR, BY THEMSELVES (§23A.6 step 3, kanban #325: "On its next start and at every
+ * settlement it sees, a client whose notes are in a DRAINING federation moves them to the successor: a stock LNv2 send
+ * from the old federation paying a stock LNv2 receive invoice in the new one ... In chunks, atomic each, no press; the
+ * balance shows moving until it is done, then the new federation's name").
+ *
+ * `record`: the old federation's FederationRecord as this page verified it (federations.js) - nothing moves on a record
+ * that is not DRAINING or names no successor, or when `to` is not that successor. `from` / `to`: the player's wallets in
+ * the old and the new federation (the same seed). Each chunk is one send of at most `chunkMsat` (all that can be sent,
+ * unnamed): an invoice of exactly that amount from the successor's wallet, paid by the old one (withdrawCollected - the
+ * stock send; a refused or refunded send leaves the notes where they were), and waited for until claimed. A chunk that
+ * fails is tried again, at most `retries` times in a row. `onState({ state: 'moving' | 'moved' | 'stopped', ... })`.
+ * Answers { moved, chunks, state, why }.
+ */
+export const MIGRATE_DUST_MSAT = 10000n;
+export async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
+  gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
+  const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  if (!record || record.status !== 'DRAINING') return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
+  if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
+  let moved = 0n, chunks = 0, failed = 0;
+  for (let n = 0; n < maxChunks; n++) {
+    let can;
+    try { can = BigInt(await from.withdrawableMsat()); } catch (e) {
+      if (/too low to send any amount after fees/i.test(String((e && e.message) || e))) can = 0n; else throw e;
+    }
+    if (can <= MIGRATE_DUST_MSAT) break;
+    const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
+    onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
+    let made = null;
+    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); return { ok: true, invoice: made.invoice }; } });
+    const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
+    if (out.ok && final === 'Claimed') {
+      moved += amount; chunks++; failed = 0;
+      if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'moved-out', msat: String(amount), to: hex(toFederationId) });
+      if (storage) ledgerAppend(storage, toFederationId, { kind: 'moved-in', msat: String(amount), from: hex(fromFederationId) });
+      continue;
+    }
+    if (++failed > retries) {
+      const why = out.ok ? `the successor's receive ended ${final}` : out.why;
+      onState({ state: 'stopped', movedMsat: moved, why });
+      return { moved, chunks, state: 'stopped', why };
+    }
+  }
+  onState({ state: 'moved', movedMsat: moved, chunks });
+  return { moved, chunks, state: 'moved' };
+}
