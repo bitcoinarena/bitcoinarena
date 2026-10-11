@@ -168,13 +168,24 @@ try {
   for (let t = 0; t < N; t++) { ev.before(st, t); A.step(st, drive.tape[t]); if (t + 1 === FIRST || t + 1 === N) stateAt[t + 1] = A.stateHash(st); }
   const played = A.result(st);
   log({ step: 'driven', seedWord: seed.seedWord, beaconHeight: seed.height, ticks: N, outcome: played.outcome, score: played.score, final: stateAt[N].slice(0, 16) });
-  const h = (x) => fromHex(x);
-  const b1 = { roundId: rid, entryId: eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: drive.tape.slice(0, FIRST), liquidations: [], loads: bedFrom(0) };
-  const m1 = { roundId: rid, entryId: eid, tick: FIRST, stateHash: h(stateAt[FIRST]), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
-  const b2 = { roundId: rid, entryId: eid, previousHash: batchId(b1), firstTick: FIRST, ticks: drive.tape.slice(FIRST, N), liquidations: [], loads: [] };
-  const m2 = { roundId: rid, entryId: eid, tick: N, stateHash: h(stateAt[N]), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
+  // THE BATCHES: the first 60 ticks, then 600 at a time - a transcript frames each batch with a u16 length (transcript.js),
+  // so one batch of the whole run (97309 bytes at 4860 ticks, measured on the first live round) can never be posted
   const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), session));
-  const msgs = [[encodeInputBatch(b1), 'batch'], [sign(m1), 'mark 60'], [encodeInputBatch(b2), 'batch'], [sign(m2), `mark ${N}`]];
+  const msgs = [];
+  let previousHash = GENESIS_HASH;
+  let previousMark = NO_PREVIOUS;
+  for (let from = 0; from < N;) {
+    const to = from === 0 ? FIRST : Math.min(N, from + 600);
+    const b = { roundId: rid, entryId: eid, previousHash, firstTick: from, ticks: drive.tape.slice(from, to), liquidations: [], loads: from === 0 ? bedFrom(0) : [] };
+    msgs.push([encodeInputBatch(b), `batch ${from}..${to - 1}`]);
+    previousHash = batchId(b);
+    if (to === FIRST || to === N) {
+      const m = { roundId: rid, entryId: eid, tick: to, stateHash: fromHex(stateAt[to]), inputChainHash: previousHash, previousHash: previousMark, sessionPubkey: entry.sessionPubkey };
+      msgs.push([sign(m), `mark ${to}`]);
+      previousMark = checkpointId(m);
+    }
+    from = to;
+  }
   // after the round's start, as a player's inputs are
   const waitMs = Number(c.startTimeMs) - Date.now() + 2000;
   if (waitMs > 0) { log({ step: 'waiting for the start', ms: waitMs }); await new Promise((ok) => setTimeout(ok, waitMs)); }
