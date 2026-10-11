@@ -17,12 +17,15 @@
 //    refused, and with no importModuleDynamically an import() throws.
 // 4. ONLY STRINGS CROSS. core-driver.js runs beside the core in the same sandbox and is called with an operation's name
 //    and a JSON string; it answers a JSON string. No object of the node's is ever handed in.
-// 5. A THREAD OF ITS OWN AND A DEADLINE. The sandbox is built in a worker thread per core (core-host.js), a V8 isolate of
-//    its own that holds none of the node's memory; the node calls it synchronously and waits for each answer against a
-//    deadline (Atomics.wait). A core that does not stop - at load or in a call, microtasks included - misses it, and its
-//    thread is ended and the core refused from then on. No vm timeout is used: one firing in the node's own thread was
-//    measured aborting the whole process (node 24.15, "Assertion failed: (env_->execution_async_id()) == (0)").
+// 5. A THREAD OF ITS OWN, WATCHED. The sandbox is built in a worker thread per core (core-host.js), a V8 isolate of its own
+//    that holds none of the node's memory; the node calls it synchronously and waits for each answer against a deadline
+//    (Atomics.wait). Each core thread is started by this node thread's core supervisor (core-supervisor.js), a thread that is
+//    never blocked: it hears the core thread's exit at once - a heap death wakes the node, not its deadline - and reads the
+//    process's memory every 2 ms while a call runs, ending the core before the backstop. No vm timeout is used: one firing in
+//    the node's own thread was measured aborting the whole process (node 24.15, "Assertion failed: (env_->execution_async_id())
+//    == (0)").
 import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
+import { C, ANSWERED, EXITED } from './core-supervisor.js';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
@@ -43,13 +46,13 @@ export const LOAD_MS = 10000;
 export const ARRAY_BUDGET = 64 * 1024 * 1024;
 /** The V8 heap of the core's thread: its arrays, objects and strings. Past it only that thread dies. */
 export const HEAP_LIMITS = Object.freeze({ maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16 });
-/** THE BACKSTOP: how far this process may grow while one call into a core runs - read between 50 ms slices of the wait. */
+/** THE BACKSTOP: how far this process may grow while one call into a core runs - read every 2 ms by the core supervisor. */
 export const RSS_BACKSTOP = 512 * 1024 * 1024;
-const SLICE_MS = 50;
-/** After a core is ended: how long the node waits, in slices, for its memory to come back before it answers. */
-const GIVE_BACK_MS = 3000;
-/** A process that shrank by this, or is back within it of where the call began, has its core's memory back. */
-const GIVE_BACK_SLACK = 64 * 1024 * 1024;
+/** The supervisor ends a core this far below the backstop: it reads the process every 2 ms, and a core allocating at full
+ *  speed keeps going for the moments its isolate takes to stop (measured on the card, kanban #343). */
+const BACKSTOP_MARGIN_MB = 96;
+/** After a core is ended: how long the node waits for its supervisor to say the thread is gone. */
+const EXIT_WAIT_MS = 3000;
 const DEADLINE = { replay: 'callMs', stepTo: 'stepMs' };
 
 /** A core's files as nextblock's hash-core.js hashes a tree: every .js below root, sorted, `rel \0 bytes \0`. */
@@ -116,63 +119,94 @@ const plain = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => (Array
  * and answers it revived. A core that does not load (an import outside its files, a top level that throws or does not stop)
  * is refused here, before it is ever asked anything; a core that misses a deadline is ended and refused from then on.
  */
+/** THE SUPERVISOR of this thread's core threads (core-supervisor.js), started with the first core: a thread that is never
+ *  blocked, so it hears each core thread's exit at once and reads the process's memory every 2 ms while a call runs. */
+let supervisor = null;
+function supervisorOf() {
+  if (!supervisor) {
+    const worker = new Worker(new URL('./core-supervisor.js', import.meta.url), { env: {}, workerData: { arenaCoreSupervisor: true } });
+    worker.unref();
+    worker.on('error', (e) => { console.log(`[sandbox] the core supervisor failed: ${e && e.message}`); supervisor = null; });
+    const { port1, port2 } = new MessageChannel();
+    port1.unref();
+    worker.postMessage({ type: 'report', port: port2 }, [port2]);
+    supervisor = { worker, deaths: port1, said: new Map(), next: 1 };
+  }
+  return supervisor;
+}
+/** Why a core's thread exited, as its supervisor reported it (a heap death says ERR_WORKER_OUT_OF_MEMORY). */
+function deathOf(sup, id) {
+  for (let m = receiveMessageOnPort(sup.deaths); m; m = receiveMessageOnPort(sup.deaths)) sup.said.set(m.message.id, m.message);
+  const d = sup.said.get(id); sup.said.delete(id);
+  return d || null;
+}
+
+/**
+ * LOAD ONE CORE INTO A SANDBOX OF ITS OWN, in a thread of its own, from its files (read and checked above). Answers
+ * { call(op, input), meta }: `call` hands the driver a JSON copy of `input`, waits for its answer against the op's deadline
+ * and answers it revived. A core that does not load (an import outside its files, a top level that throws or does not stop)
+ * is refused here, before it is ever asked anything; a core that misses a deadline, dies of its heap limit, crosses its
+ * array budget or grows this process past the backstop is ended - the node waits for its thread to be gone - and refused
+ * from then on.
+ */
 export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
   arrayBudget = ARRAY_BUDGET, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP } = {}) {
-  const ctrl = new Int32Array(new SharedArrayBuffer(8));   // [0] the answer flag, [1] only slept on
+  const sup = supervisorOf();
+  const id = sup.next++;
+  const ctrl = new Int32Array(new SharedArrayBuffer(8 * 4));
   const { port1, port2 } = new MessageChannel();
-  const worker = new Worker(new URL('./core-host.js', import.meta.url), {
-    execArgv: ['--experimental-vm-modules', '--disable-warning=ExperimentalWarning'], env: {}, resourceLimits: { ...heap },
-    workerData: { files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget }, transferList: [port2],
-  });
-  worker.unref(); port1.unref();
-  worker.on('error', () => { /* said by the deadline or the answer */ });
+  port1.unref();
+  // THE TRIGGER sits BACKSTOP_MARGIN below the backstop: sampled every 2 ms, and the core keeps allocating until its isolate
+  // stops, so the line it must never cross is the backstop itself, not the trigger
+  const triggerMb = Math.max(1, Math.round(rssBackstop / 1048576) - BACKSTOP_MARGIN_MB);
+  sup.worker.postMessage({ type: 'spawn', id, files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget,
+    heap: { ...heap }, triggerMb }, [port2]);
   let ended = null;
-  const rss = () => process.memoryUsage.rss();
-  /** END THE CORE'S THREAD, and wait - in slices - until this process is back near where the call began: the memory goes with
-   *  the thread, before the node answers (a blocked thread hears no 'exit' event, so it is read off the process). */
-  const end = (why, from = null) => {
+  let lastEnd = null;
+  const rssMb = () => Math.round(process.memoryUsage.rss() / 1048576);
+  /** THE THREAD'S OWN END, read from its supervisor: why it exited, and the call's high-water. */
+  const gone = () => Atomics.load(ctrl, C.STATE) === EXITED;
+  /** END THE CORE'S THREAD and wait - in slices - for its supervisor to say the thread is gone: what it held goes with it,
+   *  before the node answers. At most EXIT_WAIT_MS. */
+  const end = (why) => {
     ended = why;
-    worker.terminate().catch(() => {});
-    if (from === null) return;
-    // DONE WHEN THE PROCESS STOPS SHRINKING (measured on macOS: the thread's teardown gives its arrays back within ~100 ms,
-    // and the allocator then keeps the freed pages for reuse - three attacks in a row held 576 MB, not three times it - so
-    // "back to where the call began" is never reached there); at most GIVE_BACK_MS
     const t0 = Date.now();
-    const peak = rss();
-    let low = peak, lowAt = t0;
-    while (Date.now() - t0 < GIVE_BACK_MS) {
-      Atomics.wait(ctrl, 1, 0, 20);
-      const now = rss();
-      if (now < low - 1048576) { low = now; lowAt = Date.now(); }
-      else if (Date.now() - lowAt >= 100 && (low < peak - GIVE_BACK_SLACK || low <= from + GIVE_BACK_SLACK || Date.now() - t0 >= 300)) break;
-    }
-    lastGiveBack = { ms: Date.now() - t0, peakMb: Math.round(peak / 1048576), rssMb: Math.round(rss() / 1048576), fromMb: Math.round(from / 1048576) };
+    if (!gone()) sup.worker.postMessage({ type: 'end', id });
+    while (!gone() && Date.now() - t0 < EXIT_WAIT_MS) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), 10);
+    lastEnd = { exitMs: Date.now() - t0, exited: gone(), rssMb: rssMb(), highMb: Atomics.load(ctrl, C.HIGH_MB) };
+    Atomics.store(ctrl, C.CALL, 0);
   };
-  let lastGiveBack = null;
-  /** Wait for the core thread's next answer in 50 ms slices: past the deadline, or past the backstop, the thread is ended. */
+  /** Wait for the core thread's next answer, or its end: the deadline, its supervisor's backstop, its exit. */
   const wait = (ms, what) => {
-    const from = rss();
+    Atomics.store(ctrl, C.FROM_MB, rssMb());
+    Atomics.store(ctrl, C.HIGH_MB, 0);
+    Atomics.store(ctrl, C.CALL, 1);
     const until = Date.now() + ms;
-    let r = 'timed-out';
-    for (;;) {
+    let state = Atomics.load(ctrl, C.STATE);
+    while (state === 0) {
       const left = until - Date.now();
       if (left <= 0) break;
-      r = Atomics.wait(ctrl, 0, 0, Math.min(SLICE_MS, left));
-      if (r !== 'timed-out') break;
-      const grew = rss() - from;
-      if (grew > rssBackstop) {
-        end(`the core grew this node by ${Math.round(grew / 1048576)} MB in ${what}, past the ${Math.round(rssBackstop / 1048576)} MB a call may: its thread was ended, and it is not run again`, from);
-        throw new Error(ended);
-      }
+      Atomics.wait(ctrl, C.STATE, 0, left);
+      state = Atomics.load(ctrl, C.STATE);
     }
-    if (r === 'timed-out') {
-      end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`, from);
+    if (state === ANSWERED) {
+      Atomics.store(ctrl, C.CALL, 0);
+      Atomics.store(ctrl, C.STATE, 0);
+      const got = receiveMessageOnPort(port1);
+      if (!got) { end('the core thread answered nothing'); throw new Error(ended); }
+      return got.message;
+    }
+    if (state === EXITED) {
+      // THE THREAD IS GONE BEFORE ITS ANSWER: the supervisor's backstop ended it, or it died (its heap limit)
+      const caught = Atomics.load(ctrl, C.CAUGHT);
+      const d = deathOf(sup, id);
+      end(caught
+        ? `the core grew this node by ${caught} MB in ${what}, and a call may grow it by at most ${Math.round(rssBackstop / 1048576)} MB: its thread was ended at ${triggerMb} MB, and it is not run again`
+        : `the core's thread died in ${what}${d && d.error ? ` (${d.error === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out of its heap' : d.error})` : ''}: it is not run again`);
       throw new Error(ended);
     }
-    Atomics.store(ctrl, 0, 0);
-    const got = receiveMessageOnPort(port1);
-    if (!got) { end('the core thread answered nothing'); throw new Error(ended); }
-    return got.message;
+    end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
+    throw new Error(ended);
   };
   const loaded = wait(loadMs, 'loading');
   if (!loaded.ok) { end(loaded.why); throw new Error(loaded.why); }
@@ -181,16 +215,15 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (ended) throw new Error(ended);
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
-    const from = rss();
     const a = wait(ms, op);
     // A CORE AT ITS ARRAY BUDGET IS ENDED, not asked again: it could catch the refusal and keep going, and what it holds goes
     // with its thread
-    if (!a.ok && /asked for more than \d+ MB of arrays/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`, from); throw new Error(ended); }
+    if (!a.ok && /asked for more than \d+ MB of arrays/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
     if (!a.ok) throw new Error(a.why);
     return revive(a.json);
   };
   const meta = call('meta');
-  return Object.freeze({ call, meta, end: () => end('ended by the node'), givenBack: () => lastGiveBack });
+  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) });
 }
 
 /** Does this core draw a picture (a ghost)? false only when its sandbox says it does not; null when it does not load. */
