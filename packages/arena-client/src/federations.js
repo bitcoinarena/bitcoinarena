@@ -60,3 +60,37 @@ export function federationSays(status) {
     unverified: 'No signed record of this federation could be checked: nothing about it is taken on trust.',
   })[status] || '';
 }
+
+// ---- the known-good list and the player's own confirmation (kanban #318, spec §23.6) ----
+import { federationIsKnown, knownFederation } from '../../arena-protocol/src/known-federations.js';
+export { federationIsKnown, knownFederation };
+
+/** Every guardian of `federationIdHex` in a census this client checked: operator, node key, guardian endpoint, bond. */
+export function guardianRowsOf(census, federationIdHex) {
+  const fid = String(federationIdHex).toLowerCase();
+  const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  const rows = [];
+  for (const e of census || []) {
+    const g = ((e.advert && e.advert.guardianOf) || []).find((x) => hex(x.federationId) === fid);
+    if (g) rows.push({ operator: (e.advert && e.advert.operatorId) || '', nodeKey: hex(e.pubkey), guardianKey: hex(g.guardianKey),
+      endpoint: (e.advert && e.advert.guardianEndpoint) || '', bondSats: String(e.bondSats) });
+  }
+  return rows.sort((a, b) => (a.nodeKey < b.nodeKey ? -1 : 1));
+}
+
+const CONFIRM_KEY = 'arena.fed.confirmed.';
+/** This browser's own confirmation of a federation not on the list: asked once, kept until Forget. */
+export const federationConfirmed = (storage, fidHex) => { try { return !!storage.getItem(CONFIRM_KEY + String(fidHex).toLowerCase()); } catch { return false; } };
+export function confirmFederation(storage, fidHex, nowMs = Date.now()) { storage.setItem(CONFIRM_KEY + String(fidHex).toLowerCase(), String(nowMs)); }
+export function forgetFederation(storage, fidHex) { storage.removeItem(CONFIRM_KEY + String(fidHex).toLowerCase()); }
+export function confirmedFederations(storage) {
+  const out = [];
+  try { for (let i = 0; i < storage.length; i++) { const k = storage.key(i); if (k && k.startsWith(CONFIRM_KEY)) out.push({ federation: k.slice(CONFIRM_KEY.length), atMs: Number(storage.getItem(k)) }); } } catch { /* none */ }
+  return out;
+}
+
+/** Does this invite name the round's federation? The stock Fedimint client checks the config hash itself when it joins. */
+export function inviteNamesFederation(invite, federationIdHex) {
+  let f; try { f = readInvite(invite).federationId; } catch { return false; }
+  return !!f && String(f).toLowerCase() === String(federationIdHex).toLowerCase();
+}
