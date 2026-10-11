@@ -1199,7 +1199,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
   // blocks - asked for, never invented, the same way the randomness is.
-  const liveNow = gameLive(round);
+  // A MARKET'S WINDOW (the owner 2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00. Man darf davor
+  // und danach nicht am Markt teilnehmen"): an attested round on its game's period takes orders only inside it
+  const marketWindowFor = (c) => {
+    const f = pluginForRound(c, hosted);
+    if (!f.ok || !f.attested) return null;
+    const w = marketWindowOf(c, f.plugin.manifest);
+    return w.ok ? w.window : null;
+  };
+  const liveNow = gameLive(round, { windowOf: marketWindowFor });
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
     // The same beacon the verifier reads: one source, so a node cannot assign
@@ -1211,7 +1219,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
     verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    log: (m) => console.log(m) }) : null;
+    log: (m) => console.log(m), windowOf: marketWindowFor }) : null;
   if (seating) roster.seatedFor = seating.seatedFor;
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
   if (seatingTimer) seatingTimer.unref();
