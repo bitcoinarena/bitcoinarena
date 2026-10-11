@@ -105,6 +105,7 @@ import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync } from 'node:fs';
@@ -547,8 +548,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const autoUpdate = async () => {
     if (!owner || !pluginsDir) return;
     const set = owner.storeSettings();
-    if (!set.autoUpdate || !set.sources.length) return;
-    for (const from of set.sources) {
+    if (!set.autoUpdate) return;
+    // NAMED SOURCES, ELSE THE NETWORK'S OWN SEATS (kanban #276: found by this seat, not typed in)
+    const sources = set.sources.length ? set.sources : networkSeats();
+    for (const from of sources) {
       let got; try { got = await (await fetch(`${from}/games`, { signal: AbortSignal.timeout(10000) })).json(); } catch { got = { games: [] }; }
       for (const g of got.games || []) {
         if (hosted.has(g.id)) continue;
@@ -576,6 +579,59 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     }
   };
+  // THE GAMES AND MARKETS ON THE NETWORK, FOUND BY THIS SEAT ITSELF (kanban #276, the owner 2026-10-11: "Es soll automatisch nach
+  // anderen Spielen suchen nicht manuell ... games/market found on the Network ... Name/Typ/Version und der Action Install").
+  // The seats it asks: those of the newest census it can read (their advertisements' endpoints), the peers it was given and
+  // the owner's sources. Each one's GET /games is read and checked here - a manifest must hash to the id beside it, and its
+  // description and website are shown only when its developer key signed them for that id (game-info.js) - so a listing
+  // names what each seat claims and nothing this seat takes on trust. Read every NETWORK_GAMES_MS (5 min) and on an ask
+  // older than that; one read at a time.
+  const NETWORK_GAMES_MS = Number(process.env.ARENA_NETWORK_GAMES_MS || 300000);
+  const networkGames = { atMs: 0, seats: [], games: [], reading: null };
+  const baseOf = (u) => String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+  const networkSeats = () => {
+    const found = new Set((peers || []).map(baseOf));
+    let rows = [];
+    try { rows = round.db.prepare('SELECT round_id FROM rounds ORDER BY rowid DESC LIMIT 40').all(); } catch { rows = []; }
+    for (const r of rows) {
+      let c; try { c = roster.censusFor(new Uint8Array(r.round_id)); } catch { c = null; }
+      if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { for (const e of endpointsOf(c.entries, round.pubkey)) found.add(baseOf(e)); break; }
+    }
+    if (owner) for (const s of owner.storeSettings().sources || []) found.add(baseOf(s));
+    return [...found].filter((u) => /^https?:\/\//.test(u));
+  };
+  const readNetworkGames = async () => {
+    const seats = networkSeats();
+    const byId = new Map();
+    const asked = [];
+    await Promise.all(seats.map(async (from) => {
+      let got = null;
+      try { const r = await fetch(`${from}/games`, { signal: AbortSignal.timeout(8000) }); got = r.ok ? await r.json() : null; } catch { got = null; }
+      asked.push({ seat: from, answered: !!got, games: got && Array.isArray(got.games) ? got.games.length : 0 });
+      for (const g of (got && got.games) || []) {
+        let m; try { m = decodeManifest(fromHex(String(g.manifest))); } catch { continue; }
+        const id = toHex(gameIdOf(m));
+        if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
+        const info = g.info ? gameInfoStands(g.info, { gameId: gameIdOf(m), manifest: m, verify: verifyEd25519 }) : null;
+        const row = byId.get(id) || { id, name: m.gameName, title: String(g.title || m.gameName).slice(0, 80), type: gameTypeOf(m), version: m.version,
+          devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), description: null, website: null, infoSigned: false, seats: [] };
+        if (info && info.ok && !row.infoSigned) Object.assign(row, { description: info.description, website: info.website, infoSigned: true });
+        row.seats.push(from);
+        byId.set(id, row);
+      }
+    }));
+    const games = [...byId.values()].map((g) => ({ ...g, hostedHere: hosted.has(g.id),
+      updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null })).sort((a, b) => a.title.localeCompare(b.title) || a.version - b.version);
+    Object.assign(networkGames, { atMs: Date.now(), seats: asked.sort((a, b) => a.seat.localeCompare(b.seat)), games });
+    return networkGames;
+  };
+  const networkGamesNow = async ({ fresh = false } = {}) => {
+    if (!fresh && Date.now() - networkGames.atMs < NETWORK_GAMES_MS) return networkGames;
+    if (!networkGames.reading) networkGames.reading = readNetworkGames().finally(() => { networkGames.reading = null; });
+    return networkGames.reading;
+  };
+  const networkGamesTimer = setInterval(() => { networkGamesNow().catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_GAMES_MS);
+  if (networkGamesTimer.unref) networkGamesTimer.unref();
   const autoUpdateTimer = setInterval(() => { autoUpdate().catch((e) => console.error(`[plugins] automatic update: ${e.message}`)); }, Number(process.env.ARENA_AUTO_UPDATE_MS || 600000));
   if (autoUpdateTimer.unref) autoUpdateTimer.unref();
   // THE DONATION SET A ROUND NAMES, AS THIS SIGNER NODE CAN STAND BEHIND IT (M3.2 6e):
@@ -2832,7 +2888,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             try { const p = JSON.parse(readFileSync(joinPath(pluginsDir, id, 'package.json'), 'utf8')); installed.push({ id, name: p.name, title: p.title, running: hosted.has(id) }); } catch { /* not a package */ }
           }
           return answer(200, { hosted: [...hosted.values()].map((g) => ({ id: toHex(g.gameId), name: g.name, title: g.title, version: g.manifest.version,
-            devKey: toHex(g.manifest.gameDevPubkey), installed: !!(pluginsDir && existsSync(joinPath(pluginsDir, toHex(g.gameId)))), supersededBy: superseded.get(toHex(g.gameId)) || null })),
+            devKey: toHex(g.manifest.gameDevPubkey), installed: !!(pluginsDir && existsSync(joinPath(pluginsDir, toHex(g.gameId)))), supersededBy: superseded.get(toHex(g.gameId)) || null,
+            type: gameTypeOf(g.manifest), info: g.info || null })),
             installed, settings: owner.storeSettings() });
         }
         // THE NETWORK STORE'S VIEW OF THIS SEAT (kanban #276): the chain it reads, its own network's four settings, and the
@@ -3266,9 +3323,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
         return res.end(JSON.stringify(pkg));
       }
+      // THE GAMES AND MARKETS THIS SEAT FOUND ON THE NETWORK (kanban #276): public, as /games is; ?fresh=1 reads them again now
+      if (req.method === 'GET' && url.pathname === '/network-games') {
+        const ng = await networkGamesNow({ fresh: url.searchParams.get('fresh') === '1' });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), atMs: ng.atMs, seats: ng.seats, games: ng.games }));
+      }
       if (req.method === 'GET' && url.pathname === '/games') {
         const games = [...hosted.values()].map((p) => ({ id: toHex(p.gameId), name: p.name, title: p.title || p.name,
           icon: p.icon ? `game-icon?game=${toHex(p.gameId)}` : null, attested: p.manifest.resultType === RESULT_TYPE.ATTESTED,
+          // ITS KIND, VERSION AND SIGNED INFO (kanban #276): what the network store lists; the info's signature travels with it,
+          // so a reader checks it against the manifest's developer key rather than taking it from this seat
+          type: gameTypeOf(p.manifest), version: p.manifest.version, info: p.info || null,
           manifest: toHex(encodeManifest(p.manifest)) }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), games }));
@@ -5514,6 +5580,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
+        clearInterval(networkGamesTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);
         settlements.stop();
