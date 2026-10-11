@@ -1152,6 +1152,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     ...(priceFeed && typeof priceFeed === 'object' && priceFeed.readPrice ? { readPrice: priceFeed.readPrice } : {}),
     peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
   let priceTimeout = null;
+  // ENFORCED (§11, kanban #311 slice 3): where this seat runs the feed, a price round's batches carry only attested prices
+  const feedFor = (contractBytes) => { if (!priceFeed) return false; try { return priceRound(decodeRoundContract(new Uint8Array(contractBytes))); } catch { return false; } };
+  round.pricesRequired = feedFor;
   if (priceFeed) {
     const schedulePrices = () => {
       priceTimeout = setTimeout(async () => {
@@ -4205,7 +4208,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rh = String(url.searchParams.get('round') || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(rh)) return text(res, 400, 'GET /price-samples?round=<id>&since=<tick>');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(prices.list(rh, Number(url.searchParams.get('since') || 0) || 0)));
+        // `feed`: this seat runs the committee's feed for that round - a page then plays only attested prices (slice 3)
+        const row = round.get(Buffer.from(rh, 'hex'));
+        return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0), feed: !!(row && feedFor(row.contract)) }));
       }
       if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested')) {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
