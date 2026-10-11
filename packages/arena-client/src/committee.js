@@ -128,3 +128,6 @@ export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, o
   return { signerNodes: got.committees.settlement, agreed: got.seats.filter((s) => s.agrees).length,
     refused: got.seats.filter((s) => s.agrees === false).map((s) => `${s.node}: ${s.why}`), derived: got };
 }
+
+/** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
+export const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };

@@ -23,7 +23,7 @@ import {
   TYPE_DONATION_SET, TYPE_GHOST, TYPE_VSS_HANDOUT,
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
-  TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION,
+  TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD,
 } from './constants.js';
 
 /**
@@ -71,6 +71,11 @@ export const FRAMES = new Map([
   [TYPE_GAME_MANIFEST, { name: 'GameManifest', authority: true }],
   // An attested round's outcome (§0A.7a, kanban #206): k of its game's attestors decide which picks win - and so the table.
   [TYPE_OUTCOME_ATTESTATION, { name: 'OutcomeAttestation', authority: true }],
+  // The committee's word on a price a run plays (§11, kanban #311), a sample and a tape: they decide a market's outcome.
+  [TYPE_PRICE_SAMPLE, { name: 'PriceSample', authority: true }],
+  [TYPE_PRICE_TAPE, { name: 'PriceTape', authority: true }],
+  // A federation's record (§23A.4, kanban #321): it decides deposits and which federation a new round may name.
+  [TYPE_FEDERATION_RECORD, { name: 'FederationRecord', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],

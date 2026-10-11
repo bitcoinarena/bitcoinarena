@@ -6,10 +6,10 @@
 // config from any peer the invite names, so an invite naming all of them survives any one being down. The byte layout
 // is the one `fedimint-cli invite-code` writes, measured on this federation's own invite, and an invite built here was
 // joined by the stock client (fedimint-cli join-federation) while guardian 1 was down.
-const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const CHARSET_invite = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
 const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 const BECH32M = 0x2bc830a3;
-const polymod = (values) => {
+const polymod_invite = (values) => {
   let chk = 1;
   for (const v of values) {
     const b = chk >>> 25;
@@ -18,7 +18,7 @@ const polymod = (values) => {
   }
   return chk >>> 0;
 };
-const hrpExpand = (h) => [...[...h].map((c) => c.charCodeAt(0) >> 5), 0, ...[...h].map((c) => c.charCodeAt(0) & 31)];
+const hrpExpand_invite = (h) => [...[...h].map((c) => c.charCodeAt(0) >> 5), 0, ...[...h].map((c) => c.charCodeAt(0) & 31)];
 const toWords = (bytes) => {
   let acc = 0, bits = 0; const out = [];
   for (const x of bytes) { acc = (acc << 8) | x; bits += 8; while (bits >= 5) { bits -= 5; out.push((acc >> bits) & 31); } acc &= (1 << bits) - 1; }
@@ -45,9 +45,9 @@ export function inviteForGuardians(federationId, guardians) {
   }
   parts.push(1, 32, ...federationId);
   const words = toWords(Uint8Array.from([guardians.length + 1, ...parts]));
-  const pm = polymod([...hrpExpand(HRP), ...words, 0, 0, 0, 0, 0, 0]) ^ BECH32M;
+  const pm = polymod_invite([...hrpExpand_invite(HRP), ...words, 0, 0, 0, 0, 0, 0]) ^ BECH32M;
   const check = Array.from({ length: 6 }, (_, i) => (pm >>> (5 * (5 - i))) & 31);
-  return `${HRP}1${[...words, ...check].map((w) => CHARSET[w]).join('')}`;
+  return `${HRP}1${[...words, ...check].map((w) => CHARSET_invite[w]).join('')}`;
 }
 
 /** What an invite names: its guardians' urls and peer ids, and its federation id (hex). Throws on a bad checksum. */
@@ -55,8 +55,8 @@ export function readInvite(invite) {
   const s = String(invite).trim().replace(/"/g, '').toLowerCase();
   const at = s.lastIndexOf('1');
   if (s.slice(0, at) !== HRP) throw new Error('not a fedimint invite (hrp fed1)');
-  const words = [...s.slice(at + 1)].map((c) => CHARSET.indexOf(c));
-  if (words.some((w) => w < 0) || polymod([...hrpExpand(HRP), ...words]) !== BECH32M) throw new Error('the invite\'s checksum does not hold');
+  const words = [...s.slice(at + 1)].map((c) => CHARSET_invite.indexOf(c));
+  if (words.some((w) => w < 0) || polymod_invite([...hrpExpand_invite(HRP), ...words]) !== BECH32M) throw new Error('the invite\'s checksum does not hold');
   const b = fromWords(words.slice(0, -6));
   const guardians = []; let federationId = null;
   let i = 1;

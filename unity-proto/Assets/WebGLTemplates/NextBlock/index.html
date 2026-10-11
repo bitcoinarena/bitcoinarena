@@ -508,6 +508,12 @@
     /* THE SEED, A SMALL MODAL OVER SETTINGS: 24 numbered words in a grid, then Verify one word at a time. */
     /* THE WALLET SCREEN (kanban #277, the owner 2026-10-10: "a new loading screen in each game - create a new wallet or restore
        wallet ... Also Login with Nostr"): shown at start in a browser that holds no wallet; above the loading screen */
+    /* THE FEDERATION'S STATUS (kanban #321): CRITICAL and CLOSED leave Withdraw and Move; DRAINING closes Deposit; HALTED all */
+    .arena-fed-note { margin: 8px 0; padding: 8px 10px; border-left: 3px solid #f7931a; background: rgba(247,147,26,.08); border-radius: 0 8px 8px 0; font-size: 14px; }
+    body.arena-fed-draining #blwp-deposit-go, body.arena-fed-draining #arena-wb-deposit,
+    body.arena-fed-critical #blwp-deposit-go, body.arena-fed-critical #arena-wb-deposit,
+    body.arena-fed-closed #blwp-deposit-go, body.arena-fed-closed #arena-wb-deposit,
+    body.arena-fed-halted #blwp-money-actions button, body.arena-fed-halted #arena-wb-deposit, body.arena-fed-halted #arena-wb-withdraw { display: none; }
     #arena-wallet-start { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center;
       background: radial-gradient(ellipse at top, #1d2733 0%, #0b0f14 70%); padding: 16px; box-sizing: border-box;
       font: 15px/1.4 system-ui, sans-serif; color: #e8eaed; overflow-y: auto; }
@@ -620,6 +626,7 @@
         <button id="blwp-move-go" type="button">Move</button>
       </div>
       <div class="muted" id="blwp-money-why"></div>
+      <div class="arena-fed-note" id="arena-fed-note" style="display:none"></div>
     </section>
     <section class="settings-card" id="blwp-set-name">
       <h3>Name</h3>
@@ -1972,7 +1979,20 @@
       // THE COMMITTEE THIS PAGE BUILDS ITSELF (kanban #296, spec 5A.6): the headers agreed from the round's nodes, the
       // round's census checked entry by entry against them and as a set against its census_root, the beacon off the same
       // headers and the seats' sortition. The nodes' own /committee is only compared - one that differs is named.
-      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE }).then((sn) => {
+      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE }).then(async (sn) => {
+        // AND THE FEDERATION'S RECORD, checked against the same census (kanban #321): what this page may do with it
+        try {
+          const census = BLWPCLIENT.checkedCensusFor(round);
+          if (census && round.federationId) {
+            const fedHex = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            const fs = await BLWPCLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.BLWP_CURVE.verify });
+            window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
+            if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
+            console.log(`[arena] federation ${fedHex.slice(0, 16)}: ${fs.status}${fs.signers ? ` (${fs.signers} of ${fs.nominal} guardians signed, height ${fs.height})` : ''}${fs.why ? ' - ' + fs.why : ''}`);
+          }
+        } catch (e) { console.warn('[arena] federation record: ' + e.message); }
+        if (window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.allows && !window.ARENA_FED_STATUS.allows.join)
+          throw new Error(BLWPCLIENT.federationSays(window.ARENA_FED_STATUS.status));
         window.ARENA_COMMITTEE_LAST = { round: roundIdHex, ms: sn.derived.ms, headers: sn.derived.headers, census: { entries: sn.derived.census.entries },
           beacon: sn.derived.beacon.height, seats: sn.derived.seats.map((x) => ({ node: x.node, agrees: x.agrees })) };
         console.log(`[arena] committee built by this client for ${roundIdHex.slice(0, 8)}: ${sn.signerNodes.length} settlement seats, census of ${sn.derived.census.entries}, `
@@ -3211,11 +3231,24 @@
     // It imports it from the protocol"): Settings' buttons, the wallet bar over a game's own client and that client's
     // ARENA_GAME.wallet all open these two - the same round tabs, the same invoice, the same withdraw panel. `say` writes
     // why not where it was asked; the answer is { ok, why }.
+    // THE FEDERATION'S STATUS, SHOWN (kanban #321): under CRITICAL only Withdraw and Move stay; the note says why
+    window.ARENA_PAINT_FEDERATION = () => {
+      const fed = window.ARENA_FED_STATUS; const note = document.getElementById('arena-fed-note');
+      const says = fed ? BLWPCLIENT.federationSays(fed.status) : '';
+      if (note) { note.textContent = says; note.style.display = says ? '' : 'none'; }
+      for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
+    };
     function openMoney(which, say = (t) => { document.getElementById('blwp-money-why').textContent = t; }) {
       // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
       // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
       const ctx = moneyContext();
       if (!ctx.ok) { say(ctx.why); return Promise.resolve({ ok: false, why: ctx.why }); }
+      // WHAT THE FEDERATION'S OWN SIGNED RECORD ALLOWS (§23A.4, kanban #321): DRAINING and CRITICAL take no deposit, HALTED
+      // nothing at all - said by name, from the record this page checked (BLWPCLIENT.federationStatus)
+      const fed = window.ARENA_FED_STATUS;
+      if (fed && fed.allows && !fed.allows[which === 'withdraw' ? 'withdraw' : which === 'move' ? 'move' : 'deposit']) {
+        const why = BLWPCLIENT.federationSays(fed.status); say(why); return Promise.resolve({ ok: false, why });
+      }
       if (which === 'withdraw') {
         // the withdraw panel is Settings' own: opened over whatever asked (a game's client too), painted once
         const panel = document.getElementById('blwp-settings');
@@ -3244,7 +3277,7 @@
         } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); return { ok: false, why }; }
       })();
     }
-    for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'deposit'],
+    for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'move'],
       ['blwp-withdraw-lobby', 'withdraw']]) {
       const el = document.getElementById(id);
       if (el) el.addEventListener('click', () => { openMoney(which); });

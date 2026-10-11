@@ -50,7 +50,10 @@ test('one type carries no authority, and it is the ghost', () => {
   // rank curve and min_score a round of that game may name - so it carries authority.
   // 29 since the outcome attestation (kanban #206, §0A.7a): k of an attested game's attestors decide which picks win, so
   // which entries the pari-mutuel table pays - it carries authority.
-  assert.equal(FRAMES.size, 29, 'a type was added without saying what it decides');
+  // 31 since the price sample and tape (kanban #311, §11): the committee's word on the price a market run plays decides
+  // its outcome. 32 since the federation record (kanban #321, §23A.4): its guardians' signed status decides whether a
+  // client may deposit into a federation and whether a new round may name it.
+  assert.equal(FRAMES.size, 32, 'a type was added without saying what it decides');
 });
 
 /**
