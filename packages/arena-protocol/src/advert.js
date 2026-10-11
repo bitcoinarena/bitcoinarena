@@ -87,6 +87,16 @@ export function encodeAdvert(a) {
   w.bytes32(a.bondTxid);
   w.u32(a.bondVout);
   w.u16(a.bondScriptTemplateVersion);
+  // TEMPLATE 2 CARRIES ITS OWN MATURITY (kanban #295, 5A.3B): the absolute height in its recovery leaf, so a reader can
+  // rebuild the output key from the body alone. Only template 2 writes it: a template-1 body is byte for byte what it
+  // was, so the bonds already on chain keep their ids.
+  if (a.bondScriptTemplateVersion === 2) {
+    if (!Number.isInteger(a.bondMaturityHeight) || a.bondMaturityHeight < 1 || a.bondMaturityHeight >= 500000000)
+      throw new Error(`a template-2 advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
+    w.u32(a.bondMaturityHeight);
+  } else if (a.bondMaturityHeight !== undefined) {
+    throw new Error(`template ${a.bondScriptTemplateVersion} carries no bond_maturity_height`);
+  }
 
   w.bytes32(a.payoutPubkey);
 
@@ -156,9 +166,12 @@ export function decodeAdvert(bytes) {
     bondTxid: r.bytes32(),
     bondVout: r.u32(),
     bondScriptTemplateVersion: r.u16(),
+  };
+  if (a.bondScriptTemplateVersion === 2) a.bondMaturityHeight = r.u32();
+  Object.assign(a, {
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
-  };
+  });
   const capable = r.u8();
   const guardianEndpoint = r.str();
   guardianRole(capable, guardianEndpoint);

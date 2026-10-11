@@ -14,6 +14,7 @@ import {
   paysBondMarker, paysMarkerProgram,
 } from './chain.js';
 import { decodeAdvert, splitSignedAdvert, advertId, hostsGame } from './advert.js';
+import { maturityStands } from './bond-script.js';
 import { poolOfRole, GAME_VERIFY } from './fee.js';
 import { genesisFor } from './genesis.js';
 
@@ -1086,6 +1087,15 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
       // entry that agreed is an entry whose height came from the blocks.
       chainSays = { height, spent: false };
     }
+
+    // A TEMPLATE-2 BOND MATURES AT ITS OWN HEIGHT, AND THAT HEIGHT IS AT LEAST ITS CONFIRMATION PLUS THE NETWORK'S
+    // OFFSET (kanban #295, 5A.3B). The key above was rebuilt with the advertisement's height, so the leaf on chain
+    // carries it; this asks whether it is far enough from the block the bond confirmed in - read off the chain when a
+    // view was brought, else the entry's own height. One block short is a bond its node could take back before the
+    // network's maturity, and it is excluded by name.
+    const confirmed = chainSays ? chainSays.height : e.height;
+    const matures = maturityStands(read.advert, confirmed, network);
+    if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
     // an output worth 60000 sats, an entry claiming 100000000000, accepted -

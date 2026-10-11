@@ -18,7 +18,8 @@ import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import {
-  bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION,
+  bondOutputKey, bondInternalKey, tapLeafHash, TAPLEAF_VERSION, bondMaturityOf, maturityHeightFor, BOND_TEMPLATE_V2,
+  recoveryLeaf, controlBlockFor,
 } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { encodeAdvert, advertId, joinSignedAdvert, splitSignedAdvert, decodeAdvert } from '../../arena-protocol/src/advert.js';
@@ -182,14 +183,16 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     // THE PUBLIC KEY IS ENOUGH (attach, 2026-09-29): `{ pubkey }` in place of the secret - finding a bond reads the chain
     // and signs nothing, so a launcher that holds no node's store can find every node's bond.
     const nodeKey = nodeSecret && nodeSecret.pubkey ? nodeSecret.pubkey : schnorr.getPublicKey(nodeSecret);
-    const built = bondOutputKey({
-      nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
-      bondMaturity: g.bondMaturity,
-      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys },
-        { combine }).internalKey,
-    }, { tweakPoint, combine });
+    // THE MARKERS ARE READ AGAIN EACH TIME: kept from an earlier call they missed an update posted since, and a re-bond
+    // built off that record carried the advertisement from before it (measured, kanban #295: hosted_games lost)
+    markers = null;
+    const built = keyAt(nodeKey, g.bondMaturity);
     const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(built.outputKey)})`])));
-    const unspent = (scan.unspents || []).filter((u) => u.height > 0).sort((a, b) => b.height - a.height);
+    // TEMPLATE 2 PAYS A KEY OF ITS OWN HEIGHT (kanban #295), so no one key finds them: each bond transaction pays this
+    // network's marker dust, which nobody spends, and a marker whose transaction commits to a template-2 body of this
+    // node key names the bond output to ask the UTXO set about.
+    const unspent = [...(scan.unspents || []), ...v2BondsOf(nodeKey)]
+      .filter((u) => u.height > 0).sort((a, b) => b.height - a.height);
     const out = [];
     for (const u of unspent) {
       const tx = parseTransaction(fromHex(cli('getrawtransaction', u.txid, 'false', cli('getblockhash', String(u.height)))));
@@ -208,12 +211,54 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
         } catch { /* not a signed body */ }
       }
       if (!advert || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
+      // THE KEY ON CHAIN IS THE ONE THIS BODY'S TEMPLATE AND HEIGHT BUILD, or it is not this body's bond
+      // (one found by genesis' key is that key by the scan itself; one found by the marker is checked here)
+      const maturity = bondMaturityOf(advert, { genesisMaturity: g.bondMaturity });
+      if (!maturity.ok) continue;
+      if (u.byMarker ? toHex(keyAt(nodeKey, maturity.maturity).outputKey) !== u.scriptPubKey.slice(4)
+        : advert.bondScriptTemplateVersion !== 1) continue;
       const newer = newestUpdateOf({ txid: fromHex(u.txid).reverse(), vout: u.vout, height: u.height, nodePubkey: nodeKey });
-      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8),
+      out.push({ txid: u.txid, vout: u.vout, height: u.height, sats: Math.round(u.amount * 1e8), maturity: maturity.maturity,
         advert: newer ? newer.advert : advert, bondAdvert: advert, bondSignature: advertSignature, ...(ancestor ? { ancestor: true } : {}),
         ...(newer ? { updatedBy: { txid: newer.txidHex, height: newer.height } } : {}) });
     }
     return out;
+  }
+
+  /** The bond output key of a node at one maturity: genesis' for template 1, the bond's own for template 2. */
+  function keyAt(nodeKey, bondMaturity) {
+    return bondOutputKey({
+      nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity,
+      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey,
+    }, { tweakPoint, combine });
+  }
+
+  /** This node key's unspent template-2 bond outputs, as scantxoutset answers them, found by the marker (read fresh). */
+  function v2BondsOf(nodeKey) {
+    const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(bondMarker(network))})`])));
+    const found = [];
+    const seen = new Set();
+    for (const m of (scan.unspents || []).filter((x) => x.height > 0)) {
+      if (seen.has(m.txid)) continue;
+      seen.add(m.txid);
+      let tx;
+      try { tx = parseTransaction(fromHex(cli('getrawtransaction', m.txid, 'false', cli('getblockhash', String(m.height))))); }
+      catch { continue; }
+      const commitments = commitmentsOf(tx);
+      let advert = null;
+      for (const item of witnessRunsOf(tx)) {
+        try {
+          const a = decodeAdvert(splitSignedAdvert(item).body);
+          const id = advertId(a);
+          if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) { advert = a; break; }
+        } catch { /* not a signed body */ }
+      }
+      if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2 || toHex(advert.nodePubkey) !== toHex(nodeKey)) continue;
+      const out = JSON.parse(cli('gettxout', m.txid, String(advert.bondVout), 'false') || 'null');
+      if (!out) continue;
+      found.push({ txid: m.txid, vout: advert.bondVout, height: m.height, amount: out.value, scriptPubKey: out.scriptPubKey.hex, byMarker: true });
+    }
+    return found;
   }
 
   /**
@@ -311,24 +356,79 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { hex, txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
+  /**
+   * A TEMPLATE-1 BOND MOVED INTO TEMPLATE 2 (kanban #295, the owner 2026-10-11: "spend path A into a v2 bond and publish
+   * the new advert, only after a testmempoolaccept dry run"). One transaction: input 0 is the old bond by its recovery
+   * leaf - its node's own key at its own maturity, which template 1 put at genesis' fixed height and is long past - and
+   * input 1 a carrier whose witness holds the new signed body; output 0 is the new bond at the same value, at a maturity
+   * of the next block + slack + this network's offset, then the marker dust, the commitment and the carrier's change.
+   * The fee is the carrier's, so the bond keeps every sat (the round's floor is the bond). `bond` is a `bondsOf` record;
+   * `advert` the body to post (bondTxid zero: "the transaction carrying me", template 2 and its height are set here).
+   */
+  function prepareRebond(nodeSecret, bond, advert, { slackBlocks = 6 } = {}) {
+    const nodeKey = schnorr.getPublicKey(nodeSecret);
+    if (toHex(advert.nodePubkey) !== toHex(nodeKey)) throw new Error('a re-bond names the node key that signs it');
+    if (!Number.isInteger(bond.maturity)) throw new Error('that bond record names no maturity: read it with bondsOf');
+    const maturity = maturityHeightFor(height(), network, { slackBlocks });
+    const body = { ...advert, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: BOND_TEMPLATE_V2, bondMaturityHeight: maturity };
+    const id = advertId(body);
+    const pieces = chunksOf(joinSignedAdvert(encodeAdvert(body), schnorr.sign(id, nodeSecret)));
+    const carrierSecret = schnorr.utils.randomSecretKey();
+    const carrier = carrierFor(carrierSecret, pieces.length);
+    return { nodeSecret, nodeKey, bond, advert: body, id, pieces, maturity, built: keyAt(nodeKey, maturity),
+      old: keyAt(nodeKey, bond.maturity), carrierSecret, carrier, spk: carrier.spk };
+  }
+
+  function postRebond(prepared, { utxo, fundBtc = minable ? '0.001' : '0.00003', feeSats = 1500n, locktime } = {}) {
+    const { nodeSecret, nodeKey, bond, id, pieces, carrierSecret, carrier, built, old } = prepared;
+    const funded = utxo || fund(carrier.spk, fundBtc);
+    const bondSats = BigInt(bond.sats);
+    const oldSpk = fromHex('5120' + toHex(old.outputKey));
+    const outputs = [
+      { value: bondSats, script: fromHex('5120' + toHex(built.outputKey)) },
+      { value: 330n, script: fromHex('5120' + toHex(bondMarker(network))) },
+      { value: 0n, script: Uint8Array.from([0x6a, 0x20, ...id]) },
+    ];
+    const change = funded.value - 330n - feeSats;
+    if (change < 0n) throw new Error(`the carrier holds ${funded.value} sats, short of the marker and a ${feeSats}-sat fee`);
+    if (change >= 546n) outputs.push({ value: change, script: payTo() });
+    // THE LOCKTIME IS THE TIP: at or above the old leaf's CLTV (it is past), and final in the next block
+    const lock = locktime ?? height();
+    if (lock < bond.maturity) throw new Error(`the old bond matures at ${bond.maturity}; the tip ${lock} is before it`);
+    const inputs = [
+      { txid: fromHex(bond.txid).reverse(), vout: bond.vout, sequence: 0xfffffffe },
+      { txid: fromHex(funded.txid).reverse(), vout: funded.vout, sequence: 0xfffffffe },
+    ];
+    const prevouts = [{ value: bondSats, script: oldSpk }, { value: funded.value, script: carrier.spk }];
+    const tx = { version: 2, locktime: lock, inputs, outputs };
+    const recovery = recoveryLeaf(nodeKey, bond.maturity);
+    const sigA = schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 0, leafHash: tapLeafHash(recovery) }), nodeSecret);
+    const sigC = schnorr.sign(tapSighash({ ...tx, prevouts, inputIndex: 1, leafHash: carrier.leaf }), carrierSecret);
+    const hex = toHex(serializeSpend({ ...tx, witnesses: [
+      scriptPathWitness({ stack: [sigA], script: recovery, controlBlock: controlBlockFor('recovery', old).controlBlock }),
+      scriptPathWitness({ stack: [sigC, ...pieces], script: carrier.script, controlBlock: carrier.control }),
+    ] }));
+    return { hex, advertId: toHex(id), maturity: prepared.maturity, bondSats, txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
+  }
+
   // `hostedGames`: the games the node's advertisement hosts (§0A.4, kanban #204) - sorted 32-byte ids; nextblock's unless given.
   // Measured (kanban #206): with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
-    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID] } = {}) {
+    bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
+    template = BOND_TEMPLATE_V2 } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
-    const built = bondOutputKey({
-      nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
-      bondMaturity: g.bondMaturity,
-      internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys },
-        { combine }).internalKey,
-    }, { tweakPoint, combine });
+    // A NEW BOND IS TEMPLATE 2 (kanban #295): its maturity is the next block, a few of slack and this network's offset
+    // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
+    const maturity = template === BOND_TEMPLATE_V2 ? maturityHeightFor(height(), network) : g.bondMaturity;
+    const built = keyAt(nodeKey, maturity);
 
     const advert = {
       nodePubkey: nodeKey, operatorId: '2of2', protocolVersions: [1], roles, hostedGames,
       endpoint, region: 'eu-west', capacityClass: 1,
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
-      bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1,
+      bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: template,
+      ...(template === BOND_TEMPLATE_V2 ? { bondMaturityHeight: maturity } : {}),
       payoutPubkey: new Uint8Array(32).fill(3), guardianOf,
       // NOT A GUARDIAN unless the caller passes what the node answered (§5A.1 v4.6.4)
       guardianCapable, guardianEndpoint, timestamp: 1788700000000n,
@@ -361,7 +461,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
         script: carrier.script, controlBlock: carrier.control,
       })],
     }));
-    return { nodeKey, advert, hex, bondSats,
+    return { nodeKey, advert, hex, bondSats, maturity, built,
       txid: JSON.parse(cli('decoderawtransaction', hex)).txid };
   }
 
@@ -376,6 +476,6 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     return { blocks, firstHeight: from };
   }
 
-  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, prepareAdvertUpdate, postAdvertUpdate,
-    prepareReaffirmation, postReaffirmation, newestUpdateOf, blocksFrom, genesis: g };
+  return { height, mine, bury, minable, waitForHeight, include, postBond, findBond, bondsOf, keyAt, carrierFor, chunksOf, fund, payTo, prepareAdvertUpdate, postAdvertUpdate,
+    prepareReaffirmation, postReaffirmation, prepareRebond, postRebond, newestUpdateOf, blocksFrom, genesis: g };
 }

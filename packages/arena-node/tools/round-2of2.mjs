@@ -492,7 +492,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // ATTACHED: the advertisement and signature the bond itself committed to, so the page's proof is the chain's words.
     if (attach) for (const [i, b] of reused.entries()) {
       const built = bondOutputKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys,
-        arbitrationK: rt.genesis.arbitrationK, bondMaturity: rt.genesis.bondMaturity,
+        arbitrationK: rt.genesis.arbitrationK, bondMaturity: b.maturity ?? rt.genesis.bondMaturity,  // template 2: the bond's own (kanban #295)
         internalKey: bondInternalKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys }, { combine }).internalKey,
       }, { tweakPoint, combine });
       const transaction = bondTransaction(b.bondAdvert, { signature: b.bondSignature, outputKey: built.outputKey });
