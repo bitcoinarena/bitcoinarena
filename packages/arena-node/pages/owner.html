@@ -304,14 +304,14 @@ async function storePanel() {
     window.OWNER_FOUND = ng;
     if (!offers.length) { $('netfound').innerHTML = '<p class="sub">Every game the network\'s seats host is on this seat.</p>'; return; }
     $('netfound').innerHTML = `<table class="found"><tr><th>Name</th><th>Type</th><th>Version</th><th>Seats</th><th></th></tr>${offers.map((g, i) => `
-      <tr><td><b>${esc(g.title)}</b>${infoLine(g.infoSigned ? { description: g.description, website: g.website } : null)}</td><td>${esc(g.type)}</td><td>v${g.version}</td>
+      <tr><td><b>${esc(g.title)}</b></td><td>${esc(g.type)}</td><td>v${g.version}</td>
       <td>${g.seats.length}</td><td><button class="primary" data-found="${i}">${g.updateOf ? 'Update' : 'Install'}</button></td></tr>
-      <tr><td colspan="5"><div id="frep${i}"></div></td></tr>`).join('')}</table>`;
+      <tr><td colspan="5">${infoLine(g.infoSigned ? { description: g.description, website: g.website } : null) || '<div class="sub info">no signed description</div>'}<div id="frep${i}"></div></td></tr>`).join('')}</table>`;
     for (const b of $('netfound').querySelectorAll('button[data-found]')) b.onclick = async () => {
       const g = offers[Number(b.dataset.found)];
       const parent = g.updateOf ? mine.hosted.find((h) => h.id === g.updateOf) || null : null;
-      await checkAndTake({ g, parent, from: g.seats[0], box: $('frep' + b.dataset.found), button: b, auto: true });
-      found(false);
+      const took = await checkAndTake({ g, parent, from: g.seats[0], box: $('frep' + b.dataset.found), button: b, auto: true });
+      if (took) { await found(false); $('netfound-at').insertAdjacentHTML('beforeend', ` · <span class="ok">${esc(g.title)} v${g.version} ${parent ? 'updated' : 'installed'} - running now ✓</span>`); }
     };
   };
   $('netagain').onclick = () => { $('netfound-at').textContent = 'asking the network\'s seats again…'; found(true); };
@@ -365,11 +365,13 @@ async function storePanel() {
             : await post('/owner/plugins/install', signed('install', { game: g.id, from }));
           window.OWNER_INSTALLED = res;
           box.innerHTML = report(res) + `<p class="ok">${parent ? 'Updated' : 'Installed'} - running now ✓</p>`;
-          reload();
-        } catch (e) { t.textContent = 'refused'; box.insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); }
+          await reload();
+          return true;
+        } catch (e) { t.textContent = 'refused'; box.insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); return false; }
       };
       if (t) t.onclick = take;
-      if (t && auto) await take();
+      if (t && auto) return take();
+      return false;
   }
 }
 // A GAME'S DESCRIPTION AND WEBSITE, as its developer signed them (kanban #276); nothing when they do not stand
