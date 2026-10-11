@@ -41,9 +41,9 @@ die() { say "STOPPED: $*"; exit 1; }
 export ARENA_TN4_NETWORK=regtest ARENA_TESTNET4_DIR=$H ARENA_TN4_WALLET=tn4rt
 export BTC_DIR=$H/btc BITCOIN_CLI=$B/bitcoin-cli ARENA_BITCOIND_URL=http://127.0.0.1:30211 ARENA_BITCOIND_COOKIE=$H/btc/regtest/.cookie
 export CLIENT_DIR=$H/client LOCK_BIN=$FORK_BIN/blwp-stake-lock LNCLI=$L/lncli
-export NODE_PORTS=23221,23231,23241,23251,23261,23271,23281
+export NODE_PORTS=${NODE_PORTS:-23221,23231,23241,23251,23261,23271,23281}
 declare -A LRPC=([alice]=29011 [bob]=29012 [carol]=29013) LLIS=([alice]=29021 [bob]=29022 [carol]=29023) LREST=([alice]=29031 [bob]=29032 [carol]=29033)
-ZB=29041; ZT=29042; GWA=29300; GWB=29310; LNADDR=29320; RECIP=29330
+ZB=29041; ZT=29042; GWA=29300; GWB=29310; LNADDR=${LNADDR_PORT:-29320}; RECIP=29330
 GPORTS=""; for p in ${NODE_PORTS//,/ }; do GPORTS="$GPORTS,$p,$((p+1000)),$((p+2000)),$((p+3000)),$((p+4000))"; done
 export RUN_PORTS="30211,30212,$ZB,$ZT,${LRPC[alice]},${LRPC[bob]},${LRPC[carol]},${LLIS[alice]},${LLIS[bob]},${LLIS[carol]},${LREST[alice]},${LREST[bob]},${LREST[carol]},$GWA,$((GWA+1)),$((GWA+2)),$GWB,$((GWB+1)),$((GWB+2)),$LNADDR,$RECIP$GPORTS"
 export RUN_DIRS="$H/btc,$H/alice,$H/bob,$H/carol,$H/gw-a,$H/gw-b,$CLIENT_DIR,$H/paid,$(for i in 1 2 3 4 5 6 7; do printf '%s,' "$H/node-$i.db"; done)"
