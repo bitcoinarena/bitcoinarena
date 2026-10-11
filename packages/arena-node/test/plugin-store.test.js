@@ -89,7 +89,9 @@ test('install from another seat: signed by the owner, checked, kept; loaded at t
     assert.deepEqual(got.refused, []);
     assert.equal(toHex(got.registrations[0].gameId), RPS_ID);
     const [core] = [...got.registrations[0].cores.values()];
-    assert.deepEqual(core.adapter.decide([{ key: 'a', move: 0 }, { key: 'b', move: 2 }]), { a: 'WIN', b: 'LOSS' });
+    // never imported into the node's thread (kanban #328): it plays in its sandbox, moves in and verdicts out as JSON
+    assert.equal(core.adapter, undefined);
+    assert.deepEqual(sandboxFor(core).call('decide', { moves: [{ key: 'a', move: 0 }, { key: 'b', move: 2 }] }), { a: 'WIN', b: 'LOSS' });
     assert.deepEqual(readdirSync(join(dir, RPS_ID)).sort().map((f) => f.split('-')[0]), ['client', 'core', 'package.json']);
   } finally { await a.close(); await b.close(); }
 });
@@ -209,6 +211,7 @@ import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js'
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { decodeDonationSetBody } from '../../arena-protocol/src/authority.js';
 import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { sandboxFor } from '../src/core-sandbox.js';
 
 // the regtest serial-2 set (series-donation-in-force.test.js), in force from 900100, signed by the regtest authority
 const SET2 = { ...decodeDonationSetBody(Uint8Array.from(Buffer.from('1400019855e6790b51f0a6ec3ee1a4d83f4de9ad4be7bffb169f0525ad00a59ced5b380000000000000002000dbc040099100001000200466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a68736170647679306e387265381a0b00466c6e75726c31647036386775726e3867686a376572306465736867656677763475787a6d747364336a6a376d7277773465786375703064656a687361706476673764706667710d05', 'hex'))),

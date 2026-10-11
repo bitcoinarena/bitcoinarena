@@ -8,6 +8,7 @@
 //   - and every core's source passes the scan: no module loading, no network, no file system, no process, no eval.
 // A decide adapter is pure: it takes the revealed moves and answers verdicts. Replayed games' wasm cores are not packaged
 // here (their cores are installed with their engine); attested markets have no core and package their manifest and client.
+import { sandboxFor } from './core-sandbox.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -68,9 +69,10 @@ export async function registrationFromPackage(at, pkg) {
   for (const c of pkg.cores) {
     const file = join(at, `core-${c.hash}.mjs`);
     if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
-    const m = await import(pathToFileURL(file).href);
-    if (!m.DECIDE || typeof m.DECIDE.decide !== 'function') throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
-    cores.set(c.hash, { name: c.name, hash: c.hash, url: pathToFileURL(file).href, adapter: m.DECIDE, configs: new Map((c.configs || []).map((h) => [h, {}])) });
+    // NEVER IMPORTED INTO THIS THREAD (kanban #328, §0A.6): loaded into its sandbox from the bytes just checked
+    const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((c.configs || []).map((h) => [h, {}])) };
+    if (!sandboxFor(core).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
+    cores.set(c.hash, core);
   }
   return { name: pkg.name, title: pkg.title, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: (pkg.ancestors || []).map((h) => decodeManifest(fromHex(h))),

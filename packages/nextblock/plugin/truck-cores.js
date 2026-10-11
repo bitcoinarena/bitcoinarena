@@ -6,51 +6,65 @@
 //
 // The engine reads a core only through its adapter (start, eventsOf, step, stateHash, result, picture, runTicksFits) and
 // a game only through its manifest (arena-protocol/src/manifest.js); this file is where nextblock hands it both.
-import { CORE as TRUCK_ADAPTER } from '../src/adapter.js';
-import { CORE as TRUCK_2069_ADAPTER } from '../frozen/2069b4c2/adapter.js';
-import { CORE as TRUCK_DE2F_ADAPTER } from '../frozen/de2f263d/adapter.js';
-import { CORE as TRUCK_7E21_ADAPTER } from '../frozen/7e2123d1/adapter.js';
+import { createRequire } from 'node:module';
 import { coreHashHex } from '../tools/hash-core.js';
 import { GENESIS_CONFIG_HASH } from '../../arena-protocol/src/genesis-ids.js';
-import { computeCurrentConfigHash, computeDe2fConfigHash, computeConfigV3Hash } from '../config/game-config.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../arena-protocol/src/manifest.js';
 import { ROUND_PERIOD_MS } from '../../arena-protocol/src/series.js';
+
+// THE REGISTRATION IMPORTS NO CORE (kanban #328, spec §0A.6). A node loads this module in its own thread (ARENA_GAMES,
+// arena-node/src/main.js), and a core imported here would run there with every right the node has. A node runs a core
+// only in its sandbox (arena-node/src/core-sandbox.js), from the files `root` names, checked against the core's hash.
+// `adapter` is the core imported natively for a PLAYER's own simulation (tests, tools): not enumerable, so no copy of a
+// core carries it, and loaded only when something asks for it - the node never does.
+const requireCore = createRequire(import.meta.url);
+const withAdapter = (core, entry) => {
+  Object.defineProperty(core, 'adapter', { get: () => requireCore(entry).CORE, enumerable: false });
+  return Object.freeze(core);
+};
+/** The truck's name, and the longest run any of its cores takes (BLOCK_TICKS of rules/gate.js; truck-cores.test.js checks both against the cores). */
+export const TRUCK_NAME = 'btc-logistics truck';
+export const TRUCK_RUN_TICKS = 10800;
 
 /**
  * THE CONFIG A ROUND ON THE TRUCK NAMES (the owner 2026-10-04, fix 1 of the spec audit; §27A.6 "a round is bound to the config
  * it was created under"): the current core's own rules, hashed from its constants (genesis.js encodeGameConfigV2) - not
  * the founding config, which the network id commits to and which describes 2069b4c2's rounds.
  */
-export const TRUCK_CURRENT_CONFIG = toHex(computeCurrentConfigHash());
+// THE CONFIG HASHES, WRITTEN OUT (kanban #328): config/game-config.js computes them from the cores' own rule files, and
+// importing it here would run those files in the node's thread; test/truck-cores.test.js computes them and checks these.
+export const TRUCK_CURRENT_CONFIG = '2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d';
 /**
  * v4 MAKES ONE WORLD PER ROUND (#23): nextblock says so on the config itself, and the engine's seed asks the round's game
  * (kanban #203, plugins.js sharedWorld) instead of keeping a list of nextblock's configs. Every other config: per player.
  */
 const CURRENT_CONFIG = Object.freeze({ worldShared: true });
 /** 7e2123d1's per-player config (f51759b6), the 10-06 series' (#23): installed beside the current one. */
-export const TRUCK_V3_CONFIG = toHex(computeConfigV3Hash());
+export const TRUCK_V3_CONFIG = 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c';
 /**
  * THE ROUNDS de2f263d PLAYED BEFORE ITS CONFIG HAD A HASH OF ITS OWN: from 08:23Z on 2026-10-04 the free pair opened rounds
  * naming de2f263d with the founding config, and they are not rewritten. That one pair stays accepted for a round whose
  * committee time is before the cut-over, and for no round after it.
  */
+/** de2f263d's own config (computeDe2fConfigHash), written out as the two above. */
+export const TRUCK_DE2F_CONFIG = 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801';
 export const DE2F_HASH = 'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8';
 export const FOUNDING_CONFIG_ON_DE2F_BEFORE_MS = Date.parse('2026-10-04T13:00:00Z');
 
 /** The truck: the network's title, the current core with the config its rounds name. */
-export const TRUCK = Object.freeze({
-  name: TRUCK_ADAPTER.name,
+export const TRUCK = withAdapter({
+  name: TRUCK_NAME,
   hash: coreHashHex(),
   url: new URL('../src/adapter.js', import.meta.url).href,
-  adapter: TRUCK_ADAPTER,
+  root: new URL('../src/', import.meta.url).href,
   // TWO CONFIGS ON ONE CORE (#23, the owner 2026-10-04): the current one, v4 - one world per round, shared by its players -
   // which every series published from now names; and v3 (f51759b6), the per-player world the 10-06 series was published
   // on, kept installed so its rounds open and replay exactly as published.
   configs: new Map([[TRUCK_CURRENT_CONFIG, CURRENT_CONFIG], [TRUCK_V3_CONFIG, {}]]),
   // the bundle the replay page runs for this core's rounds (core/tools/bundle-replay.js)
   replayFile: new URL('../dist/blwp-replay-core.js', import.meta.url),
-});
+}, '../src/adapter.js');
 
 /**
  * THE TRUCK BEFORE C BECAME THE BED FILL AND T SANK FROM 20 S (the owner 2026-10-04 08:54 and 09:17; accepted path A): core
@@ -66,15 +80,15 @@ export const TRUCK = Object.freeze({
  */
 const FROZEN_DE2F = new URL('../frozen/de2f263d', import.meta.url).pathname;
 if (coreHashHex(FROZEN_DE2F) !== DE2F_HASH) throw new Error(`core/frozen/de2f263d hashes to ${coreHashHex(FROZEN_DE2F)}, not the core it keeps`);
-export const TRUCK_DE2F = Object.freeze({
-  name: `${TRUCK_ADAPTER.name} (de2f263d, exposure by C)`,
+export const TRUCK_DE2F = withAdapter({
+  name: `${TRUCK_NAME} (de2f263d, exposure by C)`,
   hash: DE2F_HASH,
   url: new URL('../frozen/de2f263d/adapter.js', import.meta.url).href,
-  adapter: TRUCK_DE2F_ADAPTER,
-  configs: new Map([[toHex(computeDe2fConfigHash()), {}],
+  root: new URL('../frozen/de2f263d/', import.meta.url).href,
+  configs: new Map([[TRUCK_DE2F_CONFIG, {}],
     [toHex(GENESIS_CONFIG_HASH), { committeeBeforeMs: FOUNDING_CONFIG_ON_DE2F_BEFORE_MS }]]),
   replayFile: new URL('../dist/blwp-replay-core-de2f263d.js', import.meta.url),
-});
+}, '../frozen/de2f263d/adapter.js');
 
 /**
  * 7e2123d1 KEPT INSTALLED BESIDE THE TRUCK (kanban #29, 2026-10-07: §4.11's objectives became the chart's HIGH, LOW and
@@ -85,26 +99,26 @@ export const TRUCK_DE2F = Object.freeze({
 export const TRUCK_7E21_HASH = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
 const FROZEN_7E21 = new URL('../frozen/7e2123d1', import.meta.url).pathname;
 if (coreHashHex(FROZEN_7E21) !== TRUCK_7E21_HASH) throw new Error(`core/frozen/7e2123d1 hashes to ${coreHashHex(FROZEN_7E21)}, not the core it keeps`);
-export const TRUCK_7E21 = Object.freeze({
-  name: `${TRUCK_ADAPTER.name} (7e2123d1, objectives from the relief)`,
+export const TRUCK_7E21 = withAdapter({
+  name: `${TRUCK_NAME} (7e2123d1, objectives from the relief)`,
   hash: TRUCK_7E21_HASH,
   url: new URL('../frozen/7e2123d1/adapter.js', import.meta.url).href,
-  adapter: TRUCK_7E21_ADAPTER,
+  root: new URL('../frozen/7e2123d1/', import.meta.url).href,
   configs: new Map([[TRUCK_CURRENT_CONFIG, CURRENT_CONFIG], [TRUCK_V3_CONFIG, {}]]),
   replayFile: new URL('../dist/blwp-replay-core-7e2123d1.js', import.meta.url),
-});
+}, '../frozen/7e2123d1/adapter.js');
 
 export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const FROZEN_2069 = new URL('../frozen/2069b4c2', import.meta.url).pathname;
 if (coreHashHex(FROZEN_2069) !== TRUCK_2069_HASH) throw new Error(`core/frozen/2069b4c2 hashes to ${coreHashHex(FROZEN_2069)}, not the core it keeps`);
-export const TRUCK_2069 = Object.freeze({
-  name: `${TRUCK_ADAPTER.name} (2069b4c2, C 0.7 and par 65 s)`,
+export const TRUCK_2069 = withAdapter({
+  name: `${TRUCK_NAME} (2069b4c2, C 0.7 and par 65 s)`,
   hash: TRUCK_2069_HASH,
   url: new URL('../frozen/2069b4c2/adapter.js', import.meta.url).href,
-  adapter: TRUCK_2069_ADAPTER,
+  root: new URL('../frozen/2069b4c2/', import.meta.url).href,
   configs: new Map([[toHex(GENESIS_CONFIG_HASH), {}]]),
   replayFile: new URL('../dist/blwp-replay-core-2069b4c2.js', import.meta.url),
-});
+}, '../frozen/2069b4c2/adapter.js');
 
 /** The truck's hashes as a round names them: its sim_wasm_hash and the config_hash of the rules it plays. */
 export const TRUCK_CORE_HASH = fromHex(TRUCK.hash);
@@ -124,8 +138,9 @@ export const TRUCK_SHARED_CONFIG_HASH = TRUCK_CONFIG_HASH;
 export const TRUCK_BEFORE_FORK_HASH = 'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef';
 // HELD BY 2069b4c2 SINCE THE TRUCK MOVED ON (2026-10-04): 2069b4c2 is the core that ran d15c39bb's rounds hash for hash at
 // 10800 ticks; the truck after it does not (C from an empty bed, T from 20 s), so it no longer stands in for them.
-export const TRUCK_BEFORE_FORK = Object.freeze({ ...TRUCK_2069, name: `${TRUCK.name} (before the 82/90 fork)`, hash: TRUCK_BEFORE_FORK_HASH,
-  fixedRunTicks: TRUCK_2069_ADAPTER.RUN_TICKS });
+export const TRUCK_BEFORE_FORK = withAdapter({ ...TRUCK_2069, name: `${TRUCK.name} (before the 82/90 fork)`, hash: TRUCK_BEFORE_FORK_HASH,
+  // its name is not its files' hash: it runs 2069b4c2's files, and the sandbox checks them against that
+  sourceHash: TRUCK_2069_HASH, fixedRunTicks: TRUCK_RUN_TICKS }, '../frozen/2069b4c2/adapter.js');
 
 
 /**
@@ -160,7 +175,7 @@ export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetI
     parentManifestId: NO_PARENT,
     resultType: RESULT_TYPE.REPLAY,
     cores: sorted([...NEXTBLOCK_CORES.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...NEXTBLOCK_CORES.get(h).configs.keys()]).map(fromHex) })),
-    runTicksMax: TRUCK_ADAPTER.RUN_TICKS,
+    runTicksMax: TRUCK_RUN_TICKS,
     roundPeriodMs: ROUND_PERIOD_MS,
     payoutRule: PAYOUT_RULE.RANK_CURVE,
     rankNumerator: 3,

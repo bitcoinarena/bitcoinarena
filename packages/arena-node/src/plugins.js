@@ -14,6 +14,7 @@ import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf }
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
+import { sandboxFor } from './core-sandbox.js';
 
 /**
  * THE GAMES A NODE HOSTS, by game_id (hex): the registrations its launcher handed it, each checked here once - a
@@ -46,6 +47,10 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
       for (const config of core.configs.keys())
         if (!listed.configs.some((h) => toHex(h) === config))
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
+      // AND IT LOADS IN ITS SANDBOX (kanban #328, §0A.6): read and hashed by this node, linked to its own files only, run
+      // with no network, file system or clock - the only way this node ever runs it. One that does not is not hosted.
+      try { sandboxFor(core); }
+      catch (e) { throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} does not load in its sandbox: ${e.message}`); }
     }
     // `replayPage`: the game's own replay page, when it has one (kanban #202) - the engine serves it, never draws a game
     // `sharedWorld`: the configs the game says make one world per round (a config's `worldShared`), which the engine's
@@ -100,9 +105,11 @@ export function installedCoresOf(plugins) {
  * truck's BLOCK_TICKS) - the length of a run whose round names none, and, since the 82/90 fork, the longest one may.
  */
 export function runTicksOf(core, config) {
-  const a = core && core.adapter;
-  if (!a) return null;
-  return typeof a.runTicks === 'function' ? a.runTicks(config) : a.RUN_TICKS;
+  // ASKED OF THE CORE IN ITS SANDBOX (kanban #328, §0A.6), never of a core imported into this thread
+  let s;
+  try { s = core && sandboxFor(core); } catch { return null; }
+  if (!s) return null;
+  return s.meta.runTicks ? s.call('runTicks', { config }) : s.meta.RUN_TICKS;
 }
 
 /**
@@ -111,18 +118,20 @@ export function runTicksOf(core, config) {
  * that takes the round's length takes any it says fits (1 .. RUN_TICKS for the truck).
  */
 export function runLengthFits(core, config, blockTicks) {
-  if (!core || !core.adapter) return { ok: false, why: 'no core to check that round\'s run length against' };
+  if (!core) return { ok: false, why: 'no core to check that round\'s run length against' };
+  let s;
+  try { s = sandboxFor(core); } catch (e) { return { ok: false, why: `${core.name}'s core does not load in its sandbox: ${e.message}` }; }
   if (!Number.isInteger(blockTicks)) return { ok: false, why: 'that round names no run length' };
   if (Number.isInteger(core.fixedRunTicks))
     return blockTicks === core.fixedRunTicks ? { ok: true }
       : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${core.fixedRunTicks} (${core.name}) - a run is not replayed to a length its core does not stop at` };
-  if (typeof core.adapter.runTicksFits !== 'function') {
+  if (!s.meta.runTicksFits) {
     // A CORE OF ONE LENGTH UNDER ITS CONFIG (it takes none from the round): that length only.
     const own = runTicksOf(core, config);
     return blockTicks === own ? { ok: true }
       : { ok: false, why: `that round says a run is ${blockTicks} ticks and this core ends one at ${own}` };
   }
-  return core.adapter.runTicksFits(blockTicks) ? { ok: true }
+  return s.call('runTicksFits', { ticks: blockTicks }) ? { ok: true }
     : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
 }
 
