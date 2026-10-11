@@ -62,7 +62,9 @@ reading "S3 A draining: $(curl -s --max-time 10 http://127.0.0.1:${NODE_PORTS%%,
 # (the pair in named variables: under set -u a function's $1 is its own, empty, argument list - run 6 stopped there)
 for pair in "bob carol" "carol bob"; do FROM=${pair% *} TO=${pair#* }
   KEY2=$(ln_ $TO getinfo | js 'o=>o.identity_pubkey')
-  until_ "$FROM connects $TO" 60 ln_ $FROM connect "$KEY2@127.0.0.1:${LLIS[$TO]}" >/dev/null 2>&1
+  # (the second pair is already peers through the first's channel: lncli then says "already connected" - run 7 stopped there)
+  peered() { local out; out=$(ln_ $FROM connect "$KEY2@127.0.0.1:${LLIS[$TO]}" 2>&1) || echo "$out" | grep -q 'already connected'; }
+  until_ "$FROM connects $TO" 60 peered
   openx() { ln_ $FROM openchannel --node_key=$KEY2 --local_amt=4000000 --push_amt=2000000 > $H/open-$FROM-$TO.out 2>&1; }
   until_ "$FROM opens a channel to $TO" 120 openx
   bc generatetoaddress 1 $MINE >/dev/null
