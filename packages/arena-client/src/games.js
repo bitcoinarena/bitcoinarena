@@ -9,6 +9,7 @@
 //   manifest's clients[] - the same hashes the repo's client list pins and client-hash.mjs checks from outside the page. A
 //   file the manifest does not name is never run. The page then runs it in the same origin, so the wallet and the seed
 //   (sessionStorage / localStorage) are the one the player already has.
+import { gameInfoDigest } from '../../arena-protocol/src/game-info.js';
 import { decodeManifest, gameIdOf, isAttested } from '../../arena-protocol/src/manifest.js';
 import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -39,9 +40,20 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
         byId.set(id, { id, name: manifest.gameName, title: typeof g.title === 'string' && g.title ? g.title : manifest.gameName,
           icon: typeof g.icon === 'string' && g.icon ? `${node}/${g.icon.replace(/^\/+/, '')}` : null, attested: isAttested(manifest),
           known: Object.prototype.hasOwnProperty.call(KNOWN_GOOD_GAMES, id), devKey: toHex(manifest.gameDevPubkey),
-          manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [] });
+          manifest, manifestHex: String(g.manifest).toLowerCase(), nodes: [],
+          // ITS SIGNED DESCRIPTION, AS HANDED (kanban #338): checked against the developer key by checkedGameInfo, never taken
+          info: g.info && typeof g.info === 'object' ? g.info : null,
+          // WHO PLAYS IT NOW: the highest any seat says - the seats of a committee hold the same entries, so a sum would count
+          // each player once per seat
+          live: { rounds: 0, players: 0 } });
       }
-      byId.get(id).nodes.push(node);
+      const got = byId.get(id);
+      got.nodes.push(node);
+      if (!got.info && g.info && typeof g.info === 'object') got.info = g.info;
+      if (g.live && typeof g.live === 'object') {
+        got.live.rounds = Math.max(got.live.rounds, Number(g.live.rounds) || 0);
+        got.live.players = Math.max(got.live.players, Number(g.live.players) || 0);
+      }
     }
   }
   const games = [...byId.values()].sort((a, b) => (Number(b.known) - Number(a.known)) || (b.nodes.length - a.nodes.length) || (a.name < b.name ? -1 : 1));
@@ -67,4 +79,18 @@ export async function gameClientFile({ game, url, digest, fetcher = fetch }) {
   const hash = toHex(new Uint8Array(await digest(bytes)));
   if (!pinned.has(hash)) return { ok: false, why: `${url} hashes to ${hash.slice(0, 16)}, which ${game.name}'s manifest does not name: not run` };
   return { ok: true, bytes, hash };
+}
+
+/**
+ * A GAME'S SIGNED DESCRIPTION AND WEBSITE (kanban #338, game-info.js #276): kept only when the manifest's developer key signed
+ * them - `verifyEd25519(sig, msg, pub)` may be async (the browser's). Anything else answers null and is not shown.
+ */
+export async function checkedGameInfo(game, verifyEd25519) {
+  const info = game && game.info;
+  if (!info || typeof info.description !== 'string' || typeof verifyEd25519 !== 'function') return null;
+  let digest, sig;
+  try { digest = gameInfoDigest(fromHex(game.id), info); sig = fromHex(String(info.signature || '')); } catch { return null; }
+  let good = false;
+  try { good = (await verifyEd25519(sig, digest, game.manifest.gameDevPubkey)) === true; } catch { good = false; }
+  return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null } : null;
 }
