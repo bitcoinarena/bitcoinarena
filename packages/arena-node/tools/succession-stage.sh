@@ -53,6 +53,20 @@ ROUND2=$ROUND
 drained() { curl -s --max-time 10 http://127.0.0.1:${NODE_PORTS%%,*}/federations | grep -q '"status":"DRAINING"'; }
 until_ "A's record DRAINING" 600 drained
 reading "S3 A draining: $(curl -s --max-time 10 http://127.0.0.1:${NODE_PORTS%%,*}/federations | cut -c1-400)"
+# A ROUTE BETWEEN THE TWO GATEWAYS (§23A.6 step 3: "a gateway that serves only one routes over Lightning to one that serves the
+# other"): the lock client never pays through the gateway on the invoice's own node, so a move from A pays B's invoice
+# through the other gateway - and this stack's only channels were alice->bob and alice->carol (run 5: every send Refunded)
+for pair in "bob carol" "carol bob"; do set -- $pair
+  KEY2=$(ln_ $2 getinfo | js 'o=>o.identity_pubkey')
+  until_ "$1 connects $2" 60 ln_ $1 connect "$KEY2@127.0.0.1:${LLIS[$2]}" >/dev/null 2>&1
+  openx() { ln_ $1 openchannel --node_key=$KEY2 --local_amt=4000000 --push_amt=2000000 > $H/open-$1-$2.out 2>&1; }
+  until_ "$1 opens a channel to $2" 120 openx
+  bc generatetoaddress 1 $MINE >/dev/null
+done
+bc generatetoaddress 6 $MINE >/dev/null
+activeBC() { [ "$(ln_ bob listchannels | grep -c '"active": *true')" -ge 2 ] && [ "$(ln_ carol listchannels | grep -c '"active": *true')" -ge 2 ]; }
+until_ "the bob-carol channels are active" 300 activeBC
+say "channels bob<->carol open and active"
 # the player's notes move: a deposit into A, then the page's migratePlayerWallet into B
 ( cd "$HERE/.." && ROUND=$ROUND2 NODES=$NODE_PORTS INVITE_A=$H/invite-code INVITE_B=$HB/invite-code WASM_PKG=$WASM LNCLI=$LNCLI \
   PAYER_DIR=$H/alice PAYER_RPC=127.0.0.1:${LRPC[alice]} NETWORK=regtest SEAT_RECORD=1 HOME=$FORK_HOME timeout 900 "$NODE" tools/succession-move.mjs ) > $H/move.out 2>&1; MOVE_RC=$?
