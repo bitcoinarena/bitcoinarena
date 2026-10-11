@@ -103,9 +103,15 @@ try {
   // THE DEPOSIT: the stake plus the entry fee and what the federation takes, through whichever gateway the client picks
   const depositMsat = STAKE + entryFeeMsat(STAKE) + 200000n;
   const t = Date.now();
-  const rcv = JSON.parse(await lc.receive(String(depositMsat), ''));
+  // THROUGH THE PAGE'S OWN GATEWAY (GATEWAY, else the lobby's): with none named the federation picks one, and gateway A runs
+  // on lnd-testnet4 itself - the payer - so its invoice was one the payer cannot pay (lnd does not pay its own invoices):
+  // the three hung deposits of 2026-10-11 (12:31:44, 13:47:52, 14:04:58Z) were gateway A's invoices, never paid
+  const gateway = env.GATEWAY || 'https://cleaner-cindy-duty-biggest.trycloudflare.com/';
+  const rcv = JSON.parse(await lc.receive(String(depositMsat), gateway));
   const payee = JSON.parse((await payer('decodepayreq', rcv.invoice)).out).destination;
-  const paid = await payer('payinvoice', '--force', rcv.invoice);
+  const self = JSON.parse((await payer('getinfo')).out).identity_pubkey;
+  if (payee === self) throw new Error(`the deposit invoice is on the payer's own node (${payee.slice(0, 16)}): lnd does not pay its own invoice - name another GATEWAY`);
+  const paid = await payer('payinvoice', '--force', '--timeout', '90s', rcv.invoice);
   const final = await lc.awaitReceive(rcv.operation);
   log({ step: 'deposit', msat: depositMsat, payee: payee.slice(0, 16),
     paid: (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0], final, ms: Date.now() - t,
