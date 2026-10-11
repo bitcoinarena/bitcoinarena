@@ -769,16 +769,18 @@ const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length 
  * refund go to, and the fingerprint the page shows for the player to compare
  * outside it (`arena-node/tools/refund-key.mjs <seed> <round id>`).
  */
-export function playerFor(round, { seed, curve } = {}) {
+// `order`: an order this tab places in a market round (kanban #336) - its own key, so its own lock, payout and return;
+// 0 (a game's entry, a single pick) is the round's key as it always was
+export function playerFor(round, { seed, curve, order = 0 } = {}) {
   if (!round) throw new Error('there is no round to join');
   if (!curve || typeof curve.pointX !== 'function')
     throw new Error('a player identity is a key on a curve, and none was injected');
   if (!(seed instanceof Uint8Array) || seed.length !== 32)
     throw new Error('a player key comes from the player\'s 32-byte seed, and none was given');
   const rid = roundIdOf(round);
-  const secret = playerSecretFor(seed, rid);
+  const secret = playerSecretFor(seed, rid, order);
   const pubkey = curve.pointX(secret);
-  return { seed, roundId: rid, secret, pubkey, fingerprint: refundFingerprint(pubkey) };
+  return { seed, roundId: rid, secret, pubkey, fingerprint: refundFingerprint(pubkey), order };
 }
 
 /**
@@ -820,7 +822,7 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0 } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -848,7 +850,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
   // under any other key - a bug, or a host that lies - would send the money
   // where the player's own check (`refund-key.mjs`) cannot find it. So the key
   // is derived here, and a key or a dealt stake naming another is refused.
-  const player = playerFor(round, { seed, curve });
+  // `playerOrder`: an order's own key (kanban #336) - the seed's key for this round and that order number, checked the same way
+  const player = playerFor(round, { seed, curve, order: playerOrder });
   if (playerPubkey !== undefined && toHex(playerPubkey) !== toHex(player.pubkey))
     throw new Error('that player key is not the one this seed makes for this round: a payout or '
       + 'refund to it reaches a key the player cannot check');

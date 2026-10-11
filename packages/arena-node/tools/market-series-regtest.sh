@@ -62,6 +62,10 @@ cleanup() {
   bcn stop >/dev/null 2>&1; sleep 8
   for pid in $(cut -d' ' -f1 $PIDS); do kill -KILL -- -$pid 2>/dev/null; done
   pkill -f "src/main.js [0-9]+ $H/node-" 2>/dev/null; pkill -f "$H/" 2>/dev/null; sleep 3; kill_guardians; kill_gateways
+  # AND EVERY NODE PROCESS STILL WRITING UNDER $H (kanban #293, measured twice on the test host: the paid runner outlived the
+  # stack and held its port 29430, so the next run's safety check refused it). macOS's setsid shim forks when setsid()
+  # fails, so $PIDS kept the shim's pid while the runner ran as the next one, in a session of its own.
+  for pid in $(pgrep -x node); do holds $pid && kill -TERM $pid 2>/dev/null; done
   say "stack dir kept for reading: $H"
 }
 trap cleanup EXIT

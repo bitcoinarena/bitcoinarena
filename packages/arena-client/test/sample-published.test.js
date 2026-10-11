@@ -111,3 +111,32 @@ test('an ended run submits no more samples', async () => {
     assert.equal(client.submitSample(20000000), false);
   } finally { await node.close(); }
 });
+
+test('the committee\'s price (kanban #311): an attested sample goes out at its tick with its signatures, the node checks and stores it; another tick is refused', async () => {
+  const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
+  const { node, client, rid, eid } = await rig();
+  try {
+    await drive(client, 300);
+    const tick = client.offered, cents = 8297193;
+    const sigs = [[node.round.pubkey, schnorr.sign(priceSampleId({ roundId: rid, tick, priceCents: cents }), node.round.identity.secret)]];
+    assert.equal(client.submitAttestedSample({ tick: tick + 1, priceCents: cents, sigs }), false, 'a tick the run is not at');
+    assert.equal(client.submitAttestedSample({ tick, priceCents: cents, sigs }), true);
+    await drive(client, 150);
+    const t = node.round.transcript(rid, eid);
+    assert.deepEqual(t.samples, [[tick, centsToTapeUnits(cents)]], 'the node stored the attested price, in the tape\'s unit');
+    assert.equal(client.attests.length, 0, 'the client is still holding the attestation');
+    assert.equal(client.refusals, 0, 'the node refused the attested batch');
+  } finally { await node.close(); }
+});
+
+test('an attestation the committee did not give is refused by the node, and the batch with it', async () => {
+  const { node, client } = await rig();
+  try {
+    await drive(client, 300);
+    const tick = client.offered;
+    assert.equal(client.submitAttestedSample({ tick, priceCents: 8297193, sigs: [[node.round.pubkey, new Uint8Array(64).fill(7)]] }), true);
+    await drive(client, 150);
+    assert.ok(client.refusals > 0 || client.ended, 'a forged attestation went through');
+    assert.match(String(client.refusedWhy), /not attested/);
+  } finally { await node.close(); }
+});
