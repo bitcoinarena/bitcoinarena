@@ -60,7 +60,19 @@ export function weightOf(bondSats, bondMin) {
  * symptom is two nodes disagreeing when their scores are close, which is the
  * worst failure profile there is - rare, unreproducible, and load-dependent.
  */
-export function selectCommittee({ entries, contract, role, exclude, committeeSeed }) {
+/**
+ * HOW MANY A ROLE DRAWS (§5A.7 reserve seats, RULED 2026-09-28; kanban #301): more nodes than it seats, so a drawn node that
+ * is offline when its round comes is replaced - two reserves over the seats, capped where two seatings could stop sharing a
+ * signer (`2 x threshold > drawn`): 9 for 7 seats (threshold 5), 3 for 2 (threshold 2). The census may hold fewer.
+ */
+export function drawnForRole(contract, role) {
+  const slots = slotsForRole(contract, role);
+  if (!Number.isInteger(slots)) return undefined;
+  const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
+  return Math.min(slots + 2, 2 * t - 1);
+}
+
+export function selectCommittee({ entries, contract, role, exclude, committeeSeed, count }) {
   // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
   //
   // All three used to be arguments. Section 6 on the slot counts: "echoed for
@@ -159,8 +171,12 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
     return compareEntries(a.entry, b.entry);
   });
 
-  return scored.slice(0, slots).map((s) => s.entry);
+  // `count` is the reserve draw (drawCommittee, §5A.7): the same order, more of it
+  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.entry);
 }
+
+/** THE DRAW (§5A.7): the role's `drawnForRole` lowest scores, in score order - of whom at most `slots` are seated. */
+export const drawCommittee = (args) => selectCommittee({ ...args, count: drawnForRole(args.contract, args.role) });
 
 export const outpointKey = (e) => {
   let s = '';

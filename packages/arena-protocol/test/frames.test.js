@@ -53,7 +53,9 @@ test('one type carries no authority, and it is the ghost', () => {
   // 31 since the price sample and tape (kanban #311, §11): the committee's word on the price a market run plays decides
   // its outcome. 32 since the federation record (kanban #321, §23A.4): its guardians' signed status decides whether a
   // client may deposit into a federation and whether a new round may name it.
-  assert.equal(FRAMES.size, 32, 'a type was added without saying what it decides');
+  // 34 since reserve seats (kanban #301, §5A.7): a node's PRESENT and the seated nodes' SEATING decide which nodes serve a
+  // round - a seating its certificate's signers did not all sign seats nobody.
+  assert.equal(FRAMES.size, 34, 'a type was added without saying what it decides');
 });
 
 /**
