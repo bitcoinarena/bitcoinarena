@@ -22,7 +22,7 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS } from '../../arena-protocol/src/slash.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../arena-protocol/src/result.js';
-import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput } from '../../arena-protocol/src/arbitration-tx.js';
+import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput, escrowSpend } from '../../arena-protocol/src/arbitration-tx.js';
 import { bondOutputKey, bondInternalKey, slashLeaf, tapLeafHash, controlBlockFor, bondMaturityOf } from '../../arena-protocol/src/bond-script.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { transcriptHash, decodeTranscript } from '../../arena-protocol/src/transcript.js';
@@ -123,6 +123,19 @@ export function buildSlash({ verdict, bond, advert, contract, roundId, slashHeig
   if (!built.ok) return built;
   const leaf = tapLeafHash(slashLeaf(set.keys, set.k));
   return { ok: true, built, leaf, sighash: arbitrationSighash(built, leaf), controlBlock: controlBlockFor('slash', tree).controlBlock, distribution };
+}
+
+/**
+ * THE ESCROW INTO THE FEDERATION (§5A.3B, kanban #307): the set's spend of a players' escrow output (`escrow`: { txid
+ * (internal order), vout, value }) to the peg-in script `toScript`. The escrow must be the set's own escrowOutput; answers
+ * the same shape as buildSlash, so memberSign and assemble take it as they take path B.
+ */
+export function buildEscrowPegin({ escrow, set, toScript, feeSats = 1000n }) {
+  const out = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
+  if (escrow.script && toHex(escrow.script) !== toHex(out.script)) return { ok: false, why: 'that output is not this arbitration set\'s escrow' };
+  const built = escrowSpend({ escrow: { ...escrow, script: out.script }, toScript, feeSats });
+  if (!built.ok) return built;
+  return { ok: true, built, leaf: out.leaf, sighash: arbitrationSighash(built, out.leaf), controlBlock: out.controlBlock, escrow: out };
 }
 
 /** One member's signature: its own key over the spend's sighash, nothing else. */

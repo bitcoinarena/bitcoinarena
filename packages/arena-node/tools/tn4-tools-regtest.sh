@@ -204,6 +204,18 @@ if [ -n "${PEGIN_BIN:-}" ]; then
   PC=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
   reading "7b pegin claim: {\"claim\":${PC:-null},\"seconds\":$(( $(date +%s) - T0 )),\"txid\":\"$TXID\"}"
   [ -n "$PC" ] || die "reading 7 failed: no claim"
+  # 7c. THE PLAYERS' ESCROW INTO THE FEDERATION (§5A.3B, kanban #307): an escrow output of the arbitration set, as a slash's
+  # path B pays it, spent by 5 of its 7 members to a fresh peg-in address of the arbiter's client; then that peg-in claimed
+  PA2=$(HOME=$FORK_HOME timeout 300 $PEGIN_BIN --mode pegin-address --data-dir $ARB 2>>"$LOG" | grep '"mode":"pegin-address"')
+  ADDR2=$(echo "$PA2" | js 'o=>o.address')
+  [ -n "$ADDR2" ] || die "reading 7c failed: no second peg-in address"
+  T1=$(date +%s)
+  ( cd "$HERE/.." && BITCOIN_CLI="$B/bitcoin-cli -datadir=$BTC_DIR -rpcwallet=tn4rt" PEGIN_ADDRESS=$ADDR2 timeout 300 "$NODE" tools/escrow-pegin.mjs ) > $H/escrow.out 2>&1; ESC_RC=$?
+  cat $H/escrow.out >> "$LOG"
+  bc generatetoaddress 11 $(bc getnewaddress) >/dev/null
+  PC2=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR2" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
+  reading "7c escrow into the federation: {\"exit\":$ESC_RC,\"spend\":$(grep '"step":"escrow into the federation"' $H/escrow.out | tail -1 || echo null),\"claim\":${PC2:-null},\"seconds\":$(( $(date +%s) - T1 ))}"
+  [ -n "$PC2" ] || die "reading 7c failed: the escrow's peg-in was not claimed"
 fi
 }
 
