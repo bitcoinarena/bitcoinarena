@@ -37,7 +37,11 @@ reading "S2 gateways serve both: {\"gatewayA_B_msat\":$(ecashB $GWA $H/gw-a/pass
 # by its command line: on a macOS `setsid` is a shim, and the pid the harness kept is the shim's (measured 19:23Z: the old runner
 # kept port 12221 and the new one died on EADDRINUSE)
 for p in $(pgrep -f "tools/run-testnet4-paid.mjs"); do ps -E -ww -o command= -p $p 2>/dev/null | grep -q "$H" && kill -TERM $p; done
-for i in $(seq 1 60); do curl -s -o /dev/null --max-time 2 http://127.0.0.1:${NODE_PORTS%%,*}/identity || break; sleep 2; done
+# every seat port closed - the runner closes its seats one after another (measured 20:00Z: 12221 closed, 12251 still held);
+# after 60 s it is killed
+portsHeld() { for p in ${NODE_PORTS//,/ }; do curl -s -o /dev/null --max-time 2 http://127.0.0.1:$p/identity && return 0; done; return 1; }
+for i in $(seq 1 30); do portsHeld || break; sleep 2; done
+if portsHeld; then for p in $(pgrep -f "tools/run-testnet4-paid.mjs"); do ps -E -ww -o command= -p $p 2>/dev/null | grep -q "$H" && kill -KILL $p; done; sleep 3; fi
 ( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
   ARENA_FEDERATION_INVITE_FILE=$H/invite-code ARENA_RECIPIENT_PORT=$RECIP ARENA_TN4_DATADIR=$BTC_DIR ARENA_DRAINING=$FED:$FED_B ARENA_FEDERATION_RECORD_MS=15000 PAID_FIRST=0 \
   setsid "$NODE" tools/run-testnet4-paid.mjs > $H/paid2.out 2>&1 < /dev/null & echo "$! node-paid2" >> $PIDS )
