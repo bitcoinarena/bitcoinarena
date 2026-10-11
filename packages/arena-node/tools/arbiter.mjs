@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+// THE ARBITRATION SET'S SERVICE (kanban #307, spec 5A.3B steps 1-5): unit arena-arbiter-<network>.
+//
+// Every ARENA_ARBITER_EVERY_MS (60 s) it asks each seat named in ARENA_ARBITER_SEATS for the slash proofs it filed (GET
+// /slashes) and, for each one not handled yet:
+//   - takes its evidence (GET /slash-proofs), the objection that held (GET /objection-bundle), the round (GET /round) and
+//     the entry (GET /entry) - from the seat, believed for nothing;
+//   - reads its own chain (its bitcoind): the round's beacon off the headers, the round's census and its committee
+//     (deriveCensus + selectCommittee as a seat does, the census checked against the round's census_root), and the
+//     census at the slash height (the tip), and the accused's bond output itself;
+//   - judges the proof (arbiter.js judgeProof: the objection REPLAYED here under the round's core), builds path B at
+//     slash_height = the tip, has 5 of its 7 members sign on their own, and posts it only after testmempoolaccept.
+// The members' keys are the test network's derivable ones (genesis-ids.js); mainnet has no set and this refuses it.
+// Its doors (POST /musig/nonce, /musig/partial, GET /status) serve the cooperative key path: it agrees to a release
+// only for a node no handled or open proof accuses.
+//
+//   ARENA_ARBITER_NETWORK=testnet4 ARENA_ARBITER_SEATS=https://seat-a,... ARENA_BITCOIND_URL=... ARENA_BITCOIND_COOKIE=...
+//   ARENA_ARBITER_PORT=31290 ARENA_ARBITER_STATE=<file> node tools/arbiter.mjs [--once]
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter } from '../src/arbiter.js';
+import { bondSetFor } from '../src/curve.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
+import { splitSlashEvidence, SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { deriveCensus } from '../../arena-protocol/src/census.js';
+import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
+import { selectCommittee } from '../../arena-protocol/src/sortition.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
+
+const env = process.env;
+const network = env.ARENA_ARBITER_NETWORK || 'regtest';
+const set = arbitrationMembers(network);
+const seats = String(env.ARENA_ARBITER_SEATS || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+const rpc = bitcoindRpc({ url: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE });
+const statePath = env.ARENA_ARBITER_STATE || null;
+const state = statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { handled: {} };
+const keep = () => { if (statePath) writeFileSync(statePath, JSON.stringify(state, null, 1)); };
+const say = (o) => console.log(`[arbiter] ${JSON.stringify(o)}`);
+const cache = blockCache();
+const LOOKBACK = Number(env.ARENA_ARBITER_LOOKBACK || 2100);
+
+const get = async (url, as = 'json') => { const r = await fetch(url, { signal: AbortSignal.timeout(20000) }); if (!r.ok) throw new Error(`${url} answered ${r.status}`); return as === 'json' ? r.json() : new Uint8Array(await r.arrayBuffer()); };
+
+/** The census of a round's contract at `height`, from this arbiter's own blocks, with its entries' adverts. */
+async function censusAt(contract, height) {
+  const tip = Number(await rpc('getblockcount'));
+  const view = await blocksOver(rpc, Math.max(0, height - LOOKBACK), Math.min(tip, height), { cache });
+  const byTxid = new Map();
+  for (const b of view.blocks) for (const raw of b.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* */ } }
+  const c = deriveCensus(view, { contract: { ...contract, censusHeight: height }, bond: bondSetFor(network),
+    resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
+    verifyUpdate: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } } });
+  return { ...c, tip, view };
+}
+
+async function handle(seat, s) {
+  const rid = fromHex(s.round), eid = fromHex(s.entry);
+  const recs = await get(`${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
+  let evidence = null;
+  for (let i = 0; i < recs.length; i += SLASH_EVIDENCE_BYTES) { const r = recs.subarray(i, i + SLASH_EVIDENCE_BYTES); if (toHex(splitSlashEvidence(r).proof.nodePubkey) === s.node) evidence = r; }
+  if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
+  const bundle = await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
+  const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));
+  const entry = decodeEntryContract(await get(`${seat}/entry?id=${s.entry}`, 'bytes'));
+  // THE ROUND'S CENSUS AND COMMITTEE, FROM THIS ARBITER'S OWN CHAIN
+  const census = await censusAt(contract, contract.censusHeight);
+  if (!census.ok) return { done: false, why: `no census: ${census.why}` };
+  if (toHex(census.root) !== toHex(contract.censusRoot)) return { done: true, why: 'the round names another census root than the chain gives: not this set\'s to slash on' };
+  const headers = { headers: census.view.blocks.map((b) => b.header), firstHeight: census.view.firstHeight };
+  const tipView = await blocksOver(rpc, Math.max(0, census.tip - LOOKBACK), census.tip, { cache });
+  const beacon = beaconFromChain(contract, { headers: tipView.blocks.map((b) => b.header), firstHeight: tipView.firstHeight });
+  if (!beacon.ok) return { done: false, why: `no beacon: ${beacon.why}` };
+  const seeded = committeeSeedFromBeacon(contract, { roundId: rid, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
+  if (!seeded.ok) return { done: false, why: seeded.why };
+  const committee = [...new Map([...selectCommittee({ entries: census.entries, contract, role: 'game', committeeSeed: seeded.seed }),
+    ...selectCommittee({ entries: census.entries, contract, role: 'settlement', committeeSeed: seeded.seed })].map((e) => [toHex(e.pubkey), e.pubkey])).values()];
+  const accused = census.entries.find((e) => toHex(e.pubkey) === s.node);
+  if (!accused) return { done: true, why: 'the accused is not in the round\'s census' };
+  const verdict = await judgeProof({ evidence, bundle, entry, entryId: eid, contract, committee, advert: accused.advert,
+    bondOutpoint: { txid: accused.txid, vout: accused.vout }, core: coreForRound(contract, rid, (await import('../src/plugins.js')).hostedPlugins((await loadGames()))),
+    roundRandomness: beacon.hash });
+  if (!verdict.slashed) return { done: true, why: `not slashed: ${verdict.why}` };
+  // THE BOND AS THE CHAIN HOLDS IT NOW, AND THE CENSUS AT THE SLASH HEIGHT (the tip)
+  const out = await rpc('gettxout', [toHex([...accused.txid].reverse()), accused.vout, false]);
+  if (!out) return { done: true, why: 'the bond is spent already' };
+  const bond = { txid: accused.txid, vout: accused.vout, value: BigInt(Math.round(out.value * 1e8)), script: fromHex(out.scriptPubKey.hex) };
+  const at = await censusAt(contract, census.tip);
+  if (!at.ok) return { done: false, why: `no census at the slash height: ${at.why}` };
+  const slash = buildSlash({ verdict, bond, advert: accused.advert, contract, roundId: rid, slashHeight: census.tip, tipHeight: census.tip,
+    censusNodes: at.entries.map((e) => e.pubkey), seats: contract.nodes || committee, set });
+  if (!slash.ok) return { done: false, why: slash.why };
+  // EACH MEMBER SIGNS ON ITS OWN; k OF THEM ARE ENOUGH, AND THE REST ARE NOT ASKED
+  const signatures = set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, slash.sighash) }));
+  const tx = assemble({ slash, signatures, set });
+  if (!tx.ok) return { done: false, why: tx.why };
+  const sent = await post(rpc, tx.hex);
+  return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers } : { done: false, why: sent.why };
+}
+
+let games = null;
+async function loadGames() {
+  if (games) return games;
+  const list = String(env.ARENA_GAMES || '').split(',').filter(Boolean);
+  games = [];
+  for (const p of list) { const m = await import(p); games.push(m.GAME || Object.values(m).find((v) => v && v.gameId && v.manifest)); }
+  return games;
+}
+
+async function pass() {
+  for (const seat of seats) {
+    let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
+    for (const s of list.slashes || []) {
+      if (state.handled[s.proof]) continue;
+      let r; try { r = await handle(seat, s); } catch (e) { r = { done: false, why: e.message }; }
+      say({ seat, proof: s.proof.slice(0, 16), node: s.node.slice(0, 16), ...r });
+      if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
+    }
+  }
+}
+
+const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).map(([proof, v]) => ({ proof, txid: v.posted, slashHeight: v.slashHeight }));
+// A RELEASE ONLY FOR A NODE NO HANDLED OR OPEN PROOF ACCUSES
+const open = new Set();
+const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.handled).some((v) => v.node === toHex(nodeKey))
+  ? { ok: false, why: 'a slash proof against this node is open or was posted' } : { ok: true });
+const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted() });
+say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
+await pass();
+if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }
+setInterval(() => { pass().catch((e) => say({ error: e.message })); }, Number(env.ARENA_ARBITER_EVERY_MS || 60000));

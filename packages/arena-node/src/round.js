@@ -1934,6 +1934,13 @@ export class Round {
       .run(roundIdBytes, entryIdBytes, nodePubkey, proofId, bytes, this.now()).changes;
   }
 
+  /** EVERY slash proof this node filed, newest first (kanban #307: the arbitration set's intake, GET /slashes). */
+  allSlashProofs({ limit = 500 } = {}) {
+    return this.db.prepare('SELECT round_id, entry_id, node_pubkey, proof_id, seen_ms FROM slash_proofs ORDER BY seen_ms DESC LIMIT ?').all(limit)
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id), nodePubkey: new Uint8Array(r.node_pubkey),
+        proofId: new Uint8Array(r.proof_id), seenMs: Number(r.seen_ms) }));
+  }
+
   /** Every slash proof this node filed for a run. */
   slashProofs(roundIdBytes, entryIdBytes) {
     return this.db.prepare(
