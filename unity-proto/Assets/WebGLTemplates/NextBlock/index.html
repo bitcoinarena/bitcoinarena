@@ -2493,6 +2493,25 @@
             try { BLWPCLIENT.recordDonation(vault(), named.round.federationId, { msat: BigInt(said.invoice_msat || 0), round: named.roundIdHex }); } catch { /* history only */ }
             return { ok: true, preimage: said.preimage };
           };
+          // THE NOTES FOLLOW THE SUCCESSOR (§23A.6 step 3, kanban #325): before any top-up, every federation this browser
+          // held notes in whose checked record says DRAINING and names this round's federation as its successor moves what
+          // it can send here - no press; the stage line says moving. A join step, never a timer (W4: no interval spends).
+          try {
+            const census = BLWPCLIENT.checkedCensusFor(named.round);
+            const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            for (const old of (census ? BLWPCLIENT.ledgerFederations(vault()) : []).filter((f) => f !== here)) {
+              const st = await BLWPCLIENT.federationStatus({ federationIdHex: old, nodes: named.nodes, census, verify: window.BLWP_CURVE.verify });
+              if (st.status !== 'DRAINING' || st.successorId !== here || !st.invite) continue;
+              const su = window.ARENA_FED_STATUS && window.ARENA_FED_STATUS.federation === here ? window.ARENA_FED_STATUS
+                : { ...(await BLWPCLIENT.federationStatus({ federationIdHex: here, nodes: named.nodes, census, verify: window.BLWP_CURVE.verify })), invite: named.federation };
+              const moved = await BLWPCLIENT.migratePlayerWallet({ round: Object.assign({}, named.round, { federationId: BLWPCLIENT.fromHex(old) }), invite: st.invite,
+                seed, LockClient: wasm.LockClient, storage: vault(), status: st, successor: { ...su, invite: su.invite || named.federation },
+                onState: (m) => onStep(m.state === 'moving' ? `moving your balance out of federation ${old.slice(0, 8)} (being replaced): ${Math.floor(Number(m.leftMsat) / 1000)} sat to go`
+                  : m.state === 'stopped' ? `the move out of federation ${old.slice(0, 8)} stopped (${m.why}) - your notes stay there; it is tried again at your next join` : `moved from federation ${old.slice(0, 8)}`) });
+              window.ARENA_MIGRATED = { from: old, to: here, moved: String(moved.moved), chunks: moved.chunks, state: moved.state };
+              console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
+            }
+          } catch (e) { console.warn('[arena] succession move: ' + e.message); }
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
