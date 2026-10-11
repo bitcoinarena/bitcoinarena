@@ -40,7 +40,9 @@ await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
 after(() => { server.closeAllConnections(); server.close(); });
 const PORT = server.address().port;
 async function stillAnswering() {
-  const r = await fetch(`http://127.0.0.1:${PORT}/`);
+  // a fresh connection each time: a call that held this thread for seconds outlives the server's keep-alive, and a reused
+  // socket it closed is the client's error, not the node's
+  const r = await fetch(`http://127.0.0.1:${PORT}/`, { headers: { connection: 'close' } }).catch(() => fetch(`http://127.0.0.1:${PORT}/`, { headers: { connection: 'close' } }));
   assert.equal(await r.text(), 'still answering');
 }
 
@@ -143,4 +145,71 @@ test('a good core still replays after every attack, and the report', async () =>
   assert.equal(r.stateHash, 'h:7:1:6');
   await stillAnswering();
   for (const row of rows) console.log('ROW ' + JSON.stringify(row));
+});
+
+// ITS MEMORY (kanban #343): time alone did not bound it - a core that allocated in a loop took the node to 2.9 GB before a
+// 20 s deadline. Each attack must end the core at its limit, the node must keep answering, and the memory must come back.
+const MB = 1048576;
+const MEMORY = [
+  ['typed arrays in a loop', { top: 'const keep = [];', step: 'for (;;) keep.push(new Float64Array(1 << 20))' }, /asked for more than 64 MB of arrays/],
+  ['ArrayBuffers in a loop', { top: 'const keep = [];', step: 'for (;;) keep.push(new ArrayBuffer(1 << 23))' }, /asked for more than 64 MB of arrays/],
+  ['copies through slice (the species path)', { top: 'const keep = [];', step: 'const big = new Float64Array(1 << 20); for (;;) keep.push(big.slice())' }, /asked for more than 64 MB of arrays/],
+  ['copies through map', { top: 'const keep = [];', step: 'const big = new Float64Array(1 << 20); for (;;) keep.push(big.map((x) => x + 1))' }, /asked for more than 64 MB of arrays/],
+  ['copies through toReversed (no constructor)', { top: 'const keep = [];', step: 'const big = new Float64Array(1 << 20); for (;;) keep.push(big.toReversed())' }, /asked for more than 64 MB of arrays/],
+  ['one array past the budget at once', { step: 'st.note = new Float64Array(1 << 24).length' }, /asked for more than 64 MB of arrays/],
+  ['an ArrayBuffer grown by transfer or resize', { step: 'new ArrayBuffer(8, { maxByteLength: 1 << 30 }).resize(1 << 30)' }, /resize is not a function/],
+  ['at load: the top level', { top: 'const keep = []; for (;;) keep.push(new Uint8Array(1 << 23));' }, /asked for more than 64 MB of arrays/],
+];
+
+test('every array attack ends the core at its 64 MB budget, the node keeps answering, and its memory comes back', async () => {
+  for (const [name, parts, says] of MEMORY) {
+    const c = core(parts);
+    const before = process.memoryUsage.rss();
+    const t0 = Date.now();
+    let why;
+    try { const s = sandboxFor(c, { callMs: 20000 }); s.call('replay', { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] }); why = 'answered'; }
+    catch (e) { why = e.message; }
+    const ms = Date.now() - t0;
+    assert.match(why, says, name);
+    const r = run(c);
+    assert.equal(r.ok, false, name);
+    await stillAnswering();
+    const grew = Math.round((process.memoryUsage.rss() - before) / MB);
+    assert.ok(grew < 200, `${name}: the node kept ${grew} MB after the core was ended`);
+    rows.push(['memory', name, `refused in ${ms} ms, node +${grew} MB after`, why]);
+  }
+});
+
+test('an ordinary array grown forever ends only the core\'s thread, at its heap limit', async () => {
+  const c = core({ top: 'const keep = [];', step: 'for (;;) keep.push(new Array(1 << 16).fill(1.5))' });
+  const before = process.memoryUsage.rss();
+  const t0 = Date.now();
+  let why;
+  try { sandboxFor(c, { callMs: 8000 }).call('replay', { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] }); why = 'answered'; }
+  catch (e) { why = e.message; }
+  assert.match(why, /its thread was ended/);
+  await stillAnswering();
+  const grew = Math.round((process.memoryUsage.rss() - before) / MB);
+  assert.ok(grew < 300, `the node kept ${grew} MB`);
+  rows.push(['memory', 'an ordinary array grown forever (heap)', `ended in ${Date.now() - t0} ms, node +${grew} MB after`, why]);
+  const str = core({ step: "let x = 'x'; for (;;) x += x" });
+  const s2 = run(str);
+  assert.equal(s2.ok, false);
+  assert.match(s2.why, /Invalid string length|its thread was ended/);
+  rows.push(['memory', 'a string doubled forever', 'thrown in the run', s2.why]);
+  await stillAnswering();
+});
+
+test('the backstop: past 512 MB of growth in one call the core\'s thread is ended, whatever path it found', async () => {
+  // the budget opened to 4 GB for this test only, so the backstop is what stops it
+  const c = core({ top: 'const keep = [];', step: 'for (;;) keep.push(new Float64Array(1 << 20).fill(1))' });
+  const before = process.memoryUsage.rss();
+  let why;
+  try { sandboxFor(c, { callMs: 30000, arrayBudget: 4096 * MB }).call('replay', { seedWord: 1, config: {}, runTicks: 10, start: 0, words: [[0, 0, 0, 0, 0]], events: {}, marks: [], pictures: [] }); why = 'answered'; }
+  catch (e) { why = e.message; }
+  assert.match(why, /grew this node by \d+ MB in replay, past the 512 MB a call may/);
+  await stillAnswering();
+  const grew = Math.round((process.memoryUsage.rss() - before) / MB);
+  rows.push(['memory', 'past the backstop (budget opened to 4 GB)', `node +${grew} MB after`, why]);
+  for (const row of rows.filter((x) => x[0] === 'memory')) console.log('MEMROW ' + JSON.stringify(row));
 });
