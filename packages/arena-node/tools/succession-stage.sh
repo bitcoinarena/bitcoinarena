@@ -56,11 +56,12 @@ reading "S3 A draining: $(curl -s --max-time 10 http://127.0.0.1:${NODE_PORTS%%,
 # A ROUTE BETWEEN THE TWO GATEWAYS (§23A.6 step 3: "a gateway that serves only one routes over Lightning to one that serves the
 # other"): the lock client never pays through the gateway on the invoice's own node, so a move from A pays B's invoice
 # through the other gateway - and this stack's only channels were alice->bob and alice->carol (run 5: every send Refunded)
-for pair in "bob carol" "carol bob"; do set -- $pair
-  KEY2=$(ln_ $2 getinfo | js 'o=>o.identity_pubkey')
-  until_ "$1 connects $2" 60 ln_ $1 connect "$KEY2@127.0.0.1:${LLIS[$2]}" >/dev/null 2>&1
-  openx() { ln_ $1 openchannel --node_key=$KEY2 --local_amt=4000000 --push_amt=2000000 > $H/open-$1-$2.out 2>&1; }
-  until_ "$1 opens a channel to $2" 120 openx
+# (the pair in named variables: under set -u a function's $1 is its own, empty, argument list - run 6 stopped there)
+for pair in "bob carol" "carol bob"; do FROM=${pair% *} TO=${pair#* }
+  KEY2=$(ln_ $TO getinfo | js 'o=>o.identity_pubkey')
+  until_ "$FROM connects $TO" 60 ln_ $FROM connect "$KEY2@127.0.0.1:${LLIS[$TO]}" >/dev/null 2>&1
+  openx() { ln_ $FROM openchannel --node_key=$KEY2 --local_amt=4000000 --push_amt=2000000 > $H/open-$FROM-$TO.out 2>&1; }
+  until_ "$FROM opens a channel to $TO" 120 openx
   bc generatetoaddress 1 $MINE >/dev/null
 done
 bc generatetoaddress 6 $MINE >/dev/null
