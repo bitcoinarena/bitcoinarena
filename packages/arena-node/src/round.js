@@ -621,7 +621,7 @@ export class Round {
     // chooses the price. (A batch with none is taken as before; a round whose contract names a feed requires them later.)
     if (b.attests && b.attests.length) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
-      const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: receiptsNeeded(c.nodes.length),
+      const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.nodes.length); } catch { return c.nodes.length; } })(),
         verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
       if (!prices.ok) throw new Error(prices.why);
     }

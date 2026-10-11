@@ -12,6 +12,9 @@
 //
 //   secret      = the first taggedHash("ARENA/v1/PlayerKey", seed || round_id || c),
 //                 c = 0, 1, ..., that is a scalar of the group (0 < s < n)
+//   order n > 0 = the same over seed || round_id || n (4 bytes, big-endian) || c: one key per ORDER a tab places
+//                 in a market round (kanban #336) - each order is its own entry, lock, payout and return, as the
+//                 seats hold it; order 0 is the round's key above, byte for byte
 //   player key  = x-only(secret . G)                      (BIP-340)
 //   refund key  = 0x02 || player key                      (stake-lock.js)
 //   fingerprint = the first 8 bytes of
@@ -32,15 +35,18 @@ export const PLAYER_SEED_BYTES = 32;
 
 const isPlayerBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
-/** This round's player secret from the player's seed. */
-export function playerSecretFor(seed, roundId) {
+/** This round's player secret from the player's seed - and an order's, for order n > 0 (kanban #336). */
+export function playerSecretFor(seed, roundId, order = 0) {
   if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
   if (!isPlayerBytes32(roundId)) throw new Error('a round id is 32 bytes');
-  const msg = new Uint8Array(65);
+  if (!Number.isInteger(order) || order < 0 || order > 0xffffffff) throw new Error('an order number is a whole number from 0 to 2^32 - 1');
+  const at = order ? 68 : 64;
+  const msg = new Uint8Array(at + 1);
   msg.set(seed, 0);
   msg.set(roundId, 32);
+  if (order) new DataView(msg.buffer).setUint32(64, order, false);
   for (let c = 0; c < 256; c++) {
-    msg[64] = c;
+    msg[at] = c;
     const secret = taggedHash(TAG.playerKey, msg);
     const v = scalarFrom32(secret);
     if (v > 0n && v < FIELD) return secret;

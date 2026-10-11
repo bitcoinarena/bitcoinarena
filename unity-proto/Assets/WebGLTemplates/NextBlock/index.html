@@ -1104,6 +1104,7 @@
       if (!core) return { ok: false, why: 'that round runs core ' + hex.slice(0, 16) + '..., and this page carries no such core - '
         + 'a run on another core fails its checkpoints from the first tick' };
       window.BLWP = core; window.BLWP_ROUND_CORE = hex;
+      if (window.ARENA_PRICES && window.ARENA_PRICES.wrap) window.ARENA_PRICES.wrap(core);
       var b = window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwp;
       if (b && b.core !== core) { b.core = core; console.log('[blwp] core ' + hex.slice(0, 8) + ' for this round'); }
       return { ok: true, hex: hex };
@@ -1124,6 +1125,70 @@
   <script src="arena-client.js"></script>
   <!-- Same secp256k1 the daemons use. Without it a named round never joins. -->
   <script src="blwp-curve.js"></script>
+  <script>
+    // THE COMMITTEE'S PRICE, APPLIED AT ITS TICK (§11, kanban #311): "a client includes each sample in its next InputBatch at
+    // the tick it applied it ... The player never chooses the price." Once the round's seats serve attested samples
+    // (GET /price-samples), this page hands its core ONLY those - each just before the tick it names, beside its
+    // signatures into the transcript (client.submitAttestedSample) - and Unity's own price stays on its chart: its
+    // submitSample / submitTape reach no core and no batch. Before any attested sample, or in a round whose seats serve
+    // none, nothing changes. Every core this page carries is wrapped once, so the round's core is too (BLWP_USE_CORE).
+    (function () {
+      var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), tape: null, tapeDone: false, active: false, applied: [], timer: null };
+      function hex2u8(h) { return Uint8Array.from(String(h).match(/../g).map(function (x) { return parseInt(x, 16); })); }
+      function sigsOf(list) { return (list || []).map(function (s) { return [hex2u8(s.key), hex2u8(s.signature)]; }); }
+      function netClient() {
+        try { var m = window.unityInstance && window.unityInstance.Module; var n = m && m.blwpNet; return n && n.inWorld && n.client ? n.client : null; } catch (e) { return null; }
+      }
+      function due(core, st, sample, tape) {
+        var c = netClient(); if (!c || typeof BLWPCLIENT === 'undefined') return;
+        var t = c.offered | 0;
+        if (!P.tapeDone && P.tape && t === 0) {
+          tape.call(core, st, P.tape.prices.map(BLWPCLIENT.centsToTapeUnits));
+          c.submitAttestedTape({ tick: 0, prices: P.tape.prices, sigs: sigsOf(P.tape.sigs) });
+          P.tapeDone = true; P.applied.push(['tape', 0]);
+        }
+        var s = P.samples.get(t);
+        if (s && !s.applied) {
+          sample.call(core, st, BLWPCLIENT.centsToTapeUnits(s.priceCents));
+          c.submitAttestedSample({ tick: t, priceCents: s.priceCents, sigs: sigsOf(s.sigs) });
+          s.applied = true; P.applied.push([t, s.priceCents]);
+        }
+      }
+      function wrap(core) {
+        if (!core || core.__arenaPrices || typeof core.step !== 'function') return;
+        core.__arenaPrices = true;
+        var step = core.step, sample = core.submitSample, tape = core.submitTape;
+        if (sample) core.submitSample = function () { return P.active ? false : sample.apply(this, arguments); };
+        if (tape) core.submitTape = function () { return P.active ? false : tape.apply(this, arguments); };
+        core.step = function (st) { if (P.active && sample) due(this, st, sample, tape); return step.apply(this, arguments); };
+      }
+      P.wrap = wrap;
+      Object.keys(window.BLWP_CORES || {}).forEach(function (k) { wrap(window.BLWP_CORES[k]); });
+      if (window.BLWP) wrap(window.BLWP);
+      async function poll() {
+        if (!P.round) return;
+        var since = 0; P.samples.forEach(function (v, k) { if (k >= since) since = k + 1; });
+        for (var i = 0; i < P.nodes.length; i++) {
+          try {
+            var r = await fetch(String(P.nodes[i]).replace(/\/+$/, '') + '/price-samples?round=' + P.round + '&since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+            if (!r.ok) continue;
+            var j = await r.json();
+            (j.samples || []).forEach(function (x) { if (!P.samples.has(x.tick)) P.samples.set(x.tick, { priceCents: x.priceCents, sigs: x.sigs }); });
+            if (j.tape && !P.tape) P.tape = j.tape;
+            if (!P.active && (P.samples.size || P.tape)) { P.active = true; console.log('[arena] the committee\'s price is on: this run plays the attested samples only'); }
+            return;
+          } catch (e) { /* the next seat */ }
+        }
+      }
+      // the join names the round and its seats; the samples are read every 2 s from then on
+      P.watch = function (roundHex, nodes) {
+        if (P.round === roundHex) return;
+        P.round = roundHex; P.nodes = (nodes || []).slice(); P.samples = new Map(); P.tape = null; P.tapeDone = false; P.active = false; P.applied = [];
+        if (P.timer) clearInterval(P.timer);
+        poll(); P.timer = setInterval(poll, 2000);
+      };
+    })();
+  </script>
 
   <script>
     // TYPING IN THE PAGE'S OWN FIELDS (the owner 2026-09-30 22:04, phone: "you cannot type into the custom deposit field").
@@ -2091,9 +2156,12 @@
       // session pastes the backup again.
       const seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random });
       const origin = BLWPCLIENT.seedOrigin({ storage: window.sessionStorage });
+      // an ORDER's own key (kanban #336): its number from the market's order call; a game's entry or a single pick is 0
+      // THE COMMITTEE'S PRICE for this round's run, from its seats (§11, kanban #311): read from now on, applied at its ticks
+      if (window.ARENA_PRICES) window.ARENA_PRICES.watch(named.roundIdHex, named.nodes);
       const player = BLWPCLIENT.playerFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }),
-        { seed, curve: window.BLWP_CURVE });
+        { seed, curve: window.BLWP_CURVE, order: Number((pickFor(named.roundIdHex) || {}).orderIndex) || 0 });
       // WHAT THIS TAB ALREADY DONATED TO THIS ROUND, FROM ITS NOTES, before any
       // signer node (M3.2 6e): the panel shows it even if the signer node is refused later;
       // payDonation's own answer replaces it when it comes.
@@ -2413,7 +2481,7 @@
           const whose = { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey };
           // WHAT THE PAYOUT IS COLLECTED WITH after the window (6d): the same seed,
           // round and federation the lock was made with.
-          window.BLWP_LOCK_JOIN = { invite: named.federation, roundIdHex: named.roundIdHex, seed, nodes: named.nodes };
+          window.BLWP_LOCK_JOIN = { invite: named.federation, roundIdHex: named.roundIdHex, seed, nodes: named.nodes, order: player.order || 0 };
           const committedTo = (eid) => {
             // THE PENDING LINE ASKS ABOUT THIS ENTRY from now on (WINDOW-10-SPEC, §24)
             // ONE NOTE PER ENTRY, AND THIS TAB READS ITS OWN (ORDER-2116, measured 2026-10-02 01:56Z): keyed by round alone,
@@ -2573,7 +2641,7 @@
         const hidden = BLWPCLIENT.hiddenMove(hiding.move, random);
         const entry = Object.assign(BLWPCLIENT.entryFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
-            seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
+            seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
             donationMsat: donation.donationMsat, joinTick: 0,
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
@@ -2610,7 +2678,7 @@
         if (chosen.limitPrice && !sessionKeyPkcs8) { window.BLWP_JOIN_REFUSED = 'this browser cannot make the Ed25519 key an order is cancelled with'; return; }
         const entry = keptEntry || Object.assign(BLWPCLIENT.entryFor(
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
-            seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
+            seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
             donationMsat: donation.donationMsat, joinTick: 0, pick: chosen.pick, confirmedGames: confirmedMarkets(),
             // AN ORDER (kanban #237): the pick at most this price of the scale, until this time - from a market client's order
@@ -2622,13 +2690,13 @@
         window.BLWP_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick };
         rememberPick(Object.assign(BLWPCLIENT.pickRecord({ roundIdHex: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick,
           round: named.round, nodes: named.nodes, confirmed: !!chosen.confirmed }),
-          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now() } } : {}));
+          chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0 } } : {}));
         return;
       }
       if (keptEntry) window.BLWP_ENTRY = keptEntry;
       else window.BLWP_ENTRY = BLWPCLIENT.entryFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
-          seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, random, ...(stake ? { stake } : {}),
+          seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
           donationMsat: donation.donationMsat, joinTick: late.joinTick,
         });
@@ -2688,7 +2756,7 @@
     const roundWallets = new Map();
     function roundAsk(r, LockClient) {
       return { round: r.round, roundId: BLWPCLIENT.fromHex(r.roundIdHex), invite: r.invite, seed: r.seed,
-        curve: window.BLWP_CURVE, LockClient, storage: vault(), nodes: r.nodes };
+        curve: window.BLWP_CURVE, LockClient, storage: vault(), nodes: r.nodes, order: Number(r.order) || 0 };
     }
     // ONE TAB AT A TIME USES A KEPT ROUND'S WALLET (spec §24): its database is shared by every
     // tab of this browser now, and two wallets over one database would spend the same notes. The
@@ -2808,7 +2876,7 @@
             + ', ' + knownBySeed.get(hex).length + ' already kept');
         }
         for (const f of found)
-          BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed: f.seed });
+          BLWPCLIENT.saveCollect(vault(), { roundIdHex: f.roundIdHex, round: f.round, invite: named.federation, nodes: named.nodes, seed: f.seed, order: f.order || 0 });
         window.BLWP_FOUND_OWED = found.map((f) => f.roundIdHex);
         if (found.length) { console.log('[blwp] owed: ' + found.length + ' round(s) settled in the last 24 h name a key of this browser'); lookThePayout(); }
         return window.BLWP_FOUND_OWED;
@@ -2910,12 +2978,12 @@
           const co = await BLWPCLIENT.collectIntoPlayerWallet({ look: lo, ...roundAsk(older, lco) });
           if (co.collected) {
             console.log('[blwp] owed (round ' + older.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + co.creditedMsat + ' msat');
-            BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed);
+            BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
             stakeBack.delete(older.roundIdHex);
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
             paintHistory();
           } else if (lo.final && lo.inTabMsat === 0n) {
-            BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed);
+            BLWPCLIENT.markCollectDone(vault(), older.roundIdHex, { payout: BLWPCLIENT.owedToLine(lo), stake: null }, older.seed, older.order || 0);
             stakeBack.delete(older.roundIdHex);
             collectNote(older.roundIdHex.slice(0, 8), 'older round MARKED DONE: ' + BLWPCLIENT.owedToLine(lo) + ' <- ' + lookSaid(lo));
           }
@@ -2941,7 +3009,7 @@
           const c = await BLWPCLIENT.collectIntoPlayerWallet({ look, ...roundAsk(newest, lcn) });
           if (c.collected) {
             console.log('[blwp] owed, collected into the player wallet: ' + c.creditedMsat + ' msat');
-            BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, newest.seed);
+            BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: BLWPCLIENT.owedToLine(look), stake: null }, newest.seed, newest.order || 0);
             stakeBack.delete(newest.roundIdHex);
             if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
             paintHistory();
@@ -2951,7 +3019,7 @@
         else if (newest.done) window.BLWP_COLLECT_LINE = [newest.done.payout, newest.done.stake].filter(Boolean).join(' · ');
         else if (look.final && look.inTabMsat === 0n) {
           const line = BLWPCLIENT.owedToLine(look);
-          BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed);
+          BLWPCLIENT.markCollectDone(vault(), newest.roundIdHex, { payout: line, stake: null }, newest.seed, newest.order || 0);
           stakeBack.delete(newest.roundIdHex);
           console.log('[blwp] owed: ' + line);
           collectNote(newest.roundIdHex.slice(0, 8), 'newest round MARKED DONE: ' + line + ' <- ' + lookSaid(look));
@@ -4511,7 +4579,13 @@
         market: game.attested ? {
           // `stakeMsat` (kanban #237): the order's own amount, msat - from 1 sat to the cap (order-book.js); none: the round's stake
           order: (id, pick, limitPrice, orderExpiryMs = 0, stakeMsat = null) => {
-            window.BLWP_PICK_CHOSEN = { round: id, pick, label: String(pick), gameId: game.id, confirmed: false, limitPrice, orderExpiryMs,
+            // EACH ORDER ITS OWN PLAYER KEY (kanban #336, measured by the #236 bots: a tab's second order in a round took the
+            // first one's saved lock - "that fee lock holds 510 msat and the entry's fee is 490"): this tab's orders in a round
+            // are numbered 0, 1, 2 ... - the first is the round's key as before - and every order is its own entry, lock,
+            // payout and return. Counted per attempt, so a refused order never hands its number to the next one.
+            let orderIndex = 0;
+            try { const k = 'arena.order.next.' + id; orderIndex = Number(window.sessionStorage.getItem(k) || 0) || 0; window.sessionStorage.setItem(k, String(orderIndex + 1)); } catch { orderIndex = 0; }
+            window.BLWP_PICK_CHOSEN = { round: id, pick, label: String(pick), gameId: game.id, confirmed: false, limitPrice, orderExpiryMs, orderIndex,
               ...(stakeMsat !== null && stakeMsat !== undefined ? { stakeMsat: String(stakeMsat) } : {}) };
             return window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false;
           },
