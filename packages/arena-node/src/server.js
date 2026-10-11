@@ -3327,7 +3327,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/network-games') {
         const ng = await networkGamesNow({ fresh: url.searchParams.get('fresh') === '1' });
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), atMs: ng.atMs, seats: ng.seats, games: ng.games }));
+        // hosted here or not as of this ask: a game installed since the last read is not offered again
+        const games = ng.games.map((g) => ({ ...g, hostedHere: hosted.has(g.id), updateOf: hosted.has(g.parent) && !hosted.has(g.id) ? g.parent : null }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), atMs: ng.atMs, seats: ng.seats, games }));
       }
       if (req.method === 'GET' && url.pathname === '/games') {
         const games = [...hosted.values()].map((p) => ({ id: toHex(p.gameId), name: p.name, title: p.title || p.name,
