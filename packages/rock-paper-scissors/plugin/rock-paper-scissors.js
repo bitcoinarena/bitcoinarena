@@ -24,6 +24,8 @@ export const RPS_DECIDE_CORE = Object.freeze(Object.defineProperty({ name: RPS_D
 export const RPS_CLIENT_FILE = new URL('../client/index.html', import.meta.url);
 
 export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', manifest: RPS_MANIFEST, gameId: RPS_GAME_ID, info: INFO,
+  // its square icon (kanban #338): served at GET /game-icon, shown on the chooser's tile
+  icon: new URL('../brand/rps-icon.svg', import.meta.url),
   cores: new Map([[RPS_DECIDE_CORE.hash, RPS_DECIDE_CORE]]), title: 'Rock Paper Scissors',
   donationSet: TESTNET4_DONATION_SET_KEYS.recipients,
   // its client, so the plugin store can hand the game to another seat (kanban #276 step 5)
