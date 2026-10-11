@@ -416,7 +416,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const attestedWhy = new Map();
   const settleAttestedSoon = () => {
     if (attestedSweep || !settlements) return;
+    let sweeping = false;
     attestedSweep = setInterval(async () => {
+      // one sweep at a time (kanban #336): a sweep still settling is not started again on top of itself
+      if (sweeping) return;
+      sweeping = true;
+      try {
       const ids = round.db.prepare('SELECT DISTINCT round_id FROM outcome_attestations').all().map((r) => new Uint8Array(r.round_id));
       const waiting = ids.filter((rid) => { const k = round.lockSettlement(rid); return !(k && k.state === 'ACCEPTED'); });
       if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
@@ -430,6 +435,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (was !== got.why) { attestedWhy.set(k, got.why); console.log(`[outcome] ${k.slice(0, 16)} not settled yet: ${got.why}`); }
         }
       }
+      } finally { sweeping = false; }
     }, 5000);
     if (attestedSweep.unref) attestedSweep.unref();
   };

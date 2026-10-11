@@ -131,6 +131,8 @@ out += '         watchGhosts: watchGhosts, GHOST_BACKLOG: GHOST_BACKLOG,\n';
 out += '         tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,\n';
 out += '         playersLine: playersLine, newestPose: newestPose,\n';
 out += '         stakeLine: stakeLine,\n';
+// THE COMMITTEE'S PRICE (§11, kanban #311): the page turns a signed price in cents into the tape's unit for its core
+out += '         centsToTapeUnits: centsToTapeUnits,\n';
 out += '         joinQuery: joinQuery, joinFromQuery: joinFromQuery,\n';
 out += '         verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,\n';
 out += '         isVerified: isVerified, backupLine: backupLine, NO_BACKUP_LINE: NO_BACKUP_LINE,\n';

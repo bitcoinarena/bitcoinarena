@@ -1004,9 +1004,9 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
  * The guardians refuse it before the lock's expiration - reported, not thrown.
  */
 export async function refundStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  onStep = () => {} } = {}) {
+  onStep = () => {}, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
   if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
@@ -1054,9 +1054,9 @@ export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {
  * seed's secret spends the lock with the player's key.
  */
 export async function redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client: given = null, onStep = () => {} } = {}) {
+  client: given = null, onStep = () => {}, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
   if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
@@ -1112,17 +1112,17 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
  * its forfeit (`redeemStake`).
  */
 export async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client: given = null, onStep = () => {} } = {}) {
+  client: given = null, onStep = () => {}, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no payout contract');
   // A PAYOUT THIS TAB ALREADY COLLECTED is answered from the tab's note: after a
   // reload the contract is spent, and asking the federation again could only fail
   // every time the page asks.
-  const noted = `${PAYOUT_NOTE}${toHex(roundId)}`;
+  const noted = `${PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the signer nodes for the round\'s settlement');
   const s = await settlementOf({ roundId, nodes, fetcher });
@@ -1161,9 +1161,9 @@ const PAYOUT_NOTE = 'arena.payout.';
  * for anything else (the window, a signer node short), asked again.
  */
 export async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client = null, onStep = () => {}, refused = false } = {}) {
+  client = null, onStep = () => {}, refused = false, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const noted = `${STAKE_NOTE}${toHex(roundId)}`;
+  const noted = `${STAKE_NOTE}${toHex(roundId)}${orderTag(order)}`;
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
@@ -1175,7 +1175,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   }
   let got;
   try {
-    got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep });
+    got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep, order });
   } catch (e) {
     // NOBODY WON (the owner 2026-10-03): a loser's stake comes back at settlement when no winner was paid - a signer node
     // whose settlement is not ACCEPTED yet, or whose round has an entry still in its window, says so, and is asked again
@@ -1217,12 +1217,15 @@ const STAKE_NOTE = 'arena.stakeback.';
 // same browser replaced the first's record, the winner's tab looked up the loser's lock, found nothing owed and marked the
 // round done - its pending line went at FINAL and its 96000 msat payout stayed in the federation. The record already
 // carries its tab's seed; the key now names it too, and a tab reads and marks only its own.
-const collectKey = (roundIdHex, seed) => `${COLLECT_NOTE}${roundIdHex}.${(seed instanceof Uint8Array ? toHex(seed) : String(seed || '')).slice(0, 16)}`;
-export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null } = {}) {
+// AND ONE PER ORDER (kanban #336): a tab's orders in one market round are as many entries, each with its own key - each
+// its own record (".o<n>" after the seed; order 0, the round's key, keeps the key it always had), and its own notes
+const orderTag = (order) => (order ? `.o${Number(order)}` : '');
+const collectKey = (roundIdHex, seed, order = 0) => `${COLLECT_NOTE}${roundIdHex}.${(seed instanceof Uint8Array ? toHex(seed) : String(seed || '')).slice(0, 16)}${orderTag(order)}`;
+export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null, order = 0 } = {}) {
   try {
-    const key = collectKey(roundIdHex, seed);
+    const key = collectKey(roundIdHex, seed, order);
     // a record of this round from before the key named its seed, if it is this seed's, moves under the new key
-    let old = storage.getItem(`${COLLECT_NOTE}${roundIdHex}`);
+    let old = order ? null : storage.getItem(`${COLLECT_NOTE}${roundIdHex}`);
     try { if (old && JSON.parse(old).seed === toHex(seed)) storage.removeItem(`${COLLECT_NOTE}${roundIdHex}`); else old = null; } catch { old = null; }
     // only this seed's old record carries over: another player's answers are not this one's
     const was = storage.getItem(key) || old;
@@ -1235,7 +1238,7 @@ export function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, s
       if (stakeLock) lock = { outpoint: `${toHex(stakeLock.outpoint.txid)}:${String(stakeLock.outpoint.outIdx)}`, fields: lockFieldsToJson(stakeLock.fields) };
     } catch { lock = null; }
     storage.setItem(key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
-      stakeLock: lock, done, savedMs: Date.now() }));
+      stakeLock: lock, done, savedMs: Date.now(), ...(order ? { order: Number(order) } : {}) }));
     return true;
   } catch { return false; }
 }
@@ -1254,7 +1257,7 @@ export function savedCollects(storage, { seed = null } = {}) {
         const [txid, outIdx] = r.stakeLock ? String(r.stakeLock.outpoint).split(':') : [null, null];
         out.push({ roundIdHex: r.roundIdHex, round: decodeRoundContract(fromHex(r.round)), invite: r.invite, nodes: r.nodes, seed: fromHex(r.seed),
           stakeLock: r.stakeLock ? { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(r.stakeLock.fields) } : null,
-          done: r.done || null, savedMs: Number(r.savedMs) || 0 });
+          done: r.done || null, savedMs: Number(r.savedMs) || 0, order: Number(r.order) || 0 });
       } catch { /* an unreadable record is no record */ }
     }
   } catch { /* no storage: nothing kept */ }
@@ -1325,9 +1328,9 @@ export function collectLines(records = [], { failed = new Map(), held = new Set(
 }
 
 /** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
-export function markCollectDone(storage, roundIdHex, done, seed = null) {
+export function markCollectDone(storage, roundIdHex, done, seed = null, order = 0) {
   try {
-    let key = seed ? collectKey(roundIdHex, seed) : null;
+    let key = seed ? collectKey(roundIdHex, seed, order) : null;
     if (!key || !storage.getItem(key)) {
       // no seed named, or a record from before the seed key: the round's record under the old key, else its only one
       const keys = [];
@@ -1381,7 +1384,9 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   for (const [id, l] of listed) {
     for (let i = 0; i < list.length; i++) {
       if (skips[i].has(id)) continue;
-      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve }).pubkey));
+      // EVERY ORDER'S KEY TOO (kanban #336): a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
+      for (let order = 0; order <= ORDER_SCAN; order++) {
+      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
@@ -1397,11 +1402,14 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
         contracts.set(id, round);
       }
       const round = contracts.get(id);
-      if (round) found.push({ roundIdHex: id, round, payout, lock, seed: list[i] });
+      if (round) found.push({ roundIdHex: id, round, payout, lock, seed: list[i], order });
+      }
     }
   }
   return found;
 }
+// how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
+export const ORDER_SCAN = 32;
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were
@@ -1475,9 +1483,9 @@ export async function withdrawPlayerWallet({ round, invite, seed, LockClient, st
  * nothing (lockStatus): gone - nothing to do; before its expiry - not final, and when it comes
  * back; expired - refunded into the tab's wallet, from where the withdraw takes it.
  */
-export async function refundKept({ round, roundId, seed, curve, client, storage, kept = null } = {}) {
+export async function refundKept({ round, roundId, seed, curve, client, storage, kept = null, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no lock to refund');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
   if (!held || !held.lock) return { ok: false, final: true, locks: [], why: 'this tab keeps no lock for this round' };
   const locks = [{ kind: 'stake', outpoint: held.lock.outpoint, fields: held.lock.fields }];
@@ -1559,9 +1567,9 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
 }
 
-export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null } = {}) {
+export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so nothing in it is owed from a lock');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   const rid = toHex(roundId);
   const note = (k) => { try { const v = storage && storage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
@@ -1569,7 +1577,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   const held = async (txid, outIdx) => !client || !!JSON.parse(await client.lockStatus(txid, Number(outIdx))).stored;
   const s = await settlementOf({ roundId, nodes, fetcher });
   let payout;
-  const paidNote = note(`${PAYOUT_NOTE}${rid}`);
+  const paidNote = note(`${PAYOUT_NOTE}${rid}${orderTag(order)}`);
   if (paidNote) payout = { state: 'collected', msat: BigInt(paidNote.amountMsat) };
   else if (!s.ok) payout = { state: 'waiting', why: s.why };
   else {
@@ -1580,7 +1588,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   }
   let stake;
   let lockAnswers = null;
-  const backNote = note(`${STAKE_NOTE}${rid}`);
+  const backNote = note(`${STAKE_NOTE}${rid}${orderTag(order)}`);
   if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
   else {
     const locks = s.ok ? await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }) : [];
@@ -1693,11 +1701,11 @@ export async function collectOwed({ look, client, ...ask } = {}) {
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
  * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
  */
-export async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher } = {}) {
+export async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const before = BigInt(await client.balanceMsat());
-  const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, ...(fetcher ? { fetcher } : {}) });
+  const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
   const after = BigInt(await client.balanceMsat());
   const creditedMsat = after > before ? after - before : 0n;
   // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (the owner 2026-10-03: "the money that comes back must be

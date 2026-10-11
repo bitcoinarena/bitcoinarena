@@ -19,6 +19,12 @@ export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CL
 const run = (bin, args, timeoutMs) => new Promise((done, fail) => {
   execFile(bin, args, { encoding: 'utf8', timeout: timeoutMs, maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
     const line = String(stdout || '').trim().split('\n').filter((l) => l.startsWith('{')).pop();
+    // A TOOL KILLED AT ITS TIMEOUT SAYS SO (kanban #336: its stderr was empty and the line was only "Command failed: <the
+    // whole command>", which hid why a round never settled)
+    if (err && !line && err.killed) {
+      const last = String(stderr || '').trim().split('\n').filter(Boolean).pop();
+      return fail(new Error(`blwp-stake-lock ${args[1] || ''} timed out after ${timeoutMs} ms${last ? ` (its last word: ${last.slice(0, 300)})` : ''}`));
+    }
     if (err && !line) return fail(new Error(`blwp-stake-lock: ${String(stderr || err.message).trim().split('\n').pop()}`));
     try { done(JSON.parse(line)); } catch { fail(new Error(`blwp-stake-lock answered no JSON: ${String(stdout).slice(0, 200)}`)); }
   });
@@ -114,9 +120,16 @@ export const keptFor = (ms, fn, now = () => Date.now()) => {
 // after another, ~1.3 s apart, 13-19 s after it was held (measured on testnet4, rounds 1a21b8d0 and 1537ed99). `readDataDir`
 // (a copy of the joined directory, one per seat) answers status, guardians, gateways and fees, which submit nothing; send and
 // settle, which do, stay on `dataDir`.
-export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs = 60000, keepMs = 60000, now = () => Date.now(), serve = true, spawnFn = spawn }) {
-  // THE READ-ONLY QUESTIONS THROUGH ONE SERVER on the read directory; a failed server question is asked the old way
-  const server = serve ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs, spawnFn, now }) : null;
+// `settleTimeoutMs` (kanban #336, measured 2026-10-10 on the regtest Up/Down market: a book round's settle - every filled
+// order's stake and fee lock claimed, every payout out, ~50 locks - was killed at the 60 s every other question gets, again
+// and again, and the round never settled): the one write that moves a whole round gets five times as long (5 minutes)
+export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs = 60000, settleTimeoutMs = timeoutMs * 5, keepMs = 60000, now = () => Date.now(), serve = true, spawnFn = spawn }) {
+  // THE READ-ONLY QUESTIONS THROUGH ONE SERVER on the read directory; a failed server question is asked the old way.
+  // NEVER ON THE SHARED WRITE DIRECTORY (kanban #336, measured 2026-10-11 on the regtest Up/Down market: the paid runner's
+  // port named no read directory, so its server held the one client database every seat settles through - each settle
+  // waited on its flock until it was killed, and no book round ever settled). A port with no directory of its own to read
+  // asks every question the old way, one run each.
+  const server = serve && readDataDir !== dataDir ? stakeLockServer({ bin, dataDir: readDataDir, timeoutMs, spawnFn, now }) : null;
   const read = async (flags) => {
     if (server) { try { return await server.ask(flags[1], argsOf(flags.slice(2).filter((x, i, a) => !(x === '--data-dir' || a[i - 1] === '--data-dir')))); } catch { /* the old way below */ } }
     return run(bin, flags, timeoutMs);
@@ -200,7 +213,7 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
           ? `invoice:${p.sent.paymentHash}:${p.sent.gatewayPk}:${toHex(p.payoutPk)}:${p.sent.expiration}:${p.msat}`
           : `${toHex(p.payoutPk)}:${p.msat}`)).join(','),
         '--nonce', toHex(nonce), ...(signature ? ['--signature', toHex(signature)] : [])];
-      const j = await run(bin, args, timeoutMs);
+      const j = await run(bin, args, settleTimeoutMs);
       return { txid: String(j.txid), message: String(j.message_hex), accepted: j.accepted === true, error: j.error || null,
         payouts: j.payouts || [], payoutsStored: j.payouts_stored || null, locksAfter: j.locks_after || null,
         unspentMsat: j.unspent_msat === undefined ? null : BigInt(j.unspent_msat) };
