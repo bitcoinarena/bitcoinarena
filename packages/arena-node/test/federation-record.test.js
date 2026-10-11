@@ -27,7 +27,7 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [] } = {}) {
+function seven({ leaving = [], successor = null, closed = false } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
@@ -35,6 +35,7 @@ function seven({ leaving = [] } = {}) {
   const seats = nodes.map((n, i) => federationRecords({
     round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
+    successorOf: () => successor, closedOf: () => closed,
     fetcher: async (url) => {
       const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
       const u = new URL(url); const gone = (u.searchParams.get('gone') || '').split(',').filter(Boolean);
@@ -92,4 +93,32 @@ test('the seat\'s doors: GET /federations lists what it holds, GET /federation-r
     assert.equal(none.status, 404);
     assert.match((await none.json()).why, /holds no round/);
   } finally { await seat.close(); }
+});
+
+// SUCCESSION (§23A.6 steps 2, 4 and 5; kanban #325): the guardians sign the old federation's record DRAINING with the
+// successor they were told of; its seated guardians are named for the successor's guardian pool until the record is CLOSED
+test('a successor named: the seven sign DRAINING with successor_id, and the successor\'s rounds name the drain\'s seated guardians until CLOSED', async () => {
+  const NEW = 'cd'.repeat(32);
+  const s = seven({ successor: NEW });
+  const got = await s.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers], [true, 'DRAINING', 7], got.why);
+  const v = verifyFederationRecord(fromHex(s.seats[0].list()[0].record), { census: s.census.entries, verify, inviteFederationId });
+  assert.equal(v.ok, true, v.why);
+  assert.equal(toHex(v.record.successorId), NEW);
+  assert.deepEqual(s.seats[0].predecessorGuardians(NEW).map(toHex).sort(), s.nodes.map((n) => toHex(n.pubkey)).sort(), 'all seven seated');
+  assert.deepEqual(s.seats[0].predecessorGuardians('ef'.repeat(32)), [], 'another federation has no predecessor');
+
+  const one = seven({ successor: NEW, leaving: [3] });
+  const g1 = await one.seats[0].gather(FED, inviteFederationId);
+  assert.equal(g1.status, 'DRAINING');
+  assert.equal(one.seats[0].predecessorGuardians(NEW).length, 6, 'the one gone is not paid');
+
+  const done = seven({ successor: NEW, closed: true });
+  const g2 = await done.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([g2.ok, g2.status], [true, 'CLOSED'], g2.why);
+  assert.deepEqual(done.seats[0].predecessorGuardians(NEW), [], 'CLOSED: the drain is over, nobody is named');
+
+  const none = seven();
+  await none.seats[0].gather(FED, inviteFederationId);
+  assert.equal(none.seats[0].list()[0].status, 'OPEN', 'no successor named: OPEN as before');
 });
