@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { toHex } from '../src/hash.js';
-import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_ATTEST_SIGS, MAX_INPUT_BATCH_BYTES } from '../src/batch.js';
+import { encodeInputBatch, decodeInputBatch, batchId, batchTicks, INPUT_WORDS, MAX_BATCH_TICKS, MAX_ATTEST_SIGS, MAX_ATTESTED_SAMPLES, MAX_INPUT_BATCH_BYTES } from '../src/batch.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const sample = () => ({
@@ -118,13 +118,13 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
     loads: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1, 0, 5]),
     samples: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
     tapes: [[0, ...Array.from({ length: 64 }, () => 1)]],
-    attests: [[0, 0, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])],
+    attests: [...Array.from({ length: MAX_ATTESTED_SAMPLES }, (_, k) => [k * 300, 0, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]),
       [0, 1, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]],
   };
   assert.equal(encodeInputBatch(b).length, MAX_INPUT_BATCH_BYTES);
   // + 2 + 65535 x 8 for the price samples and + 2 + 260 for the one live tape a batch may carry (2026-09-17);
-  // + 2 + 65535 x 8 for the rooms; + 2 + 875 + 1127 for the attested sample and tape, nine signatures each (kanban #311)
-  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 875 + 1127);
+  // + 2 + 65535 x 8 for the rooms; + 2 + 256 x 875 + 1127 for the attested samples and tape, nine signatures each (kanban #311)
+  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * 875 + 1127);
 });
 
 test('the committee\'s signatures on a sample and the tape (kanban #311): a fourth optional tail; a batch without them keeps its bytes', () => {
@@ -137,7 +137,8 @@ test('the committee\'s signatures on a sample and the tape (kanban #311): a four
   assert.deepEqual(back.attests, withA.attests);
   assert.deepEqual(back.samples, plain.samples);
   assert.notEqual(toHex(batchId(withA)), toHex(batchId(plain)));
-  assert.throws(() => encodeInputBatch({ ...plain, attests: [[300, 0, 1, []], [600, 0, 2, []]] }), /at most one attested sample/);
+  assert.throws(() => encodeInputBatch({ ...plain, attests: [[300, 0, 1, []], [300, 0, 2, []]] }), /one attested sample a tick/);
+  assert.equal(decodeInputBatch(encodeInputBatch({ ...plain, attests: [[300, 0, 1, []], [600, 0, 2, []]] })).attests.length, 2, 'two samples of a stall: two ticks');
   assert.throws(() => encodeInputBatch({ ...plain, attests: [[300, 0, 1, Array.from({ length: MAX_ATTEST_SIGS + 1 }, (_, i) => sig(i))]] }), /at most 9 signatures/);
 });
 

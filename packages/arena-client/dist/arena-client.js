@@ -789,6 +789,10 @@ const ROUND_PERIOD_MS = 90000n;
 const TYPE_GAME_MANIFEST = 0x1c;
 // AN ATTESTED OUTCOME (§0A.7a, kanban #206): the attestors' word on a non-replay round's result - which outcome, when seen.
 const TYPE_OUTCOME_ATTESTATION = 0x1d;
+// AN ATTESTED PRICE SAMPLE (§11, kanban #311): the committee's word on the price a run plays against at one tick - and the
+// 64 prices before the start, as one tape - so the player never chooses the price.
+const TYPE_PRICE_SAMPLE = 0x1e;
+const TYPE_PRICE_TAPE = 0x1f;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -924,6 +928,8 @@ const TAG = {
   presence: 'ARENA/v1/Presence',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
+  priceSample: 'ARENA/v1/PriceSample',
+  priceTape: 'ARENA/v1/PriceTape',
 };
 
 /**
@@ -2337,6 +2343,15 @@ function contractWarnings(c, gameWarnings = null) {
 /** The prices a live tape carries: the core's SAMPLES. */
 const TAPE_PRICES = 64;
 
+/**
+ * AND THE COMMITTEE'S SIGNATURES ON THEM (§11, kanban #311): `[tick, kind, cents, sigs]` - kind 0 the sample at that
+ * tick (cents: its price), kind 1 the tape (cents: its 64 prices) - each sig `[key32, sig64]` of the round's committee
+ * over priceSampleId / priceTapeId. A fourth optional tail after the rooms, written only when there is one: every batch
+ * before it keeps its bytes and its id. One attested sample a tick (a batch held through a stall can cover several 5 s
+ * samples) up to MAX_ATTESTED_SAMPLES, one tape, each with at most MAX_ATTEST_SIGS.
+ */
+const MAX_ATTEST_SIGS = 9;
+const MAX_ATTESTED_SAMPLES = 256;
 /** How many words of input a tick carries. The core's `step` arity. */
 const INPUT_WORDS = 5;
 
@@ -2382,12 +2397,25 @@ function encodeInputBatch(b) {
   // (empty) when this one is, so the three read back unambiguously.
   const rooms = loads.filter((l) => l.length > 3 && l[3] !== undefined && l[3] !== null).map((l) => [l[0], l[3] | 0]);
   if (new Set(rooms.map((r) => r[0])).size !== rooms.length) throw new Error('a batch carries one room a load tick');
-  if (samples.length || tapes.length || rooms.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
-  if (tapes.length || rooms.length) w.vec(tapes, (l, ww) => {
+  const attests = [...(b.attests || [])].sort((x, y) => x[1] - y[1] || x[0] - y[0]);
+  const sampleTicks = attests.filter((a) => a[1] === 0).map((a) => a[0]);
+  if (new Set(sampleTicks).size !== sampleTicks.length || sampleTicks.length > MAX_ATTESTED_SAMPLES || attests.filter((a) => a[1] === 1).length > 1
+    || attests.some((a) => a[1] !== 0 && a[1] !== 1))
+    throw new Error(`a batch carries one attested sample a tick (at most ${MAX_ATTESTED_SAMPLES}) and at most one attested tape`);
+  if (samples.length || tapes.length || rooms.length || attests.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (tapes.length || rooms.length || attests.length) w.vec(tapes, (l, ww) => {
     if (l.length !== 1 + TAPE_PRICES) throw new Error(`a tape carries ${TAPE_PRICES} prices`);
     ww.u32(l[0]); for (let i = 1; i <= TAPE_PRICES; i++) ww.i32(l[i]);
   });
-  if (rooms.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (rooms.length || attests.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
+  if (attests.length) w.vec(attests, (a, ww) => {
+    const [tick, kind, cents, sigs] = a;
+    ww.u32(tick); ww.u8(kind);
+    if (kind === 0) ww.i32(cents);
+    else { if (!Array.isArray(cents) || cents.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); for (const c of cents) ww.i32(c); }
+    if (!Array.isArray(sigs) || sigs.length > MAX_ATTEST_SIGS) throw new Error(`an attestation carries at most ${MAX_ATTEST_SIGS} signatures`);
+    ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); w3.bytes(sg[1], 64); });
+  });
   return w.finish();
 }
 
@@ -2416,7 +2444,15 @@ function decodeInputBatch(bytes) {
     b.samples = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
     b.tapes = r.at < bytes.length ? r.vec((rr) => { const t = [rr.u32()]; for (let i = 0; i < TAPE_PRICES; i++) t.push(rr.i32()); return t; }) : [];
     var rooms = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
+    b.attests = r.at < bytes.length ? r.vec((rr) => {
+      const tick = rr.u32(); const kind = rr.u8();
+      const cents = kind === 0 ? rr.i32() : kind === 1 ? Array.from({ length: TAPE_PRICES }, () => rr.i32()) : (() => { throw new Error('kind'); })();
+      const sigs = rr.vec((r3) => [r3.bytes32(), r3.bytes(64)]);
+      if (sigs.length > MAX_ATTEST_SIGS) throw new Error('sigs');
+      return [tick, kind, cents, sigs];
+    }) : [];
   } catch { throw new Error('trailing bytes after the batch'); }
+  if (!b.attests.length) delete b.attests;
   // each room joins the load at its tick; a room with no load there is not a batch this encoder writes
   for (const [at, room] of rooms) {
     const l = b.loads.filter((x) => x[0] === at);
@@ -2457,7 +2493,11 @@ const BATCH_HEADER_BYTES = 1 + 2 + 32 + 32 + 32 + 4;
  */
 const MAX_INPUT_BATCH_BYTES =
   BATCH_HEADER_BYTES + 2 + MAX_BATCH_TICKS * 20 + 2 + MAX_BATCH_TICKS * 8
-  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8 + 2 + (4 + 4 * TAPE_PRICES);
+  + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8 + 2 + (4 + 4 * TAPE_PRICES)
+  // the rooms (a load's bed fill, 2026-10-04), one a load at most
+  + 2 + MAX_BATCH_TICKS * 8
+  // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each
+  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 96) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * 96);
 
 /** The absolute tick numbers a batch covers, in order. */
 const batchTicks = (b) =>
@@ -2778,6 +2818,237 @@ function transcriptBelongsToEntry(transcript, entry, blockTicks) {
     };
 
   return { ok: true, joinTick: entry.joinTick, endsAt: ends, reaches };
+}
+
+// ---- arena-protocol/src/tick.js
+// TIME, IN THE ONLY UNIT THE SIMULATION HAS.
+//
+// The round contract measures a round in TIME - `startTimeMs`, `entryCloseMs`,
+// `objectionWindowMs`, and section 6's `player_run_duration // T_run` with the
+// worked example at "T_run: 3 minutes" - while the transcript, the
+// checkpoints, the ghosts and `blockTicks` all count TICKS. Nothing converted
+// between them, which is why the CLTV floor of 15 and the run length of 19 are
+// both parked: "the round contract measures its length in TICKS and an HTLC in
+// TIME, and the protocol defines no tick rate to convert between them."
+//
+// THE RATE IS THE NETWORK'S, STATED HERE (kanban #203, the owner 2026-10-07: "Engine states the tick rate; a nextblock
+// test checks the core matches"). It was imported from the core - the one game - and the engine imports no game now. A
+// game runs at this rate or it cannot be a game of this network: nextblock/test/engine-shared.test.js holds the core's
+// TICK_DT and ticks per second to these three numbers, so the two still cannot drift - the check moved from an import
+// to a test.
+//
+// TICK_DT is 1092 in Q16.16 (1092 / 65536 s a tick, 60.0147 ticks a second); ticks per second is ONE / TICK_DT.
+const TICK_DT = 1092;
+const TICKS_PER_SECOND_NUM = 65536;
+const TICKS_PER_SECOND_DEN = TICK_DT;
+
+
+/**
+ * MILLISECONDS PER TICK, AS A REDUCED INTEGER RATIO.
+ *
+ *     TICK_DT / ONE seconds  =  1092 / 65536 s  =  1092000 / 65536 ms
+ *                            =  34125 / 2048 ms   (exactly, after gcd)
+ *
+ * Derived, not typed: the numerator and denominator come out of the core's own
+ * two numbers and a thousand, so there is no third literal here that could
+ * drift away from the tick it was written for. Reduced once at load, because
+ * the reduction is what keeps every product below the range where a caller
+ * might be tempted to narrow it.
+ */
+const gcd = (a, b) => (b === 0n ? a : gcd(b, a % b));
+const MS_NUM_RAW = BigInt(TICKS_PER_SECOND_DEN) * 1000n;
+const MS_DEN_RAW = BigInt(TICKS_PER_SECOND_NUM);
+const G = gcd(MS_NUM_RAW, MS_DEN_RAW);
+
+/** One tick is `MS_PER_TICK_NUM / MS_PER_TICK_DEN` milliseconds, exactly. */
+const MS_PER_TICK_NUM = MS_NUM_RAW / G;
+const MS_PER_TICK_DEN = MS_DEN_RAW / G;
+
+const whole = (v, what) => {
+  const n = typeof v === 'bigint' ? v : BigInt(v);
+  if (n < 0n) throw new RangeError(`${what} cannot be negative: ${n}`);
+  return n;
+};
+
+/**
+ * TICKS TO SECONDS, EXACTLY, IN THE CORE'S OWN Q16.16.
+ *
+ * The only conversion with no remainder anywhere: a tick IS `TICK_DT` of these
+ * units, so a count of ticks is a multiplication and nothing is lost. Every
+ * other unit below has to divide, and dividing is where a clock starts lying.
+ */
+function secondsQ16ForTicks(ticks) {
+  return whole(ticks, 'a tick count') * BigInt(TICK_DT);
+}
+
+/**
+ * TICKS TO MILLISECONDS: the whole milliseconds, and the part that is left.
+ *
+ * `10800n` ticks is 179956 ms and 112/2048 of a millisecond - 179.9560546875
+ * seconds - and not the three minutes anyone would assume. The remainder is
+ * RETURNED rather than rounded away, because a millisecond dropped per call is
+ * how a run and the invoice that covers it end up disagreeing about when the
+ * round is over, and `exact` says outright whether anything was dropped.
+ */
+function msForTicks(ticks) {
+  const total = whole(ticks, 'a tick count') * MS_PER_TICK_NUM;
+  const ms = total / MS_PER_TICK_DEN;
+  const remainder = total - ms * MS_PER_TICK_DEN;
+  return { ms, remainder, divisor: MS_PER_TICK_DEN, exact: remainder === 0n };
+}
+
+/**
+ * MILLISECONDS TO TICKS: floor, and the leftover named as a fraction of a tick.
+ *
+ * FLOOR AND NOT ROUND. Three minutes is 10802.637 ticks: rounding gives 10803,
+ * which is a tick of run nobody simulated, and a round whose last tick exists
+ * only in the contract is a round whose transcript is short by one - a
+ * disagreement between two honest nodes with nothing to arbitrate it. Floor
+ * always lands inside the time available, and the 0.637 that is left comes
+ * back as `remainder / divisor` so a caller can see it rather than discover it.
+ *
+ * The remainder is a fraction of ONE TICK, not a duration in some third unit:
+ * inventing a unit here would be inventing a clock here.
+ */
+function ticksForMs(ms) {
+  const total = whole(ms, 'a duration in milliseconds') * MS_PER_TICK_DEN;
+  const ticks = total / MS_PER_TICK_NUM;
+  const remainder = total - ticks * MS_PER_TICK_NUM;
+  return { ticks, remainder, divisor: MS_PER_TICK_NUM, exact: remainder === 0n };
+}
+
+/**
+ * AND WHEN A CALLER NEEDS AN EXACT ANSWER, IT REFUSES RATHER THAN GUESSES.
+ *
+ * Some numbers must not be approximately right: a CLTV that expires half a
+ * tick before the round ends is an escape hatch, and a run length that is a
+ * tick out is a transcript that cannot be replayed to its own end. Those
+ * callers ask here, and a duration that is not a whole number of ticks comes
+ * back refused and named, with the remainder in the reason - not rounded to
+ * the nearest tick with the difference unmentioned.
+ */
+function exactTicksForMs(ms) {
+  const got = ticksForMs(ms);
+  if (!got.exact) {
+    return {
+      ok: false,
+      why: `${ms} ms is ${got.ticks} ticks and ${got.remainder}/${got.divisor} of a tick, `
+        + 'which is not a whole number of ticks',
+    };
+  }
+  return { ok: true, ticks: got.ticks };
+}
+
+// ---- arena-protocol/src/price-sample.js
+// THE PRICE A RUN PLAYS AGAINST, SIGNED BY THE COMMITTEE (§11, kanban #311). "PriceSample { tick, price_cents, attestation }
+// ... `attestation` is the game/verify committee's signature over (round_id, tick, price_cents): the committee nodes publish
+// one attested sample every 5 s of round time from the contract's named feed - and, with the first, the 64 samples before
+// start_time from the feed's history ... The player never chooses the price."
+//
+// DECIDED HERE (the spec names the fields, not the bytes): each seat signs the sample's id with its node key (BIP-340), and
+// an attestation is the list of those signatures - it stands when at least `threshold` distinct keys of the round's
+// committee signed it. The 64 prices before the start are one PriceTape object under its own tag, signed the same way.
+// The signatures sit BESIDE the object, as for a checkpoint receipt, so an id never changes when it is signed.
+
+
+
+
+/** One sample every 5 s of round time (§11); the tape before the start is 64 of them. */
+const PRICE_SAMPLE_EVERY_MS = 5000;
+const PRICE_TAPE_LENGTH = 64;
+
+const isBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+const cents = (p) => { if (!Number.isInteger(p) || p <= 0 || p > 0x7fffffff) throw new Error('a price is a whole, positive number of cents'); return p; };
+
+function encodePriceSample({ roundId, tick, priceCents }) {
+  if (!isBytes32(roundId)) throw new Error('a price sample names its 32-byte round');
+  const w = new Writer();
+  w.u8(TYPE_PRICE_SAMPLE); w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId); w.u32(tick); w.i32(cents(priceCents));
+  return w.finish();
+}
+function decodePriceSample(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PRICE_SAMPLE) throw new Error('not a price sample');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const s = { roundId: r.bytes32(), tick: r.u32(), priceCents: r.i32() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the price sample');
+  return s;
+}
+const priceSampleId = (s) => taggedHash(TAG.priceSample, encodePriceSample(s));
+
+/** The 64 prices before the start (§11), oldest first, as the run's first batch carries them at `tick`. */
+function encodePriceTape({ roundId, tick, prices }) {
+  if (!isBytes32(roundId)) throw new Error('a price tape names its 32-byte round');
+  if (!Array.isArray(prices) || prices.length !== PRICE_TAPE_LENGTH) throw new Error(`a price tape is ${PRICE_TAPE_LENGTH} prices`);
+  const w = new Writer();
+  w.u8(TYPE_PRICE_TAPE); w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId); w.u32(tick);
+  for (const p of prices) w.i32(cents(p));
+  return w.finish();
+}
+const priceTapeId = (t) => taggedHash(TAG.priceTape, encodePriceTape(t));
+
+/**
+ * AN ATTESTATION STANDS when at least `threshold` distinct keys of `committee` (x-only, 32 bytes each) signed `id`.
+ * `sigs`: [{ key, signature }] (Uint8Array or hex); `verify(signature, message, key)` is BIP-340, injected as everywhere.
+ * Answers { ok, signed: [keys that verified], why }. A key outside the committee, a second signature by one key, or a
+ * signature that does not verify counts nothing - it never refuses the others.
+ */
+function priceAttestationStands({ id, sigs, committee, threshold, verify }) {
+  if (!isBytes32(id)) return { ok: false, signed: [], why: 'no 32-byte id to check' };
+  if (!Number.isInteger(threshold) || threshold < 1) return { ok: false, signed: [], why: 'no threshold' };
+  if (typeof verify !== 'function') return { ok: false, signed: [], why: 'checking a signature needs a verifier, and none was injected' };
+  const members = new Set((committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : toHex(k))));
+  const signed = new Set();
+  for (const s of sigs || []) {
+    const key = typeof s.key === 'string' ? s.key.toLowerCase() : toHex(s.key);
+    if (!members.has(key) || signed.has(key)) continue;
+    const sig = typeof s.signature === 'string' ? Uint8Array.from(s.signature.match(/../g).map((x) => parseInt(x, 16))) : s.signature;
+    const pk = Uint8Array.from(key.match(/../g).map((x) => parseInt(x, 16)));
+    let good = false;
+    try { good = !!verify(sig, id, pk); } catch { good = false; }
+    if (good) signed.add(key);
+  }
+  return signed.size >= threshold ? { ok: true, signed: [...signed] }
+    : { ok: false, signed: [...signed], why: `${signed.size} of the committee signed it, ${threshold} are needed` };
+}
+
+/** Sample k of a run (k = 0, 1, ... every 5 s of round time) is applied at this tick - the network's tick rate (tick.js). */
+const sampleTick = (k) => Number(ticksForMs(BigInt(k) * BigInt(PRICE_SAMPLE_EVERY_MS)).ticks);
+
+/** The tape's unit is 256 a dollar (batch.js); a signed price is in cents. One rule, rounded half up, on both sides. */
+const centsToTapeUnits = (c) => Math.floor((c * 256 + 50) / 100);
+
+/**
+ * THE PRICES A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (§11, kanban #311): every attestation the batch
+ * carries must stand (`priceAttestationStands`) for this round, and the sample (or the tape) at its tick must be its price in
+ * the tape's unit. `require`: also refuse a sample or a tape that carries no attestation (a round whose contract names a
+ * feed - slice 3). Answers { ok, attested: n } or { ok: false, why }.
+ */
+function checkBatchPrices({ batch, roundId, committee, threshold, verify, require = false }) {
+  const attests = batch.attests || [];
+  const at = (list, tick) => (list || []).filter((x) => x[0] === tick);
+  for (const [tick, kind, cents, sigs] of attests) {
+    const id = kind === 0 ? priceSampleId({ roundId, tick, priceCents: cents }) : priceTapeId({ roundId, tick, prices: cents });
+    const s = priceAttestationStands({ id, sigs: sigs.map(([key, signature]) => ({ key, signature })), committee, threshold, verify });
+    if (!s.ok) return { ok: false, why: `the ${kind === 0 ? 'sample' : 'tape'} at tick ${tick} is not attested: ${s.why}` };
+    if (kind === 0) {
+      const played = at(batch.samples, tick);
+      if (played.length !== 1 || played[0][1] !== centsToTapeUnits(cents))
+        return { ok: false, why: `the sample at tick ${tick} is not the attested ${cents} cents (${centsToTapeUnits(cents)} in the tape's unit)` };
+    } else {
+      const played = at(batch.tapes, tick);
+      if (played.length !== 1 || played[0].slice(1).some((p, i) => p !== centsToTapeUnits(cents[i])))
+        return { ok: false, why: `the tape at tick ${tick} is not the attested tape` };
+    }
+  }
+  if (require) {
+    const has = (kind, tick) => attests.some((a) => a[1] === kind && a[0] === tick);
+    const bare = (batch.samples || []).find((x) => !has(0, x[0])) ? 'sample' : (batch.tapes || []).find((x) => !has(1, x[0])) ? 'tape' : null;
+    if (bare) return { ok: false, why: `a ${bare} without the committee's attestation: the player never chooses the price (§11)` };
+  }
+  return { ok: true, attested: attests.length };
 }
 
 // ---- arena-protocol/src/receipt.js
@@ -3814,125 +4085,6 @@ async function payInvoice(where, invoice, options = {}) {
   if (typeof preimage !== 'string' || !/^[0-9a-f]{64}$/i.test(preimage))
     return { ok: false, why: 'the wallet said it paid and produced no preimage' };
   return { ok: true, preimage, feesPaidMsat: said.result.fees_paid };
-}
-
-// ---- arena-protocol/src/tick.js
-// TIME, IN THE ONLY UNIT THE SIMULATION HAS.
-//
-// The round contract measures a round in TIME - `startTimeMs`, `entryCloseMs`,
-// `objectionWindowMs`, and section 6's `player_run_duration // T_run` with the
-// worked example at "T_run: 3 minutes" - while the transcript, the
-// checkpoints, the ghosts and `blockTicks` all count TICKS. Nothing converted
-// between them, which is why the CLTV floor of 15 and the run length of 19 are
-// both parked: "the round contract measures its length in TICKS and an HTLC in
-// TIME, and the protocol defines no tick rate to convert between them."
-//
-// THE RATE IS THE NETWORK'S, STATED HERE (kanban #203, the owner 2026-10-07: "Engine states the tick rate; a nextblock
-// test checks the core matches"). It was imported from the core - the one game - and the engine imports no game now. A
-// game runs at this rate or it cannot be a game of this network: nextblock/test/engine-shared.test.js holds the core's
-// TICK_DT and ticks per second to these three numbers, so the two still cannot drift - the check moved from an import
-// to a test.
-//
-// TICK_DT is 1092 in Q16.16 (1092 / 65536 s a tick, 60.0147 ticks a second); ticks per second is ONE / TICK_DT.
-const TICK_DT = 1092;
-const TICKS_PER_SECOND_NUM = 65536;
-const TICKS_PER_SECOND_DEN = TICK_DT;
-
-
-/**
- * MILLISECONDS PER TICK, AS A REDUCED INTEGER RATIO.
- *
- *     TICK_DT / ONE seconds  =  1092 / 65536 s  =  1092000 / 65536 ms
- *                            =  34125 / 2048 ms   (exactly, after gcd)
- *
- * Derived, not typed: the numerator and denominator come out of the core's own
- * two numbers and a thousand, so there is no third literal here that could
- * drift away from the tick it was written for. Reduced once at load, because
- * the reduction is what keeps every product below the range where a caller
- * might be tempted to narrow it.
- */
-const gcd = (a, b) => (b === 0n ? a : gcd(b, a % b));
-const MS_NUM_RAW = BigInt(TICKS_PER_SECOND_DEN) * 1000n;
-const MS_DEN_RAW = BigInt(TICKS_PER_SECOND_NUM);
-const G = gcd(MS_NUM_RAW, MS_DEN_RAW);
-
-/** One tick is `MS_PER_TICK_NUM / MS_PER_TICK_DEN` milliseconds, exactly. */
-const MS_PER_TICK_NUM = MS_NUM_RAW / G;
-const MS_PER_TICK_DEN = MS_DEN_RAW / G;
-
-const whole = (v, what) => {
-  const n = typeof v === 'bigint' ? v : BigInt(v);
-  if (n < 0n) throw new RangeError(`${what} cannot be negative: ${n}`);
-  return n;
-};
-
-/**
- * TICKS TO SECONDS, EXACTLY, IN THE CORE'S OWN Q16.16.
- *
- * The only conversion with no remainder anywhere: a tick IS `TICK_DT` of these
- * units, so a count of ticks is a multiplication and nothing is lost. Every
- * other unit below has to divide, and dividing is where a clock starts lying.
- */
-function secondsQ16ForTicks(ticks) {
-  return whole(ticks, 'a tick count') * BigInt(TICK_DT);
-}
-
-/**
- * TICKS TO MILLISECONDS: the whole milliseconds, and the part that is left.
- *
- * `10800n` ticks is 179956 ms and 112/2048 of a millisecond - 179.9560546875
- * seconds - and not the three minutes anyone would assume. The remainder is
- * RETURNED rather than rounded away, because a millisecond dropped per call is
- * how a run and the invoice that covers it end up disagreeing about when the
- * round is over, and `exact` says outright whether anything was dropped.
- */
-function msForTicks(ticks) {
-  const total = whole(ticks, 'a tick count') * MS_PER_TICK_NUM;
-  const ms = total / MS_PER_TICK_DEN;
-  const remainder = total - ms * MS_PER_TICK_DEN;
-  return { ms, remainder, divisor: MS_PER_TICK_DEN, exact: remainder === 0n };
-}
-
-/**
- * MILLISECONDS TO TICKS: floor, and the leftover named as a fraction of a tick.
- *
- * FLOOR AND NOT ROUND. Three minutes is 10802.637 ticks: rounding gives 10803,
- * which is a tick of run nobody simulated, and a round whose last tick exists
- * only in the contract is a round whose transcript is short by one - a
- * disagreement between two honest nodes with nothing to arbitrate it. Floor
- * always lands inside the time available, and the 0.637 that is left comes
- * back as `remainder / divisor` so a caller can see it rather than discover it.
- *
- * The remainder is a fraction of ONE TICK, not a duration in some third unit:
- * inventing a unit here would be inventing a clock here.
- */
-function ticksForMs(ms) {
-  const total = whole(ms, 'a duration in milliseconds') * MS_PER_TICK_DEN;
-  const ticks = total / MS_PER_TICK_NUM;
-  const remainder = total - ticks * MS_PER_TICK_NUM;
-  return { ticks, remainder, divisor: MS_PER_TICK_NUM, exact: remainder === 0n };
-}
-
-/**
- * AND WHEN A CALLER NEEDS AN EXACT ANSWER, IT REFUSES RATHER THAN GUESSES.
- *
- * Some numbers must not be approximately right: a CLTV that expires half a
- * tick before the round ends is an escape hatch, and a run length that is a
- * tick out is a transcript that cannot be replayed to its own end. Those
- * callers ask here, and a duration that is not a whole number of ticks comes
- * back refused and named, with the remainder in the reason - not rounded to
- * the nearest tick with the difference unmentioned.
- */
-function exactTicksForMs(ms) {
-  const got = ticksForMs(ms);
-  if (!got.exact) {
-    return {
-      ok: false,
-      why: `${ms} ms is ${got.ticks} ticks and ${got.remainder}/${got.divisor} of a tick, `
-        + 'which is not a whole number of ticks',
-    };
-  }
-  return { ok: true, ticks: got.ticks };
 }
 
 // ---- arena-protocol/src/first-mark.js
@@ -7202,6 +7354,9 @@ function lockMatchesEntry({ lock, entry, kind, claimPk, height, expiryBlocks = S
 //
 //   secret      = the first taggedHash("ARENA/v1/PlayerKey", seed || round_id || c),
 //                 c = 0, 1, ..., that is a scalar of the group (0 < s < n)
+//   order n > 0 = the same over seed || round_id || n (4 bytes, big-endian) || c: one key per ORDER a tab places
+//                 in a market round (kanban #336) - each order is its own entry, lock, payout and return, as the
+//                 seats hold it; order 0 is the round's key above, byte for byte
 //   player key  = x-only(secret . G)                      (BIP-340)
 //   refund key  = 0x02 || player key                      (stake-lock.js)
 //   fingerprint = the first 8 bytes of
@@ -7221,15 +7376,18 @@ const PLAYER_SEED_BYTES = 32;
 
 const isPlayerBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
-/** This round's player secret from the player's seed. */
-function playerSecretFor(seed, roundId) {
+/** This round's player secret from the player's seed - and an order's, for order n > 0 (kanban #336). */
+function playerSecretFor(seed, roundId, order = 0) {
   if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
   if (!isPlayerBytes32(roundId)) throw new Error('a round id is 32 bytes');
-  const msg = new Uint8Array(65);
+  if (!Number.isInteger(order) || order < 0 || order > 0xffffffff) throw new Error('an order number is a whole number from 0 to 2^32 - 1');
+  const at = order ? 68 : 64;
+  const msg = new Uint8Array(at + 1);
   msg.set(seed, 0);
   msg.set(roundId, 32);
+  if (order) new DataView(msg.buffer).setUint32(64, order, false);
   for (let c = 0; c < 256; c++) {
-    msg[64] = c;
+    msg[at] = c;
     const secret = taggedHash(TAG.playerKey, msg);
     const v = scalarFrom32(secret);
     if (v > 0n && v < FIELD) return secret;
@@ -8732,16 +8890,18 @@ const roundIdOf = (round) => (round.id instanceof Uint8Array && round.id.length 
  * refund go to, and the fingerprint the page shows for the player to compare
  * outside it (`arena-node/tools/refund-key.mjs <seed> <round id>`).
  */
-function playerFor(round, { seed, curve } = {}) {
+// `order`: an order this tab places in a market round (kanban #336) - its own key, so its own lock, payout and return;
+// 0 (a game's entry, a single pick) is the round's key as it always was
+function playerFor(round, { seed, curve, order = 0 } = {}) {
   if (!round) throw new Error('there is no round to join');
   if (!curve || typeof curve.pointX !== 'function')
     throw new Error('a player identity is a key on a curve, and none was injected');
   if (!(seed instanceof Uint8Array) || seed.length !== 32)
     throw new Error('a player key comes from the player\'s 32-byte seed, and none was given');
   const rid = roundIdOf(round);
-  const secret = playerSecretFor(seed, rid);
+  const secret = playerSecretFor(seed, rid, order);
   const pubkey = curve.pointX(secret);
-  return { seed, roundId: rid, secret, pubkey, fingerprint: refundFingerprint(pubkey) };
+  return { seed, roundId: rid, secret, pubkey, fingerprint: refundFingerprint(pubkey), order };
 }
 
 /**
@@ -8783,7 +8943,7 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0 } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -8811,7 +8971,8 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   // under any other key - a bug, or a host that lies - would send the money
   // where the player's own check (`refund-key.mjs`) cannot find it. So the key
   // is derived here, and a key or a dealt stake naming another is refused.
-  const player = playerFor(round, { seed, curve });
+  // `playerOrder`: an order's own key (kanban #336) - the seed's key for this round and that order number, checked the same way
+  const player = playerFor(round, { seed, curve, order: playerOrder });
   if (playerPubkey !== undefined && toHex(playerPubkey) !== toHex(player.pubkey))
     throw new Error('that player key is not the one this seed makes for this round: a payout or '
       + 'refund to it reaches a key the player cannot check');
@@ -11644,9 +11805,9 @@ async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch } = {}) 
  * The guardians refuse it before the lock's expiration - reported, not thrown.
  */
 async function refundStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  onStep = () => {} } = {}) {
+  onStep = () => {}, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
   if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
@@ -11694,9 +11855,9 @@ async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {}) {
  * seed's secret spends the lock with the player's key.
  */
 async function redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client: given = null, onStep = () => {} } = {}) {
+  client: given = null, onStep = () => {}, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   onStep('asking the signer nodes where this seed\'s lock is');
   const locks = await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher });
   if (!locks.length) throw new Error('no signer node knows a stake lock that refunds to this seed\'s key in this round');
@@ -11752,17 +11913,17 @@ async function settlementOf({ roundId, nodes, fetcher = fetch } = {}) {
  * its forfeit (`redeemStake`).
  */
 async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client: given = null, onStep = () => {} } = {}) {
+  client: given = null, onStep = () => {}, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no payout contract');
   // A PAYOUT THIS TAB ALREADY COLLECTED is answered from the tab's note: after a
   // reload the contract is spent, and asking the federation again could only fail
   // every time the page asks.
-  const noted = `${PAYOUT_NOTE}${toHex(roundId)}`;
+  const noted = `${PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the signer nodes for the round\'s settlement');
   const s = await settlementOf({ roundId, nodes, fetcher });
@@ -11801,9 +11962,9 @@ const PAYOUT_NOTE = 'arena.payout.';
  * for anything else (the window, a signer node short), asked again.
  */
 async function returnStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher = fetch,
-  client = null, onStep = () => {}, refused = false } = {}) {
+  client = null, onStep = () => {}, refused = false, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so its stake is not a lock');
-  const noted = `${STAKE_NOTE}${toHex(roundId)}`;
+  const noted = `${STAKE_NOTE}${toHex(roundId)}${orderTag(order)}`;
   try {
     const kept = storage && storage.getItem(noted);
     if (kept) { const k = JSON.parse(kept); return { ...k, amountMsat: BigInt(k.amountMsat), ok: true, final: true, kept: true }; }
@@ -11815,7 +11976,7 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   }
   let got;
   try {
-    got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep });
+    got = await redeemStake({ round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, client, onStep, order });
   } catch (e) {
     // NOBODY WON (the owner 2026-10-03): a loser's stake comes back at settlement when no winner was paid - a signer node
     // whose settlement is not ACCEPTED yet, or whose round has an entry still in its window, says so, and is asked again
@@ -11857,12 +12018,15 @@ const STAKE_NOTE = 'arena.stakeback.';
 // same browser replaced the first's record, the winner's tab looked up the loser's lock, found nothing owed and marked the
 // round done - its pending line went at FINAL and its 96000 msat payout stayed in the federation. The record already
 // carries its tab's seed; the key now names it too, and a tab reads and marks only its own.
-const collectKey = (roundIdHex, seed) => `${COLLECT_NOTE}${roundIdHex}.${(seed instanceof Uint8Array ? toHex(seed) : String(seed || '')).slice(0, 16)}`;
-function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null } = {}) {
+// AND ONE PER ORDER (kanban #336): a tab's orders in one market round are as many entries, each with its own key - each
+// its own record (".o<n>" after the seed; order 0, the round's key, keeps the key it always had), and its own notes
+const orderTag = (order) => (order ? `.o${Number(order)}` : '');
+const collectKey = (roundIdHex, seed, order = 0) => `${COLLECT_NOTE}${roundIdHex}.${(seed instanceof Uint8Array ? toHex(seed) : String(seed || '')).slice(0, 16)}${orderTag(order)}`;
+function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLock = null, order = 0 } = {}) {
   try {
-    const key = collectKey(roundIdHex, seed);
+    const key = collectKey(roundIdHex, seed, order);
     // a record of this round from before the key named its seed, if it is this seed's, moves under the new key
-    let old = storage.getItem(`${COLLECT_NOTE}${roundIdHex}`);
+    let old = order ? null : storage.getItem(`${COLLECT_NOTE}${roundIdHex}`);
     try { if (old && JSON.parse(old).seed === toHex(seed)) storage.removeItem(`${COLLECT_NOTE}${roundIdHex}`); else old = null; } catch { old = null; }
     // only this seed's old record carries over: another player's answers are not this one's
     const was = storage.getItem(key) || old;
@@ -11875,7 +12039,7 @@ function saveCollect(storage, { roundIdHex, round, invite, nodes, seed, stakeLoc
       if (stakeLock) lock = { outpoint: `${toHex(stakeLock.outpoint.txid)}:${String(stakeLock.outpoint.outIdx)}`, fields: lockFieldsToJson(stakeLock.fields) };
     } catch { lock = null; }
     storage.setItem(key, JSON.stringify({ roundIdHex, round: toHex(encodeRoundContract(round)), invite, nodes, seed: toHex(seed),
-      stakeLock: lock, done, savedMs: Date.now() }));
+      stakeLock: lock, done, savedMs: Date.now(), ...(order ? { order: Number(order) } : {}) }));
     return true;
   } catch { return false; }
 }
@@ -11894,7 +12058,7 @@ function savedCollects(storage, { seed = null } = {}) {
         const [txid, outIdx] = r.stakeLock ? String(r.stakeLock.outpoint).split(':') : [null, null];
         out.push({ roundIdHex: r.roundIdHex, round: decodeRoundContract(fromHex(r.round)), invite: r.invite, nodes: r.nodes, seed: fromHex(r.seed),
           stakeLock: r.stakeLock ? { outpoint: { txid: fromHex(txid), outIdx: BigInt(outIdx) }, fields: lockFieldsFromJson(r.stakeLock.fields) } : null,
-          done: r.done || null, savedMs: Number(r.savedMs) || 0 });
+          done: r.done || null, savedMs: Number(r.savedMs) || 0, order: Number(r.order) || 0 });
       } catch { /* an unreadable record is no record */ }
     }
   } catch { /* no storage: nothing kept */ }
@@ -11965,9 +12129,9 @@ function collectLines(records = [], { failed = new Map(), held = new Set() } = {
 }
 
 /** A round whose payout and stake answers are both final: the lines kept, and it is not asked again. */
-function markCollectDone(storage, roundIdHex, done, seed = null) {
+function markCollectDone(storage, roundIdHex, done, seed = null, order = 0) {
   try {
-    let key = seed ? collectKey(roundIdHex, seed) : null;
+    let key = seed ? collectKey(roundIdHex, seed, order) : null;
     if (!key || !storage.getItem(key)) {
       // no seed named, or a record from before the seed key: the round's record under the old key, else its only one
       const keys = [];
@@ -12021,7 +12185,9 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
   for (const [id, l] of listed) {
     for (let i = 0; i < list.length; i++) {
       if (skips[i].has(id)) continue;
-      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve }).pubkey));
+      // EVERY ORDER'S KEY TOO (kanban #336): a tab's orders in a market round are keyed 0, 1, 2 ... - read up to ORDER_SCAN (32: a bot places 12 a window)
+      for (let order = 0; order <= ORDER_SCAN; order++) {
+      const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed: list[i], curve, order }).pubkey));
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
@@ -12037,11 +12203,14 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
         contracts.set(id, round);
       }
       const round = contracts.get(id);
-      if (round) found.push({ roundIdHex: id, round, payout, lock, seed: list[i] });
+      if (round) found.push({ roundIdHex: id, round, payout, lock, seed: list[i], order });
+      }
     }
   }
   return found;
 }
+// how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
+const ORDER_SCAN = 32;
 
 /**
  * THE ROUND'S FEDERATION WALLET IN THIS TAB - the one the payout and the stake were
@@ -12115,9 +12284,9 @@ async function withdrawPlayerWallet({ round, invite, seed, LockClient, storage, 
  * nothing (lockStatus): gone - nothing to do; before its expiry - not final, and when it comes
  * back; expired - refunded into the tab's wallet, from where the withdraw takes it.
  */
-async function refundKept({ round, roundId, seed, curve, client, storage, kept = null } = {}) {
+async function refundKept({ round, roundId, seed, curve, client, storage, kept = null, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no lock to refund');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const held = kept || savedLock(storage, { roundId, playerPubkey: player.pubkey });
   if (!held || !held.lock) return { ok: false, final: true, locks: [], why: 'this tab keeps no lock for this round' };
   const locks = [{ kind: 'stake', outpoint: held.lock.outpoint, fields: held.lock.fields }];
@@ -12199,9 +12368,9 @@ async function refusedReturn({ roundId, playerPubkey, locks, nodes, fetcher, cli
   return { state: 'owed', how: 'forfeit', refused: true, msat: owed };
 }
 
-async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null } = {}) {
+async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, client = null, storage = null, kept = null, order = 0 } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so nothing in it is owed from a lock');
-  const player = playerFor({ ...round, id: roundId }, { seed, curve });
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   const rid = toHex(roundId);
   const note = (k) => { try { const v = storage && storage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
@@ -12209,7 +12378,7 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   const held = async (txid, outIdx) => !client || !!JSON.parse(await client.lockStatus(txid, Number(outIdx))).stored;
   const s = await settlementOf({ roundId, nodes, fetcher });
   let payout;
-  const paidNote = note(`${PAYOUT_NOTE}${rid}`);
+  const paidNote = note(`${PAYOUT_NOTE}${rid}${orderTag(order)}`);
   if (paidNote) payout = { state: 'collected', msat: BigInt(paidNote.amountMsat) };
   else if (!s.ok) payout = { state: 'waiting', why: s.why };
   else {
@@ -12220,7 +12389,7 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   }
   let stake;
   let lockAnswers = null;
-  const backNote = note(`${STAKE_NOTE}${rid}`);
+  const backNote = note(`${STAKE_NOTE}${rid}${orderTag(order)}`);
   if (backNote) stake = { state: 'collected', msat: BigInt(backNote.amountMsat) };
   else {
     const locks = s.ok ? await findLock({ roundId, playerPubkey: player.pubkey, nodes, fetcher }) : [];
@@ -12333,11 +12502,11 @@ async function collectOwed({ look, client, ...ask } = {}) {
  * no press. Into the player's own federation wallet (one per seed and federation) and NOTHING out of it: no Lightning,
  * no withdraw. What arrived is written in the history as a "winnings" row, by what the wallet's balance actually grew.
  */
-async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher } = {}) {
+async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const before = BigInt(await client.balanceMsat());
-  const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, ...(fetcher ? { fetcher } : {}) });
+  const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
   const after = BigInt(await client.balanceMsat());
   const creditedMsat = after > before ? after - before : 0n;
   // A STAKE THAT ONLY CAME BACK IS A REFUND ROW, NOT WINNINGS (the owner 2026-10-03: "the money that comes back must be
@@ -16507,6 +16676,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
 
 
 
+
 // THE RULE A PLAYER CHECKS AN INVOICE WITH, IMPORTED AND NOT REWRITTEN.
 //
 // `server.js` says at its own /invoice door that this rule "lives on their
@@ -16917,6 +17087,7 @@ class Client {
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.samples = [];            // [tick, price], the live price samples not yet published
     this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
+    this.attests = [];            // [tick, kind, cents, sigs], the committee's word on a sample (0) or the tape (1) (§11, #311)
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -17758,7 +17929,7 @@ class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [], attests = [] }) {
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
@@ -17768,6 +17939,7 @@ class Client {
       loads,
       samples,
       tapes,
+      ...(attests.length ? { attests } : {}),
     };
     const bytes = encodeInputBatch(b);
     const answer = await this.send(bytes);
@@ -18114,6 +18286,7 @@ class Client {
       this.loads = this.loads.filter(([at]) => at >= this.nextTick);
       this.samples = this.samples.filter(([at]) => at >= this.nextTick);
       this.tapes = this.tapes.filter(([at]) => at >= this.nextTick);
+      this.attests = this.attests.filter(([at]) => at >= this.nextTick);
       this.batchesLandedUnheard++;
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
@@ -18226,6 +18399,7 @@ class Client {
     this.loads = [];
     this.samples = [];
     this.tapes = [];
+    this.attests = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -18421,6 +18595,26 @@ class Client {
     return true;
   }
 
+  /**
+   * THE COMMITTEE'S PRICE (§11, kanban #311): a sample the seats signed for `tick`, in cents, with their signatures
+   * ([key, sig]). It must be applied at exactly that tick - the run is at it now (`offered`) - and goes into the transcript
+   * in the tape's unit beside its attestation, which every seat checks. Refused at any other tick, or once the run ended.
+   */
+  submitAttestedSample({ tick, priceCents, sigs }) {
+    if (this.ended || !this.where || tick !== this.offered) return false;
+    this.samples.push([tick, centsToTapeUnits(priceCents)]);
+    this.attests.push([tick, 0, priceCents, sigs]);
+    return true;
+  }
+
+  /** THE COMMITTEE'S TAPE: the 64 signed prices before the start, in cents, with their signatures - at tick `tick`. */
+  submitAttestedTape({ tick, prices, sigs }) {
+    if (this.ended || !this.where || tick !== this.offered || !prices || prices.length !== 64) return false;
+    this.tapes.push([tick, ...prices.map(centsToTapeUnits)]);
+    this.attests.push([tick, 1, prices.slice(), sigs]);
+    return true;
+  }
+
   /** THE LIVE TAPE the page handed its core (64 prices, oldest first), published with the batch covering its tick. */
   submitTape(prices) {
     if (this.ended || !this.where || !prices || prices.length !== 64) return false;
@@ -18556,8 +18750,11 @@ class Client {
     this.samples = this.samples.filter(([at]) => at >= through);
     const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
+    // the committee's word on the samples and the tape this batch carries, and on nothing else (§11, kanban #311)
+    const attests = this.attests.filter(([at, kind]) => (kind === 0 ? samples : tapes).some((x) => x[0] === at));
+    this.attests = this.attests.filter((a) => !attests.includes(a));
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -18575,6 +18772,7 @@ class Client {
         this.loads = loads.concat(this.loads);
         this.samples = samples.concat(this.samples);
         this.tapes = tapes.concat(this.tapes);
+        this.attests = attests.concat(this.attests);
         if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
           // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
           // so this is not a refusal and does not resync towards VOID -
@@ -18613,6 +18811,7 @@ class Client {
       this.loads = loads.concat(this.loads);
       this.samples = samples.concat(this.samples);
       this.tapes = tapes.concat(this.tapes);
+      this.attests = attests.concat(this.attests);
       this.publishing = null;
       throw e;
     });
@@ -22000,6 +22199,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          tickClock: tickClock, ghostLabels: ghostLabels, ghostLabelText: ghostLabelText, moveGlyphs: moveGlyphs,
          playersLine: playersLine, newestPose: newestPose,
          stakeLine: stakeLine,
+         centsToTapeUnits: centsToTapeUnits,
          joinQuery: joinQuery, joinFromQuery: joinFromQuery,
          verifyPhrase: verifyPhrase, verifyAndRecord: verifyAndRecord,
          isVerified: isVerified, backupLine: backupLine, NO_BACKUP_LINE: NO_BACKUP_LINE,

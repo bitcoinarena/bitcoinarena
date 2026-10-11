@@ -894,6 +894,19 @@ export class LockSettlement {
    * transaction submitted, and the guardians' answer kept.
    */
   async settle(roundIdBytes) {
+    // ONE SETTLE OF A ROUND AT A TIME (kanban #336, measured 2026-10-10 on the regtest Up/Down market: the attested sweep asks
+    // every 5 s, a settle of a book round with 26 locks ran longer than that, and the asks piled up - 80 blwp-stake-lock
+    // processes at once over the one client database, each killed at its timeout, and the round never settled). A second
+    // ask while one runs waits for that one's answer instead of starting another.
+    const k = toHex(roundIdBytes);
+    if (this.#settling.has(k)) return this.#settling.get(k);
+    const p = this.#settleOnce(roundIdBytes).finally(() => this.#settling.delete(k));
+    this.#settling.set(k, p);
+    return p;
+  }
+  #settling = new Map();
+
+  async #settleOnce(roundIdBytes) {
     const held = this.#attestedHold(roundIdBytes);
     if (held) return held;
     const kept = this.round.lockSettlement(roundIdBytes);

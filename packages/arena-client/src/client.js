@@ -40,6 +40,7 @@ import {
   GENESIS, decodeTranscript, checkTranscript, transcriptBelongsToEntry, flatten,
 } from '../../arena-protocol/src/transcript.js';
 import { encodeInputBatch, batchId, batchTicks } from '../../arena-protocol/src/batch.js';
+import { centsToTapeUnits } from '../../arena-protocol/src/price-sample.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
@@ -455,6 +456,7 @@ export class Client {
     this.loads = [];              // [tick, feeSats, btcHundredths], not yet published
     this.samples = [];            // [tick, price], the live price samples not yet published
     this.tapes = [];              // [tick, p0 .. p63], the live tape not yet published
+    this.attests = [];            // [tick, kind, cents, sigs], the committee's word on a sample (0) or the tape (1) (§11, #311)
     this.nodes = [];              // the committee, off the round's own contract
     this.gameVerifySlots = 7;
     this.hold = [];               // ticks waiting to go out
@@ -1296,7 +1298,7 @@ export class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [], attests = [] }) {
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
@@ -1306,6 +1308,7 @@ export class Client {
       loads,
       samples,
       tapes,
+      ...(attests.length ? { attests } : {}),
     };
     const bytes = encodeInputBatch(b);
     const answer = await this.send(bytes);
@@ -1652,6 +1655,7 @@ export class Client {
       this.loads = this.loads.filter(([at]) => at >= this.nextTick);
       this.samples = this.samples.filter(([at]) => at >= this.nextTick);
       this.tapes = this.tapes.filter(([at]) => at >= this.nextTick);
+      this.attests = this.attests.filter(([at]) => at >= this.nextTick);
       this.batchesLandedUnheard++;
     }
     // AND THE PEERS ARE FED WHAT THIS NODE TOOK, including a batch whose answer
@@ -1764,6 +1768,7 @@ export class Client {
     this.loads = [];
     this.samples = [];
     this.tapes = [];
+    this.attests = [];
     this.dropped = 0;
     this.batchesSent = 0;
     this.marksSent = 0;
@@ -1959,6 +1964,26 @@ export class Client {
     return true;
   }
 
+  /**
+   * THE COMMITTEE'S PRICE (§11, kanban #311): a sample the seats signed for `tick`, in cents, with their signatures
+   * ([key, sig]). It must be applied at exactly that tick - the run is at it now (`offered`) - and goes into the transcript
+   * in the tape's unit beside its attestation, which every seat checks. Refused at any other tick, or once the run ended.
+   */
+  submitAttestedSample({ tick, priceCents, sigs }) {
+    if (this.ended || !this.where || tick !== this.offered) return false;
+    this.samples.push([tick, centsToTapeUnits(priceCents)]);
+    this.attests.push([tick, 0, priceCents, sigs]);
+    return true;
+  }
+
+  /** THE COMMITTEE'S TAPE: the 64 signed prices before the start, in cents, with their signatures - at tick `tick`. */
+  submitAttestedTape({ tick, prices, sigs }) {
+    if (this.ended || !this.where || tick !== this.offered || !prices || prices.length !== 64) return false;
+    this.tapes.push([tick, ...prices.map(centsToTapeUnits)]);
+    this.attests.push([tick, 1, prices.slice(), sigs]);
+    return true;
+  }
+
   /** THE LIVE TAPE the page handed its core (64 prices, oldest first), published with the batch covering its tick. */
   submitTape(prices) {
     if (this.ended || !this.where || !prices || prices.length !== 64) return false;
@@ -2094,8 +2119,11 @@ export class Client {
     this.samples = this.samples.filter(([at]) => at >= through);
     const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
+    // the committee's word on the samples and the tape this batch carries, and on nothing else (§11, kanban #311)
+    const attests = this.attests.filter(([at, kind]) => (kind === 0 ? samples : tapes).some((x) => x[0] === at));
+    this.attests = this.attests.filter((a) => !attests.includes(a));
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -2113,6 +2141,7 @@ export class Client {
         this.loads = loads.concat(this.loads);
         this.samples = samples.concat(this.samples);
         this.tapes = tapes.concat(this.tapes);
+        this.attests = attests.concat(this.attests);
         if (typeof r.answer === 'string' && r.answer.startsWith(CLOSED)) {
           // THE LINK WENT WITH THE BATCH IN FLIGHT. The node refused nothing,
           // so this is not a refusal and does not resync towards VOID -
@@ -2151,6 +2180,7 @@ export class Client {
       this.loads = loads.concat(this.loads);
       this.samples = samples.concat(this.samples);
       this.tapes = tapes.concat(this.tapes);
+      this.attests = attests.concat(this.attests);
       this.publishing = null;
       throw e;
     });

@@ -1890,3 +1890,22 @@ test('a kept lock for a round the signer nodes refuse is handed to them, owed ba
   assert.equal(offered.stake.how, 'refund');
   assert.equal(offered.stakeMsat, 0n);
 });
+
+test('a tab\'s orders in one market round (kanban #336): each its own key, its own collect record, done on its own; order 0 keeps the record it always had', () => {
+  const tab = new Map();
+  const storage = { getItem: (k) => (tab.has(k) ? tab.get(k) : null), setItem: (k, v) => tab.set(k, String(v)), removeItem: (k) => tab.delete(k),
+    key: (i) => [...tab.keys()][i] ?? null, get length() { return tab.size; } };
+  const lockRound = { ...round, custody: 'FEDERATION', federationId: TEST_FEDERATION_ID };
+  const id = roundId(lockRound); const lr = toHex(id);
+  const keys = [0, 1, 2].map((order) => toHex(playerFor({ ...lockRound, id }, { seed, curve: pageCurve, order }).pubkey));
+  assert.equal(new Set(keys).size, 3, 'three orders, three player keys');
+  assert.equal(keys[0], toHex(playerFor({ ...lockRound, id }, { seed, curve: pageCurve }).pubkey), 'order 0 is the round\'s key');
+  for (const order of [0, 1, 2]) assert.equal(saveCollect(storage, { roundIdHex: lr, round: lockRound, invite: INVITE, nodes: ['http://a.test'], seed, order }), true);
+  const kept = savedCollects(storage);
+  assert.deepEqual(kept.map((r) => r.order).sort(), [0, 1, 2], 'one record per order, none replaced another');
+  assert.ok(tab.has(`arena.collect.${lr}.${toHex(seed).slice(0, 16)}`), 'order 0 under the key it always had');
+  assert.ok(tab.has(`arena.collect.${lr}.${toHex(seed).slice(0, 16)}.o2`));
+  assert.equal(markCollectDone(storage, lr, { payout: 'paid' }, seed, 1), true);
+  const after = savedCollects(storage);
+  assert.deepEqual(after.filter((r) => r.done).map((r) => r.order), [1], 'only order 1 is done');
+});

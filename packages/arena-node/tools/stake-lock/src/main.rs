@@ -752,10 +752,20 @@ async fn settle(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &D
     Ok(())
 }
 
+// ALL AT ONCE, IN THE ORDER GIVEN (kanban #336, measured 2026-10-11 on the regtest Up/Down market: a book round's settle read
+// each of its ~50 locks before and after the submit and each of its ~30 payouts after it ONE AFTER ANOTHER - ~135 consensus
+// reads at 1-2 s each - and was killed at 300 s every time; a two-order round's 8 reads had always fit). One task a read.
 async fn futures_join(api: &DynModuleApi, locks: &[OutPoint]) -> anyhow::Result<Vec<serde_json::Value>> {
-    let mut out = Vec::new();
-    for op in locks {
-        out.push(stored_json(stored_at(api, *op).await?));
+    let mut set = tokio::task::JoinSet::new();
+    for (i, op) in locks.iter().enumerate() {
+        let api = api.clone();
+        let op = *op;
+        set.spawn(async move { (i, stored_at(&api, op).await) });
+    }
+    let mut out = vec![serde_json::Value::Null; locks.len()];
+    while let Some(done) = set.join_next().await {
+        let (i, got) = done.map_err(|e| anyhow!("a consensus read did not finish: {e}"))?;
+        out[i] = stored_json(got?);
     }
     Ok(out)
 }
