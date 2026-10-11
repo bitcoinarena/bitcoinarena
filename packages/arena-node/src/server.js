@@ -5021,7 +5021,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/federations') {
         if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: fedRecords.list() }));
+        // AND WHO THE DRAIN PAYS (§23A.6 step 5, kanban #325): per successor a kept record names, the predecessor's seated
+        // guardians its guardian pool takes (roster.guardiansFor), by node key - none once the predecessor is CLOSED
+        const listed = fedRecords.list();
+        const drainPools = Object.fromEntries([...new Set(listed.map((f) => f.successor).filter(Boolean))]
+          .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: listed, drainPools }));
       }
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
