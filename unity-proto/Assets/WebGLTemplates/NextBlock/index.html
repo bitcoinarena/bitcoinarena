@@ -4804,12 +4804,14 @@
       if (game.manifest && game.manifest.resultType === 3 && !window.ARENA_H2H_WANT_TIMER) {
         const ask = async () => {
           const open = await Promise.any(nodes.map(async (n) => {
-            const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+            // the next 15 min only: the whole listing is 3.7 MB on testnet4 and took 1.7-6.6 s a seat (measured 17:44Z)
+            const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds?ahead=900000', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
             if (!r.ok) throw new Error(String(r.status));
             const j = await r.json();
             return (j.rounds || []).some((x) => x.game && x.game.id === game.id && Number(x.entryCloseMs || Date.parse(x.entryClose || 0) || 0) > Date.now());
           })).catch(() => null);
-          if (open !== false) { window.ARENA_H2H_WANT = { at: Date.now(), open }; return; }
+          // a round open: nothing to ask. No seat answered: ask anyway - the keeper publishes no grid while one runs ahead
+          if (open === true) { window.ARENA_H2H_WANT = { at: Date.now(), open }; return; }
           const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/h2h-want?game=' + game.id, { method: 'POST', signal: AbortSignal.timeout(5000) })
             .then((r) => r.status).catch(() => 0)));
           window.ARENA_H2H_WANT = { at: Date.now(), open: false, said };
