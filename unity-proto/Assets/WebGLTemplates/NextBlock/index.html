@@ -1317,6 +1317,13 @@
         locks: (navigator.locks && typeof navigator.locks.request === 'function') ? navigator.locks : null, reload: () => location.reload(),
         random: () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('') });
     } catch (e) { console.log('[blwp] the phrase is not kept in this browser: ' + (e && e.message ? e.message : e)); }
+    // THE START SCREEN IS DECIDED HERE, ONCE (kanban #339, the owner 2026-10-11: "Logout goes straight into a newly created
+    // account. It must go to an overview"): a tab that holds no phrase after the keeper - a first visit, or a tab whose
+    // account was just deleted - opens on the start screen, and until the player picks a way in nothing mints one behind it
+    // (the wallet bar's and the collect's seed reads did, and the start screen then found a phrase and stayed hidden).
+    try { window.ARENA_NO_SEED_AT_START = !/^[0-9a-f]{64}$/i.test(sessionStorage.getItem('arena.player.seed') || ''); }
+    catch { window.ARENA_NO_SEED_AT_START = false; }
+    window.ARENA_START_PENDING = () => !!window.ARENA_NO_SEED_AT_START && !(window.ARENA_WALLET_SCREEN && window.ARENA_WALLET_SCREEN.done);
     // A RELOAD OF THE DEPOSIT PAGE LANDS ON THE LOBBY (the owner 2026-09-30 21:10, PRIORITIES: "Reloading the deposit page
     // redirects to the normal Core page. Do not stay on the deposit screen. Do not show the status box or the loading
     // screen over the QR"). While a join's deposit offer is up the address is the round's link with play=1, and a reload
@@ -2904,6 +2911,7 @@
     // round still owed is looked at and withdrawn once the newer ones are done; else the newest.
     // THIS TAB'S OWN COLLECTS (ORDER-2116): a second player in the same browser keeps its own, under its own seed
     function collectSeed() {
+      if (window.ARENA_START_PENDING()) return null;   // no phrase is minted behind the start screen (#339)
       try { return BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { return null; }
     }
     // EVERY SAVED PHRASE'S RECORDS (kanban #153, ruled the owner 2026-10-07): a closed tab's round pays into the wallet of the
@@ -3196,6 +3204,7 @@
       return window.BLWP_DONATION_BPS;
     }
     const walletSeed = () => {
+      if (window.ARENA_START_PENDING()) return null;   // no phrase is minted behind the start screen (#339)
       try { return BLWPCLIENT.tabSeed({ storage: window.sessionStorage,
         random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { return null; }
     };
@@ -3964,10 +3973,15 @@
           if (cur) L.removeItem('arena.seed.held.' + cur.slice(0, 16));
           L.removeItem('arena.nostr');
         }
-        try { localStorage.removeItem('arena.nostr'); } catch { /* none */ }
+        // THE NOSTR LOGIN AND THE WALLET IT CONNECTED (kanban #339: "On Nostr logout, clear the local login")
+        try { localStorage.removeItem('arena.nostr'); localStorage.removeItem('arena.nwc'); } catch { /* none */ }
         sessionStorage.removeItem('arena.player.seed'); sessionStorage.removeItem('arena.player.seed.from'); sessionStorage.removeItem('arena.nostr.showWords');
         sessionStorage.setItem('arena.wallet.fresh', '1');
       } catch (e) { return { ok: false, why: 'This account could not be removed: ' + e.message }; }
+      // FROM NOW UNTIL THE RELOAD THIS TAB HAS NO ACCOUNT (kanban #339): the page's timers - the wallet bar, the collects,
+      // Settings painting - read the wallet's seed and would mint a new one before the start screen comes back
+      window.ARENA_NO_SEED_AT_START = true;
+      if (window.ARENA_WALLET_SCREEN) window.ARENA_WALLET_SCREEN.done = false;
       console.log('[arena] account deleted from this browser: ' + forgot + ' wallet entries');
       return { ok: true, forgot };
     };
@@ -5529,7 +5543,8 @@
       const $ = (id) => document.getElementById(id);
       const box = $('arena-wallet-start');
       let held = null; try { held = sessionStorage.getItem('arena.player.seed'); } catch { held = 'no storage'; }
-      const already = !!held;
+      // decided before any other script could mint one (#339): the keeper's word, not what the tab holds by now
+      const already = window.ARENA_NO_SEED_AT_START === undefined ? !!held : !window.ARENA_NO_SEED_AT_START;
       window.ARENA_WALLET_SCREEN = { shown: !already };
       // AFTER A NOSTR LOGIN WHOSE SEED A SIGNER MADE: its 24 words are the only offline copy - shown once, after the reload
       let words = null; try { words = sessionStorage.getItem('arena.nostr.showWords'); sessionStorage.removeItem('arena.nostr.showWords'); } catch { words = null; }
