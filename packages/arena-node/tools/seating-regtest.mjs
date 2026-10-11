@@ -276,7 +276,8 @@ for (const i of downC) await up(i);
   const c = decodeSeatingCertificate(real);
   const cut = encodeSeatingCertificate({ ...c, signatures: c.signatures.slice(1) });
   const stub = createServer(async (q, res) => {
-    if (q.url.startsWith('/seating?')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ cert: toHex(cut) })); }
+    // the settlement role's certificate with one signature cut; the game role's as the seats hold it
+    if (q.url.startsWith('/seating?') && q.url.includes('role=settlement')) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ cert: toHex(cut) })); }
     const r = await fetch(`http://127.0.0.1:${PORTS[1]}${q.url}`, { method: q.method }).catch(() => null);
     if (!r) { res.writeHead(502); return res.end(); }
     res.writeHead(r.status, { 'content-type': r.headers.get('content-type') || 'application/octet-stream' }); res.end(Buffer.from(await r.arrayBuffer()));
