@@ -1900,3 +1900,29 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
   onState({ state: 'moved', movedMsat: moved, chunks });
   return { moved, chunks, state: 'moved' };
 }
+
+/**
+ * THE PLAYER'S NOTES OUT OF A DRAINING FEDERATION (§23A.6 step 3, kanban #325), as the page runs it: `status` is the round
+ * federation's record as federations.js checked it, `successor` the successor's (its own record, checked the same way).
+ * Nothing unless the first is DRAINING and names the second, and the second is OPEN with its invite. The player's wallet
+ * in each (one seed, walletSecretFor per federation) is opened as the stake opens it; then migrateFromDraining.
+ */
+export async function migratePlayerWallet({ round, invite, seed, LockClient, storage, status, successor, onState = () => {}, chunkMsat = null } = {}) {
+  if (!status || status.status !== 'DRAINING' || !status.successorId) return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!successor || successor.status !== 'OPEN' || !successor.invite) return { moved: 0n, chunks: 0, state: 'no open successor to move to' };
+  const from = await playerWallet({ round, invite, seed, LockClient, storage });
+  const to = await playerWallet({ round: { ...round, federationId: fromHex(status.successorId) }, invite: successor.invite, seed, LockClient, storage });
+  return migrateFromDraining({ from, to, record: { status: 'DRAINING', successorId: status.successorId }, toFederationId: fromHex(status.successorId),
+    fromFederationId: round.federationId, storage, onState, chunkMsat });
+}
+
+/** The federations this browser keeps a history for (hex): where the player has held notes. */
+export function ledgerFederations(storage) {
+  const out = [];
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(LEDGER_PREFIX) || k.startsWith(LEDGER_READ_PREFIX)) continue;
+    const f = k.slice(LEDGER_PREFIX.length);
+    if (/^[0-9a-f]{64}$/.test(f)) out.push(f);
+  }
+  return out;
+}

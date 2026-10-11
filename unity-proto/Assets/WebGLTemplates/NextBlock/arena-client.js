@@ -12762,6 +12762,82 @@ async function handLock({ entryId, fields, nodes, needed, fetcher = fetch, door 
   return { ok: committed >= needed, committed, needed, said };
 }
 
+/**
+ * THE NOTES FOLLOW THE FEDERATION'S SUCCESSOR, BY THEMSELVES (§23A.6 step 3, kanban #325: "On its next start and at every
+ * settlement it sees, a client whose notes are in a DRAINING federation moves them to the successor: a stock LNv2 send
+ * from the old federation paying a stock LNv2 receive invoice in the new one ... In chunks, atomic each, no press; the
+ * balance shows moving until it is done, then the new federation's name").
+ *
+ * `record`: the old federation's FederationRecord as this page verified it (federations.js) - nothing moves on a record
+ * that is not DRAINING or names no successor, or when `to` is not that successor. `from` / `to`: the player's wallets in
+ * the old and the new federation (the same seed). Each chunk is one send of at most `chunkMsat` (all that can be sent,
+ * unnamed): an invoice of exactly that amount from the successor's wallet, paid by the old one (withdrawCollected - the
+ * stock send; a refused or refunded send leaves the notes where they were), and waited for until claimed. A chunk that
+ * fails is tried again, at most `retries` times in a row. `onState({ state: 'moving' | 'moved' | 'stopped', ... })`.
+ * Answers { moved, chunks, state, why }.
+ */
+const MIGRATE_DUST_MSAT = 10000n;
+async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
+  gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
+  const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  if (!record || record.status !== 'DRAINING') return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
+  if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
+  let moved = 0n, chunks = 0, failed = 0;
+  for (let n = 0; n < maxChunks; n++) {
+    let can;
+    try { can = BigInt(await from.withdrawableMsat()); } catch (e) {
+      if (/too low to send any amount after fees/i.test(String((e && e.message) || e))) can = 0n; else throw e;
+    }
+    if (can <= MIGRATE_DUST_MSAT) break;
+    const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
+    onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
+    let made = null;
+    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); return { ok: true, invoice: made.invoice }; } });
+    const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
+    if (out.ok && final === 'Claimed') {
+      moved += amount; chunks++; failed = 0;
+      if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'moved-out', msat: String(amount), to: hex(toFederationId) });
+      if (storage) ledgerAppend(storage, toFederationId, { kind: 'moved-in', msat: String(amount), from: hex(fromFederationId) });
+      continue;
+    }
+    if (++failed > retries) {
+      const why = out.ok ? `the successor's receive ended ${final}` : out.why;
+      onState({ state: 'stopped', movedMsat: moved, why });
+      return { moved, chunks, state: 'stopped', why };
+    }
+  }
+  onState({ state: 'moved', movedMsat: moved, chunks });
+  return { moved, chunks, state: 'moved' };
+}
+
+/**
+ * THE PLAYER'S NOTES OUT OF A DRAINING FEDERATION (§23A.6 step 3, kanban #325), as the page runs it: `status` is the round
+ * federation's record as federations.js checked it, `successor` the successor's (its own record, checked the same way).
+ * Nothing unless the first is DRAINING and names the second, and the second is OPEN with its invite. The player's wallet
+ * in each (one seed, walletSecretFor per federation) is opened as the stake opens it; then migrateFromDraining.
+ */
+async function migratePlayerWallet({ round, invite, seed, LockClient, storage, status, successor, onState = () => {}, chunkMsat = null } = {}) {
+  if (!status || status.status !== 'DRAINING' || !status.successorId) return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!successor || successor.status !== 'OPEN' || !successor.invite) return { moved: 0n, chunks: 0, state: 'no open successor to move to' };
+  const from = await playerWallet({ round, invite, seed, LockClient, storage });
+  const to = await playerWallet({ round: { ...round, federationId: fromHex(status.successorId) }, invite: successor.invite, seed, LockClient, storage });
+  return migrateFromDraining({ from, to, record: { status: 'DRAINING', successorId: status.successorId }, toFederationId: fromHex(status.successorId),
+    fromFederationId: round.federationId, storage, onState, chunkMsat });
+}
+
+/** The federations this browser keeps a history for (hex): where the player has held notes. */
+function ledgerFederations(storage) {
+  const out = [];
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(LEDGER_PREFIX) || k.startsWith(LEDGER_READ_PREFIX)) continue;
+    const f = k.slice(LEDGER_PREFIX.length);
+    if (/^[0-9a-f]{64}$/.test(f)) out.push(f);
+  }
+  return out;
+}
+
 // ---- arena-client/src/vendor-qrcode.js
 // VENDORED: qrcode-generator 2.0.4 (MIT, Kazuhiko Arase), dist/qrcode.mjs less its default export - this bundle takes
 // relative imports only (tools/bundle.js). Used by qr.js for the deposit invoice's QR code.
@@ -22683,7 +22759,10 @@ function buildFederationRecord({ federationId, networkId, invite, nominal, guard
     federationId, networkId, invite, nominal, threshold: band.threshold,
     guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
       .sort((a, b) => cmp(a.nodePubkey, b.nodePubkey)),
-    status: FEDERATION_STATUS[band.status], successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
+    // A SUCCESSOR NAMED IS A DRAIN (§23A.6 step 2: "The old federation's guardians sign a record with status = DRAINING and
+    // successor_id"): OPEN becomes DRAINING; a worse band (CRITICAL, HALTED) and CLOSED stay what they are
+    status: FEDERATION_STATUS[!closed && successorId && successorId.some((x) => x) && band.status === 'OPEN' ? 'DRAINING' : band.status],
+    successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
     exposureCapSats: cap.ok ? cap.cap : 0n, reserveSats, height,
     seated: seatedGuardians.length, band,
   };
@@ -22865,6 +22944,7 @@ const knownFederation = (hex) => KNOWN_GOOD_FEDERATIONS[String(hex || '').toLowe
 
 
 const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
+const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? hexToBytes(f) : null; };
 
 /** What a page may do with a federation in each status. */
@@ -22899,7 +22979,11 @@ async function federationStatus({ federationIdHex, nodes, census, verify, fetche
   const best = newestRecord(verified);
   if (!best) return { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: refused.length ? `no record stands: ${refused[0]}` : 'no node holds a record of this federation' };
   return { status: best.status, allows: FEDERATION_ALLOWS[best.status], signers: best.signers, height: best.record.height, from: best.from,
-    nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats) };
+    nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats),
+    // THE SUCCESSION (§23A.6, kanban #325): the successor the guardians named (hex, or null) and this federation's own invite,
+    // so a page can open the player's wallet in the successor from the successor's record
+    successorId: best.record.successorId && best.record.successorId.some((x) => x) ? bytesToHex(best.record.successorId) : null,
+    invite: best.record.invite || null };
 }
 
 /** The sentence a page shows for a status that holds something back. */
@@ -25576,7 +25660,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationSays: federationSays, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,

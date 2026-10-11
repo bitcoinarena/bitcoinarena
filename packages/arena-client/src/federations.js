@@ -13,6 +13,7 @@ import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
 
 const hexToBytes = (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16)));
+const bytesToHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 export const inviteFederationId = (invite) => { const f = readInvite(invite).federationId; return f ? hexToBytes(f) : null; };
 
 /** What a page may do with a federation in each status. */
@@ -47,7 +48,11 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
   const best = newestRecord(verified);
   if (!best) return { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: refused.length ? `no record stands: ${refused[0]}` : 'no node holds a record of this federation' };
   return { status: best.status, allows: FEDERATION_ALLOWS[best.status], signers: best.signers, height: best.record.height, from: best.from,
-    nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats) };
+    nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats),
+    // THE SUCCESSION (§23A.6, kanban #325): the successor the guardians named (hex, or null) and this federation's own invite,
+    // so a page can open the player's wallet in the successor from the successor's record
+    successorId: best.record.successorId && best.record.successorId.some((x) => x) ? bytesToHex(best.record.successorId) : null,
+    invite: best.record.invite || null };
 }
 
 /** The sentence a page shows for a status that holds something back. */
