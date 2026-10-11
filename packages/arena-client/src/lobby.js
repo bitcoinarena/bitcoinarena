@@ -208,7 +208,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     const seatingSaid = counts.map((c) => c.committee).filter((x) => x && x.seated);
     const seatedBy = seatingSaid.find((x) => x.seated.game && x.seated.settlement) || null;
     const seating = !seatingSaid.length ? null : seatedBy
-      ? { state: 'seated', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
+      ? { state: 'named', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
       : { state: seatingSaid.some((x) => x.equivocated) ? 'equivocated' : 'pending' };
     rows.push({
       id, phase,
@@ -222,7 +222,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
       signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
-      joinable: phase === 'open' && agreeing.size >= needed && (!seating || seating.state === 'seated'),
+      joinable: phase === 'open' && agreeing.size >= needed && (!seating || seating.state === 'named'),
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
@@ -392,9 +392,9 @@ export function lobbyLine(row, nowMs = Date.now()) {
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
   // RESERVE SEATS (§5A.7): who is seated, of how many drawn
-  const seat = !row.seating ? '' : row.seating.state === 'seated'
-    ? ` · seated: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
-    : row.seating.state === 'equivocated' ? ' · two seatings: the round is void' : ' · not seated yet';
+  const seat = !row.seating ? '' : row.seating.state === 'named'
+    ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
+    : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }

@@ -151,7 +151,7 @@ export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, o
   // NO ENTRY WITHOUT A CHECKED SEATING where the seats seat (§5A.7): the stake is dealt to who a certificate seats
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    if (st && st.missing) throw new Error(`that round is not seated: no seating certificate for its ${role} role stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
+    if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const answered = got.seats.filter((s) => s.agrees !== null);
   if (answered.length && !answered.some((s) => s.agrees))

@@ -758,7 +758,7 @@ export function sittingSeatsFitTheSlots(c) {
   // RESERVE SEATS (§5A.7, kanban #301; decision A: the contract names the draw): a round may name its draw - two reserves
   // over the seats, 9 for 7 and 3 for 2 (sortition.js drawnForRole) - and its seating certificate says who sits
   const t = slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1;
-  const drawn = Math.min(slots + 2, 2 * t - 1);
+  const drawn = slots < 1 ? 0 : Math.min(slots + 2, 2 * t - 1);
   if (seats > drawn)
     return { ok: false, seats, slots,
       why: `that round seats ${seats} signer nodes on ${gv}/${st} slots: 22A pays the seats the census `
