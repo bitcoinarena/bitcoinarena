@@ -161,12 +161,26 @@ for (const stop = Date.now() + 1500000; Date.now() < stop; await wait(15000)) {
 }
 const finalBook = await getJson(`${seats[0]}/book?round=${round.id}`);
 const outcomeDoc = await getJson(`${seats[0]}/outcome?round=${round.id}`);
-await wait(20000);
-const after = {}; for (const b of bots) after[b.name] = await b.balance();
+// THE COLLECT (kanban #336: "every order's payout or return collected to the msat"): the page collects a payout and a
+// returned lock into the player wallet on its own; each bot's balance is read every 20 s until it has not moved for a
+// minute, up to COLLECT_WAIT_MS (default 8 min)
+const collected = [];
+let after = {};
+{
+  let last = '', still = 0;
+  for (const stop = Date.now() + Number(env.COLLECT_WAIT_MS || 480000); Date.now() < stop; await wait(20000)) {
+    after = {}; for (const b of bots) after[b.name] = await b.balance();
+    const key = J(Object.fromEntries(Object.entries(after).map(([k, v]) => [k, v && v.sats])));
+    collected.push({ at: new Date().toISOString().slice(11, 19), sats: JSON.parse(key) });
+    still = key === last ? still + 1 : 0; last = key;
+    // stood still for a minute, and not before COLLECT_MIN_MS (2 min) - the page's collect loop runs every 5 s
+    if (still >= 3 && collected.length * 20000 >= Number(env.COLLECT_MIN_MS || 120000)) break;
+  }
+}
 const withdrawable = {}; for (const b of bots) withdrawable[b.name] = await b.ev('window.BLWP_WITHDRAW_AVAILABLE ? JSON.stringify(window.BLWP_WITHDRAW_AVAILABLE(), (k, v) => (typeof v === "bigint" ? String(v) : v)) : null');
 say({ step: 'settlement', state: ls && ls.state, why: ls && ls.why, txid: ls && ls.txid, after, withdrawable });
 for (const b of bots) { await b.shot('end'); b.stop(); }
-writeFileSync(`${OUT}/book-bots.json`, J({ round, beat, endPrice, outcome, orders, before, after, withdrawable, book: finalBook, settlement: ls, outcomeDoc,
+writeFileSync(`${OUT}/book-bots.json`, J({ round, beat, endPrice, outcome, orders, before, after, collected, withdrawable, book: finalBook, settlement: ls, outcomeDoc,
   deposits: Object.fromEntries(bots.map((b) => [b.name, b.deposits])), console: Object.fromEntries(bots.map((b) => [b.name, b.logs.filter(([, s]) => /\[blwp\]|\[arena\]/.test(s))])), log }));
 say({ step: 'done', out: `${OUT}/book-bots.json` });
 for (const c of contexts) await call('Target.disposeBrowserContext', { browserContextId: c }).catch(() => {});
