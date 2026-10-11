@@ -1,9 +1,10 @@
 // HOW MANY PLAY EACH GAME HERE NOW (kanban #338, the owner 2026-10-11: "Anzeigen wieviele nodes das haben und wieviele spieler
 // insgesamt drin sind"): per game this seat hosts, the rounds that are live now - open for entries or running - and the
-// players entered in them, from this seat's own round store. Each round's contract is read once (by rowid), the entries
+// players entered in them, from this seat's own round store - live from the seating close (start - 120 s) to the end. Each round's contract is read once (by rowid), the entries
 // counted with one query; the answer is kept 10 s, so GET /games stays cheap however often the chooser asks.
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { SEATING_LEAD_MS } from '../../arena-protocol/src/seating.js';
 
 const KEPT_MS = 10000;
 
@@ -18,7 +19,10 @@ export function gameLive(round, { nowMs = () => Date.now() } = {}) {
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       const run = BigInt(c.blockTicks || 0) * 1000n / 60n;
-      rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open: c.committeeTimeMs, end: c.startTimeMs + run + 30000n });
+      // LIVE from its seating close (start - 120 s, §5A.7: the first moment it takes an entry), not from its committee time:
+      // a series is drawn up to 72 h ahead, and counting from there showed 1,266 "live" Tick Tock rounds
+      const open = c.startTimeMs - SEATING_LEAD_MS > c.committeeTimeMs ? c.startTimeMs - SEATING_LEAD_MS : c.committeeTimeMs;
+      rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open, end: c.startTimeMs + run + 30000n });
     }
   };
   /** { [gameId hex]: { rounds, players } } - the rounds live now and the players entered in them. */
