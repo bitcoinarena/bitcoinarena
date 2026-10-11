@@ -241,7 +241,15 @@ function depthRuleOf(contract, view) {
  */
 export function commitCensus(entries, { contract, view }) {
   const { censusHeight, censusConfirmations } = depthRuleOf(contract, viewOrThrow(view));
+  return censusRootOf(entries, { censusHeight, censusConfirmations });
+}
 
+/**
+ * THE ROOT OF A SET OF RESOLVED ENTRIES AT A HEIGHT AND DEPTH, with no chain view (kanban #296, spec 5A.6): the same
+ * filters, sort and tree `commitCensus` applies - it calls this - so a client that verified each entry against headers
+ * it agreed itself computes byte for byte the root a seat derives from blocks, and compares it with the round's.
+ */
+export function censusRootOf(entries, { censusHeight, censusConfirmations }) {
   for (const e of entries)
     if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
       throw new Error('that entry has not been resolved: no advertisement stands behind it');

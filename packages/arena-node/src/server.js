@@ -3002,6 +3002,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // AND THE BONDS OF A ROUND'S GUARDIANS (M3; the owner 07:33), out of the census this signer node derived
       // for it: each transaction and its merkle branch, for the page to prove into headers it agreed
       // from providers and count against its own federation's keys. Candidates, not a count.
+      // THE ROUND'S CENSUS AS EVIDENCE (kanban #296, spec 5A.6): every bond with its merkle branch, update and
+      // re-affirmation, for a client that builds the committee itself and checks the set against census_root
+      if (req.method === 'GET' && url.pathname === '/census') {
+        const got = roster.censusEvidenceFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        if (!got.ok) return text(res, 404, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       if (req.method === 'GET' && url.pathname === '/guardian-bonds') {
         const got = roster.guardianBondsFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
         if (!got.ok) return text(res, 404, got.why);

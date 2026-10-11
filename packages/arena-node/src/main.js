@@ -194,6 +194,38 @@ if (process.env.ARENA_ATTACH_PROOF_DIR) {
 }
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });
+  // GET /headers KEPT UP WITH THE CHAIN (kanban #296): the attach proof's headers.bin was written once (to 156046 on
+  // 2026-10-11), and a client that builds a committee itself needs headers past each round's beacon. The file stays the
+  // start - it begins at the network's anchor - and every new block's header is appended from this node's bitcoind,
+  // read every 30 s; a header that does not link to the one before stops the append (a reorg is read again next time).
+  if (process.env.ARENA_ATTACH_PROOF_DIR) {
+    const dir = process.env.ARENA_ATTACH_PROOF_DIR;
+    let live = null, liveTip = null;
+    const startOf = () => { try { return new Uint8Array(readFileSync(`${dir}/headers.bin`)); } catch { return null; } };
+    const extend = async () => {
+      const base = live || startOf();
+      if (!base || base.length % 80 !== 0 || !base.length) return;
+      try {
+        const firstHash = Buffer.from(blockHashOf(base.subarray(0, 80))).reverse().toString('hex');
+        const firstHeight = Number((await call('getblockheader', [firstHash])).height);
+        const have = firstHeight + base.length / 80 - 1;
+        const tip = Number(await call('getblockcount'));
+        if (tip <= have) { live = base; liveTip = have; return; }
+        const parts = [base];
+        let prev = blockHashOf(base.subarray(base.length - 80));
+        for (let h = have + 1; h <= tip && h <= have + 2000; h++) {
+          const hdr = Buffer.from(await call('getblockheader', [await call('getblockhash', [h]), false]), 'hex');
+          if (!Buffer.from(hdr.subarray(4, 36)).equals(Buffer.from(prev))) { live = null; return; }
+          parts.push(new Uint8Array(hdr)); prev = blockHashOf(new Uint8Array(hdr));
+        }
+        live = new Uint8Array(Buffer.concat(parts)); liveTip = have + parts.length - 1;
+      } catch (e) { console.error(`[headers] not extended: ${e.message}`); }
+    };
+    extend();
+    const t = setInterval(() => { extend(); }, 30000); if (t.unref) t.unref();
+    options.headerBytes = () => live || startOf();
+    void liveTip;
+  }
   // A 400-header window, as the 2-of-2 tool reads one: the rule refuses a
   // window that does not reach back before a round's committee_time.
   const beacon = chainBeacon({ call, window: 400 });

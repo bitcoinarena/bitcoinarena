@@ -1969,7 +1969,16 @@
     function prepRound(roundIdHex, round, nodes) {
       const known = ROUND_PREP.get(roundIdHex);
       if (known) return known;
-      const signer = BLWPCLIENT.fetchSettlementSignerNodes(roundIdHex, nodes);
+      // THE COMMITTEE THIS PAGE BUILDS ITSELF (kanban #296, spec 5A.6): the headers agreed from the round's nodes, the
+      // round's census checked entry by entry against them and as a set against its census_root, the beacon off the same
+      // headers and the seats' sortition. The nodes' own /committee is only compared - one that differs is named.
+      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE }).then((sn) => {
+        window.ARENA_COMMITTEE_LAST = { round: roundIdHex, ms: sn.derived.ms, headers: sn.derived.headers, census: { entries: sn.derived.census.entries },
+          beacon: sn.derived.beacon.height, seats: sn.derived.seats.map((x) => ({ node: x.node, agrees: x.agrees })) };
+        console.log(`[arena] committee built by this client for ${roundIdHex.slice(0, 8)}: ${sn.signerNodes.length} settlement seats, census of ${sn.derived.census.entries}, `
+          + `beacon ${sn.derived.beacon.height}, ${sn.agreed} node(s) agree${sn.refused.length ? ', ' + sn.refused.length + ' differ: ' + sn.refused.join('; ') : ''} (${sn.derived.ms.total} ms)`);
+        return sn;
+      });
       const claim = signer.then((sn) => BLWPCLIENT.awaitAttestedClaimKey({
         round: Object.assign({}, round, { id: BLWPCLIENT.fromHex(roundIdHex) }),
         signerNodes: sn.signerNodes, nodes, curve: window.BLWP_CURVE,
@@ -2396,7 +2405,7 @@
       if (pays) {
         let signerNodes = null;
         try {
-          signerNodes = await joinStep('fetchSettlementSignerNodes', () => prepRound(named.roundIdHex, named.round, named.nodes).signer);
+          signerNodes = await joinStep('clientSettlementSignerNodes', () => prepRound(named.roundIdHex, named.round, named.nodes).signer);
         } catch (e) {
           // REFUSED BY NAME rather than joined silently. A paying round whose
           // settlement committee this page cannot learn is a round whose stake

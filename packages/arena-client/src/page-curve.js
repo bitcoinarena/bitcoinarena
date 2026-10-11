@@ -63,6 +63,23 @@ export const ecdhShared = (secret, theirXOnly) => {
  */
 export const signSchnorr = (message, secret) => schnorr.sign(message, secret);
 
+/**
+ * THE TWO OPERATIONS A BOND'S OUTPUT KEY IS REBUILT WITH (kanban #296: the client checks each census bond itself), as a
+ * seat's curve.js does them on x-only keys: Q = lift_x(P) + t*G with its parity, and the sum of lift_x(key)*coefficient.
+ */
+export const bondTweakPoint = (P, t) => {
+  const Q = schnorr.utils.lift_x(big(P)).add(secp256k1.Point.BASE.multiply(big(t)));
+  return { outputKey: schnorr.utils.pointToBytes(Q), parity: Number(Q.toAffine().y & 1n) };
+};
+export const bondCombine = (terms) => {
+  let sum = null;
+  for (const { key, coefficient } of terms) {
+    const p = schnorr.utils.lift_x(big(key)).multiply(big(coefficient));
+    sum = sum === null ? p : sum.add(p);
+  }
+  return schnorr.utils.pointToBytes(sum);
+};
+
 export const pageCurve = {
-  pointX, ecdhShared, pointFromScalar, combinePoints, verify, signSchnorr,
+  pointX, ecdhShared, pointFromScalar, combinePoints, verify, signSchnorr, bondTweakPoint, bondCombine,
 };

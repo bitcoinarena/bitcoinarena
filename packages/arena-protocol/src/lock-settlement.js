@@ -44,7 +44,7 @@ import { roundId } from './contracts.js';
 import { sha256, toHex, fromHex } from './hash.js';
 
 const refuse = (why) => ({ ok: false, why });
-const outpointKey = (o) => `${toHex(o.txid)}:${String(o.outIdx)}`;
+const outpointKey_locksettlement = (o) => `${toHex(o.txid)}:${String(o.outIdx)}`;
 
 /** The guardians' LNv2 fee on one input or output, in msat. */
 export function lnv2FeeMsat({ ppm, baseMsat }, msat) {
@@ -453,7 +453,7 @@ export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = nu
   return { ...done, nonce: lateSettlementNonce(roundId, entryId), late: true };
 }
 
-const byOutpoint = (a, b) => (outpointKey(a.outpoint) < outpointKey(b.outpoint) ? -1 : outpointKey(a.outpoint) > outpointKey(b.outpoint) ? 1 : 0);
+const byOutpoint = (a, b) => (outpointKey_locksettlement(a.outpoint) < outpointKey_locksettlement(b.outpoint) ? -1 : outpointKey_locksettlement(a.outpoint) > outpointKey_locksettlement(b.outpoint) ? 1 : 0);
 // BY PAYOUT KEY, and among sent winnings - which all refund to the one committee key - by payment hash, so every
 // signer node lists the same outputs in the same order.
 const payoutOrderKey = (p) => `${toHex(p.payoutPk)}:${p.sent ? p.sent.paymentHash : ''}`;
