@@ -15,6 +15,7 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
+import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { readInvite } from '../src/invite.js';
 import { clientCommittee, checkedCensusFor } from '../../arena-client/src/committee.js';
 import { federationStatus } from '../../arena-client/src/federations.js';
@@ -54,9 +55,22 @@ try {
   log({ step: 'deposit into A', msat: amount, paid: (paid.out.match(/Payment status: [A-Z_]+/) || [paid.err.slice(0, 120)])[0], final, balanceA: aBefore });
   if (final !== 'Claimed') throw new Error('the deposit into A was not claimed');
   // 2. A's RECORD, AS THE PAGE CHECKS IT: against the census this client checked for the round (clientCommittee)
-  await clientCommittee(env.ROUND, round, nodes, { curve: pageCurve, compare: false });
+  // A TEST CHAIN'S ANCHOR (a page takes the network's compiled-in one): the first header the seats serve - genesis at height 0,
+  // or that block's height as the stack's bitcoind says (seating-regtest.mjs does the same with its headers.bin)
+  const hb = new Uint8Array(await (await fetch(`${nodes[0]}/headers`)).arrayBuffer());
+  const first = hb.subarray(0, 80);
+  let height = 0;
+  if (!first.subarray(4, 36).every((x) => x === 0)) {
+    const hashHex = toHex(blockHashOf(first).slice().reverse());
+    const cookie = readFileSync(env.ARENA_BITCOIND_COOKIE, 'utf8').trim();
+    const r = await fetch(env.ARENA_BITCOIND_URL, { method: 'POST', headers: { authorization: 'Basic ' + Buffer.from(cookie).toString('base64') },
+      body: JSON.stringify({ jsonrpc: '1.0', id: 1, method: 'getblockheader', params: [hashHex] }) });
+    height = (await r.json()).result.height;
+  }
+  const anchorAt = { hash: blockHashOf(first), height };
+  const committee = await clientCommittee(env.ROUND, round, nodes, { curve: pageCurve, compare: false, anchorAt });
   const census = checkedCensusFor(round);
-  if (!census) throw new Error('no checked census for the round');
+  if (!census) throw new Error(`no checked census for the round: ${committee && committee.why}`);
   const status = await federationStatus({ federationIdHex: fedA, nodes, census, verify: pageCurve.verify });
   log({ step: 'A record', status: status.status, signers: status.signers, nominal: status.nominal, successor: status.successorId, why: status.why });
   // THE SUCCESSOR'S OWN RECORD: B's seats hold no round yet, so it signs none here - B is taken OPEN with its invite (stated)
