@@ -106,6 +106,8 @@ import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
+import { genesisFor } from '../../arena-protocol/src/genesis.js';
+import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync } from 'node:fs';
@@ -366,6 +368,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
+  // THE NODE'S OPEN MUSIG2 SESSIONS (kanban #307): session id -> its message, tweak and secret nonce, each signed once
+  const musigNodeSessions = new Map();
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2950,6 +2954,33 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const r = removeNetwork(String((body.args && body.args.network) || '').toLowerCase());
           return answer(r.status || (r.ok ? 200 : 409), r);
         }
+        // THE NODE'S HALF OF A COOPERATIVE KEY-PATH SPEND OF ITS BOND (kanban #307, spec 5A.3B key path: MuSig2 of the node
+        // key and the arbitration aggregate). The owner's act: signed by the owner, for one session and one message; the
+        // node draws its nonce once and signs once with its identity key (musig2.js; the arbitration set's half is the
+        // arbiter's POST /musig/*).
+        if (url.pathname === '/owner/musig/nonce' || url.pathname === '/owner/musig/partial') {
+          const a = owner.authorize(body, 'musig');
+          if (!a.ok) return answer(a.status, a);
+          const args = body.args || {};
+          if (url.pathname.endsWith('/nonce')) {
+            if (!/^[0-9a-f]{64}$/.test(String(args.msg)) || !/^[0-9a-f]{64}$/.test(String(args.tweak)) || !args.sessionId) return answer(400, { ok: false, why: 'a session id, a 32-byte tweak and a 32-byte message' });
+            if (musigNodeSessions.has(args.sessionId)) return answer(409, { ok: false, why: 'that session is open already' });
+            const pk = Uint8Array.from([2, ...round.pubkey]);
+            const drawn = musigNonceGen({ pk, sk: round.identity.secret, msg: Buffer.from(args.msg, 'hex') });
+            musigNodeSessions.set(args.sessionId, { msg: args.msg, tweak: args.tweak, secnonce: drawn.secnonce, at: Date.now() });
+            return answer(200, { ok: true, node: toHex(round.pubkey), pubnonce: toHex(drawn.pubnonce) });
+          }
+          const s = musigNodeSessions.get(args.sessionId);
+          if (!s) return answer(404, { ok: false, why: 'no such session' });
+          musigNodeSessions.delete(args.sessionId);              // a nonce signs once, whatever happens next
+          try {
+            const net = { 'bitcoin-regtest': 'regtest', 'bitcoin-testnet4': 'testnet4' }[chain];
+            if (!net) return answer(409, { ok: false, why: 'this node names no chain, so no arbitration set to sign with' });
+            const bctx = musigBondContext({ nodeKey: round.pubkey, arbitrationKeys: genesisFor(net).arbitrationKeys, tweak: Buffer.from(s.tweak, 'hex') });
+            const psig = musigBondPartial(bctx, { who: 'node', sk: round.identity.secret, secnonce: s.secnonce, aggnonce: Buffer.from(String(args.aggnonce), 'hex'), msg: Buffer.from(s.msg, 'hex') });
+            return answer(200, { ok: true, psig: toHex(psig) });
+          } catch (e) { return answer(422, { ok: false, why: e.message }); }
+        }
         if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/login') {
@@ -4897,6 +4928,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ slashHeight: height, tipHeight: at.tipHeight, owing }));
       }
 
+      // THE ARBITRATION SET'S INTAKE (kanban #307, spec 5A.3B step 1): every slash proof this node filed - round, entry,
+      // accused node, proof id - for the arbiter to fetch with its evidence (GET /slash-proofs) and judge itself
+      if (req.method === 'GET' && url.pathname === '/slashes') {
+        const rows = round.allSlashProofs().map((r) => ({ round: toHex(r.roundId), entry: toHex(r.entryId), node: toHex(r.nodePubkey),
+          proof: toHex(r.proofId), seenMs: r.seenMs, objection: !!round.objectionBundle(r.roundId, r.entryId) }));
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows }));
+      }
+      // AND THE OBJECTION THAT HELD AGAINST A RUN, as it was checked at this door (§13A): what the arbiter replays again
+      if (req.method === 'GET' && url.pathname === '/objection-bundle') {
+        const b = round.objectionBundle(Buffer.from(url.searchParams.get('round') || '', 'hex'), Buffer.from(url.searchParams.get('entry') || '', 'hex'));
+        if (!b) return text(res, 404, 'this node holds no objection for that run');
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        return res.end(Buffer.from(b));
+      }
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
