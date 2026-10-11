@@ -19,6 +19,7 @@ import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { readInvite } from '../src/invite.js';
 import { clientCommittee, checkedCensusFor } from '../../arena-client/src/committee.js';
 import { federationStatus } from '../../arena-client/src/federations.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { playerWallet, migratePlayerWallet } from '../../arena-client/src/page-lock.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 
@@ -70,8 +71,20 @@ try {
   const anchorAt = { hash: blockHashOf(first), height };
   const committee = await clientCommittee(env.ROUND, round, nodes, { curve: pageCurve, compare: false, anchorAt });
   const census = checkedCensusFor(round);
-  if (!census) throw new Error(`no checked census for the round: ${committee && committee.why}`);
-  const status = await federationStatus({ federationIdHex: fedA, nodes, census, verify: pageCurve.verify });
+  let status;
+  if (census) status = await federationStatus({ federationIdHex: fedA, nodes, census, verify: pageCurve.verify });
+  else if (env.SEAT_RECORD === '1') {
+    // SEAT_RECORD=1 (said in the reading): the harness seats serve a header chain fixed at their start, short of the bonds,
+    // so this client cannot check the census here; A's record is read as the seats sign it, not verified - the record's
+    // verification against a census is #321's (federation-record.test, page-federation.test)
+    const j = await (await fetch(`${nodes[0]}/federations`)).json();
+    const f = (j.federations || []).find((x) => String(x.federation).toLowerCase() === fedA);
+    if (!f) throw new Error(`no record of A at ${nodes[0]}`);
+    const rec = splitSignedRecord(fromHex(f.record)).record;
+    status = { status: f.status, signers: f.signers, nominal: rec.nominal, unverified: true,
+      successorId: rec.successorId && rec.successorId.some((x) => x) ? toHex(rec.successorId) : null };
+    log({ step: 'A record read from the seats (not census-checked)', why: committee && committee.why });
+  } else throw new Error(`no checked census for the round: ${committee && committee.why}`);
   log({ step: 'A record', status: status.status, signers: status.signers, nominal: status.nominal, successor: status.successorId, why: status.why });
   // THE SUCCESSOR'S OWN RECORD: B's seats hold no round yet, so it signs none here - B is taken OPEN with its invite (stated)
   const successor = { status: 'OPEN', invite: inviteB, successorId: null };

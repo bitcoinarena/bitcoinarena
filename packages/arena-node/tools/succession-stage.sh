@@ -55,6 +55,6 @@ until_ "A's record DRAINING" 600 drained
 reading "S3 A draining: $(curl -s --max-time 10 http://127.0.0.1:${NODE_PORTS%%,*}/federations | cut -c1-400)"
 # the player's notes move: a deposit into A, then the page's migratePlayerWallet into B
 ( cd "$HERE/.." && ROUND=$ROUND2 NODES=$NODE_PORTS INVITE_A=$H/invite-code INVITE_B=$HB/invite-code WASM_PKG=$WASM LNCLI=$LNCLI \
-  PAYER_DIR=$H/alice PAYER_RPC=127.0.0.1:${LRPC[alice]} NETWORK=regtest HOME=$FORK_HOME timeout 900 "$NODE" tools/succession-move.mjs ) > $H/move.out 2>&1; MOVE_RC=$?
+  PAYER_DIR=$H/alice PAYER_RPC=127.0.0.1:${LRPC[alice]} NETWORK=regtest SEAT_RECORD=1 HOME=$FORK_HOME timeout 900 "$NODE" tools/succession-move.mjs ) > $H/move.out 2>&1; MOVE_RC=$?
 cat $H/move.out >> "$LOG"
 reading "S4 notes moved: {\"exit\":$MOVE_RC,\"record\":$(grep '"step":"A record"' $H/move.out | tail -1 || echo null),\"moved\":$(grep '"step":"moved"' $H/move.out | tail -1 || echo null)}"
