@@ -741,7 +741,7 @@
       <h2 id="ws-title">Your wallet</h2>
       <p class="ws-sub">It holds what you play with and what you win, in this browser. Keep its 24 words - or your Nostr key - to open it anywhere.</p>
       <div id="ws-main">
-        <button id="ws-new" type="button" class="primary">Create a new wallet<small>New 24 words - write them down, verify them if you like</small></button>
+        <button id="ws-new" type="button" class="primary">Create a new wallet<small>Ready at once - back up its 24 words any time in Settings</small></button>
         <button id="ws-restore" type="button">Restore a wallet<small>Your 24 words, or your seed</small></button>
         <button id="ws-nostr" type="button" class="nostr">Login with Nostr<small>Your Nostr account is your wallet: extension, phone signer or nsec</small></button>
       </div>
@@ -5546,22 +5546,23 @@
       // decided before any other script could mint one (#339): the keeper's word, not what the tab holds by now
       const already = window.ARENA_NO_SEED_AT_START === undefined ? !!held : !window.ARENA_NO_SEED_AT_START;
       window.ARENA_WALLET_SCREEN = { shown: !already };
-      // AFTER A NOSTR LOGIN WHOSE SEED A SIGNER MADE: its 24 words are the only offline copy - shown once, after the reload
-      let words = null; try { words = sessionStorage.getItem('arena.nostr.showWords'); sessionStorage.removeItem('arena.nostr.showWords'); } catch { words = null; }
-      if (words && already) setTimeout(() => { const b = $('blwp-phrase-show'); if (b) b.click(); }, 600);
+      // A NOSTR LOGIN SHOWS NO WORDS (kanban #340): the account's seed is kept on Nostr and opens from it again; its 24 words,
+      // the offline copy, are in Settings (Seed phrase) with their check
+      try { sessionStorage.removeItem('arena.nostr.showWords'); } catch { /* none */ }
       if (already) return;
       box.style.display = 'flex';
       const panes = (which) => { for (const id of ['ws-main', 'ws-restore-pane', 'ws-nostr-pane', 'ws-newacct-pane']) $(id).style.display = id === which ? '' : 'none'; };
       const busy = (text) => { $('ws-busy').style.display = text ? '' : 'none'; $('ws-busy').textContent = text || ''; };
       const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
-      // CREATE: the existing process - the seed made here, then the dialog with its 24 words and its optional verify
+      // CREATE: the seed made here, and straight into the game (kanban #340, the owner 2026-10-11: "showing the seed and forcing a
+      // check interrupts the flow. Put the seed display and the mandatory check in settings, as a backup") - its 24 words and
+      // their check are in Settings (Seed phrase), and the lobby's backup line leads there
       $('ws-new').onclick = () => {
         let seed = null;
         try { seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch (e) { busy('This browser cannot keep a wallet: ' + e.message); return; }
         if (window.BLWP_SEED_KEEPER) window.BLWP_SEED_KEEPER.beat();
         window.ARENA_WALLET_SCREEN.made = 'new';
         done();
-        const b = $('blwp-phrase-show'); if (b) b.click();
       };
       $('ws-restore').onclick = () => { panes('ws-restore-pane'); $('ws-restore-text').focus(); };
       $('ws-restore-back').onclick = () => panes('ws-main');
@@ -5581,7 +5582,6 @@
         const hex = Array.from(got.seed, (b) => b.toString(16).padStart(2, '0')).join('');
         let profile = null; try { profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
         try { localStorage.setItem('arena.nostr', JSON.stringify({ npub: N.npubOf(signer.pubkey), how, name: profile && profile.name || null, at: Date.now() })); } catch { /* shown once */ }
-        if (got.created && got.from === 'random') { try { sessionStorage.setItem('arena.nostr.showWords', '1'); } catch { /* none */ } }
         window.ARENA_WALLET_SCREEN.nostr = { how, created: got.created, from: got.from, relays: got.relays, npub: N.npubOf(signer.pubkey) };
         try { await signer.close(); } catch { /* gone */ }
         busy(got.created ? 'Your wallet is made and kept on Nostr - opening it' : 'Your wallet is back - opening it');
