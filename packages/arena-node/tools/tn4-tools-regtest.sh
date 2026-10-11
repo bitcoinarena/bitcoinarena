@@ -73,6 +73,9 @@ cleanup() {
   bcn stop >/dev/null 2>&1; sleep 8
   for pid in $(cut -d' ' -f1 $PIDS); do kill -KILL -- -$pid 2>/dev/null; done
   pkill -f "src/main.js [0-9]+ $H/node-" 2>/dev/null; pkill -f "$H/" 2>/dev/null; sleep 3; kill_guardians
+  # AND WHAT A STAGE STARTED WITHOUT A PID LINE (run 6 on the test host: the restarted runner A held 12221 after the stop):
+  # every process of this user whose environment names this run's dir, but this script
+  for pid in $(pgrep -u "$(id -u)"); do [ "$pid" = $$ ] && continue; envOf $pid 2>/dev/null | grep -q "^H=$H$" && kill -KILL $pid 2>/dev/null; done
   say "stack dir kept for reading: $H"
 }
 trap cleanup EXIT
