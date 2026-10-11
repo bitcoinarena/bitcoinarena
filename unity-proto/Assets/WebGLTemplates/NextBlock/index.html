@@ -1219,10 +1219,14 @@
     // the tick it applied it ... The player never chooses the price." Once the round's seats serve attested samples
     // (GET /price-samples), this page hands its core ONLY those - each just before the tick it names, beside its
     // signatures into the transcript (client.submitAttestedSample) - and Unity's own price stays on its chart: its
-    // submitSample / submitTape reach no core and no batch. Before any attested sample, or in a round whose seats serve
-    // none, nothing changes. Every core this page carries is wrapped once, so the round's core is too (BLWP_USE_CORE).
+    // submitSample / submitTape reach no core and no batch. ENFORCED (slice 3): a seat that runs the feed refuses a batch
+    // carrying a price it did not attest, so from the join Unity's price is held until the seats answer - `feed: true` and
+    // it never reaches the core (the run plays the seeded tape, front_mode = SIM, until the attested samples come);
+    // `feed: false` (or no door, or no answer within 3 polls) and the held price is applied as before. Every core this page
+    // carries is wrapped once, so the round's core is too (BLWP_USE_CORE).
     (function () {
-      var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), tape: null, tapeDone: false, active: false, applied: [], timer: null };
+      var P = window.ARENA_PRICES = { round: null, nodes: [], samples: new Map(), tape: null, tapeDone: false, active: false, applied: [], timer: null,
+        heard: true, feed: false, held: {}, misses: 0 };
       function hex2u8(h) { return Uint8Array.from(String(h).match(/../g).map(function (x) { return parseInt(x, 16); })); }
       function sigsOf(list) { return (list || []).map(function (s) { return [hex2u8(s.key), hex2u8(s.signature)]; }); }
       function netClient() {
@@ -1247,32 +1251,45 @@
         if (!core || core.__arenaPrices || typeof core.step !== 'function') return;
         core.__arenaPrices = true;
         var step = core.step, sample = core.submitSample, tape = core.submitTape;
-        if (sample) core.submitSample = function () { return P.active ? false : sample.apply(this, arguments); };
-        if (tape) core.submitTape = function () { return P.active ? false : tape.apply(this, arguments); };
+        // while the seats are not heard yet, the latest of each is held (and applied once they say they run no feed)
+        if (sample) core.submitSample = function () { if (P.active) return false; if (!P.heard) { P.held.sample = [sample, this, arguments]; return true; } return sample.apply(this, arguments); };
+        if (tape) core.submitTape = function () { if (P.active) return false; if (!P.heard) { P.held.tape = [tape, this, arguments]; return true; } return tape.apply(this, arguments); };
         core.step = function (st) { if (P.active && sample) due(this, st, sample, tape); return step.apply(this, arguments); };
       }
       P.wrap = wrap;
       Object.keys(window.BLWP_CORES || {}).forEach(function (k) { wrap(window.BLWP_CORES[k]); });
       if (window.BLWP) wrap(window.BLWP);
+      function heard(feed) {
+        if (P.heard) return;
+        P.heard = true; P.feed = !!feed;
+        var held = P.held; P.held = {};
+        if (P.feed) { P.active = true; console.log('[arena] the seats run the committee\'s price: this run plays attested samples only (the seeded tape until they come)'); return; }
+        ['tape', 'sample'].forEach(function (k) { var h = held[k]; if (h) { try { h[0].apply(h[1], h[2]); } catch (e) { /* that core is gone */ } } });
+      }
+      P.heard_ = heard;
       async function poll() {
         if (!P.round) return;
         var since = 0; P.samples.forEach(function (v, k) { if (k >= since) since = k + 1; });
         for (var i = 0; i < P.nodes.length; i++) {
           try {
             var r = await fetch(String(P.nodes[i]).replace(/\/+$/, '') + '/price-samples?round=' + P.round + '&since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+            if (r.status === 404) { heard(false); return; }      // a seat without the door runs no feed
             if (!r.ok) continue;
             var j = await r.json();
+            heard(j.feed === true);
             (j.samples || []).forEach(function (x) { if (!P.samples.has(x.tick)) P.samples.set(x.tick, { priceCents: x.priceCents, sigs: x.sigs }); });
             if (j.tape && !P.tape) P.tape = j.tape;
             if (!P.active && (P.samples.size || P.tape)) { P.active = true; console.log('[arena] the committee\'s price is on: this run plays the attested samples only'); }
             return;
           } catch (e) { /* the next seat */ }
         }
+        if (!P.heard && ++P.misses >= 3) heard(false);
       }
       // the join names the round and its seats; the samples are read every 2 s from then on
       P.watch = function (roundHex, nodes) {
         if (P.round === roundHex) return;
         P.round = roundHex; P.nodes = (nodes || []).slice(); P.samples = new Map(); P.tape = null; P.tapeDone = false; P.active = false; P.applied = [];
+        P.heard = false; P.feed = false; P.held = {}; P.misses = 0;
         if (P.timer) clearInterval(P.timer);
         poll(); P.timer = setInterval(poll, 2000);
       };
