@@ -10,13 +10,13 @@
 //             re-affirmation and update, proved and signed by the bond's key. The verified set must hash to the round's
 //             own census_root (censusRootOf, the seat's own function): an entry left out, added or altered is another
 //             root, and the round is refused. Spentness at census_height is in that root.
-//   BEACON    the first block whose median time is past committee_time, deep enough - off the same_clientcommittee headers
+//   BEACON    the first block whose median time is past committee_time, deep enough - off the same headers
 //             (beaconFromChain), its hash the randomness (committeeSeedFromBeacon);
 //   SORTITION selectCommittee over the verified entries, the function a seat's Roster.committeeFor runs.
 // This package carries no curve and no signature scheme: `bond` brings the curve operations, `verify` BIP-340.
 import { parseTransaction, commitmentsOf, witnessRunsOf } from './tx.js';
 import { splitSignedAdvert, decodeAdvert, advertId } from './advert.js';
-import { provesTransaction, recognizeBond } from './chain.js';
+import { provesTransaction, recognizeBond, merkleRootFromProof } from './chain.js';
 import { decodeAncestorAdvert } from './ancestor.js';
 import { acceptAncestorEndpoint } from './ancestor-endpoint.js';
 import { readAdvertUpdate } from './advert-update.js';
@@ -27,15 +27,25 @@ import { selectCommittee } from './sortition.js';
 import { networkOf } from './constants.js';
 import { toHex, fromHex } from './hash.js';
 
-const same_clientcommittee = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-const bytesOf_clientcommittee = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
-const proofOf = (p) => (p ? { transaction: bytesOf_clientcommittee(p.transaction), branch: (p.branch || []).map(bytesOf_clientcommittee), position: p.position | 0 } : null);
+const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
+const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
+
+// THE HEADERS BY THEIR MERKLE ROOT, once per header set: a proof's root is computed once and looked up, instead of
+// re-deriving it against each of ~2,000 headers (measured on testnet4: 280 ms an entry, 2 s a census, before this)
+const ROOTS = new WeakMap();
+function rootsOf(headers) {
+  let m = ROOTS.get(headers);
+  if (!m) { m = new Map(); headers.forEach((h, i) => m.set(toHex(h.subarray(36, 68)), i)); ROOTS.set(headers, m); }
+  return m;
+}
 
 /** The height of the agreed header that proves `txid` with this branch, or null. */
 function provenAt(headers, firstHeight, txid, proof) {
-  for (let i = 0; i < headers.length; i++)
-    if (provesTransaction(headers[i], txid, proof.branch, proof.position)) return firstHeight + i;
-  return null;
+  let root;
+  try { root = merkleRootFromProof(txid, proof.branch, proof.position); } catch { return null; }
+  const i = rootsOf(headers).get(toHex(root));
+  return i === undefined || !provesTransaction(headers[i], txid, proof.branch, proof.position) ? null : firstHeight + i;
 }
 
 /** The Arena advertisement a bond transaction commits to, with its signature. */
@@ -46,7 +56,7 @@ function committedSigned(tx) {
       const { body, signature } = splitSignedAdvert(item);
       const advert = decodeAdvert(body);
       const id = advertId(advert);
-      if (commitments.some((c) => same_clientcommittee(c, id))) return { advert, signature, id };
+      if (commitments.some((c) => sameCC(c, id))) return { advert, signature, id };
     } catch { /* not a signed body */ }
   }
   return null;
@@ -70,7 +80,11 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
   const r = proofOf(item.reaffirm);
   if (r && r.transaction) {
     // A CARRIED BOND (spec 0A.9): its ancestor body, its re-affirmation and its update, proved and signed by the bond's key
-    const carried = acceptAncestorEndpoint({ chain: headers, transaction: b.transaction, branch: b.branch, position: b.position,
+    // the three headers its proofs name, found by root - acceptAncestorEndpoint proves each into the chain it is handed
+    const named = [height, (() => { try { return provenAt(headers, firstHeight, parseTransaction(r.transaction).txid, r); } catch { return null; } })(),
+      (() => { const u0 = proofOf(item.update); try { return u0 && u0.transaction ? provenAt(headers, firstHeight, parseTransaction(u0.transaction).txid, u0) : null; } catch { return null; } })()]
+      .filter((h) => h !== null).map((h) => headers[h - firstHeight]);
+    const carried = acceptAncestorEndpoint({ chain: named, transaction: b.transaction, branch: b.branch, position: b.position,
       update: proofOf(item.update), reaffirm: r });
     if (!carried.ok) return { ok: false, why: carried.why };
     // the re-affirmation's signature, as the seat's census checks it (reaffirmedBonds); the update's below
@@ -82,7 +96,7 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
     ancestor = true; vout = carried.bondVout;
     // the bond's own body, for its key and the resolve filters (the ancestor's layout)
     let body = null;
-    for (const w of witnessRunsOf(tx)) { try { body = decodeAncestorAdvert(splitSignedAdvert(w).body); if (body.nodePubkey && same_clientcommittee(body.nodePubkey, carried.nodePubkey)) break; body = null; } catch { body = null; } }
+    for (const w of witnessRunsOf(tx)) { try { body = decodeAncestorAdvert(splitSignedAdvert(w).body); if (body.nodePubkey && sameCC(body.nodePubkey, carried.nodePubkey)) break; body = null; } catch { body = null; } }
     if (!body) return { ok: false, why: 'the carried bond\'s ancestor body does not read' };
     advert = body; id = new Uint8Array(32).fill(1);         // the ancestor's id is not a leaf field; it only marks "resolved"
   } else {
@@ -112,8 +126,8 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
     if (!read.ok) return { ok: false, why: read.why };
     const uHeight = provenAt(headers, firstHeight, read.txid, u);
     if (uHeight === null || uHeight < height || uHeight > contract.censusHeight) return { ok: false, why: 'its update is not between the bond and the census height' };
-    if (!same_clientcommittee(read.bondTxid, tx.txid) || read.bondVout !== vout) return { ok: false, why: 'its update names another bond' };
-    if (!same_clientcommittee(read.nodePubkey, entry.pubkey) || !sig(read.signature, read.advertId, entry.pubkey)) return { ok: false, why: 'its update is not signed by the bond\'s key' };
+    if (!sameCC(read.bondTxid, tx.txid) || read.bondVout !== vout) return { ok: false, why: 'its update names another bond' };
+    if (!sameCC(read.nodePubkey, entry.pubkey) || !sig(read.signature, read.advertId, entry.pubkey)) return { ok: false, why: 'its update is not signed by the bond\'s key' };
     const roles = read.advert.roles || [];
     if (!roles.length || !(read.advert.protocolVersions || []).includes(contract.protocolVersion))
       return { ok: false, why: 'its newest update declares no role or not this round\'s version' };
@@ -136,18 +150,20 @@ export function censusFromEvidence(evidence, { contract, headers, firstHeight, b
   let census;
   try { census = censusRootOf(entries, { censusHeight: contract.censusHeight, censusConfirmations: contract.censusConfirmations }); }
   catch (e) { return { ok: false, why: `that census cannot be committed: ${e.message}`, refused }; }
-  if (!same_clientcommittee(census.root, contract.censusRoot))
+  if (!sameCC(census.root, contract.censusRoot))
     return { ok: false, why: `the census the seats handed over hashes to ${toHex(census.root).slice(0, 16)}, and this round names `
       + `${toHex(contract.censusRoot).slice(0, 16)}: an entry was left out, added or altered${refused.length ? ` (${refused.length} refused: ${refused[0].why})` : ''}`, refused };
   return { ok: true, entries: census.entries, root: census.root, refused };
 }
 
 /**
- * THE COMMITTEE, FROM THE CLIENT'S OWN CHECKS: the census above, the beacon off the same_clientcommittee headers, and the sortition a seat
+ * THE COMMITTEE, FROM THE CLIENT'S OWN CHECKS: the census above, the beacon off the same headers, and the sortition a seat
  * runs. `roles`: which committees to draw. Answers { ok, committees: { role: [pubkeys] }, beacon, census } or { ok: false, why }.
  */
-export function committeeFromChain({ contract, roundId, headers, firstHeight, evidence, bond, verify, roles = ['game', 'settlement'] }) {
-  const census = censusFromEvidence(evidence, { contract, headers, firstHeight, bond, verify });
+export function committeeFromChain({ contract, roundId, headers, firstHeight, evidence, bond, verify, roles = ['game', 'settlement'], census: checked = null }) {
+  // `census`: one this client already checked for this round's census_root (every round of a series shares it)
+  const census = checked && sameCC(checked.root, contract.censusRoot) ? { ok: true, ...checked }
+    : censusFromEvidence(evidence, { contract, headers, firstHeight, bond, verify });
   if (!census.ok) return census;
   const beacon = beaconFromChain(contract, { headers, firstHeight });
   if (!beacon.ok) return { ok: false, why: `no beacon: ${beacon.why}` };
@@ -158,5 +174,6 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
     try { committees[role] = selectCommittee({ entries: census.entries, contract, role, committeeSeed: seeded.seed }).map((e) => e.pubkey); }
     catch (e) { return { ok: false, why: `the ${role} committee cannot be drawn: ${e.message}` }; }
   }
-  return { ok: true, committees, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length } };
+  return { ok: true, committees, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
+    checkedCensus: { root: census.root, entries: census.entries } };
 }
