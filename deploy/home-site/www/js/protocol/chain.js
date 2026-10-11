@@ -22,7 +22,7 @@
 import { ancestorMarker } from './ancestor.js';
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
-  bondInternalKey, bondOutputKeyMatches, BOND_SCRIPT_TEMPLATE_VERSION,
+  bondInternalKey, bondOutputKeyMatches, bondMaturityOf,
 } from './bond-script.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessRunsOf,
@@ -53,6 +53,16 @@ export const HEADER_BYTES = 80;
  */
 export const BITCOIN_MAINNET_GENESIS = fromHex(
   '6fe28c0ab6f1b372c1a6a246ae63f74f931e8365e15a089c68d6190000000000');
+
+/**
+ * TESTNET4'S ANCHOR (kanban #209, the owner 2026-10-10: "A"): block 154000 (000000000071bdcfebf7356cac050858e1044bbbbeb10705bba51052da193495), below every bond the testnet4 seats
+ * carried from the ancestor (154172). Its genesis would mean 12.5 MB of headers per session on a phone; a block a player
+ * trusts because it is compiled into the client is what genesis is on mainnet. Chosen by the round's own network id
+ * (arena-client directory.js chainAnchorFor), never by a page.
+ */
+export const TESTNET4_ANCHOR = fromHex(
+  '953419da5210a5bb0507b1bebb4b04e1580805ac6c35f7ebcfbd710000000000');
+export const TESTNET4_ANCHOR_HEIGHT = 154000;
 
 /**
  * And the eighty bytes themselves, so a chain can actually START here.
@@ -329,27 +339,26 @@ export function isTaprootOutput(script) {
  * counted by a census as though it were at stake, which is the Sybil door 5A.3
  * exists to shut. It comes from genesis, never from the body.
  */
+// TEMPLATE 2 (kanban #295): the maturity is the advertisement's own `bond_maturity_height`, and the key is rebuilt
+// with it - so a body naming any height but the one in the leaf rebuilds another key and is refused here. Whether
+// that height is far enough from the bond's confirmation is the census' question (`maturityStands`): this one has no
+// chain to read a confirmation off. Template 1 keeps genesis' maturity where it is still read (`bondMaturityOf`).
 export function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, bondMaturity,
-  tweakPoint, combine } = {}) {
+  tweakPoint, combine, network } = {}) {
   if (!isTaprootOutput(script)) return { ok: false, why: 'that output is not taproot' };
   if (!Array.isArray(arbitrationKeys) || !arbitrationKeys.length)
     return { ok: false, why: 'no arbitration set was given to rebuild the bond with' };
   if (!Number.isInteger(bondMaturity))
     return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
-  if (advert.bondScriptTemplateVersion !== BOND_SCRIPT_TEMPLATE_VERSION) {
-    return {
-      ok: false,
-      why: `that advertisement names bond script template ${advert.bondScriptTemplateVersion}, `
-        + `and this is template ${BOND_SCRIPT_TEMPLATE_VERSION}`,
-    };
-  }
+  const maturity = bondMaturityOf(advert, { genesisMaturity: bondMaturity, network });
+  if (!maturity.ok) return maturity;
 
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
-    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity,
+    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,
     internalKey: derived.internalKey,
   }, { tweakPoint, combine });
 }
@@ -421,7 +430,7 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest', bond, anc
   // and named by a body - with the template listed as unchecked, because it
   // is.
   if (bond) {
-    const key = bondKeyMatches(tx.outputs[vout].script, advert, bond);
+    const key = bondKeyMatches(tx.outputs[vout].script, advert, { ...bond, network });
     if (!key.ok) return { ok: false, why: key.why };
     return {
       ok: true,

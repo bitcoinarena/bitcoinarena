@@ -69,3 +69,37 @@ const upd = arena.postAdvertUpdate(arena.prepareAdvertUpdate(SECRET, advert), fo
 cli('sendrawtransaction', upd.hex); arena.mine(1);
 say({ step: 'census after the update', txid: upd.txid, ...census(from) });
 say({ step: 'the bond', unspent: outpoint() !== null, bondBtc: outpoint() });
+
+// 4. AND MOVED INTO TEMPLATE 2 AT ITS OWN HEIGHT (kanban #295), as testnet4's seven will be: path A of the carried bond
+// (its maturity genesis' 100, long past) into a template-2 bond of the same value whose leaf carries the next block + slack
+// + the offset, with the advertisement it stands for now - checked by testmempoolaccept before it is broadcast. Then the
+// census counts the new bond as this network's own (no re-affirmation needed), the old one is gone, and path A of the new
+// one is refused one block before its height.
+{
+  const before = arena.bondsOf(SECRET)[0];
+  const prepared = arena.prepareRebond(SECRET, before, { ...before.advert, timestamp: BigInt(Date.now()) });
+  const moved = arena.postRebond(prepared);
+  const dry = JSON.parse(cli('testmempoolaccept', JSON.stringify([moved.hex])))[0];
+  say({ step: 're-bond testmempoolaccept', allowed: dry.allowed, why: dry['reject-reason'] || null, oldMaturity: before.maturity, maturity: moved.maturity, sats: moved.bondSats });
+  if (!dry.allowed) throw new Error('the re-bond is refused; nothing is broadcast');
+  cli('sendrawtransaction', moved.hex); arena.mine(1);
+  const confirmedAt = arena.height();
+  const after = arena.bondsOf(SECRET);
+  say({ step: 'bondsOf after the re-bond', found: after.map((b) => ({ txid: b.txid, vout: b.vout, template: b.advert.bondScriptTemplateVersion, maturity: b.maturity, ancestor: !!b.ancestor })) });
+  say({ step: 'old bond spent', unspent: outpoint() !== null });
+  say({ step: 'census after the re-bond', confirmedAt, ...census(from) });
+  // path A of the new bond, at H - 1 and at H, asked of bitcoind now (tip far below H)
+  const { recoveryLeaf, controlBlockFor, tapLeafHash } = await import('../../arena-protocol/src/bond-script.js');
+  const { tapSighash, scriptPathWitness, serializeSpend } = await import('../../arena-protocol/src/bond-spend.js');
+  const nb = after[0];
+  const leaf = recoveryLeaf(nb.advert.nodePubkey, nb.maturity);
+  const spk = fromHex('5120' + toHex(prepared.built.outputKey));
+  const payTo = arena.payTo();
+  const spend = (locktime) => {
+    const tx = { version: 2, locktime, inputs: [{ txid: fromHex(nb.txid).reverse(), vout: nb.vout, sequence: 0xfffffffe }], outputs: [{ value: BigInt(nb.sats) - 2000n, script: payTo }] };
+    const sig = schnorr.sign(tapSighash({ ...tx, prevouts: [{ value: BigInt(nb.sats), script: spk }], inputIndex: 0, leafHash: tapLeafHash(leaf) }), SECRET);
+    const r = JSON.parse(cli('testmempoolaccept', JSON.stringify([toHex(serializeSpend({ ...tx, witnesses: [scriptPathWitness({ stack: [sig], script: leaf, controlBlock: controlBlockFor('recovery', prepared.built).controlBlock })] }))])))[0];
+    return { allowed: r.allowed, why: r['reject-reason'] || null };
+  };
+  say({ step: 'new bond path A now', tip: arena.height(), atHminus1: spend(nb.maturity - 1), atH: spend(nb.maturity) });
+}

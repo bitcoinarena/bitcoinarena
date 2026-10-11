@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
-import { bondOutputKey, bondInternalKey, recoveryLeaf, tapLeafHash, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
+import { bondOutputKey, bondInternalKey, recoveryLeaf, tapLeafHash, controlBlockFor, maturityHeightFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { chainFactsAt } from '../../arena-protocol/src/census.js';
@@ -36,7 +36,9 @@ for (let i = 0; i < Number(process.env.GUARDIANS || 4); i++) {
   // each old guardian's seat key (test keys of this run, by index)
   const secret = taggedHash('ARENA/test/succession-guardian', new TextEncoder().encode(String(i)));
   const nodeKey = schnorr.getPublicKey(secret);
-  const built = bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity,
+  // EACH BOND AT ITS OWN HEIGHT (kanban #295, template 2): the next block plus regtest's offset, mined to below
+  const maturity = maturityHeightFor(Number(cli('getblockcount')), 'regtest', { slackBlocks: 0 });
+  const built = bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: maturity,
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });
   const spk = fromHex('5120' + toHex(built.outputKey));
   const address = JSON.parse(cli('decodescript', toHex(spk))).address;
@@ -44,14 +46,19 @@ for (let i = 0; i < Number(process.env.GUARDIANS || 4); i++) {
   w('generatetoaddress', '1', w('getnewaddress'));
   const decoded = JSON.parse(w('gettransaction', txid, 'true', 'true')).decoded;
   const utxo = { txid, vout: decoded.vout.find((o) => o.scriptPubKey.hex === toHex(spk)).n, value: 50000000n };
-  const script = recoveryLeaf(nodeKey, g.bondMaturity);
+  const script = recoveryLeaf(nodeKey, maturity);
   const spend = (locktime) => {
     const tx = { version: 2, locktime, inputs: [{ txid: fromHex(utxo.txid).reverse(), vout: utxo.vout, sequence: 0xfffffffe }], outputs: [{ value: utxo.value - 2000n, script: payTo }] };
     const sighash = tapSighash({ ...tx, prevouts: [{ value: utxo.value, script: spk }], inputIndex: 0, leafHash: tapLeafHash(script) });
     return toHex(serializeSpend({ ...tx, witnesses: [scriptPathWitness({ stack: [schnorr.sign(sighash, secret)], script, controlBlock: controlBlockFor('recovery', built).controlBlock })] }));
   };
-  const early = allowed(spend(g.bondMaturity - 1));
-  const atMaturity = spend(g.bondMaturity);
+  const confirmed = Number(cli('getblockcount'));
+  // one block before: the tip at H - 1, the spend's locktime H - 1 - refused by the leaf's CLTV
+  const tipNow = Number(cli('getblockcount'));
+  if (tipNow < maturity - 1) w('generatetoaddress', String(maturity - 1 - tipNow), w('getnewaddress'));
+  const early = allowed(spend(maturity - 1));
+  w('generatetoaddress', '1', w('getnewaddress'));
+  const atMaturity = spend(maturity);
   const ok = allowed(atMaturity);
   const sent = cli('sendrawtransaction', atMaturity);
   w('generatetoaddress', '1', w('getnewaddress'));
@@ -59,7 +66,7 @@ for (let i = 0; i < Number(process.env.GUARDIANS || 4); i++) {
   const blocks = [];
   for (let h = tip - 3; h <= tip; h++) blocks.push({ height: h, transactions: JSON.parse(cli('getblock', cli('getblockhash', String(h)), '2')).tx.map((t) => fromHex(t.hex)) });
   const facts = chainFactsAt(blocks, tip);
-  out.push({ guardian: i, bond: `${txid.slice(0, 16)}:${utxo.vout}`, sat: Number(utxo.value), beforeMaturity: early, atMaturity: ok, spentBy: sent.slice(0, 16), height: tip,
+  out.push({ guardian: i, bond: `${txid.slice(0, 16)}:${utxo.vout}`, sat: Number(utxo.value), confirmed, maturity, beforeMaturity: early, atMaturity: ok, spentBy: sent.slice(0, 16), height: tip,
     censusSeesSpent: facts.spentAt.has(`${toHex(fromHex(utxo.txid).reverse())}:${utxo.vout}`) });
 }
-console.log('BONDS ' + JSON.stringify({ maturity: g.bondMaturity, bonds: out }));
+console.log('BONDS ' + JSON.stringify({ offset: 100, bonds: out }));

@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
-import { bondOutputKey, bondInternalKey, slashLeaf, tapLeafHash, controlBlockFor } from '../../arena-protocol/src/bond-script.js';
+import { bondOutputKey, bondInternalKey, slashLeaf, tapLeafHash, controlBlockFor, maturityHeightFor } from '../../arena-protocol/src/bond-script.js';
 import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-protocol/src/bond-spend.js';
 import {
   escrowOutput, arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, arbitrationCommitmentIn,
@@ -53,7 +53,9 @@ const accepts = (hex) => { const r = JSON.parse(cli('testmempoolaccept', JSON.st
 // ---- a bond, funded here (never a live one)
 const nodeSecret = schnorr.utils.randomSecretKey();
 const nodeKey = schnorr.getPublicKey(nodeSecret);
-const bondBuilt = bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: K, bondMaturity: g.bondMaturity,
+// THE BOND AT ITS OWN HEIGHT (kanban #295, template 2): the next block plus regtest's offset - the slash leaf is the same
+const bondMaturity = maturityHeightFor(Number(cli('getblockcount')), 'regtest', { slackBlocks: 0 });
+const bondBuilt = bondOutputKey({ nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: K, bondMaturity,
   internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey }, { tweakPoint, combine });
 const bondSpk = fromHex('5120' + toHex(bondBuilt.outputKey));
 const fundTxid = cli('sendtoaddress', JSON.parse(cli('decodescript', toHex(bondSpk))).address, '1.0');

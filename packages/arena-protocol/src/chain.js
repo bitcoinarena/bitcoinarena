@@ -22,7 +22,7 @@
 import { ancestorMarker } from './ancestor.js';
 import { advertId, decodeAdvert, splitSignedAdvert } from './advert.js';
 import {
-  bondInternalKey, bondOutputKeyMatches, BOND_SCRIPT_TEMPLATE_VERSION,
+  bondInternalKey, bondOutputKeyMatches, bondMaturityOf,
 } from './bond-script.js';
 import {
   hash256, parseTransaction, commitmentsOf, witnessRunsOf,
@@ -339,27 +339,26 @@ export function isTaprootOutput(script) {
  * counted by a census as though it were at stake, which is the Sybil door 5A.3
  * exists to shut. It comes from genesis, never from the body.
  */
+// TEMPLATE 2 (kanban #295): the maturity is the advertisement's own `bond_maturity_height`, and the key is rebuilt
+// with it - so a body naming any height but the one in the leaf rebuilds another key and is refused here. Whether
+// that height is far enough from the bond's confirmation is the census' question (`maturityStands`): this one has no
+// chain to read a confirmation off. Template 1 keeps genesis' maturity where it is still read (`bondMaturityOf`).
 export function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, bondMaturity,
-  tweakPoint, combine } = {}) {
+  tweakPoint, combine, network } = {}) {
   if (!isTaprootOutput(script)) return { ok: false, why: 'that output is not taproot' };
   if (!Array.isArray(arbitrationKeys) || !arbitrationKeys.length)
     return { ok: false, why: 'no arbitration set was given to rebuild the bond with' };
   if (!Number.isInteger(bondMaturity))
     return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
-  if (advert.bondScriptTemplateVersion !== BOND_SCRIPT_TEMPLATE_VERSION) {
-    return {
-      ok: false,
-      why: `that advertisement names bond script template ${advert.bondScriptTemplateVersion}, `
-        + `and this is template ${BOND_SCRIPT_TEMPLATE_VERSION}`,
-    };
-  }
+  const maturity = bondMaturityOf(advert, { genesisMaturity: bondMaturity, network });
+  if (!maturity.ok) return maturity;
 
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
-    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity,
+    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,
     internalKey: derived.internalKey,
   }, { tweakPoint, combine });
 }
@@ -431,7 +430,7 @@ export function recognizeBond(tx, vout, advert, { network = 'regtest', bond, anc
   // and named by a body - with the template listed as unchecked, because it
   // is.
   if (bond) {
-    const key = bondKeyMatches(tx.outputs[vout].script, advert, bond);
+    const key = bondKeyMatches(tx.outputs[vout].script, advert, { ...bond, network });
     if (!key.ok) return { ok: false, why: key.why };
     return {
       ok: true,

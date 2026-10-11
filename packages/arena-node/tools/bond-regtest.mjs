@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import {
-  bondOutputKey, bondInternalKey, recoveryLeaf, slashLeaf, tapLeafHash, controlBlockFor,
+  bondOutputKey, bondInternalKey, recoveryLeaf, slashLeaf, tapLeafHash, controlBlockFor, maturityHeightFor, maturityStands,
 } from '../../arena-protocol/src/bond-script.js';
 import {
   tapSighash, scriptPathWitness, serializeSpend, commitmentOutput, spendCommitsTo,
@@ -56,11 +56,11 @@ for (let i = 0; i < g.arbitrationM; i++) {
   signerNodes.set(toHex(schnorr.getPublicKey(secret)), secret);
 }
 
-function bondFor(nodeSecret) {
+function bondFor(nodeSecret, maturity = g.bondMaturity) {
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const built = bondOutputKey({
     nodeKey, arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK,
-    bondMaturity: g.bondMaturity,
+    bondMaturity: maturity,
     internalKey: bondInternalKey({ nodeKey, arbitrationKeys: g.arbitrationKeys }, { combine }).internalKey,
   }, { tweakPoint, combine });
   return { nodeKey, built, spk: fromHex('5120' + toHex(built.outputKey)) };
@@ -220,3 +220,47 @@ const facts = chainFactsAt(blocks, tip);
 const key = `${toHex(fromHex(utxoA.txid).reverse())}:${utxoA.vout}`;
 console.log('broadcast               ', sent.slice(0, 16), 'at height', height);
 console.log('spent, seen by the census', facts.spentAt.has(key));
+
+// ---- TEMPLATE 2: A BOND AT ITS OWN HEIGHT (kanban #295, 5A.3B "an absolute locktime, reference 30 days after the bond
+// confirms"; regtest's offset is 100 blocks). H is written before the bond is funded - the next block plus the offset,
+// no slack, since regtest mines it at once - and the census' rule is checked against the block it really confirmed in.
+// Then path A is asked of bitcoind at every step: a spend whose locktime is H - 1 fails the CLTV whatever the tip; a
+// spend at H is not final while the tip is below H; at tip H it is accepted, and the next block, H + 1, mines it.
+const secretC = schnorr.utils.randomSecretKey();
+const H = maturityHeightFor(Number(cli('getblockcount')), 'regtest', { slackBlocks: 0 });
+const bondC = bondFor(secretC, H);
+const utxoC = fund(bondC.spk);
+const confirmedC = Number(cli('getblockcount'));
+const recC = recoveryLeaf(bondC.nodeKey, H);
+const pathA = (locktime) => spendOf({
+  utxo: utxoC, spk: bondC.spk, script: recC, leaf: tapLeafHash(recC),
+  control: controlBlockFor('recovery', bondC.built).controlBlock,
+  sign: (h) => [schnorr.sign(h, secretC)], locktime,
+});
+const v2 = { bondScriptTemplateVersion: 2, bondMaturityHeight: H };
+const steps = [];
+const ask = (label, locktime) => {
+  const tip = Number(cli('getblockcount'));
+  const r = allowed(pathA(locktime).hex);
+  steps.push({ step: label, tip, locktime, ...r });
+  console.log(`v2 ${label.padEnd(34)} tip ${tip} locktime ${locktime}`, JSON.stringify(r));
+  return r;
+};
+console.log('v2 bond                ', `confirmed at ${confirmedC}, matures at H = ${H}`,
+  '| census:', JSON.stringify(maturityStands(v2, confirmedC, 'regtest')),
+  '| one block short:', JSON.stringify(maturityStands({ ...v2, bondMaturityHeight: H - 1 }, confirmedC, 'regtest')));
+ask('path A, locktime H-1, tip far below', H - 1);
+ask('path A, locktime H, tip far below', H);
+cli('generatetoaddress', String(H - 1 - Number(cli('getblockcount'))), cli('getnewaddress'));
+ask('path A, locktime H-1, tip H-1', H - 1);
+ask('path A, locktime H, tip H-1', H);
+cli('generatetoaddress', '1', cli('getnewaddress'));
+ask('path A, locktime H-1, tip H', H - 1);
+const atH = pathA(H);
+ask('path A, locktime H, tip H', H);
+const sentC = cli('sendrawtransaction', atH.hex);
+const blockC = JSON.parse(cli('getblock', JSON.parse(cli('generatetoaddress', '1', cli('getnewaddress')))[0]));
+const minedIn = blockC.tx.includes(sentC) ? blockC.height : null;
+const minedTx = minedIn ? 'mined' : 'NOT mined';
+console.log('v2 path A broadcast     ', sentC.slice(0, 16), minedTx, 'at height', minedIn);
+console.log('V2 ' + JSON.stringify({ confirmed: confirmedC, maturity: H, steps, spent: sentC, minedAt: minedIn }));

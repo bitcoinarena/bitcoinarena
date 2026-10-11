@@ -4340,6 +4340,16 @@ function encodeAdvert(a) {
   w.bytes32(a.bondTxid);
   w.u32(a.bondVout);
   w.u16(a.bondScriptTemplateVersion);
+  // TEMPLATE 2 CARRIES ITS OWN MATURITY (kanban #295, 5A.3B): the absolute height in its recovery leaf, so a reader can
+  // rebuild the output key from the body alone. Only template 2 writes it: a template-1 body is byte for byte what it
+  // was, so the bonds already on chain keep their ids.
+  if (a.bondScriptTemplateVersion === 2) {
+    if (!Number.isInteger(a.bondMaturityHeight) || a.bondMaturityHeight < 1 || a.bondMaturityHeight >= 500000000)
+      throw new Error(`a template-2 advertisement names its bond_maturity_height as a block height, not ${a.bondMaturityHeight}`);
+    w.u32(a.bondMaturityHeight);
+  } else if (a.bondMaturityHeight !== undefined) {
+    throw new Error(`template ${a.bondScriptTemplateVersion} carries no bond_maturity_height`);
+  }
 
   w.bytes32(a.payoutPubkey);
 
@@ -4409,9 +4419,12 @@ function decodeAdvert(bytes) {
     bondTxid: r.bytes32(),
     bondVout: r.u32(),
     bondScriptTemplateVersion: r.u16(),
+  };
+  if (a.bondScriptTemplateVersion === 2) a.bondMaturityHeight = r.u32();
+  Object.assign(a, {
     payoutPubkey: r.bytes32(),
     guardianOf: r.vec((rr) => ({ federationId: rr.bytes32(), guardianKey: rr.bytes(GUARDIAN_KEY_BYTES) })),
-  };
+  });
   const capable = r.u8();
   const guardianEndpoint = r.str();
   guardianRole(capable, guardianEndpoint);
@@ -4580,6 +4593,82 @@ const TAPLEAF_VERSION = 0xc0;
  * says so rather than guessing.
  */
 const BOND_SCRIPT_TEMPLATE_VERSION = 1;
+
+/**
+ * TEMPLATE 2: THE SAME TREE, AT THE BOND'S OWN MATURITY (kanban #295, spec 5A.3B: "`bond_maturity` is an absolute
+ * locktime, reference 30 days after the bond confirms").
+ *
+ * Template 1 put genesis' `bondMaturity` in the recovery leaf - 100 on regtest AND on testnet4. That is a height, not a
+ * duration: on testnet4 (tip near 156 000) path A of every bond was spendable the block it confirmed. Template 2 is the
+ * same two leaves with the bond's own height in the CLTV, carried in its advertisement as `bond_maturity_height`, and a
+ * census counts it only when that height is at least the block the bond confirmed in plus this network's offset.
+ *
+ * The offset sits here, beside genesis and not in it (the owner 2026-10-11, the #295 plan): a genesis field would move
+ * testnet4's network id, its series and every re-affirmation for a number no round reads.
+ */
+const BOND_TEMPLATE_V2 = 2;
+
+/** Blocks from a template-2 bond's confirmation to its maturity: ~30 days, ~1 day, regtest's 100 (5A.3B networks table). */
+const BOND_MATURITY_OFFSET = Object.freeze({ mainnet: 4320, testnet4: 144, regtest: 100 });
+
+/**
+ * WHERE TEMPLATE 1 IS STILL READ: the networks whose bonds were posted at genesis' fixed height before template 2 existed
+ * - testnet4's seven, until they are re-bonded, and regtest's fixtures. Never mainnet: there a bond at a passed height is
+ * a bond withdrawable the block it is posted, which is the Sybil door 5A.3 exists to shut.
+ */
+const BOND_V1_READABLE = Object.freeze(['regtest', 'testnet4']);
+
+/** BIP-65: a CLTV argument at or above this is a time, not a height. */
+const LOCKTIME_THRESHOLD = 500000000;
+
+/**
+ * THE MATURITY A BOND'S RECOVERY LEAF CARRIES, off its advertisement: genesis' for template 1, the advertisement's own
+ * `bondMaturityHeight` for template 2. Refused by name for any other template, for a template 1 on a network that no
+ * longer reads it, and for a height that is not a block height.
+ */
+function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
+  const v = advert && advert.bondScriptTemplateVersion;
+  if (v === BOND_SCRIPT_TEMPLATE_VERSION) {
+    if (network !== undefined && !BOND_V1_READABLE.includes(network))
+      return { ok: false, why: `bond script template 1 is not read on ${network}: its maturity is genesis' fixed height, not the bond's` };
+    if (!Number.isInteger(genesisMaturity))
+      return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
+    return { ok: true, maturity: genesisMaturity };
+  }
+  if (v === BOND_TEMPLATE_V2) {
+    const h = advert.bondMaturityHeight;
+    if (!Number.isInteger(h) || h < 1 || h >= LOCKTIME_THRESHOLD)
+      return { ok: false, why: `that advertisement's bond_maturity_height ${h} is not a block height` };
+    return { ok: true, maturity: h };
+  }
+  return { ok: false, why: `that advertisement names bond script template ${v}, and this code reads templates 1 and 2` };
+}
+
+/**
+ * WHETHER A TEMPLATE-2 BOND'S MATURITY IS FAR ENOUGH FROM ITS CONFIRMATION (5A.3B): at least `confirmationHeight` plus
+ * this network's offset. A later height is the node's own choice and only keeps its money longer; an earlier one is a
+ * bond the node can take back before the network's maturity, and is not counted. Template 1 answers ok where it is
+ * still read (`bondMaturityOf` refuses it elsewhere).
+ */
+function maturityStands(advert, confirmationHeight, network) {
+  if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2) return { ok: true };
+  const offset = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };
+  if (!Number.isInteger(confirmationHeight))
+    return { ok: false, why: 'no confirmation height is known to measure that bond\'s maturity from' };
+  const want = confirmationHeight + offset;
+  const h = advert.bondMaturityHeight;
+  if (!Number.isInteger(h) || h < want)
+    return { ok: false, why: `that bond matures at height ${h}, ${want - h} block(s) short of its confirmation ${confirmationHeight} plus ${offset}` };
+  return { ok: true, maturity: h, want };
+}
+
+/** The maturity height a node writes into a new template-2 bond: the next block plus the offset plus `slackBlocks` it may wait for. */
+function maturityHeightFor(tipHeight, network, { slackBlocks = 6 } = {}) {
+  const offset = BOND_MATURITY_OFFSET[network];
+  if (!Number.isInteger(offset)) throw new Error(`no bond maturity offset is set for ${network}`);
+  return tipHeight + 1 + slackBlocks + offset;
+}
 
 const OP_CHECKLOCKTIMEVERIFY = 0xb1;
 const OP_DROP = 0x75;
@@ -5521,27 +5610,26 @@ function isTaprootOutput(script) {
  * counted by a census as though it were at stake, which is the Sybil door 5A.3
  * exists to shut. It comes from genesis, never from the body.
  */
+// TEMPLATE 2 (kanban #295): the maturity is the advertisement's own `bond_maturity_height`, and the key is rebuilt
+// with it - so a body naming any height but the one in the leaf rebuilds another key and is refused here. Whether
+// that height is far enough from the bond's confirmation is the census' question (`maturityStands`): this one has no
+// chain to read a confirmation off. Template 1 keeps genesis' maturity where it is still read (`bondMaturityOf`).
 function bondKeyMatches(script, advert, { arbitrationKeys, arbitrationK, bondMaturity,
-  tweakPoint, combine } = {}) {
+  tweakPoint, combine, network } = {}) {
   if (!isTaprootOutput(script)) return { ok: false, why: 'that output is not taproot' };
   if (!Array.isArray(arbitrationKeys) || !arbitrationKeys.length)
     return { ok: false, why: 'no arbitration set was given to rebuild the bond with' };
   if (!Number.isInteger(bondMaturity))
     return { ok: false, why: 'no bond maturity was given to rebuild the bond with' };
-  if (advert.bondScriptTemplateVersion !== BOND_SCRIPT_TEMPLATE_VERSION) {
-    return {
-      ok: false,
-      why: `that advertisement names bond script template ${advert.bondScriptTemplateVersion}, `
-        + `and this is template ${BOND_SCRIPT_TEMPLATE_VERSION}`,
-    };
-  }
+  const maturity = bondMaturityOf(advert, { genesisMaturity: bondMaturity, network });
+  if (!maturity.ok) return maturity;
 
   const derived = bondInternalKey(
     { nodeKey: advert.nodePubkey, arbitrationKeys }, { combine });
   if (!derived.ok) return derived;
 
   return bondOutputKeyMatches(script.subarray(2, 34), {
-    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity,
+    nodeKey: advert.nodePubkey, arbitrationKeys, arbitrationK, bondMaturity: maturity.maturity,
     internalKey: derived.internalKey,
   }, { tweakPoint, combine });
 }
@@ -5613,7 +5701,7 @@ function recognizeBond(tx, vout, advert, { network = 'regtest', bond, ancestor =
   // and named by a body - with the template listed as unchecked, because it
   // is.
   if (bond) {
-    const key = bondKeyMatches(tx.outputs[vout].script, advert, bond);
+    const key = bondKeyMatches(tx.outputs[vout].script, advert, { ...bond, network });
     if (!key.ok) return { ok: false, why: key.why };
     return {
       ok: true,

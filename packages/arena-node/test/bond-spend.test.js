@@ -71,7 +71,7 @@ function run(script, witness, { locktime = 0 } = {}) {
     if (op === 0xb1) {                              // CHECKLOCKTIMEVERIFY
       const want = stack.length ? asNumber(stack[stack.length - 1]) : null;
       if (want === null) return { ok: false, why: 'CLTV on an empty stack' };
-      if (locktime < want) return { ok: false, why: `the locktime ${locktime} is before ${want}` };
+      if (locktime < want) return { ok: false, why: `Locktime requirement not satisfied: the locktime ${locktime} is before ${want}` };
       continue;                                     // BIP-65 leaves its argument
     }
     if (op === 0x75) { if (pop() === null) return { ok: false, why: 'DROP on an empty stack' }; continue; }
@@ -134,6 +134,27 @@ test('the recovery leaf spends after maturity and not before', () => {
   ]);
   const broken = run(asWritten, witness, { locktime: genesis.bondMaturity });
   assert.equal(broken.ok, false, "the spec's own bytes spent after all");
+});
+
+/**
+ * TEMPLATE 2: THE BOND'S OWN HEIGHT (kanban #295). A testnet4 bond confirmed at 156000 matures at 156000 + 144 or later;
+ * its leaf carries that height in three bytes, and the same witness is refused one block before it, by the CLTV - the
+ * error bitcoind names "Locktime requirement not satisfied" - and spends at it.
+ */
+test('a template-2 recovery leaf is refused at H - 1 with "Locktime requirement not satisfied" and spends at H', () => {
+  const node = keyPair();
+  const H = 156000 + 144;
+  const leaf = recoveryLeaf(node.pubkey, H);
+  assert.deepEqual([...leaf.subarray(0, 4)], [0x03, H & 0xff, (H >> 8) & 0xff, H >> 16], 'the height, three bytes little endian');
+  const witness = [schnorr.sign(SIGHASH, node.secret)];
+  const early = run(leaf, witness, { locktime: H - 1 });
+  assert.equal(early.ok, false, 'the bond was recoverable one block before its maturity');
+  assert.match(early.why, /^Locktime requirement not satisfied/);
+  assert.match(early.why, /the locktime 156143 is before 156144/);
+  const at = run(leaf, witness, { locktime: H });
+  assert.equal(at.ok, true, at.why);
+  // and genesis' 100, which every template-1 bond carried, is refused by this leaf at any locktime under H
+  assert.equal(run(leaf, witness, { locktime: 100 }).ok, false);
 });
 
 /**
