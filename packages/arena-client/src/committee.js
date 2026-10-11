@@ -29,9 +29,12 @@ export const BOND_TERMS = Object.freeze({
 const CHAIN_KEPT_MS = 60000;
 const keptChains = new Map();     // network:censusHeight:committeeTime -> { at, chain, firstHeight }
 const keptCensus = new Map();     // round's census root -> evidence
+const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
 
 const baseOf = (u) => String(u).replace(/\/+$/, '');
-const originOf = (u) => { try { return new URL(u).origin; } catch { return String(u); } };
+// ONE SOURCE PER SEAT, as join.js counts its chain sources (sourceKey): the origin and the first path segment - testnet4's
+// seats share one public host and are told apart by their path
+const originOf = (u) => { try { const x = new URL(u); const head = x.pathname.split('/').filter(Boolean)[0] || ''; return head ? `${x.origin}/${head}` : x.origin; } catch { return String(u); } };
 
 /** The height of the network's anchor block: testnet4's compiled-in one, else Bitcoin's genesis. */
 export const anchorHeightFor = (networkId) => (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? TESTNET4_ANCHOR_HEIGHT : 0);
@@ -90,9 +93,10 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
   const got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
     bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-    verify: curve.verify });
+    verify: curve.verify, census: keptChecked.get(toHex(contract.censusRoot)) || null });
   if (!got.ok) return got;
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
+  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus);
   const seats = [];
   if (compare) {
     const mine = got.committees.settlement.map(toHex).sort().join(',');
