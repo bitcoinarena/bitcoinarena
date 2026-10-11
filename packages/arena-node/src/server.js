@@ -2206,6 +2206,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (h.bad) continue;
         const c = h.c;
         if (c.stakeMsat === 0n || BigInt(nowMs) < c.startTimeMs) continue;
+        // NO RUN, NO FIRST MARK (kanban #344, measured on testnet4 round 4a0a77fc, 2026-10-11 20:12Z): a head-to-head round is
+        // decided by its reveals and an attested market by its attestors - neither sends a first mark, so the start deadline
+        // is not theirs. Swept here, both paid RPS entries were FORFEIT-signed at the door ~10 s after their stakes were seen,
+        // minutes before their reveals; the h2h decide then signed DELIVERED / FAILED for the same entries.
+        { const f = pluginForRound(c, hosted); if (f.ok && (f.headToHead || f.attested)) continue; }
         let deadlineMs;
         try { deadlineMs = Number(msForTicks(startDeadlineOf(c)).ms); } catch { continue; }
         for (const { entryId } of round.entriesOf(held.roundId)) {
