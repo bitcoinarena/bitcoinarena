@@ -90,7 +90,10 @@ export function buildFederationRecord({ federationId, networkId, invite, nominal
     federationId, networkId, invite, nominal, threshold: band.threshold,
     guardians: guardians.map(({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }) => ({ peerKey, nodePubkey, operatorId, bondTxid, bondVout, endpoint }))
       .sort((a, b) => cmp(a.nodePubkey, b.nodePubkey)),
-    status: FEDERATION_STATUS[band.status], successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
+    // A SUCCESSOR NAMED IS A DRAIN (§23A.6 step 2: "The old federation's guardians sign a record with status = DRAINING and
+    // successor_id"): OPEN becomes DRAINING; a worse band (CRITICAL, HALTED) and CLOSED stay what they are
+    status: FEDERATION_STATUS[!closed && successorId && successorId.some((x) => x) && band.status === 'OPEN' ? 'DRAINING' : band.status],
+    successorId: successorId || new Uint8Array(32), gone: [...gone].sort((a, b) => cmp(a.peerKey, b.peerKey)),
     exposureCapSats: cap.ok ? cap.cap : 0n, reserveSats, height,
     seated: seatedGuardians.length, band,
   };

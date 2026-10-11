@@ -2513,8 +2513,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const all = [federationInvite, ...[...networksHeld.values()].map((h) => h.pkg.invite)].filter(Boolean);
     return all.find((inv) => String(fedOf(inv) || '').toLowerCase() === fidHex) || null;
   };
+  // SUCCESSION (§23A.6 steps 2 and 4, kanban #325): the successor this seat was told of signs into the old federation's
+  // record (DRAINING, successor_id), and the record turns CLOSED once no round this seat holds naming it is still open and
+  // drain_blocks have passed since it drained - four weeks (the owner 2026-09-21), ARENA_DRAIN_MS on a test clock
+  const DRAIN_MS = Number(process.env.ARENA_DRAIN_MS || 28 * 86400000);
+  const openRoundNames = (fidHex) => round.openRoundIds().some((id) => { try { return toHex(decodeRoundContract(new Uint8Array(round.get(id).contract)).federationId) === fidHex; } catch { return false; } });
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null,
-    leavingAtMs: () => (owner ? owner.leavingAtMs() : null) });
+    leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
+    successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
+    closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
+  // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
+  roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
   const recordTimer = setInterval(() => { fedRecords.gatherAll(inviteFedId).then((r) => { for (const x of r) if (x.ok === false) console.log(`[federations] ${String(x.federation || '').slice(0, 16)}: ${x.why}`); }, () => {}); },
     Number(process.env.ARENA_FEDERATION_RECORD_MS || 600000));

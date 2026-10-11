@@ -39,7 +39,10 @@ export function federationsOf(census) {
 /** The leave statement a node signs beside its record signature: (record id || 0x01 leaving | 0x00 staying). */
 const leaveMessage = (id, leaving) => Uint8Array.from([...id, leaving ? 1 : 0]);
 
-export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null }) {
+// `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
+// (§23A.6 steps 2 and 4, kanban #325) - both read into the body every guardian seat builds the same way
+export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
+  successorOf = () => null, closedOf = () => false }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
 
@@ -62,7 +65,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!invite) return { ok: false, why: 'this seat names no invite for that federation' };
     const guardians = guardiansOf(b.census, federationId);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
-    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height });
+    const succ = successorOf(fid);
+    const r = buildFederationRecord({ federationId, networkId: b.networkId || networkId, invite, nominal: guardians.length, guardians, gone, height: b.height,
+      ...(succ ? { successorId: fromHex(succ), closed: !!closedOf(fid) } : {}) });
     return { ok: true, record: r, guardians };
   }
 
@@ -160,6 +165,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes) })),
     draining: (fidHex) => draining.get(fidHex) || null,
+    // THE DRAIN IS PAID (§23A.6 step 5, kanban #325): the seated guardians of every federation whose verified record says
+    // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody.
+    predecessorGuardians(fidHex) {
+      const out = [];
+      for (const [, k] of kept) {
+        if (k.status !== 'DRAINING' || !k.record || toHex(k.record.successorId) !== String(fidHex).toLowerCase()) continue;
+        const gone = new Set((k.record.gone || []).map((g) => toHex(g.peerKey)));
+        for (const g of k.record.guardians || []) if (!gone.has(toHex(g.peerKey))) out.push(g.nodePubkey);
+      }
+      return out;
+    },
     FEDERATION_STATUS,
   };
 }
