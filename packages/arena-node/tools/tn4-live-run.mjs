@@ -26,6 +26,8 @@ import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
+import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
@@ -71,6 +73,19 @@ try {
   const copies = await Promise.all(nodes.map(async (n) => { const x = await fetch(`${n}/round?id=${env.ROUND}`); return x.ok ? toHex(new Uint8Array(await x.arrayBuffer())) : `HTTP ${x.status}`; }));
   if (new Set(copies).size !== 1 || copies[0].startsWith('HTTP')) throw new Error(`preflight: the seats do not all hold round ${env.ROUND.slice(0, 16)}: ${copies.map((h) => h.slice(0, 12)).join(' ')}`);
   log({ step: "preflight", round: env.ROUND.slice(0, 16), seats: copies.length });
+  // SEATED BEFORE ANYTHING IS PAID (§5A.7, kanban #301): a seat running ARENA_SEATING takes no entry without the round's
+  // seating certificate, which exists from seating_close (start - 120 s) - so wait for it, and check it as the page does
+  {
+    const c0 = decodeRoundContract(new Uint8Array(Buffer.from(copies[0], 'hex')));
+    const close = Number(seatingCloseMs(c0)) + 5000;
+    if (Date.now() < close) { log({ step: 'waiting for the seating', closeAt: new Date(close).toISOString() }); await new Promise((r) => setTimeout(r, close - Date.now())); }
+    try {
+      const got = await clientSettlementSignerNodes(env.ROUND, c0, nodes, { curve: pageCurve });
+      const st = got.derived.seating || {};
+      log({ step: 'seated', signerNodes: got.signerNodes.length, agreed: got.agreed,
+        game: st.game && st.game.seated ? st.game.seated.length : null, settlement: st.settlement && st.settlement.seated ? st.settlement.seated.length : null });
+    } catch (e) { throw new Error(`preflight: the round is not seated, nothing is paid: ${e.message}`); }
+  }
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   // THE ROUND, AS ITS OWN SIGNER NODES HOLD IT
   const r = await fetch(`${nodes[0]}/round?id=${env.ROUND}`);
