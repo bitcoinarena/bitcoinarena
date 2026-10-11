@@ -634,9 +634,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
+  // A TEST OWNER (kanban #321, the CRITICAL rehearsal): ARENA_TEST_OWNER_PUBKEY=<hex> gives every seat this harness starts an
+  // owner already claimed by that key, kept in memory - so a test signs a leave as an owner page would (POST /owner/leave)
+  const testOwner = () => (process.env.ARENA_TEST_OWNER_PUBKEY ? { owner: { store: (() => { let o = { pubkey: String(process.env.ARENA_TEST_OWNER_PUBKEY).toLowerCase(), claimedAtMs: Date.now() };
+    return { read: () => o, write: (x) => { o = x; }, writeCode: () => {} }; })() } } : {});
   const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}) };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner() };
   // ATTACHED: the page's bond proof for the running nodes to serve (their ARENA_ATTACH_PROOF_DIR), and no node started -
   // each member is its port and its key, the node itself another process's.
   if (attach) {
@@ -648,7 +652,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let a = attach ? attached(members[0]) : await launchNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}) };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner() };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
@@ -660,7 +664,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded, ...(plugins ? { plugins } : {}),
     donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode }));
+    ...(federation ? { federation } : {}), ...signerNode, ...testOwner() }));
   const rest = [];
   for (const o of optsBeyond) {
     const m = members[2 + rest.length];
