@@ -2628,6 +2628,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     console.log(`[networks] removed network ${network.slice(0, 16)}`);
     return { ok: true, network, removed: true };
   }
+  // A DRAIN NAMED AT START (kanban #325, the succession regtest): ARENA_DRAINING=<old federation hex>:<successor hex>[,...] -
+  // what an installed network package's draining.json says, as a seat setting
+  for (const pair of String(process.env.ARENA_DRAINING || '').split(',').filter(Boolean)) {
+    const [oldFed, successor] = pair.split(':').map((x) => String(x || '').toLowerCase());
+    if (/^[0-9a-f]{64}$/.test(oldFed) && /^[0-9a-f]{64}$/.test(successor)) { markDraining(null, oldFed, successor, round.now(), false); console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining into ${successor.slice(0, 16)} (ARENA_DRAINING)`); }
+  }
   // THE INSTALLED NETWORKS AT START: each checked and tried again before it is held (a package that no longer stands is not)
   if (networksDir && existsSync(networksDir)) {
     for (const id of readdirSync(networksDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
