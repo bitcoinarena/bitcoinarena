@@ -13,6 +13,7 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
+import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
 
 /**
  * THE GAMES A NODE HOSTS, by game_id (hex): the registrations its launcher handed it, each checked here once - a
@@ -61,7 +62,10 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519 } = {
       // the client files the game ships (kanban #276 step 5: the plugin store packages them, checked against the manifest)
       clientUrls: Array.isArray(p.clientUrls) ? [...p.clientUrls] : [],
       // its earlier versions' signed manifests (an installed update's chain), oldest first
-      ancestors: Array.isArray(p.ancestors) ? [...p.ancestors] : [] }));
+      ancestors: Array.isArray(p.ancestors) ? [...p.ancestors] : [],
+      // its description and website, signed by its developer beside the manifest (kanban #276): kept only when they stand
+      info: (() => { if (!p.info) return null; const i = gameInfoStands(p.info, { gameId: stands.gameId, manifest: p.manifest, verify });
+        return i.ok ? Object.freeze({ ...gameInfoJson(p.info) }) : null; })() }));
   }
   return out;
 }
