@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
+import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
 import { checkPackage } from './plugin-check.js';
 import { trialRun } from './plugin-trial.js';
 
@@ -32,7 +33,7 @@ export function packageOf(game, { ancestors = [] } = {}) {
   return { format: 'arena-plugin/v1', name: game.name, title: game.title || game.name, manifest: toHex(encodeManifest(game.manifest)),
     ancestors: ancestors.map((m) => toHex(encodeManifest(m))),
     donationSet: (game.donationSet || []).map((r) => ({ recipientPk: toHex(r.recipientPk), shareBps: Number(r.shareBps), label: r.label || '' })),
-    cores, clients };
+    cores, clients, ...(game.info ? { info: gameInfoJson(game.info) } : {}) };
 }
 
 // THE CHECKS ARE plugin-check.js's (the page runs them too); THE SEAT ADDS THE TRIAL RUN (plugin-trial.js) on every core
@@ -71,7 +72,7 @@ export async function registrationFromPackage(at, pkg) {
     if (!m.DECIDE || typeof m.DECIDE.decide !== 'function') throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
     cores.set(c.hash, { name: c.name, hash: c.hash, url: pathToFileURL(file).href, adapter: m.DECIDE, configs: new Map((c.configs || []).map((h) => [h, {}])) });
   }
-  return { name: pkg.name, title: pkg.title, manifest, gameId: gameIdOf(manifest), cores,
+  return { name: pkg.name, title: pkg.title, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: (pkg.ancestors || []).map((h) => decodeManifest(fromHex(h))),
     donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
     clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href) };

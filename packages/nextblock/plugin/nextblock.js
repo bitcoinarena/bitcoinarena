@@ -9,6 +9,7 @@ import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { NEXTBLOCK_MANIFEST_HEX } from './nextblock-manifest.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { INFO } from './info.js';
 
 /** THE SIGNED MANIFEST, and its id: what a round of nextblock names as its game_id (§0A.3). */
 export const NEXTBLOCK_MANIFEST = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
@@ -20,6 +21,8 @@ export const NEXTBLOCK_GAME_ID = gameIdOf(NEXTBLOCK_MANIFEST);
  * /replay for a round of nextblock.
  */
 export const NEXTBLOCK = Object.freeze({ name: 'nextblock', manifest: NEXTBLOCK_MANIFEST, gameId: NEXTBLOCK_GAME_ID, cores: NEXTBLOCK_CORES,
+  // ITS DESCRIPTION AND WEBSITE, signed by its developer beside the manifest (kanban #276; the id does not move)
+  info: INFO,
   replayPage: new URL('./nextblock-replay.html', import.meta.url), roundWarnings: nextblockRoundWarnings,
   // ITS NAME AND MARK AS A PLAYER SEES THEM (kanban #228): the node's pages show them beside its rounds
   title: 'Tick Tock, Next Block', icon: new URL('../brand/nextblock-icon.svg', import.meta.url),

@@ -910,6 +910,8 @@ const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
+  // kanban #276: a game's description and website, signed by its developer key beside its manifest (game-info.js)
+  gameInfo: 'ARENA/v1/GameInfo',
   // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.
   headToHeadCommit: 'ARENA/v1/HeadToHeadCommit',
   // a market order's id, the bytes its player signs (kanban #278, order-book.js)

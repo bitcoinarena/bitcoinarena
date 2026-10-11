@@ -22,6 +22,7 @@ textarea{min-height:110px}
 .warn{border-left:3px solid var(--gv);padding:8px 12px;background:rgba(242,169,59,.08);border-radius:0 8px 8px 0;margin:10px 0}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
 label{display:block;margin:8px 0 4px;color:var(--dim)}
+  table.found { width: 100%; border-collapse: collapse; } table.found th, table.found td { padding: 4px 6px; text-align: left; vertical-align: top; } .info { margin: 2px 0 6px; } .info a { color: inherit; }
 </style></head><body>
 <h1>Bitcoin Arena · Node Owner</h1>
 <div class="sub" id="who">loading…</div>
@@ -196,8 +197,12 @@ async function area() {
       <p>Games and new versions other seats host. Check runs every check in this browser and shows it; the seat checks again,
       runs the code in a sandbox, and only then runs it - at once, no restart. A version that is newer keeps the old one for
       the rounds it holds. To be drawn for a game's rounds, this seat's advertisement must name it.</p>
+      <h3>Games / markets found on the network</h3>
+      <p class="sub" id="netfound-at">this seat is asking the network's seats…</p><div id="netfound"></div>
+      <button id="netagain">Search again</button>
+      <details><summary class="sub">Or look at one seat by its address</summary>
       <label>Another seat's address</label><input id="from" placeholder="https://seat.example" autocomplete="off" autocapitalize="none">
-      <button id="look">Look</button><div class="err" id="perr"></div><div id="offer"></div><div id="installed"></div></div>
+      <button id="look">Look</button></details><div class="err" id="perr"></div><div id="offer"></div><div id="installed"></div></div>
     <h2>Networks</h2><div class="card" id="nets">
       <p>A seat's network is four settings, each signed or fixed by whoever has authority over it: its chain, the donation sets in
       force, its series and its federation invite. Check runs every check in this browser and shows it; the seat checks again,
@@ -273,7 +278,7 @@ async function storePanel() {
   const reload = async () => {
     try { mine = await (await fetch(at('/owner/plugins'), { cache: 'no-store' })).json(); } catch { /* shown as empty */ }
     const rows = mine.hosted.map((g) => `<div class="row"><span>${esc(g.title || g.name)} v${g.version}${g.supersededBy ? ' · replaced by ' + esc(g.supersededBy.slice(0, 8)) + '…' : ''}</span>
-      <b>${g.installed ? `<button data-remove="${esc(g.id)}">Remove</button>` : 'built in'}</b></div>`).join('');
+      <b>${g.installed ? `<button data-remove="${esc(g.id)}">Remove</button>` : 'built in'}</b></div>${infoLine(g.info)}`).join('');
     $('installed').innerHTML = `<p class="sub">Games on this seat:</p>${rows || '<p class="sub">none</p>'}
       <label><input type="checkbox" id="auto" ${mine.settings.autoUpdate ? 'checked' : ''}> Update games and networks automatically (a network naming another federation is never taken by itself)</label>
       <label>From these seats (one address per line)</label><textarea id="srcs" rows="2" autocomplete="off" autocapitalize="none">${esc((mine.settings.sources || []).join('\n'))}</textarea>
@@ -287,6 +292,30 @@ async function storePanel() {
     };
   };
   await reload();
+  // THE NETWORK'S GAMES, FOUND BY THE SEAT (kanban #276, the owner 2026-10-11: automatic, not by address): name, type, version,
+  // the developer's signed description and website, how many seats host it, and Install (or Update, for a newer version of a
+  // game hosted here). Install checks the package in this browser first, as Check does, then the seat checks it again.
+  const found = async (fresh) => {
+    let ng = null;
+    try { ng = await (await fetch(at('/network-games' + (fresh ? '?fresh=1' : '')), { cache: 'no-store' })).json(); } catch (e) { $('netfound-at').textContent = 'the seat did not answer: ' + e.message; return; }
+    const answered = (ng.seats || []).filter((x) => x.answered).length;
+    $('netfound-at').textContent = `${answered} of ${(ng.seats || []).length} seat(s) answered · read ${ng.atMs ? new Date(ng.atMs).toLocaleTimeString() : '-'}`;
+    const offers = (ng.games || []).filter((g) => !g.hostedHere);
+    window.OWNER_FOUND = ng;
+    if (!offers.length) { $('netfound').innerHTML = '<p class="sub">Every game the network\'s seats host is on this seat.</p>'; return; }
+    $('netfound').innerHTML = `<table class="found"><tr><th>Name</th><th>Type</th><th>Version</th><th>Seats</th><th></th></tr>${offers.map((g, i) => `
+      <tr><td><b>${esc(g.title)}</b>${infoLine(g.infoSigned ? { description: g.description, website: g.website } : null)}</td><td>${esc(g.type)}</td><td>v${g.version}</td>
+      <td>${g.seats.length}</td><td><button class="primary" data-found="${i}">${g.updateOf ? 'Update' : 'Install'}</button></td></tr>
+      <tr><td colspan="5"><div id="frep${i}"></div></td></tr>`).join('')}</table>`;
+    for (const b of $('netfound').querySelectorAll('button[data-found]')) b.onclick = async () => {
+      const g = offers[Number(b.dataset.found)];
+      const parent = g.updateOf ? mine.hosted.find((h) => h.id === g.updateOf) || null : null;
+      await checkAndTake({ g, parent, from: g.seats[0], box: $('frep' + b.dataset.found), button: b, auto: true });
+      found(false);
+    };
+  };
+  $('netagain').onclick = () => { $('netfound-at').textContent = 'asking the network\'s seats again…'; found(true); };
+  found(false);
   const report = (r) => `<div class="report">${r.checks.map((c) => `<div class="row"><span>${c.ok ? '✓' : '✗'} ${esc(c.check)}</span><b class="sub">${esc(c.detail || '')}</b></div>`).join('')}
     ${r.ok ? '' : `<p class="err">${esc(r.why)}</p>`}</div>`;
   $('look').onclick = async () => {
@@ -308,8 +337,14 @@ async function storePanel() {
       <b><button data-check="${i}">Check${parent ? ' update' : ''}</button></b></div><div id="rep${i}"></div></div>`).join('');
     for (const b of $('offer').querySelectorAll('button[data-check]')) b.onclick = async () => {
       const { g, parent } = offers[Number(b.dataset.check)];
-      const box = $('rep' + b.dataset.check);
+      await checkAndTake({ g, parent, from, box: $('rep' + b.dataset.check), button: b, auto: false });
+    };
+  };
+  // CHECK IN THIS BROWSER, THEN INSTALL OR UPDATE: the package fetched from `from`, every check shown; `auto` takes it as soon
+  // as every check passed (the network list's one Install), else the owner presses Install after reading the report
+  async function checkAndTake({ g, parent, from, box, button, auto }) {
       box.innerHTML = '<p class="sub">checking in this browser…</p>';
+      if (button) button.disabled = true;
       let pkg;
       try { const r = await fetch(`${from}/plugin?game=${g.id}`, { cache: 'no-store' }); if (!r.ok) throw new Error((await r.text()).trim()); pkg = await r.json(); }
       catch (e) { box.innerHTML = `<p class="err">That seat did not hand the game over: ${esc(e.message)}</p>`; return; }
@@ -318,10 +353,12 @@ async function storePanel() {
       let u = { ok: true };
       if (r.ok && parent) u = C.checkUpdate({ gameId: parent.id, devKey: parent.devKey, version: parent.version }, r);
       window.OWNER_REPORT = { game: g.id, ok: r.ok && u.ok, checks: r.checks, why: r.why || u.why };
+      const tid = 'take' + g.id.slice(0, 12);
       box.innerHTML = report(r) + (u.ok ? '' : `<p class="err">${esc(u.why)}</p>`)
-        + (r.ok && u.ok ? `<button class="primary" id="take${b.dataset.check}">${parent ? 'Update' : 'Install'}</button><p class="sub">The seat checks it again and runs it in a sandbox first.</p>` : '');
-      const t = $('take' + b.dataset.check);
-      if (t) t.onclick = async () => {
+        + (r.ok && u.ok ? `<button class="primary" id="${tid}">${parent ? 'Update' : 'Install'}</button><p class="sub">The seat checks it again and runs it in a sandbox first.</p>` : '');
+      if (button) button.disabled = false;
+      const t = $(tid);
+      const take = async () => {
         t.disabled = true; t.textContent = 'the seat is checking…';
         try {
           const res = parent ? await post('/owner/plugins/update', signed('update', { game: g.id, from, replaces: parent.id }))
@@ -331,8 +368,15 @@ async function storePanel() {
           reload();
         } catch (e) { t.textContent = 'refused'; box.insertAdjacentHTML('beforeend', `<p class="err">${esc(e.message)}</p>`); }
       };
-    };
-  };
+      if (t) t.onclick = take;
+      if (t && auto) await take();
+  }
+}
+// A GAME'S DESCRIPTION AND WEBSITE, as its developer signed them (kanban #276); nothing when they do not stand
+function infoLine(info) {
+  if (!info || (!info.description && !info.website)) return '';
+  const site = info.website && /^https:\/\//.test(info.website) ? ` <a href="${esc(info.website)}" target="_blank" rel="noopener">${esc(info.website.replace(/^https:\/\//, ''))}</a>` : '';
+  return `<div class="sub info">${esc(info.description || '')}${site} <span title="signed by its developer key">✓ signed</span></div>`;
 }
 // THE NETWORK STORE (kanban #276, letter 2026-10-10: federation invite, donation sets, series and chain, on the game store's
 // check-then-install path): this seat's four settings and who signs each; another seat's network package listed with the four,

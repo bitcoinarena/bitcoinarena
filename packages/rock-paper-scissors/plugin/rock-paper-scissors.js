@@ -8,6 +8,7 @@ import { RPS_MANIFEST_HEX } from './rps-manifest.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { INFO } from './info.js';
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 export const RPS_MANIFEST = decodeManifest(fromHex(RPS_MANIFEST_HEX));
@@ -17,7 +18,7 @@ export const RPS_DECIDE_CORE = Object.freeze({ name: DECIDE.name, hash: sha(read
   configs: new Map([[sha('rock-paper-scissors-config:v1'), {}]]) });
 export const RPS_CLIENT_FILE = new URL('../client/index.html', import.meta.url);
 
-export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', manifest: RPS_MANIFEST, gameId: RPS_GAME_ID,
+export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', manifest: RPS_MANIFEST, gameId: RPS_GAME_ID, info: INFO,
   cores: new Map([[RPS_DECIDE_CORE.hash, RPS_DECIDE_CORE]]), title: 'Rock Paper Scissors',
   donationSet: TESTNET4_DONATION_SET_KEYS.recipients,
   // its client, so the plugin store can hand the game to another seat (kanban #276 step 5)

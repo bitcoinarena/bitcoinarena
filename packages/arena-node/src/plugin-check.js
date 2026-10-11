@@ -10,6 +10,7 @@
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, gameIdOf, manifestStands } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
+import { gameInfoStands } from '../../arena-protocol/src/game-info.js';
 
 export const fromBase64 = (s) => (typeof Buffer !== 'undefined' ? new Uint8Array(Buffer.from(String(s || ''), 'base64'))
   : Uint8Array.from(atob(String(s || '')), (c) => c.charCodeAt(0)));
@@ -89,7 +90,11 @@ export function checkPackage(pkg, { verify, want = null, parentOf = () => null }
       return out(`client ${String(k.hash).slice(0, 16)}: it is not a client its manifest names`, who);
   }
   if (findings.length) return out(`the scan refuses it: ${findings.map((f) => `${f.rule} (line ${f.line})`).join('; ')}`, who);
-  return out(null, who);
+  // ITS DESCRIPTION AND WEBSITE (kanban #276): shown when its developer key signed them for this game id; never a reason to
+  // refuse the game - a package with none, or with an unsigned one, installs the same game (the id is the manifest's)
+  const info = pkg.info ? gameInfoStands(pkg.info, { gameId: gameIdOf(manifest), manifest, verify }) : null;
+  if (pkg.info) add('its description and website are signed by its developer', info.ok, info.ok ? '' : info.why);
+  return out(null, { ...who, info: info && info.ok ? { description: info.description, website: info.website, signed: true } : null });
 }
 
 /** AN UPDATE IS THE SAME DEVELOPER'S NEXT VERSION OF THE GAME IT REPLACES: its parent is that game, its version higher. */
