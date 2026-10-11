@@ -58,7 +58,9 @@ gc() { HOME=$FORK_HOME timeout 120 $FORK_BIN/gateway-cli --address http://127.0.
 js() { "$NODE" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s.slice(s.indexOf('{')===-1?s.indexOf('['):Math.min(...[s.indexOf('{'),s.indexOf('[')].filter(i=>i>=0))));console.log(($1)(o))})"; }
 until_() { local what=$1 secs=$2; shift 2; local t=$(date +%s); until "$@"; do [ $(( $(date +%s) - t )) -gt $secs ] && die "$what: not within $secs s"; sleep 2; done; }
 # THIS RUN'S GUARDIANS: fedimintd children whose environment names this run's dir (a node killed hard leaves its own)
-kill_guardians() { for pid in $(pgrep -x fedimintd); do tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | grep -q "^FM_DATA_DIR=$H/" && kill -KILL $pid; done; }
+# (macOS has no /proc: there `ps -E` prints a process's environment after its command line)
+envOf() { if [ -r /proc/$1/environ ]; then tr '\0' '\n' < /proc/$1/environ; else ps -Eww -o command= -p $1 2>/dev/null | tr ' ' '\n'; fi; }
+kill_guardians() { for pid in $(pgrep -x fedimintd); do envOf $pid | grep -q "^FM_DATA_DIR=$H/" && kill -KILL $pid; done; }
 # THE NODES BY WHAT THEY RUN (a recorded pid once missed one, which then held its port): every src/main.js on this run's
 # stores, then until no node port answers - their guardians are their children and go with them
 stop_nodes() { pkill -TERM -f "src/main.js [0-9]+ $H/node-" 2>/dev/null; sleep 8; pkill -KILL -f "src/main.js [0-9]+ $H/node-" 2>/dev/null
