@@ -429,9 +429,14 @@ export class Roster {
     if (!census.ok) return census;
     const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
     const fid = toHex(contract.federationId);
-    return { ok: true, guardians: census.entries
+    const own = census.entries
       .filter((e) => ((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid))
-      .map((e) => e.pubkey) };
+      .map((e) => e.pubkey);
+    // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5, kanban #325: "one share per seat across both
+    // federations, so a guardian seated in both ... earns two shares"), until its record is CLOSED - a key listed twice
+    // is paid twice by the fee table. `predecessorGuardians(fid)` is the seat's record store (federation-records.js).
+    const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid) || []) : [];
+    return { ok: true, guardians: [...own, ...drain] };
   }
 
   guardianBondsFor(roundIdBytes) {
