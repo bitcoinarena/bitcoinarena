@@ -636,11 +636,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   } : {};
   // A TEST OWNER (kanban #321, the CRITICAL rehearsal): ARENA_TEST_OWNER_PUBKEY=<hex> gives every seat this harness starts an
   // owner already claimed by that key, kept in memory - so a test signs a leave as an owner page would (POST /owner/leave)
+  // THE FEDERATION'S INVITE, AS A SEAT'S ARENA_FEDERATION_INVITE GIVES IT (main.js): without it a harness seat signs no
+  // FederationRecord - "this seat names no invite for that federation" (measured on the test host stack, kanban #325)
+  const seatInvite = () => (invite ? { federationInvite: invite } : {});
   const testOwner = () => (process.env.ARENA_TEST_OWNER_PUBKEY ? { owner: { store: (() => { let o = { pubkey: String(process.env.ARENA_TEST_OWNER_PUBKEY).toLowerCase(), claimedAtMs: Date.now() };
     return { read: () => o, write: (x) => { o = x; }, writeCode: () => {} }; })() } } : {});
   const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner() };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner(), ...seatInvite() };
   // ATTACHED: the page's bond proof for the running nodes to serve (their ARENA_ATTACH_PROOF_DIR), and no node started -
   // each member is its port and its key, the node itself another process's.
   if (attach) {
@@ -652,7 +655,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let a = attach ? attached(members[0]) : await launchNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner() };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner(), ...seatInvite() };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
@@ -664,7 +667,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded, ...(plugins ? { plugins } : {}),
     donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...testOwner() }));
+    ...(federation ? { federation } : {}), ...signerNode, ...testOwner(), ...seatInvite() }));
   const rest = [];
   for (const o of optsBeyond) {
     const m = members[2 + rest.length];
