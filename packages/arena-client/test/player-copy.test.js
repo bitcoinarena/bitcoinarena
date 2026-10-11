@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
 const SEAT = /\bseat(s|ed|ing)?\b/i;
+// code, not copy: a module path and a node's door (`/seating?round=`) are never on a screen
+const CODE = (s) => /^\.\.?\/[\w./-]+\.js$/.test(s) || /^\s*\/[a-z-]+\?/.test(s);
 
 /** The text of every string literal in a JavaScript source, comments and `${...}` code left out. */
 export function stringLiterals(src) {
@@ -85,7 +87,7 @@ test('no string the player can be shown says seat: the client library', () => {
   // \"seat\"", which is the scanner reading a dictionary.
   const NOT_COPY = new Set(['bip39-wordlist.js']);
   for (const f of readdirSync(dir).filter((x) => x.endsWith('.js') && !NOT_COPY.has(x))) {
-    for (const s of stringLiterals(readFileSync(new URL(f, dir), 'utf8'))) if (SEAT.test(s)) hits.push(`${f}: ${JSON.stringify(s.slice(0, 90))}`);
+    for (const s of stringLiterals(readFileSync(new URL(f, dir), 'utf8'))) if (SEAT.test(s) && !CODE(s)) hits.push(`${f}: ${JSON.stringify(s.slice(0, 90))}`);
   }
   assert.deepEqual(hits, [], `player-facing copy still says seat:\n${hits.join('\n')}`);
 });

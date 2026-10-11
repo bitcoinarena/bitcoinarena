@@ -63,8 +63,8 @@ test('the threshold is the round\'s: two of two on a test net, and no caller-nam
   assert.equal(claimKeyIsAttested({ roundId: RID, claimPk: CLAIM, signatures: both, signerNodes: two, settlementSlots: 2, verify }).ok, true);
   assert.match(claimKeyIsAttested({ roundId: RID, claimPk: CLAIM, signatures: both.slice(0, 1), signerNodes: two, settlementSlots: 2, verify }).why,
     /1 of 2 signer nodes attest this claim key, and this round needs 2/);
-  assert.match(claimKeyIsAttested({ roundId: RID, claimPk: CLAIM, signatures: both, signerNodes: two, settlementSlots: 3, verify }).why,
-    /no committee threshold for 3 slots/);
+  assert.match(claimKeyIsAttested({ roundId: RID, claimPk: CLAIM, signatures: both, signerNodes: two, settlementSlots: 4, verify }).why,
+    /no committee threshold for 4 slots/);
   assert.match(claimKeyIsAttested({ roundId: RID, claimPk: CLAIM, signatures: both, signerNodes: two, settlementSlots: 2 }).why,
     /needs a verifier/);
 });
