@@ -11833,11 +11833,13 @@ async function refundStake({ round, roundId, invite, seed, curve, LockClient, st
  * lock client checks it under the contract (and the guardians again) - a signer node
  * that answers with bytes that are not the forfeit gets nothing through.
  */
-async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch } = {}) {
+// `lock`: 'stake', or 'fee' - a market order's fee lock (kanban #336), which the seats return whole for an order the book
+// never filled and claim at resolution for one it did
+async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake' } = {}) {
   const refused = [];
   for (const node of [...new Set(nodes || [])]) {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}`);
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`);
       if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
       const j = await r.json();
       if (/^[0-9a-f]{128}$/.test(String(j.signature))) return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
@@ -11868,6 +11870,19 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
     if (!f.ok) throw new Error(f.why);
     forfeits.push({ lock: l, forfeit: f });
   }
+  // AND THE ORDER'S FEE LOCK (kanban #336, measured 2026-10-11 by the bots on the regtest Up/Down market: an order the book
+  // never filled came back without its 1 % - 54,450 of 55,000 msat, 55,440 of 56,000 - because only stake locks were ever
+  // looked up). The tab's own record of it (this order's saved lock, under its own key); the seats give its forfeit only
+  // when the order was not filled (or was cancelled, or the market refunded) - a fee they claim at resolution is refused,
+  // and left alone.
+  const kept = storage ? savedLock(storage, { roundId, playerPubkey: player.pubkey }) : null;
+  const fee = kept && kept.lock && kept.lock.feeLock;
+  const feeEntry = locks.find((l) => l.entryId) || null;
+  if (fee && feeEntry) {
+    onStep('asking the signer nodes for the forfeit of the fee lock');
+    const f = await forfeitOf({ roundId, entryId: feeEntry.entryId, nodes, fetcher, lock: 'fee' });
+    if (f.ok) forfeits.push({ lock: { outpoint: fee.outpoint, fields: fee.fields, entryId: feeEntry.entryId, fee: true }, forfeit: f });
+  }
   const secret = lockSecretFor(seed, roundId);
   const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
   // THE WALLET THE PAYOUT WAS JUST COLLECTED INTO, when there is one (6d): one
@@ -11879,7 +11894,7 @@ async function redeemStake({ round, roundId, invite, seed, curve, LockClient, st
     onStep('redeeming the lock');
     const said = JSON.parse(await client.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx),
       JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(player.secret)));
-    redeems.push({ outpoint: l.outpoint, forfeitFrom: f.from, ...said });
+    redeems.push({ outpoint: l.outpoint, forfeitFrom: f.from, ...(l.fee ? { fee: true } : {}), ...said });
   }
   return { client, redeems };
 }
