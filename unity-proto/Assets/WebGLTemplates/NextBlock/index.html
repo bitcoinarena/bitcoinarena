@@ -4798,6 +4798,25 @@
       if (!game) return null;
       window.ARENA_GAME_CHOSEN = game;
       window.ARENA_GAME_ID = game.id;
+      // A TABLE WAITS (kanban #293, the owner 2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
+      // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
+      // transaction, the first about an hour later. window.ARENA_H2H_WANT keeps the last ask for a probe.
+      if (game.manifest && game.manifest.resultType === 3 && !window.ARENA_H2H_WANT_TIMER) {
+        const ask = async () => {
+          const open = await Promise.any(nodes.map(async (n) => {
+            const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+            if (!r.ok) throw new Error(String(r.status));
+            const j = await r.json();
+            return (j.rounds || []).some((x) => x.game && x.game.id === game.id && Number(x.entryCloseMs || Date.parse(x.entryClose || 0) || 0) > Date.now());
+          })).catch(() => null);
+          if (open !== false) { window.ARENA_H2H_WANT = { at: Date.now(), open }; return; }
+          const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/h2h-want?game=' + game.id, { method: 'POST', signal: AbortSignal.timeout(5000) })
+            .then((r) => r.status).catch(() => 0)));
+          window.ARENA_H2H_WANT = { at: Date.now(), open: false, said };
+          console.log('[arena] no ' + game.name + ' round is open: asked the seats for one (' + said.filter((x) => x === 200).length + ' of ' + nodes.length + ')');
+        };
+        ask(); window.ARENA_H2H_WANT_TIMER = setInterval(ask, 30000);
+      }
       window.ARENA_GAME_NAME = game.name;
       console.log('[arena] game ' + game.name + ' (' + game.id.slice(0, 16) + ')');
       return game;

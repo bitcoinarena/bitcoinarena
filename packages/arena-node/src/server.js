@@ -108,6 +108,7 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
+import { isHeadToHead } from '../../arena-protocol/src/manifest.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
@@ -4116,6 +4117,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // identity key and its signature over (round, key) (match.js presenceId) - says this tab sits at that round's table; GET
       // reads who does. Each answers the identities said within PRESENCE_MS, with the name made from each key. Kept in memory
       // only: presence decides nothing.
+      // A TABLE WAITS (kanban #293, the owner 2026-10-11, path B): POST /h2h-want?game=<id> - a page that chose a head-to-head
+      // game this seat hosts and found no round of it open says so; GET /h2h-want answers, per game, when that was last
+      // said. The operator's grid keeper reads it and publishes the next 30 min of rounds in one transaction. In memory
+      // only, one time per game: it decides nothing but whether a grid is published.
+      if (url.pathname === '/h2h-want' && (req.method === 'POST' || req.method === 'GET')) {
+        const wants = round.__h2hWants || (round.__h2hWants = new Map());
+        if (req.method === 'GET') {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+          return res.end(JSON.stringify({ nowMs: Number(round.now()), wants: Object.fromEntries(wants) }));
+        }
+        const g = String(url.searchParams.get('game') || '').toLowerCase();
+        const p = /^[0-9a-f]{64}$/.test(g) ? hosted.get(g) : null;
+        if (!p || !isHeadToHead(p.manifest)) return text(res, 404, 'that is not a head-to-head game this node hosts');
+        wants.set(g, Number(round.now()));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ ok: true, game: g, atMs: wants.get(g) }));
+      }
       if (url.pathname === '/here' && (req.method === 'POST' || req.method === 'GET')) {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
