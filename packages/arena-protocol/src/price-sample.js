@@ -54,7 +54,7 @@ export const priceTapeId = (t) => taggedHash(TAG.priceTape, encodePriceTape(t));
  * Answers { ok, signed: [keys that verified], why }. A key outside the committee, a second signature by one key, or a
  * signature that does not verify counts nothing - it never refuses the others.
  */
-export function attestationStands({ id, sigs, committee, threshold, verify }) {
+export function priceAttestationStands({ id, sigs, committee, threshold, verify }) {
   if (!isBytes32(id)) return { ok: false, signed: [], why: 'no 32-byte id to check' };
   if (!Number.isInteger(threshold) || threshold < 1) return { ok: false, signed: [], why: 'no threshold' };
   if (typeof verify !== 'function') return { ok: false, signed: [], why: 'checking a signature needs a verifier, and none was injected' };
@@ -81,7 +81,7 @@ export const centsToTapeUnits = (c) => Math.floor((c * 256 + 50) / 100);
 
 /**
  * THE PRICES A BATCH PLAYED, CHECKED AGAINST THE COMMITTEE'S SIGNATURES (§11, kanban #311): every attestation the batch
- * carries must stand (`attestationStands`) for this round, and the sample (or the tape) at its tick must be its price in
+ * carries must stand (`priceAttestationStands`) for this round, and the sample (or the tape) at its tick must be its price in
  * the tape's unit. `require`: also refuse a sample or a tape that carries no attestation (a round whose contract names a
  * feed - slice 3). Answers { ok, attested: n } or { ok: false, why }.
  */
@@ -90,7 +90,7 @@ export function checkBatchPrices({ batch, roundId, committee, threshold, verify,
   const at = (list, tick) => (list || []).filter((x) => x[0] === tick);
   for (const [tick, kind, cents, sigs] of attests) {
     const id = kind === 0 ? priceSampleId({ roundId, tick, priceCents: cents }) : priceTapeId({ roundId, tick, prices: cents });
-    const s = attestationStands({ id, sigs: sigs.map(([key, signature]) => ({ key, signature })), committee, threshold, verify });
+    const s = priceAttestationStands({ id, sigs: sigs.map(([key, signature]) => ({ key, signature })), committee, threshold, verify });
     if (!s.ok) return { ok: false, why: `the ${kind === 0 ? 'sample' : 'tape'} at tick ${tick} is not attested: ${s.why}` };
     if (kind === 0) {
       const played = at(batch.samples, tick);

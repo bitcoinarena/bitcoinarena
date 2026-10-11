@@ -128,12 +128,12 @@ test('killed after it printed: its JSON is the answer (a settle killed after "ac
   const settled = { mode: 'settle', txid: 'f0'.repeat(32), message_hex: 'a5'.repeat(32), accepted: true, error: null, unspent_msat: 0 };
   const after = fakeTool({ answer: { settle: settled }, hang: { settle: 'after' } });
   const t0 = Date.now();
-  const s = await stakeLockPort({ serve: false, bin: after.bin, dataDir: '/d', timeoutMs: 1500 }).settle({ claimPk: b(1, 33), claims: [], payouts: [], nonce: b(2) });
+  const s = await stakeLockPort({ serve: false, bin: after.bin, dataDir: '/d', timeoutMs: 1500, settleTimeoutMs: 1500 }).settle({ claimPk: b(1, 33), claims: [], payouts: [], nonce: b(2) });
   assert.ok(Date.now() - t0 >= 1400, 'the port waited for its own timeout, which killed the tool');
   assert.deepEqual([s.accepted, s.txid, s.error], [true, 'f0'.repeat(32), null], 'accepted, as printed before the kill');
   const before = fakeTool({ answer: { settle: settled }, hang: { settle: 'before' } });
-  await assert.rejects(stakeLockPort({ serve: false, bin: before.bin, dataDir: '/d', timeoutMs: 1500 }).settle({ claimPk: b(1, 33), claims: [], payouts: [], nonce: b(2) }),
-    /^Error: blwp-stake-lock: /, 'killed before any JSON: an error, never read as accepted');
+  await assert.rejects(stakeLockPort({ serve: false, bin: before.bin, dataDir: '/d', timeoutMs: 1500, settleTimeoutMs: 1500 }).settle({ claimPk: b(1, 33), claims: [], payouts: [], nonce: b(2) }),
+    /^Error: blwp-stake-lock settle timed out after 1500 ms/, 'killed before any JSON: an error that says it timed out, never read as accepted');
 });
 
 // THE GATEWAYS ANSWER (kanban #149, the owner 2026-10-05 on comment 266; stake-lock-port.js:98): the mapping of each gateway the

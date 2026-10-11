@@ -64,3 +64,23 @@ test('an older tool with no serve mode: every question is asked the old way, one
     assert.deepEqual(modes, ['serve', 'status', 'fees'], 'serve tried once (down for a minute after), then one run per question');
   } finally { port.close(); }
 });
+
+test('a tool killed at its timeout says so, by mode and time (kanban #336: "Command failed: <the whole command>" hid why a round never settled)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'slow-'));
+  const bin = join(dir, 'tool');
+  writeFileSync(bin, `#!${process.execPath}\nsetTimeout(() => {}, 5000);\n`);
+  chmodSync(bin, 0o755);
+  const port = stakeLockPort({ bin, dataDir: '/shared', timeoutMs: 300, settleTimeoutMs: 300, serve: false });
+  try {
+    await assert.rejects(port.settle({ claimPk: b(2, 33), claims: [], payouts: [], nonce: b(3) }), /blwp-stake-lock settle timed out after 300 ms/);
+  } finally { port.close(); }
+});
+
+test('a port with no read directory of its own never serves (kanban #336): a server would hold the shared database every settle needs', async () => {
+  const t = serveTool(mkdtempSync(join(tmpdir(), 'noserve-')));
+  const port = stakeLockPort({ bin: t.bin, dataDir: '/shared' });
+  try {
+    assert.equal((await port.status({ txid: b(1), outIdx: 0n })).blockCount, 777);
+    assert.deepEqual(t.starts().map((a) => a[a.indexOf('--mode') + 1]), ['status'], 'one run, no server on /shared');
+  } finally { port.close(); }
+});
