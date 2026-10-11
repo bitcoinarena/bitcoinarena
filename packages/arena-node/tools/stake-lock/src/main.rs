@@ -226,7 +226,12 @@ async fn main() -> anyhow::Result<()> {
         // { "id", "ok", "result" | "error" }. Only status, fees, guardians, gateways and id: nothing that moves money.
         "serve" => serve(&client, lnv2, &api).await,
         "send" => send(&a, &client).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve or id"),
+        // THE ARBITER'S PEG-IN (kanban #307, spec §5A.3: "the arbitration set pegs it into the round's federation"): an
+        // address the federation controls, and the claim once a payment to it is confirmed - the escrow becomes e-cash in
+        // the arbiter's own client, from which each affected entry's share is locked to its player (mode lock)
+        "pegin-address" => pegin_address(&client).await,
+        "pegin-claim" => pegin_claim(&a, &client).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim or id"),
     }
 }
 
@@ -768,4 +773,45 @@ async fn futures_join(api: &DynModuleApi, locks: &[OutPoint]) -> anyhow::Result<
         out[i] = stored_json(got?);
     }
     Ok(out)
+}
+
+
+/// A PEG-IN ADDRESS of this client's federation: the wallet module the federation runs (testnet4: `wallet`, the fork's
+/// regtest: `walletv2`). Prints { mode, kind, address, operation_id?, tweak_idx? }.
+async fn pegin_address(client: &ClientHandle) -> anyhow::Result<()> {
+    if let Ok(w) = client.get_first_module::<fedimint_wallet_client::WalletClientModule>() {
+        let info = w.safe_allocate_deposit_address(()).await?;
+        println!("{}", serde_json::json!({ "mode": "pegin-address", "kind": "wallet", "address": info.address.to_string(),
+            "operation_id": info.operation_id.fmt_full().to_string(), "tweak_idx": format!("{:?}", info.tweak_idx) }));
+        return Ok(());
+    }
+    let w = client.get_first_module::<fedimint_walletv2_client::WalletClientModule>().context("this federation runs no wallet module")?;
+    let address = w.receive().await;
+    println!("{}", serde_json::json!({ "mode": "pegin-address", "kind": "walletv2", "address": address.to_string() }));
+    Ok(())
+}
+
+/// THE CLAIM of a confirmed payment to a peg-in address (--address): waits until the federation has claimed it and its
+/// e-cash is in this client (at most --timeout-s, default 900), and prints the balance before and after.
+async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
+    let before = client.get_balance_for_btc().await?;
+    let timeout = std::time::Duration::from_secs(a.get("timeout-s").map_or(Ok(900), |t| t.parse())?);
+    let waited = async {
+        if let Ok(w) = client.get_first_module::<fedimint_wallet_client::WalletClientModule>() {
+            let address = fedimint_core::bitcoin::Address::<fedimint_core::bitcoin::address::NetworkUnchecked>::from_str(need(a, "address")?)?;
+            w.await_num_deposits_by_address(address, 1).await?;
+            return anyhow::Ok("wallet");
+        }
+        // walletv2 claims in the background: wait for the balance to grow
+        loop {
+            if client.get_balance_for_btc().await? > before { return anyhow::Ok("walletv2"); }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    };
+    let kind = tokio::time::timeout(timeout, waited).await.map_err(|_| anyhow!("no claim within {timeout:?}"))??;
+    // the e-cash a claim mints is issued after its consensus item: wait a moment for the balance to show it
+    let mut after = client.get_balance_for_btc().await?;
+    for _ in 0..30 { if after > before { break; } tokio::time::sleep(std::time::Duration::from_secs(1)).await; after = client.get_balance_for_btc().await?; }
+    println!("{}", serde_json::json!({ "mode": "pegin-claim", "kind": kind, "balance_before_msat": before.msats, "balance_after_msat": after.msats }));
+    Ok(())
 }
