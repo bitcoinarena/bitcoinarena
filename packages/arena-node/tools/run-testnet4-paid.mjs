@@ -151,7 +151,7 @@ round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stak
 // RPS_GRID_NOW=1 publishes the first grid without waiting for a page's ask.
 if (env.PAID_RPS_GRID === '1') {
   const slots = Number(env.RPS_GRID_SLOTS || 225), tables = Number(env.RPS_GRID_TABLES || 2);
-  const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 105 * 60000);
+  const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 120 * 60000);
   let lastCloseMs = 0, busy = false, now1 = env.RPS_GRID_NOW === '1';
   const gid = toHex(ROCK_PAPER_SCISSORS.gameId);
   const look = async () => {
@@ -163,7 +163,8 @@ if (env.PAID_RPS_GRID === '1') {
     busy = true;
     try {
       const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
-      const committee = Math.max(mtp, Date.now()) + 40 * 60000 + 500;
+      // 60 min past the tip's median: the median climbs about 20 min a block, so the publication has three blocks to confirm in
+      const committee = Math.max(mtp, Date.now()) + 60 * 60000 + 500;
       const firstClose = Math.max(Date.now() + leadMs, lastCloseMs + 8000);
       say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
       const got = await round.openGrid({ fields: RPS_ROUND_FIELDS, stakeMsat }, { slots, tables, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),

@@ -1149,10 +1149,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
           committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start),
           ...(kind.fields || {}) };
         if (typeof kind.stakeExpiryFor === 'function') next.stakeExpiryBlocks = kind.stakeExpiryFor(next);
-        next.censusRoot = censusRootFor(next);
         grid.push(next);
       }
     }
+    // ONE CENSUS FOR THE GRID: every round names the same census height, game and slots, so the root is derived once (450
+    // derivations took over 10 min, measured) - and checked again on the last round, which must agree
+    const root = censusRootFor(grid[0]);
+    if (toHex(censusRootFor(grid[grid.length - 1])) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
+    for (const c of grid) c.censusRoot = root;
     // THE TRANSACTION BY HAND: createrawtransaction takes one `data` output only ("duplicate key: data"), and Bitcoin Core
     // 30+ relays several. Version 2, no inputs (the wallet funds it), one zero-value OP_RETURN push of 36 bytes per round.
     const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
