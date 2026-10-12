@@ -3677,6 +3677,31 @@
           status.set(2, 'Your wallet did not pay: ' + e.message + ' - you can still pay the invoice above from any wallet.', 'fail');
         } finally { nwcPay.disabled = false; nwcPaint(); nwcReadBalance(); }
       });
+      // WEBLN WHERE AVAILABLE (spec §24: "Nostr Wallet Connect, BOLT11 QR, deep link, or WebLN where available"; kanban #335):
+      // a browser wallet that puts window.webln on the page (Alby and others) pays this invoice when tapped - enable() asks the
+      // player's permission, sendPayment(invoice) pays. Shown only when such a wallet is there; the QR stays for any other.
+      const webln = window.webln && typeof window.webln.sendPayment === 'function' ? window.webln : null;
+      const weblnPay = document.createElement('button'); weblnPay.type = 'button'; weblnPay.className = 'dep-webln-pay'; weblnPay.disabled = true;
+      weblnPay.textContent = 'Pay with my browser wallet (WebLN)';
+      weblnPay.style.cssText = 'font:600 15px system-ui,sans-serif;padding:11px;border-radius:10px;border:1px solid #f7931a;background:#3a2a12;color:#fff3e0;cursor:pointer';
+      weblnPay.style.display = webln ? '' : 'none';
+      nwc.append(weblnPay);
+      weblnPay.addEventListener('click', async () => {
+        const invoice = current;
+        if (!webln || !invoice) return;
+        weblnPay.disabled = true;
+        status.set(2, 'Your browser wallet is paying this invoice (WebLN) \u2026', 'busy');
+        const t0 = Date.now();
+        try {
+          if (typeof webln.enable === 'function') await webln.enable();
+          const r = await webln.sendPayment(invoice);
+          window.ARENA_WEBLN = { paid: invoice.slice(0, 24), ms: Date.now() - t0, preimage: String((r && r.preimage) || '').slice(0, 16) };
+          nwcNote.textContent = 'Paid by your browser wallet - waiting for the e-cash \u2026';
+        } catch (e) {
+          window.ARENA_WEBLN = { failed: e && e.message ? e.message : String(e) };
+          status.set(2, 'Your browser wallet did not pay: ' + window.ARENA_WEBLN.failed + ' - you can still pay the invoice above from any wallet.', 'fail');
+        } finally { weblnPay.disabled = false; }
+      });
       const qr = add('div', 'blwp-deposit-qr');
       qr.style.cssText = 'background:#fff;padding:8px;width:min(80vw,320px,28vh);margin:6px auto;line-height:0';
       const qrHold = (words) => { qr.innerHTML = ''; const h = document.createElement('div'); h.className = 'qr-hold'; h.textContent = words; qr.appendChild(h); };
@@ -3734,7 +3759,7 @@
           if (mine !== token) return;
           current = d.invoice;
           qr.innerHTML = BLWPCLIENT.invoiceQrSvg(d.invoice);
-          box.textContent = d.invoice; copy.disabled = false; nwcPay.disabled = false; nwcWant = BigInt(d.amountMsat); nwcFit();
+          box.textContent = d.invoice; copy.disabled = false; nwcPay.disabled = false; weblnPay.disabled = false; nwcWant = BigInt(d.amountMsat); nwcFit();
           status.set(2, `Waiting for your Lightning payment of ${sats(d.amountMsat)}` + (d.gateway ? ` via ${host(d.gateway)}` : '') + ' \u2026', 'busy');
         } catch (e) {
           if (mine !== token) return;
