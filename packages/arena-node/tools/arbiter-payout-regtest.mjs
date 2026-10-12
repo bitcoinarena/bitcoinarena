@@ -26,7 +26,13 @@ const bc = (...a) => execFileSync(cli, [...cliArgs, ...a.map(String)], { encodin
 const rpc = async (method, params = []) => { const out = bc(method, ...params.map((p) => (typeof p === 'object' ? JSON.stringify(p) : p))); try { return JSON.parse(out); } catch { return out; } };
 const runEnv = { ...process.env, ...(env.FORK_HOME ? { HOME: env.FORK_HOME } : {}) };
 const sh = (bin, args, timeout = 300000) => { try { return execFileSync(bin, args, { encoding: 'utf8', env: runEnv, timeout, maxBuffer: 1 << 24 }); } catch (e) { return String(e.stdout || '') + String(e.message || ''); } };
-const json = (out) => { const l = String(out).split('\n').find((x) => x.startsWith('{')); return l ? JSON.parse(l) : null; };
+// a tool's JSON answer: the whole output (fedimint-cli prints it indented) or its one JSON line among log lines
+const json = (out) => {
+  const s = String(out).trim();
+  try { return JSON.parse(s); } catch { /* not all JSON */ }
+  for (const l of s.split('\n')) { if (!l.startsWith('{')) continue; try { return JSON.parse(l); } catch { /* a log line */ } }
+  try { return JSON.parse(s.slice(s.indexOf('{'), s.lastIndexOf('}') + 1)); } catch { return null; }
+};
 // a player key whose compressed form is 02.. (refundKeyOf names the x-only key with even y)
 const player = () => { for (;;) { const sk = randomBytes(32); const pk = secp256k1.getPublicKey(sk, true); if (pk[0] === 2) return { sk: toHex(sk), x: toHex(schnorr.getPublicKey(sk)) }; } };
 let code = 0;
