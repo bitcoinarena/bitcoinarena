@@ -98,7 +98,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     verify: curve.verify, census: keptChecked.get(toHex(contract.censusRoot)) || null });
   if (!got.ok) return got;
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
-  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus);
+  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
   // THE SEATING (§5A.7 reserve seats, kanban #301): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
@@ -162,3 +162,15 @@ export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, o
 
 /** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
 export const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
+/**
+ * THE NEWEST CENSUS THIS CLIENT CHECKED, and how many nodes it bonds (kanban #348, the owner 2026-10-12: "in the same settings
+ * window show how many nodes the network currently has"): the census at the highest height among the rounds this page checked,
+ * its distinct node keys counted. null before any census is checked.
+ */
+export function newestCheckedCensus() {
+  let best = null;
+  for (const c of keptChecked.values()) if (c && Array.isArray(c.entries) && (!best || (c.height || 0) > (best.height || 0))) best = c;
+  if (!best) return null;
+  const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
+  return { height: best.height || null, nodes: keys.size, entries: best.entries };
+}
