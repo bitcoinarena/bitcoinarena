@@ -3609,13 +3609,35 @@
       // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
       // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
       const ctx = moneyContext();
-      if (!ctx.ok) { say(ctx.why); return Promise.resolve({ ok: false, why: ctx.why }); }
+      // A DEPOSIT WITH NO ROUND LISTED (kanban #350, the owner 2026-10-12 "Yes": Deposit works on the games screen before a game is
+      // picked) - after the federation's own record is asked, as any deposit is (below)
+      const lob0 = window.BLWP_LEDGER_LOBBY; const seed0 = typeof walletSeed === 'function' ? walletSeed() : null;
+      const noRound = which === 'deposit' && !ctx.ok && !!(lob0 && lob0.federation && seed0 && BLWPCLIENT.walletDepositOffer);
+      if (!ctx.ok && !noRound) { say(ctx.why); return Promise.resolve({ ok: false, why: ctx.why }); }
       // WHAT THE FEDERATION'S OWN SIGNED RECORD ALLOWS (§23A.4, kanban #321): DRAINING and CRITICAL take no deposit, HALTED
       // nothing at all - said by name, from the record this page checked (BLWPCLIENT.federationStatus)
       const fed = window.ARENA_FED_STATUS;
       if (fed && fed.allows && !fed.allows[which === 'withdraw' ? 'withdraw' : which === 'move' ? 'move' : 'deposit']) {
         // the status says why, or - an OPEN federation over its cover on mainnet (§23A.3, ruled A) - its load does
         const why = BLWPCLIENT.federationSays(fed.status) || (BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : ''); say(why); return Promise.resolve({ ok: false, why });
+      }
+      // THE NO-ROUND DEPOSIT: plain amounts into the same player wallet, opened from the lobby's federation (walletDepositOffer)
+      if (noRound) {
+        say('Opening your wallet and making the invoice \u2026');
+        const el = document.getElementById('blwp-deposit');
+        if (el) { el.textContent = ''; el.className = 'deposit-modal over-settings'; el.style.width = 'min(92vw, 420px)';
+          const t = document.createElement('div'); t.className = 'dep-why'; t.textContent = 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)'; el.append(t); }
+        return (async () => {
+          try {
+            const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+            const federationId = BLWPCLIENT.fromHex(String(wasm.LockClient.federationIdOf(lob0.federation)));
+            const offer = await BLWPCLIENT.walletDepositOffer({ federationId, invite: lob0.federation, seed: seed0, LockClient: wasm.LockClient, storage: vault(),
+              gateways: window.BLWP_LEDGER_GATEWAYS || [], onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
+            showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
+            say('');
+            return { ok: true };
+          } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (el) el.textContent = why; return { ok: false, why }; }
+        })();
       }
       if (which === 'withdraw') {
         // the withdraw panel is Settings' own: opened over whatever asked (a game's client too), painted once
@@ -5368,6 +5390,12 @@
           const client = await BLWPCLIENT.openPlayerWallet({ federationId, invite: lobby.federation, seed, LockClient: wasm.LockClient, storage: vault(),
             onStep: (step) => console.log('[blwp] player wallet (early): ' + step + ', ' + (Date.now() - t0) + ' ms') });
           window.BLWP_WALLET_EARLY_MS = Date.now() - t0;
+          // AND THE BALANCE READER, until a round's warm-up puts its own (a deposit from the games screen reads the balance again)
+          if (!window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE = async () => {
+            try { const m = BigInt(await client.balanceMsat()); window.BLWP_WALLET_BALANCE = { sats: Number(m / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + BLWPCLIENT.toHex(federationId).slice(0, 16) + '\u2026' }; }
+            catch (e) { console.log('[blwp] the balance could not be read: ' + (e && e.message ? e.message : e)); }
+            if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS();
+          };
           // ITS BALANCE AT ONCE, for the wallet bar and Settings (a round's warm-up reads it again later)
           try { const msat = BigInt(await client.balanceMsat());
             if (!window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + BLWPCLIENT.toHex(federationId).slice(0, 16) + '\u2026' };
