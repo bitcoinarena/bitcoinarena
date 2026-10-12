@@ -169,6 +169,11 @@ test('2 of 2: Join only where both of the round\'s signer nodes signed it open a
   // kanban #43: "N signer nodes agree (M needed)", never "7 of 5"
   assert.match(lobbyLine(byName.oneSignerNode, NOW), /1 signer node agrees \(2 needed\) - waiting for 1 more/);
   assert.match(lobbyLine(byName.payingOpen, NOW), /stake 100 sat - a federation stake lock .* listed it as free$/);
+  // ITS FEDERATION AND LOAD (§23A.3, kanban #324): named beside the stake; the load once the page holds that federation's status
+  const fid = Buffer.from(byName.payingOpen.contract.federationId).toString('hex');
+  assert.match(lobbyLine(byName.payingOpen, NOW), new RegExp(`a federation stake lock in federation ${fid.slice(0, 8)} · `));
+  assert.match(lobbyLine(byName.payingOpen, NOW, { loads: new Map([[fid, { load: 4.3333 }]]) }), new RegExp(`in federation ${fid.slice(0, 8)} \\(load 4\\.33\\) · `));
+  assert.doesNotMatch(lobbyLine(byName.freeOpen, NOW, { loads: new Map([[fid, { load: 4.3333 }]]) }), /federation [0-9a-f]{8}/, 'a free row names no federation');
   assert.match(lobbyLine(byName.freePending, NOW), /committee: pending, entry opens in 1:30/);
 });
 
@@ -323,7 +328,7 @@ test('a paying row is only ever a federation stake lock, whatever its wallet fie
   console.log('  FACTS:', JSON.stringify({ wallet: rows[0].wallet, lines: lines.map((l) => l.split(' · ')[0]),
     srcLightning: src.includes("'lightning'"), srcPayment: src.includes('a Lightning payment') }));
   assert.equal(rows[0].wallet, 'federation-lock');
-  for (const l of lines) assert.match(l, /^stake 100 sat - a federation stake lock · /);
+  for (const l of lines) assert.match(l, /^stake 100 sat - a federation stake lock in federation [0-9a-f]{8} · /);
   assert.equal(src.includes("'lightning'"), false, 'the lobby still names a lightning wallet');
   assert.equal(src.includes('a Lightning payment'), false, 'the lobby still draws a Lightning payment');
 });
