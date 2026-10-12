@@ -5074,6 +5074,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const r = seating.takePresent(await read(req));
         return r.ok ? text(res, 201, 'present kept') : text(res, 409, r.why);
       }
+      // THE BATCH DOORS (kanban #345): many PRESENTs in one body, and one read of many rounds' seating state - the same
+      // signed messages the per-round doors carry, one exchange per node per tick at grid density
+      if (seating && req.method === 'POST' && url.pathname === '/presents') {
+        const r = seating.takePresents(new Uint8Array(await read(req)));
+        return r.ok ? json(res, 201, r) : text(res, 400, r.why);
+      }
+      if (seating && req.method === 'GET' && url.pathname === '/seating-batch') {
+        const ids = String(url.searchParams.get('rounds') || '').toLowerCase().split(',').filter(Boolean);
+        if (!ids.length || ids.length > 64 || !ids.every((h) => /^[0-9a-f]{64}$/.test(h))) return text(res, 400, 'rounds: 1 to 64 round ids, 32 bytes hex, comma-separated');
+        return json(res, 200, seating.batchOf(ids));
+      }
       if (seating && req.method === 'GET' && ['/present', '/seating', '/seating-sig', '/seating-equivocation'].includes(url.pathname)) {
         let rid; try { rid = fromHex(url.searchParams.get('round') || ''); } catch { rid = null; }
         if (!rid || rid.length !== 32) return text(res, 400, 'name a round: ?round=<64 hex>');
