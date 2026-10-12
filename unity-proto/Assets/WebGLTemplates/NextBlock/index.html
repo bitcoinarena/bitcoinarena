@@ -141,10 +141,16 @@
     /* WHO SETTLES, BEFORE THE PLAYER PAYS, OVER A GAME'S OWN CLIENT (kanban #317, spec §22A "Shown before approval: the selected
        node identities, committee overlap, whether a selected operator is playing"): the lobby's line says it, and a game with
        its own client - Rock Paper Scissors, a market - never showed that line. Measured 2026-10-12 17:3xZ on the live page. */
+    /* A FOOTER, NOT AN OVERLAY (measured in macOS Chrome: over the client it hid the Rock / Paper / Scissors labels): the client's
+       frame ends 44 px higher and the strip holds the settlement facts (two lines) and the build line */
     #arena-approval { display: none; }
-    body.arena-own-client #arena-approval:not(:empty) { display: block; position: fixed; left: 6px; right: 6px; z-index: 9990; pointer-events: none;
-      bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); padding: 3px 8px; border-radius: 6px; background: rgba(13,16,20,0.78);
-      color: #c9d1d9; font: 500 11px/1.35 system-ui, -apple-system, sans-serif; }
+    body.arena-own-client #arena-approval { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+      position: fixed; left: 0; right: 0; bottom: calc(13px + env(safe-area-inset-bottom, 0px)); z-index: 37; height: 31px; box-sizing: border-box;
+      padding: 3px 8px 0; background: #0d1014; border-top: 1px solid #262c36;
+      color: #c9d1d9; font: 500 10.5px/1.3 system-ui, -apple-system, sans-serif; pointer-events: none; }
+    html body.arena-own-client #arena-client { height: calc(100% - 41px - 44px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    html body.arena-own-client #arena-build { left: 0; right: 0; bottom: 0; height: calc(13px + env(safe-area-inset-bottom, 0px)); border-radius: 0;
+      padding: 0 8px; background: #0d1014; font-size: 9px; line-height: 13px; text-align: right; }
     body.blwp-clean #arena-approval { display: none !important; }
     /* a game with its own client (Rock Paper Scissors) shows no frame rate (the owner 2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
     body.arena-own-client #arena-fps { display: none; }
@@ -3648,7 +3654,8 @@
       if (ap) {
         const paid = (window.BLWP_LOBBY || []).find((r) => !r.free && r.line);
         const at = paid ? paid.line.search(/(signer|selected) nodes: /) : -1;
-        const say = at >= 0 ? 'Settled by: ' + paid.line.slice(at).replace(/^(signer|selected) nodes: /, '') : '';
+        const say = at >= 0 ? 'Settled by ' + paid.line.slice(at).replace(/^(signer|selected) nodes: /, '').replace(/\b([0-9a-f]{6})[0-9a-f]{2}\b/g, '$1')
+          .replace('no selected operator is playing', 'no operator playing').replace(/in both committees: (\d+) of (\d+)/, 'both committees $1/$2') : '';
         if (ap.textContent !== say) ap.textContent = say;
       }
     }
