@@ -27,12 +27,21 @@ for g in a b; do port=$([ $g = a ] && echo $GWA || echo $GWB); gc $port $H/gw-$g
 ( cd "$HERE/.." && HOME=$FORK_HOME ARENA_TESTNET4_DIR=$HB bash tools/testnet4-gateways.sh $CLIENT_B http://localhost:$GWA http://localhost:$GWB ) >> "$LOG" 2>&1 || die "registering the gateways at B failed"
 ecashB() { gc $1 $2 get-balances | js "o=>((o.ecash_balances||[]).find(b=>b.federation_id==='$FED_B')||{}).ecash_balance_msats||0"; }
 for g in a b; do port=$([ $g = a ] && echo $GWA || echo $GWB)
-  ( cd "$HERE/.." && FEE_RATE=2 HOME=$FORK_HOME bash tools/testnet4-gateway-pegin.sh http://127.0.0.1:$port $H/gw-$g/password $FED_B 500000 ) >> "$LOG" 2>&1 || die "peg-in of gateway $g into B failed"
+  ( cd "$HERE/.." && FEE_RATE=2 HOME=$FORK_HOME bash tools/testnet4-gateway-pegin.sh http://127.0.0.1:$port $H/gw-$g/password $FED_B ${PEG_B:-500000} ) >> "$LOG" 2>&1 || die "peg-in of gateway $g into B failed"
 done
 bc generatetoaddress 30 $MINE >/dev/null
 creditedB() { [ "$(ecashB $GWA $H/gw-a/password)" -gt 0 ] && [ "$(ecashB $GWB $H/gw-b/password)" -gt 0 ]; }
 until_ "both gateways hold e-cash in B" 600 creditedB
 reading "S2 gateways serve both: {\"gatewayA_B_msat\":$(ecashB $GWA $H/gw-a/password),\"gatewayB_B_msat\":$(ecashB $GWB $H/gw-b/password)}"
+# kanban #324 (§23A.3): both federations OPEN - each one's signed load, read from its own seats as the page reads them, and
+# Move as moveOffer answers it (above 90 % to one below 50 %). PEG_B sets how much the gateways peg into B, so B's load is low.
+# LOAD324_ONLY=1 stops the run here.
+if [ "${LOAD324:-0}" = 1 ]; then
+  bothReserved() { [ "$(for p in ${NODE_PORTS%%,*} ${B_PORTS%%,*}; do curl -s --max-time 60 "http://127.0.0.1:$p/federations?fresh=1"; echo; done | grep -o '"reserveSats":"[1-9][0-9]*"' | wc -l)" -ge 2 ]; }
+  until_ "both federations' records name a reserve" 900 bothReserved
+  reading "L324 $(for p in ${NODE_PORTS%%,*} ${B_PORTS%%,*}; do curl -s --max-time 60 "http://127.0.0.1:$p/federations?fresh=1"; echo; done | (cd "$HERE/.." && "$NODE" tools/load-move-read.mjs))"
+  [ "${LOAD324_ONLY:-0}" = 1 ] && { say "LOAD324_ONLY: stopped after the reading"; exit 0; }
+fi
 # A's seats told the successor: the paid runner restarted with ARENA_DRAINING (its seven seats are in its process)
 # by its command line: on a macOS `setsid` is a shim, and the pid the harness kept is the shim's (measured 19:23Z: the old runner
 # kept port 12221 and the new one died on EADDRINUSE)
