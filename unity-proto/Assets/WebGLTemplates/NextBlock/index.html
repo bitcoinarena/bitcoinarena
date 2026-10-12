@@ -138,6 +138,14 @@
       z-index: 9991; pointer-events: none; padding: 1px 6px; border-radius: 4px; background: rgba(13,16,20,0.72); color: #8b949e;
       font: 600 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
     body.blwp-clean #arena-build { display: none; }
+    /* WHO SETTLES, BEFORE THE PLAYER PAYS, OVER A GAME'S OWN CLIENT (kanban #317, spec §22A "Shown before approval: the selected
+       node identities, committee overlap, whether a selected operator is playing"): the lobby's line says it, and a game with
+       its own client - Rock Paper Scissors, a market - never showed that line. Measured 2026-10-12 17:3xZ on the live page. */
+    #arena-approval { display: none; }
+    body.arena-own-client #arena-approval:not(:empty) { display: block; position: fixed; left: 6px; right: 6px; z-index: 9990; pointer-events: none;
+      bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); padding: 3px 8px; border-radius: 6px; background: rgba(13,16,20,0.78);
+      color: #c9d1d9; font: 500 11px/1.35 system-ui, -apple-system, sans-serif; }
+    body.blwp-clean #arena-approval { display: none !important; }
     /* a game with its own client (Rock Paper Scissors) shows no frame rate (the owner 2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
     body.arena-own-client #arena-fps { display: none; }
     /* ONE BAR, NOT TWO (kanban #341, the owner 2026-10-11: "split in two: one stretch to 90, then another to 100. It should be
@@ -646,6 +654,7 @@
        Deposit, Withdraw, Move) is in Settings. THE GEAR FROM THE FIRST PAINT (kanban #200: Settings waited 2.6-5.1 s for
        Unity's lobby): shown over the loading screen and Unity's title too, hidden only while a round's own screens are up
        (paintMoney); the backup warning stays over the lobby alone. -->
+  <div id="arena-approval" role="status"></div>
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
@@ -3634,6 +3643,14 @@
       document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
         : window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
       document.getElementById('arena-wb-pending').textContent = bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '';
+      // THE PAYING ROUND'S SETTLEMENT FACTS (kanban #317): the part of its lobby line from "signer nodes" / "selected nodes" on
+      const ap = document.getElementById('arena-approval');
+      if (ap) {
+        const paid = (window.BLWP_LOBBY || []).find((r) => !r.free && r.line);
+        const at = paid ? paid.line.search(/(signer|selected) nodes: /) : -1;
+        const say = at >= 0 ? 'Settled by: ' + paid.line.slice(at).replace(/^(signer|selected) nodes: /, '') : '';
+        if (ap.textContent !== say) ap.textContent = say;
+      }
     }
     {
       let sayTimer = null;
