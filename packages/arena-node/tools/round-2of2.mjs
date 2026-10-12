@@ -439,8 +439,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if ((!rt.minable || attach) && toPost.length)
       throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${toPost.map((i) => members[i].name).join(', ')} `
         + 'say now: publish an advertisement update for the existing bond; no bond is posted here');
-    const posted = toPost.map((i) => members[i]).map((m, j) =>
-      rt.postBond(m.id.secret, {
+    // EACH BOND INCLUDED AS IT IS BUILT (kanban #321/#307, measured on the test host regtest stack 2026-10-11 15:58Z: "names 7
+    // committee keys and the census assigns 6"): a template-2 bond fixes its maturity (the tip + 1 + 6 + the offset) when it
+    // is built, and on regtest each bond's funding mines a block while the stack's own miner adds one every 20 s - seven
+    // built first and included together left the first confirming more than 6 blocks later, short of its maturity, and the
+    // census excluded it. The same fix as tools/seating-regtest.mjs.
+    const postedAt = [];
+    const posted = toPost.map((i) => members[i]).map((m, j) => {
+      const p = rt.postBond(m.id.secret, {
         // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (the owner 2026-09-25 21:41: the replay link a player copies
         // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
         // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
@@ -458,8 +464,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // ON TESTNET4 THE BOND IS THE ROUND'S MINIMUM, not regtest's half a coin: 50 000 sats, the contract's
         // bond_min_sats, out of a 55 000-sat funding output (the rest is the marker, the fee and the change).
         ...(rt.minable ? {} : { bondSats: 50000n, fundBtc: '0.00055' }),
-      }));
-    if (posted.length) rt.include(posted.map((p) => p.hex));
+      });
+      rt.include([p.hex]);
+      postedAt.push(rt.height());
+      return p;
+    });
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
     // `census_height` - "spentness, height and depth off REAL BLOCKS with depth
     // at census_height" (15) - so a bond in the census height's own block is
@@ -467,7 +476,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // "that census carries 0 game nodes where regtest was born needing 2".
     // THE NEWEST BOND sets the depth the census must wait for; the OLDEST sets where the census view begins
     const heights = reused.filter(Boolean).map((b) => b.height);
-    if (posted.length) heights.push(rt.height());
+    heights.push(...postedAt);
     bondHeight = Math.max(...heights);
     bondFloor = Math.min(...heights);
     // SIX DEEP, AND ON A REAL CHAIN THOSE ARE SOMEBODY ELSE'S BLOCKS (RULED, the owner 2026-09-21 17:01).
@@ -1179,12 +1188,19 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const now = () => BigInt(Date.now());
     const due = grid.filter((c) => c.startTimeMs - now() >= BigInt(postLeadMs));
     const ids = [];
-    // a few at a time: every seat draws each committee as it is posted
-    for (let i = 0; i < due.length; i += 6) {
-      const batch = due.slice(i, i + 6).filter((c) => c.startTimeMs - now() >= 125000n);
-      for (const c of batch) if (funded.nameRound) funded.nameRound(roundId(c));
-      ids.push(...await Promise.all(batch.map((c) => postRound(c))));
-      held.push(...batch);
+    // ONE AT A TIME, PACED, A DROPPED CONNECTION ASKED AGAIN (kanban #344, measured 2026-10-11): every seat draws each
+    // committee as it is posted (0.5-1.3 s of its loop), and 63 rounds posted back to back held every seat 5-29 s - the
+    // seating of the next rounds then missed its window; and one "fetch failed" from a busy or restarting seat stopped this
+    // whole posting twice. A round is posted every ARENA_GRID_PAUSE_MS (4 s) - two tables per 8 s slot - and asked again.
+    const pause = Number(process.env.ARENA_GRID_PAUSE_MS || 4000);
+    for (const c of due) {
+      if (c.startTimeMs - now() < 125000n) continue;
+      if (funded.nameRound) funded.nameRound(roundId(c));
+      for (let t = 0; ; t++) {
+        try { ids.push(await postRound(c)); held.push(c); break; }
+        catch (e) { if (t >= 10) { console.log(`[grid] round ${toHex(roundId(c)).slice(0, 16)} not posted: ${e.message}`); break; } await new Promise((r) => setTimeout(r, 3000)); }
+      }
+      await new Promise((r) => setTimeout(r, pause));
     }
     onPosted({ posted: ids.length, of: grid.length, publishedAt: got.publishedAt, beacon: got.named.height,
       firstStart: ids.length ? new Date(Number(due[0].startTimeMs)).toISOString() : null });
