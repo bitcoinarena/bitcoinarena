@@ -1508,11 +1508,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const claimKeyRuns = new Set();
   function makeClaimKey(rid) {
     if (claimKeyFor || !dkg.canDeal) return;
-    const key = toHex(rid);
     const row = round.get(rid);
-    if (!row || claimKeyRuns.has(key)) return;
+    if (!row) return;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const signerNodes = contract.nodes;
+    // ONE RUN PER COMMITTEE, not per round (kanban #345): the claim key is the committee's (dkg.js epochFor), and an RPS grid's
+    // rounds all name one committee - one run per round was 30 (a 450-round grid: 450) loops redoing the same key every
+    // second; profiled at grid density, 80 % of a seat's main thread, its seating ticks 35-86 s long
+    const where = dkg.epochFor(signerNodes);
+    if (!where.ok) return;
+    const key = toHex(where.epochId);
+    if (claimKeyRuns.has(key)) return;
     // A ROUND POSTED AGAIN - a player's session opens it too - to a signer node that
     // already holds its key makes nothing: measured, the key was made twice.
     if (dkg.signerNodeFor(signerNodes).ok) return;
