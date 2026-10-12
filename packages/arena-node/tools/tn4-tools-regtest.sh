@@ -216,6 +216,29 @@ if [ -n "${PEGIN_BIN:-}" ]; then
   PC2=$(HOME=$FORK_HOME timeout 900 $PEGIN_BIN --mode pegin-claim --data-dir $ARB --address "$ADDR2" --timeout-s 840 2>>"$LOG" | grep '"mode":"pegin-claim"')
   reading "7c escrow into the federation: {\"exit\":$ESC_RC,\"spend\":$(grep '"step":"escrow into the federation"' $H/escrow.out | tail -1 || echo null),\"claim\":${PC2:-null},\"seconds\":$(( $(date +%s) - T1 ))}"
   [ -n "$PC2" ] || die "reading 7c failed: the escrow's peg-in was not claimed"
+  # 7d. THE SLASH'S PAYOUTS (§5A.3B "locks each share to its player", kanban #307): two wronged players' shares from the
+  # arbiter's e-cash, in one transaction, each a pre-expired lock only that player's key moves (stake-lock --mode pay)
+  pkOf() { "$NODE" --input-type=module -e "import { secp256k1 } from '@noble/curves/secp256k1.js'; console.log(Buffer.from(secp256k1.getPublicKey(Buffer.from('$1', 'hex'), true)).toString('hex'))"; }
+  PS1=$(openssl rand -hex 32); PS2=$(openssl rand -hex 32); PK1=$(pkOf $PS1); PK2=$(pkOf $PS2)
+  PAY=$(HOME=$FORK_HOME timeout 300 $PEGIN_BIN --mode pay --data-dir $ARB --payouts "$PK1:60000000,$PK2:40000000" 2>>"$LOG" | grep '"mode":"pay"')
+  reading "7d slash payouts: ${PAY:-null}"
+  [ -n "$PAY" ] || die "reading 7d failed: no payout transaction"
+  # 7e. EACH PLAYER TAKES ITS OWN: a fresh client of the federation, the payout redeemed by the refund path with the
+  # player's key (the page's way for a settlement's payout); the other player's key cannot
+  PTX=$(echo "$PAY" | js 'o=>o.txid')
+  RED=""
+  for i in 1 2; do
+    eval "SK=\$PS$i; PK=\$PK$i"; DIRP=$H/player-$i; mkdir -p $DIRP
+    HOME=$FORK_HOME timeout 120 $FORK_BIN/fedimint-cli --data-dir $DIRP join-federation "$(cat $H/invite-code)" >> "$LOG" 2>&1
+    IDX=$(echo "$PAY" | js "o=>o.payouts.find(p=>p.refund_pk==='$PK').out_idx"); MSAT=$(echo "$PAY" | js "o=>o.payouts.find(p=>p.refund_pk==='$PK').amount_msat")
+    redeemAs() { HOME=$FORK_HOME timeout 300 $PEGIN_BIN --mode redeem --data-dir $DIRP --outpoint $PTX:$IDX --amount-msat $MSAT --hash 0000000000000000000000000000000000000000000000000000000000000000 \
+      --claim-pk $PK --refund-pk $PK --expiration 0 --witness refund --signer-secret $1 2>>"$LOG" | grep '"mode":"redeem"' | js 'o=>JSON.stringify({accepted:o.accepted,signerIsRefundPk:o.signer_is_refund_pk,error:o.error})'; }
+    OTHER=$([ $i = 1 ] && echo $PS2 || echo $PS1)
+    WRONG=$(redeemAs $OTHER); RIGHT=$(redeemAs $SK)
+    BAL=$(HOME=$FORK_HOME timeout 120 $FORK_BIN/fedimint-cli --data-dir $DIRP info 2>/dev/null | js 'o=>o.total_amount_msat')
+    RED="$RED{\"player\":$i,\"msat\":$MSAT,\"otherKey\":$WRONG,\"ownKey\":$RIGHT,\"balanceMsat\":${BAL:-null}},"
+  done
+  reading "7e payouts redeemed: [${RED%,}]"
 fi
 }
 
