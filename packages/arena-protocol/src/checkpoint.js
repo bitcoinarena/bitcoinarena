@@ -48,7 +48,7 @@
 // than a second simulator.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_CHECKPOINT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_CHECKPOINT, TAG } from './constants.js';
 
 /** What the first checkpoint of a round chains to. */
 export const NO_PREVIOUS = new Uint8Array(32);
@@ -83,7 +83,7 @@ export function decodeCheckpoint(bytes) {
   const type = r.u8();
   if (type !== TYPE_CHECKPOINT) throw new Error('not a checkpoint: type ' + type);
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const c = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),

@@ -57,7 +57,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
-  PROTOCOL_VERSION, TYPE_SIGNED_DONATION_SET, TYPE_AUTHORITY_ROTATION, TAG,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SIGNED_DONATION_SET, TYPE_AUTHORITY_ROTATION, TAG,
 } from './constants.js';
 import { encodeDonationSet, decodeDonationSet, donationSetStands } from './donation.js';
 
@@ -103,7 +103,7 @@ export function encodeDonationSetBody(set) {
 export function decodeDonationSetBody(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SIGNED_DONATION_SET) throw new Error('not a signed donation set');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const networkId = r.bytes32();
   const serial = r.u64();
   const validFrom = r.u32();
@@ -151,7 +151,7 @@ export function encodeAuthorityRotation(rotation) {
 export function decodeAuthorityRotation(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_AUTHORITY_ROTATION) throw new Error('not an authority rotation');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const rotation = {
     networkId: r.bytes32(),
     serial: r.u64(),
