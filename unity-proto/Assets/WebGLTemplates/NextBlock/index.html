@@ -5313,7 +5313,10 @@
       // the federation join starting at the Deposit tap): from the invite daily.json names, as soon as this tab has a seed (the
       // start screen first, #339), so the join runs while the games and their rounds load. Kept under the key a round's
       // playerWallet asks (page-lock.js openPlayerWallet): the deposit, the warm-up and the join find it open.
-      (function openWalletEarly(lobby) {
+      // AFTER THE GAMES ARE READ (the owner 2026-10-12 21:40 local, a phone off the tailnet: "Looking for the game's nodes … (try 3 of
+      // 8)"): the wallet's 21 guardian websockets went first, and the Funnel holds one source to ~20 connections an address, so the
+      // page's own GET /games found none free. Started once chooseTheGame has answered - still before any round is listed.
+      window.ARENA_OPEN_WALLET_EARLY = function openWalletEarly(lobby) {
         if (window.BLWP_WALLET_EARLY || !lobby || !lobby.federation || !BLWPCLIENT.openPlayerWallet) return;
         const seed = walletSeed();
         if (!seed) { setTimeout(() => openWalletEarly(lobby), 1000); return; }
@@ -5327,13 +5330,14 @@
           console.log('[blwp] player wallet open before any round, ' + (Date.now() - t0) + ' ms');
           return client;
         })().catch((e) => { console.log('[blwp] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.BLWP_WALLET_EARLY = null; });
-      })(window.BLWP_LEDGER_LOBBY);
+      };
       window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
       // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
+      if (window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.BLWP_LEDGER_LOBBY);
       // NEXT BLOCK'S LOADING SCREEN, ONCE IT IS THE GAME (kanban #350): the bare root showed Bitcoin Arena's splash until here
       if (window.ARENA_UNITY && document.documentElement.classList.contains('arena-root')) document.documentElement.classList.remove('other-game', 'arena-root');
       // WHICH LOBBY A ROW CAME FROM, so its join - PLAY, or the next round after a run - carries that lobby's own link
