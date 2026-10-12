@@ -440,12 +440,33 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     for (const [i, b] of reused.entries())
       if (b && b.updatedBy) console.log(`[bond] node ${members[i].name}: its advertisement is the update ${b.updatedBy.txid} (height ${b.updatedBy.height})`);
     const toPost = members.map((m, i) => (reused[i] ? null : i)).filter((i) => i !== null);
+    // A FIRST BOND FOR A NODE THAT HAS NONE (kanban #348, the owner 2026-10-12: "Poste neue bonds wenn nötig, du kannst auch neue
+    // nodes auf dem test host dafür starten, für eine zweite Federation"): with ARENA_POST_FIRST_BONDS=1 an attached node whose
+    // key has no confirmed unspent bond AT ALL is bonded here - its secret read from its own store, read-only, beside the
+    // running node. A node with any bond is never bonded again (the 2026-09-28 rule below stands for it).
+    const firstBond = new Set();
+    if (attach && process.env.ARENA_POST_FIRST_BONDS === '1') {
+      const { DatabaseSync } = await import('node:sqlite');
+      for (const i of toPost) {
+        const m = members[i];
+        if (rt.bondsOf({ pubkey: m.id.pubkey }).length) continue;
+        const db = new DatabaseSync(m.path, { readOnly: true });
+        let row; try { row = db.prepare('SELECT secret FROM identity WHERE one = 0').get(); } finally { db.close(); }
+        const secret = row ? new Uint8Array(row.secret) : null;
+        if (!secret || toHex(schnorr.getPublicKey(secret)) !== toHex(m.id.pubkey))
+          throw new Error(`node ${m.name}: the store ${m.path} does not hold the key its /identity names - no first bond`);
+        m.id = { ...m.id, secret };
+        firstBond.add(i);
+        console.log(`[bond] node ${m.name} has no bond on chain: its first one is posted (ARENA_POST_FIRST_BONDS)`);
+      }
+    }
     // OFF REGTEST A MISSING BOND STOPS THE RUN, IT IS NOT POSTED (§5A.2; the owner 2026-09-28, the advertisement-update
     // letter: "accept an updated advert and select the existing bond. If none matches, stop. Do not post a bond"). A
     // node whose bond says something else is given an advertisement update (tools/testnet4-advert-update.mjs), not a
     // second bond.
-    if ((!rt.minable || attach) && toPost.length)
-      throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${toPost.map((i) => members[i].name).join(', ')} `
+    const blocked = toPost.filter((i) => !firstBond.has(i));
+    if ((!rt.minable || attach) && blocked.length)
+      throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${blocked.map((i) => members[i].name).join(', ')} `
         + 'say now: publish an advertisement update for the existing bond; no bond is posted here');
     // EACH BOND INCLUDED AS IT IS BUILT (kanban #321/#307, measured on the test host regtest stack 2026-10-11 15:58Z: "names 7
     // committee keys and the census assigns 6"): a template-2 bond fixes its maturity (the tip + 1 + 6 + the offset) when it
