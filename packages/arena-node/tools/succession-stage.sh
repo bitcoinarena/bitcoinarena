@@ -37,6 +37,21 @@ reading "S2 gateways serve both: {\"gatewayA_B_msat\":$(ecashB $GWA $H/gw-a/pass
 # Move as moveOffer answers it (above 90 % to one below 50 %). PEG_B sets how much the gateways peg into B, so B's load is low.
 # LOAD324_ONLY=1 stops the run here.
 if [ "${LOAD324:-0}" = 1 ]; then
+  # B'S SEATS IN A PAID RUNNER OF THEIR OWN, so they hold a paid round naming B while A is OPEN - a seat signs its federation's
+  # record from a round it holds (measured 08:1xZ: "this seat holds no round, so it reads no census"). The miner runs again:
+  # B's bonds are buried six deep before its round stands.
+  rm -f $H/miner-pause
+  # by command line (on a macOS `setsid` is a shim, and the pid kept is the shim's)
+  for p in ${B_PORTS//,/ }; do pkill -TERM -f "src/main.js $p $HB/" 2>/dev/null || true; done
+  for p in ${B_PORTS//,/ }; do for i in $(seq 1 30); do curl -s -o /dev/null --max-time 2 http://127.0.0.1:$p/identity || break; sleep 2; done; done
+  WSSB=""; for p in ${B_PORTS//,/ }; do WSSB="$WSSB ARENA_WSS_$p=ws://127.0.0.1:$p"; done
+  ( cd "$HERE/.." && env $WSSB HOME=$FORK_HOME ARENA_TESTNET4_DIR=$HB ARENA_TN4_PORTS=$B_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_B \
+    ARENA_FEDERATION_INVITE_FILE=$HB/invite-code ARENA_RECIPIENT_PORT=$((RECIP + 1)) ARENA_TN4_DATADIR=$BTC_DIR ARENA_FEDERATION_RECORD_MS=15000 \
+    ARENA_ENTRY_WINDOW_MS=${ENTRY_WINDOW_MS:-21600000} PAID_KEEP=0 \
+    setsid "$NODE" tools/run-testnet4-paid.mjs > $HB/paid.out 2>&1 < /dev/null & echo "$! node-paid-b" >> $PIDS )
+  paidupB() { grep -q '"paid":"up"' $HB/paid.out; }
+  until_ "B's paid runner stands its round up" 1500 paidupB
+  reading "L324 B round: $(grep '"paid":"up"' $HB/paid.out | tail -1 | cut -c1-300)"
   bothReserved() { [ "$(for p in ${NODE_PORTS%%,*} ${B_PORTS%%,*}; do curl -s --max-time 60 "http://127.0.0.1:$p/federations?fresh=1"; echo; done | grep -o '"reserveSats":"[1-9][0-9]*"' | wc -l)" -ge 2 ]; }
   until_ "both federations' records name a reserve" 900 bothReserved
   reading "L324 $(for p in ${NODE_PORTS%%,*} ${B_PORTS%%,*}; do curl -s --max-time 60 "http://127.0.0.1:$p/federations?fresh=1"; echo; done | (cd "$HERE/.." && "$NODE" tools/load-move-read.mjs))"
