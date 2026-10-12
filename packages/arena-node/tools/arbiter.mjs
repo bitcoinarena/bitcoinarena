@@ -19,7 +19,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash } from '../src/arbiter.js';
+
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
@@ -96,8 +97,16 @@ async function handle(seat, s) {
   const tx = assemble({ slash, signatures, set });
   if (!tx.ok) return { done: false, why: tx.why };
   const sent = await post(rpc, tx.hex);
-  return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers } : { done: false, why: sent.why };
+  // WHO THE PLAYERS' ESCROW IS FOR, kept with the slash: the step after (payOut) pays each from the federation
+  const players = [...slash.distribution.playerShares].map(([key, sats]) => ({ key, sats: String(sats) }));
+  return sent.ok ? { done: true, posted: sent.txid, slashHeight: census.tip, signers: tx.signers, node: s.node, round: s.round, entry: s.entry,
+    playersSats: String(slash.built.amounts.players), players } : { done: false, why: sent.why };
 }
+
+// AFTER PATH B (spec §5A.3B, kanban #307): the players' escrow into the round's federation, claimed, each share paid
+// (arbiter.js payOutSlash, through ARENA_STAKE_LOCK_BIN on the client in ARENA_ARBITER_CLIENT_DIR)
+const payOut = (proof, v) => payOutSlash({ proof, v, set, rpc, keep, say, bin: env.ARENA_STAKE_LOCK_BIN, dir: env.ARENA_ARBITER_CLIENT_DIR,
+  feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000) });
 
 let games = null;
 async function loadGames() {
@@ -118,14 +127,21 @@ async function pass() {
       if (r.done) { state.handled[s.proof] = { at: Date.now(), ...r }; keep(); }
     }
   }
+  for (const [proof, v] of Object.entries(state.handled)) {
+    if (!v.posted || !v.players || v.payouts) continue;
+    let r; try { r = await payOut(proof, v); } catch (e) { r = { why: e.message }; }
+    if (r.why) say({ proof: proof.slice(0, 16), payouts: r.why });
+  }
 }
+// THE SLASH'S PAYOUTS (GET /slash-payouts?round=), for a page to collect its player's: each a pre-expired lock at txid:outIdx
+const payouts = () => Object.values(state.handled).flatMap((v) => v.payouts || []);
 
 const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).map(([proof, v]) => ({ proof, txid: v.posted, slashHeight: v.slashHeight }));
 // A RELEASE ONLY FOR A NODE NO HANDLED OR OPEN PROOF ACCUSES
 const open = new Set();
 const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.handled).some((v) => v.node === toHex(nodeKey))
   ? { ok: false, why: 'a slash proof against this node is open or was posted' } : { ok: true });
-const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted() });
+const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts });
 say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
 await pass();
 if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }

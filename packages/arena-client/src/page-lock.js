@@ -1283,6 +1283,49 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
 const PAYOUT_NOTE = 'arena.payout.';
 
 /**
+ * A SLASH'S PAYOUT (kanban #307, spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share
+ * to its player"): when a node of this round was slashed for this player's entry, the arbitration service lists the share it
+ * locked to the player's refund key - the key a settlement payout names - at GET /slash-payouts?round=. It is a pre-expired
+ * lock, collected by Refund under that key exactly as a settlement payout is (redeemPayout); nobody else's key can move it.
+ */
+export async function redeemSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, fetcher = fetch,
+  client: given = null, onStep = () => {}, order = 0 } = {}) {
+  if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no slash payout');
+  if (!arbiter) return { ok: false, final: false, why: 'no arbitration service named' };
+  const noted = `${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
+  try {
+    const kept = storage && storage.getItem(noted);
+    if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
+  } catch { /* an unreadable note is no note */ }
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  onStep('asking the arbitration service for slash payouts');
+  let listed;
+  try {
+    const r = await fetcher(`${String(arbiter).replace(/\/+$/, '')}/slash-payouts?round=${toHex(roundId)}`);
+    if (!r.ok) return { ok: false, final: false, why: `the arbitration service answered ${r.status}` };
+    listed = await r.json();
+  } catch (e) { return { ok: false, final: false, why: `the arbitration service did not answer: ${e.message}` }; }
+  const p = (listed.payouts || []).find((x) => String(x.refundPk).toLowerCase() === mine);
+  if (!p) return { ok: false, final: true, why: 'no slash payout of this round names this seed\'s key' };
+  const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
+  const secret = lockSecretFor(seed, roundId);
+  const store = storage ? lockStoreFor(storage, roundId, secret) : unkeptLockStore();
+  if (!given) onStep('joining the federation');
+  const client = given || await LockClient.join(invite, toHex(round.federationId), toHex(secret), store);
+  onStep('collecting the slash payout');
+  const said = JSON.parse(await client.refund(p.txid, Number(p.outIdx), JSON.stringify(fields), toHex(player.secret)));
+  const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+  const got = { ok: said.accepted === true, final: said.accepted === true || spent, spent, txid: p.txid, outIdx: Number(p.outIdx), amountMsat: BigInt(p.msat),
+    ...said, why: said.accepted === true ? undefined : spent ? 'the slash payout is already spent - by this seed\'s key, the only key that can' : (said.error || 'the federation did not accept the refund') };
+  if (got.ok && storage) {
+    try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* unkept: a reload asks again */ }
+  }
+  return { ...got, client };
+}
+const SLASH_PAYOUT_NOTE = 'arena.slash-payout.';
+
+/**
  * AND THE PLAYER'S OWN STAKE BACK, AFTER THE WINDOW (6d, §23.2 row 1). The signer nodes
  * forfeit a qualifier's lock only once its result is FINAL with the window closed;
  * the page asks only once the signer nodes hold an ACCEPTED settlement, which they make
