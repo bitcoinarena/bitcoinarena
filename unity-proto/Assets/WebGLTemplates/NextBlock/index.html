@@ -5131,6 +5131,8 @@
           }
           el.classList.add('show');
           document.body.classList.add('arena-picking');
+          // SETTINGS BEFORE A GAME IS CHOSEN names Bitcoin Arena, not Next Block (the chosen game's name replaces it after)
+          { const small = document.querySelector('#blwp-settings .settings-head h2 small'); if (small) small.textContent = 'Bitcoin Arena'; }
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
         });
         el.classList.remove('show');
