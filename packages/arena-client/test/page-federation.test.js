@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { pageFunction } from './page-script.js';
-import { federationStatus, federationSays, FEDERATION_ALLOWS } from '../src/federations.js';
+import { federationStatus, federationSays, loadSays, FEDERATION_ALLOWS } from '../src/federations.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
 
@@ -18,14 +18,14 @@ const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, fro
 const PAINT = slice('    window.ARENA_PAINT_FEDERATION = () => {', '\n    };\n');
 const OPEN = slice('    function openMoney(which, say = ', '\n      })();\n    }\n');
 
-function page(status) {
+function page(status, extra = {}) {
   const els = {}; const classes = new Set();
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
   for (const id of ['arena-fed-note', 'blwp-money-why', 'blwp-settings']) el(id);
   const document = { getElementById: (id) => els[id] || null, body: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: (c) => classes.has(c) } } };
-  const window = { ARENA_FED_STATUS: status ? { status, allows: FEDERATION_ALLOWS[status] } : undefined };
+  const window = { ARENA_FED_STATUS: status ? { status, allows: FEDERATION_ALLOWS[status], ...extra } : undefined };
   const did = [];
-  const BLWPCLIENT = { federationSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
+  const BLWPCLIENT = { federationSays, loadSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
   const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
     [PAINT, OPEN], 'return { paint: window.ARENA_PAINT_FEDERATION, openMoney };');
   const api = fn(document, window, BLWPCLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),
@@ -72,4 +72,20 @@ test('the client believes a record its census\' bonded guardians signed, and cal
   assert.deepEqual([got.status, got.signers, got.allows.deposit, got.allows.withdraw], ['CRITICAL', 5, false, true]);
   const none = await federationStatus({ federationIdHex: Buffer.from(FED).toString('hex'), nodes: ['https://seat.example'], census: census.slice(3), verify, fetcher });
   assert.equal(none.status, 'unverified', 'a census without its guardians: 4 bonded signers, short of 5');
+});
+
+// THE LOAD, SHOWN AND NOT REFUSED (§23A.3, kanban #324; refusing waits for the owner's ruling): an OPEN federation holding more
+// than its guardians' bonds cover says so in the note, and a deposit still goes on
+test('an OPEN federation at load 4.33 says so in the note, and the deposit still goes on', async () => {
+  const p = page('OPEN', { reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 });
+  p.paint();
+  assert.equal(p.els['arena-fed-note'].style.display, '');
+  assert.equal(p.els['arena-fed-note'].textContent, 'Load 4.33: this federation holds 650,000 sat, more than the 150,000 sat its guardians\' bonds cover.');
+  // the deposit goes the way it goes with no load at all: the load refuses nothing
+  const r = await p.openMoney('deposit', () => {});
+  const plain = page('OPEN'); const r0 = await plain.openMoney('deposit', () => {});
+  assert.deepEqual([r, p.did], [r0, plain.did], 'the load changed what a deposit does');
+  const under = page('OPEN', { reserveSats: '100000', exposureCapSats: '150000', load: 0.6666 });
+  under.paint();
+  assert.equal(under.els['arena-fed-note'].style.display, 'none', 'a load under 1 says nothing');
 });
