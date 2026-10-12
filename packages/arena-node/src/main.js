@@ -359,6 +359,15 @@ if (url) {
 // THE NODE, AND ITS GUARDIAN WHEN IT HOLDS A GUARDIAN KEY (node-start.js; §23A.2, RULED the owner 2026-09-26 22:54 and
 // 2026-09-27): nothing here is guardian config - whether this node is a guardian is the key beside its store, and the
 // network, bitcoind, data, ports and public endpoint are all read off what this node already has (guardian.js).
+// WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "every node serving players needs a valid certificate ... Node software
+// SHOULD make certificate provisioning a first-class setup step"): ARENA_TLS_CERT and ARENA_TLS_KEY, PEM files as
+// tools/tls-setup.sh writes them - the node answers https and wss on its port. The files are read again every hour, so a
+// renewed certificate is taken without a restart.
+const tlsFiles = process.env.ARENA_TLS_CERT && process.env.ARENA_TLS_KEY ? { cert: process.env.ARENA_TLS_CERT, key: process.env.ARENA_TLS_KEY } : null;
+if (tlsFiles) {
+  try { options.tls = { cert: readFileSync(tlsFiles.cert), key: readFileSync(tlsFiles.key) }; }
+  catch (e) { console.error(`ARENA_TLS_CERT / ARENA_TLS_KEY: ${e.message}`); process.exit(2); }
+}
 const node = await startNode({ db, path }, options,
   { bitcoindUrl: url, cookiePath, call: url ? bitcoindRpc({ url, cookiePath }) : null });
 // AND STOPS WITH IT: a signal closes the node, and its close() stops its guardian - never one without the other.
@@ -371,5 +380,12 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     process.exit(0);
   });
 }
-console.log(`arena-node on http://${host}:${node.port}  (${path})${url ? `, chain ${url}` : ''}`
+if (tlsFiles && node.http && typeof node.http.setSecureContext === 'function') {
+  const renew = setInterval(() => {
+    try { node.http.setSecureContext({ cert: readFileSync(tlsFiles.cert), key: readFileSync(tlsFiles.key) }); }
+    catch (e) { console.error(`ARENA_TLS: the certificate was not read again: ${e.message}`); }
+  }, 3600000);
+  renew.unref();
+}
+console.log(`arena-node on ${tlsFiles ? 'https' : 'http'}://${host}:${node.port}  (${path})${url ? `, chain ${url}` : ''}`
   + `${ln.given ? `, lnd ${ln.rpc} (${ln.network})` : ''}`);
