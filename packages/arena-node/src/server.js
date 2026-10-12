@@ -25,7 +25,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
-import { decodeRoundContract, encodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
@@ -400,6 +400,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and, once ATTESTED, the pari-mutuel table the settlement seats pay from (built here from the entries' picks and the
   // outcome, no game code). null for a round of a replayed game, or of a game this node does not host.
   const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
+  const warningsOf = (c) => { const f = pluginForRound(c, hosted); try { return contractWarnings(c, f.ok ? f.plugin.roundWarnings : null); } catch { return []; } };
   const outcomeOf = (rid, c, { table = false } = {}) => {
     const plugin = attestedOf(c);
     if (!plugin) return null;
@@ -2428,6 +2429,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE WRITER'S TIMER, started once: at start when a series is held or a file can add one, else when the network store
   // first holds one (kanban #276: no restart)
   let seriesTimerStarted = false;
+  let writeSeriesNow = null;           // the writer's pass, once its timer runs: a grid posted later is written at once (kanban #293)
   const startSeriesTimer = () => {
     if (seriesTimerStarted || shuttingDown) return;
     seriesTimerStarted = true;
@@ -2473,6 +2475,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (more && !sliceQueued) { sliceQueued = true; setImmediate(() => { sliceQueued = false; writeAll(); }); }
     });
+    writeSeriesNow = writeAll;
     writeAll();
     seriesTimer = setInterval(writeAll, seriesEveryMs);
     seriesTimer.unref();
@@ -2503,7 +2506,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       catch (e) { console.error(`[series] grid ${id.slice(0, 16)} not kept on disk: ${e.message}`); }
     }
     console.log(`[series] grid ${id.slice(0, 16)}: taken${persist ? ' at POST /series' : ' from the grid file'} - ${t.seriesCount} rounds every ${t.seriesPeriodMs} ms from ${new Date(Number(t.startTimeMs)).toISOString()}`);
-    startSeriesTimer();
+    // ITS ROUNDS WRITTEN NOW, not at the writer's next pass (up to seriesEveryMs, 60 s, later - measured in series-grid-door)
+    if (seriesTimerStarted && writeSeriesNow) setImmediate(writeSeriesNow); else startSeriesTimer();
     return { ok: true, series: id, rounds: t.seriesCount, held: false };
   };
   // THE GRIDS POSTED BEFORE A RESTART, read back - not one whose last entry closed a day ago
@@ -2936,6 +2940,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
         // player's own signature (lobby-name.js), not this signer node's word.
         names: namesHeld(held.roundId),
+        // WHAT A PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): the engine's and the game's own (its plugin's
+        // roundWarnings) - advisory and not signed; a page computes the engine's itself and takes only codes it can name
+        warnings: free ? [] : warningsOf(c),
         needed, signerNodes: c.nodes.length,
         // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
         // joined here, and the two counts. `watching` is not signed.
