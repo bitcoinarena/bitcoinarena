@@ -2899,14 +2899,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // that just closed for its result). OPEN WITH ROOM TO JOIN: measured on seat 7 after the first cut, the 8 counted open
       // rounds still closed 6..62 s ahead - the soonest first - so a round counts only while its entry stays open
       // NEXT_ROOM_MS more (a lobby read and a join); one closing sooner is kept in the second tally.
+      // AND EVERY OPEN ROUND CLOSING WITHIN NEXT_SPAN_MS: a listing is signed once a window (45 s) and served until the
+      // next, so seven seats answer from seven moments up to 44 s apart (measured 15:05Z: nowMs 0..44 s behind). Eight rounds
+      // of an 8 s grid are 64 s, and the seven windows shared too few of them - no round had 5 of 7 seats saying it open,
+      // none was joinable. Two minutes of a short grid overlap every window; a 90 s series is unchanged (8 rounds are 12 min).
       const closed = new Map();
       const NEXT_ROOM_MS = 30000;
+      const NEXT_SPAN_MS = 120000;
       for (const x of candidates) {
         if (!(x.c.seriesId instanceof Uint8Array)) { kept.push(x); continue; }
         const k = toHex(x.c.seriesId);
-        const tally = Number(nowMs) + NEXT_ROOM_MS < Number(x.c.entryCloseMs) ? count : closed;
+        const roomy = Number(nowMs) + NEXT_ROOM_MS < Number(x.c.entryCloseMs);
+        const tally = roomy ? count : closed;
         const n = tally.get(k) || 0;
-        if (n >= perSeries) continue;
+        if (n >= perSeries && !(roomy && Number(x.c.entryCloseMs) <= Number(nowMs) + NEXT_SPAN_MS)) continue;
         tally.set(k, n + 1); kept.push(x);
       }
       candidates.length = 0; candidates.push(...kept);
