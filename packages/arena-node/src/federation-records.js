@@ -181,6 +181,35 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
   }
 
+  /** MIRROR: the newest signed record of `federationId` its guardians' nodes hold, checked against this seat's census `b`. */
+  async function mirror(federationId, b, inviteFederationId) {
+    const fid = toHex(federationId);
+    const guardians = guardiansOf(b.census, federationId);
+    if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
+    const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+    let best = null; let why = 'none of its guardians holds a record';
+    await Promise.all(guardians.map(async (g) => {
+      const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+      if (!base) return;
+      try {
+        const r = await fetcher(`${base}/federations`, { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) return;
+        const j = await r.json();
+        for (const x of j.federations || []) {
+          if (String(x.federation).toLowerCase() !== fid) continue;
+          const v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId });
+          if (!v.ok) { why = v.why; continue; }
+          if (!best || v.record.height > best.v.record.height) best = { v, bytes: fromHex(String(x.record)) };
+        }
+      } catch { /* the next guardian */ }
+    }));
+    if (!best) return { ok: false, why, mirrored: false };
+    const had = kept.get(fid);
+    if (!had || had.height <= best.v.record.height) kept.set(fid, { bytes: best.bytes, record: best.v.record, status: best.v.status, height: best.v.record.height, signers: best.v.signers, atMs: nowMs() });
+    if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(best.v.status)) draining.set(fid, best.v.status); else draining.delete(fid);
+    return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
+  }
+
   /** A body this seat builds anyway (with the gone it was told), signed: the second ask of `gather`. */
   function signBody(record) {
     const id = federationRecordId(record);
@@ -210,7 +239,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const b = basis();
       if (!b.ok) return [b];
       const out = [];
-      for (const fid of federationsOf(b.census)) { try { out.push({ federation: toHex(fid), ...(await gather(fid, inviteFederationId)) }); } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); } }
+      // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (kanban #348, the owner 2026-10-12: "Make it happen
+      // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
+      // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
+      for (const fid of federationsOf(b.census)) { try { out.push({ federation: toHex(fid), ...(inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : await mirror(fid, b, inviteFederationId)) }); } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); } }
       return out;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
