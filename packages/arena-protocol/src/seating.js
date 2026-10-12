@@ -23,8 +23,13 @@ export const ROLE_BYTE = Object.freeze({ game: 1, settlement: 2 });
 const roleOfSeat = (b) => Object.keys(ROLE_BYTE).find((k) => ROLE_BYTE[k] === b);
 export const SEATING_ROLES = Object.freeze(['game', 'settlement']);
 
-/** When a round's seating closes: start_time - 120 s. */
-export const seatingCloseMs = (contract) => BigInt(contract.startTimeMs) - SEATING_LEAD_MS;
+/**
+ * When a round's seating closes: start_time - 120 s. A MARKET'S (the owner 2026-10-11: "Der prediction market läuft immer z.B.
+ * zwischen 19:45 und 20:00. Man darf davor und danach nicht am Markt teilnehmen") is seated 120 s before its WINDOW opens
+ * (attested.js marketWindowOf: entry_close - period), so its seats are certified when its first order may come.
+ */
+export const seatingCloseMs = (contract, window = null) =>
+  (window && window.startMs < BigInt(contract.startTimeMs) ? window.startMs : BigInt(contract.startTimeMs)) - SEATING_LEAD_MS;
 
 /** The threshold a seated committee needs (receiptsNeeded): 5 of 7, 2 of 2. */
 export const seatedThreshold = (slots) => (slots === 7 ? 5 : slots === 2 ? 2 : Math.floor(slots / 2) + 1);

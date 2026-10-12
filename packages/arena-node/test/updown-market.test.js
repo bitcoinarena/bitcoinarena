@@ -28,13 +28,17 @@ const player = (n) => ({ ...LOSER, name: `u${n}`, key: b32(0x70 + n), worldSecre
 const sum = (xs) => xs.reduce((t, x) => t + x, 0n);
 const expiryFor = (c) => marketExpiryBlocks(c, UPDOWN_TERMS).blocks;
 const B = 500;
+// THE MARKET'S WINDOW (the owner 2026-10-11): orders from entry_close - period on, never before
+const windowOpen = (x) => Math.max(Number(x.c.committeeTimeMs), Number(x.c.entryCloseMs) - P) + 100;
 
 test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 refused), orders resolved by the attestors and settled to the msat; a missed deadline and a dispute void, every lock back', async () => {
   const opts = { n: 2, stakeMsat: STAKE, round: ROUND, alignCloseMs: P, stakeExpiryFor: expiryFor };
   const w = await lockRound({ ...opts, endMs: testNow() + 1800000,
     serveOpts: { plugins: [NEXTBLOCK, UPDOWN.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST], orderBatchTimer: false } });
-  skipTo(Number(w.c.committeeTimeMs) + 100);
   const base = (d) => `http://127.0.0.1:${d.port}`;
+  // THE LISTING SAYS SO TOO: closed at the committee time, open from the window's start
+  const listedOpen = async (x) => { const b = await (await fetch(`${base(x.a)}/rounds`)).json(); const r = b.rounds.find((y) => y.id === toHex(x.rid)); return r && { entryOpen: r.entryOpen, windowStartMs: r.windowStartMs }; };
+  skipTo(Number(w.c.committeeTimeMs) + 100);
   const post = (d, path, body) => fetch(`${base(d)}${path}`, { method: 'POST', body }).then(async (r) => `${r.status} ${(await r.text()).trim()}`);
   const back = (x, e, lock = '') => fetch(`${base(x.a)}/forfeit?round=${toHex(x.rid)}&entry=${toHex(e.eid)}${lock}`).then(async (r) => (r.status === 200 ? '200' : `${r.status} ${(await r.text()).trim()}`));
   const batch = async (x) => {
@@ -63,6 +67,9 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
   };
   const facts = {};
   try {
+    skipTo(windowOpen(w));
+    const inside = await listedOpen(w);
+    assert.deepEqual(inside, { entryOpen: true, windowStartMs: String(w.c.entryCloseMs - UPDOWN_PERIOD_MS) });
     // 1. THE MARKET'S OWN CLOCK AND THE LOCK SPAN AT THE ROUND DOOR
     const need = marketExpiryBlocks(w.c, UPDOWN_TERMS);
     const offGrid = await post(w.a, '/round', encodeRoundContract({ ...w.c, entryCloseMs: w.c.entryCloseMs + 1000n, stakeExpiryBlocks: expiryFor({ ...w.c, entryCloseMs: w.c.entryCloseMs + 1000n }) }));
@@ -107,7 +114,7 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
     assert.equal(claims.length, 4, 'not the two locks of each filled order');
     // 4. A MISSED DEADLINE: a round nobody attests - VOID 10 min after its window's end, every lock back
     const r2 = await openLockRound(w, { stakeMsat: STAKE, round: ROUND, endMs: Number(w.c.entryCloseMs) + 3600000, alignCloseMs: P, stakeExpiryFor: expiryFor });
-    skipTo(Number(r2.c.committeeTimeMs) + 100);
+    skipTo(windowOpen(r2));
     const e2 = await lockAndPlay(r2, player(3), { noMarks: true, pick: YES, order: { price: 50000n } });
     const before2 = await back(r2, e2);
     skipTo(Number(r2.c.entryCloseMs) + 600000 + 1000);
@@ -119,7 +126,7 @@ test('the Up/Down market: its 15-minute clock, locks that outlive a round (144 r
     assert.deepEqual(facts.deadline.back, ['200', '200']);
     // 5. A DISPUTE: A+B say Up, B+C say Down (B signed both) - DISPUTED, VOID, every lock back
     const r3 = await openLockRound(w, { stakeMsat: STAKE, round: ROUND, endMs: Number(r2.c.entryCloseMs) + 3600000, alignCloseMs: P, stakeExpiryFor: expiryFor });
-    skipTo(Number(r3.c.committeeTimeMs) + 100);
+    skipTo(windowOpen(r3));
     const u3 = await lockAndPlay(r3, player(4), { noMarks: true, pick: YES, order: { price: 60000n } });
     const d3 = await lockAndPlay(r3, player(5), { noMarks: true, pick: NO, order: { price: 45000n } });
     await batch(r3);

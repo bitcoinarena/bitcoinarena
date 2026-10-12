@@ -167,8 +167,11 @@ try {
   if (!roundHex) {
     const list = (await (await fetch(`${nodes[0]}/rounds?ahead=7200000`)).json()).rounds || [];
     const now = Date.now();
-    const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > 150000).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
-    if (!rows.length) throw new Error('no RPS round held whose entry closes more than 150 s ahead');
+    // AHEAD_S (default 270): a round whose seating is still to come (seating close = entry close - 200 s on an RPS grid), so its
+    // certificate forms while this waits - measured 20:38Z and 20:53Z: a round taken 150 s ahead had missed its seating under load
+    const ahead = Number(env.AHEAD_S || 270) * 1000;
+    const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
+    if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);
     roundHex = rows[0].id;
   }
   const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${roundHex}`)).arrayBuffer()));
@@ -178,7 +181,13 @@ try {
   // SEATED BEFORE ANYTHING IS PAID (§5A.7): wait for the seating close, then the page's own certificate check
   const close = Number(seatingCloseMs(c)) + 5000;
   if (Date.now() < close) { log({ step: 'waiting for the seating', closeAt: new Date(close).toISOString() }); await new Promise((r) => setTimeout(r, close - Date.now())); }
-  const seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve });
+  // THE CERTIFICATE MAY COME A LITTLE AFTER THE CLOSE: every seated seat's signature is gathered (measured 21:11Z under load:
+  // none 11 s after the close, all 7 seats holding it a minute later) - asked again every 5 s, until 150 s before entry close
+  let seated = null;
+  for (;;) {
+    try { seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve }); break; }
+    catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
+  }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });
   if (env.DRY) { log({ step: 'dry run: nothing paid' }); process.exit(0); }
   const moves = [Number(env.MOVE_1 ?? 0), Number(env.MOVE_2 ?? 2)];   // 0 rock, 1 paper, 2 scissors (the game's own numbering)

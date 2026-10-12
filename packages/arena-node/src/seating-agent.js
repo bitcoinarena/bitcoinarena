@@ -20,7 +20,7 @@ import { endpointsOf } from './roster.js';
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
 export const PRESENT_WINDOW_MS = 60000n;
 
-export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {} }) {
+export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null }) {
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS seat_presents (round_id BLOB NOT NULL, role TEXT NOT NULL, node TEXT NOT NULL, bytes BLOB NOT NULL,
@@ -80,7 +80,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (typeof c.startTimeMs !== 'bigint') continue;
-      starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c), contract: c });
+      starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c });
     }
   };
 

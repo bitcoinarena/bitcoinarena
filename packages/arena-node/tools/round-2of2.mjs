@@ -1195,12 +1195,19 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const now = () => BigInt(Date.now());
     const due = grid.filter((c) => c.startTimeMs - now() >= BigInt(postLeadMs));
     const ids = [];
-    // a few at a time: every seat draws each committee as it is posted
-    for (let i = 0; i < due.length; i += 6) {
-      const batch = due.slice(i, i + 6).filter((c) => c.startTimeMs - now() >= 125000n);
-      for (const c of batch) if (funded.nameRound) funded.nameRound(roundId(c));
-      ids.push(...await Promise.all(batch.map((c) => postRound(c))));
-      held.push(...batch);
+    // ONE AT A TIME, PACED, A DROPPED CONNECTION ASKED AGAIN (kanban #344, measured 2026-10-11): every seat draws each
+    // committee as it is posted (0.5-1.3 s of its loop), and 63 rounds posted back to back held every seat 5-29 s - the
+    // seating of the next rounds then missed its window; and one "fetch failed" from a busy or restarting seat stopped this
+    // whole posting twice. A round is posted every ARENA_GRID_PAUSE_MS (4 s) - two tables per 8 s slot - and asked again.
+    const pause = Number(process.env.ARENA_GRID_PAUSE_MS || 4000);
+    for (const c of due) {
+      if (c.startTimeMs - now() < 125000n) continue;
+      if (funded.nameRound) funded.nameRound(roundId(c));
+      for (let t = 0; ; t++) {
+        try { ids.push(await postRound(c)); held.push(c); break; }
+        catch (e) { if (t >= 10) { console.log(`[grid] round ${toHex(roundId(c)).slice(0, 16)} not posted: ${e.message}`); break; } await new Promise((r) => setTimeout(r, 3000)); }
+      }
+      await new Promise((r) => setTimeout(r, pause));
     }
     onPosted({ posted: ids.length, of: grid.length, publishedAt: got.publishedAt, beacon: got.named.height,
       firstStart: ids.length ? new Date(Number(due[0].startTimeMs)).toISOString() : null });

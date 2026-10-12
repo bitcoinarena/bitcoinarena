@@ -72,6 +72,9 @@ fn donation_image(d: &serde_json::Value) -> Result<PaymentImage, JsError> {
 
 fn js(e: impl std::fmt::Display) -> JsError { JsError::new(&e.to_string()) }
 
+/// A deposit invoice's life in seconds (kanban #319): short, so a stalled payment returns to its payer within minutes.
+const DEPOSIT_INVOICE_SECS: u32 = 600;
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = console, js_name = error)]
@@ -692,10 +695,21 @@ impl LockClient {
         let description = Bolt11InvoiceDescription::Direct(String::new());
         let gateway = if gateway.is_empty() { None } else { Some(SafeUrl::parse(&gateway).map_err(js)?) };
         let (invoice, op) = ln
-            .receive(amount, 3600, description, gateway, serde_json::Value::Null)
+            // 600 s (kanban #319, spec §23.1: "the invoice's CLTV is short, and a client moves to the next gateway after a
+            // timeout"): a payment a gateway takes and stalls on returns to the payer within minutes, not an hour
+            .receive(amount, DEPOSIT_INVOICE_SECS, description, gateway, serde_json::Value::Null)
             .await
             .map_err(js)?;
         Ok(serde_json::json!({ "invoice": invoice.to_string(), "operation": op.fmt_full().to_string() }).to_string())
+    }
+
+    /// THE GATEWAYS THE FEDERATION LISTS (kanban #319, spec §23.1: "made through any gateway the federation lists"): the
+    /// union of every guardian's registered list, most-listed first - JSON ["https://...", ...]. The page tries them in
+    /// turn and moves to the next after a timeout.
+    pub async fn gateways(&self) -> Result<String, JsError> {
+        let ln = self.client.get_first_module::<LightningClientModule>().map_err(js)?;
+        let list = ln.list_gateways(None).await.map_err(js)?;
+        Ok(serde_json::Value::from(list.iter().map(|u| u.to_string()).collect::<Vec<_>>()).to_string())
     }
 
     /// Until the deposit is final: "Claimed", "Expired" or "Failure".
