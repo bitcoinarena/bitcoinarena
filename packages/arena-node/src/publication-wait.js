@@ -12,6 +12,7 @@
 //   - a round whose beacon block came first - no publication below it, or one at or above it: the fcb15cca shape - is
 //     NOT a published round. It is never posted or forced through; the caller drafts a new round and publishes that.
 import { findPublication } from '../../arena-protocol/src/publication.js';
+import { findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { beaconFromChain, medianTimePast } from '../../arena-protocol/src/beacon.js';
 import { roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -44,7 +45,8 @@ export async function awaitPublishedBeacon({ contract, txid, view, rpc, feeRate 
     const v = await view();
     const tip = v.firstHeight + v.blocks.length - 1;
     if (bumpedAt === null) bumpedAt = tip;
-    const pub = findPublication(v, rid);
+    // A SERIES ROUND (a grid's, kanban #293) IS PUBLISHED BY ITS SERIES' "ARN" SERIES series_id, not one of its own
+    const pub = contract.seriesId instanceof Uint8Array ? findSeriesPublication(v, contract.seriesId) : findPublication(v, rid);
     const beaconAt = beaconBlockIn(contract, v);
     // THE BEACON BLOCK CAME FIRST: not a published round, whatever confirms later.
     if (beaconAt !== null && (!pub || pub.height >= beaconAt))
