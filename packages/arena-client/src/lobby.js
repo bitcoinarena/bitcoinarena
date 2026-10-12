@@ -32,6 +32,7 @@ import { entryOpenUntilMs } from './late-join.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { marketOf } from '../../arena-protocol/src/known-game.js';
+import { entryWarnings } from './entry-warnings.js';
 
 /** How far a signer node's signed time may be from this page's clock and still count. */
 export const LOBBY_SKEW_MS = 60000;
@@ -166,6 +167,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           names: Array.isArray(x.names) ? x.names : [],
+          // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7, kanban #316): the seat's word, only known codes kept (entry-warnings.js)
+          warnings: Array.isArray(x.warnings) ? x.warnings.filter((k) => typeof k === 'string') : [],
           // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
           committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
@@ -227,6 +230,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: checkedNames(counts.flatMap((c) => c.names), id, verify),
+      // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): a paying round's only
+      warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
       contract,
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet

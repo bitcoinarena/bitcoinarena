@@ -2303,7 +2303,8 @@ function contractWarnings(c, gameWarnings = null) {
   // float here would change nothing - which is exactly why it is worth not
   // writing: a division on a money-shaped number is a habit, and the next one
   // will be somewhere it matters.
-  if (Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
+  // A ROUND WITH NO RANK CURVE (an attested market, §0A.7a: rank 0 of 0) is not flat - it has none (kanban #316)
+  if (c.rankDenominator > 0 && Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
     out.push('flat_rank_curve');
   // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
   if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
@@ -23272,6 +23273,32 @@ function inviteNamesFederation(invite, federationIdHex) {
   return !!f && String(f).toLowerCase() === String(federationIdHex).toLowerCase();
 }
 
+// ---- arena-client/src/entry-warnings.js
+// WARNINGS BEFORE ENTRY (spec §18A.7 / §22A, kanban #316): "Clients SHOULD warn before entry when r >= 0.95, when K > 0.5 ·
+// qualifier_count, or when the declared score function is not exposure-multiplicative" - and "rather than leaving the
+// player to read a hash". The engine's own (contracts.js contractWarnings: a flat rank curve, a danger-level min_score) are
+// read here from the contract the lobby checked; the game's own (its plugin's roundWarnings - nextblock's "exposure
+// ignored", a non-multiplicative score, and a degenerate time factor) are the seats' word, and only codes this page can name
+// are taken from it. K is not a contract field: the engine pays K = ceil(q / 4) (payout.js), never above half of two or
+// more qualifiers, so that warning has no round to fire on.
+
+const WARNING_SAYS = Object.freeze({
+  flat_rank_curve: 'Its payout curve is nearly flat (r >= 0.95): the last paying rank is paid almost as much as the first, so playing it safe pays.',
+  minimum_score_is_a_danger_rule: 'Its minimum score is above 100 points: a run that scores less is paid nothing.',
+  exposure_ignored: 'Its score ignores exposure (not exposure-multiplicative): the safe route pays as well as the risky one.',
+  time_factor_degenerate: 'Its time factor does nothing (its floor is not below its ceiling): time does not count in the score.',
+});
+
+/** The warning codes for a paying round: the engine's from its contract, and the game's the seats named that this page knows. */
+function entryWarnings(contract, fromSeats = []) {
+  const own = contract ? contractWarnings(contract) : [];
+  const seats = (fromSeats || []).filter((k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(WARNING_SAYS, k));
+  return [...new Set([...own, ...seats])];
+}
+
+/** The sentences a page shows for the codes. */
+const warningsSay = (codes) => (codes || []).map((k) => WARNING_SAYS[k]).filter(Boolean);
+
 // ---- arena-protocol/src/match.js
 // A SCORE ACROSS ROUNDS (kanban #280, the owner 2026-10-09: "The protocol must support a score across rounds, when the same two
 // players stay in the game. I win: 1:0. Opponent wins: 1:1. It keeps counting until one player or both leave. The protocol
@@ -23749,6 +23776,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 
 
 
+
 /** How far a signer node's signed time may be from this page's clock and still count. */
 const LOBBY_SKEW_MS = 60000;
 
@@ -23882,6 +23910,8 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
           names: Array.isArray(x.names) ? x.names : [],
+          // THE GAME'S WARNINGS BEFORE ENTRY (§18A.7, kanban #316): the seat's word, only known codes kept (entry-warnings.js)
+          warnings: Array.isArray(x.warnings) ? x.warnings.filter((k) => typeof k === 'string') : [],
           // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
           committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
@@ -23943,6 +23973,8 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
       names: checkedNames(counts.flatMap((c) => c.names), id, verify),
+      // WHAT THE PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): a paying round's only
+      warnings: pays ? entryWarnings(contract, counts.flatMap((c) => c.warnings || [])) : [],
       contract,
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
@@ -25903,7 +25935,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,

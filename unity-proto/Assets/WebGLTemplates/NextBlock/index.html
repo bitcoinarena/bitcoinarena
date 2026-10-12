@@ -560,6 +560,14 @@
     #arena-fed-confirm .afc-row { display: flex; justify-content: space-between; gap: 10px; margin: 4px 0; font-size: 14px; } #arena-fed-confirm .afc-row b { font: 13px ui-monospace, monospace; word-break: break-all; text-align: right; }
     #arena-fed-confirm .afc-guardians { margin: 10px 0; font-size: 13px; } #arena-fed-confirm .afc-g { border-top: 1px solid #2a3442; padding: 6px 0; } #arena-fed-confirm .afc-g code { font: 12px ui-monospace, monospace; color: #a9b3c1; word-break: break-all; }
     #arena-fed-confirm .afc-buttons { display: flex; gap: 10px; margin-top: 12px; } #arena-fed-confirm button { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #3a4655; background: #1c2430; color: #e6edf5; font: 600 15px system-ui; } #arena-fed-confirm button.primary { background: #f7931a; border-color: #f7931a; color: #1b1000; }
+    #arena-warn-confirm { position: fixed; inset: 0; z-index: 70; display: none; align-items: center; justify-content: center; background: rgba(5,8,12,.78); padding: 16px; }
+    #arena-warn-confirm .afc-box { width: 100%; max-width: 460px; max-height: 90vh; overflow: auto; background: #141a21; border: 1px solid #2a3442; border-radius: 16px; padding: 20px; color: #e6edf5; font: 15px system-ui, sans-serif; }
+    #arena-warn-confirm h2 { margin: 0 0 6px; color: #f7931a; font-size: 20px; }
+    #arena-warn-confirm .afc-sub { color: #a9b3c1; margin: 0 0 12px; }
+    #arena-warn-confirm .afc-row { display: flex; justify-content: space-between; gap: 10px; margin: 4px 0; font-size: 14px; } #arena-warn-confirm .afc-row b { font: 13px ui-monospace, monospace; word-break: break-all; text-align: right; }
+    #arena-warn-confirm .afc-guardians { margin: 10px 0; font-size: 13px; } #arena-warn-confirm .afc-g { border-top: 1px solid #2a3442; padding: 6px 0; } #arena-warn-confirm .afc-g code { font: 12px ui-monospace, monospace; color: #a9b3c1; word-break: break-all; }
+    #arena-warn-confirm .afc-buttons { display: flex; gap: 10px; margin-top: 12px; } #arena-warn-confirm button { flex: 1; padding: 12px; border-radius: 10px; border: 1px solid #3a4655; background: #1c2430; color: #e6edf5; font: 600 15px system-ui; } #arena-warn-confirm button.primary { background: #f7931a; border-color: #f7931a; color: #1b1000; }
+    #arena-warn-confirm ul { margin: 8px 0 4px; padding-left: 20px; } #arena-warn-confirm li { margin: 6px 0; line-height: 1.35; }
     #arena-wallet-start { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center;
       background: radial-gradient(ellipse at top, #1d2733 0%, #0b0f14 70%); padding: 16px; box-sizing: border-box;
       font: 15px/1.4 system-ui, sans-serif; color: #e8eaed; overflow-y: auto; }
@@ -773,6 +781,16 @@
       <div class="afc-row"><span>Status</span><b id="afc-status"></b></div>
       <div class="afc-guardians" id="afc-guardians"></div>
       <div class="afc-buttons"><button type="button" id="afc-trust" class="primary">I trust this federation</button><button type="button" id="afc-cancel">Cancel</button></div>
+    </div>
+  </div>
+  <!-- WARNINGS BEFORE ENTRY (spec §18A.7 / §22A, kanban #316): a paying round whose rules make a bad bet says so, and the
+       player confirms, before anything is locked -->
+  <div id="arena-warn-confirm" role="dialog" aria-modal="true" aria-labelledby="awc-title" style="display:none">
+    <div class="afc-box">
+      <h2 id="awc-title">Before you stake</h2>
+      <p class="afc-sub">This round's rules are fixed in its contract. Read what they mean for you:</p>
+      <ul id="awc-list"></ul>
+      <div class="afc-buttons"><button type="button" id="awc-go" class="primary">Enter anyway</button><button type="button" id="awc-cancel">Cancel</button></div>
     </div>
   </div>
   <div id="arena-wallet-start" role="dialog" aria-modal="true" aria-labelledby="ws-title">
@@ -2544,6 +2562,11 @@
             const gate = await window.ARENA_FEDERATION_GATE({ round: named.round, invite: named.federation, roundIdHex: named.roundIdHex, nodes: named.nodes });
             if (!gate.ok) throw new Error(gate.why);
           }
+          // AND WHAT ITS RULES WARN OF, CONFIRMED (kanban #316, §18A.7 / §22A)
+          if (window.ARENA_WARNINGS_GATE) {
+            const warned = await window.ARENA_WARNINGS_GATE({ round: named.round, roundIdHex: named.roundIdHex });
+            if (!warned.ok) throw new Error(warned.why);
+          }
           signerNodes = await joinStep('clientSettlementSignerNodes', () => prepRound(named.roundIdHex, named.round, named.nodes).signer);
         } catch (e) {
           // REFUSED BY NAME rather than joined silently. A paying round whose
@@ -3422,6 +3445,21 @@
       BLWPCLIENT.confirmFederation(localStorage, fid);
       if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED();
       return { ok: true, confirmed: true, asked: true };
+    };
+    // WARNINGS BEFORE ENTRY (spec §18A.7 / §22A, kanban #316): the engine's from the round's own contract, the game's from
+    // the seats' listing (only codes this page can name, BLWPCLIENT.entryWarnings); none - nothing is shown
+    window.ARENA_WARNINGS_GATE = async ({ round, roundIdHex }) => {
+      const row = (window.BLWP_LOBBY_ROWS || []).find((r) => r.id === roundIdHex);
+      const codes = BLWPCLIENT.entryWarnings ? BLWPCLIENT.entryWarnings(round, (row && row.warnings) || []) : [];
+      window.ARENA_WARNINGS_SHOWN = { round: roundIdHex, codes };
+      if (!codes.length) return { ok: true, codes };
+      const $ = (id) => document.getElementById(id);
+      const list = $('awc-list'); list.textContent = '';
+      for (const t of BLWPCLIENT.warningsSay(codes)) { const li = document.createElement('li'); li.textContent = t; list.appendChild(li); }
+      const box = $('arena-warn-confirm'); box.style.display = 'flex';
+      const go = await new Promise((done) => { $('awc-go').onclick = () => done(true); $('awc-cancel').onclick = () => done(false); });
+      box.style.display = 'none';
+      return go ? { ok: true, codes, confirmed: true } : { ok: false, codes, why: 'This round\'s warnings were not accepted: nothing is staked.' };
     };
     window.ARENA_PAINT_CONFIRMED = () => {
       const el = document.getElementById('arena-fed-confirmed'); if (!el) return;
