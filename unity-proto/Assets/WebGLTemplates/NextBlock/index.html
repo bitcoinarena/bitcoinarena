@@ -136,6 +136,11 @@
        over every layer (a game's own client too), never in the way of a tap */
     /* TOP LEFT, where no screen puts anything (the owner 2026-10-12: at the bottom it lay over "Build your own game or market, or run
        a node" on the games screen); over a game's own client it is the footer strip's last line (below) */
+    /* THE LAST LINE, IN THE PAGE'S FLOW (the owner 2026-10-12: "Now it blocks the header. Just display it as last line at the end"):
+       the games screen and the loading screen end with it; the fixed label is only the footer strip's line over a game's client */
+    .build-line { margin-top: 18px; text-align: center; color: #6e7681; font: 600 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    #arena-build { display: none; }
+    body.arena-own-client #arena-build { display: block; }
     #arena-build { position: fixed; left: calc(env(safe-area-inset-left, 0px) + 6px); top: calc(env(safe-area-inset-top, 0px) + 24px);
       z-index: 9991; pointer-events: none; padding: 1px 6px; border-radius: 4px; background: rgba(13,16,20,0.72); color: #8b949e;
       font: 600 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
@@ -366,9 +371,15 @@
     /* THE WALLET BAR OVER A GAME'S OWN CLIENT (kanban #294): one balance, Deposit, Withdraw and the gear for every game; the
        client's frame starts under it, so the bar never covers the client */
     #arena-wallet-bar { display: none; }
-    body.arena-own-client #arena-wallet-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 37; display: flex; align-items: center; gap: 6px;
+    /* THE GAMES SCREEN TOO (the owner 2026-10-12: "add a balance display on testnet.bitcoin-arena.io and setting screen along with all
+       features"; "disable fps display for the games screen"): the wallet bar - balance, Deposit, Withdraw, the gear - over the
+       choice of games, the games below it, and no frame rate there */
+    body.arena-picking #arena-fps { display: none !important; }
+    body.arena-picking #arena-games { padding-top: calc(41px + env(safe-area-inset-top, 0px) + 20px); }
+    body.arena-picking #arena-wallet-bar, body.arena-own-client #arena-wallet-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 37; display: flex; align-items: center; gap: 6px;
       height: 40px; padding: env(safe-area-inset-top, 0px) 8px 0; box-sizing: content-box; background: #0d1014; border-bottom: 1px solid #30363d;
       font: 13px/1.2 system-ui, sans-serif; color: #e8eaed; }
+    body.arena-picking #arena-wallet-bar { z-index: 38; }
     body.arena-own-client #arena-client { top: calc(41px + env(safe-area-inset-top, 0px)); height: calc(100% - 41px - env(safe-area-inset-top, 0px)); }
     #arena-wallet-bar .wb-bal { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #arena-wallet-bar .wb-bal b { color: #f7931a; }
@@ -1219,7 +1230,7 @@
   })();
   </script>
 
-  <div id="arena-games"><div class="box"><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div></div></div>
+  <div id="arena-games"><div class="box"><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div><div class="dots"><i></i><i></i><i></i></div></div>
     <script>
@@ -1239,6 +1250,7 @@
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
     <div id="arena-platform"><a href="platform/">Build a game or a market on Bitcoin Arena, or run a node and earn &rarr;</a></div>
+    <div class="build-line" id="boot-build">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
     <div id="blwp-deposit"></div>
     <div id="err"></div>
     <div id="blwp-donation-noted"></div>
@@ -3665,7 +3677,7 @@
     // until what it waits for answers.
     function paintWalletBar() {
       const bar = document.getElementById('arena-wallet-bar');
-      if (!bar || !document.body.classList.contains('arena-own-client')) return;
+      if (!bar || !(document.body.classList.contains('arena-own-client') || document.body.classList.contains('arena-picking'))) return;
       const bal = window.BLWP_WALLET_BALANCE;
       document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
         : window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
@@ -3990,7 +4002,9 @@
     function moneyContext() {
       const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract) || moneyRound();
       const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
-      if (!row) return { ok: false, why: 'No paying round is listed, so there is no stake to count rounds in.' };
+      if (!row) return { ok: false, why: document.body.classList.contains('arena-picking')
+        ? 'Choose a game first: its rounds set the deposit amounts. Your balance is shown above.'
+        : 'No paying round is listed, so there is no stake to count rounds in.' };
       if (!lob || !lob.federation || !seed) return { ok: false, why: 'This lobby names no federation to hold the funds.' };
       // A MARKET ROUND'S LOCK SPAN BY ITS MARKET'S TERMS, as the lobby's warm-up and the join check it (kanban #237/#277,
       // measured on the regtest market: Settings -> Deposit said "that round names stake_expiry_blocks 34770 where §23.1
@@ -5058,6 +5072,8 @@
         }
       }
       if (!got) return null;
+      // THE WALLET FROM HERE, BEFORE THE PICK (kanban #350: the games screen shows the balance) - the games are read already
+      if (got.games && got.games.length && window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.BLWP_LEDGER_LOBBY);
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
       window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
       if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));
@@ -5114,9 +5130,11 @@
             list.append(sec);
           }
           el.classList.add('show');
+          document.body.classList.add('arena-picking');
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
         });
         el.classList.remove('show');
+        document.body.classList.remove('arena-picking');
         // THE GAME'S NAME IN THE LINK (kanban #350), its id only when two listed games share the name: the loading screen
         // reads the name before anything loads, and a reload shows this game's splash, not Next Block's
         const byName = got.games.filter((g) => g.name === game.name).length === 1;
@@ -5348,6 +5366,12 @@
           const client = await BLWPCLIENT.openPlayerWallet({ federationId, invite: lobby.federation, seed, LockClient: wasm.LockClient, storage: vault(),
             onStep: (step) => console.log('[blwp] player wallet (early): ' + step + ', ' + (Date.now() - t0) + ' ms') });
           window.BLWP_WALLET_EARLY_MS = Date.now() - t0;
+          // ITS BALANCE AT ONCE, for the wallet bar and Settings (a round's warm-up reads it again later)
+          try { const msat = BigInt(await client.balanceMsat());
+            if (!window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + BLWPCLIENT.toHex(federationId).slice(0, 16) + '\u2026' };
+          } catch (e) { console.log('[blwp] the early balance could not be read: ' + (e && e.message ? e.message : e)); }
+          window.BLWP_BALANCE_TRIED = true;
+          if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS();
           console.log('[blwp] player wallet open before any round, ' + (Date.now() - t0) + ' ms');
           return client;
         })().catch((e) => { console.log('[blwp] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.BLWP_WALLET_EARLY = null; });
