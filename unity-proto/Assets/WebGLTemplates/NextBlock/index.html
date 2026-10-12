@@ -3014,8 +3014,13 @@
     async function findTheRoundsOwed(named) {
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.findOwedRounds || !window.BLWP_CURVE || !named || !named.federation) return;
       try {
+        // A BROWSER WITH NO WALLET YET (kanban #346): behind the start screen no phrase is minted (#339), collectSeed() is null,
+        // and toHex(null) threw "Cannot read properties of null (reading 'length')" at every fresh load - the scan never ran.
+        // It waits for the wallet (the tab's first seed) and runs then.
+        let tabSeed = collectSeed();
+        while (!tabSeed) { await new Promise((r) => setTimeout(r, 1000)); tabSeed = collectSeed(); }
         // EVERY SAVED PHRASE OF THIS BROWSER (kanban #153), each scanned with its own key and its finds kept under its own seed
-        const tabHex = BLWPCLIENT.toHex(collectSeed());
+        const tabHex = BLWPCLIENT.toHex(tabSeed);
         const seeds = BLWPCLIENT.browserSeedHexes ? BLWPCLIENT.browserSeedHexes(vault(), tabHex) : [tabHex];
         // ONE READ OF EACH SIGNER NODE PER SCAN (kanban #153, the owner 2026-10-07): its /settled list is matched against every
         // phrase's keys - 7 asks on 7 signer nodes however many phrases are kept (was 7 per phrase: 49 for seven)
