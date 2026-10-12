@@ -13,7 +13,7 @@
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
-import { signPresent, verifyPresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
+import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
   seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { endpointsOf } from './roster.js';
 
@@ -98,6 +98,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
 
   // ---- the doors ----
   function takePresent(bytes) {
+    // ONE HELD ALREADY, byte for byte, is not checked again (kanban #345: every batch answer repeats a round's PRESENTs,
+    // and verifying each at each tick was thousands of signature checks per tick at grid density)
+    try {
+      const d = decodePresent(bytes);
+      const had = db.prepare('SELECT bytes FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(d.roundId, d.role, toHex(d.nodePubkey));
+      if (had && Buffer.compare(Buffer.from(had.bytes), Buffer.from(bytes)) === 0) return { ok: true, held: true };
+    } catch { /* not decodable: verifyPresent says why */ }
     const v = verifyPresent(bytes, { verify });
     if (!v.ok) return v;
     const { roundId, role, nodePubkey } = v.present;
@@ -133,6 +140,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   async function tick() {
     if (busy) return;
     busy = true;
+    const t0 = Date.now(); let fellBack = 0, peers = 0, rounds = 0;
     try {
       index();
       const now = BigInt(nowMs());
@@ -180,11 +188,16 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         }
         answers.set(b, got);
       }));
+      peers = answers.size; fellBack = [...answers.values()].filter((a) => a === null).length; rounds = new Set(work.map((w) => w.ridHex)).size;
       // 4. WHAT EACH SAID: their PRESENTs, certificates and seating signatures; then this node's certificate where it can
+      // a node that answered no batch is asked the old way - every round of it at once, not one after another
+      const single = new Map();
+      await Promise.all(work.flatMap((w) => w.others.filter((b) => answers.get(b) === null)
+        .map(async (b) => { single.set(`${b}|${w.ridHex}|${w.role}`, await askOne(b, w)); })));
       for (const w of work) {
         for (const b of w.others) {
           const batch = answers.get(b);
-          const a = batch ? batch[w.ridHex] : await askOne(b, w);
+          const a = batch ? batch[w.ridHex] : single.get(`${b}|${w.ridHex}|${w.role}`);
           if (!a) continue;
           for (const x of a.presents || []) if (x.role === w.role) takePresent(fromHex(x.present));
           const cert = a.cert && a.cert[w.role];
@@ -195,7 +208,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
         if (w.closed) { signMine(w); await certify(w); }
       }
     } catch (e) { log(`[seating] ${e.message}`); }
-    finally { busy = false; }
+    finally {
+      busy = false;
+      const took = Date.now() - t0;
+      if (took > 5000) log(`[seating] a tick of ${rounds} round(s) took ${took} ms; ${fellBack} of ${peers} node(s) answered no batch`);
+    }
   }
 
   /** The old doors, one round at a time: for a node that has no GET /seating-batch. */
@@ -228,6 +245,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     if (!signed || !got.signature || !Array.isArray(got.seated) || !got.node) return;
     if (got.seated.join(',') !== signed.seated.join(',')) return;    // another seating: no signature of this one
     const id = toHex(seatingId({ roundId: w.t.rid, role: w.role, seated: signed.seated.map(fromHex) }));
+    if (db.prepare('SELECT 1 FROM seat_sigs WHERE round_id = ? AND role = ? AND seating = ? AND node = ?').get(w.t.rid, w.role, id, got.node)) return;   // held already
     let good = false; try { good = verify(fromHex(got.signature), fromHex(id), fromHex(got.node)); } catch { good = false; }
     if (good) db.prepare('INSERT OR IGNORE INTO seat_sigs (round_id, role, seating, node, signature) VALUES (?, ?, ?, ?, ?)').run(w.t.rid, w.role, id, got.node, fromHex(got.signature));
   }
