@@ -876,11 +876,18 @@ export class Round {
       const stored = this.db.prepare(
         'SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?')
         .get(c.roundId, c.entryId, c.tick);
-      this.db.prepare(
+      const kept = this.db.prepare(
         'INSERT OR IGNORE INTO equivocations '
         + '(round_id, entry_id, tick, stored_bytes, offered_bytes, seen_ms) '
         + 'VALUES (?, ?, ?, ?, ?, ?)')
         .run(c.roundId, c.entryId, c.tick, stored.bytes, bytes, this.now());
+      // AND PUBLISHED (§25.2, kanban #327: "equivocation proofs, objections - direct, AND any public broadcast channel"):
+      // the first time this node holds the pair, whoever set `onEquivocation` (the server: the round's publication_relays[])
+      // is handed both signed marks. A pair held already is not handed again, so relays that relay do not loop.
+      if (kept.changes && typeof this.onEquivocation === 'function') {
+        try { this.onEquivocation({ roundId: c.roundId, entryId: c.entryId, tick: c.tick, stored: new Uint8Array(stored.bytes), offered: bytes }); }
+        catch { /* publishing never undoes the keeping */ }
+      }
 
       throw new Error(
         `equivocation at tick ${c.tick}: ${toHex(at.checkpoint_id)} already stored, `
