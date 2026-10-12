@@ -90,7 +90,9 @@ reading "P2 after the leaves, the drain pool of B: $(poolOfB)"
 # ---- 10. CLOSED (§23A.6 step 4, kanban #325): drain_blocks after DRAINING (ARENA_DRAIN_MS here) with no open round naming A,
 # A's record is CLOSED, and nobody is named for B's guardian pool any more
 closedA() { poolOfB | grep -q '"status":"CLOSED"'; }
-until_ "A's record CLOSED" 900 closedA
+# (the paid round of reading 4 names A: A closes only once it is closed - its entry window, its run, its objection window;
+# ENTRY_WINDOW_MS=480000 keeps that inside this wait)
+until_ "A's record CLOSED" ${CLOSED_WAIT_S:-1500} closedA
 reading "S5 A closed: $(poolOfB)"
 # the stack held for a look (the page's CRITICAL view): HOLD_S seconds before the stop
 [ -n "${HOLD_S:-}" ] && { say "holding the stack $HOLD_S s"; sleep "$HOLD_S"; }
