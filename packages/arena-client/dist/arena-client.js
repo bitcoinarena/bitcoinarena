@@ -24267,7 +24267,38 @@ const fedWords = (row, loads) => {
   }
   return ` in federation ${fid.slice(0, 8)}` + (f && typeof f.load === 'number' ? ` (load ${f.load.toFixed(2)}${why})` : '');
 };
-function lobbyLine(row, nowMs = Date.now(), { loads = null } = {}) {
+/**
+ * WHAT THE PLAYER SEES BEFORE APPROVAL (spec §22A "Transparency": "the selected node identities (or "pending" per §5A.5), any
+ * committee overlap, whether any selected operator is playing"; §5A.13 "The client MUST show, before commitment, whether any
+ * selected node's operator is playing"; kanban #317). From a paying row's seating (who the certificate seats), the census
+ * this page checked (each node's advert names its operator_id) and the round's players (their checked name records):
+ *   { pending, settlement: [{ node, operator }], operators, both, operatorsPlaying }
+ */
+function approvalFacts(row, census = null) {
+  if (!row || !row.seating || row.seating.state !== 'named') return { pending: true };
+  const opOf = new Map();
+  for (const e of census || []) {
+    const k = e && e.pubkey ? (e.pubkey instanceof Uint8Array ? toHex(e.pubkey) : String(e.pubkey)).toLowerCase() : null;
+    if (k) opOf.set(k, String((e.advert && e.advert.operatorId) || '').toLowerCase());
+  }
+  const game = (row.seating.game || []).map((k) => String(k).toLowerCase());
+  const settlement = (row.seating.settlement || []).map((k) => String(k).toLowerCase());
+  const both = settlement.filter((k) => game.includes(k)).length;
+  const operators = [...new Set([...game, ...settlement].map((k) => opOf.get(k)).filter(Boolean))];
+  const players = new Set((row.names || []).map((n) => String(n.player || '').toLowerCase()).filter(Boolean));
+  return { pending: false, settlement: settlement.map((node) => ({ node, operator: opOf.get(node) || null })), operators, both,
+    of: settlement.length, operatorsPlaying: operators.filter((o) => players.has(o)), censusKnown: opOf.size > 0 };
+}
+
+/** The lobby line's words for approvalFacts. */
+function approvalWords(f) {
+  if (!f || f.pending) return ' · selected nodes: pending (§5A.5)';
+  const ops = !f.censusKnown ? 'operators not read yet' : `${f.operators.length} operator${f.operators.length === 1 ? '' : 's'}${f.operators.length ? ` (${f.operators.map((o) => o.slice(0, 8)).join(', ')})` : ''}`;
+  return ` · ${ops} · in both committees: ${f.both} of ${f.of}` + (f.operatorsPlaying.length
+    ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing');
+}
+
+function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
@@ -24290,7 +24321,9 @@ function lobbyLine(row, nowMs = Date.now(), { loads = null } = {}) {
   const seat = !row.seating ? '' : row.seating.state === 'named'
     ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
     : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
-  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}`
+  // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13, kanban #317): operators, overlap, an operator playing
+  const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census));
+  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
 
@@ -26082,7 +26115,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,

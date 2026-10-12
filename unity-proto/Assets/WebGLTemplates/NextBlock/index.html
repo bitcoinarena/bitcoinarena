@@ -5231,7 +5231,7 @@
       const lobbyViewRow = (r, nowMs) => {
         const raw = r.raw || null;
         const secsTo = (ms) => Math.max(0, Math.ceil((Number(ms) - nowMs) / 1000));
-        const line = raw ? BLWPCLIENT.lobbyLine(raw, nowMs, { loads: window.ARENA_FED_LOADS }) : r.line;
+        const line = raw ? BLWPCLIENT.lobbyLine(raw, nowMs, { loads: window.ARENA_FED_LOADS, census: (c) => (c && c.censusRoot ? BLWPCLIENT.checkedCensusFor(c) : null) }) : r.line;
         const startS = raw && raw.startTimeMs !== undefined ? secsTo(raw.startTimeMs) : -1;
         const leftS = raw && raw.entryCloseMs !== undefined && raw.phase !== 'pending' ? secsTo(raw.entryCloseMs) : -1;
         // total: the round's committee size from its verified contract (7 paid, 2 free) - the header's "N OF M" (#43 follow-up)
@@ -5251,7 +5251,7 @@
       // each entry close ("closes in 0:00", not joinable).
       const lobbyNow = () => (window.BLWP_LOBBY = BLWPCLIENT.lobbyRowsAt(window.BLWP_LOBBY_ROWS || [], Date.now(), goingRound(), { going: joinGoing() }).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
         signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
-        line: BLWPCLIENT.lobbyLine(r, Date.now(), { loads: window.ARENA_FED_LOADS }), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null })));
+        line: BLWPCLIENT.lobbyLine(r, Date.now(), { loads: window.ARENA_FED_LOADS, census: (c) => (c && c.censusRoot ? BLWPCLIENT.checkedCensusFor(c) : null) }), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null })));
       const paint = async () => {
         // 2 OF 2 (M3.3-34): each signer node's listing is its own BIP-340 signature,
         // checked with the curve the daemons sign under; Join is offered only
