@@ -4188,6 +4188,10 @@
       const row = (k, v, tip, c) => { const d = document.createElement('div'); d.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:1px 0';
         const a = document.createElement('span'); a.textContent = k; a.style.color = '#a9b3c1'; const b = document.createElement('b'); b.textContent = v; b.style.cssText = `font-weight:700;color:${c || '#e6edf5'}`;
         d.append(a, b); if (tip) { d.title = tip; d.style.cursor = 'help'; } el.appendChild(d); return b; };
+      // HOW MANY NODES THE NETWORK HAS (kanban #348, the owner 2026-10-12): the bonded nodes of the newest census this page checked -
+      // shown whatever the federations' records say, it is the chain's own count
+      { const nc = BLWPCLIENT.newestCheckedCensus ? BLWPCLIENT.newestCheckedCensus() : null;
+        if (nc) row('Nodes in the network', String(nc.nodes), nc.height ? 'bonded nodes in the census at block ' + nc.height : '', '#58a6ff'); }
       if (!sum.federations) {
         const loading = window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_FED_TRIED');
         row('Federations', loading ? 'loading \u2026' : 'none verified yet', loading ? 'Reading the federations\' signed records from the seats' : '', loading ? '#d29922' : '#8b949e');
@@ -4195,9 +4199,6 @@
         window.ARENA_CUSTODY_SHOWN = sum; return;
       }
       row('Federations', String(sum.federations), '', '#58a6ff');
-      // HOW MANY NODES THE NETWORK HAS (kanban #348, the owner 2026-10-12): the bonded nodes of the newest census this page checked
-      { const nc = BLWPCLIENT.newestCheckedCensus ? BLWPCLIENT.newestCheckedCensus() : null;
-        if (nc) row('Nodes in the network', String(nc.nodes), nc.height ? 'bonded nodes in the census at block ' + nc.height : '', '#58a6ff'); }
       row('Funds held in all federations', sat(sum.reserveSats), '', '#f7931a');
       row('Possible capacity', sat(sum.capSats), '', '#58a6ff');
       row('Free before deposits stop', sat(sum.freeSats), '', Number(BigInt(sum.freeSats)) > 0 ? '#3fb950' : '#f85149');
