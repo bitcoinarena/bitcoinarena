@@ -126,6 +126,43 @@ export function loadSays(fed) {
     + (fed.loadRefusesDeposit ? ' No deposit goes into it; play in another federation.' : '');
 }
 
+/**
+ * ALL FEDERATIONS TOGETHER, FOR THE DEPOSIT SCREEN (kanban #347, the owner 2026-10-12: "show the total amount of funds in all
+ * federations, number of federations we have and total health before we will stop accepting deposits ... green/yellow/red
+ * ... Show the total possible capacity"). From the verified statuses (federationStatuses), the ones with a signed cap:
+ *   reserveSats  every federation's signed reserve, summed (the funds held)
+ *   capSats      every federation's exposure cap, summed (the possible capacity)
+ *   freeSats     what OPEN federations can still take before each reaches load 1 - where a deposit stops (§23A.3, ruled A:
+ *                on mainnet; a test network shows and refuses nothing)
+ *   load         reserve / cap over all of them; band green below 0.7, yellow from 0.7, red from 0.9 (Move is offered there)
+ */
+export function custodySummary(statuses, { networkTest = false } = {}) {
+  const list = [...(statuses || [])].filter((f) => f && f.status !== 'unverified' && f.exposureCapSats !== undefined);
+  let reserve = 0n, cap = 0n, free = 0n;
+  for (const f of list) {
+    const r = BigInt(f.reserveSats || 0), c = BigInt(f.exposureCapSats || 0);
+    reserve += r; cap += c;
+    if (f.status === 'OPEN' && c > r) free += c - r;
+  }
+  const load = cap > 0n ? Number((reserve * 10000n) / cap) / 10000 : null;
+  const band = load === null ? 'unknown' : load >= 0.9 ? 'red' : load >= 0.7 ? 'yellow' : 'green';
+  return { federations: list.length, open: list.filter((f) => f.status === 'OPEN').length, reserveSats: String(reserve), capSats: String(cap),
+    freeSats: String(free), load, band, networkTest };
+}
+
+/** The deposit screen's line and its tooltip for a custodySummary. */
+export function custodySays(c) {
+  if (!c || !c.federations) return { line: 'Federations: none verified yet', tip: 'No federation record could be checked yet.', band: 'unknown' };
+  const sat = (x) => `${Number(BigInt(x)).toLocaleString('en-US')} sat`;
+  const pct = c.load === null ? '-' : `${Math.round(c.load * 100)} %`;
+  const line = `${c.federations} federation${c.federations === 1 ? '' : 's'} · ${sat(c.reserveSats)} held · health ${pct} · capacity ${sat(c.capSats)} (${sat(c.freeSats)} free)`;
+  const tip = `Funds held in all federations: ${sat(c.reserveSats)}. Possible capacity, what the guardians' bonds cover: ${sat(c.capSats)}. `
+    + `Still free before deposits stop: ${sat(c.freeSats)}. A federation takes no deposit once its load reaches 100 % (its funds equal its cover). `
+    + `Green below 70 %, yellow from 70 %, red from 90 % (Move is offered there).`
+    + (c.networkTest ? ' This is a test network: the load is shown, and no deposit is refused for it.' : '');
+  return { line, tip, band: c.band };
+}
+
 /** The sentence a page shows when Move is offered (moveOffer's answer), else ''. */
 export function moveSays(offer) {
   if (!offer) return '';
