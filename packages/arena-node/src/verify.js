@@ -33,6 +33,7 @@ import { resultFinality as finalityOf, chainIndex, resultWindow } from './finali
 let retryJobs = 0;                     // each re-tried close is its own pool job
 let objectionJobs = 0;                 // each objection's replay is its own pool job (§13A, kanban #24)
 import { encodeTranscript, transcriptHash as hashOfTranscript } from '../../arena-protocol/src/transcript.js';
+import { TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 import {
   encodeTranscriptPosting, transcriptPostingId, joinSignedPosting, splitSignedPosting, decodeTranscriptPosting,
   transcriptBytesHash, relayPath, transcriptIsPublished, SIGNED_POSTING_BYTES,
@@ -1184,6 +1185,14 @@ export class Verifier {
       // PAST THE RESULT WINDOW, still unable to retrieve the transcript: §13C decides (07:49).
       return (await this.#unretrievedPastWindow(roundIdBytes, entryIdBytes, contract, why))
         || { entryId: entryIdBytes, stored: false, waiting: true, why };
+    }
+    // A RUN WHOSE TRANSCRIPT CANNOT BE FRAMED (kanban #342): a batch longer than a transcript's u16 frame, taken before the
+    // intake refused one - every replay of it fails the same way, so it is not replayed again (measured: all seven seats
+    // retried a full replay back to back, then every 60 s without end); past the result window §13C decides it
+    const largest = typeof this.round.largestBatch === 'function' ? this.round.largestBatch(roundIdBytes, entryIdBytes) : 0;
+    if (largest > TRANSCRIPT_BATCH_MAX_BYTES) {
+      const why = `a batch of this run is ${largest} bytes and a transcript frames each in at most ${TRANSCRIPT_BATCH_MAX_BYTES}: it can never be replayed or signed`;
+      return (await this.#unretrievedPastWindow(roundIdBytes, entryIdBytes, contract, why)) || { entryId: entryIdBytes, stored: false, why };
     }
     const options = { roundRandomness: beacon.hash };
     const answer = await this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryIdBytes)}:retry:${++retryJobs}`,

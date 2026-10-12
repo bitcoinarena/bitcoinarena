@@ -97,6 +97,9 @@ const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attemp
   owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
   txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why, donation: !!r.donation });
 
+/** A transcript (transcript.js) frames each batch with a u16 length: no batch longer than this can be in one (kanban #342). */
+export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
+
 export class Round {
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
@@ -585,6 +588,10 @@ export class Round {
    * primary key is the whole mechanism.
    */
   batch(bytes) {
+    // NO BATCH A TRANSCRIPT CANNOT FRAME (kanban #342, measured live 2026-10-11 on round 6843f9fb: a 97,309-byte batch
+    // was taken by all seven seats and every close then failed "u16 out of range" - the run could never be replayed)
+    if (bytes.length > TRANSCRIPT_BATCH_MAX_BYTES)
+      throw new Error(`a batch is at most ${TRANSCRIPT_BATCH_MAX_BYTES} bytes - a transcript frames each with a u16 length - and that one is ${bytes.length}: send its ticks as several batches`);
     const b = decodeInputBatch(bytes);
     const round = this.get(b.roundId);
     if (!round) throw new Error('no such round');
@@ -1445,6 +1452,12 @@ export class Round {
    * was checked against the stored head on the way in, so a live watcher can
    * check the new ones and no others - once each, still all of them.
    */
+  /** The longest batch held for a run, in bytes (0 for none). */
+  largestBatch(roundIdBytes, entryIdBytes) {
+    const r = this.db.prepare('SELECT max(length(bytes)) AS n FROM batches WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes);
+    return (r && r.n) || 0;
+  }
+
   batchesFrom(roundIdBytes, entryIdBytes, afterSeq = -1) {
     return this.db.prepare(
       'SELECT seq, bytes FROM batches WHERE round_id = ? AND entry_id = ? AND seq > ? ORDER BY seq')
