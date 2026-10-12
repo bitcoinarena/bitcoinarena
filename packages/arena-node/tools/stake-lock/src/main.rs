@@ -231,7 +231,10 @@ async fn main() -> anyhow::Result<()> {
         // the arbiter's own client, from which each affected entry's share is locked to its player (mode lock)
         "pegin-address" => pegin_address(&client).await,
         "pegin-claim" => pegin_claim(&a, &client).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim or id"),
+        // THE SLASH'S PAYOUTS (kanban #307, spec §5A.3B): each wronged player's share, from the arbiter's own e-cash (the escrow
+        // it pegged in), as a settlement pays a qualifier - a pre-expired lock only that player's key ever moves
+        "pay" => pay(&a, &client, lnv2, &api).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay or id"),
     }
 }
 
@@ -453,6 +456,59 @@ async fn lock(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &Dyn
         }
     }
     bail!("the lock transaction {txid} was accepted but no outpoint of it holds an outgoing contract")
+}
+
+/// --mode pay --payouts PK:MSAT[,PK:MSAT...] (kanban #307, spec §5A.3B "the arbitration set pegs it into the round's
+/// federation and locks each share to its player"): ONE transaction from this client's own e-cash, one output per player -
+/// the payout shape of --mode settle: expiration 0 (pre-expired, so Claim is refused for everybody), claim and refund keys
+/// the player's, the image unused - so only that player's key ever moves it, by the refund the page already takes for a
+/// settlement's payout. Each payout's outpoint is read back from the guardians by its contract id.
+async fn pay(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+    let mut contracts: Vec<OutgoingContract> = Vec::new();
+    for spec in need(a, "payouts")?.split(',') {
+        let (pk, msat) = spec.split_once(':').context("a payout is PK:MSAT")?;
+        let pk = PublicKey::from_str(pk)?;
+        contracts.push(OutgoingContract {
+            payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
+            amount: Amount::from_msats(msat.parse()?),
+            expiration: 0,
+            claim_pk: pk,
+            refund_pk: pk,
+            ephemeral_pk: pk,
+        });
+    }
+    let outputs = contracts
+        .iter()
+        .map(|c| ClientOutput { output: LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())), amounts: Amounts::new_bitcoin(c.amount) })
+        .collect::<Vec<_>>();
+    let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(lnv2);
+    let operation = OperationId::new_random();
+    let change = client
+        .finalize_and_submit_transaction(operation, "arena-slash-payouts", |_| (), TransactionBuilder::new().with_outputs(bundle))
+        .await?;
+    let txid = change.txid();
+    client
+        .transaction_updates(operation)
+        .await
+        .await_tx_accepted(txid)
+        .await
+        .map_err(|e| anyhow!("the guardians did not accept the payout transaction: {e}"))?;
+    // WHERE EACH PAYOUT LANDED: the builder places the change, so every outpoint is read and matched by contract id
+    let mut found = Vec::new();
+    for out_idx in 0..(contracts.len() as u64 + 16) {
+        if let Some((stored_id, _)) = stored_at(api, OutPoint { txid, out_idx }).await? {
+            if let Some(c) = contracts.iter().find(|c| c.contract_id() == stored_id) {
+                found.push(serde_json::json!({ "out_idx": out_idx, "contract_id": stored_id.0.to_string(),
+                    "refund_pk": c.refund_pk.to_string(), "amount_msat": c.amount.msats }));
+            }
+        }
+    }
+    if found.len() != contracts.len() {
+        bail!("the payout transaction {txid} was accepted, and {} of its {} payouts were found at the guardians", found.len(), contracts.len());
+    }
+    let balance = client.get_balance_for_btc().await.map(|b| b.msats).unwrap_or(0);
+    println!("{}", serde_json::json!({ "mode": "pay", "txid": txid.to_string(), "payouts": found, "balance_after_msat": balance }));
+    Ok(())
 }
 
 async fn redeem(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
