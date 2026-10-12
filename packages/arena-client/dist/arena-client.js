@@ -24120,7 +24120,16 @@ const lobbyClock = (ms) => {
 };
 
 /** One row as the page shows it; the page draws this string and adds nothing. */
-function lobbyLine(row, nowMs = Date.now()) {
+// AND ITS FEDERATION'S LOAD (§23A.3, kanban #324: "the seats show load beside every round"; "The lobby shows every round with
+// its federation and load"): `loads` is the page's verified statuses by federation id hex (federationStatuses), the load of
+// a paying row's federation said beside its stake when known
+const fedWords = (row, loads) => {
+  const fid = row.contract && row.contract.federationId instanceof Uint8Array ? toHex(row.contract.federationId) : null;
+  if (!fid) return '';
+  const f = loads && typeof loads.get === 'function' ? loads.get(fid) : null;
+  return ` in federation ${fid.slice(0, 8)}` + (f && typeof f.load === 'number' ? ` (load ${f.load.toFixed(2)})` : '');
+};
+function lobbyLine(row, nowMs = Date.now(), { loads = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
@@ -24130,7 +24139,7 @@ function lobbyLine(row, nowMs = Date.now()) {
     return `${what} · ${money} · ${when}`;
   }
   const money = row.free ? 'free - no wallet, no Lightning'
-    : `stake ${String(row.stakeMsat / 1000n)} sat - a federation stake lock`;
+    : `stake ${String(row.stakeMsat / 1000n)} sat - a federation stake lock${fedWords(row, loads)}`;
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
