@@ -52,6 +52,8 @@ import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
+import { createAbsences, readAbsenceHex } from './absences.js';
+import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -390,6 +392,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OPEN MUSIG2 SESSIONS (kanban #307): session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
+  // ABSENCE ATTESTATIONS (§23A.4, kanban #322): taken at POST /absence, and what proves a guardian ABANDONED in the record
+  const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2623,6 +2627,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return r;
   };
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+    absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
     closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
@@ -5208,7 +5213,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `reserve` (kanban #324): the reserve the gathering seat read; this seat signs it only on its own same reading
         const rv = url.searchParams.get('reserve');
         if (rv !== null && !/^[0-9]{1,16}$/.test(rv)) return text(res, 400, 'a reserve, whole satoshi');
-        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv) : await fedRecords.mySignature(fid, atHeight, rv);
+        // `absent` (kanban #322): the absence attestations that prove a named peer ABANDONED, each encoding + signature in hex
+        const absentHex = String(url.searchParams.get('absent') || '').split(',').filter(Boolean);
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex) : await fedRecords.mySignature(fid, atHeight, rv);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }
@@ -5217,6 +5224,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // RESERVE SEATS (§5A.7, kanban #301): PRESENT in and out, this node's seating signature, the certificate, a proof of
       // equivocation
       const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+      if (req.method === 'POST' && url.pathname === '/absence') {
+        let a; try { a = readAbsenceHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `an absence attestation, its encoding and signature in hex: ${e.message}`); }
+        const r = absences.offer(a);
+        return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/absences') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        return json(res, 200, { node: toHex(round.pubkey), absences: absences.list(/^[0-9a-f]{64}$/.test(fid) ? fid : null) });
+      }
       // A CERTIFICATE HANDED OVER (§5A.7: "a node that sees two certificates for one round publishes both"): kept if it
       // stands against this node's draw; one that differs from the one held is the proof of equivocation
       if (seating && req.method === 'POST' && url.pathname === '/seating') {
