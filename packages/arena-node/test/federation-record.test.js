@@ -29,7 +29,7 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [], successor = null, closed = false } = {}) {
+function seven({ leaving = [], successor = null, closed = false, reserves = null } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
@@ -38,10 +38,12 @@ function seven({ leaving = [], successor = null, closed = false } = {}) {
     round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
     successorOf: () => successor, closedOf: () => closed,
+    ...(reserves ? { reserveOf: async () => (reserves[i] === null ? { ok: false, why: 'no answer' } : { ok: true, reserveSats: BigInt(reserves[i]) }) } : {}),
     fetcher: async (url) => {
       const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
       const u = new URL(url); const gone = (u.searchParams.get('gone') || '').split(',').filter(Boolean);
-      const body = gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone) : j.mySignature(u.searchParams.get('federation'));
+      const rv = u.searchParams.get('reserve');
+      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv) : j.mySignature(u.searchParams.get('federation'), null, rv));
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     },
   }));
@@ -154,7 +156,7 @@ test('seats holding rounds at different census heights sign one record: the newe
       asked.push(url);
       const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
       const u = new URL(url); const h = u.searchParams.get('height');
-      const body = j.mySignature(u.searchParams.get('federation'), h === null ? null : Number(h));
+      const body = await j.mySignature(u.searchParams.get('federation'), h === null ? null : Number(h), u.searchParams.get('reserve'));
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     },
   }));
@@ -165,6 +167,28 @@ test('seats holding rounds at different census heights sign one record: the newe
   const at150 = await seats[3].gather(FED, inviteFederationId);
   assert.equal(at150.ok, false);
   assert.match(at150.why, /1 of its bonded guardians signed it, and a record needs 5/);
-  assert.equal(seats[1].mySignature(toHex(FED), 150).why, 'this seat holds no round with census height 150');
-  assert.match(seats[1].mySignature(toHex(FED), 300).why, /^census height 300: this node has no chain view/);
+  assert.equal((await seats[1].mySignature(toHex(FED), 150)).why, 'this seat holds no round with census height 150');
+  assert.match((await seats[1].mySignature(toHex(FED), 300)).why, /^census height 300: this node has no chain view/);
+});
+
+// THE RESERVE AND THE LOAD IN THE RECORD (§23A.3, kanban #324): the gatherer reads the federation's on-chain reserve and names
+// it; a seat signs only on its own same reading; the listed load is the signed reserve over the signed exposure cap
+test('the signed record carries the reserve the guardians name; the load is reserve over cap; a seat reading another reserve does not sign', async () => {
+  const s = seven({ reserves: [650000, 650000, 650000, 650000, 650000, 650000, 650000] });
+  const got = await s.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers], [true, 'OPEN', 7], got.why);
+  const listed = s.seats[0].list()[0];
+  assert.deepEqual([listed.reserveSats, listed.exposureCapSats, listed.load], ['650000', '150000', 4.3333]);
+  const v = verifyFederationRecord(fromHex(listed.record), { census: s.census.entries, verify, inviteFederationId });
+  assert.equal(v.ok, true, v.why);
+  assert.equal(v.record.reserveSats, 650000n, 'the reserve is in the signed bytes');
+  // two seats read another reserve (a peg-in confirmed between): they do not sign that body; five still do
+  const split = seven({ reserves: [650000, 650000, 650000, 700000, 700000, 650000, 650000] });
+  const g2 = await split.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([g2.ok, g2.signers], [true, 5], g2.why);
+  assert.match((await split.seats[3].mySignature(toHex(FED), null, '650000')).why, /^this seat reads a reserve of 700000 sat, not 650000$/);
+  // the gatherer cannot read one: no record
+  const none = seven({ reserves: [null, 650000, 650000, 650000, 650000, 650000, 650000] });
+  const g3 = await none.seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([g3.ok, g3.why], [false, 'the reserve: no answer']);
 });
