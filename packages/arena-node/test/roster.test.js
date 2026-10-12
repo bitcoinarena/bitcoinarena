@@ -870,3 +870,24 @@ test('a census checked against its round\'s root is kept in the store and read b
   assert.equal(derivedAgain.ok, true);
   assert.equal(Buffer.from(derivedAgain.root).toString('hex'), Buffer.from(first.root).toString('hex'), 'a kept census with another root was used');
 });
+
+// ONE CENSUS FOR THE ROUNDS OF NO SERIES THAT NAME ONE (kanban #345): an RPS grid's rounds share a census height and a
+// network, and a derivation per round cost every seat 0.5-1.3 s per posted round. Kept by what the census is read from,
+// and still checked against each round's own root on every ask.
+test('rounds of no series naming one census share one derivation, and a round naming another root is still refused', () => {
+  const bonds = [bondOf(0x11), bondOf(0x12)];
+  const round = new Round(openStore(), () => AFTER_COMMITTEE, { plugins: HOSTED });
+  const a = round.open(contractFor({ censusRoot: rootFor(bonds), publicationRelays: ['wss://r.example/a'] }));
+  const b = round.open(contractFor({ censusRoot: rootFor(bonds), publicationRelays: ['wss://r.example/b'] }));
+  const forged = round.open(contractFor({ censusRoot: new Uint8Array(32).fill(0x77), publicationRelays: ['wss://r.example/c'] }));
+  const roster = new Roster(round, { chainFor: ({ contract: c } = {}) => chainWith(bonds, c),
+    randomnessFor: ({ contract: c }) => beaconOf(chainWith(bonds, c), c) });
+  const first = roster.censusFor(a);
+  assert.equal(first.ok, true, first.why);
+  const second = roster.censusFor(b);
+  assert.equal(second, first, 'a second round naming the same census derived it again');
+  assert.equal(roster.censuses.size, 1);
+  const refused = roster.censusFor(forged);
+  assert.equal(refused.ok, false, 'a round naming another root was served the kept census');
+  assert.match(refused.why, /^that round names census root 7777777777777777 and the chain gives /);
+});
