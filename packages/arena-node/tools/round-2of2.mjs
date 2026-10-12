@@ -531,7 +531,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     for (const [j, p] of posted.entries()) bonded[toPost[j]].onChainTxid = p.txid;
     for (const [i, b] of reused.entries()) if (b) bonded[i].onChainTxid = b.txid;
     // ATTACHED: the advertisement and signature the bond itself committed to, so the page's proof is the chain's words.
-    if (attach) for (const [i, b] of reused.entries()) {
+    // A FIRST BOND POSTED IN THIS RUN (ARENA_POST_FIRST_BONDS, kanban #348) has no `reused` entry: it is read back off the chain
+    // now that it is buried (measured 19:40Z on federation B: "Cannot read properties of null (reading 'maturity')")
+    if (attach) for (const [i, b0] of reused.entries()) {
+      const b = b0 || rt.findBond({ pubkey: members[i].id.pubkey }, wantFor(members[i], i));
+      if (!b) throw new Error(`node ${members[i].name}: its bond is not on chain as posted - no census can name it`);
       const built = bondOutputKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys,
         arbitrationK: rt.genesis.arbitrationK, bondMaturity: b.maturity ?? rt.genesis.bondMaturity,  // template 2: the bond's own (kanban #295)
         internalKey: bondInternalKey({ nodeKey: members[i].id.pubkey, arbitrationKeys: rt.genesis.arbitrationKeys }, { combine }).internalKey,
