@@ -3433,7 +3433,8 @@
     // THE FEDERATION'S STATUS, SHOWN (kanban #321): under CRITICAL only Withdraw and Move stay; the note says why
     window.ARENA_PAINT_FEDERATION = () => {
       const fed = window.ARENA_FED_STATUS; const note = document.getElementById('arena-fed-note');
-      const says = fed ? BLWPCLIENT.federationSays(fed.status) : '';
+      // AND ITS LOAD (§23A.3, kanban #324): said when the federation holds more than its guardians' bonds cover - shown, not refused
+      const says = fed ? [BLWPCLIENT.federationSays(fed.status), BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : ''].filter(Boolean).join(' ') : '';
       if (note) { note.textContent = says; note.style.display = says ? '' : 'none'; }
       for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
     };
@@ -3446,7 +3447,8 @@
       // nothing at all - said by name, from the record this page checked (BLWPCLIENT.federationStatus)
       const fed = window.ARENA_FED_STATUS;
       if (fed && fed.allows && !fed.allows[which === 'withdraw' ? 'withdraw' : which === 'move' ? 'move' : 'deposit']) {
-        const why = BLWPCLIENT.federationSays(fed.status); say(why); return Promise.resolve({ ok: false, why });
+        // the status says why, or - an OPEN federation over its cover on mainnet (§23A.3, ruled A) - its load does
+        const why = BLWPCLIENT.federationSays(fed.status) || (BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : ''); say(why); return Promise.resolve({ ok: false, why });
       }
       if (which === 'withdraw') {
         // the withdraw panel is Settings' own: opened over whatever asked (a game's client too), painted once

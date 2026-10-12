@@ -93,6 +93,8 @@ import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
 import { gameLive } from './game-live.js';
+import { readReserve } from './federation-reserve.js';
+import { thresholdOf as thresholdOfFederation } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
 import { seatingAgent } from './seating-agent.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
@@ -2585,7 +2587,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // drain_blocks have passed since it drained - four weeks (the owner 2026-09-21), ARENA_DRAIN_MS on a test clock
   const DRAIN_MS = Number(process.env.ARENA_DRAIN_MS || 28 * 86400000);
   const openRoundNames = (fidHex) => round.openRoundIds().some((id) => { try { return toHex(decodeRoundContract(new Uint8Array(round.get(id).contract)).federationId) === fidHex; } catch { return false; } });
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null,
+  // THE RESERVE (§23A.3, kanban #324): each federation's on-chain wallet, read from its guardians' wallet_summary - a
+  // threshold of them naming one sum - and kept 30 s, so the seats asking at one gathering read the guardians once each
+  const reserveKept = new Map();
+  const reserveOf = async (fidHex, guardians) => {
+    const had = reserveKept.get(fidHex);
+    if (had && Date.now() - had.at < 30000) return had.r;
+    const endpoints = guardians.map((g) => g.endpoint).filter(Boolean);
+    const r = endpoints.length ? await readReserve({ endpoints, threshold: thresholdOfFederation(guardians.length) })
+      : { ok: false, why: 'the census names no guardian endpoint for that federation' };
+    reserveKept.set(fidHex, { at: Date.now(), r });
+    return r;
+  };
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
     closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
@@ -5111,7 +5125,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const h = url.searchParams.get('height');
         if (h !== null && !/^[0-9]{1,10}$/.test(h)) return text(res, 400, 'a census height, a whole number');
         const atHeight = h === null ? null : Number(h);
-        const r = goneHex.length ? fedRecords.mySignatureWithGone(fid, goneHex, atHeight) : fedRecords.mySignature(fid, atHeight);
+        // `reserve` (kanban #324): the reserve the gathering seat read; this seat signs it only on its own same reading
+        const rv = url.searchParams.get('reserve');
+        if (rv !== null && !/^[0-9]{1,16}$/.test(rv)) return text(res, 400, 'a reserve, whole satoshi');
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv) : await fedRecords.mySignature(fid, atHeight, rv);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }

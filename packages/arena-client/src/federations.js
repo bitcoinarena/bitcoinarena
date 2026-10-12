@@ -9,6 +9,7 @@
 //   CLOSED    its successor holds everything
 //   unverified  no record that stands: shown, and nothing about it is taken on trust
 import { verifyFederationRecord, newestRecord } from '../../arena-protocol/src/federation-record.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { readWithOneRetry } from './reread.js';
 
@@ -47,12 +48,60 @@ export async function federationStatus({ federationIdHex, nodes, census, verify,
   }));
   const best = newestRecord(verified);
   if (!best) return { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: refused.length ? `no record stands: ${refused[0]}` : 'no node holds a record of this federation' };
-  return { status: best.status, allows: FEDERATION_ALLOWS[best.status], signers: best.signers, height: best.record.height, from: best.from,
+  const load = best.record.exposureCapSats > 0n ? Number(((best.record.reserveSats ?? 0n) * 10000n) / best.record.exposureCapSats) / 10000 : null;
+  const refusesDeposit = loadRefusesDeposit({ load, networkId: best.record.networkId });
+  return { status: best.status, allows: refusesDeposit ? { ...FEDERATION_ALLOWS[best.status], deposit: false } : FEDERATION_ALLOWS[best.status],
+    loadRefusesDeposit: refusesDeposit, signers: best.signers, height: best.record.height, from: best.from,
     nominal: best.record.nominal, threshold: best.record.threshold, exposureCapSats: String(best.record.exposureCapSats),
+    // THE LOAD (§23A.3, kanban #324): the signed reserve over the signed exposure cap - what the federation holds against what
+    // its smallest set of leavers' bonds covers; null when the record names no cap
+    reserveSats: String(best.record.reserveSats ?? 0n),
+    load,
     // THE SUCCESSION (§23A.6, kanban #325): the successor the guardians named (hex, or null) and this federation's own invite,
     // so a page can open the player's wallet in the successor from the successor's record
     successorId: best.record.successorId && best.record.successorId.some((x) => x) ? bytesToHex(best.record.successorId) : null,
     invite: best.record.invite || null };
+}
+
+/**
+ * A DEPOSIT REFUSED FOR THE LOAD (§23A.3: "A deposit into a federation at load >= 1 is refused by the client") - RULED
+ * the owner 2026-10-12 (kanban #324, option A): on mainnet only. A test network (regtest, testnet4) shows the load and warns,
+ * and refuses nothing: testnet4's one federation holds 4.33x its cover, and its bonds are not raised for it.
+ */
+const TEST_NETWORKS = new Set(['regtest', 'testnet4']);
+export function loadRefusesDeposit({ load, networkId }) {
+  return typeof load === 'number' && load >= 1 && !TEST_NETWORKS.has(networkOf(networkId));
+}
+
+/**
+ * WHICH FEDERATION A FIRST DEPOSIT GOES INTO (§23A.3, RULED: "the one holding least"): among the checked statuses
+ * (`federationStatus` answers, each with its `federation` id), the OPEN ones on the known-good list (`known(fid)`), the
+ * lowest load; ties by the newest record (its height). A federation whose load the record does not say comes after every
+ * one that says it. Null when none is OPEN.
+ */
+export function pickFederation(statuses, { known = () => true } = {}) {
+  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation));
+  if (!open.length) return null;
+  const loadOf = (f) => (typeof f.load === 'number' ? f.load : Infinity);
+  return [...open].sort((a, b) => loadOf(a) - loadOf(b) || (b.height || 0) - (a.height || 0))[0];
+}
+
+/**
+ * MOVE, OFFERED (§23A.3): a returning player stays in their federation; Move is offered when it is above 90 % load and
+ * another OPEN federation is below 50 % - that one named. (DRAINING and CRITICAL are not offers: §23A.6 moves by itself.)
+ */
+export function moveOffer(own, others = []) {
+  if (!own || own.status !== 'OPEN' || typeof own.load !== 'number' || own.load <= 0.9) return null;
+  const to = pickFederation((others || []).filter((f) => f && f.federation !== own.federation && typeof f.load === 'number' && f.load < 0.5));
+  return to ? { from: own.federation, to: to.federation, fromLoad: own.load, toLoad: to.load } : null;
+}
+
+/** The sentence a page shows when a federation holds more than its guardians' bonds cover (load >= 1), else ''. */
+export function loadSays(fed) {
+  if (!fed || typeof fed.load !== 'number' || fed.load < 1) return '';
+  const sat = (x) => `${Number(BigInt(x || 0)).toLocaleString('en-US')} sat`;
+  return `Load ${fed.load.toFixed(2)}: this federation holds ${sat(fed.reserveSats)}, more than the ${sat(fed.exposureCapSats)} its guardians' bonds cover.`
+    + (fed.loadRefusesDeposit ? ' No deposit goes into it; play in another federation.' : '');
 }
 
 /** The sentence a page shows for a status that holds something back. */
