@@ -73,7 +73,9 @@ try {
   const codes = [];
   for (const [i, x] of guardians.entries())
     codes.push((await cli(['admin', 'setup', x.api, 'set-local-params', `node-${i + 1}`,
-      ...(i === 0 ? ['--federation-name', 'blwp-testnet4', '--federation-size', '7'] : [])], x.password)).replace(/["\s]/g, ''));
+      // ITS NAME AND SIZE (kanban #324: a second testnet4 federation of six on the test host): ARENA_FEDERATION_NAME, default
+      // blwp-testnet4; the size is the nodes given
+      ...(i === 0 ? ['--federation-name', process.env.ARENA_FEDERATION_NAME || 'blwp-testnet4', '--federation-size', String(guardians.length)] : [])], x.password)).replace(/["\s]/g, ''));
   say('every guardian set its local params');
   for (const [i, x] of guardians.entries())
     for (const [j, code] of codes.entries()) if (i !== j) await cli(['admin', 'setup', x.api, 'add-peer', code], x.password);
