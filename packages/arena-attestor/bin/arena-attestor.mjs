@@ -49,7 +49,11 @@ const sample = async () => {
 const roundsOfGame = async () => {
   for (const seat of SEATS) {
     try {
-      const r = await fetch(`${seat}/rounds`, { signal: AbortSignal.timeout(8000) });
+      // THE NEXT 16 OF EACH SERIES, NOT EVERY ROUND (kanban #350, the owner 2026-10-12 "Bring down test-host CPU usage back to 12"):
+      // the full listing every 5 s made a seat sign all its ~2,400 rows each 45 s window - 4,800 signatures a window, its
+      // listing-sign worker at ~42 % (measured 16:02Z on seat 3). A market's rounds whose window ended within the hour are a
+      // handful, kept in the listing's closed tally.
+      const r = await fetch(`${seat}/rounds?next=16`, { signal: AbortSignal.timeout(8000) });
       if (!r.ok) continue;
       const j = await r.json();
       const rows = Array.isArray(j) ? j : j.rounds || [];
