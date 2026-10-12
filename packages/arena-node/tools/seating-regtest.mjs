@@ -209,6 +209,42 @@ const readCerts = async (rid, c, drawn, live) => {
 };
 const all = [...Array(9).keys()];
 
+// ======== G: AT GRID DENSITY (kanban #345) - GRID=1 runs only this: GRID_ROUNDS rounds, two per GRID_SLOT_MS slot as the
+// RPS grid posts them (one census, one committee time), posted at once; at each round's start every seat is asked for both
+// roles' certificates. Measured on testnet4 2026-10-11: 349 game seatings signed and 35 certificates built at seat 3.
+if (env.GRID) {
+  const N = Number(env.GRID_ROUNDS || 30), SLOT = BigInt(env.GRID_SLOT_MS || 8000);
+  const committee = BigInt(Date.now()) + 20000n;
+  const first = committee + BigInt(env.GRID_FIRST_MS || 320000);
+  const rounds = [];
+  for (let k = 0; k < N; k++) {
+    const start = first + BigInt(Math.floor(k / 2)) * SLOT;
+    const c = decodeRoundContract(encodeRoundContract({ ...base, committeeTimeMs: committee, startTimeMs: start, entryCloseMs: start, publicationRelays: [`wss://r.example/G${k}`] }));
+    rounds.push({ k, c, rid: roundId(c) });
+  }
+  const t0 = Date.now();
+  for (const r of rounds) r.posted = await postRound(r.c);
+  say({ case: 'G', step: 'posted', rounds: N, slotMs: Number(SLOT), postSeconds: Math.round((Date.now() - t0) / 1000), firstStart: new Date(Number(first)).toISOString(),
+    seatingCloseOfFirst: new Date(Number(seatingCloseMs(rounds[0].c))).toISOString(), refused: rounds.filter((r) => r.posted.some((x) => !x.startsWith('2'))).length });
+  const at = async (r) => {
+    const per = [];
+    for (const i of all) per.push((await certOf(i, r.rid, 'game')) && (await certOf(i, r.rid, 'settlement')) ? 1 : 0);
+    return per.reduce((a, b) => a + b, 0);
+  };
+  const rows = [];
+  for (const r of rounds) {
+    const left = Number(r.c.startTimeMs) - Date.now(); if (left > 0) await wait(left);
+    r.atStart = await at(r);
+    rows.push(r);
+  }
+  await wait(30000);
+  for (const r of rounds) r.after30 = await at(r);
+  const full = (x) => x === 9;
+  say({ case: 'G', step: 'certificates', perRound: rounds.map((r) => `${r.k}:${r.atStart}/${r.after30}`).join(' '),
+    fullAtStart: rounds.filter((r) => full(r.atStart)).length, fullAfter30s: rounds.filter((r) => full(r.after30)).length, of: N });
+  for (let i = 0; i < 9; i++) await stopSeat(i); bitcoind.kill(); process.exit(0);
+}
+
 // ======== A: all nine up
 const cA = newRound('A'); const ridA = roundId(cA);
 say({ case: 'A', step: 'round', id: toHex(ridA).slice(0, 16), posted: await postRound(cA), seatingClose: new Date(Number(seatingCloseMs(cA))).toISOString() });
