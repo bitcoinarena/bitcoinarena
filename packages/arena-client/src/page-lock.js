@@ -237,6 +237,20 @@ function paysIntoALock(round, invite, LockClient) {
 const openWallets = new WeakMap();
 export async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
+  return openPlayerWallet({ federationId: round.federationId, invite, seed, LockClient, storage, onStep, openWaitMs, joinWaitMs, ancestor });
+}
+
+/**
+ * THE SAME PLAYER WALLET, OPENED FROM ITS FEDERATION ALONE (kanban #350, the owner 2026-10-12: the cold first deposit waited
+ * 41.5 s - the join of the federation began at the Deposit tap). The page opens it before any round is listed, from the
+ * invite daily.json names; it is kept under the same key a round's playerWallet asks for, so the deposit and the join find
+ * it open. `federationId` is its 32 bytes.
+ */
+export async function openPlayerWallet({ federationId, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a player wallet is opened for a 32-byte federation id');
+  if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
+  if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
+  const round = { federationId };
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one (kanban #209)
   const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;

@@ -1033,7 +1033,10 @@
   const unityStartSettled = () => new Promise((ok) => {
     const ready = () => (window.unityInstance && Date.now() - (window.ARENA_UNITY_UP_AT || 0) > 3000)
       || (window.BLWP_JOIN && window.BLWP_JOIN.state === 'joining') || /(^|[?&])round=/.test(location.search)
-      || performance.now() > 60000;
+      || performance.now() > 60000
+      // NO UNITY TO WAIT FOR (kanban #350): a game with its own client - Rock Paper Scissors, a market - never starts Unity, so
+      // its wallet waited the whole 60 s before the federation join could even begin (the cold first deposit's 41.5 s)
+      || window.ARENA_UNITY === false || (window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock');
     (function look() { if (ready()) ok(); else setTimeout(look, 250); })();
   });
   window.BLWP_LOCK_WASM = () => (window.__blwpLockWasm = window.__blwpLockWasm || unityStartSettled().then(() => import('./blwp_lock_client.js'))
@@ -5266,6 +5269,25 @@
       const testnet = await testnetLobby(named);
       // THE LOBBY WHOSE FEDERATION HOLDS THE PLAYER'S FUNDS, for the Settings history (the testnet one when there is one)
       window.BLWP_LEDGER_LOBBY = testnet ? testnet.named : named;
+      // THE PLAYER WALLET OPENS BEFORE ANY ROUND IS LISTED (kanban #350, the owner 2026-10-12: the cold first deposit waited 41.5 s,
+      // the federation join starting at the Deposit tap): from the invite daily.json names, as soon as this tab has a seed (the
+      // start screen first, #339), so the join runs while the games and their rounds load. Kept under the key a round's
+      // playerWallet asks (page-lock.js openPlayerWallet): the deposit, the warm-up and the join find it open.
+      (function openWalletEarly(lobby) {
+        if (window.BLWP_WALLET_EARLY || !lobby || !lobby.federation || !BLWPCLIENT.openPlayerWallet) return;
+        const seed = walletSeed();
+        if (!seed) { setTimeout(() => openWalletEarly(lobby), 1000); return; }
+        const t0 = Date.now();
+        window.BLWP_WALLET_EARLY = (async () => {
+          const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+          const federationId = BLWPCLIENT.fromHex(String(wasm.LockClient.federationIdOf(lobby.federation)));
+          const client = await BLWPCLIENT.openPlayerWallet({ federationId, invite: lobby.federation, seed, LockClient: wasm.LockClient, storage: vault(),
+            onStep: (step) => console.log('[blwp] player wallet (early): ' + step + ', ' + (Date.now() - t0) + ' ms') });
+          window.BLWP_WALLET_EARLY_MS = Date.now() - t0;
+          console.log('[blwp] player wallet open before any round, ' + (Date.now() - t0) + ' ms');
+          return client;
+        })().catch((e) => { console.log('[blwp] the early player wallet did not open: ' + (e && e.message ? e.message : e)); window.BLWP_WALLET_EARLY = null; });
+      })(window.BLWP_LEDGER_LOBBY);
       window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
