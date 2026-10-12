@@ -147,7 +147,9 @@ console.log(round.lobbyUrl);
 // THE NEXT ONE-OFF 4 h BEFORE THE CURRENT ENTRY CLOSES (the owner 2026-09-30: "4 h is the lead"): a round is published first
 // and joinable only once its beacon is 6 deep - measured 1.5-3 h on testnet4 - so opening it 60 s before the close left a
 // 1.5-3 h gap every 6 h with no paid round to join.
-round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
+// PAID_KEEP=0 (kanban #325, the regtest succession): no next round - with a short ARENA_ENTRY_WINDOW_MS every round closes
+// within the 4 h lead, and the keeper opened one every 10 s (87 in run 13), mining the regtest chain past its federation
+if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
 }
 // PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
