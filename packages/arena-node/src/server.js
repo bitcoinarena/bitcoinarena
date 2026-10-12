@@ -52,7 +52,7 @@ import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
-import { createAbsences, readAbsenceHex } from './absences.js';
+import { createAbsences, readAbsenceHex, readDepartureHex } from './absences.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -2628,6 +2628,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
     absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
+    departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
     closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
@@ -5215,7 +5216,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (rv !== null && !/^[0-9]{1,16}$/.test(rv)) return text(res, 400, 'a reserve, whole satoshi');
         // `absent` (kanban #322): the absence attestations that prove a named peer ABANDONED, each encoding + signature in hex
         const absentHex = String(url.searchParams.get('absent') || '').split(',').filter(Boolean);
-        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex) : await fedRecords.mySignature(fid, atHeight, rv);
+        const departedHex = String(url.searchParams.get('departed') || '').split(',').filter(Boolean);
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex) : await fedRecords.mySignature(fid, atHeight, rv);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }
@@ -5231,7 +5233,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/absences') {
         const fid = String(url.searchParams.get('federation') || '').toLowerCase();
-        return json(res, 200, { node: toHex(round.pubkey), absences: absences.list(/^[0-9a-f]{64}$/.test(fid) ? fid : null) });
+        return json(res, 200, { node: toHex(round.pubkey), absences: absences.list(/^[0-9a-f]{64}$/.test(fid) ? fid : null), departures: absences.listDepartures(/^[0-9a-f]{64}$/.test(fid) ? fid : null) });
+      }
+      if (req.method === 'POST' && url.pathname === '/departure') {
+        let d; try { d = readDepartureHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a departure notice, its encoding and signature in hex: ${e.message}`); }
+        const r = absences.offerDeparture(d);
+        return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
       }
       // A CERTIFICATE HANDED OVER (§5A.7: "a node that sees two certificates for one round publishes both"): kept if it
       // stands against this node's draw; one that differs from the one held is the proof of equivocation

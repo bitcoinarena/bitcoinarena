@@ -45,6 +45,13 @@ export function encodeDeparture(d) {
   w.bytes32(d.federationId); w.bytes(d.peerKey, 33); w.u32(d.leaveAfterHeight); w.u32(d.postedAt); w.bytes32(d.nodePubkey);
   return w.finish();
 }
+export function decodeDeparture(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DEPARTURE_NOTICE) throw new Error('not a departure notice');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const d = { federationId: r.bytes32(), peerKey: r.bytes(33), leaveAfterHeight: r.u32(), postedAt: r.u32(), nodePubkey: r.bytes32() };
+  r.end(); encodeDeparture(d); return d;
+}
 export const departureId = (d) => taggedHash(TAG.departureNotice, encodeDeparture(d));
 export const signDeparture = (d, sign) => ({ ...d, signature: sign(departureId(d)) });
 
