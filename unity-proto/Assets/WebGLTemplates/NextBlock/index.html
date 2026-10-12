@@ -674,6 +674,9 @@
         <div class="muted" id="blwp-wd-chosen"></div>
         <button id="blwp-wd-go" type="button">Withdraw</button>
       </div>
+      <!-- ALL FEDERATIONS AT A GLANCE (kanban #347, the owner 2026-10-12: on the deposit part of Settings, inline): funds held,
+           how many, health before deposits stop (green / yellow / red, its meaning in the tooltip) and possible capacity -->
+      <div id="arena-custody" style="margin:8px 0 10px;padding:9px 11px;border:1px solid #2a3442;border-radius:10px;background:#11161d;font-size:13px;line-height:1.5"></div>
       <div id="blwp-money-actions">
         <button id="blwp-deposit-go" type="button">Deposit</button>
         <button id="blwp-withdraw-lobby" type="button">Withdraw</button>
@@ -2100,6 +2103,7 @@
             const fs = all.get(fedHex) || { status: 'unverified', allows: BLWPCLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load (kanban #324)
+            if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();   // and Settings' custody summary (kanban #347)
             window.ARENA_FED_MOVE = BLWPCLIENT.moveOffer ? BLWPCLIENT.moveOffer(window.ARENA_FED_STATUS, [...all.values()]) : null;
             if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
             console.log(`[arena] federation ${fedHex.slice(0, 16)}: ${fs.status}${fs.signers ? ` (${fs.signers} of ${fs.nominal} guardians signed, height ${fs.height})` : ''}${fs.why ? ' - ' + fs.why : ''}`);
@@ -3599,23 +3603,6 @@
       const close = add('button', 'dep-close', '\u2715');
       close.type = 'button'; close.title = 'Close';
       const titleEl = add('div', 'dep-title', message || title);
-      // ALL FEDERATIONS AT A GLANCE (kanban #347, the owner 2026-10-12): funds held, how many, the health before deposits stop
-      // (green / yellow / red, the meaning in its tooltip) and the possible capacity - from the verified statuses this page
-      // read (window.ARENA_FED_LOADS), else the round's own federation
-      if (BLWPCLIENT.custodySummary) {
-        const known = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : (window.ARENA_FED_STATUS ? [window.ARENA_FED_STATUS] : []);
-        const sum = BLWPCLIENT.custodySummary(known, { networkTest: known.some((f) => typeof f.load === 'number' && f.load >= 1 && f.loadRefusesDeposit === false) });
-        const said = BLWPCLIENT.custodySays(sum);
-        const box = add('div', 'dep-custody');
-        const dot = document.createElement('span'); dot.className = 'dep-custody-dot';
-        const color = { green: '#3fb950', yellow: '#d29922', red: '#f85149' }[said.band] || '#8b949e';
-        dot.style.cssText = `display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;background:${color}`;
-        const words = document.createElement('span'); words.textContent = said.line;
-        box.append(dot, words);
-        box.title = said.tip; box.dataset.band = said.band;
-        box.style.cssText = 'font-size:12.5px;color:#c9d1d9;margin:2px 0 6px;cursor:help';
-        window.ARENA_CUSTODY_SHOWN = { ...sum, line: said.line, band: said.band };
-      }
       const tabs = add('div', 'dep-tabs');
       // CUSTOM: typed, read with parseInt as it is typed, the invoice made a moment after the last key - no Set button.
       // The row keeps its place when hidden (visibility), so choosing Custom moves nothing.
@@ -3999,7 +3986,38 @@
     // SETTINGS: three things and a Close, and the phrase is only shown when asked for.
     const settingsPanel = () => document.getElementById('blwp-settings');
     // THE GEAR'S CLICK IS TAKEN BY THE EARLY SCRIPT UNDER THE PANEL (kanban #200), which opens it and calls this to fill it
-    window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
+    // THE CUSTODY SUMMARY IN SETTINGS (kanban #347): from the verified statuses this page read (window.ARENA_FED_LOADS), else
+    // the round's own federation; every value on its own line, the band's meaning in the health line's tooltip
+    const paintCustody = () => {
+      const el = document.getElementById('arena-custody');
+      if (!el || !BLWPCLIENT.custodySummary) return;
+      const known = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : (window.ARENA_FED_STATUS ? [window.ARENA_FED_STATUS] : []);
+      const sum = BLWPCLIENT.custodySummary(known, { networkTest: known.some((f) => typeof f.load === 'number' && f.load >= 1 && f.loadRefusesDeposit === false) });
+      const said = BLWPCLIENT.custodySays(sum);
+      const sat = (x) => `${Number(BigInt(x)).toLocaleString('en-US')} sat`;
+      const color = { green: '#3fb950', yellow: '#d29922', red: '#f85149' }[said.band] || '#8b949e';
+      // COLOURFUL SO IT IS READ (the owner 2026-10-12): the card tinted by its band, each value in its own colour, the health a pill
+      const tint = { green: 'rgba(63,185,80,.12)', yellow: 'rgba(210,153,34,.14)', red: 'rgba(248,81,73,.14)' }[said.band] || 'rgba(139,148,158,.1)';
+      el.style.borderColor = color; el.style.background = `linear-gradient(135deg, ${tint}, #11161d 70%)`;
+      el.textContent = '';
+      const head = document.createElement('div'); head.style.cssText = 'font-weight:700;font-size:14px;color:#f7931a;margin-bottom:4px';
+      head.textContent = '🏦 Federations'; el.appendChild(head);
+      const row = (k, v, tip, c) => { const d = document.createElement('div'); d.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:1px 0';
+        const a = document.createElement('span'); a.textContent = k; a.style.color = '#a9b3c1'; const b = document.createElement('b'); b.textContent = v; b.style.cssText = `font-weight:700;color:${c || '#e6edf5'}`;
+        d.append(a, b); if (tip) { d.title = tip; d.style.cursor = 'help'; } el.appendChild(d); return b; };
+      if (!sum.federations) { row('Federations', 'none verified yet', '', '#8b949e'); window.ARENA_CUSTODY_SHOWN = sum; return; }
+      row('Federations', String(sum.federations), '', '#58a6ff');
+      row('Funds held in all federations', sat(sum.reserveSats), '', '#f7931a');
+      row('Possible capacity', sat(sum.capSats), '', '#58a6ff');
+      row('Free before deposits stop', sat(sum.freeSats), '', Number(BigInt(sum.freeSats)) > 0 ? '#3fb950' : '#f85149');
+      const h = row('Health', sum.load === null ? '-' : `${Math.round(sum.load * 100)} %${sum.networkTest ? ' · test network' : ''}`, said.tip, '#0d1117');
+      h.style.cssText = `font-weight:700;color:#0d1117;background:${color};border-radius:999px;padding:1px 10px`;
+      h.title = said.tip;
+      el.dataset.band = said.band; el.title = said.tip;
+      window.ARENA_CUSTODY_SHOWN = { ...sum, band: said.band };
+    };
+    window.ARENA_PAINT_CUSTODY = paintCustody;
+    window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); paintCustody(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
     // THE OTHER WALLETS THIS BROWSER KEEPS (the owner 2026-10-02: "now fix the balances" - his 402 sat sat in another kept
     // phrase's wallet while this tab showed 0; seven phrases in one browser, three of them holding sats). Every kept phrase
     // with a wallet here, other than this tab's, is opened read-only (20 s each at most), its balance shown, and offered:
