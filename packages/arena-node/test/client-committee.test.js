@@ -176,6 +176,19 @@ test('a withheld, added or altered entry is another root, and the round is refus
   assert.match(otherRoot.why, /this round names 0707070707070707/);
 });
 
+// SUPPORTED PROTOCOL VERSIONS (§27A.5, kanban #331): a node is counted for a round only if its bond's advertisement lists the
+// round's protocol version - on the client's own check as on the seat's (census.js). The same evidence for a round that runs
+// another version names nobody: every entry refused by name, so the census root is not the round's
+test('an advertisement that does not list the round\'s protocol version is not counted', () => {
+  const { view, ev, contract } = setup();
+  const at = { contract, headers: headersOf(view), firstHeight: view.firstHeight, bond: bondSetFor('regtest'), verify };
+  assert.equal(censusFromEvidence(ev.entries, at).ok, true, 'the version the adverts list: every node counted');
+  const other = censusFromEvidence(ev.entries, { ...at, contract: { ...contract, protocolVersion: contract.protocolVersion + 1 } });
+  assert.equal(other.ok, false);
+  assert.equal(other.refused.length, ev.entries.length);
+  assert.ok(other.refused.every((r) => /does not speak this round's version/.test(r.why)), other.refused[0] && other.refused[0].why);
+});
+
 test('headers that end before the beacon is deep enough name no committee', () => {
   const { rid, view, ev, contract } = setup();
   const named = beaconFromChain(contract, { headers: headersOf(view), firstHeight: view.firstHeight });
