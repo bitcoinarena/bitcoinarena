@@ -189,6 +189,8 @@ out += '         findLock: findLock, refundStake: refundStake, forfeitOf: forfei
 // AND THE WINNER'S PAYOUT (6d, W4): the signer nodes' accepted settlement, the payout
 // contract to this seed's key spent into the tab's wallet, and its line.
 out += '         settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,\n';
+// A SLASH'S PAYOUT (kanban #307): listed by the arbitration service, collected into the player wallet
+out += '         redeemSlashPayout: redeemSlashPayout, collectSlashPayout: collectSlashPayout, slashPayoutMine: slashPayoutMine, slashPayoutKept: slashPayoutKept,\n';
 // AND THE PLAYER'S OWN STAKE BACK BY THE SIGNER NODES' FORFEIT, after the window, and its line.
 out += '         returnStake: returnStake, stakeBackLine: stakeBackLine,\n';
 // AND WHAT THE TAB STILL HAS TO COLLECT, kept per round, so a reload collects too.
