@@ -110,7 +110,10 @@ const guardianOf = ports.map((_, i) => {
 });
 
 const [pa, pb, pc, ...more] = ports;
-const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, portC: pc, extraPorts: more,
+// THE NODES' OWN ADDRESS (kanban #348): attached to nodes that listen on ARENA_BIND - federation B's seven on the test host bind
+// its tailnet address - the runner reached for 127.0.0.1 and failed at once (ECONNREFUSED 127.0.0.1:6221, 13:20:45Z)
+const NODE_HOST = env.ARENA_BIND || '127.0.0.1';
+const round = await standUpRound({ host: NODE_HOST, portA: pa, portB: pb, portC: pc, extraPorts: more,
   store: join(home, 'paid'), storePaths, network, wallet, cli, rpc,
   stakeMsat, federationId: fed.federationId, invite, guardianOf,
   // THE ENTRY WINDOW OUTLASTS THE BEACON: on testnet4 committee_time is passed by somebody else's blocks, about an
@@ -173,7 +176,7 @@ if (env.PAID_RPS_GRID === '1') {
   const look = async () => {
     if (busy) return;
     let wantAt = 0;
-    try { wantAt = (await (await fetch(`http://127.0.0.1:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
+    try { wantAt = (await (await fetch(`http://${NODE_HOST}:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
     if (now1) { wantAt = Date.now(); now1 = false; }
     if (Date.now() - wantAt > 180000 || lastCloseMs > Date.now() + aheadMs) return;
     busy = true;
@@ -210,7 +213,7 @@ if (env.PAID_RPS_GRID === '1') {
         .map((inv) => { try { return String(readInvite(inv).federationId); } catch { return null; } }).filter(Boolean)];
       let fedPick = { federationId: own, load: null, why: 'the seats\' federation records were not read: its own' };
       try {
-        const fl = await (await fetch(`http://127.0.0.1:${pa}/federations`, { signal: AbortSignal.timeout(15000) })).json();
+        const fl = await (await fetch(`http://${NODE_HOST}:${pa}/federations`, { signal: AbortSignal.timeout(15000) })).json();
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own, said above */ }
       say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
@@ -230,7 +233,7 @@ if (env.PAID_RPS_GRID === '1') {
 if (env.PAID_RPS === '1')
   keepBackToBack(round, { fields: RPS_ROUND_FIELDS,
     tables: (() => { const count = tableCounter({ min: Number(env.RPS_MIN_TABLES || 3), spare: 1, gameId: toHex(ROCK_PAPER_SCISSORS.gameId) });
-      return async () => { try { const d = await (await fetch(`http://127.0.0.1:${pa}/rounds`)).json(); return count(d.rounds || [], Date.now()); } catch { return 3; } }; })(),
+      return async () => { try { const d = await (await fetch(`http://${NODE_HOST}:${pa}/rounds`)).json(); return count(d.rounds || [], Date.now()); } catch { return 3; } }; })(),
     onOpen: ({ id, entryCloseMs, tookMs }) => say({ rps: id, entryClose: new Date(Number(entryCloseMs)).toISOString(), stakeMsat: String(stakeMsat), tookMs }),
     onError: (e) => say({ rpsNotOpened: e.message }) });
 const stop = async () => { say({ stopping: true }); await round.close(); process.exit(0); };
