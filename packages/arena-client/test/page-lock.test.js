@@ -23,7 +23,7 @@ import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
 import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
-  refundStake, redeemStake, redeemPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
+  refundStake, redeemStake, redeemPayout, redeemSlashPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
@@ -1943,4 +1943,39 @@ test('an order the book never filled comes back whole (kanban #336): its stake l
   calls.length = 0;
   await redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake, storage: tab, nodes: ['http://a.test'], fetcher: seats(409), order });
   assert.deepEqual(calls.map((c) => String(c.amount)), ['54450'], 'a filled order\'s fee is the seats\': only the stake is redeemed');
+});
+
+// A SLASH'S PAYOUT (kanban #307, §5A.3B): the arbitration service lists the share it locked to the wronged player's refund
+// key; the player's page collects it by Refund under that key, as a settlement payout; another seed finds none
+test('a wronged player\'s page collects its slash payout from the arbitration service\'s list - by Refund under its key - and another seed\'s asks the wallet nothing', async () => {
+  const wronged = playerFor({ ...round, id: rid }, { seed, curve: pageCurve });
+  const key = toHex(refundKeyOf(wronged.pubkey));
+  const listed = { network: 'regtest', payouts: [
+    { round: toHex(rid), entry: 'e1'.repeat(32), refundPk: '02' + 'bb'.repeat(32), msat: '40000000', txid: '71'.repeat(32), outIdx: 1, contractId: 'c2'.repeat(32) },
+    { round: toHex(rid), entry: 'e0'.repeat(32), refundPk: key, msat: '60000000', txid: '71'.repeat(32), outIdx: 0, contractId: 'c1'.repeat(32) },
+  ] };
+  const urls = [];
+  const arbiterAt = async (url) => { urls.push(url); return { ok: true, status: 200, json: async () => listed }; };
+  const asked = [];
+  class Wallet {
+    static async join(invite, federationId, secret) { asked.push({ join: { invite, federationId } }); return new Wallet(); }
+    async refund(txid, outIdx, fields, secret) {
+      asked.push({ refund: { txid, outIdx, fields: JSON.parse(fields), secret } });
+      return JSON.stringify({ accepted: true, balance_before: 0, balance_after: 59999744, amount_msat: 60000000 });
+    }
+  }
+  const tab = new Map(); const storage = { getItem: (k) => tab.get(k) ?? null, setItem: (k, v) => tab.set(k, v), removeItem: (k) => tab.delete(k), get length() { return tab.size; }, key: (i) => [...tab.keys()][i] };
+  const got = await redeemSlashPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, storage, arbiter: 'https://arbiter.example/', fetcher: arbiterAt });
+  assert.equal(got.ok, true, got.why);
+  assert.deepEqual(urls, [`https://arbiter.example/slash-payouts?round=${toHex(rid)}`]);
+  assert.deepEqual(asked.find((a) => a.refund).refund, { txid: '71'.repeat(32), outIdx: 0, secret: toHex(wronged.secret),
+    fields: { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: '60000000', claimPk: key, refundPk: key, expiration: 0 } });
+  // A RELOAD answers from the tab's note, and asks nobody
+  asked.length = 0; urls.length = 0;
+  const again = await redeemSlashPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, storage, arbiter: 'https://arbiter.example', fetcher: arbiterAt });
+  assert.deepEqual([again.ok, again.kept, String(again.amountMsat), asked.length, urls.length], [true, true, '60000000', 0, 0]);
+  // ANOTHER SEED: nothing names its key, final, and the wallet is not asked
+  const other = await redeemSlashPayout({ round, roundId: rid, invite: INVITE, seed: b32(0x53), curve: pageCurve, LockClient: Wallet, arbiter: 'https://arbiter.example', fetcher: arbiterAt });
+  assert.deepEqual([other.ok, other.final, asked.length], [false, true, 0]);
+  assert.match(other.why, /no slash payout of this round names this seed's key/);
 });
