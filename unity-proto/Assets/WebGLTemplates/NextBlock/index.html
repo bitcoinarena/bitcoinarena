@@ -3447,7 +3447,8 @@
       // nothing at all - said by name, from the record this page checked (BLWPCLIENT.federationStatus)
       const fed = window.ARENA_FED_STATUS;
       if (fed && fed.allows && !fed.allows[which === 'withdraw' ? 'withdraw' : which === 'move' ? 'move' : 'deposit']) {
-        const why = BLWPCLIENT.federationSays(fed.status); say(why); return Promise.resolve({ ok: false, why });
+        // the status says why, or - an OPEN federation over its cover on mainnet (§23A.3, ruled A) - its load does
+        const why = BLWPCLIENT.federationSays(fed.status) || (BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : ''); say(why); return Promise.resolve({ ok: false, why });
       }
       if (which === 'withdraw') {
         // the withdraw panel is Settings' own: opened over whatever asked (a game's client too), painted once
