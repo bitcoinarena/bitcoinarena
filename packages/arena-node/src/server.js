@@ -27,6 +27,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
+import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -160,7 +161,7 @@ const read = (req) => new Promise((resolve, reject) => {
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  'access-control-allow-headers': 'content-type, authorization',
   // The headers a client actually reads answers out of. Without this a page
   // sees the body and none of the counts.
   'access-control-expose-headers':
@@ -277,6 +278,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OWNER (kanban #276, owner.js): `{ store }` - where the owner's public key and the claim code are kept
   // (files beside the database, from main.js). Without it the node has no owner area and /owner answers 404.
   owner: ownerFiles = null,
+  // THE OPERATOR UI (§27A.7.7, kanban #332): { store, writePairing, endpoint } - scoped bearer tokens, none of which moves money
+  operator: operatorFiles = null,
   // WHERE THE PLUGIN STORE KEEPS INSTALLED GAMES (kanban #276 step 5; main.js: <db>.plugins), loaded at start; installed
   // networks are kept in its networks/ directory
   pluginsDir = null,
@@ -505,6 +508,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     relayMarks(relays, [stored, offered])
       .then((r) => console.log(`[equivocation] ${toHex(entryId).slice(0, 16)} tick ${tick}: both marks relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
   };
+  const operatorTokens = operatorFiles ? createOperatorTokens({ store: operatorFiles.store, log: (l) => console.log(l) }) : null;
+  if (operatorTokens) { const t = operatorTokens.first(operatorFiles.endpoint); if (t && operatorFiles.writePairing) operatorFiles.writePairing(t.uri); }
   const owner = ownerFiles ? createOwner({ store: ownerFiles.store, node: toHex(round.pubkey), log: (l) => console.log(l),
     verify: (sig, msg, key) => schnorr.verify(sig, msg, key) }) : null;
   if (roundClock) round.now = roundClock;
@@ -3038,6 +3043,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8', 'cache-control': 'no-store' });
         return res.end(readFileSync(new URL('../pages/owner-client.js', import.meta.url)));
       }
+      // THE OPERATOR UI'S DOORS (§27A.7.7, kanban #332): a scoped bearer token, paired through the node's blwp-operator: URI
+      if (url.pathname.startsWith('/operator/')) {
+        if (!operatorTokens) return text(res, 404, 'this node runs without operator tokens');
+        const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        const scope = url.pathname === '/operator/status' ? 'read' : url.pathname === '/operator/vote' ? 'vote' : url.pathname === '/operator/config' ? 'config' : null;
+        if (!scope) return answer(404, { ok: false, why: 'no such operator door (status, vote, config)' });
+        const a = operatorTokens.check(req.headers.authorization, scope);
+        if (!a.ok) return answer(a.status, a);
+        if (scope === 'read') {
+          let held = null; try { held = round.db.prepare('SELECT COUNT(*) AS n FROM rounds').get().n; } catch { held = null; }
+          return answer(200, { ok: true, node: toHex(round.pubkey), owner: owner ? owner.state() : null, roundsHeld: held,
+            federations: fedRecords && fedRecords.list ? fedRecords.list().map((f) => ({ federation: f.federation, status: f.status, load: f.load ?? null })) : [] });
+        }
+        // NOT BUILT YET, SAID BY NAME: the ballot (§27A.7.2-4, kanban #329) a vote is cast in, and the declarations (§27A.2)
+        return answer(501, { ok: false, scope, why: scope === 'vote'
+          ? 'there is no ballot to vote in yet (spec 27A.7.2-27A.7.4, kanban #329); until it is built a rule change is made by the network authority (27A.7.8)'
+          : 'the declarations a config token edits (spec 27A.2 medians, delivery addresses) are not built yet' });
+      }
       if (url.pathname === '/owner' || url.pathname.startsWith('/owner/')) {
         if (!owner) return text(res, 404, 'this node runs without an owner area');
         const answer = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
@@ -3100,6 +3123,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let body;
         try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return answer(400, { ok: false, why: 'an owner request is JSON' }); }
         if (url.pathname === '/owner/claim') { const r = owner.claim(body); return answer(r.ok ? 200 : r.status, r); }
+        // THE OPERATOR UI'S TOKENS (§27A.7.7, kanban #332): minted, listed and revoked by the owner's signature only
+        if (url.pathname === '/owner/operator/mint' || url.pathname === '/owner/operator/revoke' || url.pathname === '/owner/operator/list') {
+          if (!operatorTokens) return answer(404, { ok: false, why: 'this node runs without operator tokens' });
+          const action = 'operator-' + url.pathname.split('/').pop();
+          const a = owner.authorize(body, action);
+          if (!a.ok) return answer(a.status, a);
+          const args = body.args || {};
+          if (action === 'operator-list') return answer(200, { ok: true, tokens: operatorTokens.list() });
+          if (action === 'operator-revoke') { const r = operatorTokens.revoke(String(args.id || '')); return answer(r.ok ? 200 : r.status, r); }
+          try { const t = operatorTokens.mint(args.scopes); return answer(200, { ok: true, id: t.id, scopes: t.scopes, uri: operatorUri({ endpoint: operatorFiles.endpoint, token: t.token }) }); }
+          catch (e) { return answer(400, { ok: false, why: e.message }); }
+        }
         // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
         if (url.pathname === '/owner/leave') { const r = owner.leave(body); return answer(r.ok ? 200 : r.status, r); }
         // INSTALL, UPDATE, REMOVE (kanban #276 step 5, the owner 2026-10-10: like an App Store, from the browser, no restart): each

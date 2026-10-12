@@ -118,7 +118,17 @@ const ownerFiles = { store: {
   write: (o) => writeFileSync(`${path}.owner.json`, JSON.stringify(o) + '\n', { mode: 0o600 }),
   writeCode: (code) => { if (code) writeFileSync(`${path}.owner-claim`, code + '\n', { mode: 0o600 }); else rmSync(`${path}.owner-claim`, { force: true }); },
 } };
-const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
+// THE OPERATOR UI'S TOKENS (spec §27A.7.7, kanban #332): kept as hashes beside the database; the first-start pairing URI written
+// beside it too, readable by the operator only, as the claim code is. The endpoint is the node's public one (ARENA_WSS_<port>)
+const operatorFiles = {
+  store: {
+    read: () => { try { return JSON.parse(readFileSync(`${path}.operator-tokens.json`, 'utf8')); } catch { return []; } },
+    write: (l) => writeFileSync(`${path}.operator-tokens.json`, JSON.stringify(l) + '\n', { mode: 0o600 }),
+  },
+  writePairing: (uri) => writeFileSync(`${path}.operator-pairing`, uri + '\n', { mode: 0o600 }),
+  endpoint: (process.env[`ARENA_WSS_${port}`] || `http://${host}:${port}`).replace(/^ws(s?):/, 'http$1:'),
+};
+const options = { port, host, funded: fundingFromEnv(process.env), plugins: games, owner: ownerFiles, operator: operatorFiles, pluginsDir, ...(fed.given ? { stakeLocks: fed.stakeLocks } : {}) };
 if (ln.given) options.lightning = ln.lightning;
 if (process.env.ARENA_CLOSE_AT_END === '1') options.closeAtEnd = true;
 // THE COMMITTEE'S PRICE FEED (§11, kanban #311): read BTC/USD every 5 s and lead / sign the attested price samples
