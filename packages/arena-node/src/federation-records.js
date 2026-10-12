@@ -45,6 +45,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   successorOf = () => null, closedOf = () => false, reserveOf = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
+  // THE HALT A LIQUIDATION COUNTS FROM (§23A.5, kanban #323): the lowest-height signed HALTED record of the run of HALTED records
+  // this seat holds - kept with its bytes, so anyone checks it - and forgotten once a newer record is not HALTED (a recovery)
+  const halted = new Map();                  // federation id hex -> { height, bytes }
+  function keep(fid, bytes, v) {
+    const had = kept.get(fid);
+    if (had && had.height > v.record.height) return;
+    kept.set(fid, { bytes, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
+    if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
+    if (v.status !== 'HALTED') halted.delete(fid);
+    else if (!halted.has(fid) || halted.get(fid).height > v.record.height) halted.set(fid, { height: v.record.height, bytes });
+  }
 
   // ROUNDS BY CENSUS HEIGHT, each read once (kanban #321, measured on testnet4 2026-10-12: a seat holds thousands of rounds,
   // and reading them all at every ask held the loop 3-6 s per GET /federation-record)
@@ -174,10 +185,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const signed = joinSignedRecord(finalBytes, signatures);
     const v = verifyFederationRecord(signed, { census: b.census.entries, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, inviteFederationId });
     if (!v.ok) return { ok: false, why: v.why, signatures: signatures.length, of: plain.guardians.length };
-    const fid = toHex(federationId);
-    const had = kept.get(fid);
-    if (!had || had.height <= v.record.height) kept.set(fid, { bytes: signed, record: v.record, status: v.status, height: v.record.height, signers: v.signers, atMs: nowMs() });
-    if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(v.status)) draining.set(fid, v.status); else draining.delete(fid);
+    keep(toHex(federationId), signed, v);
     return { ok: true, status: v.status, signers: v.signers, height: v.record.height, gone: gone.length, of: plain.guardians.length };
   }
 
@@ -204,9 +212,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       } catch { /* the next guardian */ }
     }));
     if (!best) return { ok: false, why, mirrored: false };
-    const had = kept.get(fid);
-    if (!had || had.height <= best.v.record.height) kept.set(fid, { bytes: best.bytes, record: best.v.record, status: best.v.status, height: best.v.record.height, signers: best.v.signers, atMs: nowMs() });
-    if (['DRAINING', 'CRITICAL', 'CLOSED', 'HALTED'].includes(best.v.status)) draining.set(fid, best.v.status); else draining.delete(fid);
+    keep(fid, best.bytes, best.v);
     return { ok: true, mirrored: true, status: best.v.status, signers: best.v.signers, height: best.v.record.height };
   }
 
@@ -252,6 +258,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       // the successor's guardian pool takes this drain's seated guardians (predecessorGuardians), shown with the record
       ...(k.record && k.record.successorId && k.record.successorId.some((x) => x) ? { successor: toHex(k.record.successorId) } : {}) })),
     draining: (fidHex) => draining.get(fidHex) || null,
+    /** The kept record of a federation ({ record, status, height }) and, while it is HALTED, the halt it counts from. */
+    recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height } : null; },
+    haltOf: (fidHex) => halted.get(String(fidHex).toLowerCase()) || null,
+    haltedFederations: () => [...halted.keys()],
     // THE DRAIN IS PAID (§23A.6 step 5, kanban #325): the seated guardians of every federation whose verified record says
     // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody. One that fell to
     // CRITICAL while draining is still drained by its seated guardians, and paid ("until its record is CLOSED"); a HALTED one
