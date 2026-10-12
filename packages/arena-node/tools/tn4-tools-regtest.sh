@@ -240,6 +240,9 @@ if [ -n "${PEGIN_BIN:-}" ]; then
       --claim-pk $PK --refund-pk $PK --expiration 0 --witness refund --signer-secret $1 2>>"$LOG" | grep '"mode":"redeem"' | js 'o=>JSON.stringify({accepted:o.accepted,signerIsRefundPk:o.signer_is_refund_pk,error:o.error})'; }
     OTHER=$([ $i = 1 ] && echo $PS2 || echo $PS1)
     WRONG=$(redeemAs $OTHER); RIGHT=$(redeemAs $SK)
+    # the redeem exits once the guardians accept it; the notes it pays are issued after - waited for here (measured: info
+    # read 0 msat straight after both accepted redeems)
+    HOME=$FORK_HOME timeout 180 $FORK_BIN/fedimint-cli --data-dir $DIRP dev wait-complete >/dev/null 2>&1
     BAL=$(HOME=$FORK_HOME timeout 120 $FORK_BIN/fedimint-cli --data-dir $DIRP info 2>/dev/null | js 'o=>o.total_amount_msat')
     RED="$RED{\"player\":$i,\"msat\":$MSAT,\"otherKey\":$WRONG,\"ownKey\":$RIGHT,\"balanceMsat\":${BAL:-null}},"
   done
