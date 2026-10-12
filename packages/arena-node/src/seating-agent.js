@@ -56,6 +56,11 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     return { roundId: rid, role, drawn: c.drawn.map((e) => e.pubkey), slots: slotsForRole(contract, role), verify };
   };
   const keepCert = (rid, role, bytes) => {
+    // ONE HELD ALREADY, byte for byte, is not checked again (kanban #350, the owner 2026-10-12 "figure out why CPU usage so high and
+    // optimise it": every batch answer repeats a round's certificate, and each was verified - all its signatures - before the
+    // seat looked whether it held exactly these bytes)
+    const held = db.prepare('SELECT cert FROM seat_certs WHERE round_id = ? AND role = ?').get(rid, role);
+    if (held && Buffer.compare(Buffer.from(held.cert), Buffer.from(bytes)) === 0) return { ok: true, kept: false };
     const check = checkFor(rid, role);
     if (!check) return { ok: false, why: 'this node cannot draw that round yet' };
     const v = verifySeating(bytes, check);
@@ -176,8 +181,13 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       // 2. THIS NODE'S SEATING SIGNATURE for each closed round it is seated in, before the reads
       for (const w of work) if (w.closed) signMine(w);
       // 3. ONE READ PER NODE, for every round of this tick it is drawn for
+      // ONLY WHAT THIS NODE STILL LACKS (kanban #350, measured 2026-10-12 21:3x local on seat 3: GET /seating-batch 88 times in 30 s,
+      // 14.3 MB of JSON out - every round of the window asked of every node each tick, its PRESENTs sent back though held - the
+      // seat's largest cost with the garbage it made): a round before its close whose PRESENTs from every drawn node are held
+      // has nothing more to learn until then; after the close it is asked until its certificate stands (the work above)
+      const holds = (w) => !w.closed && db.prepare('SELECT COUNT(*) AS n FROM seat_presents WHERE round_id = ? AND role = ?').get(w.t.rid, w.role).n >= w.drawnKeys.length;
       const asks = new Map();
-      for (const w of work) for (const b of w.others) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex);
+      for (const w of work) { if (holds(w)) continue; for (const b of w.others) (asks.get(b) || asks.set(b, new Set()).get(b)).add(w.ridHex); }
       const answers = new Map();
       await Promise.all([...asks].map(async ([b, set]) => {
         const ids = [...set]; const got = {};
