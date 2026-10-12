@@ -22,3 +22,15 @@ test('an attestation travels as hex, is kept once per peer and attester at its n
   assert.match(h.offer({ ...att(1500), signature: new Uint8Array(64) }).why, /not signed by its attester/);
   assert.throws(() => readAbsenceHex('00'), /64-byte signature/);
 });
+
+test('a departure notice travels as hex and reads back the same; a seat keeps the latest posted per guardian', async () => {
+  const { signDeparture } = await import('../../arena-protocol/src/absence.js');
+  const { departureHex, readDepartureHex } = await import('../src/absences.js');
+  const n = (posted) => signDeparture({ federationId: FED, peerKey: peer, leaveAfterHeight: posted + 18, postedAt: posted, nodePubkey: g.pubkey }, (m) => schnorr.sign(m, g.secret));
+  const one = n(100);
+  assert.deepEqual(readDepartureHex(departureHex(one)), one);
+  const h = createAbsences({ verify });
+  assert.deepEqual([h.offerDeparture(n(100)).kept, h.offerDeparture(n(90)).kept, h.offerDeparture(n(120)).kept], [true, false, true]);
+  assert.equal(h.listDepartures().length, 1);
+  assert.match(h.offerDeparture({ ...n(130), signature: new Uint8Array(64) }).why, /not signed/);
+});
