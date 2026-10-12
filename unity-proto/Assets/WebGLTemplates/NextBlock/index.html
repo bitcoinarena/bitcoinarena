@@ -3114,6 +3114,28 @@
     // the stake as lookOwed reads it: owed back - by forfeit or by refund - when its state is 'owed' (page-lock.js owed())
     const noteStakeBack = (rid, lk) => { const m = lk && lk.stake && lk.stake.state === 'owed' ? BigInt(lk.stake.msat || 0n) : 0n;
       if (m > 0n) stakeBack.set(rid, m); else stakeBack.delete(rid); };
+    // A SLASH'S PAYOUT (kanban #307, spec §5A.3B): the arbitration service lists every share it locked to a wronged player;
+    // one read of its list on load and every 10 min, matched against this browser's kept rounds, and a share naming one of
+    // their keys is collected into the player wallet (Refund under that key, as a settlement payout) and shown in the history
+    async function collectSlashPayouts() {
+      const arbiter = window.ARENA_ARBITER;
+      if (!arbiter || !BLWPCLIENT.collectSlashPayout || !window.BLWP_CURVE) return;
+      let listed; try { const r = await fetch(arbiter.replace(/\/+$/, '') + '/slash-payouts', { cache: 'no-store' }); if (!r.ok) return; listed = await r.json(); } catch { return; }
+      const rounds = new Set((listed.payouts || []).map((p) => p.round));
+      if (!rounds.size) return;
+      for (const r of keptRecords().collectable.filter((x) => rounds.has(x.roundIdHex) && BLWPCLIENT.roundLocks(x.round))) {
+        try {
+          const wasm = await window.BLWP_LOCK_WASM();
+          const ask = roundAsk(r, wasm.LockClient);
+          if (BLWPCLIENT.slashPayoutKept(ask.storage, ask.roundId, ask.order) || !BLWPCLIENT.slashPayoutMine(listed, ask)) continue;
+          const got = await withRecordPhrase(r, () => BLWPCLIENT.collectSlashPayout({ ...ask, arbiter, listed }));
+          if (got === null) continue;   // that phrase is held by another tab of this browser: collected there
+          if (got && got.ok) { console.log('[blwp] slash payout (round ' + r.roundIdHex.slice(0, 8) + '), collected into the player wallet: ' + got.creditedMsat + ' msat'); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); paintHistory(); }
+          else if (got) console.warn('[blwp] slash payout (round ' + r.roundIdHex.slice(0, 8) + '): ' + got.why);
+        } catch (e) { console.warn('[blwp] slash payout (round ' + r.roundIdHex.slice(0, 8) + '): ' + e.message); }
+      }
+    }
+    window.ARENA_COLLECT_SLASH = collectSlashPayouts;
     async function lookThePayout() {
       if (payoutAsking) {
         if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
@@ -3855,12 +3877,13 @@
       if (!rows.length) { rowsEl.textContent = 'No deposits, stakes or withdrawals in this tab yet'; return; }
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
       for (const r of rows) {
-        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund';
+        const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout';
         const el = document.createElement('div');
         el.className = `hist-row ${plus ? 'plus' : 'minus'}` + (r.kind === 'stake' && r.entry ? ' clickable' : '');
         const when = r.atMs ? new Date(r.atMs).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'earlier';
         const what = r.kind === 'deposit' ? 'Deposit' : r.kind === 'winnings' ? `Winnings${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}` : r.kind === 'donation' ? `Donation${r.round ? ' \u00b7 round ' + String(r.round).slice(0, 8) : ''}`
           : r.kind === 'refund' ? `Refund \u00b7 round ${String(r.round || '').slice(0, 8)} \u00b7 stake back`
+          : r.kind === 'slash-payout' ? `Slash payout \u00b7 round ${String(r.round || '').slice(0, 8)}`
           : r.kind === 'withdrawal' ? `Withdrawal${r.state && r.state !== 'Success' ? ' (' + r.state + ')' : ''}`
           : `Stake · round ${String(r.round).slice(0, 8)}${r.entry ? '' : ' · not entered'}`;
         for (const [cls, text] of [['hist-when', when], ['hist-what', what], ['hist-amt', (plus ? '+' : '\u2212') + sat(r.msat)]]) {
@@ -4739,6 +4762,8 @@
         const d = await r.json();
         const search = d && d.testnet ? BLWPCLIENT.dailyLobbySearch(d.testnet) : null;
         if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(window.BLWP_ALT_ROUTES || {}, d.testnet.alt);
+        // THE ARBITRATION SERVICE (kanban #307): where a slash's payouts to wronged players are listed (collectSlashPayouts)
+        if (d && d.testnet && typeof d.testnet.arbiter === 'string' && /^https:\/\//.test(d.testnet.arbiter)) window.ARENA_ARBITER = d.testnet.arbiter;
         const named = search ? BLWPCLIENT.lobbyQuery(search) : null;
         if (!named || (first && named.nodes.join(',') === first.nodes.join(','))) return null;
         return { search, named };
@@ -5019,6 +5044,7 @@
       window.BLWP_LEDGER_LOBBY = testnet ? testnet.named : named;
       window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
+      if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
       // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
