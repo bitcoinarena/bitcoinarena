@@ -4195,6 +4195,9 @@
         window.ARENA_CUSTODY_SHOWN = sum; return;
       }
       row('Federations', String(sum.federations), '', '#58a6ff');
+      // HOW MANY NODES THE NETWORK HAS (kanban #348, the owner 2026-10-12): the bonded nodes of the newest census this page checked
+      { const nc = BLWPCLIENT.newestCheckedCensus ? BLWPCLIENT.newestCheckedCensus() : null;
+        if (nc) row('Nodes in the network', String(nc.nodes), nc.height ? 'bonded nodes in the census at block ' + nc.height : '', '#58a6ff'); }
       row('Funds held in all federations', sat(sum.reserveSats), '', '#f7931a');
       row('Possible capacity', sat(sum.capSats), '', '#58a6ff');
       row('Free before deposits stop', sat(sum.freeSats), '', Number(BigInt(sum.freeSats)) > 0 ? '#3fb950' : '#f85149');
