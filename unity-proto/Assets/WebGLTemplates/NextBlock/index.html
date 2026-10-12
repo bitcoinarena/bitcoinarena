@@ -5020,7 +5020,23 @@
       // 2.5 s AT MOST (the owner 2026-10-02: Join to the round loaded in 2-3 s): a node slower than that is not asked to be waited
       // for - its games are the ones the others name, and with none named the page is nextblock's, as before
       const t0 = Date.now();
-      try { got = await BLWPCLIENT.fetchGames({ nodes, answerMs: 2500 }); } catch (e) { console.warn('[arena] games: ' + e.message); return null; }
+      // ASKED AGAIN, NOT GIVEN UP ON (the owner 2026-10-12 21:35 local, a phone off the tailnet: "The game's nodes are not reachable
+      // right now" for good - the seats were restarting one after another, then answered in 0.2-2.8 s, past the one 2.5 s ask).
+      // A game's site, or a link naming a game, asks again with a longer wait each time for about a minute, saying so; the bare
+      // root asks twice (with no game named, Next Block's page is the fallback, as before).
+      const named0 = new URLSearchParams(location.search.replace(/^\?/, '')).get('game') || window.ARENA_SITE_GAME;
+      const waits = named0 && named0 !== 'nextblock' ? [2500, 4000, 6000, 8000, 8000, 8000, 8000, 8000] : [2500, 5000];
+      for (let i = 0; i < waits.length; i++) {
+        try { got = await BLWPCLIENT.fetchGames({ nodes, answerMs: waits[i] }); } catch (e) { console.warn('[arena] games: ' + e.message); got = null; }
+        if (got && got.games && got.games.length) break;
+        if (i < waits.length - 1) {
+          const st = document.getElementById('stage');
+          if (st) st.textContent = 'Looking for the game\'s nodes \u2026 (try ' + (i + 2) + ' of ' + waits.length + ')';
+          console.log('[arena] no games answered within ' + waits[i] + ' ms - asking again');
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+      if (!got) return null;
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
       window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
       if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));
