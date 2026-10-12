@@ -42,6 +42,7 @@ import { extname, join, normalize } from 'node:path';
 import { openStore, nodeIdentity } from '../src/store.js';
 import { chainBeacon } from '../src/beacon-source.js';
 import { awaitPublishedBeacon } from '../src/publication-wait.js';
+import { fundAtRate } from '../src/fund-at-rate.js';
 import { beaconFromChain, medianTimePast } from '../../arena-protocol/src/beacon.js';
 import { regtest } from './regtest-bond.mjs';
 import { chainOf, publicationOf } from '../../arena-protocol/tools/chainview.js';
@@ -1174,15 +1175,13 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if (toHex(censusRootFor(grid[grid.length - 1])) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
     for (const c of grid) c.censusRoot = root;
     // THE TRANSACTION BY HAND: createrawtransaction takes one `data` output only ("duplicate key: data"), and Bitcoin Core
-    // 30+ relays several. Version 2, no inputs (the wallet funds it), one zero-value OP_RETURN push of 36 bytes per round.
+    // 30+ relays several. One zero-value OP_RETURN push of 36 bytes per round.
     const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
-    const varint = (n) => (n < 0xfd ? Buffer.from([n]) : Buffer.concat([Buffer.from([0xfd]), le(n, 2)]));
     const outs = grid.map((c) => Buffer.concat([le(0, 8), Buffer.from([38, 0x6a, 36]), Buffer.from(publicationPayload(roundId(c)))]));
-    const raw = Buffer.concat([le(2, 4), varint(0), varint(outs.length), ...outs, le(0, 4)]).toString('hex');
-    const paid = (await chainRpc('fundrawtransaction', [raw, { fee_rate: feeRate, replaceable: true }, false])).hex;
-    const signed = (await chainRpc('signrawtransactionwithwallet', [paid])).hex;
+    // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; the owner 2026-10-12
+    // "Mach das deutlich sparsamer"); the wallet signs
+    const { hex: signed, vsize } = await fundAtRate(chainRpc, outs, feeRate);
     const txid = await chainRpc('sendrawtransaction', [signed]);
-    const vsize = Math.ceil(signed.length / 2);
     onPublished({ txid, rounds: grid.length, bytes: vsize, contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
     const got = await awaitPublishedBeacon({ contract: grid[0], txid, rpc: chainRpc, view: async () => (censusView = await viewToTip()),

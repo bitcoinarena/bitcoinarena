@@ -161,6 +161,9 @@ if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id
 if (env.PAID_RPS_GRID === '1') {
   const slots = Number(env.RPS_GRID_SLOTS || 225), tables = Number(env.RPS_GRID_TABLES || 2);
   const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 120 * 60000);
+  // RPS_GRID_FEE_RATE (sat/vB, the owner 2026-10-12 "Mach das deutlich sparsamer"): under the wallet's 1 sat/vB down to the
+  // node's 0.1 - a block without the grid raises it (doubling, to RPS_GRID_MAX_FEE_RATE)
+  const feeRate = Number(env.RPS_GRID_FEE_RATE || 1), maxFeeRate = Number(env.RPS_GRID_MAX_FEE_RATE || 4);
   let lastCloseMs = 0, busy = false, now1 = env.RPS_GRID_NOW === '1';
   const gid = toHex(ROCK_PAPER_SCISSORS.gameId);
   const look = async () => {
@@ -190,7 +193,7 @@ if (env.PAID_RPS_GRID === '1') {
       const donationSetId = idOfDonationSet(forced.recipients);
       say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
       say({ rpsGrid: 'donation set', serial: String(forced.serial), id: toHex(donationSetId).slice(0, 16), censusHeight: round.contract.censusHeight });
-      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId }, stakeMsat }, { slots, tables, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
         rounds: got.rounds, posted: got.posted, lastClose: got.lastCloseMs ? new Date(Number(got.lastCloseMs)).toISOString() : undefined });
