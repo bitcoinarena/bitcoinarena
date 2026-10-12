@@ -46,3 +46,28 @@ test('3 kept phrases, 7 signer nodes: one /settled read per node; a round owed t
   assert.equal(kept.length, 1, 'the round owed to the third phrase is kept under it');
   assert.equal(PL.savedCollects(L, { seed: seeds[0] }).length, 0, 'and not under the tab\'s own');
 });
+
+// NO WALLET YET (kanban #346): behind the start screen collectSeed() is null; the scan waits for the first seed instead of
+// throwing "Cannot read properties of null (reading 'length')", and asks the signer nodes only once there is one
+test('a fresh browser behind the start screen: the scan waits for the wallet, then reads each signer node once', async () => {
+  const seed = new Uint8Array(32).fill(9);
+  const L = store();
+  const nodes = [1, 2, 3].map((k) => `https://n${k}`);
+  const asked = [];
+  globalThis.fetch = async (url) => { asked.push({ url, at: Date.now() }); return url.includes('/settled?') ? { ok: true, json: async () => ({ rounds: [] }) } : { ok: false }; };
+  let reads = 0, minted = 0;
+  const collect = () => { reads += 1; if (reads < 3) return null; if (!minted) minted = Date.now(); return seed; };
+  const BL = { ...PL, findOwedRounds: PL.findOwedRounds, tabSeed: () => seed, toHex, fromHex };
+  const window = { BLWP_CURVE: pageCurve, sessionStorage: null };
+  const errors = []; const was = console.error; console.error = (m) => errors.push(String(m));
+  try {
+    const scan = pageFunction(PAGE, ['BLWPCLIENT', 'vault', 'collectSeed', 'window', 'lookThePayout', 'crypto'], [SCAN], 'return findTheRoundsOwed;')(
+      BL, () => L, collect, window, () => {}, { getRandomValues: (a) => a });
+    const found = await scan({ nodes, federation: 'fed1invite' });
+    assert.deepEqual(found, []);
+  } finally { console.error = was; }
+  assert.deepEqual(errors, [], 'no error at a fresh load');
+  assert.equal(reads, 3, 'the seed read until there is one');
+  assert.equal(asked.filter((a) => a.url.includes('/settled?')).length, 3, 'each signer node read once');
+  assert.ok(asked.every((a) => a.at >= minted), 'no signer node asked before the wallet exists');
+});
