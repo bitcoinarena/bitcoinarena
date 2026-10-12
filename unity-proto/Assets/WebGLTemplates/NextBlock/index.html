@@ -131,6 +131,13 @@
     #arena-fps-bench { display: block; color: #c9d1d9; font-weight: 500; white-space: pre-line; text-align: left; }
     #arena-fps-bench:empty { display: none; }
     body.blwp-clean #arena-fps { display: none; }
+    /* THE BUILD AND THE UI NUMBER, ALWAYS ON SCREEN (the owner 2026-10-12 18:13: "Also always include build number in
+       testnet.bitcoin-arena.io including ui number that is separate"): Unity's build and this page's own number, bottom left,
+       over every layer (a game's own client too), never in the way of a tap */
+    #arena-build { position: fixed; left: calc(env(safe-area-inset-left, 0px) + 6px); bottom: calc(env(safe-area-inset-bottom, 0px) + 4px);
+      z-index: 9991; pointer-events: none; padding: 1px 6px; border-radius: 4px; background: rgba(13,16,20,0.72); color: #8b949e;
+      font: 600 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+    body.blwp-clean #arena-build { display: none; }
     /* a game with its own client (Rock Paper Scissors) shows no frame rate (the owner 2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
     body.arena-own-client #arena-fps { display: none; }
     /* ONE BAR, NOT TWO (kanban #341, the owner 2026-10-11: "split in two: one stretch to 90, then another to 100. It should be
@@ -639,6 +646,7 @@
        Deposit, Withdraw, Move) is in Settings. THE GEAR FROM THE FIRST PAINT (kanban #200: Settings waited 2.6-5.1 s for
        Unity's lobby): shown over the loading screen and Unity's title too, hidden only while a round's own screens are up
        (paintMoney); the backup warning stays over the lobby alone. -->
+  <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
