@@ -799,7 +799,8 @@ export function contractWarnings(c, gameWarnings = null) {
   // float here would change nothing - which is exactly why it is worth not
   // writing: a division on a money-shaped number is a habit, and the next one
   // will be somewhere it matters.
-  if (Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
+  // A ROUND WITH NO RANK CURVE (an attested market, §0A.7a: rank 0 of 0) is not flat - it has none (kanban #316)
+  if (c.rankDenominator > 0 && Math.imul(c.rankNumerator, 100) >= Math.imul(c.rankDenominator, 95))
     out.push('flat_rank_curve');
   // min_score is in the score's unit, 1e-5 points (constants.js SCORE_SCALE): a floor above 100 points is a danger rule
   if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');

@@ -43,6 +43,7 @@ test('a grid series line is taken once per table, funded by its id, written, kep
   const t = gridOf(nodes), line = seriesLineOf(t, encodeRoundContract);
   assert.match(line, / grid period=8000 count=225$/);
   assert.equal(toHex(seriesId(parseSeriesLine(line))), toHex(seriesId(t)), 'the line reads back as the same series');
+  let blind = null;
   const s = await serve(openStore(db), { plugins: HOSTED, port: 0, funded, roundClock: () => NOW, gridSeriesFile: gridFile });
   try {
     const url = `http://127.0.0.1:${s.port}`;
@@ -68,9 +69,23 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     assert.equal((await post('zz')).status, 400);
     // ITS ROUNDS ARE WRITTEN BY THE SERIES WRITER: the derived ids, listed
     await new Promise((r) => setTimeout(r, 300));
-    const listed = new Set((await (await fetch(`${url}/rounds?ahead=${2 * 3600000}`)).json()).rounds.map((r) => r.id));
+    const rows = (await (await fetch(`${url}/rounds?ahead=${2 * 3600000}`)).json()).rounds;
+    const listed = new Set(rows.map((r) => r.id));
     assert.ok(listed.has(toHex(roundId(seriesRound(t, 0)))), 'round 0 listed');
     assert.ok(listed.has(toHex(roundId(seriesRound(t, 224)))), 'round 224 listed');
+    // AND WHAT A PLAYER IS WARNED OF (kanban #316): nothing for these rules; nextblock's own "exposure ignored" for a grid whose
+    // exposure reference is 0 - the game's plugin's word, beside the signed row
+    assert.deepEqual(rows.find((r) => r.id === toHex(roundId(seriesRound(t, 0)))).warnings, []);
+    blind = gridOf(nodes, { exposureReference: 0, committeeTimeMs: START - GRID_SERIES_LEAD_MIN_MS - 7n });
+    named.add(toHex(seriesId(blind)));
+    assert.equal((await post(seriesLineOf(blind, encodeRoundContract))).status, 200);
+    let row2 = null;
+    for (let i = 0; i < 40 && !row2; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      row2 = (await (await fetch(`${url}/rounds?ahead=${2 * 3600000}`)).json()).rounds.find((r) => r.id === toHex(roundId(seriesRound(blind, 0))));
+    }
+    assert.ok(row2, 'the second grid\'s round 0 listed');
+    assert.deepEqual(row2.warnings, ['exposure_ignored']);
     // AND A POSTED ROUND OF IT PASSES THE SERIES CHECK AS DERIVED (this seat reaches no federation, so a paying round stops
     // there - after the series check), and is refused by it moved
     const ok = await fetch(`${url}/round`, { method: 'POST', body: encodeRoundContract(seriesRound(t, 3)) });
@@ -78,12 +93,12 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     const moved = await fetch(`${url}/round`, { method: 'POST', body: encodeRoundContract({ ...seriesRound(t, 3), entryCloseMs: seriesRound(t, 3).entryCloseMs + 1n }) });
     assert.equal(moved.status, 409);
     assert.match(await moved.text(), /series round refused: round 3 of series .* opens and closes its entry/);
-    assert.equal(readFileSync(gridFile, 'utf8'), line + '\n', 'kept once beside the store');
+    assert.equal(readFileSync(gridFile, 'utf8'), line + '\n' + seriesLineOf(blind, encodeRoundContract) + '\n', 'each kept once beside the store');
   } finally { await s.close(); }
   // A RESTART HOLDS IT AGAIN from the grid file
   const again = await serve(openStore(db), { plugins: HOSTED, port: 0, funded, roundClock: () => NOW, gridSeriesFile: gridFile });
   try {
     const held = (await (await fetch(`http://127.0.0.1:${again.port}/series`)).json()).series.map((x) => x.series);
-    assert.deepEqual(held, [toHex(seriesId(t))]);
+    assert.deepEqual(held, [toHex(seriesId(t)), toHex(seriesId(blind))]);
   } finally { await again.close(); }
 });
