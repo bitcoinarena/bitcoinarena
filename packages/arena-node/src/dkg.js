@@ -41,6 +41,7 @@ export class Dkg {
     this.random = random;
     this.peers = peers;
     this.fetcher = fetcher;
+    this.openedKept = new Map();          // epoch:contribution bytes -> openMyContribution's answer (finish)
   }
 
   get canDeal() { return !!(this.curve && this.random && this.round.identity); }
@@ -126,6 +127,11 @@ export class Dkg {
     try { c = decodeContribution(bytes); }
     catch (e) { return { ok: false, why: 'that is not a contribution: ' + e.message }; }
 
+    // ONE THIS NODE HOLDS ALREADY, byte for byte, is not proven and opened again (kanban #345): every run of a peer posts
+    // its contribution anew, and checking it each time was a third of a seat's processor at grid density
+    const had = this.round.contributionsOf(c.epochId).find((r) => Buffer.compare(Buffer.from(r.bytes), Buffer.from(bytes)) === 0);
+    if (had) return { ok: true, fresh: false, from: c.from };
+
     const shaped = acceptContribution(c, { curve: this.curve });
     if (!shaped.ok) return shaped;
 
@@ -173,11 +179,19 @@ export class Dkg {
           + 'contributed, and a key a subset chose is a key that subset can steer',
       };
 
+    // EACH CONTRIBUTION OPENED ONCE (kanban #345): a finish that waits for the committee's agreements is asked again every
+    // second, and opening every contribution again each time was most of a seat's processor at grid density. Kept by the
+    // contribution's own bytes, so a different contribution is opened as before.
     const opened = [];
-    for (const c of contributions) {
-      const one = await openMyContribution(c, {
-        pubkey: this.round.pubkey, secret: this.round.identity.secret, curve: this.curve,
-      });
+    for (const [i, c] of contributions.entries()) {
+      const k = `${toHex(where.epochId)}:${Buffer.from(stored[i].bytes).toString('base64')}`;
+      let one = this.openedKept.get(k);
+      if (!one) {
+        one = await openMyContribution(c, {
+          pubkey: this.round.pubkey, secret: this.round.identity.secret, curve: this.curve,
+        });
+        if (one.ok) { this.openedKept.set(k, one); if (this.openedKept.size > 4096) this.openedKept.delete(this.openedKept.keys().next().value); }
+      }
       if (!one.ok) return { ok: false, why: `a stored contribution no longer opens: ${one.why}` };
       opened.push(one);
     }
