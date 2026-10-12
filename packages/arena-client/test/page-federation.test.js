@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { pageFunction } from './page-script.js';
-import { federationStatus, federationSays, loadSays, FEDERATION_ALLOWS } from '../src/federations.js';
+import { federationStatus, federationSays, loadSays, loadRefusesDeposit, FEDERATION_ALLOWS } from '../src/federations.js';
+import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
 
@@ -88,4 +89,21 @@ test('an OPEN federation at load 4.33 says so in the note, and the deposit still
   const under = page('OPEN', { reserveSats: '100000', exposureCapSats: '150000', load: 0.6666 });
   under.paint();
   assert.equal(under.els['arena-fed-note'].style.display, 'none', 'a load under 1 says nothing');
+});
+
+// RULED A (the owner 2026-10-12, kanban #324): a deposit at load >= 1 is refused on mainnet only - a test network shows and warns
+test('load >= 1 refuses a deposit on a network that is not a test network, and on regtest and testnet4 refuses nothing', async () => {
+  const MAIN = new Uint8Array(32).fill(0x6d);
+  assert.equal(loadRefusesDeposit({ load: 4.3333, networkId: MAIN }), true);
+  assert.equal(loadRefusesDeposit({ load: 1, networkId: MAIN }), true);
+  assert.equal(loadRefusesDeposit({ load: 0.9999, networkId: MAIN }), false);
+  assert.equal(loadRefusesDeposit({ load: 4.3333, networkId: NETWORK_ID_TESTNET4 }), false);
+  assert.equal(loadRefusesDeposit({ load: 4.3333, networkId: NETWORK_ID_REGTEST }), false);
+  assert.equal(loadRefusesDeposit({ load: null, networkId: MAIN }), false, 'no cap named: nothing to compare');
+  // the page: an OPEN federation over its cover on mainnet refuses the deposit, naming the load; Withdraw still opens
+  const fed = { reserveSats: '650000', exposureCapSats: '150000', load: 4.3333, loadRefusesDeposit: true };
+  const p = page('OPEN', { ...fed, allows: { ...FEDERATION_ALLOWS.OPEN, deposit: false } });
+  const r = await p.openMoney('deposit', () => {});
+  assert.deepEqual(r, { ok: false, why: 'Load 4.33: this federation holds 650,000 sat, more than the 150,000 sat its guardians\' bonds cover. No deposit goes into it; play in another federation.' });
+  assert.equal((await p.openMoney('withdraw', () => {})).ok, true);
 });
