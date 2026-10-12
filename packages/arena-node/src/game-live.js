@@ -8,7 +8,7 @@ import { SEATING_LEAD_MS } from '../../arena-protocol/src/seating.js';
 
 const KEPT_MS = 10000;
 
-export function gameLive(round, { nowMs = () => Date.now() } = {}) {
+export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => null } = {}) {
   const db = round.db;
   const rounds = new Map();        // round id hex -> { game, open: bigint, end: bigint }
   let lastRow = 0;
@@ -21,7 +21,9 @@ export function gameLive(round, { nowMs = () => Date.now() } = {}) {
       const run = BigInt(c.blockTicks || 0) * 1000n / 60n;
       // LIVE from its seating close (start - 120 s, §5A.7: the first moment it takes an entry), not from its committee time:
       // a series is drawn up to 72 h ahead, and counting from there showed 1,266 "live" Tick Tock rounds
-      const open = c.startTimeMs - SEATING_LEAD_MS > c.committeeTimeMs ? c.startTimeMs - SEATING_LEAD_MS : c.committeeTimeMs;
+      // A MARKET from its window's start (the owner 2026-10-11): it takes no order before it
+      const w = windowOf(c);
+      const open = w ? w.startMs : c.startTimeMs - SEATING_LEAD_MS > c.committeeTimeMs ? c.startTimeMs - SEATING_LEAD_MS : c.committeeTimeMs;
       rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open, end: c.startTimeMs + run + 30000n });
     }
   };

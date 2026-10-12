@@ -1199,7 +1199,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
   // blocks - asked for, never invented, the same way the randomness is.
-  const liveNow = gameLive(round);
+  // A MARKET'S WINDOW (the owner 2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00. Man darf davor
+  // und danach nicht am Markt teilnehmen"): an attested round on its game's period takes orders only inside it
+  const marketWindowFor = (c) => {
+    const f = pluginForRound(c, hosted);
+    if (!f.ok || !f.attested) return null;
+    const w = marketWindowOf(c, f.plugin.manifest);
+    return w.ok ? w.window : null;
+  };
+  const liveNow = gameLive(round, { windowOf: marketWindowFor });
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
     // The same beacon the verifier reads: one source, so a node cannot assign
@@ -1211,7 +1219,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
     sign: (digest) => schnorr.sign(digest, round.identity.secret),
     verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    log: (m) => console.log(m) }) : null;
+    log: (m) => console.log(m), windowOf: marketWindowFor }) : null;
   if (seating) roster.seatedFor = seating.seatedFor;
   const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
   if (seatingTimer) seatingTimer.unref();
@@ -2206,6 +2214,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (h.bad) continue;
         const c = h.c;
         if (c.stakeMsat === 0n || BigInt(nowMs) < c.startTimeMs) continue;
+        // NO RUN, NO FIRST MARK (kanban #344, measured on testnet4 round 4a0a77fc, 2026-10-11 20:12Z): a head-to-head round is
+        // decided by its reveals and an attested market by its attestors - neither sends a first mark, so the start deadline
+        // is not theirs. Swept here, both paid RPS entries were FORFEIT-signed at the door ~10 s after their stakes were seen,
+        // minutes before their reveals; the h2h decide then signed DELIVERED / FAILED for the same entries.
+        { const f = pluginForRound(c, hosted); if (f.ok && (f.headToHead || f.attested)) continue; }
         let deadlineMs;
         try { deadlineMs = Number(msForTicks(startDeadlineOf(c)).ms); } catch { continue; }
         for (const { entryId } of round.entriesOf(held.roundId)) {
@@ -2817,8 +2830,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
       // the window's signature of this row for these facts (windowSigs)
       const sig = sigOf.get(id);
+      // A MARKET is open in its window only (the owner 2026-10-11): from entry_close - period, never from its committee time
+      const marketWindow = marketWindowFor(c);
+      const opensMs = marketWindow && marketWindow.startMs > c.committeeTimeMs ? marketWindow.startMs : c.committeeTimeMs;
       listed.push({
-        id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
+        id, phase, entryOpen: nowMs >= opensMs && nowMs < c.entryCloseMs,
+        ...(marketWindow ? { windowStartMs: String(marketWindow.startMs) } : {}),
         // THE ROUND'S GAME (kanban #204): its id and the name this node hosts it under
         game: gameOfContract(c),
         // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
