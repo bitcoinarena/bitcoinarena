@@ -55,6 +55,8 @@ import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recip
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../arena-protocol/src/chain.js';
 import { publicationPayload } from '../../arena-protocol/src/publication.js';
+import { seriesId, seriesRound, seriesLeadIsValid, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
+import { seriesLineOf } from '../src/series-line.js';
 import { hash256, parseTransaction } from '../../arena-protocol/src/tx.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { bondTransaction, blockOf } from '../../arena-protocol/tools/bond.js';
@@ -1142,47 +1144,58 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   // A GRID ON DEMAND (kanban #293, the owner 2026-10-11, path B: "When a table waits, one transaction carries the next 30 min
   // of rounds, about an hour ahead"): `slots` slots `windowMs` apart, `tables` rounds side by side in each, every one a
-  // whole round contract of `kind` - and ALL OF THEM PUBLISHED IN ONE TRANSACTION, one OP_RETURN "ARN" ROUND id each
-  // (publication.js publishesRound reads every output: each round is still published on chain before its beacon, no
-  // protocol change). One committee time for the grid (the tables k ms apart, so their ids differ), so one beacon: once the
-  // publication has confirmed below it and it is deep, every round still at least `postLeadMs` from its start is posted -
-  // stored 3 min or more before its start, so the seats seat it (§5A.7: PRESENT from start - 180 s, the certificate at
-  // start - 120 s). A beacon that came before the publication confirmed answers `dead`: nothing is posted.
+  // whole round contract of `kind`. PUBLISHED AS ONE SHORT SERIES PER TABLE (the owner 2026-10-12: "Pick S ... one ARN S
+  // series_id output per table, two per grid"; series.js gridIsValid - lead >= 45 min, at most 30 min of rounds, its own
+  // entry window): table k is a template - the first slot's round, its committee time k ms before the grid's so the
+  // tables' ids differ - with `grid`, its period and its count; round i of it is derived, never authored, and nothing per
+  // round is chosen after the beacon. Until 2026-10-12 every round was its own OP_RETURN "ARN" ROUND - 450 outputs, ~21,000
+  // sat at 1 sat/vB. One committee time, so one beacon: once the publication has confirmed below it and it is deep, each
+  // table's line is posted to every seat (POST /series - one post per table, not 450 round posts), and the seats' series
+  // writers open the rounds. A beacon that came before the publication confirmed answers `dead`: nothing is posted.
   async function openGrid(kind = {}, { slots = 225, tables = 2, windowMs = 8000n, entryAfterStartMs = 80000n, firstCloseMs,
-    committeeTimeMs, postLeadMs = 190000n, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {} } = {}) {
+    committeeTimeMs, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {} } = {}) {
     if (!onChain || onChain.minable) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
     if (firstCloseMs === undefined || committeeTimeMs === undefined) throw new Error('a grid names its first close and its committee time');
     const committee = BigInt(committeeTimeMs), first = BigInt(firstCloseMs);
     if (first - BigInt(entryAfterStartMs) - committee < MIN_ENTRY_WINDOW_MS) throw new Error('the grid starts before its committee time plus the minimum entry window');
     censusView = await viewToTip();
-    const grid = [];
-    for (let s = 0; s < slots; s++) {
-      const close = first + BigInt(s) * BigInt(windowMs);
-      const start = close - BigInt(entryAfterStartMs);
-      for (let k = 0; k < tables; k++) {
-        const next = { ...contract,
-          ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
-          ...(kind.custody ? { custody: kind.custody } : {}),
-          committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start),
-          ...(kind.fields || {}) };
-        if (typeof kind.stakeExpiryFor === 'function') next.stakeExpiryBlocks = kind.stakeExpiryFor(next);
-        grid.push(next);
+    const start = first - BigInt(entryAfterStartMs);
+    const templates = [];
+    for (let k = 0; k < tables; k++) {
+      const t = { ...contract,
+        ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
+        ...(kind.custody ? { custody: kind.custody } : {}),
+        committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: first, blockTicks: runTicksAt(start),
+        ...(kind.fields || {}) };
+      // a lock span sized from the round's times (kanban #236) is the LAST round's, so it holds for every round of the table
+      if (typeof kind.stakeExpiryFor === 'function') {
+        const lastStart = start + BigInt(slots - 1) * BigInt(windowMs);
+        t.stakeExpiryBlocks = kind.stakeExpiryFor({ ...t, startTimeMs: lastStart, entryCloseMs: lastStart + BigInt(entryAfterStartMs) });
       }
+      Object.assign(t, { seriesGrid: true, seriesPeriodMs: BigInt(windowMs), seriesCount: slots });
+      const valid = seriesLeadIsValid(t);
+      if (!valid.ok) throw new Error(`the grid is no grid series: ${valid.why}`);
+      templates.push(t);
     }
-    // ONE CENSUS FOR THE GRID: every round names the same census height, game and slots, so the root is derived once (450
-    // derivations took over 10 min, measured) - and checked again on the last round, which must agree
-    const root = censusRootFor(grid[0]);
-    if (toHex(censusRootFor(grid[grid.length - 1])) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
-    for (const c of grid) c.censusRoot = root;
+    // ONE CENSUS FOR THE GRID: every round names the same census height, game and slots, so the root is derived once - and
+    // checked again on the last round, which must agree
+    const root = censusRootFor(templates[0]);
+    if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
+    for (const t of templates) t.censusRoot = root;
+    const ids = templates.map((t) => seriesId(t));
+    const grid = [];
+    for (let s = 0; s < slots; s++) for (let k = 0; k < tables; k++) grid.push(seriesRound(templates[k], s));
     // THE TRANSACTION BY HAND: createrawtransaction takes one `data` output only ("duplicate key: data"), and Bitcoin Core
-    // 30+ relays several. One zero-value OP_RETURN push of 36 bytes per round.
+    // 30+ relays several. One zero-value OP_RETURN "ARN" SERIES series_id (36 bytes) per table.
     const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
-    const outs = grid.map((c) => Buffer.concat([le(0, 8), Buffer.from([38, 0x6a, 36]), Buffer.from(publicationPayload(roundId(c)))]));
+    const outs = ids.map((id) => { const o = seriesPublicationOutput(id); return Buffer.concat([le(0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]); });
     // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; the owner 2026-10-12
     // "Mach das deutlich sparsamer"); the wallet signs
-    const { hex: signed, vsize } = await fundAtRate(chainRpc, outs, feeRate);
+    const { hex: signed, vsize, fee } = await fundAtRate(chainRpc, outs, feeRate);
     const txid = await chainRpc('sendrawtransaction', [signed]);
-    onPublished({ txid, rounds: grid.length, bytes: vsize, contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
+    const lines = templates.map((t) => seriesLineOf(t, encodeRoundContract));
+    onPublished({ txid, rounds: grid.length, bytes: vsize, feeSat: String(fee), series: ids.map((id) => toHex(id)), lines,
+      contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
     const got = await awaitPublishedBeacon({ contract: grid[0], txid, rpc: chainRpc, view: async () => (censusView = await viewToTip()),
       feeRate, maxFeeRate, sleepMs: Number(process.env.ARENA_PUBLISH_LOOK_MS || 60000) });
@@ -1191,27 +1204,31 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       const seen = await beacon.refresh(grid[0]);
       if (!seen.ok) return { ok: false, why: 'the grid names no beacon: ' + seen.why, txid: got.txid };
     }
-    const now = () => BigInt(Date.now());
-    const due = grid.filter((c) => c.startTimeMs - now() >= BigInt(postLeadMs));
-    const ids = [];
-    // ONE AT A TIME, PACED, A DROPPED CONNECTION ASKED AGAIN (kanban #344, measured 2026-10-11): every seat draws each
-    // committee as it is posted (0.5-1.3 s of its loop), and 63 rounds posted back to back held every seat 5-29 s - the
-    // seating of the next rounds then missed its window; and one "fetch failed" from a busy or restarting seat stopped this
-    // whole posting twice. A round is posted every ARENA_GRID_PAUSE_MS (4 s) - two tables per 8 s slot - and asked again.
-    const pause = Number(process.env.ARENA_GRID_PAUSE_MS || 4000);
-    for (const c of due) {
-      if (c.startTimeMs - now() < 125000n) continue;
-      if (funded.nameRound) funded.nameRound(roundId(c));
-      for (let t = 0; ; t++) {
-        try { ids.push(await postRound(c)); held.push(c); break; }
-        catch (e) { if (t >= 10) { console.log(`[grid] round ${toHex(roundId(c)).slice(0, 16)} not posted: ${e.message}`); break; } await new Promise((r) => setTimeout(r, 3000)); }
-      }
-      await new Promise((r) => setTimeout(r, pause));
+    // ONE POST PER TABLE TO EVERY SEAT, its series id named funded first; a seat whose own view has not read the publication
+    // yet is asked again, 3 s apart
+    const posted = [];
+    for (let k = 0; k < tables; k++) {
+      if (funded.nameRound) funded.nameRound(ids[k]);
+      const answers = await Promise.all([a, b, ...rest].map(async (node) => {
+        let why = '';
+        for (let t = 0; t < 100; t++) {
+          try {
+            const r = await fetch(`http://${host}:${node.port}/series`, { method: 'POST', body: lines[k] });
+            if (r.ok) return { port: node.port, ok: true, ...(await r.json()) };
+            why = await r.text();
+            if (!/no chain view|view .*pending|fetch failed/i.test(why) || t >= 10) break;
+          } catch (e) { why = e.message; }
+          await new Promise((res) => setTimeout(res, 3000));
+        }
+        return { port: node.port, ok: false, why };
+      }));
+      for (const x of answers) if (!x.ok) console.log(`[grid] series ${toHex(ids[k]).slice(0, 16)} refused by ${x.port}: ${x.why}`);
+      posted.push({ series: toHex(ids[k]), seats: answers.filter((x) => x.ok).length, of: answers.length });
     }
-    onPosted({ posted: ids.length, of: grid.length, publishedAt: got.publishedAt, beacon: got.named.height,
-      firstStart: ids.length ? new Date(Number(due[0].startTimeMs)).toISOString() : null });
-    return { ok: true, txid: got.txid, publishedAt: got.publishedAt, beacon: got.named.height, rounds: grid.length, posted: ids.length,
-      lastCloseMs: grid[grid.length - 1].entryCloseMs, ids };
+    for (const c of grid) held.push(c);
+    onPosted({ posted, rounds: grid.length, publishedAt: got.publishedAt, beacon: got.named.height, firstStart: new Date(Number(start)).toISOString() });
+    return { ok: true, txid: got.txid, publishedAt: got.publishedAt, beacon: got.named.height, rounds: grid.length, posted,
+      lastCloseMs: grid[grid.length - 1].entryCloseMs, ids: grid.map((c) => toHex(roundId(c))), series: ids.map((id) => toHex(id)) };
   }
 
   // AND KEEP ONE JOINABLE OF EACH KIND: whenever no round of a kind this tool

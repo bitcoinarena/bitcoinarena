@@ -58,6 +58,7 @@ import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
 
@@ -138,19 +139,8 @@ if (net) options.chain = net === 'regtest' ? 'bitcoin-regtest' : 'bitcoin-testne
 if (process.env.ARENA_FEDERATION_INVITE) options.federationInvite = process.env.ARENA_FEDERATION_INVITE.trim();
 if (net) options.donationSets = net === 'regtest' ? (process.env.ARENA_REGTEST_DONATION_SET === 'keys' ? [TEST_DONATION_SET_KEYS_REGTEST] : [TEST_DONATION_SET_REGTEST]) : [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS];
 }
-// ONE SERIES A LINE: its template, hex; then `count=N` for a tail (the 82/90 fork: fewer than a day's 960 rounds - its id
-// is taken over that count) and `cut=N` for a series replaced from round N by its tail.
-const readSeriesFile = (path) => readFileSync(path, 'utf8').split(/\n/).map((l) => l.trim().split(/\s+/))
-  .filter((w) => w[0] && /^[0-9a-f]+$/i.test(w[0]))
-  .map(([h, ...more]) => {
-    const t = decodeRoundContract(new Uint8Array(Buffer.from(h, 'hex')));
-    for (const m of more) {
-      const kv = /^(count|cut)=(\d+)$/.exec(m);
-      if (!kv) throw new Error(`a series line names ${m}, not count=N or cut=N`);
-      if (kv[1] === 'count') t.seriesCount = Number(kv[2]); else t.seriesCutFrom = Number(kv[2]);
-    }
-    return t;
-  });
+// ONE SERIES A LINE (series-line.js): its template, hex; then count=N, cut=N, and for a grid series grid and period=N.
+const readSeriesFile = (path) => readSeriesLines(readFileSync(path, 'utf8'));
 // THE OPERATOR'S REFUSE-ROUNDS FILE (kanban #191): round ids this node refuses at every door, read again when it changes
 if (process.env.ARENA_REFUSE_ROUNDS_FILE) options.refuseRoundsFile = process.env.ARENA_REFUSE_ROUNDS_FILE;
 if (process.env.ARENA_SERIES_FILE) {
@@ -170,6 +160,8 @@ if (process.env.ARENA_SERIES_FILE) {
     return read;
   };
 }
+// THE GRID SERIES POSTED TO THIS SEAT (POST /series, kanban #293), kept beside its store so a restart holds them again
+options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-series`;
 // WHERE THE OTHER SIGNER NODES ANSWER, as the operator knows it (serve's `peers`; ORDER-2116, measured on the free pair):
 // with none named, a node finds its peers off the round's census - the bond adverts at its census height - and a seat
 // whose address moved since answers there no more. The free pair's nodes run as their own units (the owner 2026-10-01) and

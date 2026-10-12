@@ -155,7 +155,8 @@ if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id
 // PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
 // waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
 // read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
-// grid is published: committee_time 40 min past the tip's median time (so the publication confirms below its beacon), the
+// grid is published - one short series per table since 2026-10-12 (round-2of2.mjs openGrid): committee_time 45 min past
+// the tip's median time (so the publication confirms below its beacon), the
 // first close 105 min from now - or 8 s after the last grid's, when that is later, so a table plays on without a hole.
 // RPS_GRID_NOW=1 publishes the first grid without waiting for a page's ask.
 if (env.PAID_RPS_GRID === '1') {
@@ -180,7 +181,9 @@ if (env.PAID_RPS_GRID === '1') {
       // only after its committee time - so the first close is also at least 5 min past it (measured 17:54-17:59Z: with the
       // committee 60 min past a median 2 h ahead, every grid started before its committee time and none was published)
       const committee = mtp + 45 * 60000 + 500;
-      const firstClose = Math.max(Date.now() + leadMs, committee + 5 * 60000, lastCloseMs + 8000);
+      // AND A SHORT SERIES' LEAD (the owner 2026-10-12, S; series.js gridIsValid): the first start - 80 s before the first close -
+      // at least 45 min after the committee time
+      const firstClose = Math.max(Date.now() + leadMs, committee + 45 * 60000 + 80000 + 1000, lastCloseMs + 8000);
       // THE DONATION SET IN FORCE AT THE GRID'S CENSUS HEIGHT, as every seat checks it (server.js donationSetFor; measured
       // 17:54Z: grid 474c23f1 named the harness's older set and seat 31281 refused its first round - "at census height
       // 156098 this network's donation set in force is serial 3")

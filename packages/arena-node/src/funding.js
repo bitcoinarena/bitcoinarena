@@ -37,6 +37,9 @@ export function operatorFunding({ named = () => [] } = {}) {
     try {
       if (kind === 'round')
         return BigInt(contract.stakeMsat) > 0n && isNamed(toHex(roundId(contract)));
+      // A GRID SERIES POSTED TO POST /series (kanban #293): funded when the operator names its series id, as a round by its id
+      if (kind === 'series')
+        return BigInt(contract.stakeMsat) > 0n && contract.seriesIdBytes instanceof Uint8Array && isNamed(toHex(contract.seriesIdBytes));
       if (kind === 'entry') {
         if (!node) return false;
         const held = node.holds(contract.roundId);

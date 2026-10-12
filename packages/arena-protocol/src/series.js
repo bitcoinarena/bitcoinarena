@@ -42,6 +42,21 @@ const lateJoinOf = (template) => {
   return late === 0n || late === LATE_JOIN_MS ? late : null;
 };
 export const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
+
+// A GRID SERIES (kanban #293, the owner 2026-10-12: "Pick S ... Publish the grid as a short series, the format the spec
+// already has: one ARN S series_id output per table, two per grid"): an on-demand head-to-head grid - Rock Paper Scissors'
+// 2 tables of 8 s rounds - published as one series per table instead of one OP_RETURN per round (450 outputs, ~21,000 sat
+// at 1 sat/vB). Its own rule, in the owner's words: "lead of at least 45 minutes, as path B already uses; any start time; at
+// most 30 minutes of rounds; its own entry window". Still published on demand, about 1 h ahead: a series only in how it
+// is written on chain. Nothing per round is chosen after the beacon - every round is derived from the template.
+// A template is one by `seriesGrid: true`, its period (`seriesPeriodMs`) and count (`seriesCount`) named; all three are
+// in its series id (H(template || period || count || 'G')), so a grid's id is never a day series' or a tail's.
+export const GRID_SERIES_MAX_MS = 30n * 60000n;
+export const GRID_SERIES_LEAD_MIN_MS = 45n * 60000n;
+const GRID_ID_MARK = 0x47;                                  // 'G'
+export const isGridSeries = (template) => !!template && template.seriesGrid === true;
+// A GRID'S ENTRY WINDOW IS ITS OWN: entry_close - start, as the template names it, for every round of it
+const gridLateOf = (template) => template.entryCloseMs - template.startTimeMs;
 export const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
 
 // A SERIES RUNS ON ITS GAME'S OWN round_period (kanban #236/#237, §0A.7b.4 "Market rounds on their own 15 min period
@@ -116,6 +131,7 @@ export function seriesLeadIsValid(template) {
   if (!template || typeof template.startTimeMs !== 'bigint' || typeof template.committeeTimeMs !== 'bigint')
     return { ok: false, why: 'a series names its committee time and its start' };
   const lead = template.startTimeMs - template.committeeTimeMs;
+  if (isGridSeries(template)) return gridIsValid(template, lead);
   // A TAIL (the 82/90 fork, the owner 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
   // inside its day and running to that day's end, on testnet4 only, with a committee lead of at least 12 h.
   if (Number.isInteger(template.seriesCount) && template.seriesCount !== roundsPerSeries(periodOf(template))) return tailIsValid(template, lead);
@@ -134,6 +150,19 @@ export function seriesLeadIsValid(template) {
   return { ok: true, leadMs: lead };
 }
 
+function gridIsValid(template, lead) {
+  const period = template.seriesPeriodMs, count = template.seriesCount;
+  if (typeof period !== 'bigint' || period <= 0n) return { ok: false, why: 'a grid series names its period' };
+  if (!Number.isInteger(count) || count < 1) return { ok: false, why: 'a grid series names its round count' };
+  if (BigInt(count) * period > GRID_SERIES_MAX_MS)
+    return { ok: false, why: `a grid series of ${count} rounds every ${period} ms runs ${BigInt(count) * period} ms, and a grid runs at most ${GRID_SERIES_MAX_MS} ms (30 min)` };
+  if (lead < GRID_SERIES_LEAD_MIN_MS)
+    return { ok: false, why: `that grid starts ${lead} ms after its committee time, and a grid needs ${GRID_SERIES_LEAD_MIN_MS} ms (45 min)` };
+  if (typeof template.entryCloseMs !== 'bigint' || gridLateOf(template) < 0n)
+    return { ok: false, why: 'a grid round\'s entry closes at or after its start' };
+  return { ok: true, leadMs: lead, grid: true };
+}
+
 function tailIsValid(template, lead) {
   if (seriesClockFor(template.networkId) !== SERIES_CLOCKS.testnet4) return { ok: false, why: 'a tail series is testnet4\'s only: the mainnet clock is one 72 h' };
   if (lateJoinOf(template) === null) return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
@@ -150,7 +179,7 @@ function tailIsValid(template, lead) {
 }
 
 /** A contract without its series fields: what a series' template is. */
-const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, ...rest } = c; void _s; void _i; void _n; void _c; void _p; return rest; };
+const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, seriesGrid: _g, ...rest } = c; void _s; void _i; void _n; void _c; void _p; void _g; return rest; };
 
 /**
  * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, the owner 2026-10-01): a template may carry `seriesCount` - a tail's
@@ -161,15 +190,16 @@ const countOf = (template, count) => (count !== undefined ? count
   : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
 export const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
 
-/** series_id = H(template || round_period || round_count), tagged. */
+/** series_id = H(template || round_period || round_count), tagged; a grid's with 'G' after its count. */
 export function seriesId(template, { periodMs, count } = {}) {
   periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
   const body = encodeRoundContract(withoutSeries(template));
-  const bytes = new Uint8Array(body.length + 12);
+  const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
   bytes.set(body, 0);
   bytes.set(u64(periodMs), body.length);
   bytes.set(u32(count), body.length + 8);
+  if (isGridSeries(template)) bytes[body.length + 12] = GRID_ID_MARK;
   return taggedHash('ARENA/v1/Series', bytes);
 }
 
@@ -179,7 +209,8 @@ export function seriesRound(template, i, { periodMs, count } = {}) {
   count = countOf(template, count);
   if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
   const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
-  const late = template.entryCloseMs !== undefined && lateJoinOf(template) !== null ? lateJoinOf(template) : 0n;
+  const late = isGridSeries(template) ? gridLateOf(template)
+    : template.entryCloseMs !== undefined && lateJoinOf(template) !== null ? lateJoinOf(template) : 0n;
   return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start + late,
     seriesId: seriesId(template, { periodMs, count }), roundIndex: i };
 }

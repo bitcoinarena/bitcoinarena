@@ -16,7 +16,8 @@
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries } from '../../arena-protocol/src/series.js';
+import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid } from '../../arena-protocol/src/series.js';
+import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { createServer } from 'node:http';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -24,7 +25,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
-import { decodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, encodeRoundContract, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
@@ -115,7 +116,7 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
-import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync, appendFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { readTranscript } from './transcript-read.js';
 import { SIGNED_RERUN_BYTES, rerunResultId, decodeRerunResult, splitSignedRerun, encodeRerunResult, joinSignedRerun } from '../../arena-protocol/src/rerun.js';
@@ -314,6 +315,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A SERIES ADDED WHILE RUNNING (main.js reads ARENA_SERIES_FILE again when it changes): a function that answers the whole
   // list when it changed, else null. Each series not held yet gets its writer on the next pass - no restart.
   seriesReload = null,
+  // THE GRID SERIES POSTED HERE (POST /series, kanban #293), one line each (series-line.js): read at start, so a restart holds
+  // them again, and appended as each is taken. Unset: a posted grid is held until the restart.
+  gridSeriesFile = null,
   // THE ROUND STORE'S CLOCK, when a caller must set it before anything reads it (a series is written at start). Unset: the wall clock.
   roundClock = null,
   // THE SIGNER NODES' ADVERTISEMENTS, by round (Map node key hex -> advert), so a slash
@@ -2389,6 +2393,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let seriesTimer = null;
   let seriesVersion = 0;               // bumped when a series is added or dropped while running: the listing's verdicts are read again
   const storeSeries = new Set();       // series ids an installed network package holds (kanban #276): the series file does not drop them
+  const postedSeries = new Set();      // grid series ids taken at POST /series (kanban #293): the series file does not drop them either
   const takeNewSeries = () => {
     if (typeof seriesReload !== 'function') return;
     let now;
@@ -2413,7 +2418,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // written and listed until a restart): its writer stops, its stored rounds stay in the store but are offered nowhere
     for (let i = writers.length - 1; i >= 0; i--) {
       const id = toHex(writers[i].id);
-      if (named.has(id) || storeSeries.has(id)) continue;   // a series a network package brought is the store's, not the file's
+      if (named.has(id) || storeSeries.has(id) || postedSeries.has(id)) continue;   // a network package's, or one posted: not the file's
       writers.splice(i, 1); droppedSeries.add(id); seriesVersion++;
       console.log(`[series] ${id.slice(0, 16)}: taken out of the series file - no longer held; its rounds are offered nowhere`);
     }
@@ -2471,6 +2476,45 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     seriesTimer.unref();
   };
   if (writers.length || typeof seriesReload === 'function') startSeriesTimer();
+
+  // A GRID SERIES, POSTED ONCE PER TABLE (kanban #293, the owner 2026-10-12: "Replace the 450 round posts with one post per
+  // table. Every round comes from the template; nothing is chosen per round after the beacon"). Taken only as a grid
+  // (series.js gridIsValid: lead >= 45 min, at most 30 min of rounds, its own entry window), of a game this seat hosts, under
+  // the donation set in force, and funded - the operator names its series id as it names a paying round's id. Its rounds
+  // are written by the series writer like any series'; an entry still needs its "ARN" SERIES publication below the beacon
+  // (roster.js). Answers { ok, series, rounds, held } or { ok: false, why }.
+  const takeGridSeries = (t, { persist = true } = {}) => {
+    if (!isGridSeries(t)) return { ok: false, code: 400, why: 'this door takes a grid series (a line naming grid, period=N and count=N)' };
+    const lead = seriesLeadIsValid(t);
+    if (!lead.ok) return { ok: false, code: 409, why: lead.why };
+    const sid = seriesId(t), id = toHex(sid);
+    if (writers.some((w) => toHex(w.id) === id)) return { ok: true, series: id, rounds: t.seriesCount, held: true };
+    if (refuseSeries(t)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} is not written here: its game is not hosted, or its donation set or federation is refused` };
+    if (persist && !funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: sid }, node: fundingView }))
+      return { ok: false, code: 402, why: `this node stores nothing for a series nobody has funded (series ${id.slice(0, 16)})` };
+    let w;
+    try { w = seriesWriter(round, t); } catch (e) { return { ok: false, code: 409, why: e.message }; }
+    droppedSeries.delete(id);
+    series.push(t); writers.push(w); postedSeries.add(id); seriesVersion++;
+    if (persist && gridSeriesFile) {
+      try { appendFileSync(gridSeriesFile, seriesLineOf(t, encodeRoundContract) + '\n'); }
+      catch (e) { console.error(`[series] grid ${id.slice(0, 16)} not kept on disk: ${e.message}`); }
+    }
+    console.log(`[series] grid ${id.slice(0, 16)}: taken${persist ? ' at POST /series' : ' from the grid file'} - ${t.seriesCount} rounds every ${t.seriesPeriodMs} ms from ${new Date(Number(t.startTimeMs)).toISOString()}`);
+    startSeriesTimer();
+    return { ok: true, series: id, rounds: t.seriesCount, held: false };
+  };
+  // THE GRIDS POSTED BEFORE A RESTART, read back - not one whose last entry closed a day ago
+  if (gridSeriesFile && existsSync(gridSeriesFile)) {
+    let lines = [];
+    try { lines = readSeriesLines(readFileSync(gridSeriesFile, 'utf8')); } catch (e) { console.error(`[series] the grid file did not read: ${e.message}`); }
+    for (const t of lines) {
+      const lastClose = t.entryCloseMs + BigInt(t.seriesCount - 1) * t.seriesPeriodMs;
+      if (BigInt(round.now()) > lastClose + 86400000n) continue;
+      const got = takeGridSeries(t, { persist: false });
+      if (!got.ok) console.error(`[series] a grid from the grid file refused: ${got.why}`);
+    }
+  }
 
   // THE NETWORK STORE ON THIS SEAT (kanban #276, the owner 2026-10-10: networks are updated from the owner page like games; a
   // seat's network settings are its federation invite, the donation sets in force, its series and the chain it reads). A
@@ -3586,6 +3630,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
+      if (req.method === 'POST' && url.pathname === '/series') {
+        let t;
+        try { t = parseSeriesLine(Buffer.from(await read(req)).toString('utf8')); }
+        catch (e) { return text(res, 400, `that is not a series line: ${e.message}`); }
+        const got = takeGridSeries(t);
+        if (!got.ok) return text(res, got.code, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       if (req.method === 'GET' && url.pathname === '/series') {
         const nowMs = round.now();
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });

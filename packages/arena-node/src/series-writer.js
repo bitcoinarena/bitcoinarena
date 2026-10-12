@@ -6,7 +6,7 @@
 // is refused for the same reasons any round is - for every start from now to now + 72 h, and again as the clock
 // moves. A series that leaves less than the 72 h lead is refused whole, by the spec's rule.
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin, seriesRunFits } from '../../arena-protocol/src/series.js';
+import { SERIES_WRITE_AHEAD_MS, seriesLeadIsValid, seriesId, seriesRound, seriesRoundsWithin, seriesRunFits, isGridSeries } from '../../arena-protocol/src/series.js';
 import { pluginForRound } from './plugins.js';
 import { seriesPeriodFits } from '../../arena-protocol/src/manifest.js';
 
@@ -29,7 +29,9 @@ export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } 
     // wherever the node reads this series (series.js periodOf); a 90 s game's series is exactly what it was
     if (period.periodMs !== 90000n) template.seriesPeriodMs = period.periodMs;
   }
-  if (runs && runs.ok && runs.core && !Number.isInteger(runs.core.fixedRunTicks)) {
+  // NOT A GRID'S (kanban #293, the owner 2026-10-12): its rounds overlap by design - an 8 s grid of 80 s entry windows - and
+  // its rule is its own entry window (series.js gridIsValid), not the 90 s grid's slot
+  if (runs && runs.ok && runs.core && !Number.isInteger(runs.core.fixedRunTicks) && !isGridSeries(template)) {
     const fits = seriesRunFits(template);
     if (!fits.ok) throw new Error(`series refused: ${fits.why}`);
   }

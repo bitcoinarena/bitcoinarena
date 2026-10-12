@@ -14,6 +14,7 @@ import {
 import { decodeInputBatch, batchTicks, batchId } from '../../arena-protocol/src/batch.js';
 import { checkBatchPrices } from '../../arena-protocol/src/price-sample.js';
 import { LATE_JOIN_LAST_ENTRY_MS } from '../../arena-protocol/src/contracts.js';
+import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../arena-protocol/src/transcript.js';
@@ -395,7 +396,9 @@ export class Round {
     // stricter. The same entry posted again - a retry, a reload's resend, a peer's copy - is still taken.
     // Only a series round whose entry closes after its start (a late-join series): a round closing entry at its start keeps the
     // old door, where a join held to the start may land its entry a few seconds after it.
-    const lateJoin = asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs > asks.startTimeMs;
+    // A late-join series closes entry exactly LATE_JOIN_MS after its start (series.js); a grid series (kanban #293) names its
+    // own window and keeps the old door, as its rounds had it when each was published alone.
+    const lateJoin = asks.seriesId instanceof Uint8Array && typeof asks.entryCloseMs === 'bigint' && asks.entryCloseMs - asks.startTimeMs === LATE_JOIN_MS;
     if (lateJoin && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(entryId(contract)))) {
       const lastEntry = asks.startTimeMs + LATE_JOIN_LAST_ENTRY_MS;
       if (now >= lastEntry)
