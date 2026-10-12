@@ -2541,6 +2541,26 @@
               console.log(`[arena] succession: moved ${moved.moved} msat in ${moved.chunks} chunk(s) from ${old.slice(0, 16)} to ${here.slice(0, 16)} (${moved.state})`);
             }
           } catch (e) { console.warn('[arena] succession move: ' + e.message); }
+          // A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3, kanban #324 step 3): before a top-up, the player's notes
+          // in another OPEN federation this page verified move the shortfall here through a gateway that serves both - the
+          // fee shown and the press the player's (ARENA_SWAP_CONFIRM); declined, the deposit offer follows as before
+          try {
+            const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
+            const loads = window.ARENA_FED_LOADS || new Map();
+            const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
+            for (const other of BLWPCLIENT.ledgerFederations(vault()).filter((f) => f !== here)) {
+              const st = loads.get(other);
+              if (!st || st.status !== 'OPEN' || !st.invite || !BLWPCLIENT.swapPlayerWalletForRound) continue;
+              const r = await BLWPCLIENT.swapPlayerWalletForRound({ round: named.round, toInvite: named.federation, fromInvite: st.invite, fromFederationId: other,
+                seed, LockClient: wasm.LockClient, storage: vault(), needMsat, gateways: wallet.gateways,
+                confirm: (q) => (window.ARENA_SWAP_CONFIRM ? window.ARENA_SWAP_CONFIRM(q, other, here) : Promise.resolve(false)),
+                onState: (m) => onStep(m.state === 'swapping' ? `swapping ${Math.ceil(Number(m.amountMsat) / 1000)} sat from federation ${other.slice(0, 8)} into this round's`
+                  : m.state === 'swapped' ? `swapped from federation ${other.slice(0, 8)} (fee ${Math.ceil(Number(m.feeMsat) / 1000)} sat)` : `the swap stopped (${m.why})`) });
+              window.ARENA_SWAPPED = { from: other, to: here, state: r.state, movedMsat: r.movedMsat ? String(r.movedMsat) : null, feeMsat: r.feeMsat !== undefined ? String(r.feeMsat) : null,
+                quotedFeeMsat: r.quote ? String(r.quote.feeMsat) : null };
+              if (r.state === 'swapped' || r.state === 'enough' || r.state === 'declined') break;
+            }
+          } catch (e) { console.warn('[arena] swap: ' + e.message); }
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
           await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
@@ -3465,6 +3485,27 @@
       const go = await new Promise((done) => { $('awc-go').onclick = () => done(true); $('awc-cancel').onclick = () => done(false); });
       box.style.display = 'none';
       return go ? { ok: true, codes, confirmed: true } : { ok: false, codes, why: 'This round\'s warnings were not accepted: nothing is staked.' };
+    };
+    // THE SWAP'S PRESS (kanban #324 step 3): the amount, the fee both gateway legs cost and the federations, shown in the
+    // warnings dialog's frame; "Swap and enter" moves the notes, Cancel leaves them (the deposit offer follows)
+    window.ARENA_SWAP_CONFIRM = async (q, from, to) => {
+      const $ = (id) => document.getElementById(id);
+      const sat = (msat) => `${Math.ceil(Number(msat) / 1000).toLocaleString('en-US')} sat`;
+      const title = $('awc-title'), sub = document.querySelector('#arena-warn-confirm .afc-sub'), go = $('awc-go');
+      const was = [title.textContent, sub.textContent, go.textContent];
+      title.textContent = 'Enter by swap';
+      sub.textContent = `This round is in federation ${String(to).slice(0, 8)}; your money is in federation ${String(from).slice(0, 8)}.`;
+      const list = $('awc-list'); list.textContent = '';
+      for (const t of [`Move ${sat(q.amountMsat)} through a gateway that serves both.`, `Fee: ${sat(q.feeMsat)}${q.ruleKnown ? '' : ' (the gateways name no fee rule)'}.`, `Total from federation ${String(from).slice(0, 8)}: ${sat(q.totalMsat)}.`]) {
+        const li = document.createElement('li'); li.textContent = t; list.appendChild(li);
+      }
+      go.textContent = 'Swap and enter';
+      window.ARENA_SWAP_SHOWN = { amountMsat: String(q.amountMsat), feeMsat: String(q.feeMsat), from, to };
+      const box = $('arena-warn-confirm'); box.style.display = 'flex';
+      const yes = await new Promise((done) => { go.onclick = () => done(true); $('awc-cancel').onclick = () => done(false); });
+      box.style.display = 'none';
+      [title.textContent, sub.textContent, go.textContent] = was;
+      return yes;
     };
     window.ARENA_PAINT_CONFIRMED = () => {
       const el = document.getElementById('arena-fed-confirmed'); if (!el) return;
