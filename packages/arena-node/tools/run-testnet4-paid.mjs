@@ -124,6 +124,16 @@ const round = await standUpRound({ host: NODE_HOST, portA: pa, portB: pb, portC:
   signerNode: { closeAtEnd: true, stakeLocks: lock },
   // PAID_FIRST=0 (kanban #293, the RPS grid): no round of its own - only the grid keeper below publishes
   openFirst: env.PAID_FIRST !== '0',
+  // ITS OWN FIRST ROUND NAMES THE DONATION SET IN FORCE, as the grid below does (kanban #348)
+  donationSetAt: (height, networkId) => {
+    const keys = donationKeysForNetworkId(networkId);
+    const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery,
+      sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+      rotations: [], height, verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+    if (!forced.ok) throw new Error(`no donation set in force at census height ${height}: ${forced.why}`);
+    say({ donationSet: 'in force', serial: String(forced.serial), id: toHex(idOfDonationSet(forced.recipients)).slice(0, 16), censusHeight: height });
+    return idOfDonationSet(forced.recipients);
+  },
   ...(env.ARENA_ATTACH === '1' ? { attach: { fundedFile: env.ARENA_FUNDED_ROUNDS_FILE || join(home, 'paid', 'funded-rounds.txt'),
     proofDir: env.ARENA_ATTACH_PROOF_DIR || join(home, 'paid', 'attach-proof') } } : {}),
   guardianChain: { bitcoindUrl: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE, call: chainCall },
