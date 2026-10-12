@@ -1098,6 +1098,25 @@
       }
     }
     window.WebSocket = RoutedWebSocket;
+    // AND EVERY HTTP REQUEST TO A SEAT, THE SAME WAY (the owner 2026-10-12 21:40 local, a phone without Tailscale: "Looking for the
+    // game's nodes … (try 3 of 8)", and no other address than testnet.bitcoin-arena.io opens there): the sockets took the
+    // bitcoin-arena.io route, but GET /games, /rounds and the rest still went to the Funnel host alone. Now a seat's request
+    // goes over its route first (tn4.bitcoin-arena.io answered /guardian-N/games in 0.1-0.2 s), and to the Funnel host if that
+    // fails; the order flips per path as the sockets' does.
+    const RealFetch = window.fetch.bind(window);
+    window.fetch = async function routedFetch(input, init) {
+      const raw = typeof input === 'string' ? input : input && input.url;
+      const r = typeof input === 'string' || input instanceof URL ? routed(String(input)) : { url: raw, key: null };
+      if (!r.key || r.url === String(raw)) return RealFetch(input, init);
+      try {
+        const got = await RealFetch(r.url, init);
+        return got;
+      } catch (e) {
+        if (init && init.signal && init.signal.aborted) throw e;
+        viaAlt.set(r.key, !viaAlt.get(r.key));
+        return RealFetch(input, init);
+      }
+    };
   })();
   </script>
 
