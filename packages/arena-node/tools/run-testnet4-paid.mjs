@@ -182,7 +182,10 @@ if (env.PAID_RPS_GRID === '1') {
       // before the median passes it. On testnet4 the median runs ahead of the clock (74 min at 18:01Z), and a round starts
       // only after its committee time - so the first close is also at least 5 min past it (measured 17:54-17:59Z: with the
       // committee 60 min past a median 2 h ahead, every grid started before its committee time and none was published)
-      const committee = mtp + 45 * 60000 + 500;
+      // RPS_GRID_COMMITTEE_LEAD_MS (kanban #293, measured 2026-10-12: testnet4's coinbase-only blocks move the median ~20 min each
+      // while a block that takes transactions came 2.5 h apart - grid 39101772 (committee 45 min out) saw its beacon before
+      // its publication confirmed): how far past the tip's median the committee time is, so a real block has that long
+      const committee = mtp + Number(env.RPS_GRID_COMMITTEE_LEAD_MS || 45 * 60000) + 500;
       // AND A SHORT SERIES' LEAD (the owner 2026-10-12, S; series.js gridIsValid): the first start - 80 s before the first close -
       // at least 45 min after the committee time
       const firstClose = Math.max(Date.now() + leadMs, committee + 45 * 60000 + 80000 + 1000, lastCloseMs + 8000);
