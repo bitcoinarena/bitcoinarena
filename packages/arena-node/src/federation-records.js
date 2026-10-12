@@ -46,16 +46,46 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
 
-  /** The newest held round's census and height - the series' own, so seats agree. */
-  function basis() {
-    let best = newest ? newest() : null;
-    if (!newest) for (const r of round.db.prepare('SELECT round_id, contract FROM rounds').all()) {
+  // ROUNDS BY CENSUS HEIGHT, each read once (kanban #321, measured on testnet4 2026-10-12: a seat holds thousands of rounds,
+  // and reading them all at every ask held the loop 3-6 s per GET /federation-record)
+  const byHeight = new Map();                // census height -> [{ rid, contract }]
+  let lastRow = 0;
+  const indexRounds = () => {
+    for (const r of round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
+      lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
-      if (!best || c.censusHeight > best.contract.censusHeight) best = { rid: new Uint8Array(r.round_id), contract: c };
+      if (!byHeight.has(c.censusHeight)) byHeight.set(c.censusHeight, []);
+      const at = byHeight.get(c.censusHeight);
+      if (at.length < 4) at.push({ rid: new Uint8Array(r.round_id), contract: c });
     }
-    if (!best) return { ok: false, why: 'this seat holds no round, so it reads no census' };
-    const census = roster.censusFor(best.rid);
-    return census.ok ? { ok: true, census, height: best.contract.censusHeight, networkId: best.contract.networkId } : census;
+  };
+  /**
+   * THE CENSUS A RECORD IS BUILT FROM, and its height. Without `atHeight`: the newest held round whose census this seat can
+   * read. With it (a gathering seat names its height, kanban #321): a held round at exactly that census height - so every
+   * guardian seat builds the gatherer's body, never one of its own. Measured live before: seats 2-7 of testnet4 each took
+   * their own newest round, a round posted ahead whose census they could not read yet ("this node has no chain view for
+   * that round"), and no record ever had more than 1 signature of the 5 it needs.
+   */
+  function basis(atHeight = null) {
+    if (newest) {
+      const best = newest();
+      if (!best) return { ok: false, why: 'this seat holds no round, so it reads no census' };
+      if (atHeight !== null && best.contract.censusHeight !== atHeight) return { ok: false, why: `this seat holds no round with census height ${atHeight}` };
+      const census = roster.censusFor(best.rid);
+      return census.ok ? { ok: true, census, height: best.contract.censusHeight, networkId: best.contract.networkId } : census;
+    }
+    indexRounds();
+    const heights = atHeight !== null ? [atHeight] : [...byHeight.keys()].sort((a, b) => b - a);
+    let why = null;
+    for (const h of heights.slice(0, 64)) {
+      for (const x of byHeight.get(h) || []) {
+        const census = roster.censusFor(x.rid);
+        if (census.ok) return { ok: true, census, height: h, networkId: x.contract.networkId };
+        why = census.why;
+      }
+    }
+    if (atHeight !== null) return { ok: false, why: why ? `census height ${atHeight}: ${why}` : `this seat holds no round with census height ${atHeight}` };
+    return { ok: false, why: why || 'this seat holds no round, so it reads no census' };
   }
 
   /** The body for one federation from a basis, with `gone` - the guardians whose nodes said they are leaving. */
@@ -72,8 +102,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** THIS SEAT'S SIGNATURE (GET /federation-record): only a guardian of the federation signs, over the body it builds. */
-  function mySignature(federationIdHex) {
-    const b = basis();
+  function mySignature(federationIdHex, atHeight = null) {
+    const b = basis(atHeight);
     if (!b.ok) return b;
     const built = bodyFor(b, fromHex(federationIdHex));
     if (!built.ok) return built;
@@ -93,7 +123,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const asked = await Promise.all(plain.guardians.map(async (g) => {
       const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
       if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: mySignature(toHex(federationId)) };
-      try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+      try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
       catch { return { g, said: null }; }
     }));
     // WHO SAYS IT IS LEAVING, each by its own key over the plain body's id
@@ -114,7 +144,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       answers = await Promise.all(plain.guardians.map(async (g) => {
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(final.record) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
     }
@@ -141,8 +171,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
-  function mySignatureWithGone(federationIdHex, goneHex) {
-    const b = basis();
+  function mySignatureWithGone(federationIdHex, goneHex, atHeight = null) {
+    const b = basis(atHeight);
     if (!b.ok) return b;
     const plain = bodyFor(b, fromHex(federationIdHex));
     if (!plain.ok) return plain;
