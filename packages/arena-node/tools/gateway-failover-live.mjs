@@ -38,6 +38,9 @@ try {
   const round = { ...c, id: roundId(c) };
   const t0 = Date.now();
   const w = await playerWallet({ round, invite: readFileSync(env.INVITE, 'utf8').trim(), seed: new Uint8Array(randomBytes(32)), LockClient: wasm.LockClient, storage });
+  // what the lock client itself answers (federationGateways answers [] for an error): said, not swallowed
+  let raw; try { raw = await w.gateways(); } catch (e) { raw = `error: ${String((e && e.message) || e).slice(0, 300)}`; }
+  log({ step: 'gateways', raw: String(raw).slice(0, 600) });
   const listed = await federationGateways(w);
   const named = env.NAMED.split(',').map((u) => u.trim()).filter(Boolean);
   const order = gatewayOrder(named, listed);
