@@ -20,6 +20,7 @@ import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSe
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
@@ -256,6 +257,9 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
 }
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null,
+  // WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "Node software SHOULD make certificate provisioning a first-class setup
+  // step"): { cert, key } PEM - the same doors and sockets over https/wss on the same port; none, plain http as ever
+  tls = null,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
@@ -2955,7 +2959,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { nowMs, listed };
   };
 
-  const http = createServer(async (req, res) => {
+  const http = (tls ? (h) => createHttpsServer({ cert: tls.cert, key: tls.key }, h) : createServer)(async (req, res) => {
     try {
       const url = new URL(req.url, 'http://node');
       // EVERY DOOR IS TIMED, so a stall inside one has a name (the owner 2026-09-17 19:15, the ghost lag: 32 of the 34
