@@ -30,6 +30,9 @@ import { isMainThread, parentPort, workerData, Worker } from 'node:worker_thread
 import { lastTickOfRun, runTicksForEntry } from '../../arena-protocol/src/contracts.js';
 import { INPUT_WORDS } from '../../arena-protocol/src/batch.js';
 import { seedWordForEntry, worldSeedWord } from '../../arena-protocol/src/seed.js';
+// AND SINCE KANBAN #328 (spec §0A.6) THE CORE RUNS ONLY IN ITS SANDBOX: no network, no file system, no clock. The loop
+// below is core-driver.js, inside it; this file checks what it hands in and reads back what the core said.
+import { sandboxFor } from './core-sandbox.js';
 
 const hex = (b) => {
   if (typeof b === 'string') return b.toLowerCase();
@@ -95,9 +98,23 @@ function seedWordOf(entry, roundRandomness, core) {
  * OF, because 11's input chain covers ticks and `ghostBinds` checks the tick
  * against the inputs that cover it. The same state is mark N+1 and ghost N.
  */
+/** The core's sandbox (core-sandbox.js), or why it has none: a core that cannot run in the sandbox is not run. */
+function sandboxOf(core) {
+  if (!core || typeof core.url !== 'string') return { ok: false, why: NO_CORE_RULE };
+  let s;
+  try { s = sandboxFor(core); } catch (e) { return { ok: false, why: `that run's core is not run outside its sandbox, and it does not load in one: ${e.message}` }; }
+  return s.meta.start ? { ok: true, s } : { ok: false, why: NO_CORE_RULE };
+}
+
+/** The run's length: the round's (core.runTicks), else the core's runTicks(config), else its RUN_TICKS. */
+function runTicksIn(core, s) {
+  return Number.isInteger(core.runTicks) ? core.runTicks : s.meta.runTicks ? s.call('runTicks', { config: core.config }) : s.meta.RUN_TICKS;
+}
+
 export function replay(transcript, entry, { core, seedWord, roundRandomness, marks = [], pictures = [] } = {}) {
-  if (!core || !core.adapter || typeof core.adapter.start !== 'function') return { ok: false, why: NO_CORE_RULE };
-  const a = core.adapter;
+  const box = sandboxOf(core);
+  if (!box.ok) return { ok: false, why: box.why };
+  const s = box.s;
   if (!Number.isInteger(seedWord)) {
     if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
       return { ok: false, why: NO_SEED_RULE };
@@ -126,7 +143,8 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   // clean, all 9600 of them.
   // THE RUN'S LENGTH IS ITS CORE'S, under the round's config (M3 R1 R3): runTicks(config), else RUN_TICKS.
   // AND, SINCE THE 82/90 FORK, THE ROUND'S OWN: core.runTicks, its contract's blockTicks, when the round names one.
-  const runTicks = Number.isInteger(core.runTicks) ? core.runTicks : typeof a.runTicks === 'function' ? a.runTicks(core.config) : a.RUN_TICKS;
+  let runTicks;
+  try { runTicks = runTicksIn(core, s); } catch (e) { return { ok: false, why: e.message }; }
   const ends = lastTickOfRun(start, runTicks);
   const reaches = ticks[ticks.length - 1].tick;
   if (reaches > ends)
@@ -147,84 +165,25 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   }
 
   // BEFORE THAT TICK, which is what the golden vectors say and what
-  // `core/tools/replay.js` does: "liquidations are [tick, size] pairs handed
-  // to submitLiquidation BEFORE that tick". After it would be a different
-  // game - the strike would land a tick late, every tick, and only in the
-  // replay.
-  // The events are the core's (adapter.eventsOf): for the truck, liquidations and loads.
-  const events = a.eventsOf(transcript);
-
-  // AND THE LOAD, WHICH DECIDES HOW HARD THE WAR HUNTS THIS RUN.
-  //
-  // Before letter 40 there was nothing here at all: heat was written into the
-  // page's own core by `BlwpSetHeat` and stored nowhere, so every replay - and
-  // every ghost drawn off one - stepped a run at heat zero while the player
-  // drove at 57229. The two agree until the first tank is in reach and then
-  // part for good: 0.000 m at tick 400, 7.217 m by tick 900, growing.
-  //
-  // Before the tick, like a liquidation, and for the same reason: it is round
-  // setup for the tick it names, not a consequence of it. More than one at a
-  // tick cannot happen - the node keys them by tick - so a Map is the shape.
-  const want = new Map(marks.map((m) => [m.tick, hex(m.stateHash)]));
-  const wanted = new Set(pictures);
-  const taken = new Map();
-
-  // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban #130): blockTicks - joinTick ticks, the same as every run for joinTick 0
-  const st = a.start(seedWord, core.config, { runTicks: runTicksForEntry(start, runTicks) });
-  let checked = 0;
-  let divergedAt = null;
-
-  // A LOAD AT THE JOIN TICK NEEDS NO SPECIAL CASE, and a mark does. Roll-out
-  // declares the load before the first step, and the loop below applies a load
-  // BEFORE stepping the tick it names - so the join tick's load lands there.
-  // A mark names the state a tick REACHED, which is why one at the join tick
-  // is checked here and nowhere else.
-
-  // A mark AT the join tick is the state before any input, which a player can
-  // legitimately publish; the loop below only sees ticks it steps, so it is
-  // checked here.
-  const atStart = want.get(start);
-  if (atStart !== undefined) { checked++; if (a.stateHash(st) !== atStart) divergedAt = start; }
-
-  for (const t of ticks) {
-    events.before(st, t.tick);
-    a.step(st, t.words);
-
-    // THE PICTURE, if this tick is one somebody asked for. Three words and no
-    // more: x, z, heading are what draws a truck on a map, and every other
-    // word of the state would be a claim about somebody's run that a 5 Hz
-    // frame cannot prove and a renderer does not need.
-    // A GAME WHOSE ADAPTER DRAWS NO PICTURE (kanban #202: `picture` is a plugin's optional extra) has none to take.
-    if (wanted.has(t.tick) && typeof a.picture === 'function') {
-      taken.set(t.tick, { tick: t.tick, ...a.picture(st) });
-    }
-
-    // A CHECKPOINT AT TICK N IS THE STATE AFTER N HAS BEEN STEPPED. The
-    // client's own marks are made that way - it drives the core and then
-    // publishes at the tick it has reached - so the comparison is here, after
-    // the step, and not before the next one.
-    const at = want.get(t.tick + 1);
-    if (at !== undefined) {
-      checked++;
-      if (a.stateHash(st) !== at && divergedAt === null) divergedAt = t.tick + 1;
-    }
-  }
-
-  // WHAT THE RUN CAME TO, read off the state the replay reached rather than
-  // off anything the player said about it.
-  //
-  // The core ends a run LIVE, DELIVERED, WRECKED or MISSED (rules/gate.js) and
-  // section 13's PlayerResult carries `result`. DELIVERED is the only one of
-  // the four that delivered; wrecked and missed are both FAILED, which is the
-  // whole of the difference the money cares about - 18 pays a delivery and
-  // pools the rest. FORFEIT, VOID and ENTRY_VOID are NOT here and cannot be:
-  // they are facts about a stake or an entry, not about a drive, and a replay
-  // that returned one would be answering a question it was never asked.
-  //
-  // A run still LIVE at the last stored tick has no outcome at all. That is
-  // not FAILED - the transcript simply stops - and saying otherwise would let
-  // a lost connection be scored as a lost run.
-  const ran = a.result(st);
+  // `core/tools/replay.js` does: liquidations, loads, samples and tapes land
+  // BEFORE the tick they name (the core's eventsOf), a mark names the state a
+  // tick REACHED, a picture the truck after its tick was stepped. That loop is
+  // core-driver.js now, run inside the core's sandbox (kanban #328): it is
+  // handed the words, the events, the marks and the ticks wanted as one JSON
+  // string, and answers one. A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban
+  // #130): blockTicks - joinTick ticks, the same as every run for joinTick 0.
+  let ran;
+  try {
+    ran = s.call('replay', {
+      seedWord, config: core.config, runTicks: runTicksForEntry(start, runTicks), start,
+      words: ticks.map((t) => t.words),
+      events: { liquidations: transcript.liquidations, loads: transcript.loads, samples: transcript.samples, tapes: transcript.tapes },
+      marks: marks.map((m) => [m.tick, hex(m.stateHash)]), pictures,
+    });
+  } catch (e) { return { ok: false, why: e.message }; }
+  const taken = new Map(ran.taken.map((p) => [p.tick, p]));
+  const { checked, divergedAt } = ran;
+  const events = { count: ran.count || {} };
 
   return {
     ok: true,
@@ -242,7 +201,7 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
     samples: events.count.samples,
     tapes: events.count.tapes,
     heat: ran.heat,
-    stateHash: a.stateHash(st),
+    stateHash: ran.stateHash,
     checked,
     unchecked: marks.length - checked,
     divergedAt,
@@ -286,7 +245,8 @@ export function replayInWorker(transcript, entry, options = {}) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL(import.meta.url), {
       workerData: { blwpReplay: true, transcript, entry, source: source || null, options: rest,
-        core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks, world: core.world || null } },
+        core: { hash: core.hash, url: core.url, root: core.root ? String(core.root) : undefined, sourceHash: core.sourceHash,
+          name: core.name, config: core.config, runTicks: core.runTicks, world: core.world || null } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
@@ -301,7 +261,8 @@ export function replayInWorker(transcript, entry, options = {}) {
 // as a Worker by `replayInWorker`; in the daemon's own thread it does nothing.
 if (!isMainThread && workerData && workerData.blwpReplay) {
   const { transcript, entry, source, options, core } = workerData;
-  import(core.url).then(async (m) => {
+  // THE CORE IS NOT IMPORTED HERE (kanban #328): replay() loads it into its sandbox from its checked files
+  Promise.resolve().then(async () => {
     let inputs = transcript;
     if (source) {
       // READ HERE, NOT ON THE DAEMON'S LOOP. Read-only, and only the rows of this one run.
@@ -311,7 +272,7 @@ if (!isMainThread && workerData && workerData.blwpReplay) {
       try { inputs = readTranscript(db, source.roundId, source.entryId); }
       finally { try { db.close(); } catch { /* closing */ } }
     }
-    parentPort.postMessage(replay(inputs, entry, { ...options, core: { hash: core.hash, url: core.url, config: core.config, runTicks: core.runTicks, world: core.world || null, adapter: m.CORE } }));
+    parentPort.postMessage(replay(inputs, entry, { ...options, core }));
     parentPort.close();
   }, (e) => {
     parentPort.postMessage({ ok: false, why: `the core named for that run could not be loaded: ${e.message}` });
@@ -352,14 +313,17 @@ if (!isMainThread && workerData && workerData.blwpReplay) {
  * the node stored, and produces three words. Nothing here is an input to
  * anybody's simulation and no browser computes any of it.
  */
+/** A warm run's state lives in its core's sandbox; when the RunInProgress holding it is collected, it is let go there too. */
+const DROP = new FinalizationRegistry(({ s, id }) => { try { s.call('drop', { id }); } catch { /* gone with it */ } });
+
 export class RunInProgress {
   constructor(entry, { core, seedWord, roundRandomness } = {}) {
     this.ok = true;
     // THE CORE THE ROUND NAMES (M3 R1), as `replay` takes it: none named, none run.
-    if (!core || !core.adapter || typeof core.adapter.start !== 'function')
-      return Object.assign(this, { ok: false, why: NO_CORE_RULE });
+    const box = sandboxOf(core);
+    if (!box.ok) return Object.assign(this, { ok: false, why: box.why });
     this.core = core;
-    this.a = core.adapter;
+    this.s = box.s;
     if (!Number.isInteger(seedWord)) {
       if (!(entry?.worldSecret instanceof Uint8Array) || entry.worldSecret.length !== 32)
         return Object.assign(this, { ok: false, why: NO_SEED_RULE });
@@ -373,10 +337,13 @@ export class RunInProgress {
 
     this.seedWord = seedWord;
     this.joinTick = entry.joinTick;
-    this.runTicks = Number.isInteger(core.runTicks) ? core.runTicks
-      : typeof this.a.runTicks === 'function' ? this.a.runTicks(core.config) : this.a.RUN_TICKS;
+    try {
+      this.runTicks = runTicksIn(core, this.s);
+      // THE RUN IS KEPT IN THE CORE'S SANDBOX (kanban #328); this object holds its number, and lets it go when it is collected
+      this.id = this.s.call('open', { seedWord, config: core.config, runTicks: runTicksForEntry(entry.joinTick, this.runTicks) });
+    } catch (e) { return Object.assign(this, { ok: false, why: e.message }); }
+    DROP.register(this, { s: this.s, id: this.id });
     this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);
-    this.st = this.a.start(seedWord, core.config, { runTicks: runTicksForEntry(entry.joinTick, this.runTicks) });
     // The last tick STEPPED. Nothing yet, so one before the join.
     this.at = entry.joinTick - 1;
     // Liquidations land BEFORE their own tick and exactly once, whether the
@@ -395,7 +362,7 @@ export class RunInProgress {
 
   /** x, z and heading as of the last tick stepped. Three words, like `replay`. */
   pose() {
-    return { tick: this.at, ...(typeof this.a.picture === 'function' ? this.a.picture(this.st) : {}) };
+    return { tick: this.at, ...this.s.call('pose', { id: this.id }) };
   }
 
   /**
@@ -464,21 +431,28 @@ export class RunInProgress {
 
     // THE CORE APPLIES THEM (adapter.eventsOf), each before its own tick - and a tick is stepped once,
     // so each lands once, whichever slice brought it.
-    const events = this.a.eventsOf({
+    // In the sandbox (core-driver.js stepTo), as one call: the ticks up to the first that does not carry five words,
+    // which is refused after the ones before it were stepped, as it always was.
+    const events = {
       liquidations: [...this.due],
       loads: [...this.loadDue].map(([at, load]) => [at, ...load]),
       samples: [...this.sampleDue],
       tapes: [...this.tapeDue].map(([at, prices]) => [at, ...prices]),
-    });
+    };
+    const words = [];
+    let bad = null;
     for (let at = this.at + 1; at <= tick; at++) {
       const t = ticks[at - from];
-      if (!Array.isArray(t.words) || t.words.length !== INPUT_WORDS)
-        return { ok: false, why: `tick ${t.tick} does not carry five words` };
-      events.before(this.st, at);
-      this.a.step(this.st, t.words);
-      this.at = at;
-      this.stepped++;
+      if (!Array.isArray(t.words) || t.words.length !== INPUT_WORDS) { bad = t; break; }
+      words.push(t.words);
     }
+    if (words.length) {
+      try { this.s.call('stepTo', { id: this.id, events, from: this.at + 1, words }); }
+      catch (e) { return { ok: false, why: e.message }; }
+      this.at += words.length;
+      this.stepped += words.length;
+    }
+    if (bad) return { ok: false, why: `tick ${bad.tick} does not carry five words` };
     // Consumed as they land: nothing at or before the last tick stepped is kept.
     for (const at of [...this.due.keys()]) if (at <= this.at) this.due.delete(at);
     for (const at of [...this.loadDue.keys()]) if (at <= this.at) this.loadDue.delete(at);

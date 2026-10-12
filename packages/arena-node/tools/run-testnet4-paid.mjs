@@ -37,6 +37,13 @@ import { MARKET } from '../test/plugins/market/index.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
+import { donationSetInForce } from '../../arena-protocol/src/authority.js';
+import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
+import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
+import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
+import { TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
@@ -79,7 +86,8 @@ if (network === 'testnet4') {
 const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
 const wallet = env.ARENA_TN4_WALLET || 'testnet';
 const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
-  [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8' }).trim();
+  // a testnet4 block is read whole as hex: past the 1 MB default buffer (ENOBUFS, measured 2026-10-11 on a 1.4 MB block)
+  [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).trim();
 const rpc = bitcoindRpc({ url: `${env.ARENA_BITCOIND_URL.replace(/\/$/, '')}/wallet/${wallet}`, cookiePath: env.ARENA_BITCOIND_COOKIE });
 const chainCall = bitcoindRpc({ url: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE });
 
@@ -110,6 +118,8 @@ const round = await standUpRound({ host: '127.0.0.1', portA: pa, portB: pb, port
   // OR AN ENTRY CLOSE AT A WALL-CLOCK INSTANT (ISO), the window then fitted to it once committee_time is known
   ...(env.ARENA_ENTRY_CLOSE_AT ? { entryCloseAtMs: Date.parse(env.ARENA_ENTRY_CLOSE_AT) } : {}),
   signerNode: { closeAtEnd: true, stakeLocks: lock },
+  // PAID_FIRST=0 (kanban #293, the RPS grid): no round of its own - only the grid keeper below publishes
+  openFirst: env.PAID_FIRST !== '0',
   ...(env.ARENA_ATTACH === '1' ? { attach: { fundedFile: env.ARENA_FUNDED_ROUNDS_FILE || join(home, 'paid', 'funded-rounds.txt'),
     proofDir: env.ARENA_ATTACH_PROOF_DIR || join(home, 'paid', 'attach-proof') } } : {}),
   guardianChain: { bitcoindUrl: env.ARENA_BITCOIND_URL, cookiePath: env.ARENA_BITCOIND_COOKIE, call: chainCall },
@@ -123,6 +133,7 @@ say({ paid: 'up', network, custody: round.contract.custody, stakeMsat: String(st
 // THE FUNDED GATEWAY STAYS IN THE LINK (the owner 2026-09-30 14:30 and the leadMs letter): a start used to write the link
 // without `gateway=`, and a page opened on it deposits through whichever gateway the lock client picks. The gateway the
 // link already named is kept.
+if (round.id) {
 let lobbyUrl = round.lobbyUrl;
 try {
   const had = new URL(readFileSync(join(home, 'paid', 'lobby-url.txt'), 'utf8').trim()).searchParams.get('gateway');
@@ -136,8 +147,58 @@ console.log(round.lobbyUrl);
 // THE NEXT ONE-OFF 4 h BEFORE THE CURRENT ENTRY CLOSES (the owner 2026-09-30: "4 h is the lead"): a round is published first
 // and joinable only once its beacon is 6 deep - measured 1.5-3 h on testnet4 - so opening it 60 s before the close left a
 // 1.5-3 h gap every 6 h with no paid round to join.
-round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
+// PAID_KEEP=0 (kanban #325, the regtest succession): no next round - with a short ARENA_ENTRY_WINDOW_MS every round closes
+// within the 4 h lead, and the keeper opened one every 10 s (87 in run 13), mining the regtest chain past its federation
+if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
+}
+// PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
+// waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
+// read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
+// grid is published: committee_time 40 min past the tip's median time (so the publication confirms below its beacon), the
+// first close 105 min from now - or 8 s after the last grid's, when that is later, so a table plays on without a hole.
+// RPS_GRID_NOW=1 publishes the first grid without waiting for a page's ask.
+if (env.PAID_RPS_GRID === '1') {
+  const slots = Number(env.RPS_GRID_SLOTS || 225), tables = Number(env.RPS_GRID_TABLES || 2);
+  const aheadMs = Number(env.RPS_GRID_AHEAD_MS || 100 * 60000), leadMs = Number(env.RPS_GRID_LEAD_MS || 120 * 60000);
+  let lastCloseMs = 0, busy = false, now1 = env.RPS_GRID_NOW === '1';
+  const gid = toHex(ROCK_PAPER_SCISSORS.gameId);
+  const look = async () => {
+    if (busy) return;
+    let wantAt = 0;
+    try { wantAt = (await (await fetch(`http://127.0.0.1:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
+    if (now1) { wantAt = Date.now(); now1 = false; }
+    if (Date.now() - wantAt > 180000 || lastCloseMs > Date.now() + aheadMs) return;
+    busy = true;
+    try {
+      const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
+      // 45 min past the tip's median: the median climbs about 20 min a block, so the publication has two blocks to confirm in
+      // before the median passes it. On testnet4 the median runs ahead of the clock (74 min at 18:01Z), and a round starts
+      // only after its committee time - so the first close is also at least 5 min past it (measured 17:54-17:59Z: with the
+      // committee 60 min past a median 2 h ahead, every grid started before its committee time and none was published)
+      const committee = mtp + 45 * 60000 + 500;
+      const firstClose = Math.max(Date.now() + leadMs, committee + 5 * 60000, lastCloseMs + 8000);
+      // THE DONATION SET IN FORCE AT THE GRID'S CENSUS HEIGHT, as every seat checks it (server.js donationSetFor; measured
+      // 17:54Z: grid 474c23f1 named the harness's older set and seat 31281 refused its first round - "at census height
+      // 156098 this network's donation set in force is serial 3")
+      const keys = donationKeysForNetworkId(round.contract.networkId);
+      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+        rotations: [], height: round.contract.censusHeight,
+        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+      const donationSetId = idOfDonationSet(forced.recipients);
+      say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
+      say({ rpsGrid: 'donation set', serial: String(forced.serial), id: toHex(donationSetId).slice(0, 16), censusHeight: round.contract.censusHeight });
+      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId }, stakeMsat }, { slots, tables, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+        onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
+      say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
+        rounds: got.rounds, posted: got.posted, lastClose: got.lastCloseMs ? new Date(Number(got.lastCloseMs)).toISOString() : undefined });
+      if (got.ok) lastCloseMs = Number(got.lastCloseMs);
+    } catch (e) { say({ rpsGridNotOpened: e.message }); } finally { busy = false; }
+  };
+  look(); setInterval(look, 30000);
+}
 // PAID ROCK PAPER SCISSORS BACK TO BACK (kanban #293, the owner 2026-10-10: head-to-head needs no series, and a paid round is
 // still paid - 100 sats as Tick Tock's): PAID_RPS=1 keeps a paying RPS round closing every 8 s, published ahead, at this
 // runner's stake and custody (ARENA_PUBLISH_AHEAD=1 in this runner's environment)

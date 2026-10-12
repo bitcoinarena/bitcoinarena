@@ -47,6 +47,7 @@ import { packageOf, verifyPackage, installPackage, registrationFromPackage } fro
 import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
+import { federationRecords } from './federation-records.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
@@ -90,7 +91,10 @@ import { CLOSED } from './store.js';
 import { Round } from './round.js';
 import { Verifier } from './verify.js';
 import { Ghosts } from './ghosts.js';
+import { gameLive } from './game-live.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY } from './roster.js';
+import { seatingAgent } from './seating-agent.js';
+import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
 import { donationSetId, donationOutputsExpected, encodeDonationSet } from '../../arena-protocol/src/donation.js';
@@ -104,6 +108,7 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
+import { isHeadToHead } from '../../arena-protocol/src/manifest.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -247,7 +252,7 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
   return { result: 'lost', netMsat: String(-BigInt(entry.stakeMsat)) };
 }
 
-export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED,
+export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null,
   randomnessFor, chainFor, peers = [], headerBytes, bondProof,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
@@ -370,6 +375,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const hosted = hostedPlugins(plugins);
   // THE NODE'S OPEN MUSIG2 SESSIONS (kanban #307): session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
+  let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -1151,6 +1157,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     ...(priceFeed && typeof priceFeed === 'object' && priceFeed.readPrice ? { readPrice: priceFeed.readPrice } : {}),
     peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
   let priceTimeout = null;
+  // ENFORCED (§11, kanban #311 slice 3): where this seat runs the feed, a price round's batches carry only attested prices
+  const feedFor = (contractBytes) => { if (!priceFeed) return false; try { return priceRound(decodeRoundContract(new Uint8Array(contractBytes))); } catch { return false; } };
+  round.pricesRequired = feedFor;
   if (priceFeed) {
     const schedulePrices = () => {
       priceTimeout = setTimeout(async () => {
@@ -1194,12 +1203,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library
   // code here: this is the daemon's only caller of it, and `chainFor` is the
   // blocks - asked for, never invented, the same way the randomness is.
+  // A MARKET'S WINDOW (the owner 2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00. Man darf davor
+  // und danach nicht am Markt teilnehmen"): an attested round on its game's period takes orders only inside it
+  const marketWindowFor = (c) => {
+    const f = pluginForRound(c, hosted);
+    if (!f.ok || !f.attested) return null;
+    const w = marketWindowOf(c, f.plugin.manifest);
+    return w.ok ? w.window : null;
+  };
+  const liveNow = gameLive(round, { windowOf: marketWindowFor });
   const roster = new Roster(round, {
     ...(chainFor ? { chainFor } : {}),
     // The same beacon the verifier reads: one source, so a node cannot assign
     // one committee and sign results against another.
     ...(randomnessFor ? { randomnessFor } : {}),
   });
+  // RESERVE SEATS (§5A.7, kanban #301): ARENA_SEATING=1 - each role draws 9 for 7 seats, the drawn sign PRESENT before
+  // start - 120 s, the seated sign one SEATING certificate, and a round takes entries only with it (seating-agent.js)
+  const seating = (seatingOn ?? process.env.ARENA_SEATING === '1') ? seatingAgent({ round, roster,
+    sign: (digest) => schnorr.sign(digest, round.identity.secret),
+    verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    log: (m) => console.log(m), windowOf: marketWindowFor }) : null;
+  if (seating) roster.seatedFor = seating.seatedFor;
+  const seatingTimer = seating ? setInterval(() => { seating.tick(); }, Number(process.env.ARENA_SEATING_TICK_MS || 2000)) : null;
+  if (seatingTimer) seatingTimer.unref();
 
   // WHAT HEARS A ROUND CLOSING. Section 13 replays once the run is over, so
   // the close is the event and this is what listens for it. The world secret
@@ -2191,6 +2218,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (h.bad) continue;
         const c = h.c;
         if (c.stakeMsat === 0n || BigInt(nowMs) < c.startTimeMs) continue;
+        // NO RUN, NO FIRST MARK (kanban #344, measured on testnet4 round 4a0a77fc, 2026-10-11 20:12Z): a head-to-head round is
+        // decided by its reveals and an attested market by its attestors - neither sends a first mark, so the start deadline
+        // is not theirs. Swept here, both paid RPS entries were FORFEIT-signed at the door ~10 s after their stakes were seen,
+        // minutes before their reveals; the h2h decide then signed DELIVERED / FAILED for the same entries.
+        { const f = pluginForRound(c, hosted); if (f.ok && (f.headToHead || f.attested)) continue; }
         let deadlineMs;
         try { deadlineMs = Number(msForTicks(startDeadlineOf(c)).ms); } catch { continue; }
         for (const { entryId } of round.entriesOf(held.roundId)) {
@@ -2242,6 +2274,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const drainingRefusal = (contract) => {
     if (!contract || !(contract.stakeMsat > 0n) || !(contract.federationId instanceof Uint8Array)) return null;
     const d = drainingFeds.get(toHex(contract.federationId));
+    // AND BY ITS GUARDIANS' OWN RECORD (§23A.4, kanban #321): DRAINING, CRITICAL, CLOSED or HALTED names no new round
+    const byRecord = fedRecords ? fedRecords.draining(toHex(contract.federationId)) : null;
+    if (!d && byRecord) return `federation ${toHex(contract.federationId).slice(0, 16)} is ${byRecord} by its guardians' signed record: no new round or deposit names it`;
     return d ? `federation ${toHex(contract.federationId).slice(0, 16)} is draining since ${new Date(d.sinceMs).toISOString()} (its successor is ${d.successor.slice(0, 16)}): no new round or deposit names it` : null;
   };
   const refusedSeries = new Set();
@@ -2489,6 +2524,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FEDERATION THIS SEAT NAMED BEFORE A PACKAGE NAMING A SUCCESSOR: draining from now (§23A.6 step 2), kept beside the
   // package so the next start keeps it draining; the series naming it are no longer written
   const fedOf = (invite) => { try { return invite ? readInvite(invite).federationId : null; } catch { return null; } };
+  // THE FEDERATION RECORDS (kanban #321): signed here when this node guards one, gathered from the guardians, mirrored at
+  // GET /federations; gathered every ARENA_FEDERATION_RECORD_MS (10 min)
+  const inviteOfFed = (fidHex) => {
+    const all = [federationInvite, ...[...networksHeld.values()].map((h) => h.pkg.invite)].filter(Boolean);
+    return all.find((inv) => String(fedOf(inv) || '').toLowerCase() === fidHex) || null;
+  };
+  // SUCCESSION (§23A.6 steps 2 and 4, kanban #325): the successor this seat was told of signs into the old federation's
+  // record (DRAINING, successor_id), and the record turns CLOSED once no round this seat holds naming it is still open and
+  // drain_blocks have passed since it drained - four weeks (the owner 2026-09-21), ARENA_DRAIN_MS on a test clock
+  const DRAIN_MS = Number(process.env.ARENA_DRAIN_MS || 28 * 86400000);
+  const openRoundNames = (fidHex) => round.openRoundIds().some((id) => { try { return toHex(decodeRoundContract(new Uint8Array(round.get(id).contract)).federationId) === fidHex; } catch { return false; } });
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null,
+    leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
+    successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
+    closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
+  // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
+  roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
+  const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
+  const recordTimer = setInterval(() => { fedRecords.gatherAll(inviteFedId).then((r) => { for (const x of r) if (x.ok === false) console.log(`[federations] ${String(x.federation || '').slice(0, 16)}: ${x.why}`); }, () => {}); },
+    Number(process.env.ARENA_FEDERATION_RECORD_MS || 600000));
+  if (recordTimer.unref) recordTimer.unref();
   const markDraining = (nid, oldFed, successor, sinceMs = round.now(), keep = true) => {
     if (!oldFed || oldFed === successor || drainingFeds.has(oldFed)) return;
     drainingFeds.set(oldFed, { successor, sinceMs });
@@ -2589,6 +2645,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     console.log(`[networks] removed network ${network.slice(0, 16)}`);
     return { ok: true, network, removed: true };
   }
+  // A DRAIN NAMED AT START (kanban #325, the succession regtest): ARENA_DRAINING=<old federation hex>:<successor hex>[,...] -
+  // what an installed network package's draining.json says, as a seat setting
+  for (const pair of String(process.env.ARENA_DRAINING || '').split(',').filter(Boolean)) {
+    const [oldFed, successor] = pair.split(':').map((x) => String(x || '').toLowerCase());
+    if (/^[0-9a-f]{64}$/.test(oldFed) && /^[0-9a-f]{64}$/.test(successor)) { markDraining(null, oldFed, successor, round.now(), false); console.log(`[networks] federation ${oldFed.slice(0, 16)} is draining into ${successor.slice(0, 16)} (ARENA_DRAINING)`); }
+  }
   // THE INSTALLED NETWORKS AT START: each checked and tried again before it is held (a package that no longer stands is not)
   if (networksDir && existsSync(networksDir)) {
     for (const id of readdirSync(networksDir).filter((x) => /^[0-9a-f]{64}$/.test(x))) {
@@ -2610,7 +2672,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const kept = committeeDrawn.get(toHex(rid));
     if (kept) return kept;
     const drawn = committeeDraw(rid);
-    if (drawn.drawn) committeeDrawn.set(toHex(rid), drawn);
+    // with reserve seats the committee is who the certificate seats: kept only once both roles are seated
+    if (drawn.drawn && (!seating || (drawn.seated && drawn.seated.game && drawn.seated.settlement))) committeeDrawn.set(toHex(rid), drawn);
     return drawn;
   };
   const committeeDraw = (rid) => {
@@ -2620,6 +2683,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const keys = (x) => x.committee.map((e) => toHex(e.pubkey));
     // WHAT IT WAS DRAWN FROM: the census's bond entries and its distinct node keys - a key sits once (sortition.js).
     return { drawn: true, game: keys(game), settlement: keys(settlement), eligibleEntries: game.eligible,
+      // RESERVE SEATS (§5A.7): whether each role's committee is a seating certificate's, and the drawn beyond the seats
+      ...(seating ? { seated: { game: game.seated, settlement: settlement.seated }, drawnCount: { game: game.drawn.length, settlement: settlement.drawn.length },
+        drawn: { game: game.drawn.map((e) => toHex(e.pubkey)), settlement: settlement.drawn.map((e) => toHex(e.pubkey)) },
+        equivocated: Object.values(seating.stateOf(rid)).some((x) => x && x.equivocated) } : {}),
       eligibleKeys: new Set((roster.censusFor(rid).entries || []).map((e) => toHex(e.pubkey))).size };
   };
   const listingKept = new Map();                  // GET /rounds query -> { at, json }, a large one kept 30 s
@@ -2782,8 +2849,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try { needed = roundThreshold(c.gameVerifySlots); } catch { needed = null; }
       // the window's signature of this row for these facts (windowSigs)
       const sig = sigOf.get(id);
+      // A MARKET is open in its window only (the owner 2026-10-11): from entry_close - period, never from its committee time
+      const marketWindow = marketWindowFor(c);
+      const opensMs = marketWindow && marketWindow.startMs > c.committeeTimeMs ? marketWindow.startMs : c.committeeTimeMs;
       listed.push({
-        id, phase, entryOpen: nowMs >= c.committeeTimeMs && nowMs < c.entryCloseMs,
+        id, phase, entryOpen: nowMs >= opensMs && nowMs < c.entryCloseMs,
+        ...(marketWindow ? { windowStartMs: String(marketWindow.startMs) } : {}),
         // THE ROUND'S GAME (kanban #204): its id and the name this node hosts it under
         game: gameOfContract(c),
         // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
@@ -3376,8 +3447,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // ITS KIND, VERSION AND SIGNED INFO (kanban #276): what the network store lists; the info's signature travels with it,
           // so a reader checks it against the manifest's developer key rather than taking it from this seat
           type: gameTypeOf(p.manifest), version: p.manifest.version, info: p.info || null,
+          // WHO PLAYS IT HERE NOW (kanban #338): its live rounds and the players in them, from this seat's own store
+          live: liveNow()[toHex(p.gameId)] || { rounds: 0, players: 0 },
           manifest: toHex(encodeManifest(p.manifest)) }));
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=10', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), games }));
       }
       if (req.method === 'GET' && url.pathname === '/rounds' && /text\/html/.test(String(req.headers.accept || ''))) {
@@ -3589,6 +3662,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const game = refusedGameOf.get(toHex(contract.roundId));
           if (game) return text(res, 409, `entry refused: this node does not host game ${game.slice(0, 16)} (§0A.4), the game that round plays`); }
         { const why = offerRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
+        // RESERVE SEATS (§5A.7, kanban #301): a round takes entries only once both roles are seated by a certificate this
+        // node holds - and never after two seatings (equivocation: the round is void)
+        if (seating) {
+          const st = seating.stateOf(contract.roundId);
+          if (Object.values(st).some((x) => x && x.equivocated)) return text(res, 409, 'entry refused: that round has two seatings - equivocation, the round is void (§5A.7)');
+          if (!st.game || !st.settlement) return text(res, 409, 'entry refused: that round is not seated yet - no seating certificate for its game and settlement roles (§5A.7)');
+        }
         if (!funded({ kind: 'entry', contract, node: fundingView }))
           return text(res, 402, 'this node stores nothing for an entry nobody has funded');
         // THE FEE-LOCK DOOR (the owner 2026-09-14, pick a). Where the round's gate mints fee locks,
@@ -4100,6 +4180,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // identity key and its signature over (round, key) (match.js presenceId) - says this tab sits at that round's table; GET
       // reads who does. Each answers the identities said within PRESENCE_MS, with the name made from each key. Kept in memory
       // only: presence decides nothing.
+      // A TABLE WAITS (kanban #293, the owner 2026-10-11, path B): POST /h2h-want?game=<id> - a page that chose a head-to-head
+      // game this seat hosts and found no round of it open says so; GET /h2h-want answers, per game, when that was last
+      // said. The operator's grid keeper reads it and publishes the next 30 min of rounds in one transaction. In memory
+      // only, one time per game: it decides nothing but whether a grid is published.
+      if (url.pathname === '/h2h-want' && (req.method === 'POST' || req.method === 'GET')) {
+        const wants = round.__h2hWants || (round.__h2hWants = new Map());
+        if (req.method === 'GET') {
+          res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+          return res.end(JSON.stringify({ nowMs: Number(round.now()), wants: Object.fromEntries(wants) }));
+        }
+        const g = String(url.searchParams.get('game') || '').toLowerCase();
+        const p = /^[0-9a-f]{64}$/.test(g) ? hosted.get(g) : null;
+        if (!p || !isHeadToHead(p.manifest)) return text(res, 404, 'that is not a head-to-head game this node hosts');
+        wants.set(g, Number(round.now()));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ ok: true, game: g, atMs: wants.get(g) }));
+      }
       if (url.pathname === '/here' && (req.method === 'POST' || req.method === 'GET')) {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
@@ -4192,7 +4289,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rh = String(url.searchParams.get('round') || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(rh)) return text(res, 400, 'GET /price-samples?round=<id>&since=<tick>');
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(prices.list(rh, Number(url.searchParams.get('since') || 0) || 0)));
+        // `feed`: this seat runs the committee's feed for that round - a page then plays only attested prices (slice 3)
+        const row = round.get(Buffer.from(rh, 'hex'));
+        return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0), feed: !!(row && feedFor(row.contract)) }));
       }
       if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested')) {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
@@ -4943,6 +5042,59 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(b));
       }
+      // THIS GUARDIAN'S SIGNATURE OVER ITS FEDERATION'S RECORD (§23A.4, kanban #321), with `gone` named: the same body
+      // with those guardians gone - and its own word on whether it is leaving, signed
+      if (req.method === 'GET' && url.pathname === '/federation-record') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'a federation id, 32 bytes hex');
+        const goneHex = String(url.searchParams.get('gone') || '').split(',').filter(Boolean).map((x) => x.toLowerCase());
+        // `height` (kanban #321): the census height the gathering seat built its body at - this seat signs that body or none
+        const h = url.searchParams.get('height');
+        if (h !== null && !/^[0-9]{1,10}$/.test(h)) return text(res, 400, 'a census height, a whole number');
+        const atHeight = h === null ? null : Number(h);
+        const r = goneHex.length ? fedRecords.mySignatureWithGone(fid, goneHex, atHeight) : fedRecords.mySignature(fid, atHeight);
+        res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(r));
+      }
+      // EVERY FEDERATION RECORD THIS SEAT HOLDS, signed by the threshold of its bonded guardians (§23A.4: "every seat
+      // mirrors the newest record of every federation its census knows"); ?fresh=1 gathers again now
+      // RESERVE SEATS (§5A.7, kanban #301): PRESENT in and out, this node's seating signature, the certificate, a proof of
+      // equivocation
+      const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+      // A CERTIFICATE HANDED OVER (§5A.7: "a node that sees two certificates for one round publishes both"): kept if it
+      // stands against this node's draw; one that differs from the one held is the proof of equivocation
+      if (seating && req.method === 'POST' && url.pathname === '/seating') {
+        let rid, role, k;
+        try { const c = decodeSeatingCertificate(await read(req)); rid = c.roundId; role = c.role; k = seating.keepCert(rid, role, encodeSeatingCertificate(c)); }
+        catch (e) { return text(res, 400, `not a seating certificate: ${e.message}`); }
+        if (!k.ok) return text(res, 409, k.why);
+        return json(res, k.equivocation ? 200 : 201, k);
+      }
+      if (seating && req.method === 'POST' && url.pathname === '/present') {
+        const r = seating.takePresent(await read(req));
+        return r.ok ? text(res, 201, 'present kept') : text(res, 409, r.why);
+      }
+      if (seating && req.method === 'GET' && ['/present', '/seating', '/seating-sig', '/seating-equivocation'].includes(url.pathname)) {
+        let rid; try { rid = fromHex(url.searchParams.get('round') || ''); } catch { rid = null; }
+        if (!rid || rid.length !== 32) return text(res, 400, 'name a round: ?round=<64 hex>');
+        const role = url.searchParams.get('role');
+        if (url.pathname === '/present') return json(res, 200, { presents: seating.presentsOf(rid) });
+        if (url.pathname === '/seating-equivocation') return json(res, 200, { equivocations: seating.equivocationOf(rid) });
+        if (role !== 'game' && role !== 'settlement') return text(res, 400, 'name a role: game or settlement');
+        if (url.pathname === '/seating-sig') { const m = seating.mySignature(rid, role); return m ? json(res, 200, m) : text(res, 404, 'this node signed no seating for that round and role'); }
+        const cert = seating.certOf(rid, role);
+        return cert ? json(res, 200, { cert }) : text(res, 404, 'no seating certificate for that round and role here');
+      }
+      if (req.method === 'GET' && url.pathname === '/federations') {
+        if (url.searchParams.get('fresh') === '1') { try { await fedRecords.gatherAll((inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; }); } catch { /* the kept ones */ } }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        // AND WHO THE DRAIN PAYS (§23A.6 step 5, kanban #325): per successor a kept record names, the predecessor's seated
+        // guardians its guardian pool takes (roster.guardiansFor), by node key - none once the predecessor is CLOSED
+        const listed = fedRecords.list();
+        const drainPools = Object.fromEntries([...new Set(listed.map((f) => f.successor).filter(Boolean))]
+          .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: listed, drainPools }));
+      }
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
@@ -5636,6 +5788,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearTimeout(attestedBoot);
         signer.close().catch(() => {});
         clearInterval(autoUpdateTimer);
+        clearInterval(recordTimer);
         clearInterval(networkGamesTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);

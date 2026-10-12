@@ -38,6 +38,7 @@ import { decodeHandout } from '../../arena-protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { H2H_REVEAL_MIN_MS } from '../../arena-protocol/src/manifest.js';
+import { marketWindowOf } from '../../arena-protocol/src/attested.js';
 import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
@@ -424,6 +425,12 @@ export class Round {
         // AND ONLY UNTIL THE ROUND'S ENTRY CLOSE (§0A.7a slice 2): the outcome may be taken from then on, so no pick after it
         if (typeof asks.entryCloseMs === 'bigint' && BigInt(this.now()) >= asks.entryCloseMs)
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: an attested round takes no pick after its entry close`);
+        // AND NOT BEFORE ITS WINDOW OPENS (the owner 2026-10-11: "Der prediction market läuft immer z.B. zwischen 19:45 und 20:00.
+        // Man darf davor und danach nicht am Markt teilnehmen und mit Wetten. Das ist die allgemeine Regel für prediction
+        // markets"): a market on its game's period (attested.js marketWindowOf) takes a pick only from entry_close - period
+        { const w = marketWindowOf(asks, game.plugin.manifest);
+          if (w.ok && w.window && BigInt(this.now()) < w.window.startMs)
+            throw new Error(`that market opens at ${new Date(Number(w.window.startMs)).toISOString()} and runs to ${new Date(Number(w.window.endMs)).toISOString()}: it takes no pick before its window`); }
         // AND NOT ONCE THE OUTCOME IS KNOWN HERE: a pick made after its attestation came is not a pick, it is a copy
         if (this.outcomeAttestations(contract.roundId).length)
           throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');
@@ -618,11 +625,14 @@ export class Round {
 
     // AND THE PRICES IT PLAYED, WHERE IT CARRIES THE COMMITTEE'S WORD ON THEM (§11, kanban #311): an attestation that
     // does not stand, or a sample that is not the attested price at its tick, refuses the batch - the player never
-    // chooses the price. (A batch with none is taken as before; a round whose contract names a feed requires them later.)
-    if (b.attests && b.attests.length) {
+    // chooses the price. A batch with none is taken as before - unless this seat runs the committee's feed for the round
+    // (`pricesRequired`, slice 3): then a bare sample or tape is the player choosing the price and is refused; a run with no
+    // samples at all plays the seeded tape (front_mode = SIM) and stands.
+    const requirePrices = !!(this.pricesRequired && this.pricesRequired(round.contract));
+    if ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length)))) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.nodes.length); } catch { return c.nodes.length; } })(),
-        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } } });
+        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices });
       if (!prices.ok) throw new Error(prices.why);
     }
 

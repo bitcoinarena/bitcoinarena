@@ -235,6 +235,13 @@ export const TYPE_OUTCOME_ATTESTATION = 0x1d;
 // 64 prices before the start, as one tape - so the player never chooses the price.
 export const TYPE_PRICE_SAMPLE = 0x1e;
 export const TYPE_PRICE_TAPE = 0x1f;
+// A FEDERATION'S RECORD (§23A.4, kanban #321): signed by its guardians, it decides whether a client may deposit into it,
+// and whether a seat names it in a new round - OPEN, DRAINING, CRITICAL, CLOSED, HALTED.
+export const TYPE_FEDERATION_RECORD = 0x20;
+// RESERVE SEATS (§5A.7, kanban #301): a drawn node's word that it is present for a round and role, and the seating its
+// seated nodes all sign - which nodes serve the round. Two seatings for one round and role are equivocation.
+export const TYPE_PRESENT = 0x21;
+export const TYPE_SEATING = 0x22;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -352,6 +359,8 @@ export const TAG = {
   // Two tags: the digest a key signs is never the id of the signed object, or a signature could carry somewhere else.
   gameManifestBody: 'ARENA/v1/GameManifestBody',
   gameManifest: 'ARENA/v1/GameManifest',
+  // a federation record's id, the bytes its guardians sign (kanban #321, federation-record.js)
+  federationRecord: 'ARENA/v1/FederationRecord',
   // kanban #276: a game's description and website, signed by its developer key beside its manifest (game-info.js)
   gameInfo: 'ARENA/v1/GameInfo',
   // A head-to-head player's hidden move (kanban #233): H(round_id || entry key || move || salt), revealed after entry close.
@@ -370,6 +379,9 @@ export const TAG = {
   matchProof: 'ARENA/v1/MatchProof',
   matchRecord: 'ARENA/v1/MatchRecord',
   presence: 'ARENA/v1/Presence',
+  // §5A.7 reserve seats (kanban #301)
+  seatPresent: 'ARENA/v1/SeatPresent',
+  seating: 'ARENA/v1/Seating',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',

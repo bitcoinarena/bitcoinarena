@@ -13,7 +13,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const OPEN = slice('    function openMoney(which, say = ', '\n      })();\n    }\n');
-const WIRED = slice("    for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'deposit'],", '\n      setInterval(paintWalletBar, 1000);\n    }\n');
+const WIRED = slice("    for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'move'],", '\n      setInterval(paintWalletBar, 1000);\n    }\n');
 
 function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab'.repeat(32), roundStake: 100000n, invite: 'fed1', seed: 'seed', gateways: [] },
   ownClient = true, balance = { sats: 12345, pending: 0 }, settingsShown = false, depositFails = null } = {}) {

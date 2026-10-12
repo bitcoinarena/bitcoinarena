@@ -115,3 +115,4 @@ test('one player alone is not played (the owner 2026-10-09: "there must be 2 bef
     assert.deepEqual(only(r), ['VOID 0']);
   } finally { await w.close(); }
 });
+

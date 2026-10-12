@@ -7,11 +7,13 @@
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+import { verifySeating } from '../../arena-protocol/src/seating.js';
+import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { committeeFromChain } from '../../arena-protocol/src/client-committee.js';
 import { blockHashOf, TESTNET4_ANCHOR_HEIGHT } from '../../arena-protocol/src/chain.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { agreedChain, httpProvider } from './headers.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
@@ -97,6 +99,30 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   if (!got.ok) return got;
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus);
+  // THE SEATING (§5A.7 reserve seats, kanban #301): each role's certificate, asked of the seats and checked against the draw
+  // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
+  // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
+  // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before #301).
+  got.seating = {};
+  for (const role of roles) {
+    let spoke = false; const refused = [];
+    let found = null;
+    for (const u of nodes) {
+      try {
+        const r = await fetcher(`${baseOf(u)}/seating?round=${roundIdHex}&role=${role}`);
+        const body = await r.text();
+        if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
+        if (!r.ok) continue;
+        spoke = true;
+        const cert = JSON.parse(body).cert;
+        const v = verifySeating(fromHex(cert), { roundId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        if (v.ok) { found = { seated: v.seating.seated, from: u }; break; }
+        refused.push(`${u}: ${v.why}`);
+      } catch { /* that seat says nothing */ }
+    }
+    got.seating[role] = found ? found : spoke ? { missing: true, refused } : null;
+    if (found) got.committees[role] = found.seated;
+  }
   const seats = [];
   if (compare) {
     const mine = got.committees.settlement.map(toHex).sort().join(',');
@@ -122,9 +148,17 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
 export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
   const got = await clientCommittee(roundIdHex, contract, nodes, opts);
   if (!got.ok) throw new Error(`this client could not build the round's committee itself: ${got.why}`);
+  // NO ENTRY WITHOUT A CHECKED SEATING where the seats seat (§5A.7): the stake is dealt to who a certificate seats
+  for (const role of ['game', 'settlement']) {
+    const st = got.seating && got.seating[role];
+    if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
+  }
   const answered = got.seats.filter((s) => s.agrees !== null);
   if (answered.length && !answered.some((s) => s.agrees))
     throw new Error('every node that answered names another settlement committee than the one this client derived from the chain');
   return { signerNodes: got.committees.settlement, agreed: got.seats.filter((s) => s.agrees).length,
     refused: got.seats.filter((s) => s.agrees === false).map((s) => `${s.node}: ${s.why}`), derived: got };
 }
+
+/** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
+export const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };

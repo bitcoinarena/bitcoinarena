@@ -23,7 +23,7 @@ import { readAdvertUpdate } from './advert-update.js';
 import { maturityStands } from './bond-script.js';
 import { censusRootOf } from './census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from './beacon.js';
-import { selectCommittee } from './sortition.js';
+import { selectCommittee, drawCommittee, slotsForRole } from './sortition.js';
 import { networkOf } from './constants.js';
 import { toHex, fromHex } from './hash.js';
 
@@ -170,10 +170,14 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
   const seeded = committeeSeedFromBeacon(contract, { roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
   if (!seeded.ok) return { ok: false, why: seeded.why };
   const committees = {};
+  // THE DRAW (§5A.7 reserve seats, kanban #301): more than the seats, in score order - a seating certificate is checked
+  // against it, and the committee is who that certificate seats; before one, the draw's first slots
+  const drawn = {};
   for (const role of roles) {
-    try { committees[role] = selectCommittee({ entries: census.entries, contract, role, committeeSeed: seeded.seed }).map((e) => e.pubkey); }
+    try { drawn[role] = drawCommittee({ entries: census.entries, contract, role, committeeSeed: seeded.seed }).map((e) => e.pubkey); }
     catch (e) { return { ok: false, why: `the ${role} committee cannot be drawn: ${e.message}` }; }
+    committees[role] = drawn[role].slice(0, slotsForRole(contract, role));
   }
-  return { ok: true, committees, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
+  return { ok: true, committees, drawn, beacon: { height: beacon.height, hash: beacon.hash }, census: { root: census.root, entries: census.entries.length },
     checkedCensus: { root: census.root, entries: census.entries } };
 }

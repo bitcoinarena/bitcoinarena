@@ -57,7 +57,7 @@ test('the registry resolves a round by both hashes within its game, holds nextbl
   const got = coreForRound(round);
   assert.equal(got.ok, true, got.why);
   assert.equal(got.core, TRUCK);
-  const other = { name: 'a second title', hash: 'ab'.repeat(32), url: 'file:///nowhere', adapter: TRUCK.adapter, configs: new Map([['cd'.repeat(32), {}]]) };
+  const other = { name: 'a second title', hash: 'ab'.repeat(32), url: TRUCK.url, root: TRUCK.root, sourceHash: TRUCK.hash, adapter: TRUCK.adapter, configs: new Map([['cd'.repeat(32), {}]]) };
   // A SECOND TITLE IS A GAME OF ITS OWN (kanban #202), hosted beside nextblock - never a core installed beside the truck
   const otherGame = testGame({ name: 'a second title', cores: new Map([[other.hash, other]]), runTicksMax: 10800 });
   const both = hostedPlugins([NEXTBLOCK, otherGame]);

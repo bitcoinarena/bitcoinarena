@@ -60,3 +60,27 @@ test('the lobby rows of one game', () => {
   assert.deepEqual(rowsOfGame(rows, 'aa').map((r) => r.id), ['1']);
   assert.deepEqual(rowsOfGame(null, 'aa'), []);
 });
+
+// THE CHOOSER'S TILES (kanban #338): who plays each game - the highest count any seat gives, never their sum, since the seats
+// of a committee hold the same entries - and its description only when its developer signed it.
+test('a tile\'s players are the most any seat counts, and its description shows only signed by its developer', async () => {
+  const { ROCK_PAPER_SCISSORS } = await import('../../rock-paper-scissors/plugin/rock-paper-scissors.js');
+  const { checkedGameInfo } = await import('../src/games.js');
+  const { ed25519 } = await import('@noble/curves/ed25519.js');
+  const rps = { ...listed(ROCK_PAPER_SCISSORS), info: ROCK_PAPER_SCISSORS.info };
+  const fetcher = async (url) => {
+    if (url === 'http://a/games') return answer({ games: [{ ...rps, live: { rounds: 3, players: 12 } }] });
+    if (url === 'http://b/games') return answer({ games: [{ ...rps, live: { rounds: 4, players: 9 } }] });
+    if (url === 'http://c/games') return answer({ games: [{ ...rps }] });
+    throw new Error('no such node');
+  };
+  const got = await fetchGames({ nodes: ['http://a', 'http://b', 'http://c'], fetcher });
+  const g = got.games[0];
+  assert.deepEqual([g.nodes.length, g.live], [3, { rounds: 4, players: 12 }]);
+  const verify = (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
+  const info = await checkedGameInfo(g, async (...a) => verify(...a));
+  assert.equal(info.description, ROCK_PAPER_SCISSORS.info.description);
+  const forged = await checkedGameInfo({ ...g, info: { ...g.info, description: 'free money' } }, async (...a) => verify(...a));
+  assert.equal(forged, null, 'a description its developer did not sign is not shown');
+  assert.equal(await checkedGameInfo({ ...g, info: null }, verify), null);
+});

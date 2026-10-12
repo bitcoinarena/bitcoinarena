@@ -15,7 +15,7 @@
 // exists to prevent, and the guard test in `round.test.js` counts the files
 // that reach the census the same way it counts the files that reach the core.
 import { deriveCensus } from '../../arena-protocol/src/census.js';
-import { selectCommittee } from '../../arena-protocol/src/sortition.js';
+import { selectCommittee, drawCommittee, slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
@@ -100,8 +100,11 @@ function keepCensus(round, key, census) {
 }
 
 export class Roster {
-  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON } = {}) {
+  constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null } = {}) {
     this.round = round;
+    // RESERVE SEATS (§5A.7, kanban #301): who a seating certificate seats for a round and role - node keys (hex), or null
+    // while none stands. Set by the seating agent (seating-agent.js); with none, the committee is the draw's first slots.
+    this.seatedFor = seatedFor;
     this.chainFor = chainFor;
     this.randomnessFor = randomnessFor;
     // A CENSUS DERIVED ONCE, NOT ON EVERY ASK (the owner 2026-09-17 19:15, the ghost lag). Deriving one parses every
@@ -426,9 +429,14 @@ export class Roster {
     if (!census.ok) return census;
     const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
     const fid = toHex(contract.federationId);
-    return { ok: true, guardians: census.entries
+    const own = census.entries
       .filter((e) => ((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid))
-      .map((e) => e.pubkey) };
+      .map((e) => e.pubkey);
+    // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5, kanban #325: "one share per seat across both
+    // federations, so a guardian seated in both ... earns two shares"), until its record is CLOSED - a key listed twice
+    // is paid twice by the fee table. `predecessorGuardians(fid)` is the seat's record store (federation-records.js).
+    const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid) || []) : [];
+    return { ok: true, guardians: [...own, ...drain] };
   }
 
   guardianBondsFor(roundIdBytes) {
@@ -536,8 +544,17 @@ export class Roster {
     if (!row) return { ok: false, why: 'this node holds no such round' };
     const contract = decodeRoundContract(new Uint8Array(row.contract));
 
-    const assigned = this.signerNodesFor(roundIdBytes);
-    if (!assigned.ok) return assigned;
+    const seatedNow = this.signerNodesFor(roundIdBytes);
+    if (!seatedNow.ok) return seatedNow;
+    // THE CONTRACT NAMES THE DRAW (§5A.7, decision A of kanban #301): every node drawn for either role - 9 for 7 seats where
+    // the census has them, the seats themselves where it has no more (testnet4: 7) - and the seating says who serves
+    const drawnUnion = new Map();
+    for (const role of ['game', 'settlement']) {
+      const picked = this.committeeFor(roundIdBytes, role);
+      if (!picked.ok) return picked;
+      for (const e of picked.drawn || picked.committee) drawnUnion.set(toHex(e.pubkey), e.pubkey);
+    }
+    const assigned = { ok: true, signerNodes: [...drawnUnion.values()] };
 
     const named = Array.isArray(contract.nodes) ? contract.nodes : [];
     const have = new Set(assigned.signerNodes.map(toHex));
@@ -582,11 +599,12 @@ export class Roster {
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
     const census = contract ? this.censusFor(roundIdBytes) : null;
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
+    const seated = this.seatedFor ? this.seatedFor(roundIdBytes, role) : null;
     const kept = census && census.ok && seeded && seeded.ok && seeded.seed
-      ? `${toHex(roundIdBytes)}:${role}:${toHex(census.root)}:${toHex(seeded.seed)}` : null;
+      ? `${toHex(roundIdBytes)}:${role}:${toHex(census.root)}:${toHex(seeded.seed)}:${seated ? seated.join(',') : '-'}` : null;
     if (kept && this.committees.has(kept)) return this.committees.get(kept);
     const answer = timed(`committee assigned ${toHex(roundIdBytes).slice(0, 8)}`,
-      () => this.#committeeFor(roundIdBytes, role), { over: 20 });
+      () => this.#committeeFor(roundIdBytes, role, seated), { over: 20 });
     if (kept && answer.ok) {
       this.committees.set(kept, answer);
       if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
@@ -594,7 +612,7 @@ export class Roster {
     return answer;
   }
 
-  #committeeFor(roundIdBytes, role) {
+  #committeeFor(roundIdBytes, role, seated = null) {
     const census = this.censusFor(roundIdBytes);
     if (!census.ok) return census;
 
@@ -607,17 +625,21 @@ export class Roster {
     const seeded = this.seedFor(roundIdBytes, contract);
     if (!seeded.ok) return { ok: false, why: seeded.why, root: census.root };
 
-    let committee;
+    // THE DRAW (§5A.7): more than the seats - 9 for 7 - in score order; the committee is who a seating certificate seats,
+    // and before one stands the draw's first slots (as every round was drawn before reserve seats)
+    let drawn;
     try {
-      committee = selectCommittee({
-        entries: census.entries, contract, role, committeeSeed: seeded.seed,
-      });
+      drawn = drawCommittee({ entries: census.entries, contract, role, committeeSeed: seeded.seed });
     } catch (e) { return { ok: false, why: e.message, root: census.root }; }
+    const slots = slotsForRole(contract, role);
+    const committee = seated ? drawn.filter((e) => seated.includes(toHex(e.pubkey))) : drawn.slice(0, slots);
 
     return {
       ok: true,
       role,
       committee,
+      drawn,
+      seated: !!seated,
       root: census.root,
       eligible: census.entries.length,
       excluded: census.excluded,

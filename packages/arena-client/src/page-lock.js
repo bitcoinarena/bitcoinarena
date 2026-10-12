@@ -384,6 +384,79 @@ export function depositGateway(planned, funded = []) {
   return (funded || []).filter((u) => norm(u))[i >= 0 ? i : 0];
 }
 
+// ANY GATEWAY THE FEDERATION LISTS, AND THE NEXT ONE AFTER A TIMEOUT (kanban #319, spec §23.1: "a deposit invoice, made
+// through any gateway the federation lists ... It can delay: the invoice's CLTV is short, and a client moves to the next
+// gateway after a timeout - a slow gateway costs the round, never the money"). The gateways in turn: the lobby's named
+// first, then the federation's (LockClient.gateways, the guardians' lists); one that makes no invoice in
+// GATEWAY_INVOICE_MS is passed over at once; an invoice that ends Expired or Failure, or is not claimed in
+// GATEWAY_UNCLAIMED_MS, gets a fresh invoice from the next gateway - the first stays payable, so a player who pays both
+// has both in the wallet. The invoice lives 600 s (the lock client's DEPOSIT_INVOICE_SECS).
+export const GATEWAY_INVOICE_MS = 10000;
+export const GATEWAY_UNCLAIMED_MS = 120000;
+const gwKey = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+/** The gateways to try, in order, each once: `named` (the lobby's) first, then `listed` (the federation's). */
+export function gatewayOrder(named = [], listed = []) {
+  const out = []; const seen = new Set();
+  for (const u of [...(named || []), ...(listed || [])]) { const k = gwKey(u); if (!k || seen.has(k)) continue; seen.add(k); out.push(String(u).trim()); }
+  return out;
+}
+const listedOf = new WeakMap();
+/** The gateways the federation lists, as the lock client reads them (asked once per wallet); none when it cannot say. */
+export async function federationGateways(client) {
+  if (!client || typeof client.gateways !== 'function') return [];
+  if (!listedOf.has(client)) listedOf.set(client, (async () => { try { const l = JSON.parse(await client.gateways()); return Array.isArray(l) ? l : []; } catch { return []; } })());
+  return listedOf.get(client);
+}
+const withinMs = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: no answer in ${ms / 1000} s`)), ms))]);
+/**
+ * AN INVOICE FROM THE FIRST GATEWAY OF `order` THAT MAKES ONE IN `timeoutMs` (none named: the lock client's own pick).
+ * Answers { invoice, operation, gateway, tried: [{ gateway, why, ms }] } or throws naming every gateway tried.
+ */
+export async function invoiceThroughGateways(client, amountMsat, order = [], { timeoutMs = GATEWAY_INVOICE_MS, nowMs = () => Date.now() } = {}) {
+  const list = order.length ? order : [''];
+  const tried = [];
+  for (const gateway of list) {
+    const t0 = nowMs();
+    try {
+      const got = JSON.parse(await withinMs(client.receive(String(amountMsat), gateway), timeoutMs, `gateway ${gateway || '(the federation\'s pick)'}`));
+      return { ...got, gateway, tried };
+    } catch (e) { tried.push({ gateway, why: String((e && e.message) || e), ms: nowMs() - t0 }); }
+  }
+  throw new Error(`no gateway made a deposit invoice: ${tried.map((t) => `${t.gateway || 'the federation\'s pick'} (${t.why})`).join('; ')}`);
+}
+/**
+ * WATCH ONE INVOICE AND FAIL OVER: `d` ({ invoice, operation, gateway }) is awaited; when it ends Expired or Failure, or
+ * is not claimed in `unclaimedMs`, the next gateway of `order` after d.gateway makes a fresh invoice, handed to
+ * `onInvoice(next)` and watched the same way. `onEnd(d, final)` for every invoice that ends; `done()` true stops it.
+ */
+export function followWithFailover(client, d, { amountMsat, order = [], unclaimedMs = GATEWAY_UNCLAIMED_MS, onInvoice = () => {},
+  onEnd = () => {}, onExhausted = () => {}, done = () => false, timeoutMs = GATEWAY_INVOICE_MS } = {}) {
+  let moved = false;
+  const at = order.findIndex((g) => gwKey(g) === gwKey(d.gateway));
+  const rest = order.slice(at + 1);
+  // `onEnd(d, final, failover)`: `failover` true when a next gateway's invoice is still to come
+  const next = async (why) => {
+    if (moved || done()) return; moved = true;
+    if (!rest.length) { onExhausted(why); return; }
+    try {
+      const got = await invoiceThroughGateways(client, amountMsat, rest, { timeoutMs });
+      if (done()) return;
+      const n = { ...d, invoice: got.invoice, operation: got.operation, gateway: got.gateway, tried: got.tried, failoverFrom: d.gateway, failoverWhy: why };
+      onInvoice(n);
+      followWithFailover(client, n, { amountMsat, order, unclaimedMs, onInvoice, onEnd, onExhausted, done, timeoutMs });
+    } catch (e) { onExhausted(String((e && e.message) || e)); /* the invoices made stay payable */ }
+  };
+  const timer = setTimeout(() => next(`not claimed in ${unclaimedMs / 1000} s`), unclaimedMs);
+  if (timer.unref) timer.unref();
+  const ended = (final, why) => {
+    clearTimeout(timer);
+    const failover = final !== 'Claimed' && !moved && !done() && rest.length > 0;
+    onEnd(d, final, failover);
+    if (final !== 'Claimed') next(why);
+  };
+  client.awaitReceive(d.operation).then((final) => ended(final, `it ended ${final}`),
+    (e) => ended('Failure: ' + String((e && e.message) || e), 'its wait failed'));
+}
 // THE DEPOSIT IS THE GROSS ROUND AMOUNT, IN ROUNDS (the owner 2026-09-30 20:53, GROSS-INVOICE-2053: "A 10000 sat round
 // invoices 10000 sat, not 9906. Fee and donation are not subtracted from the invoice ... The tabs are '1 round', '2
 // rounds', '5 rounds', '10 rounds', and 'Custom' ... The amount is this round's stake times the count"). The gateway's
@@ -485,20 +558,32 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
     // AS ASKED, IN WHOLE SATS: the tabs are priced so their whole notes hold the rounds (oneRoundDepositMsat)
     const amount = BigInt(msat);
     if (amount <= 0n) throw new Error('a deposit is more than 0 sat');
-    const gateway = depositGateway('', gateways);
-    const got = JSON.parse(await client.receive(String(amount), gateway));
-    const d = { invoice: got.invoice, amountMsat: amount, creditsMsat: null, gateway };
-    made.push(d);
-    // KEPT UNTIL IT ENDS: a reload between the payment and the claim leaves this page, and the next page's wallet
-    // (resumeDeposits) waits on the same operation and writes its history row
-    pendingAdd(storage, federationId, { invoice: d.invoice, operation: got.operation, msat: String(amount) });
-    onDeposit(d);
-    client.awaitReceive(got.operation).then((final) => {
-      if (final === 'Claimed') depositRowOnce(storage, federationId, d);
-      pendingDrop(storage, federationId, got.operation);
-      said(d, final); if (final === 'Claimed') settle(d);
-    }, (e) => said(d, 'Failure: ' + String((e && e.message) || e)));
-    return d;
+    // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT (kanban #319): the lobby's first, then the federation's
+    const order = gatewayOrder([depositGateway('', gateways)].filter(Boolean), await federationGateways(client));
+    const got = await invoiceThroughGateways(client, amount, order);
+    let settled = false;
+    const shown = (x) => {
+      const d = { invoice: x.invoice, amountMsat: amount, creditsMsat: null, gateway: x.gateway, tried: x.tried || [],
+        ...(x.failoverFrom !== undefined ? { failoverFrom: x.failoverFrom, failoverWhy: x.failoverWhy } : {}) };
+      made.push(d);
+      // KEPT UNTIL IT ENDS: a reload between the payment and the claim leaves this page, and the next page's wallet
+      // (resumeDeposits) waits on the same operation and writes its history row
+      pendingAdd(storage, federationId, { invoice: d.invoice, operation: x.operation, msat: String(amount) });
+      onDeposit(d);
+      return d;
+    };
+    const first = shown(got);
+    const byOp = new Map([[got.operation, first]]);
+    followWithFailover(client, { invoice: got.invoice, operation: got.operation, gateway: got.gateway }, { amountMsat: amount, order,
+      done: () => settled,
+      onInvoice: (n) => { byOp.set(n.operation, shown(n)); },
+      onEnd: (x, final) => {
+        const d = byOp.get(x.operation) || first;
+        if (final === 'Claimed') depositRowOnce(storage, federationId, d);
+        if (final === 'Claimed' || final === 'Expired' || final === 'Failure') pendingDrop(storage, federationId, x.operation);
+        said(d, final); if (final === 'Claimed' && !settled) { settled = true; settle(d); }
+      } });
+    return first;
   };
   const rest = restMsat === null ? null : BigInt(restMsat);
   // what the rest invoice asks: the rest itself, or the 5 sat floor when the rest is under it
@@ -629,12 +714,21 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
     const plan = estimateDeposit
       ? { invoice_msat: String(stakeOf(round) > 0n ? stakeOf(round) : asked), credited_msat: String(asked), gateway: '' }
       : JSON.parse(await client.depositFor(String(asked)));
-    const invoice = JSON.parse(await client.receive(String(plan.invoice_msat), depositGateway(plan.gateway, gateways)));
-    const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat) };
+    // ANY LISTED GATEWAY, THE NEXT AFTER A TIMEOUT (kanban #319): the named first, then the federation's list
+    const order = gatewayOrder([depositGateway(plan.gateway, gateways)].filter(Boolean), await federationGateways(client));
+    const invoice = await invoiceThroughGateways(client, plan.invoice_msat, order);
+    const d = { invoice: invoice.invoice, amountMsat: BigInt(plan.invoice_msat), creditsMsat: BigInt(plan.credited_msat), gateway: invoice.gateway, tried: invoice.tried };
     deposits.push(d);
     onDeposit(d);
     onStep('waiting for the deposit into the player wallet');
-    const final = await client.awaitReceive(invoice.operation);
+    const final = await new Promise((resolve) => {
+      let open = 1, over = false;
+      followWithFailover(client, invoice, { amountMsat: plan.invoice_msat, order, done: () => over,
+        onInvoice: (n) => { open++; const e = { ...d, invoice: n.invoice, gateway: n.gateway, failoverFrom: n.failoverFrom, failoverWhy: n.failoverWhy }; deposits.push(e); onDeposit(e);
+          onStep(`gateway ${n.failoverFrom || 'one'} ${n.failoverWhy}: a fresh invoice from the next gateway - either may be paid`); },
+        onEnd: (x, f, failover) => { if (over) return; if (f === 'Claimed') { over = true; resolve(f); return; } open--; if (!failover && open <= 0) { over = true; resolve(f); } },
+        onExhausted: () => { if (!over && open <= 0) { over = true; resolve('no gateway left'); } } });
+    });
     if (final !== 'Claimed') throw new Error(`the deposit into the player wallet was not claimed: ${final}`);
     depositRow(storage, round, d);
   }
@@ -1849,4 +1943,80 @@ export async function handLock({ entryId, fields, nodes, needed, fetcher = fetch
   }));
   const committed = said.filter((s) => s.status === 201).length;
   return { ok: committed >= needed, committed, needed, said };
+}
+
+/**
+ * THE NOTES FOLLOW THE FEDERATION'S SUCCESSOR, BY THEMSELVES (§23A.6 step 3, kanban #325: "On its next start and at every
+ * settlement it sees, a client whose notes are in a DRAINING federation moves them to the successor: a stock LNv2 send
+ * from the old federation paying a stock LNv2 receive invoice in the new one ... In chunks, atomic each, no press; the
+ * balance shows moving until it is done, then the new federation's name").
+ *
+ * `record`: the old federation's FederationRecord as this page verified it (federations.js) - nothing moves on a record
+ * that is not DRAINING or names no successor, or when `to` is not that successor. `from` / `to`: the player's wallets in
+ * the old and the new federation (the same seed). Each chunk is one send of at most `chunkMsat` (all that can be sent,
+ * unnamed): an invoice of exactly that amount from the successor's wallet, paid by the old one (withdrawCollected - the
+ * stock send; a refused or refunded send leaves the notes where they were), and waited for until claimed. A chunk that
+ * fails is tried again, at most `retries` times in a row. `onState({ state: 'moving' | 'moved' | 'stopped', ... })`.
+ * Answers { moved, chunks, state, why }.
+ */
+export const MIGRATE_DUST_MSAT = 10000n;
+export async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
+  gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
+  const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  if (!record || record.status !== 'DRAINING') return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
+  if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
+  let moved = 0n, chunks = 0, failed = 0;
+  for (let n = 0; n < maxChunks; n++) {
+    let can;
+    try { can = BigInt(await from.withdrawableMsat()); } catch (e) {
+      if (/too low to send any amount after fees/i.test(String((e && e.message) || e))) can = 0n; else throw e;
+    }
+    if (can <= MIGRATE_DUST_MSAT) break;
+    const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
+    onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
+    let made = null;
+    const out = await withdrawCollected({ client: from, amountMsat: amount, gateways,
+      invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), '')); return { ok: true, invoice: made.invoice }; } });
+    const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
+    if (out.ok && final === 'Claimed') {
+      moved += amount; chunks++; failed = 0;
+      if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'moved-out', msat: String(amount), to: hex(toFederationId) });
+      if (storage) ledgerAppend(storage, toFederationId, { kind: 'moved-in', msat: String(amount), from: hex(fromFederationId) });
+      continue;
+    }
+    if (++failed > retries) {
+      const why = out.ok ? `the successor's receive ended ${final}` : out.why;
+      onState({ state: 'stopped', movedMsat: moved, why });
+      return { moved, chunks, state: 'stopped', why };
+    }
+  }
+  onState({ state: 'moved', movedMsat: moved, chunks });
+  return { moved, chunks, state: 'moved' };
+}
+
+/**
+ * THE PLAYER'S NOTES OUT OF A DRAINING FEDERATION (§23A.6 step 3, kanban #325), as the page runs it: `status` is the round
+ * federation's record as federations.js checked it, `successor` the successor's (its own record, checked the same way).
+ * Nothing unless the first is DRAINING and names the second, and the second is OPEN with its invite. The player's wallet
+ * in each (one seed, walletSecretFor per federation) is opened as the stake opens it; then migrateFromDraining.
+ */
+export async function migratePlayerWallet({ round, invite, seed, LockClient, storage, status, successor, onState = () => {}, chunkMsat = null } = {}) {
+  if (!status || status.status !== 'DRAINING' || !status.successorId) return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!successor || successor.status !== 'OPEN' || !successor.invite) return { moved: 0n, chunks: 0, state: 'no open successor to move to' };
+  const from = await playerWallet({ round, invite, seed, LockClient, storage });
+  const to = await playerWallet({ round: { ...round, federationId: fromHex(status.successorId) }, invite: successor.invite, seed, LockClient, storage });
+  return migrateFromDraining({ from, to, record: { status: 'DRAINING', successorId: status.successorId }, toFederationId: fromHex(status.successorId),
+    fromFederationId: round.federationId, storage, onState, chunkMsat });
+}
+
+/** The federations this browser keeps a history for (hex): where the player has held notes. */
+export function ledgerFederations(storage) {
+  const out = [];
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(LEDGER_PREFIX) || k.startsWith(LEDGER_READ_PREFIX)) continue;
+    const f = k.slice(LEDGER_PREFIX.length);
+    if (/^[0-9a-f]{64}$/.test(f)) out.push(f);
+  }
+  return out;
 }
