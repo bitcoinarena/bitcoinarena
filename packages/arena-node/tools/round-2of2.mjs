@@ -1205,8 +1205,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     onPublished({ txid, rounds: grid.length, bytes: vsize, feeSat: String(fee), series: ids.map((id) => toHex(id)), lines,
       contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
+    // LOOKED FOR UNTIL THE GRID'S LAST ROUND HAS STARTED, not 240 looks (kanban #293, measured 2026-10-12: grid 8290176f was
+    // published at 156211 and its beacon 156216 was 4 deep when the keeper gave up after 2 h - "neither a beacon above its
+    // publication nor a dead round after 240 looks" - testnet4's coinbase-only blocks came one per 20 min)
+    const sleepMs = Number(process.env.ARENA_PUBLISH_LOOK_MS || 60000);
+    const lastStartMs = Number(grid[grid.length - 1].startTimeMs);
+    const maxLooks = Math.max(240, Math.ceil((lastStartMs - Date.now()) / sleepMs) + 10);
     const got = await awaitPublishedBeacon({ contract: grid[0], txid, rpc: chainRpc, view: async () => (censusView = await viewToTip()),
-      feeRate, maxFeeRate, sleepMs: Number(process.env.ARENA_PUBLISH_LOOK_MS || 60000) });
+      feeRate, maxFeeRate, sleepMs, maxLooks });
     if (got.dead) return { ok: false, dead: true, why: got.why, txid };
     if (beacon) {
       const seen = await beacon.refresh(grid[0]);
