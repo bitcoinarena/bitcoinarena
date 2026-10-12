@@ -1203,7 +1203,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     }
     const txid = await chainRpc('sendrawtransaction', [signed]);
     onPublished({ txid, rounds: grid.length, bytes: vsize, feeSat: String(fee), series: ids.map((id) => toHex(id)), lines,
-      contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
+      // the first 900 rounds' contracts for the tools that read them (a 24 h grid derives 21,600; every seat derives them itself)
+      contracts: grid.slice(0, 900).map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
     // LOOKED FOR UNTIL THE GRID'S LAST ROUND HAS STARTED, not 240 looks (kanban #293, measured 2026-10-12: grid 8290176f was
     // published at 156211 and its beacon 156216 was 4 deep when the keeper gave up after 2 h - "neither a beacon above its

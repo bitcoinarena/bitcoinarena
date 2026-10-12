@@ -11,12 +11,16 @@ import { pluginForRound } from './plugins.js';
 import { seriesPeriodFits } from '../../arena-protocol/src/manifest.js';
 
 export const SERIES_HORIZON_MS = SERIES_WRITE_AHEAD_MS;       // 72 h on every network (TN24-1405)
+// A GRID'S ROUNDS ARE WRITTEN 3 h AHEAD, not 72 h (kanban #293, the owner 2026-10-12: a grid now runs 24 h - 21,600 rounds of 8 s
+// across its two tables; a seat opens and assigns them as the clock reaches them, not all at once)
+export const GRID_HORIZON_MS = 3n * 3600n * 1000n;
 
 /**
  * One series' writer over a Round store. `write(nowMs)` opens every round of the series starting in
  * [nowMs, nowMs + horizon] that it has not opened yet, and answers what it holds.
  */
-export function seriesWriter(round, template, { horizonMs = SERIES_HORIZON_MS } = {}) {
+export function seriesWriter(round, template, { horizonMs: given = SERIES_HORIZON_MS } = {}) {
+  const horizonMs = isGridSeries(template) && BigInt(given) > GRID_HORIZON_MS ? GRID_HORIZON_MS : given;
   const lead = seriesLeadIsValid(template);
   if (!lead.ok) throw new Error(`series refused: ${lead.why}`);
   // AND ITS RUN FITS ITS SLOT (the 82/90 fork): on a core that takes the round's run length, at most 82 s of 90.
