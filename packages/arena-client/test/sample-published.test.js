@@ -35,8 +35,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const FEE_SATS = 17314, BTC_HUND = 42;
 
-async function rig() {
-  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
+async function rig(opts = {}) {
+  const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED, ...opts });
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
     networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7,
@@ -139,4 +139,19 @@ test('an attestation the committee did not give is refused by the node, and the 
     assert.ok(client.refusals > 0 || client.ended, 'a forged attestation went through');
     assert.match(String(client.refusedWhy), /not attested/);
   } finally { await node.close(); }
+});
+
+test('a seat running the committee\'s feed (kanban #311 slice 3) says so at /price-samples and refuses a bare price; a seat without says feed false', async () => {
+  for (const on of [true, false]) {
+    const { node, client, rid } = await rig(on ? { priceFeed: { readPrice: async () => 8297193 } } : {});
+    try {
+      const r = await fetch(`http://127.0.0.1:${node.port}/price-samples?round=${Buffer.from(rid).toString('hex')}`);
+      assert.equal((await r.json()).feed, on);
+      await drive(client, 300);
+      assert.equal(client.submitSample(20000000), true);
+      await drive(client, 150);
+      if (on) { assert.ok(client.refusals > 0, 'a bare price went through a seat running the feed'); assert.match(String(client.refusedWhy), /the player never chooses the price/); }
+      else assert.equal(client.refusals, 0, 'a seat without the feed refused a bare price');
+    } finally { await node.close(); }
+  }
 });

@@ -17,6 +17,7 @@
 // NOTHING IN THIS FILE TOUCHES THE CORE. It asks `replay` for a picture and
 // builds a frame around it, so the guard that counts the files reaching the
 // simulator still counts one.
+import { drawsPicture } from './core-sandbox.js';
 import { encodeGhost, ghostBinds } from '../../arena-protocol/src/ghost.js';
 import { interestSet, GHOST_SUBSCRIPTIONS } from '../../arena-protocol/src/interest.js';
 import { decodeRoundContract, decodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
@@ -73,7 +74,7 @@ export function ghostFor({
     return { ok: false, why: 'a ghost is at a whole tick' };
   // A GAME WHOSE CORE DRAWS NO PICTURE HAS NO GHOST (kanban #202: `picture` is a plugin's optional extra) - said for that
   // reason, before any replay, and never as a run that did not reach its tick.
-  if (core && core.adapter && typeof core.adapter.picture !== 'function')
+  if (core && drawsPicture(core) === false)
     return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
   if (!entry || !(entry.playerPubkey instanceof Uint8Array))
     return { ok: false, why: 'no entry contract to say whose truck that is' };
@@ -214,7 +215,7 @@ export class Ghosts {
     if (had) return had;
     // THE LIVE PATH REFUSES AS THE SLOW ONE DOES (kanban #202): a game that draws no picture keeps no run warm for one
     const core = this.#coreOf(roundIdBytes);
-    if (core && core.adapter && typeof core.adapter.picture !== 'function')
+    if (core && drawsPicture(core) === false)
       return { ok: false, why: `${core.game || core.name} draws no picture, so its runs have no ghost` };
     const made = new RunInProgress(entry, {
       core,

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <title>Rock Paper Scissors</title>
+  <!-- the square icon (kanban #338), on the page's dark ground like Tick Tock's: rock, paper and scissors around a coin -->
+  <rect width="512" height="512" rx="112" fill="#0d1014"/>
+  <!-- the ring the three chase each other around -->
+  <circle cx="256" cy="268" r="150" fill="none" stroke="#f7931a" stroke-width="10" stroke-dasharray="22 18" opacity="0.55"/>
+  <!-- the coin -->
+  <circle cx="256" cy="268" r="62" fill="#f7931a"/>
+  <path d="M243 232v72M263 232v72M234 240h34a14 14 0 0 1 0 28h-34M234 268h38a15 15 0 0 1 0 30h-38" fill="none" stroke="#0d1014" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- rock, top: a closed fist -->
+  <g transform="translate(256 92)">
+    <rect x="-56" y="-38" width="112" height="76" rx="34" fill="#ffffff"/>
+    <path d="M-30 -36v30M0 -38v32M30 -36v30" stroke="#0d1014" stroke-width="7" stroke-linecap="round"/>
+    <rect x="-64" y="2" width="36" height="28" rx="14" fill="#ffffff" stroke="#0d1014" stroke-width="6"/>
+  </g>
+  <!-- paper, lower left: a sheet with a folded corner -->
+  <g transform="translate(110 382) rotate(-14)">
+    <path d="M-46 -58h62l30 30v86h-92z" fill="#ffffff"/>
+    <path d="M16 -58v30h30" fill="#d9dee5" stroke="#0d1014" stroke-width="5" stroke-linejoin="round"/>
+    <path d="M-30 -14h56M-30 6h56M-30 26h40" stroke="#9aa4b2" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <!-- scissors, lower right -->
+  <g transform="translate(402 382) rotate(16)">
+    <path d="M-6 6L52 -58M6 6L-52 -58" stroke="#ffffff" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="-26" cy="40" r="24" fill="none" stroke="#f7931a" stroke-width="13"/>
+    <circle cx="26" cy="40" r="24" fill="none" stroke="#f7931a" stroke-width="13"/>
+    <circle cx="0" cy="4" r="7" fill="#0d1014" stroke="#ffffff" stroke-width="4"/>
+  </g>
+</svg>

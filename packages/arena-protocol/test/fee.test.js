@@ -336,3 +336,21 @@ test('per-entry floors can collect less than the table owes, never more', () => 
     assert.ok(collected <= owedOnGross, 'a collector must never gather more than the table owes');
   }
 });
+
+// THE DRAIN IS PAID (§23A.6 step 5, kanban #325): a round naming a successor lists, beside the successor's guardians, the
+// draining predecessor's seated ones - "one share per seat across both federations, so a guardian seated in both earns two
+// shares, and a guardian seated only in the old one still earns one"
+test('a guardian seated in the successor and in its draining predecessor is listed twice and earns two guardian shares', () => {
+  const g = [1, 2, 3].map((n) => new Uint8Array(32).fill(0x60 + n));
+  const old = new Uint8Array(32).fill(0x70);                     // seated only in the predecessor
+  const pool = [g[0], g[1], g[2], g[0], g[1], old];             // successor's three, then the predecessor's seated: g0, g1, old
+  const all = [...g, old];
+  const t = nodeFeeTable({ contract, entries, pools: { gameVerify: g, settlement: g, guardian: pool },
+    eligible: new Set(all.map((k) => Buffer.from(k).toString('hex'))) });
+  const guardianPool = t.pools.guardian, each = guardianPool / 6n;
+  const owed = (k) => t.signerNodes.get(`guardian:${toHex(k)}`) || 0n;   // the guardian pool's row (feeOwed reads the two role pools)
+  assert.ok(owed(g[0]) >= 2n * each && owed(g[0]) <= 2n * each + 2n, 'seated in both: two shares');
+  assert.ok(owed(g[2]) >= each && owed(g[2]) <= each + 1n, 'seated in the successor only: one');
+  assert.ok(owed(old) >= each && owed(old) <= each + 1n, 'seated in the predecessor only: one');
+  assert.equal(all.reduce((s, k) => s + owed(k), 0n), guardianPool, 'the whole guardian pool, nothing more');
+});

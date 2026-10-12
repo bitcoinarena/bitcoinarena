@@ -56,7 +56,7 @@ test('refused by name: ids not 32 bytes, no verifier, no committee, a committee 
   assert.deepEqual(count([], { verify: undefined }), { ok: false, agreed: 0, why: 'counting a re-run needs a verifier, and none was injected' });
   assert.deepEqual(count([], { signerNodes: [] }), { ok: false, agreed: 0, why: 'this round has no assigned committee to re-run it' });
   assert.deepEqual(count([], { signerNodes: undefined }), { ok: false, agreed: 0, why: 'this round has no assigned committee to re-run it' });
-  assert.deepEqual(count([], { slots: 3 }), { ok: false, agreed: 0, why: 'no committee threshold for 3 slots' });
+  assert.deepEqual(count([], { slots: 4 }), { ok: false, agreed: 0, why: 'no committee threshold for 4 slots' });
 });
 
 test('records that do not count: undecodable, off the committee, another round, player or contradicted run, a bad or throwing signature', () => {

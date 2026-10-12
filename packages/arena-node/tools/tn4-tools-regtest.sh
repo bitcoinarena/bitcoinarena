@@ -58,7 +58,9 @@ gc() { HOME=$FORK_HOME timeout 120 $FORK_BIN/gateway-cli --address http://127.0.
 js() { "$NODE" -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const o=JSON.parse(s.slice(s.indexOf('{')===-1?s.indexOf('['):Math.min(...[s.indexOf('{'),s.indexOf('[')].filter(i=>i>=0))));console.log(($1)(o))})"; }
 until_() { local what=$1 secs=$2; shift 2; local t=$(date +%s); until "$@"; do [ $(( $(date +%s) - t )) -gt $secs ] && die "$what: not within $secs s"; sleep 2; done; }
 # THIS RUN'S GUARDIANS: fedimintd children whose environment names this run's dir (a node killed hard leaves its own)
-kill_guardians() { for pid in $(pgrep -x fedimintd); do tr '\0' '\n' < /proc/$pid/environ 2>/dev/null | grep -q "^FM_DATA_DIR=$H/" && kill -KILL $pid; done; }
+# (macOS has no /proc: there `ps -E` prints a process's environment after its command line)
+envOf() { if [ -r /proc/$1/environ ]; then tr '\0' '\n' < /proc/$1/environ; else ps -Eww -o command= -p $1 2>/dev/null | tr ' ' '\n'; fi; }
+kill_guardians() { for pid in $(pgrep -x fedimintd); do envOf $pid | grep -q "^FM_DATA_DIR=$H/" && kill -KILL $pid; done; }
 # THE NODES BY WHAT THEY RUN (a recorded pid once missed one, which then held its port): every src/main.js on this run's
 # stores, then until no node port answers - their guardians are their children and go with them
 stop_nodes() { pkill -TERM -f "src/main.js [0-9]+ $H/node-" 2>/dev/null; sleep 8; pkill -KILL -f "src/main.js [0-9]+ $H/node-" 2>/dev/null
@@ -71,6 +73,9 @@ cleanup() {
   bcn stop >/dev/null 2>&1; sleep 8
   for pid in $(cut -d' ' -f1 $PIDS); do kill -KILL -- -$pid 2>/dev/null; done
   pkill -f "src/main.js [0-9]+ $H/node-" 2>/dev/null; pkill -f "$H/" 2>/dev/null; sleep 3; kill_guardians
+  # AND WHAT A STAGE STARTED WITHOUT A PID LINE (run 6 on the test host: the restarted runner A held 12221 after the stop):
+  # every process of this user whose environment names this run's dir, but this script
+  for pid in $(pgrep -u "$(id -u)"); do [ "$pid" = $$ ] && continue; envOf $pid 2>/dev/null | grep -q "^H=$H$" && kill -KILL $pid 2>/dev/null; done
   say "stack dir kept for reading: $H"
 }
 trap cleanup EXIT
@@ -257,6 +262,7 @@ stop_nodes
 WSS=""; for p in ${NODE_PORTS//,/ }; do WSS="$WSS ARENA_WSS_$p=ws://127.0.0.1:$p"; done
 ( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
   ARENA_FEDERATION_INVITE_FILE=$H/invite-code ARENA_RECIPIENT_PORT=$RECIP ARENA_TN4_DATADIR=$BTC_DIR \
+  ARENA_ENTRY_WINDOW_MS=${ENTRY_WINDOW_MS:-21600000} ${ENTRY_WINDOW_MS:+PAID_KEEP=0} \
   setsid "$NODE" tools/run-testnet4-paid.mjs > $H/paid.out 2>&1 < /dev/null & echo "$! node-paid" >> $PIDS )
 paidup() { grep -q '"paid":"up"' $H/paid.out; }
 until_ "run-testnet4-paid.mjs stands the round up" 1500 paidup
@@ -299,5 +305,6 @@ LNADDR_PUBLIC=http://localhost:$LNADDR LNADDR_LND_DIR=$H/bob LNADDR_LND_RPC=127.
 reading "6 lightning address: $(grep '"reading":6' "$LOG" | tail -1)"
 
 [ -n "${PEGIN_ONLY:-}" ] || pegin
+[ "${SUCCESSION:-}" = 1 ] && . "$HERE/succession-stage.sh"   # kanban #325: the successor, the drain, the notes moved
 
 say "ALL SIX READINGS TAKEN"

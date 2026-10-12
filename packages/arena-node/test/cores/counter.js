@@ -9,28 +9,14 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { testGame } from '../plugins/sign.js';
+import { CORE } from './counter-core.js';
 
 const sha = (s) => createHash('sha256').update(s).digest();
 
-export const CORE = Object.freeze({
-  name: 'counter (a second title)',
-  // its run length is its config's (R3): a round names it as blockTicks, and the signer node checks it against this
-  runTicks: (config = {}) => config.ticks ?? 120,
-  INPUT_WORDS: 5,
-  start: (seedWord, config = {}) => ({ seed: seedWord | 0, sum: 0, ticks: 0, target: config.target ?? 1000, length: config.ticks ?? 120 }),
-  eventsOf: () => ({ count: { liquidations: 0, loads: 0 }, before() {} }),
-  step(st, w) {
-    if (st.ticks >= st.length) return;
-    st.sum = (st.sum + (w[0] | 0)) | 0;
-    st.ticks++;
-  },
-  stateHash: (st) => sha(`counter:${st.seed}:${st.sum}:${st.ticks}:${st.target}:${st.length}`).toString('hex'),
-  result: (st) => ({ outcome: st.ticks < st.length ? null : (st.sum >= st.target ? 'DELIVERED' : 'FAILED'), score: st.sum, heat: 0 }),
-  picture: (st) => ({ x: st.sum, z: st.ticks, heading: 0 }),
-});
+export { CORE };
 
 /** Its sim_wasm_hash: sha256 over its own source, as the truck's is over its sources. */
-export const COUNTER_HASH = sha(readFileSync(new URL(import.meta.url))).toString('hex');
+export const COUNTER_HASH = sha(readFileSync(new URL('./counter-core.js', import.meta.url))).toString('hex');
 
 /** Two rule sets for it - a low bar and a high one - each named by the hash of its own bytes. */
 export const CONFIGS = [{ target: 1000, ticks: 120 }, { target: 2000000000, ticks: 120 }]
@@ -38,7 +24,7 @@ export const CONFIGS = [{ target: 1000, ticks: 120 }, { target: 2000000000, tick
 
 /** The core as its game installs it (kanban #202: a core is installed for a game, never beside one). */
 export const COUNTER = Object.freeze({
-  name: CORE.name, hash: COUNTER_HASH, url: new URL(import.meta.url).href, adapter: CORE,
+  name: CORE.name, hash: COUNTER_HASH, url: new URL('./counter-core.js', import.meta.url).href, adapter: CORE,
   configs: new Map(CONFIGS.map(({ config, hash }) => [hash.toString('hex'), config])),
 });
 
