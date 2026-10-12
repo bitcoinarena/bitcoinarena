@@ -13,7 +13,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { abandonmentProof } from '../../arena-protocol/src/absence.js';
-import { absenceHex, readAbsenceHex } from './absences.js';
+import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture } from './absences.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
   FEDERATION_STATUS, GONE } from '../../arena-protocol/src/federation-record.js';
@@ -44,7 +44,7 @@ const leaveMessage = (id, leaving) => Uint8Array.from([...id, leaving ? 1 : 0]);
 // `successorOf(fidHex)`: the successor this seat was told of (hex) or null; `closedOf(fidHex)`: whether the drain is over
 // (§23A.6 steps 2 and 4, kanban #325) - both read into the body every guardian seat builds the same way
 export function federationRecords({ round, roster, inviteFor, networkId, leavingAtMs = () => null, fetcher = fetch, nowMs = () => Date.now(), newest = null,
-  successorOf = () => null, closedOf = () => false, reserveOf = null, absences = null, abandonBlocks = null }) {
+  successorOf = () => null, closedOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
 
@@ -156,6 +156,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // WHO IS PROVEN ABANDONED (§23A.4, kanban #322): 2f + 1 guardians' absence attestations this seat holds, for at least
     // abandon_blocks - gone ABANDONED since the proof's height, under the proof's id; the attestations go along on the second
     // ask, so every guardian seat checks exactly that set
+    // AND WHO GAVE NOTICE (§23A.5): a standing departure notice due at this height - DEPARTED from its leave_after, under its id
+    const departed = [];
+    if (absences && Number.isInteger(departureNotice)) for (const g of plain.guardians) {
+      if (gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))) continue;
+      const d = absences.departureFor(plain.record, g.peerKey, departureNotice, b.height);
+      if (d.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); departed.push(d.notice); }
+    }
     const absent = [];
     if (absences && Number.isInteger(abandonBlocks)) for (const g of plain.guardians) {
       if (gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))) continue;
@@ -172,7 +179,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       answers = await Promise.all(plain.guardians.map(async (g) => {
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) return { g, said: signBody(final.record) };
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
-        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
+        try { const r = await fetcher(`${base}/federation-record?federation=${toHex(federationId)}&height=${b.height}&reserve=${reserveSats}&gone=${gone.map((x) => toHex(x.peerKey)).join(',')}${absent.length ? `&absent=${absent.map(absenceHex).join(',')}` : ''}${departed.length ? `&departed=${departed.map(departureHex).join(',')}` : ''}`, { signal: AbortSignal.timeout(8000) }); return { g, said: r.ok ? await r.json() : null }; }
         catch { return { g, said: null }; }
       }));
     }
@@ -228,7 +235,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   /** GET /federation-record with `gone` named: the same body with those peer keys gone, signed - if they are its guardians. */
-  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = []) {
+  async function mySignatureWithGone(federationIdHex, goneHex, atHeight = null, reserveNamed = null, absentHex = [], departedHex = []) {
     const b = basis(atHeight);
     if (!b.ok) return b;
     const first = bodyFor(b, fromHex(federationIdHex));
@@ -241,10 +248,18 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!goneHex.every((k) => keys.has(k))) return { ok: false, why: 'that names a guardian this federation does not have' };
     const plainId = federationRecordId(plain.record);
     // a peer the attestations handed along are about is ABANDONED - only if they prove it to this seat, on its own record
-    let absent;
-    try { absent = absentHex.map(readAbsenceHex); } catch (e) { return { ok: false, why: e.message }; }
+    let absent; let notices;
+    try { absent = absentHex.map(readAbsenceHex); notices = departedHex.map(readDepartureHex); } catch (e) { return { ok: false, why: e.message }; }
+    const sv = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
     const gone = [];
     for (const g of plain.guardians.filter((x) => goneHex.includes(toHex(x.peerKey)))) {
+      // a notice handed along for this peer: DEPARTED from its leave_after - only if it stands here and is due at this height
+      if (notices.some((d) => toHex(d.peerKey) === toHex(g.peerKey))) {
+        if (!Number.isInteger(departureNotice)) return { ok: false, why: 'this seat runs no departure_notice clock' };
+        const d = dueDeparture(notices, { record: plain.record, peerKey: g.peerKey, departureNotice, height: b.height, verify: sv });
+        if (!d.ok) return { ok: false, why: `that departure does not stand here: ${d.why}` };
+        gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); continue;
+      }
       const about = absent.filter((a) => toHex(a.peerKey) === toHex(g.peerKey));
       if (!about.length) { gone.push({ peerKey: g.peerKey, sinceHeight: b.height, kind: GONE.DEPARTED, proofRef: plainId }); continue; }
       if (!Number.isInteger(abandonBlocks)) return { ok: false, why: 'this seat runs no abandon_blocks clock' };
