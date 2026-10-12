@@ -221,6 +221,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // THE GAMES THE SEATS HOST (kanban #206: a market beside nextblock), and fields over every round
                                      // this tool opens (a market's game id, no core, no config) - none given: nextblock, as before
                                      plugins = null, roundFields = null,
+                                     // THE DONATION SET IN FORCE AT THE CENSUS HEIGHT (kanban #348, measured 2026-10-12 22:0xZ: federation
+                                     // B's first round named the built-in test set efffd27f and every seat refused it - "at census height
+                                     // 156288 this network's donation set in force is serial 3 (a5dc55c1...)"): (height, networkId) ->
+                                     // the set's id bytes, as the grid keeper reads it; null keeps the built-in set
+                                     donationSetAt = null,
                                      donationRecipients = stakeMsat > 0n || (paid && BigInt(paid.stakeMsat) > 0n)
                                        ? { port: TEST_RECIPIENT_PORT } : null } = {}) {
   // WHAT THESE DAEMONS FUND (M3.3-31): a PAYING round goes through the
@@ -776,7 +781,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // daemons' own relay doors. A result is final only once both have posted
     // it, and a round naming no relay could never settle a stake.
     publicationRelays: members.map((m) => `http://${host}:${m.port}`),
-    donationSetId: idOfDonationSet(DONATION_SET.recipients), censusHeight,
+    donationSetId: (donationSetAt && donationSetAt(censusHeight, NETWORK_ID)) || idOfDonationSet(DONATION_SET.recipients), censusHeight,
     censusRoot: new Uint8Array(32), stakeMsat, bondMinSats: 50000n, blockTicks: runTicksAt(committeeTimeMs + MIN_ENTRY_WINDOW_MS),
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 100000, rankNumerator: 3, rankDenominator: 4,   // min_score 1 point, in the score's 1e-5 points
