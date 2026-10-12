@@ -2785,11 +2785,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // same time. Measured before (live testnet4, 2026-10-08): every ~45 s each seat signed ALL announced rows - 1,857, ~6.5 s
   // of BIP-340 in a new worker each time - about 23 of a seat's 29 % CPU, while the lobby asks for a handful (?next=1)
   // and a signature is good for 60 s. Every row stays listed; the signature format and the page's check are unchanged.
-  // 10 s, NOT 45 (kanban #350, the owner 2026-10-12 16:47 "no rounds opens for Rps"): a listing is computed at its window's time
-  // and served until the next, so a round that opened after a seat's window began stayed "pending" in it - with the 8 s
-  // Rock Paper Scissors grid (a round open ~75 s) seven windows up to 44 s apart left most rows at 2 of the 5 seats needed
-  // (measured 15:25Z in the page). A lobby asks ?next=8, ~60 rows: 10 s windows sign a few rows a second.
-  const SIGN_EVERY_MS = 10000n;
+  // THE WINDOW SIGNS, THE CLOCK DECIDES (kanban #350, the owner 2026-10-12 16:47 "no rounds opens for Rps"): a listing was
+  // computed at its window's time, so a round that opened after a seat's window began stayed "pending" in it - with the 8 s
+  // Rock Paper Scissors grid (a round open ~75 s) seven windows up to 44 s apart left most rows at 2 of the 5 seats needed.
+  // A 10 s window fixed that and cost a core per seat (measured 15:50Z: the listing-sign worker at 63 %, 99,100 signatures
+  // in 45 min, load 25-28). So the window stays 45 s and is only the signed time; which rounds are listed, and each row's
+  // phase, are read at the request (announcedRounds) - a row whose phase turned is signed again alone.
+  const SIGN_EVERY_MS = 45000n;
   let signedSet = null;                           // { atMs: bigint, sigs: Map<id hex, {key, sig}>, committees: Map }
   const windowSet = () => {
     const now = BigInt(round.now());
@@ -2857,7 +2859,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     // EVERY LISTING, FULL OR `next`, AT ITS WINDOW'S TIME (kanban #232): rows signed once a window, as asked
     const set = windowSet();
-    const nowMs = set.atMs;
+    const nowMs = BigInt(round.now());
     const listed = [];
     // EVERY ANNOUNCED ROUND, WITH ITS TIMES AND WHO IS RESPONSIBLE FOR IT (the owner 2026-09-28 16:12, ROUNDS-EP-1612):
     // every round this node holds that has not ended - a series' rounds 72 h ahead included - with its start and
@@ -2978,7 +2980,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     listed.sort((x, y) => (x.phase === y.phase
       ? (BigInt(x.entryCloseMs) < BigInt(y.entryCloseMs) ? -1 : 1)
       : (x.phase === 'open' ? -1 : 1)));
-    return { nowMs, listed };
+    return { nowMs: set.atMs, listed };
   };
 
   const http = (tls ? (h) => createHttpsServer({ cert: tls.cert, key: tls.key }, h) : createServer)(async (req, res) => {
