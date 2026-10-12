@@ -43,7 +43,7 @@ test('a grid series line is taken once per table, funded by its id, written, kep
   const t = gridOf(nodes), line = seriesLineOf(t, encodeRoundContract);
   assert.match(line, / grid period=8000 count=225$/);
   assert.equal(toHex(seriesId(parseSeriesLine(line))), toHex(seriesId(t)), 'the line reads back as the same series');
-  let blind = null;
+  let blind = null, daylong = null;
   const s = await serve(openStore(db), { plugins: HOSTED, port: 0, funded, roundClock: () => NOW, gridSeriesFile: gridFile });
   try {
     const url = `http://127.0.0.1:${s.port}`;
@@ -54,7 +54,7 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     assert.match(await r0.text(), /series nobody has funded/);
     named.add(toHex(seriesId(t)));
     const r1 = await post(line);
-    assert.equal(r1.status, 200);
+    assert.equal(r1.status, 200, await r1.clone().text());
     assert.deepEqual(await r1.json(), { ok: true, series: toHex(seriesId(t)), rounds: 225, held: false });
     const r2 = await post(line);
     assert.equal((await r2.json()).held, true, 'the same line again: held, not taken twice');
@@ -79,6 +79,15 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     blind = gridOf(nodes, { exposureReference: 0, committeeTimeMs: START - GRID_SERIES_LEAD_MIN_MS - 7n });
     named.add(toHex(seriesId(blind)));
     assert.equal((await post(seriesLineOf(blind, encodeRoundContract))).status, 200);
+    // A 24 h GRID (the owner 2026-10-12): 10,800 slots taken, its rounds written 3 h ahead, not all 10,800
+    daylong = gridOf(nodes, { seriesCount: 10800, committeeTimeMs: START - GRID_SERIES_LEAD_MIN_MS - 9n });
+    named.add(toHex(seriesId(daylong)));
+    { const r = await post(seriesLineOf(daylong, encodeRoundContract)); assert.equal(r.status, 200, await r.clone().text()); }
+    let dayWritten = 0;
+    for (let i = 0; i < 40 && dayWritten < 1; i++) { await new Promise((r) => setTimeout(r, 250));
+      dayWritten = ((await (await fetch(`${url}/series`)).json()).series.find((x) => x.series === toHex(seriesId(daylong))) || {}).written || 0; }
+    // NOW is START - 1 h - 123 ms: the 3 h ahead reach just short of 2 h into the grid - slots 0 .. 899
+    assert.equal(dayWritten, 900, 'written 3 h ahead');
     let row2 = null;
     for (let i = 0; i < 40 && !row2; i++) {
       await new Promise((r) => setTimeout(r, 250));
@@ -93,12 +102,12 @@ test('a grid series line is taken once per table, funded by its id, written, kep
     const moved = await fetch(`${url}/round`, { method: 'POST', body: encodeRoundContract({ ...seriesRound(t, 3), entryCloseMs: seriesRound(t, 3).entryCloseMs + 1n }) });
     assert.equal(moved.status, 409);
     assert.match(await moved.text(), /series round refused: round 3 of series .* opens and closes its entry/);
-    assert.equal(readFileSync(gridFile, 'utf8'), line + '\n' + seriesLineOf(blind, encodeRoundContract) + '\n', 'each kept once beside the store');
+    assert.equal(readFileSync(gridFile, 'utf8'), line + '\n' + seriesLineOf(blind, encodeRoundContract) + '\n' + seriesLineOf(daylong, encodeRoundContract) + '\n', 'each kept once beside the store');
   } finally { await s.close(); }
   // A RESTART HOLDS IT AGAIN from the grid file
   const again = await serve(openStore(db), { plugins: HOSTED, port: 0, funded, roundClock: () => NOW, gridSeriesFile: gridFile });
   try {
     const held = (await (await fetch(`http://127.0.0.1:${again.port}/series`)).json()).series.map((x) => x.series);
-    assert.deepEqual(held, [toHex(seriesId(t)), toHex(seriesId(blind))]);
+    assert.deepEqual(held, [toHex(seriesId(t)), toHex(seriesId(blind)), toHex(seriesId(daylong))]);
   } finally { await again.close(); }
 });
