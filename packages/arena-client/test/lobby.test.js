@@ -174,6 +174,11 @@ test('2 of 2: Join only where both of the round\'s signer nodes signed it open a
   assert.match(lobbyLine(byName.payingOpen, NOW), new RegExp(`a federation stake lock in federation ${fid.slice(0, 8)} · `));
   assert.match(lobbyLine(byName.payingOpen, NOW, { loads: new Map([[fid, { load: 4.3333 }]]) }), new RegExp(`in federation ${fid.slice(0, 8)} \\(load 4\\.33\\) · `));
   assert.doesNotMatch(lobbyLine(byName.freeOpen, NOW, { loads: new Map([[fid, { load: 4.3333 }]]) }), /federation [0-9a-f]{8}/, 'a free row names no federation');
+  // A ROUND IN A FEDERATION THAT IS NOT THE LOWEST-LOAD OPEN ONE says which is lower (§23A.3: "the client show why")
+  const two = new Map([[fid, { federation: fid, status: 'OPEN', load: 0.93 }], ['bb'.repeat(32), { federation: 'bb'.repeat(32), status: 'OPEN', load: 0.4 }]]);
+  assert.match(lobbyLine(byName.payingOpen, NOW, { loads: two }), /\(load 0\.93 - not the lowest-load federation: bbbbbbbb is at 0\.40\)/);
+  const drained = new Map([[fid, { federation: fid, status: 'OPEN', load: 0.93 }], ['bb'.repeat(32), { federation: 'bb'.repeat(32), status: 'DRAINING', load: 0.1 }]]);
+  assert.match(lobbyLine(byName.payingOpen, NOW, { loads: drained }), /\(load 0\.93\) · /, 'a draining one is no reason');
   assert.match(lobbyLine(byName.freePending, NOW), /committee: pending, entry opens in 1:30/);
 });
 
