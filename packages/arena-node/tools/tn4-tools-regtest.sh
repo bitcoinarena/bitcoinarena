@@ -252,6 +252,11 @@ if [ -n "${PEGIN_BIN:-}" ]; then
   ( cd "$HERE/.." && BITCOIN_CLI="$B/bitcoin-cli -datadir=$BTC_DIR -rpcwallet=tn4rt" STAKE_LOCK_BIN=$PEGIN_BIN CLIENT_DIR=$ARB FEDIMINT_CLI=$FORK_BIN/fedimint-cli \
     INVITE_FILE=$H/invite-code WORK_DIR=$H FORK_HOME=$FORK_HOME timeout 1500 "$NODE" tools/arbiter-payout-regtest.mjs ) > $H/payout.out 2>&1; PO_RC=$?
   cat $H/payout.out >> "$LOG"
+  # 7g. THE COOPERATIVE RELEASE (§5A.3B key path): a bond output spent by MuSig2 of its node (owner doors) and the
+  # arbitration set (arbiter doors), one key-path signature, accepted by bitcoind and mined
+  ( cd "$HERE/.." && BITCOIN_CLI="$B/bitcoin-cli -datadir=$BTC_DIR -rpcwallet=tn4rt" timeout 300 "$NODE" tools/musig-release-regtest.mjs ) > $H/release.out 2>&1; RL_RC=$?
+  cat $H/release.out >> "$LOG"
+  reading "7g cooperative release: {\"exit\":$RL_RC,\"signed\":$(grep '"step":"signed"' $H/release.out | tail -1 || echo null),\"released\":$(grep '"step":"released"' $H/release.out | tail -1 || echo null)}"
   reading "7f the service's payout step: {\"exit\":$PO_RC,\"paid\":$(grep '"step":"payOutSlash"' $H/payout.out | tail -1 || echo null),\"redeemed\":$(grep '"step":"redeemed"' $H/payout.out | tail -1 || echo null)}"
 fi
 }
