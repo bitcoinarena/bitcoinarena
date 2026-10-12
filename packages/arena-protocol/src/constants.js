@@ -242,6 +242,9 @@ export const TYPE_FEDERATION_RECORD = 0x20;
 // seated nodes all sign - which nodes serve the round. Two seatings for one round and role are equivocation.
 export const TYPE_PRESENT = 0x21;
 export const TYPE_SEATING = 0x22;
+// A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5, kanban #322); 0x23 is the ballot's (#329)
+export const TYPE_ABSENCE_ATTESTATION = 0x24;
+export const TYPE_DEPARTURE_NOTICE = 0x25;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -386,6 +389,10 @@ export const TAG = {
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
   priceTape: 'ARENA/v1/PriceTape',
+  // ABSENCE AND DEPARTURE (§23A.4-5, kanban #322): what a guardian signs, and an abandonment proof's id
+  absenceAttestation: 'ARENA/v1/AbsenceAttestation',
+  departureNotice: 'ARENA/v1/DepartureNotice',
+  abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
 /**
