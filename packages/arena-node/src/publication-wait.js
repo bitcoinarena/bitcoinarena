@@ -55,7 +55,14 @@ export async function awaitPublishedBeacon({ contract, txid, view, rpc, feeRate 
           : `round ${tag}'s beacon block ${beaconAt} came while its publication ${current.slice(0, 16)} was unconfirmed: it is not a published round` };
     if (!pub) {
       // UNCONFIRMED: no beacon is named. A block that came without it raises its fee.
-      if (tip > bumpedAt && rate < maxFeeRate) {
+      // ONLY A BLOCK THAT TOOK OTHERS' TRANSACTIONS SAYS THE FEE WAS TOO LOW (kanban #293, measured 2026-10-12 07:42-07:43Z:
+      // testnet4 blocks 156204-156209 were coinbase-only, minimum-difficulty, 20 min apart in their timestamps - the grid's
+      // 0.15 sat/vB was raised to 1.2 for nothing; 156203 before them took a 0.15 sat/vB transaction among 220)
+      const tookOthers = v.blocks.slice(Math.max(0, bumpedAt + 1 - v.firstHeight)).some((b) => (b.transactions || []).length > 1);
+      if (tip > bumpedAt && !tookOthers) {
+        if (look % 10 === 0) log(`[publish] round ${tag}: block ${tip} came empty (coinbase only): no fee raise for it`);
+        bumpedAt = tip;
+      } else if (tip > bumpedAt && rate < maxFeeRate) {
         // A RAISE THE NODE REFUSES (measured on testnet4, 99ce7662: 4 -> 8 sat/vB refused, "Insufficient total fee ...
         // must be at least" the old fee plus the increment - the replacement's size differs) is doubled again at once,
         // up to the cap, rather than asked the same way at the next block and refused the same way.
