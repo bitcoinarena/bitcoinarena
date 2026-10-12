@@ -12200,7 +12200,7 @@ const PAYOUT_NOTE = 'arena.payout.';
  * lock, collected by Refund under that key exactly as a settlement payout is (redeemPayout); nobody else's key can move it.
  */
 async function redeemSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, fetcher = fetch,
-  client: given = null, onStep = () => {}, order = 0 } = {}) {
+  client: given = null, onStep = () => {}, order = 0, listed: given_list = null } = {}) {
   if (!round || !roundLocks(round)) throw new Error('this round names no federation, so it has no slash payout');
   if (!arbiter) return { ok: false, final: false, why: 'no arbitration service named' };
   const noted = `${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`;
@@ -12211,8 +12211,8 @@ async function redeemSlashPayout({ round, roundId, invite, seed, curve, LockClie
   const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the arbitration service for slash payouts');
-  let listed;
-  try {
+  let listed = given_list;
+  if (!listed) try {
     const r = await fetcher(`${String(arbiter).replace(/\/+$/, '')}/slash-payouts?round=${toHex(roundId)}`);
     if (!r.ok) return { ok: false, final: false, why: `the arbitration service answered ${r.status}` };
     listed = await r.json();
@@ -12235,6 +12235,28 @@ async function redeemSlashPayout({ round, roundId, invite, seed, curve, LockClie
   return { ...got, client };
 }
 const SLASH_PAYOUT_NOTE = 'arena.slash-payout.';
+
+/** Whether a slash payout of the arbitration service's list (`listed`, GET /slash-payouts) names this seed's key in the round. */
+function slashPayoutMine(listed, { round, roundId, seed, curve, order = 0 } = {}) {
+  const mine = toHex(refundKeyOf(playerFor({ ...round, id: roundId }, { seed, curve, order }).pubkey));
+  return ((listed && listed.payouts) || []).find((p) => p.round === toHex(roundId) && String(p.refundPk).toLowerCase() === mine) || null;
+}
+/** Whether this tab already collected that round's slash payout (its note), so nothing is opened for it again. */
+const slashPayoutKept = (storage, roundId, order = 0) => { try { return !!(storage && storage.getItem(`${SLASH_PAYOUT_NOTE}${toHex(roundId)}${orderTag(order)}`)); } catch { return false; } };
+
+/**
+ * A SLASH PAYOUT INTO THE PLAYER WALLET (kanban #307): collected by Refund (redeemSlashPayout) into the wallet every
+ * deposit and payout lands in, and written in its history as a slash payout.
+ */
+async function collectSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed = null, fetcher, order = 0 } = {}) {
+  const client = await playerWallet({ round, invite, seed, LockClient, storage });
+  const before = BigInt(await client.balanceMsat());
+  const got = await redeemSlashPayout({ round, roundId, invite, seed, curve, LockClient, storage, arbiter, listed, client, order, ...(fetcher ? { fetcher } : {}) });
+  const after = BigInt(await client.balanceMsat());
+  const creditedMsat = after > before ? after - before : 0n;
+  if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind: 'slash-payout', msat: String(creditedMsat), round: toHex(roundId) });
+  return { ...got, creditedMsat };
+}
 
 /**
  * AND THE PLAYER'S OWN STAKE BACK, AFTER THE WINDOW (6d, §23.2 row 1). The signer nodes
@@ -25791,6 +25813,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          depositChoices: depositChoices, withdrawChoices: withdrawChoices, invoiceAmountMsat: invoiceAmountMsat, playerWithdrawable: playerWithdrawable, pendingDeposits: pendingDeposits, resumeDeposits: resumeDeposits, restOfFeesMsat: restOfFeesMsat, restInvoiceMsat: restInvoiceMsat, REST_FLOOR_MSAT: REST_FLOOR_MSAT, ceilNote: ceilNote, roundsDepositMsat: roundsDepositMsat, recordDonation: recordDonation, collectIntoPlayerWallet: collectIntoPlayerWallet, donationCostMsat: donationCostMsat, depositOffer: depositOffer, settingsDepositOffer: settingsDepositOffer, DEPOSIT_INSUFFICIENT: DEPOSIT_INSUFFICIENT,
          findLock: findLock, refundStake: refundStake, forfeitOf: forfeitOf, redeemStake: redeemStake,
          settlementOf: settlementOf, redeemPayout: redeemPayout, payoutLine: payoutLine,
+         redeemSlashPayout: redeemSlashPayout, collectSlashPayout: collectSlashPayout, slashPayoutMine: slashPayoutMine, slashPayoutKept: slashPayoutKept,
          returnStake: returnStake, stakeBackLine: stakeBackLine,
          saveCollect: saveCollect, savedCollects: savedCollects, markCollectDone: markCollectDone,
          browserSeedHexes: browserSeedHexes, recordsToCollect: recordsToCollect, collectLines: collectLines,
