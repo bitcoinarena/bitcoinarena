@@ -21,6 +21,19 @@ export const SCHEDULES = Object.freeze({
   regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
     [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
 });
+/**
+ * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
+ * before. It can go back, never forward." Regtest's is 0 / 6 / 0 (a choice made here, named: its voting phase as for the others).
+ */
+export const REPEAL_SCHEDULES = Object.freeze({
+  mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 0 }),
+  regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
+});
+/** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
+export function isRepeal(p, history = []) {
+  const mine = toHex(p.config);
+  return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
+}
 /** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
 export const THRESHOLDS = Object.freeze({
   [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
@@ -70,15 +83,17 @@ export function proposalId(p) {
  * A PROPOSAL ON ITS FACE (§27A.7.2, §27A.7.4): signed by its proposer, activation at or after the end of cooldown counted from
  * the height it was published at, and its deposit within the cap - at most bond_min of the lowest bracket over 100.
  */
-export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify }) {
+export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify, history = null, repealSchedule = REPEAL_SCHEDULES.mainnet }) {
   try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, why: e.message }; }
   if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
-  const s = schedule[p.class];
+  // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
+  const repeal = !!history && isRepeal(p, history);
+  const s = repeal ? repealSchedule : schedule[p.class];
   const earliest = publishedAt + s.review + s.voting + s.cooldown;
   if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
   const cap = BigInt(lowestBondMinSats) / 100n;
   if (BigInt(depositSats) > cap) return { ok: false, why: `a deposit of ${depositSats} sat is over the cap of ${cap} (bond_min of the lowest bracket / 100)` };
-  return { ok: true, id: proposalId(p), class: className(p.class), votingFrom: publishedAt + s.review, votingUntil: publishedAt + s.review + s.voting, activationHeight: p.activationHeight };
+  return { ok: true, id: proposalId(p), class: className(p.class), repeal, votingFrom: publishedAt + s.review, votingUntil: publishedAt + s.review + s.voting, activationHeight: p.activationHeight };
 }
 
 /** What a bond key signs to vote: H(proposal_id || choice). */
