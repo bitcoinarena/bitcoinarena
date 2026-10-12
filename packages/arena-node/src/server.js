@@ -2896,12 +2896,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // 32 Rock Paper Scissors rounds listed, the latest entry closing 46 s ahead - and after a lobby read over the Funnel
       // (8.5 s even from the seat's own machine) the page had no round of the running grid to offer. So `next` counts the
       // rounds still open for entry, and as many closed but unfinished ones are kept beside them (a client reads the slot
-      // that just closed for its result).
+      // that just closed for its result). OPEN WITH ROOM TO JOIN: measured on seat 7 after the first cut, the 8 counted open
+      // rounds still closed 6..62 s ahead - the soonest first - so a round counts only while its entry stays open
+      // NEXT_ROOM_MS more (a lobby read and a join); one closing sooner is kept in the second tally.
       const closed = new Map();
+      const NEXT_ROOM_MS = 30000;
       for (const x of candidates) {
         if (!(x.c.seriesId instanceof Uint8Array)) { kept.push(x); continue; }
         const k = toHex(x.c.seriesId);
-        const tally = nowMs < x.c.entryCloseMs ? count : closed;
+        const tally = Number(nowMs) + NEXT_ROOM_MS < Number(x.c.entryCloseMs) ? count : closed;
         const n = tally.get(k) || 0;
         if (n >= perSeries) continue;
         tally.set(k, n + 1); kept.push(x);
