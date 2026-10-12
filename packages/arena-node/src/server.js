@@ -5002,7 +5002,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const fid = String(url.searchParams.get('federation') || '').toLowerCase();
         if (!/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'a federation id, 32 bytes hex');
         const goneHex = String(url.searchParams.get('gone') || '').split(',').filter(Boolean).map((x) => x.toLowerCase());
-        const r = goneHex.length ? fedRecords.mySignatureWithGone(fid, goneHex) : fedRecords.mySignature(fid);
+        // `height` (kanban #321): the census height the gathering seat built its body at - this seat signs that body or none
+        const h = url.searchParams.get('height');
+        if (h !== null && !/^[0-9]{1,10}$/.test(h)) return text(res, 400, 'a census height, a whole number');
+        const atHeight = h === null ? null : Number(h);
+        const r = goneHex.length ? fedRecords.mySignatureWithGone(fid, goneHex, atHeight) : fedRecords.mySignature(fid, atHeight);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }

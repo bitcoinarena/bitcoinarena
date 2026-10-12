@@ -10,6 +10,8 @@ import { statusFor, buildFederationRecord, encodeFederationRecord, decodeFederat
   splitSignedRecord, verifyFederationRecord, FEDERATION_STATUS } from '../../arena-protocol/src/federation-record.js';
 import { federationRecords } from '../src/federation-records.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { readFileSync } from 'node:fs';
+import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const FED = new Uint8Array(32).fill(0x37);
@@ -128,4 +130,41 @@ test('a successor named: the seven sign DRAINING with successor_id, and the succ
   const none = seven();
   await none.seats[0].gather(FED, inviteFederationId);
   assert.equal(none.seats[0].list()[0].status, 'OPEN', 'no successor named: OPEN as before');
+});
+
+// THE GATHERER NAMES ITS CENSUS HEIGHT (kanban #321, measured on testnet4 2026-10-12): each seat took the newest round IT held,
+// a round posted ahead whose census it could not read yet - seats 2-7 answered "no chain view for that round" and no record
+// ever had more than 1 of its 5 signatures. Now a seat's own basis is the newest round whose census it reads, and a peer
+// signs at the height the gatherer names, from a round it holds at that height.
+test('seats holding rounds at different census heights sign one record: the newest readable for the gatherer, its height for the peers', async () => {
+  const base = decodeRoundContract(fromHex(readFileSync(new URL('../../arena-client/test/page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1]));
+  const s0 = seven();
+  const { nodes, census } = s0;
+  // every seat: a round at 100 every seat reads and one at 300 nobody reads yet (posted ahead); seats 3, 4, 5 each one more
+  // they alone read (150, 160, 170) - their own newest readable
+  const own = { 3: 150, 4: 160, 5: 170 };
+  const rowsOf = (i) => [100, 300, ...(own[i] ? [own[i]] : [])].map((h, k) => ({ rowid: k + 1, round_id: Buffer.from(new Uint8Array(32).fill(h % 251)), contract: Buffer.from(encodeRoundContract({ ...base, censusHeight: h })) }));
+  const reads = (i, rid) => rid[0] === 100 % 251 || (own[i] !== undefined && rid[0] === own[i] % 251);
+  const asked = [];
+  const seats = nodes.map((n, i) => federationRecords({
+    round: { pubkey: n.pubkey, identity: { secret: n.secret }, db: { prepare: () => ({ all: (after) => rowsOf(i).filter((r) => r.rowid > after) }) } },
+    roster: { censusFor: (rid) => (reads(i, rid) ? census : { ok: false, why: 'this node has no chain view for that round, so it cannot say who is bonded' }) },
+    inviteFor: () => INVITE, networkId: NET,
+    fetcher: async (url) => {
+      asked.push(url);
+      const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
+      const u = new URL(url); const h = u.searchParams.get('height');
+      const body = j.mySignature(u.searchParams.get('federation'), h === null ? null : Number(h));
+      return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
+    },
+  }));
+  const got = await seats[0].gather(FED, inviteFederationId);
+  assert.deepEqual([got.ok, got.status, got.signers, got.height], [true, 'OPEN', 7, 100], got.why);
+  assert.ok(asked.length === 6 && asked.every((u) => u.includes('&height=100')), 'every peer asked at the gatherer\'s height');
+  // seat 3 gathers at its own newest readable height, 150: no other seat holds a round there, so no record - and it says why
+  const at150 = await seats[3].gather(FED, inviteFederationId);
+  assert.equal(at150.ok, false);
+  assert.match(at150.why, /1 of its bonded guardians signed it, and a record needs 5/);
+  assert.equal(seats[1].mySignature(toHex(FED), 150).why, 'this seat holds no round with census height 150');
+  assert.match(seats[1].mySignature(toHex(FED), 300).why, /^census height 300: this node has no chain view/);
 });
