@@ -384,7 +384,15 @@ const fedWords = (row, loads) => {
   const fid = row.contract && row.contract.federationId instanceof Uint8Array ? toHex(row.contract.federationId) : null;
   if (!fid) return '';
   const f = loads && typeof loads.get === 'function' ? loads.get(fid) : null;
-  return ` in federation ${fid.slice(0, 8)}` + (f && typeof f.load === 'number' ? ` (load ${f.load.toFixed(2)})` : '');
+  // AND WHY, WHEN IT IS NOT THE ONE A SEAT WOULD NAME (§23A.3: "A seat opening a round names the OPEN federation with the
+  // lowest load ...; a creator who names another has the client show why"): another OPEN federation the page holds is lower
+  let why = '';
+  if (f && typeof f.load === 'number' && typeof loads.values === 'function') {
+    const lower = [...loads.values()].filter((x) => x && x.status === 'OPEN' && typeof x.load === 'number' && x.federation !== fid && x.load < f.load)
+      .sort((a, b) => a.load - b.load)[0];
+    if (lower) why = ` - not the lowest-load federation: ${String(lower.federation).slice(0, 8)} is at ${lower.load.toFixed(2)}`;
+  }
+  return ` in federation ${fid.slice(0, 8)}` + (f && typeof f.load === 'number' ? ` (load ${f.load.toFixed(2)}${why})` : '');
 };
 export function lobbyLine(row, nowMs = Date.now(), { loads = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
