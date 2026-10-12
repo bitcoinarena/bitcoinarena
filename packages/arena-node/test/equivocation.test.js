@@ -546,3 +546,22 @@ test('re-sending the stored mark keeps nothing and publishes nothing', () => {
   assert.equal(round.offeredMarks(rid, eid).length, 0);
   assert.deepEqual(round.equivocation(rid, eid), []);
 });
+
+// PUBLISHED AS WELL AS KEPT (§25.2, kanban #327: equivocation proofs go "direct, AND any public broadcast channel"): the first
+// time a node holds a pair, `onEquivocation` is handed both signed marks - the server sends them to the round's
+// publication_relays[]. The same pair again is handed to nobody, so relays that relay do not loop.
+test('the first pair held is handed to onEquivocation once, with both signed marks', () => {
+  const { round, rid, eid, mark } = played();
+  const handed = [];
+  round.onEquivocation = (x) => handed.push(x);
+  const other = signedBy({ ...mark, stateHash: b32(0x33) });
+  assert.throws(() => round.checkpoint(other), /equivocation at tick 60/);
+  assert.equal(handed.length, 1);
+  assert.equal(toHex(handed[0].roundId), toHex(rid));
+  assert.equal(toHex(handed[0].entryId), toHex(eid));
+  assert.equal(handed[0].tick, 60);
+  assert.equal(toHex(handed[0].offered), toHex(other));
+  assert.equal(handed[0].stored.length, SIGNED_CHECKPOINT_BYTES);
+  assert.throws(() => round.checkpoint(other), /equivocation at tick 60/);
+  assert.equal(handed.length, 1, 'the same pair again: nothing handed');
+});

@@ -26,6 +26,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
+import { relayPost, relayMarks } from './relay.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -495,6 +496,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     } catch (e) { console.error(`[replay] cannot keep this node's core in ${replayCores}: ${e.message}`); }
   }
   const round = new Round(db, undefined, { plugins: hosted });
+  // A CHECKPOINT EQUIVOCATION THIS SEAT HOLDS FOR THE FIRST TIME GOES TO THE ROUND'S PUBLICATION RELAYS (§25.2, kanban #327): both
+  // signed marks over each relay's /play, where the relay records the pair itself; unawaited, best effort
+  round.onEquivocation = ({ roundId, entryId, tick, stored, offered }) => {
+    let relays = [];
+    try { relays = decodeRoundContract(new Uint8Array(round.get(roundId).contract)).publicationRelays || []; } catch { relays = []; }
+    if (!relays.length) return;
+    relayMarks(relays, [stored, offered])
+      .then((r) => console.log(`[equivocation] ${toHex(entryId).slice(0, 16)} tick ${tick}: both marks relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
+  };
   const owner = ownerFiles ? createOwner({ store: ownerFiles.store, node: toHex(round.pubkey), log: (l) => console.log(l),
     verify: (sig, msg, key) => schnorr.verify(sig, msg, key) }) : null;
   if (roundClock) round.now = roundClock;
@@ -5346,6 +5356,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           + `; objection replays here so far ${verifier.objectionReplayCount}`);
         if (!checked.holds) return text(res, 422, checked.why);
         const taken = objectionIntake(round, rid, eid, /^[0-9a-f]{64}$/.test(blockHex) ? new Uint8Array(Buffer.from(blockHex, 'hex')) : null, bundle, arrivedMs);
+        // AND TO THE ROUND'S PUBLICATION RELAYS (§25.2, kanban #327: "It is sent to the seats and to the round's
+        // publication_relays[] at once"): an objection this seat took for the first time goes on, unawaited; each relay checks
+        // it on its own evidence, and one holding it already answers "already objected" - so relaying relays do not loop
+        if (taken.status === 201) {
+          let relays = [];
+          try { relays = decodeRoundContract(new Uint8Array(round.get(rid).contract)).publicationRelays || []; } catch { relays = []; }
+          relayPost(relays, `/objection?round=${toHex(rid)}&entry=${toHex(eid)}${/^[0-9a-f]{64}$/.test(blockHex) ? `&block=${blockHex}` : ''}`, bundle)
+            .then((r) => console.log(`[objection] ${toHex(eid).slice(0, 16)} relayed to ${r.sent} of ${relays.length} publication relay(s)${r.failed.length ? `; ${r.failed[0]}` : ''}`), () => {});
+        }
         // AN OBJECTION THAT HOLDS SUSPENDS THE RESULT, AND THE COMMITTEE
         // RE-RUNS IT (13A): this signer node starts its own re-run at once.
         const after = taken.status === 201 ? resultFinality(round, rid, eid) : null;
