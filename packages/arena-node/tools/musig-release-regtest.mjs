@@ -48,7 +48,7 @@ try {
   const sats = 200000n;
   const fund = bc('sendtoaddress', address, (Number(sats) / 1e8).toFixed(8));
   bc('generatetoaddress', 1, bc('getnewaddress'));
-  const vout = bcj('getrawtransaction', fund, 1).vout.find((o) => o.address === address).n;
+  const vout = bcj('getrawtransaction', fund, 1).vout.find((o) => o.scriptPubKey.hex === toHex(Uint8Array.from([0x51, 0x20, ...built.outputKey]))).n;
   // THE RELEASE: the whole bond back to the wallet, less 500 sat
   const back = bc('getnewaddress');
   const tx = { version: 2, locktime: 0, inputs: [{ txid: fromHex(fund).reverse(), vout, sequence: 0xfffffffd }],
