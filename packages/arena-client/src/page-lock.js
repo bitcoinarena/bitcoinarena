@@ -2075,6 +2075,70 @@ export async function migratePlayerWallet({ round, invite, seed, LockClient, sto
     fromFederationId: round.federationId, storage, onState, chunkMsat });
 }
 
+/**
+ * A ROUND IN ANOTHER FEDERATION IS ENTERED BY A SWAP (§23A.3: "Entering a round in another federation is a swap (§23A.6
+ * mechanics: the notes leave the one and arrive in the other through a gateway that serves both, stock LNv2, seconds, the
+ * routing fee shown) and the client does it on the press with the fee shown - it is not refused, and it is not the
+ * default"; kanban #324 step 3).
+ *
+ * THE QUOTE, BEFORE THE PRESS: the amount and the fee its two legs cost - the paying wallet's gateway fee rule and the
+ * receiving wallet's (each client's feeRule: base msat + ppm, rounded up) - and whether the paying wallet can send it.
+ */
+const feeRuleOf = async (c) => {
+  if (!c || typeof c.feeRule !== 'function') return null;
+  try { const r = JSON.parse(await c.feeRule()); return { ppm: BigInt(r.fee_ppm), baseMsat: BigInt(r.fee_base_msat) }; } catch { return null; }
+};
+export async function swapQuote({ from, to, amountMsat }) {
+  const amount = BigInt(amountMsat);
+  const out = await feeRuleOf(from), into = await feeRuleOf(to);
+  const legFee = (r) => (r ? r.baseMsat + (amount * r.ppm + 999999n) / 1000000n : 0n);
+  const feeMsat = legFee(out) + legFee(into);
+  let can = 0n; try { can = BigInt(await from.withdrawableMsat()); } catch { can = 0n; }
+  return { amountMsat: amount, feeMsat, totalMsat: amount + feeMsat, withdrawableMsat: can, enough: can >= amount, ruleKnown: !!(out || into) };
+}
+
+/** THE SWAP ITSELF: `amountMsat` from `from` to `to` - an invoice from the receiving wallet, paid through a gateway by the
+ * paying one (withdrawCollected); the fee measured off the paying wallet's balance, both sides in the history. */
+export async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {} }) {
+  const amount = BigInt(amountMsat);
+  const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
+  onState({ state: 'swapping', amountMsat: amount });
+  const before = BigInt(await from.balanceMsat());
+  // THE INVOICE IS THE RECEIVING WALLET'S OWN, made for exactly the amount, and paid as a withdraw pays (the funded gateway
+  // preferred; the lock client never takes the gateway on the invoice's own node)
+  const made = JSON.parse(await to.receive(String(amount), ''));
+  const said = JSON.parse(await from.withdraw(made.invoice, depositGateway('', gateways) || undefined));
+  const final = said.state === 'Success' ? await to.awaitReceive(made.operation) : null;
+  if (!(said.state === 'Success' && final === 'Claimed')) {
+    const why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ' - the money is back there' : ''}`;
+    onState({ state: 'stopped', why });
+    return { ok: false, state: 'stopped', why };
+  }
+  const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
+  if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'swapped-out', msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
+  if (storage && toFederationId) ledgerAppend(storage, toFederationId, { kind: 'swapped-in', msat: String(amount), from: hex(fromFederationId) });
+  onState({ state: 'swapped', amountMsat: amount, feeMsat });
+  return { ok: true, state: 'swapped', movedMsat: amount, feeMsat };
+}
+
+/**
+ * THE JOIN'S SWAP, AS THE PAGE RUNS IT: the player's wallet in the round's federation and its wallet in `fromInvite`'s (one
+ * seed, walletSecretFor per federation), opened as the stake opens them. Nothing when the round's wallet already holds
+ * `needMsat`; else the shortfall quoted, `confirm(quote)` asked - the fee shown, the press the player's - and swapped.
+ */
+export async function swapPlayerWalletForRound({ round, toInvite, fromInvite, fromFederationId, seed, LockClient, storage, needMsat, gateways = [],
+  confirm = async () => false, onState = () => {}, openWallet = playerWallet } = {}) {
+  const to = await openWallet({ round, invite: toInvite, seed, LockClient, storage });
+  const have = BigInt(await to.balanceMsat());
+  if (have >= BigInt(needMsat)) return { ok: true, state: 'enough', haveMsat: have };
+  const from = await openWallet({ round: { ...round, federationId: fromHex(fromFederationId) }, invite: fromInvite, seed, LockClient, storage });
+  const quote = await swapQuote({ from, to, amountMsat: BigInt(needMsat) - have });
+  if (!quote.enough) return { ok: false, state: 'short', quote, why: `the wallet in federation ${String(fromFederationId).slice(0, 8)} can send ${quote.withdrawableMsat} msat, less than ${quote.amountMsat}` };
+  if (!(await confirm(quote))) return { ok: false, state: 'declined', quote };
+  const done = await swapForRound({ from, to, amountMsat: quote.amountMsat, gateways, storage, fromFederationId, toFederationId: round.federationId, onState });
+  return { ...done, quote };
+}
+
 /** The federations this browser keeps a history for (hex): where the player has held notes. */
 export function ledgerFederations(storage) {
   const out = [];
