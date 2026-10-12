@@ -555,7 +555,7 @@ export async function playerWithdrawable({ round, invite, seed, LockClient, stor
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
 export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
-  storage = null, federationId = null, restMsat = null, sizeOf = null } = {}) {
+  storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
   let settle; let fail;
   // WHAT CAME OF IT (option 2, the owner 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
@@ -604,7 +604,7 @@ export function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = nu
   const restPay = rest === null ? null : restInvoiceMsat(rest);
   return { stakeMsat: BigInt(stakeMsat || 0n), perRoundStake: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest, restPayMsat: restPay,
     // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one amount
-    choices: rest === null ? depositChoices(stakeMsat, sizeOf) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }],
+    choices: choices || (rest === null ? depositChoices(stakeMsat, sizeOf) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }]),
     outcome, decided: (o) => decide(o),
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
@@ -659,6 +659,21 @@ export async function settingsDepositOffer({ round, invite, seed, LockClient, st
   return offer;
 }
 function depositRow(storage, round, d) { depositRowOnce(storage, round.federationId, d); }
+/**
+ * A DEPOSIT BEFORE ANY ROUND (kanban #350, the owner 2026-10-12 "Yes" to Deposit on the games screen before a game is picked): no
+ * round to count rounds in, so the tabs are plain amounts - 1,000 / 5,000 / 10,000 / 50,000 sat and Custom - into the same
+ * player wallet, opened from its federation alone (openPlayerWallet).
+ */
+export const WALLET_DEPOSIT_SATS = Object.freeze([1000, 5000, 10000, 50000]);
+export const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => ({ key: `sat${sat}`, label: `${sat.toLocaleString('en-US')} sat`, rounds: null, msat: BigInt(sat) * 1000n })),
+  { key: 'custom', label: 'Custom', rounds: null, msat: null }];
+export async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+  const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
+  const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
+    choices: walletDepositChoices() });
+  offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
+  return offer;
+}
 export const DEPOSIT_MARGIN_PPM = 6000n;
 export const DEPOSIT_MARGIN_MSAT = 10000n;
 /**
