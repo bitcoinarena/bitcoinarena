@@ -3599,6 +3599,23 @@
       const close = add('button', 'dep-close', '\u2715');
       close.type = 'button'; close.title = 'Close';
       const titleEl = add('div', 'dep-title', message || title);
+      // ALL FEDERATIONS AT A GLANCE (kanban #347, the owner 2026-10-12): funds held, how many, the health before deposits stop
+      // (green / yellow / red, the meaning in its tooltip) and the possible capacity - from the verified statuses this page
+      // read (window.ARENA_FED_LOADS), else the round's own federation
+      if (BLWPCLIENT.custodySummary) {
+        const known = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : (window.ARENA_FED_STATUS ? [window.ARENA_FED_STATUS] : []);
+        const sum = BLWPCLIENT.custodySummary(known, { networkTest: known.some((f) => typeof f.load === 'number' && f.load >= 1 && f.loadRefusesDeposit === false) });
+        const said = BLWPCLIENT.custodySays(sum);
+        const box = add('div', 'dep-custody');
+        const dot = document.createElement('span'); dot.className = 'dep-custody-dot';
+        const color = { green: '#3fb950', yellow: '#d29922', red: '#f85149' }[said.band] || '#8b949e';
+        dot.style.cssText = `display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;background:${color}`;
+        const words = document.createElement('span'); words.textContent = said.line;
+        box.append(dot, words);
+        box.title = said.tip; box.dataset.band = said.band;
+        box.style.cssText = 'font-size:12.5px;color:#c9d1d9;margin:2px 0 6px;cursor:help';
+        window.ARENA_CUSTODY_SHOWN = { ...sum, line: said.line, band: said.band };
+      }
       const tabs = add('div', 'dep-tabs');
       // CUSTOM: typed, read with parseInt as it is typed, the invoice made a moment after the last key - no Set button.
       // The row keeps its place when hidden (visibility), so choosing Custom moves nothing.

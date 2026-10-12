@@ -141,3 +141,19 @@ test('two signed federations: the one above 90 % offers Move to the one below 50
   other.paint();
   assert.equal(other.els['arena-fed-note'].style.display, 'none', 'an offer for another federation is not this one\'s note');
 });
+
+// THE DEPOSIT SCREEN'S SUMMARY (kanban #347, the owner 2026-10-12): funds, how many, health and capacity over all federations
+test('custodySummary: funds, count, health band and free capacity over the verified federations; the line and tooltip say them', async () => {
+  const { custodySummary, custodySays } = await import('../src/federations.js');
+  const a = { federation: 'aa', status: 'OPEN', reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 };
+  const b = { federation: 'bb', status: 'OPEN', reserveSats: '0', exposureCapSats: '150000', load: 0 };
+  const u = { federation: 'cc', status: 'unverified' };
+  const s = custodySummary([a, b, u], { networkTest: true });
+  assert.deepEqual([s.federations, s.open, s.reserveSats, s.capSats, s.freeSats, s.load, s.band], [2, 2, '650000', '300000', '150000', 2.1666, 'red']);
+  const said = custodySays(s);
+  assert.equal(said.line, '2 federations · 650,000 sat held · health 217 % · capacity 300,000 sat (150,000 sat free)');
+  assert.match(said.tip, /Still free before deposits stop: 150,000 sat\..*This is a test network/);
+  assert.equal(custodySummary([{ ...b, reserveSats: '100000' }]).band, 'green', '0.6666');
+  assert.equal(custodySummary([{ ...b, reserveSats: '120000' }]).band, 'yellow', '0.8');
+  assert.equal(custodySays(custodySummary([])).line, 'Federations: none verified yet');
+});
