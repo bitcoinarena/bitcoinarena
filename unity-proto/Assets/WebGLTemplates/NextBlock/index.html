@@ -55,8 +55,11 @@
       try {
         var q = new URLSearchParams(location.search).get('game');
         var m = document.querySelector('meta[name="arena-site-game"]');
-        // a game named by its 64-hex manifest id (the page writes one after a choice) is not a name: nextblock's page as before
-        var g = (q && !/^[0-9a-f]{64}$/i.test(q) ? q : (m && m.content) || '').trim();
+        // A GAME NAMED BY ITS 64-HEX MANIFEST ID (a link from before kanban #350) is read through the name this browser kept
+        // for it at the choice (arena.game-name.<id>); unknown, nextblock's page as before. the owner 2026-10-12 16:42: "Der
+        // loading screen ist immer der next block loading screen obwohl ich rps starte".
+        if (q && /^[0-9a-f]{64}$/i.test(q)) { var kept = null; try { kept = localStorage.getItem('arena.game-name.' + q.toLowerCase()); } catch (e) { /* storage blocked */ } q = kept; }
+        var g = (q || (m && m.content) || '').trim();
         window.ARENA_SITE_GAME = g || null;
         if (g && g !== 'nextblock') {
           document.documentElement.classList.add('other-game');
@@ -64,6 +67,12 @@
           var t = titles[g] || [g.replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }), ''];
           window.ARENA_SITE_TITLE = t;
           document.title = t[0];
+        }
+        // THE BARE ROOT (kanban #350): no game is known until the player picks one, so Bitcoin Arena's own splash shows - not
+        // Next Block's loading screen in front of Rock Paper Scissors. Next Block's comes back when it is the game chosen.
+        else if (!g && !location.search) {
+          document.documentElement.classList.add('other-game', 'arena-root');
+          window.ARENA_SITE_TITLE = ['Bitcoin Arena', '\u26A1'];
         }
       } catch (e) { window.ARENA_SITE_GAME = null; }
     })();
@@ -524,6 +533,12 @@
       box-shadow: 0 2px 10px rgba(0,0,0,0.35); }
     #blwp-history { margin: 10px 0 4px; }
     #blwp-history-rows { max-height: 240px; overflow-y: auto; }
+    /* THE FEDERATION AS A CHIP, NOT A WALL OF HEX (kanban #350, the owner 2026-10-12 16:44: "the federation id is too long. Make it
+       better visible"): its first and last 4 bytes, the full id on hover and copied on a tap */
+    #blwp-history-fed .fed-chip { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0 8px; padding: 3px 10px; border-radius: 999px;
+      background: rgba(88,166,255,0.14); border: 1px solid rgba(88,166,255,0.45); color: #79c0ff; font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+    #blwp-history-fed .fed-chip::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
+    #blwp-history-rows .empty { color: #8b949e; font-size: 14px; padding: 6px 0; }
     .hist-row { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid #2a2f36; font-size: 12px; }
     .hist-row .hist-amt { margin-left: auto; font-variant-numeric: tabular-nums; }
     .hist-row.plus .hist-amt { color: #7bd88f; } .hist-row.minus .hist-amt { color: #ff9f7a; }
@@ -3551,12 +3566,26 @@
       // WHAT IT WAITS FOR, SAID (kanban #294, measured from the wallet bar: a Deposit tapped while the player wallet was still
       // joining the federation - 58 s on the regtest market stack - showed nothing at all until the modal came)
       say('Opening your wallet and making the invoice \u2026');
+      // THE MODAL AT ONCE (kanban #350, the owner 2026-10-12 16:44: "Clicking deposit on the main screen is laggy, it does not open
+      // the deposit modal at all"; measured in Chrome: 14.2 s from the tap to the modal, the player wallet joining the federation
+      // all that time): the box opens on the tap with what it waits for, and the invoice fills it when it is made
+      const waitBox = which === 'deposit' ? (() => {
+        const el = document.getElementById('blwp-deposit');
+        if (!el) return null;
+        el.textContent = ''; el.className = 'deposit-modal over-settings';
+        const close = document.createElement('button'); close.type = 'button'; close.className = 'dep-close'; close.textContent = '\u2715'; close.title = 'Close';
+        close.addEventListener('click', () => { el.textContent = ''; el.className = ''; });
+        const t = document.createElement('div'); t.className = 'dep-title'; t.textContent = 'Deposit into your player wallet';
+        const w = document.createElement('div'); w.className = 'dep-why'; w.textContent = 'Opening your wallet and making the invoice \u2026 (the first time takes up to 20 s)';
+        el.append(close, t, w);
+        return { el, w };
+      })() : null;
       return (async () => {
         // A FEDERATION NOT ON THE LIST IS SHOWN AND CONFIRMED FIRST (kanban #318); Move takes notes out, so it is not asked
         if (which === 'deposit' && window.ARENA_FEDERATION_GATE) {
           const lob = window.BLWP_LEDGER_LOBBY || {};
           const gate = await window.ARENA_FEDERATION_GATE({ round: ctx.round, invite: ctx.invite, roundIdHex: ctx.roundIdHex, nodes: lob.nodes || [] });
-          if (!gate.ok) { say(gate.why); return { ok: false, why: gate.why }; }
+          if (!gate.ok) { say(gate.why); if (waitBox && waitBox.el.contains(waitBox.w)) waitBox.w.textContent = gate.why; return { ok: false, why: gate.why }; }
         }
         try {
           const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
@@ -3572,7 +3601,7 @@
           showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
           say('');
           return { ok: true };
-        } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); return { ok: false, why }; }
+        } catch (e) { const why = 'No deposit: ' + (e && e.message ? e.message : e); say(why); if (waitBox && waitBox.el.contains(waitBox.w)) waitBox.w.textContent = why; return { ok: false, why }; }
       })();
     }
     for (const [id, which] of [['blwp-deposit-go', 'deposit'], ['blwp-move-go', 'move'],
@@ -3995,12 +4024,17 @@
       try { const wasm = await window.BLWP_LOCK_WASM(); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
       catch (e) { fedEl.textContent = 'The federation id could not be read: ' + (e && e.message ? e.message : e); return; }
       window.BLWP_LEDGER_FEDERATION = fed;
-      fedEl.textContent = 'Federation ' + fed;
+      fedEl.textContent = '';
+      { const chip = document.createElement('span'); chip.className = 'fed-chip'; chip.title = fed + ' - tap to copy';
+        chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4);
+        chip.addEventListener('click', () => { try { navigator.clipboard.writeText(fed).then(() => { chip.textContent = 'Copied'; setTimeout(() => { chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4); }, 1200); }); } catch { /* no clipboard */ } });
+        fedEl.append(chip); }
       const st = vault();
       try { BLWPCLIENT.ledgerReadSavedStakes(st, fed); } catch { /* nothing to read */ }
       const rows = BLWPCLIENT.ledgerHistory(BLWPCLIENT.ledgerRows(st, fed)).slice().sort((a, b) => (b.atMs ?? -1) - (a.atMs ?? -1));
       rowsEl.textContent = '';
-      if (!rows.length) { rowsEl.textContent = 'No deposits, stakes or withdrawals in this tab yet'; return; }
+      // NOTHING YET, SAID AS SUCH (kanban #350, the owner: "misleading, I just did no deposits yet")
+      if (!rows.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No activity yet. Your deposits, stakes and withdrawals show here.'; rowsEl.append(e); return; }
       const sat = (msat) => `${(Number(BigInt(msat || 0) / 1000n)).toLocaleString('en-US')} sat`;
       for (const r of rows) {
         const plus = r.kind === 'deposit' || r.kind === 'winnings' || r.kind === 'refund' || r.kind === 'slash-payout';
@@ -4998,11 +5032,23 @@
           console.log('[arena] choose a game: ' + got.games.map((g) => g.name).join(' / '));
         });
         el.classList.remove('show');
-        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', game.id);
+        // THE GAME'S NAME IN THE LINK (kanban #350), its id only when two listed games share the name: the loading screen
+        // reads the name before anything loads, and a reload shows this game's splash, not Next Block's
+        const byName = got.games.filter((g) => g.name === game.name).length === 1;
+        try { localStorage.setItem('arena.game-name.' + game.id, game.name); } catch (e) { /* storage blocked */ }
+        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', byName ? game.name : game.id);
         history.replaceState(null, '', location.pathname + '?' + q.toString());
       }
       if (!game) return null;
       window.ARENA_GAME_CHOSEN = game;
+      // THE CHOSEN GAME'S NAME WHERE THE PAGE NAMED NEXT BLOCK (kanban #350, the owner 2026-10-12 16:44: "Settings shows tick tock
+      // Next block even though I am in RPS"): the Settings head and its mark, and the bare root's splash while the game loads
+      if (game.name !== 'nextblock') {
+        const head = document.querySelector('#blwp-settings .settings-head h2');
+        if (head) { const small = head.querySelector('small'); if (small) small.textContent = game.title || game.name;
+          const mark = head.querySelector('img.mark'); if (mark) { if (game.icon) mark.src = game.icon; else mark.remove(); } }
+        if (document.documentElement.classList.contains('arena-root')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name; const i = document.getElementById('site-icons'); if (i) i.textContent = ''; }
+      }
       window.ARENA_GAME_ID = game.id;
       // A TABLE WAITS (kanban #293, the owner 2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
       // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
@@ -5205,6 +5251,8 @@
       // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
+      // NEXT BLOCK'S LOADING SCREEN, ONCE IT IS THE GAME (kanban #350): the bare root showed Bitcoin Arena's splash until here
+      if (window.ARENA_UNITY && document.documentElement.classList.contains('arena-root')) document.documentElement.classList.remove('other-game', 'arena-root');
       // WHICH LOBBY A ROW CAME FROM, so its join - PLAY, or the next round after a run - carries that lobby's own link
       const rowSearch = window.BLWP_ROW_SEARCH = new Map();
       // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
