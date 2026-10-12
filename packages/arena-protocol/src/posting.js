@@ -22,7 +22,7 @@
 // is injected, as `claim-key.js` takes it.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_TRANSCRIPT_POSTING, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_TRANSCRIPT_POSTING, TAG } from './constants.js';
 import { receiptsNeeded } from './threshold.js';
 
 /** 1 type + 2 version + 32 round + 32 player + 32 transcript + 32 signer node + 32 block. */
@@ -53,7 +53,7 @@ export function decodeTranscriptPosting(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_TRANSCRIPT_POSTING) throw new Error('not a transcript posting');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const p = { roundId: r.bytes32(), playerPubkey: r.bytes32(), transcriptHash: r.bytes32(), signerNodePubkey: r.bytes32(), blockHash: r.bytes32() };
   r.end();
   return p;

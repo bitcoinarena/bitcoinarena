@@ -14,7 +14,7 @@
 // every signature. No curve here: `verify` (BIP-340) is the caller's.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION } from './constants.js';
+import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION, speaksVersion } from './constants.js';
 import { exposureCap } from './federation-slash.js';
 
 export const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
@@ -61,7 +61,7 @@ export function encodeFederationRecord(r) {
 export function decodeFederationRecord(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_FEDERATION_RECORD) throw new Error('not a federation record');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const out = {
     federationId: r.bytes32(), networkId: r.bytes32(), invite: r.str(), nominal: r.u8(), threshold: r.u8(),
     guardians: r.vec((rr) => ({ peerKey: rr.bytes(33), nodePubkey: rr.bytes32(), operatorId: rr.str(), bondTxid: rr.bytes32(), bondVout: rr.u32(), endpoint: rr.str() })),

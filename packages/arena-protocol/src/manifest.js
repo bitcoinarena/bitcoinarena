@@ -29,7 +29,7 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS } from './constants.js';
 
 /**
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
@@ -53,6 +53,16 @@ export const ATTESTORS_MAX = 16;
  * text). Optional: an attested manifest without them keeps the network's fee and today's rules, and its bytes.
  */
 export const MARKET_TERMS_MARKER = 0x01;
+
+/**
+ * THE PROTOCOL VERSION A GAME REQUIRES (kanban #349, the owner 2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
+ * Versionen required können. Alte nodes die da nicht updaten fliegen raus."): optional, written last after its own marker,
+ * so every manifest without it keeps its bytes and its game id. A round of the game names that version or a later one
+ * (roundFitsManifest, gameIsKnownGood), and the census seats only nodes whose advert lists the round's version - a node
+ * that did not update is not drawn for the game's rounds. A node too old to know the field cannot read the manifest at
+ * all (trailing bytes), so it cannot host the game either.
+ */
+export const REQUIRED_VERSION_MARKER = 0x02;
 export const MARKET_FEE_BPS_MAX = 500;
 export const MARKET_DONATION_BPS_MAX = 500;
 export const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -160,6 +170,9 @@ export function encodeManifestBody(m) {
   if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
   if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
   if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
+  if (m.requiredProtocolVersion !== undefined && m.requiredProtocolVersion !== null
+      && (!Number.isInteger(m.requiredProtocolVersion) || m.requiredProtocolVersion < 1 || m.requiredProtocolVersion > 65535))
+    throw new Error('a required protocol version is 1 to 65535');
 
   const w = new Writer();
   w.u8(TYPE_GAME_MANIFEST);
@@ -197,13 +210,15 @@ export function encodeManifestBody(m) {
     w.u8(m.moveCount);
     w.u64(m.revealWindowMs);
   }
+  // THE REQUIRED PROTOCOL VERSION, LAST AND ONLY WHEN NAMED: no manifest before it moves
+  if (m.requiredProtocolVersion) { w.u8(REQUIRED_VERSION_MARKER); w.u16(m.requiredProtocolVersion); }
   return w.finish();
 }
 
 function readBody(r) {
   if (r.u8() !== TYPE_GAME_MANIFEST) throw new Error('not a game manifest');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
+  if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
   const body = {
     gameName: r.str(),
     gameDevPubkey: r.bytes32(),
@@ -234,6 +249,10 @@ function readBody(r) {
     body.players = r.u8();
     body.moveCount = r.u8();
     body.revealWindowMs = r.u64();
+  }
+  if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === REQUIRED_VERSION_MARKER) {
+    r.u8();
+    body.requiredProtocolVersion = r.u16();
   }
   return body;
 }
@@ -302,6 +321,8 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   const name = `game "${m.gameName}"`;
   if (!contract || !manIs32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game' };
   if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
+  if (m.requiredProtocolVersion && !(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= m.requiredProtocolVersion))
+    return { ok: false, why: `${name} requires protocol version ${m.requiredProtocolVersion}; that round runs ${contract.protocolVersion ?? 'none'}` };
   // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
   if (isAttested(m)) {
     if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))

@@ -30,7 +30,7 @@ import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId,
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
-  PROTOCOL_VERSION, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
+  PROTOCOL_VERSION, speaksVersion, TYPE_SLASH_PROOF, TYPE_PAYOUT_TABLE, TYPE_SETTLEMENT_RECORD,
   TYPE_RESULT, TYPE_FEE_CLAIM, TYPE_SERVICE_RECORD, ROLES, roleByte,
   SLASH_REMAINDERS, SLASH_TO_PLAYERS_BPS, TAG, splitNodesDevelopers,
 } from './constants.js';
@@ -187,7 +187,7 @@ export function encodeSlashProof(p) {
 export function decodeSlashProof(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SLASH_PROOF) throw new Error('not a slash proof');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const p = {
     roundId: r.bytes32(),
     playerPubkey: r.bytes32(),
@@ -619,7 +619,7 @@ export function encodeSettlementRecord(r) {
 export function decodeSettlementRecord(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SETTLEMENT_RECORD) throw new Error('not a settlement record');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const out = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
@@ -1030,7 +1030,7 @@ export function encodeFeeClaim(c) {
 export function decodeFeeClaim(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_FEE_CLAIM) throw new Error('not a fee claim');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const c = {
     roundId: r.bytes32(),
     nodePubkey: r.bytes32(),
@@ -1067,7 +1067,7 @@ export function encodeServiceRecord(r) {
 export function decodeServiceRecord(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SERVICE_RECORD) throw new Error('not a service record');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const out = {
     roundId: r.bytes32(),
     nodePubkey: r.bytes32(),
