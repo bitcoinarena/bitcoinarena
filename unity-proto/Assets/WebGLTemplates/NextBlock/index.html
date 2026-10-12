@@ -3433,7 +3433,8 @@
     // THE FEDERATION'S STATUS, SHOWN (kanban #321): under CRITICAL only Withdraw and Move stay; the note says why
     window.ARENA_PAINT_FEDERATION = () => {
       const fed = window.ARENA_FED_STATUS; const note = document.getElementById('arena-fed-note');
-      const says = fed ? BLWPCLIENT.federationSays(fed.status) : '';
+      // AND ITS LOAD (§23A.3, kanban #324): said when the federation holds more than its guardians' bonds cover - shown, not refused
+      const says = fed ? [BLWPCLIENT.federationSays(fed.status), BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : ''].filter(Boolean).join(' ') : '';
       if (note) { note.textContent = says; note.style.display = says ? '' : 'none'; }
       for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
     };
