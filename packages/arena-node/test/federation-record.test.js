@@ -192,3 +192,42 @@ test('the signed record carries the reserve the guardians name; the load is rese
   const g3 = await none.seats[0].gather(FED, inviteFederationId);
   assert.deepEqual([g3.ok, g3.why], [false, 'the reserve: no answer']);
 });
+
+// A FEDERATION FOUND, NOT CONFIGURED (kanban #348, the owner 2026-10-12: "Make it happen automatically so we don't have to update
+// nodes, it needs to find federations"): a seat with no invite for a federation its census knows mirrors the record its
+// guardians' nodes hold - kept only when it stands against that seat's own census.
+function outsider(census, guardianSeats, nodes) {
+  const me = { secret: new Uint8Array(32).fill(0x55) }; me.pubkey = schnorr.getPublicKey(me.secret);
+  return federationRecords({
+    round: { pubkey: me.pubkey, identity: { secret: me.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => census }, inviteFor: () => null, networkId: NET,
+    fetcher: async (url) => {
+      const i = nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')));
+      if (!url.endsWith('/federations') || i < 0) return new Response('no', { status: 404 });
+      return new Response(JSON.stringify({ federations: guardianSeats[i].list() }), { status: 200 });
+    },
+  });
+}
+
+test('a seat with no invite for a federation its census knows mirrors the record its guardians hold', async () => {
+  const s = seven();
+  for (const seat of s.seats) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
+  const o = outsider(s.census, s.seats, s.nodes);
+  assert.deepEqual(o.list(), [], 'nothing before it asks');
+  const got = await o.gatherAll(inviteFederationId);
+  assert.deepEqual([got[0].ok, got[0].mirrored, got[0].status, got[0].signers], [true, true, 'OPEN', 7], got[0].why);
+  const listed = o.list();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].federation, toHex(FED));
+  assert.equal(verifyFederationRecord(fromHex(listed[0].record), { census: s.census.entries, verify, inviteFederationId }).ok, true);
+});
+
+test('a mirrored record that does not stand against the seat\'s own census is not kept', async () => {
+  const s = seven();
+  for (const seat of s.seats) await seat.gather(FED, inviteFederationId);
+  // this seat's census bonds only 4 of the 7 guardians: below the threshold of 5, the record signed by all 7 does not stand here
+  const o = outsider({ ok: true, entries: s.census.entries.slice(0, 4) }, s.seats, s.nodes);
+  const got = await o.gatherAll(inviteFederationId);
+  assert.equal(got[0].ok, false);
+  assert.deepEqual(o.list(), []);
+});
