@@ -415,12 +415,17 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (cli) {
     const rt = regtest(cli, { network, ...(wallet ? { wallet } : {}) });
     onChain = rt;
+    // ARENA_BOND_SATS ON REGTEST (kanban #324: a federation whose bonds cover little, so its load is high - Move is offered
+    // only from one above 90 %): each bond that amount, out of a funding output 5 000 sats larger, instead of half a coin
+    const bondOverride = rt.minable && process.env.ARENA_BOND_SATS ? BigInt(process.env.ARENA_BOND_SATS) : null;
+    const bondAmount = bondOverride !== null ? { bondSats: bondOverride, fundBtc: (Number(bondOverride + 5000n) / 1e8).toFixed(8) }
+      : rt.minable ? {} : { bondSats: 50000n, fundBtc: '0.00055' };
     // WHAT EACH NODE'S BOND MUST SAY: the advert the node would post now
     const wantFor = (m, i) => ({
       endpoint: process.env[`ARENA_WSS_${m.port}`] || `ws://${host}:${m.port}`,
       ...(guardianOfFor(i).length ? { guardianOf: guardianOfFor(i) } : {}),
       ...m.guardian,
-      ...(rt.minable ? {} : { bondSats: 50000n }),
+      ...(bondAmount.bondSats !== undefined ? { bondSats: bondAmount.bondSats } : {}),
     });
     // A BOND THAT ONCE CONFIRMED STAYS VALID (spec §5A.3; the owner 2026-09-28 07:39: "The operator does not post again.
     // Change the node so a confirmed unspent bond for that node key is reused"). Off regtest - where every block is
@@ -466,7 +471,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         ...m.guardian,
         // ON TESTNET4 THE BOND IS THE ROUND'S MINIMUM, not regtest's half a coin: 50 000 sats, the contract's
         // bond_min_sats, out of a 55 000-sat funding output (the rest is the marker, the fee and the change).
-        ...(rt.minable ? {} : { bondSats: 50000n, fundBtc: '0.00055' }),
+        ...bondAmount,
       });
       rt.include([p.hex]);
       postedAt.push(rt.height());
