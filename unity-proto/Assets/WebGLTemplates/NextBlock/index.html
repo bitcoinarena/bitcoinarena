@@ -2074,8 +2074,14 @@
           const census = BLWPCLIENT.checkedCensusFor(round);
           if (census && round.federationId) {
             const fedHex = Array.from(round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
-            const fs = await BLWPCLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.BLWP_CURVE.verify });
+            // EVERY FEDERATION THE SEATS LIST, each record checked against this census (kanban #324): the round's own is its
+            // status; the others' loads say whether Move is offered (§23A.3: above 90 %, to one below 50 %)
+            const all = BLWPCLIENT.federationStatuses
+              ? await BLWPCLIENT.federationStatuses({ nodes, census, verify: window.BLWP_CURVE.verify })
+              : new Map([[fedHex, await BLWPCLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.BLWP_CURVE.verify })]]);
+            const fs = all.get(fedHex) || { status: 'unverified', allows: BLWPCLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
+            window.ARENA_FED_MOVE = BLWPCLIENT.moveOffer ? BLWPCLIENT.moveOffer(window.ARENA_FED_STATUS, [...all.values()]) : null;
             if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
             console.log(`[arena] federation ${fedHex.slice(0, 16)}: ${fs.status}${fs.signers ? ` (${fs.signers} of ${fs.nominal} guardians signed, height ${fs.height})` : ''}${fs.why ? ' - ' + fs.why : ''}`);
           }
@@ -3434,7 +3440,8 @@
     window.ARENA_PAINT_FEDERATION = () => {
       const fed = window.ARENA_FED_STATUS; const note = document.getElementById('arena-fed-note');
       // AND ITS LOAD (§23A.3, kanban #324): said when the federation holds more than its guardians' bonds cover - shown, not refused
-      const says = fed ? [BLWPCLIENT.federationSays(fed.status), BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : ''].filter(Boolean).join(' ') : '';
+      const says = fed ? [BLWPCLIENT.federationSays(fed.status), BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : '',
+        BLWPCLIENT.moveSays && window.ARENA_FED_MOVE && window.ARENA_FED_MOVE.from === fed.federation ? BLWPCLIENT.moveSays(window.ARENA_FED_MOVE) : ''].filter(Boolean).join(' ') : '';
       if (note) { note.textContent = says; note.style.display = says ? '' : 'none'; }
       for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
     };

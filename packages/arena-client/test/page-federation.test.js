@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { pageFunction } from './page-script.js';
-import { federationStatus, federationSays, loadSays, loadRefusesDeposit, FEDERATION_ALLOWS } from '../src/federations.js';
+import { federationStatus, federationStatuses, federationSays, loadSays, loadRefusesDeposit, moveOffer, moveSays, FEDERATION_ALLOWS } from '../src/federations.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord } from '../../arena-protocol/src/federation-record.js';
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
@@ -24,9 +24,10 @@ function page(status, extra = {}) {
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
   for (const id of ['arena-fed-note', 'blwp-money-why', 'blwp-settings']) el(id);
   const document = { getElementById: (id) => els[id] || null, body: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: (c) => classes.has(c) } } };
-  const window = { ARENA_FED_STATUS: status ? { status, allows: FEDERATION_ALLOWS[status], ...extra } : undefined };
+  const { move, ...fields } = extra;
+  const window = { ARENA_FED_STATUS: status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined, ARENA_FED_MOVE: move };
   const did = [];
-  const BLWPCLIENT = { federationSays, loadSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
+  const BLWPCLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
   const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
     [PAINT, OPEN], 'return { paint: window.ARENA_PAINT_FEDERATION, openMoney };');
   const api = fn(document, window, BLWPCLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),
@@ -106,4 +107,37 @@ test('load >= 1 refuses a deposit on a network that is not a test network, and o
   const r = await p.openMoney('deposit', () => {});
   assert.deepEqual(r, { ok: false, why: 'Load 4.33: this federation holds 650,000 sat, more than the 150,000 sat its guardians\' bonds cover. No deposit goes into it; play in another federation.' });
   assert.equal((await p.openMoney('withdraw', () => {})).ok, true);
+});
+
+// MOVE, OFFERED FROM THE OTHERS' SIGNED LOADS (§23A.3, kanban #324): every federation the seats list is checked against the
+// census in one read (federationStatuses); the player's at 93 % and another at 40 % - Move is offered and the note says so
+test('two signed federations: the one above 90 % offers Move to the one below 50 %, and the note says it', async () => {
+  const A = new Uint8Array(32).fill(0x37), B = new Uint8Array(32).fill(0x38);
+  const nodes = Array.from({ length: 7 }, (_, i) => { const secret = new Uint8Array(32).fill(i + 1); return { secret, pubkey: schnorr.getPublicKey(secret),
+    guardianKey: Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]), guardianKeyB: Uint8Array.from([2, ...new Uint8Array(32).fill(0x70 + i)]) }; });
+  const census = nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(i), vout: 0, bondSats: 50000n,
+    advert: { guardianOf: [{ federationId: A, guardianKey: n.guardianKey }, { federationId: B, guardianKey: n.guardianKeyB }] } }));
+  const recordOf = (fed, key, reserveSats) => {
+    const r = buildFederationRecord({ federationId: fed, networkId: NETWORK_ID_TESTNET4, invite: inviteForGuardians(fed, [{ url: 'wss://g.example/', peer: 0 }]), nominal: 7,
+      height: 156200, reserveSats, guardians: census.map((e, i) => ({ peerKey: nodes[i][key], nodePubkey: e.pubkey, operatorId: '', bondTxid: e.txid, bondVout: 0, endpoint: '', bondSats: 50000n })) });
+    const id = federationRecordId(r);
+    return Buffer.from(joinSignedRecord(encodeFederationRecord(r), nodes.map((n) => ({ nodePubkey: n.pubkey, signature: schnorr.sign(id, n.secret) })))).toString('hex');
+  };
+  const listed = [{ federation: Buffer.from(A).toString('hex'), record: recordOf(A, 'guardianKey', 140000n) },
+    { federation: Buffer.from(B).toString('hex'), record: recordOf(B, 'guardianKeyB', 60000n) }];
+  const fetcher = async () => new Response(JSON.stringify({ federations: listed }), { status: 200 });
+  const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
+  const all = await federationStatuses({ nodes: ['https://seat.example'], census, verify, fetcher });
+  const a = all.get(listed[0].federation), b = all.get(listed[1].federation);
+  assert.deepEqual([a.status, a.exposureCapSats, a.load, b.status, b.load], ['OPEN', '150000', 0.9333, 'OPEN', 0.4]);
+  assert.deepEqual(await federationStatus({ federationIdHex: listed[1].federation, nodes: ['https://seat.example'], census, verify, fetcher }), b);
+  const offer = moveOffer(a, [...all.values()]);
+  assert.deepEqual(offer, { from: listed[0].federation, to: listed[1].federation, fromLoad: 0.9333, toLoad: 0.4 });
+  assert.equal(moveOffer(b, [...all.values()]), null, 'the one at 40 % is offered nothing');
+  const p = page('OPEN', { federation: listed[0].federation, load: 0.9333, move: offer });
+  p.paint();
+  assert.equal(p.els['arena-fed-note'].textContent, `This federation is at 93 % load; federation ${listed[1].federation.slice(0, 16)} is at 40 %. Move is offered: your money can go there.`);
+  const other = page('OPEN', { federation: listed[1].federation, load: 0.4, move: offer });
+  other.paint();
+  assert.equal(other.els['arena-fed-note'].style.display, 'none', 'an offer for another federation is not this one\'s note');
 });

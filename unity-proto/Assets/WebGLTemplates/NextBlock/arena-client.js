@@ -23128,21 +23128,43 @@ const FEDERATION_ALLOWS = Object.freeze({
  */
 async function federationStatus({ federationIdHex, nodes, census, verify, fetcher = fetch }) {
   const fid = String(federationIdHex).toLowerCase();
-  const verified = [], refused = [];
+  const all = await federationStatuses({ nodes, census, verify, fetcher, only: fid });
+  return all.get(fid) || { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
+}
+
+/**
+ * EVERY FEDERATION THE SEATS LIST, EACH AS federationStatus ANSWERS IT (§23A.3, kanban #324: Move is offered against the
+ * others' loads): one read of each seat's /federations, every record checked against the same census. A Map, federation
+ * id hex -> status with `federation`; `only` keeps one. `.why` says why none stood when the map is empty.
+ */
+async function federationStatuses({ nodes, census, verify, fetcher = fetch, only = null }) {
+  const verified = new Map(), refused = new Map(), failed = [];
+  const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
   await Promise.all((nodes || []).map(async (u) => {
     try {
       const r = await readWithOneRetry(fetcher, `${String(u).replace(/\/+$/, '')}/federations`);
-      if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
+      if (!r.ok) { failed.push(`${u}: ${r.status}`); return; }
       const j = await r.json();
       for (const f of j.federations || []) {
-        if (String(f.federation).toLowerCase() !== fid) continue;
+        const fid = String(f.federation).toLowerCase();
+        if (only && fid !== only) continue;
         const v = verifyFederationRecord(hexToBytes(f.record), { census, verify, inviteFederationId });
-        if (v.ok) verified.push({ ...v, from: u }); else refused.push(`${u}: ${v.why}`);
+        if (v.ok) add(verified, fid, { ...v, from: u }); else add(refused, fid, `${u}: ${v.why}`);
       }
-    } catch (e) { refused.push(`${u}: ${e.message}`); }
+    } catch (e) { failed.push(`${u}: ${e.message}`); }
   }));
-  const best = newestRecord(verified);
-  if (!best) return { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, why: refused.length ? `no record stands: ${refused[0]}` : 'no node holds a record of this federation' };
+  const out = new Map();
+  for (const fid of new Set([...verified.keys(), ...refused.keys()])) {
+    const best = newestRecord(verified.get(fid) || []);
+    const why = (refused.get(fid) || failed)[0];
+    out.set(fid, best ? { ...statusOfRecord(best), federation: fid }
+      : { status: 'unverified', allows: FEDERATION_ALLOWS.unverified, federation: fid, why: why ? `no record stands: ${why}` : 'no node holds a record of this federation' });
+  }
+  if (!out.size && failed.length) out.why = `no record stands: ${failed[0]}`;
+  return out;
+}
+
+function statusOfRecord(best) {
   const load = best.record.exposureCapSats > 0n ? Number(((best.record.reserveSats ?? 0n) * 10000n) / best.record.exposureCapSats) / 10000 : null;
   const refusesDeposit = loadRefusesDeposit({ load, networkId: best.record.networkId });
   return { status: best.status, allows: refusesDeposit ? { ...FEDERATION_ALLOWS[best.status], deposit: false } : FEDERATION_ALLOWS[best.status],
@@ -23197,6 +23219,13 @@ function loadSays(fed) {
   const sat = (x) => `${Number(BigInt(x || 0)).toLocaleString('en-US')} sat`;
   return `Load ${fed.load.toFixed(2)}: this federation holds ${sat(fed.reserveSats)}, more than the ${sat(fed.exposureCapSats)} its guardians' bonds cover.`
     + (fed.loadRefusesDeposit ? ' No deposit goes into it; play in another federation.' : '');
+}
+
+/** The sentence a page shows when Move is offered (moveOffer's answer), else ''. */
+function moveSays(offer) {
+  if (!offer) return '';
+  const pct = (x) => `${Math.round(x * 100)} %`;
+  return `This federation is at ${pct(offer.fromLoad)} load; federation ${String(offer.to).slice(0, 16)} is at ${pct(offer.toLoad)}. Move is offered: your money can go there.`;
 }
 
 /** The sentence a page shows for a status that holds something back. */
@@ -25874,7 +25903,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
