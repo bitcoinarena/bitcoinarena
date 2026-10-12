@@ -165,7 +165,9 @@ if (env.PAID_RPS_GRID === '1') {
   // RPS_GRID_FEE_RATE (sat/vB, the owner 2026-10-12 "Mach das deutlich sparsamer"): under the wallet's 1 sat/vB down to the
   // node's 0.1 - a block without the grid raises it (doubling, to RPS_GRID_MAX_FEE_RATE)
   const feeRate = Number(env.RPS_GRID_FEE_RATE || 1), maxFeeRate = Number(env.RPS_GRID_MAX_FEE_RATE || 4);
-  let lastCloseMs = 0, busy = false, now1 = env.RPS_GRID_NOW === '1';
+  // RPS_GRID_AFTER_MS: a grid already running when this keeper starts (its last close, ms) - the next one's first close comes
+  // 8 s after it, so a restart does not lay a second grid over the running one
+  let lastCloseMs = Number(env.RPS_GRID_AFTER_MS || 0), busy = false, now1 = env.RPS_GRID_NOW === '1';
   const gid = toHex(ROCK_PAPER_SCISSORS.gameId);
   const look = async () => {
     if (busy) return;

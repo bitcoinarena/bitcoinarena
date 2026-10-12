@@ -49,9 +49,12 @@ export const SERIES_MAX_MS = 86400000n;                     // a series lasts at
 // at 1 sat/vB). Its own rule, in the owner's words: "lead of at least 45 minutes, as path B already uses; any start time; at
 // most 30 minutes of rounds; its own entry window". Still published on demand, about 1 h ahead: a series only in how it
 // is written on chain. Nothing per round is chosen after the beacon - every round is derived from the template.
+// 24 HOURS OF ROUNDS (the owner 2026-10-12 ~09:55Z: "Make sure each grid has 24 hours of gameplay, and cost as less as possible
+// on chain"): a grid runs at most a day - 10,800 slots of 8 s per table - published once a day for ~20 sat at 0.1 sat/vB;
+// the 30 minutes ruled at ~06:20Z gave way to it.
 // A template is one by `seriesGrid: true`, its period (`seriesPeriodMs`) and count (`seriesCount`) named; all three are
 // in its series id (H(template || period || count || 'G')), so a grid's id is never a day series' or a tail's.
-export const GRID_SERIES_MAX_MS = 30n * 60000n;
+export const GRID_SERIES_MAX_MS = SERIES_MAX_MS;            // 24 h
 export const GRID_SERIES_LEAD_MIN_MS = 45n * 60000n;
 const GRID_ID_MARK = 0x47;                                  // 'G'
 export const isGridSeries = (template) => !!template && template.seriesGrid === true;
@@ -155,7 +158,7 @@ function gridIsValid(template, lead) {
   if (typeof period !== 'bigint' || period <= 0n) return { ok: false, why: 'a grid series names its period' };
   if (!Number.isInteger(count) || count < 1) return { ok: false, why: 'a grid series names its round count' };
   if (BigInt(count) * period > GRID_SERIES_MAX_MS)
-    return { ok: false, why: `a grid series of ${count} rounds every ${period} ms runs ${BigInt(count) * period} ms, and a grid runs at most ${GRID_SERIES_MAX_MS} ms (30 min)` };
+    return { ok: false, why: `a grid series of ${count} rounds every ${period} ms runs ${BigInt(count) * period} ms, and a grid runs at most ${GRID_SERIES_MAX_MS} ms (24 h)` };
   if (lead < GRID_SERIES_LEAD_MIN_MS)
     return { ok: false, why: `that grid starts ${lead} ms after its committee time, and a grid needs ${GRID_SERIES_LEAD_MIN_MS} ms (45 min)` };
   if (typeof template.entryCloseMs !== 'bigint' || gridLateOf(template) < 0n)
