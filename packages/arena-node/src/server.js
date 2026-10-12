@@ -2891,11 +2891,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       candidates.sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0));
       const count = new Map();
       const kept = [];
+      // A ROUND WHOSE ENTRY HAS CLOSED DOES NOT TAKE AN OPEN ONE'S PLACE (kanban #350, the owner 2026-10-12 16:47: "no rounds
+      // opens for Rps"): counted by start, an 8 s grid's `next` rounds were the ones already started - measured at 14:50:42Z,
+      // 32 Rock Paper Scissors rounds listed, the latest entry closing 46 s ahead - and after a lobby read over the Funnel
+      // (8.5 s even from the seat's own machine) the page had no round of the running grid to offer. So `next` counts the
+      // rounds still open for entry, and as many closed but unfinished ones are kept beside them (a client reads the slot
+      // that just closed for its result).
+      const closed = new Map();
       for (const x of candidates) {
         if (!(x.c.seriesId instanceof Uint8Array)) { kept.push(x); continue; }
-        const k = toHex(x.c.seriesId); const n = count.get(k) || 0;
+        const k = toHex(x.c.seriesId);
+        const tally = nowMs < x.c.entryCloseMs ? count : closed;
+        const n = tally.get(k) || 0;
         if (n >= perSeries) continue;
-        count.set(k, n + 1); kept.push(x);
+        tally.set(k, n + 1); kept.push(x);
       }
       candidates.length = 0; candidates.push(...kept);
     }
