@@ -128,6 +128,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
                                      // EACH SEAT CLOSES A ROUND ITSELF AT ITS END (kanban #233), as a live seat does with
                                      // ARENA_CLOSE_AT_END=1 - for a stack nobody else closes rounds on (the demo)
                                      closeAtEnd = false,
+                                     // NO FIRST ROUND (kanban #293, the on-demand head-to-head grid): the template is built and the
+                                     // seats attached, and nothing is published or posted until openGrid / openNext is asked
+                                     openFirst = true,
                                      store = ':memory:', rpc = null, cli = null,
                                      page = 'https://btc-logistics-core.pages.dev',
                                      // A PAYING ROUND, for a rehearsal with Lightning. Every
@@ -436,8 +439,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     if ((!rt.minable || attach) && toPost.length)
       throw new Error(`no confirmed unspent bond, as bonded or as updated, says what node(s) ${toPost.map((i) => members[i].name).join(', ')} `
         + 'say now: publish an advertisement update for the existing bond; no bond is posted here');
-    const posted = toPost.map((i) => members[i]).map((m, j) =>
-      rt.postBond(m.id.secret, {
+    // EACH BOND INCLUDED AS IT IS BUILT (kanban #321/#307, measured on the test host regtest stack 2026-10-11 15:58Z: "names 7
+    // committee keys and the census assigns 6"): a template-2 bond fixes its maturity (the tip + 1 + 6 + the offset) when it
+    // is built, and on regtest each bond's funding mines a block while the stack's own miner adds one every 20 s - seven
+    // built first and included together left the first confirming more than 6 blocks later, short of its maturity, and the
+    // census excluded it. The same fix as tools/seating-regtest.mjs.
+    const postedAt = [];
+    const posted = toPost.map((i) => members[i]).map((m, j) => {
+      const p = rt.postBond(m.id.secret, {
         // THE PUBLIC ENDPOINT, THE SAME ONE THE ADVERT NAMES (the owner 2026-09-25 21:41: the replay link a player copies
         // is built from these, and "a copied link that only opens on 127.0.0.1 does not count"). The bond said
         // ws://<host>:<port> - on the Daily 198.51.100.7, a tailnet address no phone off this machine can open -
@@ -455,8 +464,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         // ON TESTNET4 THE BOND IS THE ROUND'S MINIMUM, not regtest's half a coin: 50 000 sats, the contract's
         // bond_min_sats, out of a 55 000-sat funding output (the rest is the marker, the fee and the change).
         ...(rt.minable ? {} : { bondSats: 50000n, fundBtc: '0.00055' }),
-      }));
-    if (posted.length) rt.include(posted.map((p) => p.hex));
+      });
+      rt.include([p.hex]);
+      postedAt.push(rt.height());
+      return p;
+    });
     // THE CENSUS HEIGHT IS ABOVE THE BONDS, NOT AT THEM. Depth is measured at
     // `census_height` - "spentness, height and depth off REAL BLOCKS with depth
     // at census_height" (15) - so a bond in the census height's own block is
@@ -464,7 +476,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // "that census carries 0 game nodes where regtest was born needing 2".
     // THE NEWEST BOND sets the depth the census must wait for; the OLDEST sets where the census view begins
     const heights = reused.filter(Boolean).map((b) => b.height);
-    if (posted.length) heights.push(rt.height());
+    heights.push(...postedAt);
     bondHeight = Math.max(...heights);
     bondFloor = Math.min(...heights);
     // SIX DEEP, AND ON A REAL CHAIN THOSE ARE SOMEBODY ELSE'S BLOCKS (RULED, the owner 2026-09-21 17:01).
@@ -622,9 +634,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       },
     },
   } : {};
+  // A TEST OWNER (kanban #321, the CRITICAL rehearsal): ARENA_TEST_OWNER_PUBKEY=<hex> gives every seat this harness starts an
+  // owner already claimed by that key, kept in memory - so a test signs a leave as an owner page would (POST /owner/leave)
+  // THE FEDERATION'S INVITE, AS A SEAT'S ARENA_FEDERATION_INVITE GIVES IT (main.js): without it a harness seat signs no
+  // FederationRecord - "this seat names no invite for that federation" (measured on the test host stack, kanban #325)
+  const seatInvite = () => (invite ? { federationInvite: invite } : {});
+  const testOwner = () => (process.env.ARENA_TEST_OWNER_PUBKEY ? { owner: { store: (() => { let o = { pubkey: String(process.env.ARENA_TEST_OWNER_PUBKEY).toLowerCase(), claimedAtMs: Date.now() };
+    return { read: () => o, write: (x) => { o = x; }, writeCode: () => {} }; })() } } : {});
   const optsA = { port: portA, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}) };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner(), ...seatInvite() };
   // ATTACHED: the page's bond proof for the running nodes to serve (their ARENA_ATTACH_PROOF_DIR), and no node started -
   // each member is its port and its key, the node itself another process's.
   if (attach) {
@@ -636,7 +655,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   let a = attach ? attached(members[0]) : await launchNode({ db: dbA, path: pathA }, optsA, guardianChain);
   const optsB = { port: portB, host, funded, donationSets: [DONATION_SET], headerBytes, bondProof, chainFor, ...(plugins ? { plugins } : {}),
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}) };
+    ...(federation ? { federation } : {}), ...signerNode, ...(closeAtEnd ? { closeAtEnd: true } : {}), ...testOwner(), ...seatInvite() };
   // B DOWN AT START (`bDownAtStart`, an operator's look at signer node A restarted
   // while it holds a close that needs B): B is served on a port nobody names -
   // the bond, the relays and every peer say `portB` - only so the first round
@@ -648,7 +667,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const optsBeyond = members.slice(2).map((m) => ({ port: m.port, host, funded, ...(plugins ? { plugins } : {}),
     donationSets: [DONATION_SET], headerBytes, bondProof, chainFor,
     ...(randomnessFor ? { randomnessFor } : {}), ...lightning, ...chainTip, ...spendOn,
-    ...(federation ? { federation } : {}), ...signerNode }));
+    ...(federation ? { federation } : {}), ...signerNode, ...testOwner(), ...seatInvite() }));
   const rest = [];
   for (const o of optsBeyond) {
     const m = members[2 + rest.length];
@@ -895,7 +914,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   }
   // A ROUND WHOSE BEACON CAME BEFORE ITS PUBLICATION IS DRAFTED AGAIN - a new committee time just past the tip, the
   // same windows after it, its own census root and its own publication - never posted as it was.
-  if (onChain) {
+  if (onChain && openFirst) {
     for (let drafts = 1; ; drafts++) {
       const got = await publishOnChain(contract);
       if (!got || !got.dead) break;
@@ -918,7 +937,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // It is also the real order. 5A.5 has the committee form AT committee_time;
   // a node that has not seen the beacon has nothing to form it from.
   let beaconSeen = null;
-  if (beacon) {
+  if (beacon && openFirst) {
     // A CHAIN THAT CANNOT BE READ IS NOT A ROUND THAT CANNOT EXIST for the
     // caller of this tool: the refusal is carried out rather than thrown, so
     // an operator reads one line instead of a stack. The daemons will still
@@ -932,7 +951,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // exits - measured, the first version of this hung the suite.
   // THE OPERATOR NAMES ITS ROUND, now that the contract that names both
   // daemons gives it an id - what ARENA_FUNDED_ROUNDS does for main.js.
-  if (funded.nameRound) funded.nameRound(roundId(contract));
+  if (funded.nameRound && openFirst) funded.nameRound(roundId(contract));
   if (beforeRound) await beforeRound();
   // BOTH DAEMONS, ONE ROUND: posted to each, and both must name it the same.
   async function postRound(c) {
@@ -966,8 +985,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       throw new Error(`the ${opened.length} daemons named the round differently: ` + opened.join(' '));
     return rid;
   }
-  let id;
-  try { id = await postRound(contract); } catch (e) {
+  let id = null;
+  if (openFirst) try { id = await postRound(contract); } catch (e) {
     await a.close(); await b.close(); if (nodeC) await nodeC.close();
     throw e;
   }
@@ -1027,7 +1046,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // ONLY ON A BITCOIND. The fixture chain's clock is fixed (its blocks are dated
   // from 2026-09-06), so a round opened on it today would be past its entry
   // close before anybody saw it: refused by name rather than listed as open.
-  const held = [contract];
+  const held = openFirst ? [contract] : [];
   // NO GAP BETWEEN 90 s ROUNDS ACROSS A RESTART (the owner 2026-10-01: "There may be no gaps between 90 sec rounds"): the rounds
   // this pair already holds - written by the opener before it stopped, still in the signer nodes' stores - are the grid it
   // goes on from. Without them a restart began a new grid at its own first round, and the slots in between went unplayed.
@@ -1120,6 +1139,82 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     return nextId;
   }
 
+  // A GRID ON DEMAND (kanban #293, the owner 2026-10-11, path B: "When a table waits, one transaction carries the next 30 min
+  // of rounds, about an hour ahead"): `slots` slots `windowMs` apart, `tables` rounds side by side in each, every one a
+  // whole round contract of `kind` - and ALL OF THEM PUBLISHED IN ONE TRANSACTION, one OP_RETURN "ARN" ROUND id each
+  // (publication.js publishesRound reads every output: each round is still published on chain before its beacon, no
+  // protocol change). One committee time for the grid (the tables k ms apart, so their ids differ), so one beacon: once the
+  // publication has confirmed below it and it is deep, every round still at least `postLeadMs` from its start is posted -
+  // stored 3 min or more before its start, so the seats seat it (§5A.7: PRESENT from start - 180 s, the certificate at
+  // start - 120 s). A beacon that came before the publication confirmed answers `dead`: nothing is posted.
+  async function openGrid(kind = {}, { slots = 225, tables = 2, windowMs = 8000n, entryAfterStartMs = 80000n, firstCloseMs,
+    committeeTimeMs, postLeadMs = 190000n, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {} } = {}) {
+    if (!onChain || onChain.minable) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
+    if (firstCloseMs === undefined || committeeTimeMs === undefined) throw new Error('a grid names its first close and its committee time');
+    const committee = BigInt(committeeTimeMs), first = BigInt(firstCloseMs);
+    if (first - BigInt(entryAfterStartMs) - committee < MIN_ENTRY_WINDOW_MS) throw new Error('the grid starts before its committee time plus the minimum entry window');
+    censusView = await viewToTip();
+    const grid = [];
+    for (let s = 0; s < slots; s++) {
+      const close = first + BigInt(s) * BigInt(windowMs);
+      const start = close - BigInt(entryAfterStartMs);
+      for (let k = 0; k < tables; k++) {
+        const next = { ...contract,
+          ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
+          ...(kind.custody ? { custody: kind.custody } : {}),
+          committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: close, blockTicks: runTicksAt(start),
+          ...(kind.fields || {}) };
+        if (typeof kind.stakeExpiryFor === 'function') next.stakeExpiryBlocks = kind.stakeExpiryFor(next);
+        grid.push(next);
+      }
+    }
+    // ONE CENSUS FOR THE GRID: every round names the same census height, game and slots, so the root is derived once (450
+    // derivations took over 10 min, measured) - and checked again on the last round, which must agree
+    const root = censusRootFor(grid[0]);
+    if (toHex(censusRootFor(grid[grid.length - 1])) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
+    for (const c of grid) c.censusRoot = root;
+    // THE TRANSACTION BY HAND: createrawtransaction takes one `data` output only ("duplicate key: data"), and Bitcoin Core
+    // 30+ relays several. Version 2, no inputs (the wallet funds it), one zero-value OP_RETURN push of 36 bytes per round.
+    const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
+    const varint = (n) => (n < 0xfd ? Buffer.from([n]) : Buffer.concat([Buffer.from([0xfd]), le(n, 2)]));
+    const outs = grid.map((c) => Buffer.concat([le(0, 8), Buffer.from([38, 0x6a, 36]), Buffer.from(publicationPayload(roundId(c)))]));
+    const raw = Buffer.concat([le(2, 4), varint(0), varint(outs.length), ...outs, le(0, 4)]).toString('hex');
+    const paid = (await chainRpc('fundrawtransaction', [raw, { fee_rate: feeRate, replaceable: true }, false])).hex;
+    const signed = (await chainRpc('signrawtransactionwithwallet', [paid])).hex;
+    const txid = await chainRpc('sendrawtransaction', [signed]);
+    const vsize = Math.ceil(signed.length / 2);
+    onPublished({ txid, rounds: grid.length, bytes: vsize, contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
+      committeeTime: new Date(Number(committee)).toISOString() });
+    const got = await awaitPublishedBeacon({ contract: grid[0], txid, rpc: chainRpc, view: async () => (censusView = await viewToTip()),
+      feeRate, maxFeeRate, sleepMs: Number(process.env.ARENA_PUBLISH_LOOK_MS || 60000) });
+    if (got.dead) return { ok: false, dead: true, why: got.why, txid };
+    if (beacon) {
+      const seen = await beacon.refresh(grid[0]);
+      if (!seen.ok) return { ok: false, why: 'the grid names no beacon: ' + seen.why, txid: got.txid };
+    }
+    const now = () => BigInt(Date.now());
+    const due = grid.filter((c) => c.startTimeMs - now() >= BigInt(postLeadMs));
+    const ids = [];
+    // ONE AT A TIME, PACED, A DROPPED CONNECTION ASKED AGAIN (kanban #344, measured 2026-10-11): every seat draws each
+    // committee as it is posted (0.5-1.3 s of its loop), and 63 rounds posted back to back held every seat 5-29 s - the
+    // seating of the next rounds then missed its window; and one "fetch failed" from a busy or restarting seat stopped this
+    // whole posting twice. A round is posted every ARENA_GRID_PAUSE_MS (4 s) - two tables per 8 s slot - and asked again.
+    const pause = Number(process.env.ARENA_GRID_PAUSE_MS || 4000);
+    for (const c of due) {
+      if (c.startTimeMs - now() < 125000n) continue;
+      if (funded.nameRound) funded.nameRound(roundId(c));
+      for (let t = 0; ; t++) {
+        try { ids.push(await postRound(c)); held.push(c); break; }
+        catch (e) { if (t >= 10) { console.log(`[grid] round ${toHex(roundId(c)).slice(0, 16)} not posted: ${e.message}`); break; } await new Promise((r) => setTimeout(r, 3000)); }
+      }
+      await new Promise((r) => setTimeout(r, pause));
+    }
+    onPosted({ posted: ids.length, of: grid.length, publishedAt: got.publishedAt, beacon: got.named.height,
+      firstStart: ids.length ? new Date(Number(due[0].startTimeMs)).toISOString() : null });
+    return { ok: true, txid: got.txid, publishedAt: got.publishedAt, beacon: got.named.height, rounds: grid.length, posted: ids.length,
+      lastCloseMs: grid[grid.length - 1].entryCloseMs, ids };
+  }
+
   // AND KEEP ONE JOINABLE OF EACH KIND: whenever no round of a kind this tool
   // opened has more than `leadMs` of entry left, open the next of that kind -
   // the free round, and the paying one beside it when `paid` is given (the owner
@@ -1161,7 +1256,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     : null;
 
   return {
-    id, url, lobbyUrl, contract, openNext, keepOpen,
+    id, url, lobbyUrl, contract, openNext, openGrid, keepOpen,
     // THE ADVERTS THIS START BONDED, one per signer node, in member order.
     adverts: bonded.map((m) => m.advert),
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),

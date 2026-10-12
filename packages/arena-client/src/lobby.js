@@ -165,7 +165,9 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
         said.get(id).push({ node, key: nodeKey, joined: Number(x.joined) || 0, playing: Number(x.playing) || 0,
           watching: Number(x.watching) || 0, free: !!x.free, phase: x.phase, assignedHere: !!x.assignedHere,
           signed, fresh: Number.isFinite(at) && Math.abs(at - nowMs) <= skewMs,
-          names: Array.isArray(x.names) ? x.names : [] });
+          names: Array.isArray(x.names) ? x.names : [],
+          // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
+          committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); if (e && e.silent) unanswered.push(String(node)); }
   }
@@ -202,8 +204,15 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       c.counts = !!(c.signed && c.fresh && signerNodes.has(c.key) && c.phase === 'open' && c.assignedHere);
       if (c.counts) agreeing.add(c.key);
     }
+    // THE SEATED (§5A.7): where the seats seat, the row lists who a certificate seats - and is not joined before one stands
+    const seatingSaid = counts.map((c) => c.committee).filter((x) => x && x.seated);
+    const seatedBy = seatingSaid.find((x) => x.seated.game && x.seated.settlement) || null;
+    const seating = !seatingSaid.length ? null : seatedBy
+      ? { state: 'named', game: seatedBy.game, settlement: seatedBy.settlement, drawn: seatedBy.drawnCount || null }
+      : { state: seatingSaid.some((x) => x.equivocated) ? 'equivocated' : 'pending' };
     rows.push({
       id, phase,
+      seating,
       free: !pays,
       wallet: pays ? 'federation-lock' : 'none',
       stakeMsat: contract.stakeMsat,
@@ -213,7 +222,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       entryCloseMs: entryOpenUntilMs(contract),
       said: counts,
       signerNodesAgree: agreeing.size, needed, signerNodes: signerNodes.size,
-      joinable: phase === 'open' && agreeing.size >= needed,
+      joinable: phase === 'open' && agreeing.size >= needed && (!seating || seating.state === 'named'),
       // A NODE THAT CALLED A PAYING ROUND FREE, OR THE REVERSE, IS NAMED: the row
       // says what the contract says, and the disagreement is shown beside it.
       disagrees: counts.filter((c) => c.free !== !pays).map((c) => c.node),
@@ -382,6 +391,10 @@ export function lobbyLine(row, nowMs = Date.now()) {
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.signerNodesAgree} more` : '');
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
-  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}`
+  // RESERVE SEATS (§5A.7): who is seated, of how many drawn
+  const seat = !row.seating ? '' : row.seating.state === 'named'
+    ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
+    : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
+  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }

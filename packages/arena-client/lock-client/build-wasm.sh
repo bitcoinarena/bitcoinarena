@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Rebuild the BLWP wasm lock client with whole-msat e-cash (the owner 2026-10-01: "we want 1 sat = 1 sat").
 set -euxo pipefail
-B=/mnt/bitcoin/lockclient-build
+# WHERE: the the test host's /mnt/bitcoin by default; ARENA_LOCK_BUILD and ARENA_FORK_DIR move it (the test host, kanban #319: a whole
+# wasm build of the fork is a job that takes the test host past load 12)
+B=${ARENA_LOCK_BUILD:-/mnt/bitcoin/lockclient-build}
+FORK=${ARENA_FORK_DIR:-/mnt/bitcoin/fedimint-fork}
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) WASI_PLAT=arm64-macos; WB_PLAT=aarch64-apple-darwin; SEDI=(sed -i '') ;;
+  *) WASI_PLAT=x86_64-linux; WB_PLAT=x86_64-unknown-linux-musl; SEDI=(sed -i) ;;
+esac
+mkdir -p $B
 # THE SOURCES ARE THIS SCRIPT'S OWN DIRECTORY (2026-10-04, #27): the crate and the patches next to it, not a fixed old
 # checkout - before, every run re-linked the crate to /mnt/bitcoin/blwp-build-a535 and built that tree's lib.rs.
 HERE=${ARENA_LOCK_CLIENT_DIR:-$(cd "$(dirname "$0")" && pwd)}
@@ -11,15 +19,15 @@ cd $B
 [ -x $B/cargo/bin/rustup ] || curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal --default-toolchain stable
 rustup target add wasm32-unknown-unknown
 if [ ! -x $B/wasi-sdk/bin/clang ]; then
-  curl -sSL -o wasi.tgz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+  curl -sSL -o wasi.tgz https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${WASI_PLAT}.tar.gz
   mkdir -p wasi-sdk && tar xzf wasi.tgz -C wasi-sdk --strip-components=1
 fi
 if [ ! -x $B/wasm-bindgen/wasm-bindgen ]; then
-  curl -sSL -o wb.tgz https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz
+  curl -sSL -o wb.tgz https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-${WB_PLAT}.tar.gz
   mkdir -p wasm-bindgen && tar xzf wb.tgz -C wasm-bindgen --strip-components=1
 fi
 # 2. THE TREE: a worktree of the fork at its testnet4 commit, the one stock patch, the denominations change, the crate
-if [ ! -d $B/tree ]; then git -C /mnt/bitcoin/fedimint-fork worktree add --detach $B/tree f1481d4bcfa; fi
+if [ ! -d $B/tree ]; then git -C $FORK worktree add --detach $B/tree f1481d4bcfa; fi
 cd $B/tree
 git checkout -- . && git clean -fdq
 patch -p1 < $HERE/fedimint-lnv2-send-expiry.patch
@@ -62,9 +70,9 @@ fi
 if [ -n "${ARENA_NOTE_YIELDS:-}${ARENA_NOTE_BATCH:-}" ]; then echo "ARENA_NOTE_YIELDS/ARENA_NOTE_BATCH: replaced by the batch every build applies (#196)" >&2; exit 2; fi
 patch -p1 < $HERE/fedimint-mintv2-note-batch2.patch; grep -q "static COMBINED" modules/fedimint-mintv2-client/src/api.rs
 if [ -n "${ARENA_AWAIT_PARALLEL:-}" ]; then patch -p1 < $HERE/fedimint-client-await-parallel.patch; grep -q "drop(tx_submitted)" fedimint-client-module/src/transaction/sm.rs; fi
-grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | grep -qx 2
+grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | tr -d ' ' | grep -qx 2
 ln -sfn $HERE blwp-lock-client
-grep -q '"blwp-lock-client"' Cargo.toml || sed -i 's/^members = \[/members = [\n  "blwp-lock-client",/' Cargo.toml
+grep -q '"blwp-lock-client"' Cargo.toml || perl -0pi -e 's/^members = \[/members = [\n  "blwp-lock-client",/m' Cargo.toml
 export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown=$B/wasi-sdk/bin/llvm-ar
 export CFLAGS_wasm32_unknown_unknown="--target=wasm32-unknown-unknown"
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS='--cfg getrandom_backend="wasm_js"'

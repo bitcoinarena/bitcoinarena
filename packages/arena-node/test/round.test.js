@@ -128,7 +128,7 @@ test('a batch for a round or an entry the node has not got is refused', () => {
 // core it is handed. Since kanban #202 (a game is a plugin) NO engine file imports a core at all: the launcher, main.js,
 // imports the game's registration (core/plugin/nextblock.js) and hands it to serve(), and plugins.js passes each round's
 // core on. Measured before the split: the one file that did both was replay.js; before #202, cores.js imported the cores.
-test('the node imports no core and registers no game, and only replay.js steps a core', async () => {
+test('the node imports no core and registers no game, and only the sandbox\'s driver steps a core', async () => {
   const { readFileSync, readdirSync } = await import('node:fs');
   const imports = [];
   const registrations = [];
@@ -146,12 +146,14 @@ test('the node imports no core and registers no game, and only replay.js steps a
   assert.deepEqual(imports, [], 'an engine file imports a core');
   // since kanban #203 not even the launcher: main.js hosts what ARENA_GAMES names, nextblock's bin/node.mjs names nextblock
   assert.deepEqual(registrations, [], 'an engine file registers a game');
-  assert.deepEqual(steps, ['replay.js'], 'a core is stepped somewhere other than the replay, or nowhere');
+  // since kanban #328 (spec §0A.6) the one door is core-driver.js, run inside the core's sandbox; replay.js hands it the run
+  assert.deepEqual(steps, ['core-driver.js'], 'a core is stepped somewhere other than the sandbox\'s driver, or nowhere');
 
-  // and that door replays a finished transcript - it does not tick anything
-  const src = readFileSync(new URL('../src/replay.js', import.meta.url).pathname, 'utf8');
-  assert.ok(!/setInterval|setTimeout|requestAnimationFrame/.test(src),
-    'the replay door runs a clock, which is a live second simulator');
+  // and that door replays a finished transcript - neither it nor replay.js ticks anything
+  for (const f of ['replay.js', 'core-driver.js']) {
+    const src = readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8');
+    assert.ok(!/setInterval|setTimeout|requestAnimationFrame/.test(src), `${f} runs a clock, which is a live second simulator`);
+  }
 });
 
 test('opening or joining twice is the same round and the same player', () => {
@@ -265,4 +267,28 @@ test('a batch that carries the committee\'s word on its price (kanban #311): tak
   const good = { ...bad, samples: [[1, centsToTapeUnits(cents)]] };
   r.batch(encodeInputBatch(good));
   assert.equal(r.transcript(rid, eid).ticks.length, 2, 'taken');
+});
+
+test('a seat running the committee\'s feed for the round (kanban #311 slice 3) refuses a bare price; a batch with no price, or an attested one, is taken', async () => {
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
+  const { receiptsNeeded } = await import('../../arena-protocol/src/genesis.js');
+  const sks = [1, 2, 3, 4, 5, 6, 7].map((n) => b32(0x40 + n)); const seats = sks.map((sk) => schnorr.getPublicKey(sk));
+  const r = fresh(), c = { ...contract(), nodes: seats };
+  const rid = r.open(c); const eid = r.enter(entryFor(rid));
+  const w = [65536, 0, 0, 0, 0];
+  const cents = 8297193;
+  const bare = { roundId: rid, entryId: eid, previousHash: GENESIS, firstTick: 0, ticks: [w], liquidations: [], samples: [[0, centsToTapeUnits(cents)]] };
+  r.pricesRequired = () => false;
+  assert.doesNotThrow(() => r.batch(encodeInputBatch(bare)), 'a seat without the feed takes a bare price as before');
+  const r2 = fresh(); const rid2 = r2.open(c); const eid2 = r2.enter(entryFor(rid2));
+  r2.pricesRequired = (contractBytes) => contractBytes instanceof Uint8Array || Buffer.isBuffer(contractBytes);
+  const b = { ...bare, roundId: rid2, entryId: eid2 };
+  assert.throws(() => r2.batch(encodeInputBatch(b)), /a sample without the committee's attestation: the player never chooses the price/);
+  assert.throws(() => r2.batch(encodeInputBatch({ ...b, samples: [], tapes: [[0, ...Array(64).fill(1)]] })), /a tape without the committee's attestation/);
+  const sim = { ...b, samples: [] };
+  r2.batch(encodeInputBatch(sim));                                                    // no price at all: the seeded tape (SIM)
+  const att = [1, 0, cents, sks.slice(0, receiptsNeeded(7)).map((sk, i) => [seats[i], schnorr.sign(priceSampleId({ roundId: rid2, tick: 1, priceCents: cents }), sk)])];
+  r2.batch(encodeInputBatch({ ...b, previousHash: r2.head(rid2, eid2), firstTick: 1, samples: [[1, centsToTapeUnits(cents)]], attests: [att] }));
+  assert.equal(r2.transcript(rid2, eid2).ticks.length, 2, 'the SIM batch and the attested one are taken');
 });
