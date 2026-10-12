@@ -9,7 +9,7 @@
 // The signatures sit BESIDE the object, as for a checkpoint receipt, so an id never changes when it is signed.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TAG } from './constants.js';
 import { ticksForMs } from './tick.js';
 
 /** One sample every 5 s of round time (§11); the tape before the start is 64 of them. */
@@ -29,7 +29,7 @@ export function encodePriceSample({ roundId, tick, priceCents }) {
 export function decodePriceSample(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_PRICE_SAMPLE) throw new Error('not a price sample');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const s = { roundId: r.bytes32(), tick: r.u32(), priceCents: r.i32() };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the price sample');
   return s;

@@ -35,7 +35,7 @@
 // difference shows in the hash rather than being a matter of who is asking.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_TRANSCRIPT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_TRANSCRIPT, TAG } from './constants.js';
 import { encodeInputBatch, decodeInputBatch, batchId, batchTicks } from './batch.js';
 import { entryId, lastTickOfRun } from './contracts.js';
 // The run length is the core's; this reads it rather than restating it.
@@ -69,7 +69,7 @@ export function encodeTranscript(t) {
 export function decodeTranscript(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_TRANSCRIPT) throw new Error('not a transcript');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const t = { roundId: r.bytes32(), entryId: r.bytes32() };
   t.batches = r.vec((rr) => decodeInputBatch(rr.bytes(rr.u16())));
   t.marks = r.vec((rr) => rr.bytes(SIGNED_CHECKPOINT_BYTES));

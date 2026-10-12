@@ -17,6 +17,16 @@ import {
 export const PROTOCOL_VERSION = 1;
 
 /**
+ * THE VERSIONS THIS BUILD READS (kanban #349, the owner 2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
+ * Versionen required können. Alte nodes die da nicht updaten fliegen raus."). It writes PROTOCOL_VERSION and reads every
+ * version listed here, so a cut-over can run old and new rounds side by side: a build of version N+1 lists N and N+1
+ * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
+ * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
+ */
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION]);
+export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
+
+/**
  * THE FEWEST PLAYERS A ROUND OPENS FOR. The preflight sizes a signer node's Lightning
  * for it, and the fee-lock gate (lock-settlement.js `feeLockPays`) takes it as
  * the worst case: more players only raise each signer node's fee share.

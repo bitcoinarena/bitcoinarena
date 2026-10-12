@@ -12,6 +12,7 @@
 // code they can know.
 import { toHex } from './hash.js';
 import { KNOWN_GOOD_GAMES } from './known-games.js';
+import { speaksVersion } from './constants.js';
 
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
@@ -41,9 +42,17 @@ const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
 // `networkId`: the round's network - a pinned market is good only on the networks it is pinned for. `confirmed`: game ids
 // (hex) of ATTESTED games the player confirmed a second time on this page (§0A.6) - an unpinned market is let through only
 // then, and only with no core and no config (there is nothing of it to run).
-export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null } = {}) {
+export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null, protocolVersion } = {}) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];
+  // THE VERSION THE GAME REQUIRES (kanban #349, manifest.js REQUIRED_VERSION_MARKER): this build must speak it, and the
+  // round must run it or a later one. A pinned game that requires none passes as before.
+  if (game && game.requiredProtocolVersion) {
+    if (!speaksVersion(game.requiredProtocolVersion))
+      return { ok: false, why: `${game.name} requires protocol version ${game.requiredProtocolVersion}, which this client does not speak: update the page` };
+    if (!(Number.isInteger(protocolVersion) && protocolVersion >= game.requiredProtocolVersion))
+      return { ok: false, why: `${game.name} requires protocol version ${game.requiredProtocolVersion}; that round runs ${protocolVersion ?? 'none'}` };
+  }
   // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
   if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
     if (!isZero32(simCoreHash) || (configHash !== undefined && !isZero32(configHash)))

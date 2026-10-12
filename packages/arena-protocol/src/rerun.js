@@ -19,7 +19,7 @@
 // injected, as `claim-key.js` and `posting.js` take it.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_RERUN_RESULT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_RERUN_RESULT, TAG } from './constants.js';
 import { encodePlayerResult, decodePlayerResult, resultId, RESULT_BYTES } from './result.js';
 import { receiptsNeeded } from './threshold.js';
 
@@ -49,7 +49,7 @@ export function decodeRerunResult(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_RERUN_RESULT) throw new Error('not a re-run result');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const contradictedRunId = r.bytes32();
   const signedAtMs = r.u64();
   const result = decodePlayerResult(r.bytes(RESULT_BYTES));

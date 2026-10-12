@@ -30,7 +30,7 @@
 // is what happens only if that re-run fails.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_OBJECTION, TAG, OBJECTION_WINDOW_MS } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_OBJECTION, TAG, OBJECTION_WINDOW_MS } from './constants.js';
 import { OUTCOMES, outcomeByte, provisionallyFinal } from './result.js';
 
 /** The three answers a result can be sitting in. */
@@ -58,7 +58,7 @@ export function decodeObjection(bytes) {
   const type = rd.u8();
   if (type !== TYPE_OBJECTION) throw new Error('not an objection: type ' + type);
   const version = rd.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const o = {
     roundId: rd.bytes32(),
     playerPubkey: rd.bytes32(),

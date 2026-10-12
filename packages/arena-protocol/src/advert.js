@@ -29,7 +29,7 @@
 // keeps it adjacent so the commitment and the id are both stable.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_ADVERT, TAG, ROLES, roleByte } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_ADVERT, TAG, ROLES, roleByte } from './constants.js';
 
 /** A Fedimint guardian's broadcast key: a compressed secp256k1 point. */
 export const GUARDIAN_KEY_BYTES = 33;
@@ -146,7 +146,7 @@ export function decodeAdvert(bytes) {
   const type = r.u8();
   if (type !== TYPE_ADVERT) throw new Error('not an advertisement: type ' + type);
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
 
   const a = {
     nodePubkey: r.bytes32(),

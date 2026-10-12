@@ -25,7 +25,7 @@
 // second protocol.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_DONATION_SET, TYPE_DONATION_SET_KEYS, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_DONATION_SET, TYPE_DONATION_SET_KEYS, TAG } from './constants.js';
 import { isRefund } from './payout.js';
 
 /** Basis points, and 22A's MUST: the shares sum to exactly this. */
@@ -392,7 +392,7 @@ export function decodeDonationSet(bytes) {
   const r = new Reader(bytes);
   const type = r.u8();
   if (type === TYPE_DONATION_SET_KEYS) {
-    if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+    if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
     const recipients = r.vec((rr) => ({ recipientPk: rr.bytes(RECIPIENT_KEY_BYTES), shareBps: rr.u16(), label: rr.str() }));
     if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
     const stands = donationSetStands(recipients);
@@ -400,7 +400,7 @@ export function decodeDonationSet(bytes) {
     return recipients;
   }
   if (type !== TYPE_DONATION_SET) throw new Error('not a donation set');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
 

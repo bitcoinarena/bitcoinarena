@@ -38,7 +38,7 @@
 // checkpoint names its player by `entryId`.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_CHECKPOINT_RECEIPT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_CHECKPOINT_RECEIPT, TAG } from './constants.js';
 
 export function encodeCheckpointReceipt(r) {
   const w = new Writer();
@@ -61,7 +61,7 @@ export function decodeCheckpointReceipt(bytes) {
   if (type !== TYPE_CHECKPOINT_RECEIPT)
     throw new Error('not a checkpoint receipt: type ' + type);
   const version = rd.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const r = {
     checkpointId: rd.bytes32(),
     receivedAtMs: rd.u64(),

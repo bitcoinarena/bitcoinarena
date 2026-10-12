@@ -26,7 +26,7 @@
 // to look. That is not weaker: a dealer who cheats signer node 6 is refused by signer node 6,
 // and a handout five signer nodes accepted is a handout five signer nodes can open.
 import { Writer, Reader } from './encode.js';
-import { TAG, TYPE_VSS_HANDOUT, PROTOCOL_VERSION } from './constants.js';
+import { TAG, TYPE_VSS_HANDOUT, PROTOCOL_VERSION, speaksVersion } from './constants.js';
 import { taggedHash } from './hash.js';
 import { shareOpensTo, splitSecret } from './shares.js';
 import { openShare, sealShare, VSS_SEALED_BYTES } from './seal.js';
@@ -70,7 +70,7 @@ export function decodeHandout(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_VSS_HANDOUT) throw new Error('not a VssHandout');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const h = {
     roundId: r.bytes32(),
     playerPubkey: r.bytes32(),

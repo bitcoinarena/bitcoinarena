@@ -31,7 +31,7 @@
 // signed.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_RESULT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_RESULT, TAG } from './constants.js';
 import { DELIVERED, FAILED, FORFEIT, VOID } from './payout.js';
 
 /** The four fates a round can end in, and the byte each is written as. */
@@ -85,7 +85,7 @@ export function decodePlayerResult(bytes) {
   const type = rd.u8();
   if (type !== TYPE_RESULT) throw new Error('not a player result: type ' + type);
   const version = rd.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const out = {
     roundId: rd.bytes32(),
     playerPubkey: rd.bytes32(),

@@ -19,7 +19,7 @@
 // injected, as `authority.js` takes it.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_CLAIM_KEY_ATTESTATION, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_CLAIM_KEY_ATTESTATION, TAG } from './constants.js';
 import { receiptsNeeded } from './threshold.js';
 
 /** A compressed secp256k1 point, as `groupKeyOf` computes the committee's key. */
@@ -46,7 +46,7 @@ export function decodeClaimKeyAttestation(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_CLAIM_KEY_ATTESTATION) throw new Error('not a claim-key attestation');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const a = { roundId: r.bytes32(), claimPk: r.bytes(CLAIM_KEY_BYTES), signerNodePubkey: r.bytes32() };
   r.end();
   return a;
