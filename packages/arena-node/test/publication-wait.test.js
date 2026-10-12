@@ -19,12 +19,13 @@ const timeOf = (h) => T0 + 600 * h;             // view heights start at 0
 const FIRST = 0;
 const spend = (n, outputs = []) => serializeSpend({ inputs: [{ txid: b32(n), vout: 0, sequence: 0xffffffff }],
   outputs: [{ value: 5000n, script: fromHex('0014' + '33'.repeat(20)) }, ...outputs], witnesses: [[new Uint8Array(64)]] });
-// a chain of `n` blocks; `extra[h]` are raw transactions put in block h
-function chain(n, extra = {}) {
+// a chain of `n` blocks; `extra[h]` are raw transactions put in block h; each block takes another's transaction beside its
+// coinbase, unless its height is in `empty` (a coinbase-only block, as testnet4's minimum-difficulty ones)
+function chain(n, extra = {}, { empty = [] } = {}) {
   const blocks = [];
   let previous = new Uint8Array(32);
   for (let h = 0; h < n; h++) {
-    const transactions = [spend(200 + (h % 50)), ...(extra[h] || [])];
+    const transactions = [spend(200 + (h % 50)), ...(empty.includes(h) ? [] : [spend(300 + (h % 50))]), ...(extra[h] || [])];
     const { header } = blockOf(hash256, transactions.map((raw) => parseTransaction(raw).txid), { previous, time: timeOf(h) });
     blocks.push({ header, transactions });
     previous = blockHashOf(header);
@@ -72,6 +73,19 @@ test('unconfirmed: no beacon is named and each new block doubles the fee, 2 -> 4
   assert.ok(got.named.height > got.publishedAt, 'the beacon is above the publication');
   assert.equal(got.txid, `bumped-to-8-${'0'.repeat(40)}`, 'the txid after the raises');
   assert.ok(logs.some((l) => /fee raised 2 -> 4 sat\/vB/.test(l)) && logs.some((l) => /fee raised 4 -> 8 sat\/vB/.test(l)));
+});
+
+// TESTNET4'S EMPTY BLOCKS (measured 2026-10-12, 156204-156209: coinbase only, 20 min apart): no fee raise for them; the
+// first block that took others' transactions without this one raises it
+test('a coinbase-only block raises no fee; a block that took others\' transactions without it does', async () => {
+  const c = roundWithBeaconAt(30);
+  const { rpc, calls } = fakeRpc();
+  const logs = [];
+  const empty = [20, 21, 22];
+  await awaitPublishedBeacon({ contract: c, txid: 'aa'.repeat(32), rpc, ...quiet, log: (s) => logs.push(s),
+    view: growing([chain(20, {}, { empty }), chain(21, {}, { empty }), chain(22, {}, { empty }), chain(23, {}, { empty }), chain(24, {}, { empty }),
+      chain(26, { 25: [pubTx(c)] }, { empty }), chain(31, { 25: [pubTx(c)] }, { empty })]) });
+  assert.deepEqual(calls.map((x) => x.rate), [4], 'blocks 20-22 came empty: no raise; 23 took others\' transactions: one raise');
 });
 
 test('a raise the node refuses is doubled again at once, up to the cap of 100', async () => {
