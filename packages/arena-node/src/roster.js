@@ -335,10 +335,24 @@ export class Roster {
     // one template - one census height, one network, one bond floor - and ~500 of them derived their census each, from a
     // ~2080-block view, past a 64-entry cache, on every listing: GET /rounds took over 90 s. Keyed by the series id, one
     // derivation serves the series. A round naming no series keeps its own key.
-    const whose = contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}` : toHex(roundIdBytes);
+    // AND A ROUND OF NO SERIES BY WHAT ITS CENSUS IS READ FROM (kanban #345): deriveCensus reads the view, the network, the
+    // protocol version and the census height - nothing else of the contract - so every round naming those has one census.
+    // An RPS grid's 450 rounds name one each, and a derivation per round cost every seat 0.5-1.3 s per posted round
+    // (measured on testnet4, 2026-10-11), which is why a grid was posted one round every 4 s. A census kept this way is
+    // still checked against each round's own root below, on every ask.
+    const whose = contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}`
+      : `census:${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}`;
     const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
     const had = this.censuses.get(kept);
-    if (had) return had;
+    if (had) {
+      if (asRoundsOwn && !(contract.seriesId instanceof Uint8Array)) {
+        if (!(contract.censusRoot instanceof Uint8Array) || contract.censusRoot.length !== 32)
+          return { ok: false, why: 'that round names no census root to check against the chain' };
+        if (!had.root.every((b, i) => b === contract.censusRoot[i]))
+          return { ok: false, why: `that round names census root ${toHex(contract.censusRoot).slice(0, 16)} and the chain gives ${toHex(had.root).slice(0, 16)} at height ${contract.censusHeight}`, root: had.root };
+      }
+      return had;
+    }
     // KEPT ACROSS A RESTART (OPEN-LIST-2140 item 4, measured: one derivation held the loop 2.7 s - every transaction of a
     // ~2,000-block view parsed and hashed again - and a restarted seat derived one per series): a census this node checked
     // against its round's own root is read back from the store instead.
