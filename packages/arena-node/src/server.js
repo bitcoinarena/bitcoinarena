@@ -2785,7 +2785,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // same time. Measured before (live testnet4, 2026-10-08): every ~45 s each seat signed ALL announced rows - 1,857, ~6.5 s
   // of BIP-340 in a new worker each time - about 23 of a seat's 29 % CPU, while the lobby asks for a handful (?next=1)
   // and a signature is good for 60 s. Every row stays listed; the signature format and the page's check are unchanged.
-  const SIGN_EVERY_MS = 45000n;
+  // 10 s, NOT 45 (kanban #350, the owner 2026-10-12 16:47 "no rounds opens for Rps"): a listing is computed at its window's time
+  // and served until the next, so a round that opened after a seat's window began stayed "pending" in it - with the 8 s
+  // Rock Paper Scissors grid (a round open ~75 s) seven windows up to 44 s apart left most rows at 2 of the 5 seats needed
+  // (measured 15:25Z in the page). A lobby asks ?next=8, ~60 rows: 10 s windows sign a few rows a second.
+  const SIGN_EVERY_MS = 10000n;
   let signedSet = null;                           // { atMs: bigint, sigs: Map<id hex, {key, sig}>, committees: Map }
   const windowSet = () => {
     const now = BigInt(round.now());
