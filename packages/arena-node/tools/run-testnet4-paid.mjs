@@ -36,7 +36,8 @@ import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { MARKET } from '../test/plugins/market/index.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { openingFederation } from '../src/opening-federation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { donationSetInForce } from '../../arena-protocol/src/authority.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
@@ -201,7 +202,19 @@ if (env.PAID_RPS_GRID === '1') {
       const donationSetId = idOfDonationSet(forced.recipients);
       say({ rpsGrid: 'asked', wantAt: new Date(wantAt).toISOString(), slots, tables, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString() });
       say({ rpsGrid: 'donation set', serial: String(forced.serial), id: toHex(donationSetId).slice(0, 16), censusHeight: round.contract.censusHeight });
-      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      // THE FEDERATION THIS GRID NAMES (§23A.3, kanban #324 step 2: "A seat opening a round names the OPEN federation with the
+      // lowest load among those its own bond qualifies it to serve"): the seats' signed records (GET /federations), over the
+      // federations this opener holds an invite for - its own, and ARENA_OTHER_FEDERATION_INVITES (comma-separated)
+      const own = toHex(round.contract.federationId);
+      const serves = [own, ...String(env.ARENA_OTHER_FEDERATION_INVITES || '').split(',').map((x) => x.trim()).filter(Boolean)
+        .map((inv) => { try { return String(readInvite(inv).federationId); } catch { return null; } }).filter(Boolean)];
+      let fedPick = { federationId: own, load: null, why: 'the seats\' federation records were not read: its own' };
+      try {
+        const fl = await (await fetch(`http://127.0.0.1:${pa}/federations`, { signal: AbortSignal.timeout(15000) })).json();
+        fedPick = openingFederation({ listed: fl.federations || [], serves, own });
+      } catch { /* its own, said above */ }
+      say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
+      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       if (got.dry) { say({ rpsGrid: 'dry', ...got }); return; }
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
