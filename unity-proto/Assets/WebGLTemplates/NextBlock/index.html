@@ -3868,8 +3868,16 @@
       // the same way) - here once, so the deposit and the withdraw both read the round with them
       const market = BLWPCLIENT.marketForRound ? BLWPCLIENT.marketForRound(row.raw.contract) : null;
       const round = market && market.terms ? Object.assign({}, row.raw.contract, { marketTerms: market.terms }) : row.raw.contract;
-      return { ok: true, round, roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n, invite: lob.federation, seed,
-        gateways: window.BLWP_LEDGER_GATEWAYS || [] };
+      // A FIRST DEPOSIT GOES TO THE LOWEST-LOAD FEDERATION (§23A.3, kanban #324 step 1): from the statuses this page verified,
+      // OPEN and known-good or confirmed here, when this browser holds no federation's wallet yet; else the lobby's
+      const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
+      const pick = BLWPCLIENT.depositFederation ? BLWPCLIENT.depositFederation({ lobbyInvite: lob.federation, statuses,
+        held: BLWPCLIENT.ledgerFederations(vault()),
+        known: (fid) => BLWPCLIENT.federationIsKnown(fid) || BLWPCLIENT.federationConfirmed(localStorage, fid),
+        sameFederation: (inv, fid) => { try { return BLWPCLIENT.inviteNamesFederation(inv, fid); } catch { return false; } } }) : { invite: lob.federation };
+      window.ARENA_DEPOSIT_FEDERATION = pick;
+      return { ok: true, round, roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n, invite: pick.invite || lob.federation, seed,
+        depositFederation: pick, gateways: window.BLWP_LEDGER_GATEWAYS || [] };
     }
     function openWithdraw(ctx) {
       // THE INVOICE DEFINES THE AMOUNT (the owner 2026-10-01, "1 and 3"): no selector - the page says how much can be withdrawn,

@@ -109,6 +109,35 @@ export function pickFederation(statuses, { known = () => true } = {}) {
 }
 
 /**
+ * THE FEDERATION A DEPOSIT GOES INTO (§23A.3 "First deposit. The client takes the OPEN federations of the census, drops those
+ * not on its known-good list ..., and picks the one with the lowest load"; kanban #324 step 1). A FIRST deposit - this
+ * browser holds no federation's wallet yet (`held` empty) - goes to pickFederation's answer over the verified statuses whose
+ * record names an invite; a returning player stays ("A returning player stays in his federation"; Move is offered apart).
+ * Otherwise, or when nothing better is verified, the lobby's federation.
+ *   lobbyInvite        the lobby round's federation invite
+ *   statuses           federationStatuses' answers (each with federation, status, load, invite)
+ *   held               federation ids hex this browser holds a wallet in (ledgerFederations)
+ *   known(fid)         on the known-good list or confirmed here
+ *   sameFederation(invite, fid)   whether an invite names that federation (inviteNamesFederation)
+ * Answers { invite, federation, lowest, why }.
+ */
+export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false }) {
+  const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
+  // A RETURNING PLAYER STAYS IN THE FEDERATION IT HOLDS - its own invite, so a deposit or a withdraw reads that wallet; the
+  // lobby's when that federation's record is not among the verified statuses
+  if (held && held.length) {
+    const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));
+    if (mine && !sameFederation(lobbyInvite, mine.federation)) return { invite: mine.invite, federation: mine.federation, lowest: false, why: 'a returning player stays in the federation it holds' };
+    return lobby('a returning player stays in the federation it holds');
+  }
+  const pick = pickFederation((statuses || []).filter((f) => f && f.invite), { known });
+  if (!pick) return lobby('no other OPEN, known federation with a signed load');
+  if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
+  return { invite: pick.invite, federation: pick.federation, lowest: true,
+    why: `first deposit: federation ${String(pick.federation).slice(0, 16)} has the lowest load (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
+}
+
+/**
  * MOVE, OFFERED (§23A.3): a returning player stays in their federation; Move is offered when it is above 90 % load and
  * another OPEN federation is below 50 % - that one named. (DRAINING and CRITICAL are not offers: §23A.6 moves by itself.)
  */
