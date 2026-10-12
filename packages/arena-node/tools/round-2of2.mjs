@@ -1192,8 +1192,16 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; the owner 2026-10-12
     // "Mach das deutlich sparsamer"); the wallet signs
     const { hex: signed, vsize, fee } = await fundAtRate(chainRpc, outs, feeRate);
-    const txid = await chainRpc('sendrawtransaction', [signed]);
     const lines = templates.map((t) => seriesLineOf(t, encodeRoundContract));
+    // ARENA_GRID_DRY=1: the transaction built, signed and asked of the node's mempool (testmempoolaccept) - not sent
+    if (process.env.ARENA_GRID_DRY === '1') {
+      const [acc] = await chainRpc('testmempoolaccept', [[signed]]);
+      return { ok: false, dry: true, accepted: acc.allowed, reject: acc['reject-reason'], bytes: vsize, feeSat: String(fee), outputs: outs.length,
+        series: ids.map((id) => toHex(id)), lines, rounds: grid.length, firstStart: new Date(Number(start)).toISOString(),
+        lastClose: new Date(Number(grid[grid.length - 1].entryCloseMs)).toISOString(), committeeTime: new Date(Number(committee)).toISOString(),
+        leadMs: String(start - committee) };
+    }
+    const txid = await chainRpc('sendrawtransaction', [signed]);
     onPublished({ txid, rounds: grid.length, bytes: vsize, feeSat: String(fee), series: ids.map((id) => toHex(id)), lines,
       contracts: grid.map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
