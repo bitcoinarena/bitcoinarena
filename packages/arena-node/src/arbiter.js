@@ -23,6 +23,7 @@ import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { slashHolds, slashProofId, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS } from '../../arena-protocol/src/slash.js';
 import { splitSignedResult, decodePlayerResult, resultId } from '../../arena-protocol/src/result.js';
 import { arbitrationSpend, arbitrationSighash, arbitrationWitness, arbitrationTransaction, escrowOutput, escrowSpend } from '../../arena-protocol/src/arbitration-tx.js';
+import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { bondOutputKey, bondInternalKey, slashLeaf, tapLeafHash, controlBlockFor, bondMaturityOf } from '../../arena-protocol/src/bond-script.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { transcriptHash, decodeTranscript } from '../../arena-protocol/src/transcript.js';
@@ -138,6 +139,60 @@ export function buildEscrowPegin({ escrow, set, toScript, feeSats = 1000n }) {
   return { ok: true, built, leaf: out.leaf, sighash: arbitrationSighash(built, out.leaf), controlBlock: out.controlBlock, escrow: out };
 }
 
+// AFTER PATH B (spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share to its player",
+// kanban #307): once the slash is confirmed, its players' escrow is spent by k of the set to a peg-in address of the
+// arbiter's own client of the round's federation (ARENA_ARBITER_CLIENT_DIR, through ARENA_STAKE_LOCK_BIN), claimed, and each
+// wronged player's share locked to refundKeyOf(their entry key) - the key a settlement's payout names, so the page collects
+// it the same way. Each step is kept (`keep`, the service's state file) before the next, so a restart picks up where it
+// stopped. `bin` is the stake-lock tool, `dir` its client of the round's federation, `rpc` the arbiter's own bitcoind.
+export async function payOutSlash({ proof, v, set, rpc, keep = () => {}, say = () => {}, bin, dir: dataDir, feeSats = 1000n, env: runEnv = process.env }) {
+  if (!bin || !dataDir) return { why: 'no client of the round\'s federation here (ARENA_STAKE_LOCK_BIN, ARENA_ARBITER_CLIENT_DIR)' };
+  const { execFile } = await import('node:child_process');
+  const run = (args, timeoutMs = 120000) => new Promise((done) => execFile(bin, args, { timeout: timeoutMs, maxBuffer: 1 << 24, env: runEnv },
+    (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
+  const dir = ['--data-dir', dataDir];
+  if (!v.escrowTxid) {
+    // THE ESCROW OUTPUT FROM THE UTXO SET (gettxout: no transaction index needed): path B carries at most four outputs
+    const escrow = escrowOutput({ arbitrationKeys: set.keys, k: set.k }, { tweakPoint, combine });
+    let o = null;
+    for (let n = 0; n < 6 && !o; n++) {
+      const x = await rpc('gettxout', [v.posted, n, false]).catch(() => null);
+      if (x && x.scriptPubKey.hex === toHex(escrow.script) && BigInt(Math.round(x.value * 1e8)) === BigInt(v.playersSats)) o = { n, confirmations: x.confirmations };
+    }
+    if (!o) return { why: 'path B holds no unspent players\' escrow of that amount (not confirmed and seen yet, or spent)' };
+    if (!(o.confirmations >= 1)) return { why: 'path B is not confirmed yet' };
+    const addr = await run(['--mode', 'pegin-address', ...dir]);
+    if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
+    const toScript = fromHex((await rpc('validateaddress', [addr.address])).scriptPubKey);
+    const spend = buildEscrowPegin({ escrow: { txid: fromHex(v.posted).reverse(), vout: o.n, value: BigInt(v.playersSats), script: escrow.script }, set, toScript,
+      feeSats });
+    if (!spend.ok) return { why: spend.why };
+    const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
+    if (!signed.ok) return { why: signed.why };
+    const sent = await post(rpc, signed.hex);
+    if (!sent.ok) return { why: sent.why };
+    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address, pegInSats: String(spend.built.amounts.pegIn) }); keep();
+    say({ proof: proof.slice(0, 16), escrowIntoFederation: sent.txid, sats: String(spend.built.amounts.pegIn) });
+  }
+  if (!v.claimedMsat) {
+    const c = await run(['--mode', 'pegin-claim', ...dir, '--address', v.pegInAddress, '--timeout-s', '840'], 900000);
+    if (!(c.balance_after_msat > c.balance_before_msat)) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
+    v.claimedMsat = String(c.balance_after_msat - c.balance_before_msat); keep();
+  }
+  if (!v.payouts) {
+    // THE SHARES AS THE DISTRIBUTION NAMES THEM, scaled to what the federation credited (the peg-in's own fee came off it)
+    const want = v.players.reduce((t, p) => t + BigInt(p.sats) * 1000n, 0n);
+    const have = BigInt(v.claimedMsat);
+    const payouts = v.players.map((p) => ({ key: toHex(refundKeyOf(fromHex(p.key))), msat: have >= want ? BigInt(p.sats) * 1000n : (BigInt(p.sats) * 1000n * have) / want }));
+    const paid = await run(['--mode', 'pay', ...dir, '--payouts', payouts.map((p) => `${p.key}:${p.msat}`).join(',')], 300000);
+    if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
+    v.payouts = paid.payouts.map((x) => ({ round: v.round, entry: v.entry, refundPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx, contractId: x.contract_id }));
+    keep();
+    say({ proof: proof.slice(0, 16), paid: v.payouts.length, txid: paid.txid });
+  }
+  return { paid: v.payouts.length };
+}
+
 /** One member's signature: its own key over the spend's sighash, nothing else. */
 export const memberSign = (member, sighash) => schnorr.sign(sighash, member.secret);
 
@@ -210,7 +265,7 @@ export { REPLAY_CONTRADICTS };
  * pubnonces; POST /musig/partial { sessionId, aggnonce } -> their partial signatures (each nonce used once); GET /status
  * -> the set and what it posted. `posted` is the arbiter loop's record of path B spends it broadcast.
  */
-export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', posted = [] }) {
+export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', posted = [], payouts = () => [] }) {
   const { createServer } = await import('node:http');
   const party = musigParty({ set, allow });
   const server = createServer(async (req, res) => {
@@ -218,6 +273,13 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
     const url = new URL(req.url, 'http://x');
     if (req.method === 'GET' && url.pathname === '/status')
       return answer(200, { network: set.network, k: set.k, members: set.members.map((m) => toHex(m.key)), posted });
+    // THE SLASH'S PAYOUTS (kanban #307): every share this set locked to a wronged player - round, entry, the player's refund
+    // key, msat, and the pre-expired lock's outpoint - for one round with ?round=, else all; a page collects its own
+    if (req.method === 'GET' && url.pathname === '/slash-payouts') {
+      const round = String(url.searchParams.get('round') || '').toLowerCase();
+      if (round && !/^[0-9a-f]{64}$/.test(round)) return answer(400, { ok: false, why: 'a round id, 32 bytes hex' });
+      return answer(200, { network: set.network, payouts: payouts().filter((p) => !round || p.round === round) });
+    }
     if (req.method !== 'POST' || !['/musig/nonce', '/musig/partial'].includes(url.pathname)) return answer(404, { ok: false, why: 'no such door' });
     let body; try { body = JSON.parse(await new Promise((r) => { let s = ''; req.on('data', (d) => { s += d; }); req.on('end', () => r(s)); })); } catch { return answer(400, { ok: false, why: 'a JSON body' }); }
     if (url.pathname === '/musig/nonce') {

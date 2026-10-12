@@ -247,6 +247,12 @@ if [ -n "${PEGIN_BIN:-}" ]; then
     RED="$RED{\"player\":$i,\"msat\":$MSAT,\"otherKey\":$WRONG,\"ownKey\":$RIGHT,\"balanceMsat\":${BAL:-null}},"
   done
   reading "7e payouts redeemed: [${RED%,}]"
+  # 7f. THE SERVICE'S OWN PAYOUT STEP (arbiter.js payOutSlash), end to end on a recorded slash: escrow -> federation -> claimed
+  # -> each share locked -> each player redeems its own
+  ( cd "$HERE/.." && BITCOIN_CLI="$B/bitcoin-cli -datadir=$BTC_DIR -rpcwallet=tn4rt" STAKE_LOCK_BIN=$PEGIN_BIN CLIENT_DIR=$ARB FEDIMINT_CLI=$FORK_BIN/fedimint-cli \
+    INVITE_FILE=$H/invite-code WORK_DIR=$H FORK_HOME=$FORK_HOME timeout 1500 "$NODE" tools/arbiter-payout-regtest.mjs ) > $H/payout.out 2>&1; PO_RC=$?
+  cat $H/payout.out >> "$LOG"
+  reading "7f the service's payout step: {\"exit\":$PO_RC,\"paid\":$(grep '"step":"payOutSlash"' $H/payout.out | tail -1 || echo null),\"redeemed\":$(grep '"step":"redeemed"' $H/payout.out | tail -1 || echo null)}"
 fi
 }
 
