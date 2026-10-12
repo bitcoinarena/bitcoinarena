@@ -13,6 +13,7 @@
 import { toHex } from './hash.js';
 import { KNOWN_GOOD_GAMES } from './known-games.js';
 import { speaksVersion } from './constants.js';
+import { protocolVersionName } from './protocol-version.js';
 
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 
@@ -49,9 +50,9 @@ export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = n
   // round must run it or a later one. A pinned game that requires none passes as before.
   if (game && game.requiredProtocolVersion) {
     if (!speaksVersion(game.requiredProtocolVersion))
-      return { ok: false, why: `${game.name} requires protocol version ${game.requiredProtocolVersion}, which this client does not speak: update the page` };
+      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}, which this client does not speak: update the page` };
     if (!(Number.isInteger(protocolVersion) && protocolVersion >= game.requiredProtocolVersion))
-      return { ok: false, why: `${game.name} requires protocol version ${game.requiredProtocolVersion}; that round runs ${protocolVersion ?? 'none'}` };
+      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}; that round runs ${Number.isInteger(protocolVersion) ? protocolVersionName(protocolVersion) : 'none'}` };
   }
   // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
   if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
