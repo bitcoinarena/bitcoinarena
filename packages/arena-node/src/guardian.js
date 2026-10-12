@@ -157,7 +157,10 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   const pwFile = join(dataDir, 'admin-password');
   if (!existsSync(pwFile)) writeFileSync(pwFile, randomBytes(24).toString('hex'), { mode: 0o600 });
   const ts = tailscale === undefined ? await readTailscale() : tailscale;
-  const endpoint = guardianEndpoint(nodePort, { host, tailscale: ts });
+  // A NODE PUBLISHED THROUGH ANOTHER MACHINE'S FUNNEL (kanban #324, the second testnet4 federation on the test host: its nodes
+  // are reached at wss://<test host>/fed2-N, a Funnel path the test host forwards over the tailnet): ARENA_GUARDIAN_ENDPOINT_<port>
+  // names the guardian's public endpoint when this machine's own Tailscale cannot derive it
+  const endpoint = env[`ARENA_GUARDIAN_ENDPOINT_${nodePort}`] || guardianEndpoint(nodePort, { host, tailscale: ts });
   const fmEnv = guardianEnv({ nodePort, dataDir, network, chain, bitcoindUrl, endpoint,
     cookieSecret: readFileSync(cookiePath, 'utf8').trim().split(':').slice(1).join(':'),
     password: readFileSync(pwFile, 'utf8').trim() });
