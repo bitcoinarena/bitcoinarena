@@ -2116,6 +2116,7 @@
               ? await BLWPCLIENT.federationStatuses({ nodes, census, verify: window.BLWP_CURVE.verify })
               : new Map([[fedHex, await BLWPCLIENT.federationStatus({ federationIdHex: fedHex, nodes, census, verify: window.BLWP_CURVE.verify })]]);
             const fs = all.get(fedHex) || { status: 'unverified', allows: BLWPCLIENT.FEDERATION_ALLOWS.unverified, why: all.why || 'no node holds a record of this federation' };
+            window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading" (kanban #350)
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load (kanban #324)
             if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();   // and Settings' custody summary (kanban #347)
@@ -3426,14 +3427,15 @@
       // CONFIRMED AND PENDING, EACH WITH ITS ICON, in the lobby and in Settings (the owner 2026-09-29 12:47). Until the
       // player wallet of §24A.1 reports a balance the numbers say nothing ("-") rather than invent one.
       const sat = (n) => `${Number(n || 0).toLocaleString('en-US')} sat`;
-      const confirmed = known ? sat(bal.sats) : '\u2013';
-      const pending = known ? sat(bal.pending) : '\u2013';
+      const loadingBal = !known && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED');
+      const confirmed = known ? sat(bal.sats) : loadingBal ? '\u2026' : '\u2013';
+      const pending = known ? sat(bal.pending) : loadingBal ? '\u2026' : '\u2013';
       for (const [id, v] of [['blwp-lobby-confirmed', confirmed], ['blwp-bal-confirmed', confirmed],
         ['blwp-lobby-pending', pending], ['blwp-bal-pending', pending]]) {
         const el = document.getElementById(id); if (el) el.textContent = v;
       }
       // THE FEDERATION ONCE (the owner 2026-10-02: "don't show the federation id twice"): the history names it in full
-      document.getElementById('blwp-balance-line').textContent = known ? '' : 'No balance in this wallet yet';
+      document.getElementById('blwp-balance-line').textContent = known ? '' : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
       const why = document.getElementById('blwp-money-why');
       if (why && !isBackedUp()) why.textContent = '';
     }
@@ -3573,6 +3575,7 @@
         const el = document.getElementById('blwp-deposit');
         if (!el) return null;
         el.textContent = ''; el.className = 'deposit-modal over-settings';
+        el.style.width = 'min(92vw, 420px)';   // the waiting box was as narrow as its title and cut its line (the owner's 17:46 screenshot)
         const close = document.createElement('button'); close.type = 'button'; close.className = 'dep-close'; close.textContent = '\u2715'; close.title = 'Close';
         close.addEventListener('click', () => { el.textContent = ''; el.className = ''; });
         const t = document.createElement('div'); t.className = 'dep-title'; t.textContent = 'Deposit into your player wallet';
@@ -3617,7 +3620,8 @@
       const bar = document.getElementById('arena-wallet-bar');
       if (!bar || !document.body.classList.contains('arena-own-client')) return;
       const bal = window.BLWP_WALLET_BALANCE;
-      document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat' : '– sat';
+      document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
+        : window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
       document.getElementById('arena-wb-pending').textContent = bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '';
     }
     {
@@ -4012,6 +4016,10 @@
         } catch (e) { status.set(3, 'Withdrawal failed: ' + (e && e.message ? e.message : e), 'fail'); }
       };
     }
+    // STILL LOADING, SAID AS SUCH (kanban #350, the owner 2026-10-12 17:47: "Also show a loading message for deposit and federation
+    // load if it hasn't loaded yet"): until the wallet's balance or the federations' records were first tried - or for the first
+    // 3 min of a page that opens no wallet (measured under load: 88 s before the wallet was even open) - the boxes say "Loading …", not "-" and "none verified yet"
+    window.ARENA_STILL_LOADING = (flag) => !window[flag] && performance.now() < 180000;
     // THE HISTORY UNDER THE BALANCES (the owner 2026-09-30 16:15; accepted sequence): every deposit, withdrawal and stake this
     // tab made in the federation that holds the funds - its id named, the id LockClient.federationIdOf reads off the
     // lobby's invite - newest first; a stake row names its round and opens that round's replay in a new window.
@@ -4088,7 +4096,12 @@
       const row = (k, v, tip, c) => { const d = document.createElement('div'); d.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:10px;padding:1px 0';
         const a = document.createElement('span'); a.textContent = k; a.style.color = '#a9b3c1'; const b = document.createElement('b'); b.textContent = v; b.style.cssText = `font-weight:700;color:${c || '#e6edf5'}`;
         d.append(a, b); if (tip) { d.title = tip; d.style.cursor = 'help'; } el.appendChild(d); return b; };
-      if (!sum.federations) { row('Federations', 'none verified yet', '', '#8b949e'); window.ARENA_CUSTODY_SHOWN = sum; return; }
+      if (!sum.federations) {
+        const loading = window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_FED_TRIED');
+        row('Federations', loading ? 'loading \u2026' : 'none verified yet', loading ? 'Reading the federations\' signed records from the seats' : '', loading ? '#d29922' : '#8b949e');
+        if (loading && !window.ARENA_CUSTODY_RETRY) window.ARENA_CUSTODY_RETRY = setTimeout(() => { window.ARENA_CUSTODY_RETRY = null; if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY(); }, 3000);
+        window.ARENA_CUSTODY_SHOWN = sum; return;
+      }
       row('Federations', String(sum.federations), '', '#58a6ff');
       row('Funds held in all federations', sat(sum.reserveSats), '', '#f7931a');
       row('Possible capacity', sat(sum.capSats), '', '#58a6ff');
@@ -5403,6 +5416,8 @@
               const msat = BigInt(await client.balanceMsat());
               window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + fed.slice(0, 16) + '\u2026' };
             } catch (e) { console.log('[blwp] the balance could not be read: ' + (e && e.message ? e.message : e)); }
+            window.BLWP_BALANCE_TRIED = true;   // read or not, no longer "loading" (kanban #350)
+            if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS();
           };
           await window.BLWP_READ_BALANCE();
           combineWallets(client, named, r.raw.contract).catch((e) => console.log('[blwp] wallets not combined: ' + (e && e.message ? e.message : e)));
