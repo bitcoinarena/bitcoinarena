@@ -26,6 +26,7 @@ import { readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
+import { routeGuardianSockets } from './guardian-ws-local.mjs';
 import { randomBytes } from 'node:crypto';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -81,6 +82,7 @@ async function paidEntry(c, rid, roundHex, move, who) {
     log({ step: 'claim key', claimPk: toHex(att.claimPk).slice(0, 16) });
 
     if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
+    if (!globalThis.__guardianRouted) globalThis.__guardianRouted = routeGuardianSockets() || -1;
     const esm = join(tmpdir(), `blwp-lock-client-${process.pid}.mjs`);
     copyFileSync(`${env.WASM_PKG}/blwp_lock_client.js`, esm);
     const wasmMod = await import(esm);
