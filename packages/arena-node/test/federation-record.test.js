@@ -29,7 +29,7 @@ test('the bands are §23A.1\'s table: 10, 7 and 4 guardians', () => {
 });
 
 /** Seven seats on one census: node keys, guardian keys, 50 000-sat bonds; `leaving` the ones whose owners left. */
-function seven({ leaving = [], successor = null, closed = false, reserves = null } = {}) {
+function seven({ leaving = [], successor = null, closed = false, reserves = null, absencesOf = null, abandonBlocks = null } = {}) {
   const nodes = Array.from({ length: 7 }, (_, i) => ({ secret: new Uint8Array(32).fill(i + 1) }));
   for (const [i, n] of nodes.entries()) { n.pubkey = schnorr.getPublicKey(n.secret); n.guardianKey = Uint8Array.from([2, ...new Uint8Array(32).fill(0x60 + i)]); n.endpoint = `wss://seat-${i}.example`; }
   const census = { ok: true, entries: nodes.map((n, i) => ({ pubkey: n.pubkey, txid: new Uint8Array(32).fill(0xa0 + i), vout: 0, bondSats: 50000n,
@@ -38,12 +38,14 @@ function seven({ leaving = [], successor = null, closed = false, reserves = null
     round: { pubkey: n.pubkey, identity: { secret: n.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
     roster: { censusFor: () => census }, inviteFor: () => INVITE, networkId: NET, leavingAtMs: () => (leaving.includes(i) ? 1 : null),
     successorOf: () => successor, closedOf: () => closed,
+    ...(absencesOf ? { absences: absencesOf(i), abandonBlocks } : {}),
     ...(reserves ? { reserveOf: async () => (reserves[i] === null ? { ok: false, why: 'no answer' } : { ok: true, reserveSats: BigInt(reserves[i]) }) } : {}),
     fetcher: async (url) => {
       const j = seats[nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')))];
       const u = new URL(url); const gone = (u.searchParams.get('gone') || '').split(',').filter(Boolean);
       const rv = u.searchParams.get('reserve');
-      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv) : j.mySignature(u.searchParams.get('federation'), null, rv));
+      const absent = (u.searchParams.get('absent') || '').split(',').filter(Boolean);
+      const body = await (gone.length ? j.mySignatureWithGone(u.searchParams.get('federation'), gone, null, rv, absent) : j.mySignature(u.searchParams.get('federation'), null, rv));
       return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 });
     },
   }));
@@ -230,4 +232,26 @@ test('a mirrored record that does not stand against the seat\'s own census is no
   const got = await o.gatherAll(inviteFederationId);
   assert.equal(got[0].ok, false);
   assert.deepEqual(o.list(), []);
+});
+
+test('2f + 1 guardians\' absence attestations held by the gatherer make the peer ABANDONED in the record every guardian signs (kanban #322)', async () => {
+  const { createAbsences, absenceHex } = await import('../src/absences.js');
+  const { signAbsence } = await import('../../arena-protocol/src/absence.js');
+  const ABANDON = 288;
+  const attestFrom = (nodes, k) => nodes.slice(0, k).map((n) => signAbsence({ federationId: FED, peerKey: nodes[6].guardianKey, lastSeenHeight: 1000, height: 1300, attester: n.pubkey }, (m) => schnorr.sign(m, n.secret)));
+  const run = async (k) => {
+    const held = createAbsences({ verify });
+    const s = seven({ absencesOf: (i) => (i === 0 ? held : createAbsences({ verify })), abandonBlocks: ABANDON });
+    for (const a of attestFrom(s.nodes, k)) assert.equal(held.offer(a).kept, true);
+    return { s, got: await s.seats[0].gather(FED, inviteFederationId) };
+  };
+  const five = await run(5);
+  assert.deepEqual([five.got.ok, five.got.status, five.got.gone, five.got.signers], [true, 'DRAINING', 1, 7], five.got.why);
+  const v = verifyFederationRecord(fromHex(five.s.seats[0].list()[0].record), { census: five.s.census.entries, verify, inviteFederationId });
+  assert.deepEqual([v.record.gone[0].kind, v.record.gone[0].sinceHeight, toHex(v.record.gone[0].peerKey)], [2, 1000, toHex(five.s.nodes[6].guardianKey)], 'ABANDONED since the proof');
+  const four = await run(4);
+  assert.deepEqual([four.got.status, four.got.gone], ['OPEN', 0], 'four of seven prove nothing');
+  // a guardian seat handed a set that is no proof does not sign it ABANDONED
+  const said = await four.s.seats[1].mySignatureWithGone(toHex(FED), [toHex(four.s.nodes[6].guardianKey)], null, null, attestFrom(four.s.nodes, 4).map(absenceHex));
+  assert.match(said.why, /does not stand here: 4 guardian\(s\) attest the absence, the threshold is 5/);
 });
