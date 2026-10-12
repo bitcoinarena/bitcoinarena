@@ -203,7 +203,7 @@ stop_nodes
 WSS=""; for p in ${NODE_PORTS//,/ }; do WSS="$WSS ARENA_WSS_$p=ws://127.0.0.1:$p"; done
 ( cd "$HERE/.." && env $WSS HOME=$FORK_HOME ARENA_TN4_PORTS=$NODE_PORTS ARENA_STAKE_LOCK_BIN=$LOCK_BIN ARENA_FEDERATION_CLIENT_DIR=$CLIENT_DIR \
   ARENA_FEDERATION_INVITE_FILE=$H/invite-code ARENA_RECIPIENT_PORT=$RECIP ARENA_TN4_DATADIR=$BTC_DIR \
-  ARENA_ENTRY_WINDOW_MS=${ENTRY_WINDOW_MS:-21600000} \
+  ARENA_ENTRY_WINDOW_MS=${ENTRY_WINDOW_MS:-21600000} ${ENTRY_WINDOW_MS:+PAID_KEEP=0} \
   setsid "$NODE" tools/run-testnet4-paid.mjs > $H/paid.out 2>&1 < /dev/null & echo "$! node-paid" >> $PIDS )
 paidup() { grep -q '"paid":"up"' $H/paid.out; }
 until_ "run-testnet4-paid.mjs stands the round up" 1500 paidup
