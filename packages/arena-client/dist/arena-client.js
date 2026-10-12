@@ -23168,6 +23168,29 @@ function loadRefusesDeposit({ load, networkId }) {
   return typeof load === 'number' && load >= 1 && !TEST_NETWORKS.has(networkOf(networkId));
 }
 
+/**
+ * WHICH FEDERATION A FIRST DEPOSIT GOES INTO (§23A.3, RULED: "the one holding least"): among the checked statuses
+ * (`federationStatus` answers, each with its `federation` id), the OPEN ones on the known-good list (`known(fid)`), the
+ * lowest load; ties by the newest record (its height). A federation whose load the record does not say comes after every
+ * one that says it. Null when none is OPEN.
+ */
+function pickFederation(statuses, { known = () => true } = {}) {
+  const open = (statuses || []).filter((f) => f && f.status === 'OPEN' && known(f.federation));
+  if (!open.length) return null;
+  const loadOf = (f) => (typeof f.load === 'number' ? f.load : Infinity);
+  return [...open].sort((a, b) => loadOf(a) - loadOf(b) || (b.height || 0) - (a.height || 0))[0];
+}
+
+/**
+ * MOVE, OFFERED (§23A.3): a returning player stays in their federation; Move is offered when it is above 90 % load and
+ * another OPEN federation is below 50 % - that one named. (DRAINING and CRITICAL are not offers: §23A.6 moves by itself.)
+ */
+function moveOffer(own, others = []) {
+  if (!own || own.status !== 'OPEN' || typeof own.load !== 'number' || own.load <= 0.9) return null;
+  const to = pickFederation((others || []).filter((f) => f && f.federation !== own.federation && typeof f.load === 'number' && f.load < 0.5));
+  return to ? { from: own.federation, to: to.federation, fromLoad: own.load, toLoad: to.load } : null;
+}
+
 /** The sentence a page shows when a federation holds more than its guardians' bonds cover (load >= 1), else ''. */
 function loadSays(fed) {
   if (!fed || typeof fed.load !== 'number' || fed.load < 1) return '';
@@ -25851,7 +25874,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
