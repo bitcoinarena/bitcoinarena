@@ -23,6 +23,8 @@
 // IT IS NOT A SECOND DOOR. Nothing here touches the simulator; it decides only
 // WHEN `replay.js` is asked, and `replay.js` is still the only file in this
 // daemon that reaches the core.
+import { medianSpeed } from '../../arena-protocol/src/replay-budget.js';
+import { MS_PER_TICK_NUM, MS_PER_TICK_DEN } from '../../arena-protocol/src/tick.js';
 import { replayInWorker } from './replay.js';
 
 /** Objected first, then the board's leaders, then everybody else. */
@@ -60,7 +62,12 @@ export class ReplayPool {
     this.running = 0;
     /** The keys in the order they were STARTED - what a starvation claim is checked against. */
     this.order = [];
+    /** THE MEASURED REPLAY SPEED (§34, kanban #303): the newest replays' wall time against the game time they covered. */
+    this.samples = [];
   }
+
+  /** The median speed of this machine's own replays (game ms per wall ms), or null before any (replay-budget.js). */
+  measuredSpeed() { return medianSpeed(this.samples); }
 
   get waiting() { return this.queues.reduce((n, q) => n + q.length, 0); }
 
@@ -101,8 +108,17 @@ export class ReplayPool {
       this.order.push(next.job.key);
       // THE CORE THE ROUND NAMES travels with the job (M3 R1): the worker replays under it, or refuses.
       const { transcript, entry, source, options, core } = next.job;
+      const t0 = Date.now();
       Promise.resolve()
         .then(() => replayInWorker(transcript, entry, { ...options, core, source }))
+        .then((answer) => {
+          // a replay that ran: its speed is kept, the newest 50 (a refusal or a throw measures nothing). The ticks are the replay's
+          // own count (replay.js answers them): a stored run crosses to the worker by its name, not its ticks
+          const wallMs = Date.now() - t0;
+          const ticks = answer && Number.isInteger(answer.ticks) ? answer.ticks : 0;
+          if (ticks > 0 && wallMs > 0) { this.samples.push({ wallMs, gameMs: (ticks * Number(MS_PER_TICK_NUM)) / Number(MS_PER_TICK_DEN) }); if (this.samples.length > 50) this.samples.shift(); }
+          return answer;
+        })
         .then(next.resolve, next.reject)
         .finally(() => { this.running--; this.#pump(); });
     }
