@@ -58,7 +58,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // 35 since the config proposal (kanban #329, §27A.7.2): tallied, it decides the configuration rounds run under. 37 since the
   // absence attestation and the departure notice (kanban #322, §23A.4-5): they make a guardian ABANDONED or DEPARTED. 38 since the
   // spent-note set (kanban #323, §23A.5): it decides which notes a halted federation's liquidation pays.
-  assert.equal(FRAMES.size, 38, 'a type was added without saying what it decides');
+  // 39 since the round result (kanban #312, §13): it decides who won a price round's war - bulls or bears - and moves no money.
+  assert.equal(FRAMES.size, 39, 'a type was added without saying what it decides');
 });
 
 /**
