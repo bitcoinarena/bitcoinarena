@@ -823,6 +823,8 @@ const TYPE_FEDERATION_RECORD = 0x20;
 // seated nodes all sign - which nodes serve the round. Two seatings for one round and role are equivocation.
 const TYPE_PRESENT = 0x21;
 const TYPE_SEATING = 0x22;
+// A CONFIG PROPOSAL (§27A.7.2, kanban #329): the full named configuration a ballot decides
+const TYPE_CONFIG_PROPOSAL = 0x23;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -967,6 +969,10 @@ const TAG = {
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
   priceTape: 'ARENA/v1/PriceTape',
+  // THE BALLOT (§27A.7.2-3, kanban #329): a proposal's body the proposer signs, its id, and what a bond key signs to vote
+  configProposalBody: 'ARENA/v1/ConfigProposalBody',
+  configProposal: 'ARENA/v1/ConfigProposal',
+  vote: 'ARENA/v1/Vote',
 };
 
 /**
@@ -13087,7 +13093,8 @@ const MIGRATE_DUST_MSAT = 10000n;
 async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
   gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
-  if (!record || record.status !== 'DRAINING') return { moved: 0n, chunks: 0, state: 'not draining' };
+  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, the owner 2026-10-13)
+  if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
   let moved = 0n, chunks = 0, failed = 0;
@@ -13132,6 +13139,23 @@ async function migratePlayerWallet({ round, invite, seed, LockClient, storage, s
   const to = await playerWallet({ round: { ...round, federationId: fromHex(status.successorId) }, invite: successor.invite, seed, LockClient, storage });
   return migrateFromDraining({ from, to, record: { status: 'DRAINING', successorId: status.successorId }, toFederationId: fromHex(status.successorId),
     fromFederationId: round.federationId, storage, onState, chunkMsat });
+}
+
+/**
+ * THE NOTES OUT OF A DRAINING OR CRITICAL FEDERATION, BY THEMSELVES (the owner 2026-10-13 ~12:00Z: "When a federation is draining
+ * the client has automatically to move it to a safe federation"): not only at a join into the successor (migratePlayerWallet)
+ * but as soon as the page has checked the federations' records - into `target` (federations.js safeFederation: the named
+ * successor, else the lowest-load OPEN one). `from`: the draining federation's checked status with its invite. Both wallets
+ * of this seed are opened as the stake opens them; then the chunks of migrateFromDraining.
+ */
+async function evacuatePlayerWallet({ from, target, seed, LockClient, storage, onState = () => {}, chunkMsat = null, gateways = [] } = {}) {
+  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!target || target.status !== 'OPEN' || !target.invite) return { moved: 0n, chunks: 0, state: 'no safe federation to move to' };
+  const fromId = fromHex(String(from.federation)), toId = fromHex(String(target.federation));
+  const a = await openPlayerWallet({ federationId: fromId, invite: from.invite, seed, LockClient, storage });
+  const b = await openPlayerWallet({ federationId: toId, invite: target.invite, seed, LockClient, storage });
+  return migrateFromDraining({ from: a, to: b, record: { status: from.status, successorId: toId }, toFederationId: toId, fromFederationId: fromId,
+    storage, onState, chunkMsat, gateways });
 }
 
 /**
@@ -23525,20 +23549,21 @@ function pickFederation(statuses, { known = () => true } = {}) {
  *   sameFederation(invite, fid)   whether an invite names that federation (inviteNamesFederation)
  * Answers { invite, federation, lowest, why }.
  */
-function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false }) {
+function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
-  // A RETURNING PLAYER STAYS IN THE FEDERATION IT HOLDS - its own invite, so a deposit or a withdraw reads that wallet; the
-  // lobby's when that federation's record is not among the verified statuses
-  if (held && held.length) {
+  // EVERY DEPOSIT TO THE LOWEST LOAD (RULED the owner 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
+  // it's evened out"): a returning player too - the page sums every federation's wallet (BLWP_SUM_BALANCES), so where the money
+  // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
+  if (!always && held && held.length) {
     const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));
     if (mine && !sameFederation(lobbyInvite, mine.federation)) return { invite: mine.invite, federation: mine.federation, lowest: false, why: 'a returning player stays in the federation it holds' };
     return lobby('a returning player stays in the federation it holds');
   }
   const pick = pickFederation((statuses || []).filter((f) => f && f.invite), { known });
-  if (!pick) return lobby('no other OPEN, known federation with a signed load');
+  if (!pick) return lobby('no OPEN, known federation with a signed load');
   if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
   return { invite: pick.invite, federation: pick.federation, lowest: true,
-    why: `first deposit: federation ${String(pick.federation).slice(0, 16)} has the lowest load (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
+    why: `deposit: federation ${String(pick.federation).slice(0, 16)} has the lowest load (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
 }
 
 /**
@@ -23645,6 +23670,33 @@ function confirmedFederations(storage) {
 function inviteNamesFederation(invite, federationIdHex) {
   let f; try { f = readInvite(invite).federationId; } catch { return false; }
   return !!f && String(f).toLowerCase() === String(federationIdHex).toLowerCase();
+}
+
+/**
+ * THE FEDERATION A WITHDRAW READS (kanban #348, with every deposit going to the lowest load): the one of `parts` - the summed
+ * balance's split, [{ federation, sats }] - holding the most, among those whose invite a verified status names; else the lobby's.
+ * One federation per withdraw; a withdraw over several federations at once is a later step.
+ */
+function withdrawFederation({ lobbyInvite, parts = [], statuses = [] }) {
+  const inviteOf = (fid) => { const st = (statuses || []).find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
+  const best = [...(parts || [])].filter((p) => p && p.sats > 0 && inviteOf(p.federation)).sort((a, b) => b.sats - a.sats)[0];
+  return best ? { invite: inviteOf(best.federation), federation: best.federation, sats: best.sats, why: `withdraw from federation ${String(best.federation).slice(0, 16)}, which holds the most (${best.sats} sat)` }
+    : { invite: lobbyInvite, federation: null, sats: null, why: 'the lobby\'s federation' };
+}
+
+/**
+ * WHERE A DRAINING FEDERATION'S NOTES GO (the owner 2026-10-13 ~12:00Z: "When a federation is draining the client has automatically
+ * to move it to a safe federation"): `from` is a federation's checked status ({ federation, status, successorId }). DRAINING or
+ * CRITICAL only. Its named successor when that one is OPEN with an invite; else the lowest-load OPEN, known federation other
+ * than itself (pickFederation). Null when there is nowhere safe - the notes stay and the next status read tries again.
+ */
+function safeFederation(from, statuses = [], { known = () => true } = {}) {
+  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status)) return null;
+  const me = String(from.federation || '').toLowerCase();
+  const usable = (statuses || []).filter((f) => f && f.invite && String(f.federation).toLowerCase() !== me);
+  const succ = from.successorId && !/^0+$/.test(String(from.successorId))
+    ? usable.find((f) => String(f.federation).toLowerCase() === String(from.successorId).toLowerCase() && f.status === 'OPEN' && known(f.federation)) : null;
+  return succ || pickFederation(usable, { known });
 }
 
 // ---- arena-client/src/entry-warnings.js
@@ -26462,7 +26514,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
