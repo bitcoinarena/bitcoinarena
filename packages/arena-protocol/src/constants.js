@@ -294,6 +294,8 @@ export const TAG = {
   seriesRound: 'ARENA/v1/SeriesRound',
   // WHAT A ROUND'S CREATOR SIGNS (§6 creator_signature, kanban #313): the round's id, under this tag
   roundCreator: 'ARENA/v1/RoundCreator',
+  // A RULE A CONTRACT NAMES (§6 *_rule_hash, kanban #314): the rule's text under this tag
+  contractRule: 'ARENA/v1/ContractRule',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',

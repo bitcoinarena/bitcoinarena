@@ -25,6 +25,7 @@ import { stateOf } from './settlement-state.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { nodeStanding } from './node-standing.js';
 import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
+import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -3462,6 +3463,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!st.ok && !(round.get(rid) && round.creatorSignature(rid))) return text(res, 403, st.why);
           if (st.ok) round.putCreatorSignature(rid, sig);
         }
+        // THE RULES IT NAMES, THIS BUILD'S OR REFUSED (§6, kanban #314; rules.js): a round settled under rules this seat does not run is
+        // not selectable here - refused by name, nothing of it stored
+        { const ru = rulesStand(contract); if (!ru.ok) return text(res, 409, ru.why); }
         // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
         // round is refused by the same game rather than as a round nobody heard of
         { const refused = unhostedRefusal(contract); if (refused) return text(res, 409, refused); }
