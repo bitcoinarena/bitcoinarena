@@ -46,6 +46,9 @@ const ADD_GAMES = (env.ARENA_ADVERT_ADD_GAMES || '').split(',').filter((x) => /^
 // the update's block on (true brings them back), their bonds untouched; ARENA_ADVERT_NODES="3,5" names which (all seven when unset)
 const SERVING = env.ARENA_ADVERT_SERVING === 'false' ? false : env.ARENA_ADVERT_SERVING === 'true' ? true : null;
 const ONLY = (env.ARENA_ADVERT_NODES || '').split(',').map(Number).filter((n) => n >= 1 && n <= 7);
+// THE NODE'S DECLARED SCALARS (§27A.2, kanban #305): ARENA_ADVERT_DECLARE="<bond_min sats>:<proposal deposit sats>"
+const DECLARE = /^\d+:\d+$/.test(env.ARENA_ADVERT_DECLARE || '')
+  ? (([b, p]) => ({ bondMinSats: BigInt(b), proposalDepositSats: BigInt(p) }))(env.ARENA_ADVERT_DECLARE.split(':')) : null;
 const gamesWith = (hosted) => [...new Map([...(hosted || []), ...ADD_GAMES.map(fromHex)].map((g) => [toHex(g), g])).values()]
   .sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1));
 
@@ -77,10 +80,12 @@ for (let n = 1; n <= 7; n++) {
   const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
   const gamesDiffer = ADD_GAMES.length && gamesWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
   const servingDiffers = SERVING !== null && (bond.advert.serving !== false) !== SERVING;
-  if (now.length === 1 && now[0] === want && !versionsDiffer && !gamesDiffer && !servingDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
+  const declaresDiffer = DECLARE && JSON.stringify(bond.advert.declares || null, (k, v) => (typeof v === 'bigint' ? String(v) : v))
+    !== JSON.stringify(DECLARE, (k, v) => (typeof v === 'bigint' ? String(v) : v));
+  if (now.length === 1 && now[0] === want && !versionsDiffer && !gamesDiffer && !servingDiffers && !declaresDiffer) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
   const advert = { ...bond.advert, guardianOf: [{ federationId, guardianKey: fromHex(guardianKey) }], timestamp: BigInt(Date.now()),
     ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}),
-    ...(SERVING !== null ? { serving: SERVING } : {}) };
+    ...(SERVING !== null ? { serving: SERVING } : {}), ...(DECLARE ? { declares: DECLARE } : {}) };
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }
 if (!plans.length) { say({ done: 'every bond already advertises its node\'s current guardian key; nothing posted' }); process.exit(0); }
