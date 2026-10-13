@@ -4687,6 +4687,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(Buffer.from(rh, 'hex'));
         return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0), feed: !!(row && feedFor(row.contract)) }));
       }
+      // WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): this seat's signed result, once the round has ended
+      if (req.method === 'GET' && url.pathname === '/round-result') {
+        const got = prices.result(String(url.searchParams.get('round') || '').toLowerCase());
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested')) {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
         const got = url.pathname === '/price-sign' ? prices.sign(body) : prices.hold(body);

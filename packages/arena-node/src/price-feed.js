@@ -20,6 +20,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { priceSampleId, priceTapeId, priceAttestationStands, sampleTick, PRICE_SAMPLE_EVERY_MS, PRICE_TAPE_LENGTH } from '../../arena-protocol/src/price-sample.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
+import { roundResultFrom, roundResultId, frontName } from '../../arena-protocol/src/round-result.js';
+import { msForTicks } from '../../arena-protocol/src/tick.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const EVERY = PRICE_SAMPLE_EVERY_MS;
@@ -141,6 +143,26 @@ export class PriceFeed {
     if (!this.samples.has(body.round)) this.samples.set(body.round, new Map());
     this.samples.get(body.round).set(k, { k, tick: sample.tick, priceCents: body.priceCents, sigs: body.sigs });
     return { ok: true };
+  }
+
+  /**
+   * GET /round-result?round=: WHO WON THE ROUND (§13 RoundResult, kanban #312) - once its run has ended, the result this seat
+   * makes from the attested samples it holds (open the first, close the last at or before the round's last tick), signed with
+   * its node key. A client takes it when the committee's threshold signed the same result (round-result.js roundResultStands).
+   */
+  result(roundHex) {
+    const rid = typeof roundHex === 'string' && /^[0-9a-f]{64}$/.test(roundHex) ? fromHex(roundHex) : null;
+    if (!rid) return refuse('GET /round-result?round=<id, 64 hex>', 400);
+    const c = this.#contract(rid); if (!c.ok) return c;
+    const endTick = Number(c.contract.blockTicks);
+    const endMs = Number(c.contract.startTimeMs) + Number(msForTicks(BigInt(endTick)).ms);
+    if (this.now() < endMs) return refuse(`the round runs until ${new Date(endMs).toISOString()}: its result is made at its end`);
+    const m = this.samples.get(roundHex);
+    const got = roundResultFrom({ roundId: rid, samples: m ? [...m.values()] : [], endTick });
+    if (!got.ok) return refuse(got.why);
+    const x = got.result;
+    return { ok: true, round: roundHex, openCents: x.openCents, closeCents: x.closeCents, front: frontName(x.front), samples: got.samples,
+      openTick: got.openTick, closeTick: got.closeTick, committee: c.committee.map(toHex), needed: c.needed, ...this.#sign(roundResultId(x)) };
   }
 
   /** GET /price-samples?round=&since=<tick>: the attested samples this seat holds for a round, and its tape. */

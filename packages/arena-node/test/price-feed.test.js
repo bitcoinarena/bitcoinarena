@@ -85,3 +85,35 @@ test('the tape of the 64 prices before the start: led by seat 0 at the start fro
   assert.equal(out.find(([what]) => what === 0)[1].ok, true, 'and sample 0, which seat 0 also leads');
   assert.deepEqual(await net.seatOf(1).beat(), [], 'seat 1 leads neither the tape nor sample 0');
 });
+
+test('who won the round (§13 RoundResult, kanban #312): open and close of the attested tape, BULLS, signed by all seven seats; the client takes it at the threshold', async () => {
+  const { roundVerdict } = await import('../../arena-client/src/round-verdict.js');
+  const { msForTicks } = await import('../../arena-protocol/src/tick.js');
+  let t; let price;
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => price), now: () => t });
+  const rh = toHex(net.rid);
+  for (const [k, p] of [[1, 8297000], [3, 8300500]]) {
+    t = START + (k - 1) * 5000 + 300; price = p;
+    for (const s of net.seats) await s.read();
+    const got = await net.seatOf(k % 7).leadSample(net.rid, k);
+    assert.equal(got.ok, true, got.why);
+  }
+  assert.match(net.seats[0].result(rh).why, /its result is made at its end/, 'not before the round has ended');
+  t = START + Number(msForTicks(BigInt(net.contract.blockTicks)).ms) + 1000;
+  const r = net.seats[0].result(rh);
+  assert.deepEqual([r.ok, r.openCents, r.closeCents, r.front, r.samples], [true, 8297000, 8300500, 'BULLS', 2], r.why);
+  const verify = (sg, m, k) => schnorr.verify(sg, m, k);
+  const asking = (n) => async (url) => {
+    const i = Number(/^seat(\d)\/round-result/.exec(url)[1]);
+    const got = net.seats[i].result(rh);
+    return { ok: got.ok, status: got.ok ? 200 : 409, json: async () => got, text: async () => got.why || '' };
+  };
+  const committee = net.keys.map((k) => k.pubkey);
+  const all = await roundVerdict({ roundId: net.rid, nodes: [0, 1, 2, 3, 4, 5, 6].map((i) => `seat${i}`), committee, verify, fetcher: asking() });
+  assert.deepEqual([all.ok, all.front, all.signers, all.needed, all.says], [true, 'BULLS', 7, 5, 'THE BULLS WIN (+0.04%)'], all.why);
+  const four = await roundVerdict({ roundId: net.rid, nodes: [0, 1, 2, 3].map((i) => `seat${i}`), committee, verify, fetcher: asking() });
+  assert.equal(four.ok, false); assert.match(four.why, /no result is signed by 5 of the committee \(at most 4 agree\)/);
+  // a seat outside the committee counts nothing
+  const outsiders = await roundVerdict({ roundId: net.rid, nodes: [0, 1, 2, 3, 4, 5, 6].map((i) => `seat${i}`), committee: [b32(9), b32(8)], verify, fetcher: asking(), threshold: 1 });
+  assert.equal(outsiders.ok, false);
+});
