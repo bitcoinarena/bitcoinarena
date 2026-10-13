@@ -55,7 +55,10 @@ test('one type carries no authority, and it is the ghost', () => {
   // client may deposit into a federation and whether a new round may name it.
   // 34 since reserve seats (kanban #301, §5A.7): a node's PRESENT and the seated nodes' SEATING decide which nodes serve a
   // round - a seating its certificate's signers did not all sign seats nobody.
-  assert.equal(FRAMES.size, 34, 'a type was added without saying what it decides');
+  // 35 since the config proposal (kanban #329, §27A.7.2): tallied, it decides the configuration rounds run under. 37 since the
+  // absence attestation and the departure notice (kanban #322, §23A.4-5): they make a guardian ABANDONED or DEPARTED. 38 since the
+  // spent-note set (kanban #323, §23A.5): it decides which notes a halted federation's liquidation pays.
+  assert.equal(FRAMES.size, 38, 'a type was added without saying what it decides');
 });
 
 /**
