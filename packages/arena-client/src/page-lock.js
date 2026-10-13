@@ -2057,7 +2057,8 @@ export const MIGRATE_DUST_MSAT = 10000n;
 export async function migrateFromDraining({ from, to, record, toFederationId, chunkMsat = null, retries = 3, maxChunks = 64,
   gateways = [], onState = () => {}, storage = null, fromFederationId = null } = {}) {
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
-  if (!record || record.status !== 'DRAINING') return { moved: 0n, chunks: 0, state: 'not draining' };
+  // DRAINING, or CRITICAL with the safe federation the page chose as `successorId` (evacuatePlayerWallet, the owner 2026-10-13)
+  if (!record || !['DRAINING', 'CRITICAL'].includes(record.status)) return { moved: 0n, chunks: 0, state: 'not draining' };
   if (!record.successorId || /^0+$/.test(hex(record.successorId))) return { moved: 0n, chunks: 0, state: 'no successor named' };
   if (hex(record.successorId) !== hex(toFederationId)) return { moved: 0n, chunks: 0, state: 'that wallet is not in the successor' };
   let moved = 0n, chunks = 0, failed = 0;
@@ -2102,6 +2103,23 @@ export async function migratePlayerWallet({ round, invite, seed, LockClient, sto
   const to = await playerWallet({ round: { ...round, federationId: fromHex(status.successorId) }, invite: successor.invite, seed, LockClient, storage });
   return migrateFromDraining({ from, to, record: { status: 'DRAINING', successorId: status.successorId }, toFederationId: fromHex(status.successorId),
     fromFederationId: round.federationId, storage, onState, chunkMsat });
+}
+
+/**
+ * THE NOTES OUT OF A DRAINING OR CRITICAL FEDERATION, BY THEMSELVES (the owner 2026-10-13 ~12:00Z: "When a federation is draining
+ * the client has automatically to move it to a safe federation"): not only at a join into the successor (migratePlayerWallet)
+ * but as soon as the page has checked the federations' records - into `target` (federations.js safeFederation: the named
+ * successor, else the lowest-load OPEN one). `from`: the draining federation's checked status with its invite. Both wallets
+ * of this seed are opened as the stake opens them; then the chunks of migrateFromDraining.
+ */
+export async function evacuatePlayerWallet({ from, target, seed, LockClient, storage, onState = () => {}, chunkMsat = null, gateways = [] } = {}) {
+  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status) || !from.invite) return { moved: 0n, chunks: 0, state: 'not draining' };
+  if (!target || target.status !== 'OPEN' || !target.invite) return { moved: 0n, chunks: 0, state: 'no safe federation to move to' };
+  const fromId = fromHex(String(from.federation)), toId = fromHex(String(target.federation));
+  const a = await openPlayerWallet({ federationId: fromId, invite: from.invite, seed, LockClient, storage });
+  const b = await openPlayerWallet({ federationId: toId, invite: target.invite, seed, LockClient, storage });
+  return migrateFromDraining({ from: a, to: b, record: { status: from.status, successorId: toId }, toFederationId: toId, fromFederationId: fromId,
+    storage, onState, chunkMsat, gateways });
 }
 
 /**

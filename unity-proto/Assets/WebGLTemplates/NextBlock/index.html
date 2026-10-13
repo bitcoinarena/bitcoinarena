@@ -2186,6 +2186,7 @@
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading" (kanban #350)
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load (kanban #324)
+            if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);   // notes out of a DRAINING / CRITICAL federation, by themselves
             if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();   // and Settings' custody summary (kanban #347)
             window.ARENA_FED_MOVE = BLWPCLIENT.moveOffer ? BLWPCLIENT.moveOffer(window.ARENA_FED_STATUS, [...all.values()]) : null;
             if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
@@ -3502,7 +3503,10 @@
         const el = document.getElementById(id); if (el) el.textContent = v;
       }
       // THE FEDERATION ONCE (the owner 2026-10-02: "don't show the federation id twice"): the history names it in full
-      document.getElementById('blwp-balance-line').textContent = known ? '' : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
+      // THE SPLIT, ONLY WHEN THERE IS ONE: the sum above is every federation's; this line says where it sits (the owner 2026-10-13)
+      const split = known && Array.isArray(bal.parts) && bal.parts.length > 1
+        ? 'Across ' + bal.parts.length + ' federations: ' + bal.parts.map((x) => x.federation.slice(0, 8) + ' ' + sat(x.sats)).join(' · ') : '';
+      document.getElementById('blwp-balance-line').textContent = known ? split : loadingBal ? 'Loading your wallet \u2026' : 'No balance in this wallet yet';
       const why = document.getElementById('blwp-money-why');
       if (why && !isBackedUp()) why.textContent = '';
     }
@@ -3616,7 +3620,7 @@
     function openMoney(which, say = (t) => { document.getElementById('blwp-money-why').textContent = t; }) {
       // WITHDRAW IS NOT GATED. Taking your own money OUT never needs a backup - it is putting money in, and staking
       // it, that a lost seed loses. BOTH WEAR THE ROUND TABS (GROSS-INVOICE-2053): n x this lobby's paying stake, or Custom.
-      const ctx = moneyContext();
+      const ctx = moneyContext(which);
       // A DEPOSIT WITH NO ROUND LISTED (kanban #350, the owner 2026-10-12 "Yes": Deposit works on the games screen before a game is
       // picked) - after the federation's own record is asked, as any deposit is (below)
       const lob0 = window.BLWP_LEDGER_LOBBY; const seed0 = typeof walletSeed === 'function' ? walletSeed() : null;
@@ -4039,7 +4043,7 @@
       const r = series[0] || other[0];
       return r ? { free: false, raw: r } : null;
     }
-    function moneyContext() {
+    function moneyContext(which = 'deposit') {
       const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract) || moneyRound();
       const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
       if (!row) return { ok: false, why: document.body.classList.contains('arena-picking')
@@ -4060,8 +4064,11 @@
         known: (fid) => BLWPCLIENT.federationIsKnown(fid) || BLWPCLIENT.federationConfirmed(localStorage, fid),
         sameFederation: (inv, fid) => { try { return BLWPCLIENT.inviteNamesFederation(inv, fid); } catch { return false; } } }) : { invite: lob.federation };
       window.ARENA_DEPOSIT_FEDERATION = pick;
-      return { ok: true, round, roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n, invite: pick.invite || lob.federation, seed,
-        depositFederation: pick, gateways: window.BLWP_LEDGER_GATEWAYS || [] };
+      // A WITHDRAW READS WHERE THE MONEY IS: the federation of the summed balance holding the most (kanban #348)
+      const out = which === 'withdraw' && BLWPCLIENT.withdrawFederation ? BLWPCLIENT.withdrawFederation({ lobbyInvite: lob.federation,
+        parts: (window.BLWP_WALLET_BALANCE && window.BLWP_WALLET_BALANCE.parts) || [], statuses }) : null;
+      return { ok: true, round, roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n,
+        invite: (out && out.invite) || pick.invite || lob.federation, seed, depositFederation: pick, withdrawFrom: out, gateways: window.BLWP_LEDGER_GATEWAYS || [] };
     }
     function openWithdraw(ctx) {
       // THE INVOICE DEFINES THE AMOUNT (the owner 2026-10-01, "1 and 3"): no selector - the page says how much can be withdrawn,
@@ -5466,6 +5473,71 @@
         }
         window.ARENA_FED_EARLY = false;
       };
+      // EVERY FEDERATION'S FUNDS, SUMMED (the owner 2026-10-13 ~11:55Z: "Die Funds müssen immer sichtbar sein von allen Föderationen,
+      // ohne zwischen Federations zu klicken und zu wechseln, immer alle Balances summiert und ersichtlich"): a deposit goes to the
+      // lowest-load federation and winnings come from every federation's pot, so one player's money sits in several. Every
+      // player wallet this tab opens is kept here per federation (openPlayerWallet keeps one client per federation and seed),
+      // a wallet is opened for every federation this browser holds notes in whose invite a verified record names, and the
+      // balance the page shows is their sum - `parts` the split.
+      window.BLWP_WALLETS = window.BLWP_WALLETS || new Map();
+      window.BLWP_KEEP_WALLET = (fid, client) => { if (fid && client) window.BLWP_WALLETS.set(String(fid).toLowerCase(), client); };
+      let summing = null;
+      window.BLWP_SUM_BALANCES = () => summing || (summing = (async () => {
+        try {
+          const seed = walletSeed();
+          const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
+          const held = BLWPCLIENT.ledgerFederations ? BLWPCLIENT.ledgerFederations(vault()) : [];
+          const missing = held.filter((f) => !window.BLWP_WALLETS.has(f));
+          if (seed && missing.length && BLWPCLIENT.openPlayerWallet) {
+            const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+            for (const fid of missing) {
+              const st = statuses.find((x) => x && x.invite && String(x.federation).toLowerCase() === fid);
+              if (!st) continue;
+              try { window.BLWP_KEEP_WALLET(fid, await BLWPCLIENT.openPlayerWallet({ federationId: BLWPCLIENT.fromHex(fid), invite: st.invite, seed, LockClient: wasm.LockClient, storage: vault() })); }
+              catch (e) { console.log('[blwp] the wallet in federation ' + fid.slice(0, 16) + ' did not open: ' + (e && e.message ? e.message : e)); }
+            }
+          }
+          let sum = 0n; const parts = [];
+          for (const [fid, c] of window.BLWP_WALLETS) {
+            try { const m = BigInt(await c.balanceMsat()); sum += m; parts.push({ federation: fid, sats: Number(m / 1000n) }); }
+            catch (e) { console.log('[blwp] the balance in federation ' + fid.slice(0, 16) + ' could not be read: ' + (e && e.message ? e.message : e)); }
+          }
+          if (parts.length) {
+            window.BLWP_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.BLWP_PENDING_SATS || 0, parts,
+              federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
+            if (parts.length > 1) console.log('[blwp] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
+          }
+        } finally { window.BLWP_BALANCE_TRIED = true; summing = null; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
+      })());
+      // OUT OF A DRAINING FEDERATION, BY ITSELF (the owner 2026-10-13 ~12:00Z: "When a federation is draining the client has
+      // automatically to move it to a safe federation"): each time the federations' records are checked, every federation this
+      // browser holds notes in whose record says DRAINING or CRITICAL is emptied into its successor, else the lowest-load OPEN
+      // one (safeFederation). Once per federation per page at a time; a status read, never a timer (W4: no interval spends).
+      const evacuating = new Set();
+      window.ARENA_EVACUATE = async (all) => {
+        if (!BLWPCLIENT.evacuatePlayerWallet || !BLWPCLIENT.safeFederation || !all) return;
+        const seed = walletSeed(); if (!seed) return;
+        const statuses = [...all.values()];
+        for (const fid of BLWPCLIENT.ledgerFederations(vault())) {
+          const st = all.get(fid);
+          if (!st || !['DRAINING', 'CRITICAL'].includes(st.status) || evacuating.has(fid)) continue;
+          const target = BLWPCLIENT.safeFederation({ ...st, federation: fid }, statuses,
+            { known: (f) => BLWPCLIENT.federationIsKnown(f) || BLWPCLIENT.federationConfirmed(localStorage, f) });
+          if (!target) { console.warn('[arena] federation ' + fid.slice(0, 16) + ' is ' + st.status + ' and no safe federation is OPEN: the notes stay, tried again at the next status read'); continue; }
+          evacuating.add(fid);
+          try {
+            const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+            const r = await BLWPCLIENT.evacuatePlayerWallet({ from: { ...st, federation: fid }, target, seed, LockClient: wasm.LockClient, storage: vault(),
+              gateways: window.BLWP_LEDGER_GATEWAYS || [],
+              onState: (m) => console.log(`[arena] moving out of federation ${fid.slice(0, 8)} (${st.status}) into ${String(target.federation).slice(0, 8)}: ${m.state}`
+                + (m.leftMsat !== undefined ? `, ${Math.floor(Number(m.leftMsat) / 1000)} sat to go` : '') + (m.why ? ` (${m.why})` : '')) });
+            window.ARENA_EVACUATED = { from: fid, to: String(target.federation), state: r.state, moved: String(r.moved), chunks: r.chunks };
+            console.log(`[arena] out of federation ${fid.slice(0, 16)}: ${r.state}, ${r.moved} msat in ${r.chunks} chunk(s) to ${String(target.federation).slice(0, 16)}`);
+            if (window.BLWP_SUM_BALANCES) window.BLWP_SUM_BALANCES();
+          } catch (e) { console.warn('[arena] the move out of federation ' + fid.slice(0, 16) + ' stopped: ' + (e && e.message ? e.message : e)); }
+          finally { evacuating.delete(fid); }
+        }
+      };
       window.ARENA_OPEN_WALLET_EARLY = function openWalletEarly(lobby) {
         checkFederationsEarly((testnet ? testnet.named : named).nodes).catch(() => {});
         if (window.BLWP_WALLET_EARLY || !lobby || !lobby.federation || !BLWPCLIENT.openPlayerWallet) return;
@@ -5479,16 +5551,10 @@
             onStep: (step) => console.log('[blwp] player wallet (early): ' + step + ', ' + (Date.now() - t0) + ' ms') });
           window.BLWP_WALLET_EARLY_MS = Date.now() - t0;
           // AND THE BALANCE READER, until a round's warm-up puts its own (a deposit from the games screen reads the balance again)
-          if (!window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE = async () => {
-            try { const m = BigInt(await client.balanceMsat()); window.BLWP_WALLET_BALANCE = { sats: Number(m / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + BLWPCLIENT.toHex(federationId).slice(0, 16) + '\u2026' }; }
-            catch (e) { console.log('[blwp] the balance could not be read: ' + (e && e.message ? e.message : e)); }
-            if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS();
-          };
+          window.BLWP_KEEP_WALLET(BLWPCLIENT.toHex(federationId), client);
+          if (!window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE = () => window.BLWP_SUM_BALANCES();
           // ITS BALANCE AT ONCE, for the wallet bar and Settings (a round's warm-up reads it again later)
-          try { const msat = BigInt(await client.balanceMsat());
-            if (!window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + BLWPCLIENT.toHex(federationId).slice(0, 16) + '\u2026' };
-          } catch (e) { console.log('[blwp] the early balance could not be read: ' + (e && e.message ? e.message : e)); }
-          window.BLWP_BALANCE_TRIED = true;
+          await window.BLWP_SUM_BALANCES();
           if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS();
           console.log('[blwp] player wallet open before any round, ' + (Date.now() - t0) + ' ms');
           return client;
@@ -5648,14 +5714,9 @@
           // THE BALANCE THE BOXES SHOW (Confirmed / Pending, lobby and Settings): read off this wallet, never computed
           const fed = BLWPCLIENT.toHex(r.raw.contract.federationId);
           window.BLWP_WALLET_FEDERATION = fed;   // the federation this wallet answers lockStatus for (lookRound, kanban #200)
-          window.BLWP_READ_BALANCE = async () => {
-            try {
-              const msat = BigInt(await client.balanceMsat());
-              window.BLWP_WALLET_BALANCE = { sats: Number(msat / 1000n), pending: window.BLWP_PENDING_SATS || 0, federation: 'federation ' + fed.slice(0, 16) + '\u2026' };
-            } catch (e) { console.log('[blwp] the balance could not be read: ' + (e && e.message ? e.message : e)); }
-            window.BLWP_BALANCE_TRIED = true;   // read or not, no longer "loading" (kanban #350)
-            if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS();
-          };
+          // EVERY FEDERATION SUMMED (BLWP_SUM_BALANCES): this round's wallet is one of them; read or not, no longer "loading" (#350)
+          if (window.BLWP_KEEP_WALLET) window.BLWP_KEEP_WALLET(fed, client);
+          window.BLWP_READ_BALANCE = () => (window.BLWP_SUM_BALANCES ? window.BLWP_SUM_BALANCES() : Promise.resolve());
           await window.BLWP_READ_BALANCE();
           combineWallets(client, named, r.raw.contract).catch((e) => console.log('[blwp] wallets not combined: ' + (e && e.message ? e.message : e)));
           // A DEPOSIT AN EARLIER PAGE LEFT (a reload between the payment and the claim): finished here, its history row

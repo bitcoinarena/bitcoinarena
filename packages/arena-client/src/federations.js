@@ -121,20 +121,21 @@ export function pickFederation(statuses, { known = () => true } = {}) {
  *   sameFederation(invite, fid)   whether an invite names that federation (inviteNamesFederation)
  * Answers { invite, federation, lowest, why }.
  */
-export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false }) {
+export function depositFederation({ lobbyInvite, statuses = [], held = [], known = () => true, sameFederation = () => false, always = true }) {
   const lobby = (why) => ({ invite: lobbyInvite, federation: null, lowest: false, why });
-  // A RETURNING PLAYER STAYS IN THE FEDERATION IT HOLDS - its own invite, so a deposit or a withdraw reads that wallet; the
-  // lobby's when that federation's record is not among the verified statuses
-  if (held && held.length) {
+  // EVERY DEPOSIT TO THE LOWEST LOAD (RULED the owner 2026-10-13 ~11:50Z: "It should always take the federation with less funds so
+  // it's evened out"): a returning player too - the page sums every federation's wallet (BLWP_SUM_BALANCES), so where the money
+  // sits is no longer the player's concern. `always: false` is §23A.3's earlier rule, a returning player staying where it holds.
+  if (!always && held && held.length) {
     const mine = (statuses || []).find((f) => f && f.invite && held.includes(String(f.federation).toLowerCase()));
     if (mine && !sameFederation(lobbyInvite, mine.federation)) return { invite: mine.invite, federation: mine.federation, lowest: false, why: 'a returning player stays in the federation it holds' };
     return lobby('a returning player stays in the federation it holds');
   }
   const pick = pickFederation((statuses || []).filter((f) => f && f.invite), { known });
-  if (!pick) return lobby('no other OPEN, known federation with a signed load');
+  if (!pick) return lobby('no OPEN, known federation with a signed load');
   if (sameFederation(lobbyInvite, pick.federation)) return { invite: lobbyInvite, federation: pick.federation, lowest: true, why: 'the lobby federation is the lowest-load one' };
   return { invite: pick.invite, federation: pick.federation, lowest: true,
-    why: `first deposit: federation ${String(pick.federation).slice(0, 16)} has the lowest load (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
+    why: `deposit: federation ${String(pick.federation).slice(0, 16)} has the lowest load (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
 }
 
 /**
@@ -242,4 +243,31 @@ export function confirmedFederations(storage) {
 export function inviteNamesFederation(invite, federationIdHex) {
   let f; try { f = readInvite(invite).federationId; } catch { return false; }
   return !!f && String(f).toLowerCase() === String(federationIdHex).toLowerCase();
+}
+
+/**
+ * THE FEDERATION A WITHDRAW READS (kanban #348, with every deposit going to the lowest load): the one of `parts` - the summed
+ * balance's split, [{ federation, sats }] - holding the most, among those whose invite a verified status names; else the lobby's.
+ * One federation per withdraw; a withdraw over several federations at once is a later step.
+ */
+export function withdrawFederation({ lobbyInvite, parts = [], statuses = [] }) {
+  const inviteOf = (fid) => { const st = (statuses || []).find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
+  const best = [...(parts || [])].filter((p) => p && p.sats > 0 && inviteOf(p.federation)).sort((a, b) => b.sats - a.sats)[0];
+  return best ? { invite: inviteOf(best.federation), federation: best.federation, sats: best.sats, why: `withdraw from federation ${String(best.federation).slice(0, 16)}, which holds the most (${best.sats} sat)` }
+    : { invite: lobbyInvite, federation: null, sats: null, why: 'the lobby\'s federation' };
+}
+
+/**
+ * WHERE A DRAINING FEDERATION'S NOTES GO (the owner 2026-10-13 ~12:00Z: "When a federation is draining the client has automatically
+ * to move it to a safe federation"): `from` is a federation's checked status ({ federation, status, successorId }). DRAINING or
+ * CRITICAL only. Its named successor when that one is OPEN with an invite; else the lowest-load OPEN, known federation other
+ * than itself (pickFederation). Null when there is nowhere safe - the notes stay and the next status read tries again.
+ */
+export function safeFederation(from, statuses = [], { known = () => true } = {}) {
+  if (!from || !['DRAINING', 'CRITICAL'].includes(from.status)) return null;
+  const me = String(from.federation || '').toLowerCase();
+  const usable = (statuses || []).filter((f) => f && f.invite && String(f.federation).toLowerCase() !== me);
+  const succ = from.successorId && !/^0+$/.test(String(from.successorId))
+    ? usable.find((f) => String(f.federation).toLowerCase() === String(from.successorId).toLowerCase() && f.status === 'OPEN' && known(f.federation)) : null;
+  return succ || pickFederation(usable, { known });
 }

@@ -90,7 +90,8 @@ test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw
   assert.match(api, /balance: \(\) => \(window\.BLWP_WALLET_BALANCE \?/);
   assert.match(api, /deposit: \(\) => openMoney\('deposit', window\.ARENA_WALLET_BAR_SAY\)/);
   assert.match(api, /withdraw: \(\) => openMoney\('withdraw', window\.ARENA_WALLET_BAR_SAY\)/);
-  const css = slice('    body.arena-own-client #arena-wallet-bar {', '\n    #arena-wb-why:empty { display: none; }');
+  // the bar over a game's own client and over the games screen share one rule since kanban #350 (UI 88)
+  const css = slice('    body.arena-picking #arena-wallet-bar, body.arena-own-client #arena-wallet-bar {', '\n    #arena-wb-why:empty { display: none; }');
   assert.match(css, /body\.arena-own-client #arena-client \{ top: calc\(41px \+ env\(safe-area-inset-top, 0px\)\)/, 'the frame starts under the 40 px bar and its border');
   assert.match(css, /height: 40px/);
   assert.match(HTML, /<div id="arena-wallet-bar" role="toolbar" aria-label="wallet">/);

@@ -15,7 +15,7 @@ const SRC = (() => {
 })();
 const BLWPCLIENT = { lobbyLine: (raw) => `line of ${raw.id}` };
 const joinedOf = (line) => { const m = String(line).match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
-const lobbyViewRow = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['BLWPCLIENT', 'joinedOf'], SRC, 'return lobbyViewRow;')(BLWPCLIENT, joinedOf);
+const lobbyViewRow = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['BLWPCLIENT', 'joinedOf', 'window'], SRC, 'return lobbyViewRow;')(BLWPCLIENT, joinedOf, {});   // window: the row's line reads the verified federation loads (#324)
 const NOW = Date.UTC(2026, 9, 4, 11, 26, 15);
 const raw = (startIn, closeIn, more) => ({ id: 'r1', phase: 'open', startTimeMs: NOW + startIn, entryCloseMs: NOW + closeIn, signerNodes: 7, ...more });
 const row = (r, more) => ({ id: r.id, raw: r, free: false, signerNodesAgree: 7, needed: 5, join: true, stakeSats: '100', ...more });
