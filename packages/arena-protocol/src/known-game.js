@@ -10,9 +10,9 @@
 //
 // F2's second clause rests on it (FEDERATION.md): the player's key is theirs only if the code that decides the round is
 // code they can know.
-import { toHex } from './hash.js';
+import { toHex, taggedHash } from './hash.js';
 import { KNOWN_GOOD_GAMES } from './known-games.js';
-import { speaksVersion } from './constants.js';
+import { speaksVersion, TAG } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
 
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -104,4 +104,21 @@ export function termsOfKnownGame(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   if (!game || !game.terms) return null;
   return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
+}
+
+/**
+ * A TABLE'S ANCHOR (kanban #293, the owner 2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
+ * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
+ * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the
+ * table draws its committee on that round's id (beacon.js committeeSeedFromBeacon) and takes that round's seating certificate, so
+ * all of them name one committee and one claim key (the seats' DKG is per committee). null for every other round: it draws and seats
+ * itself, as before.
+ */
+export function tableAnchorOf(contract) {
+  if (!contract || !(contract.seriesId instanceof Uint8Array) || !Number.isInteger(contract.roundIndex)) return null;
+  if (!(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= 2)) return null;
+  const known = KNOWN_GOOD_GAMES[toHex(contract.gameId)];
+  if (!known || known.seatsPerTable !== true) return null;
+  const body = new Uint8Array(36); body.set(contract.seriesId, 0);      // round 0's id: H(series_id || 0), as contracts.js roundId
+  return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
 }

@@ -14,6 +14,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid } from '../../arena-protocol/src/series.js';
@@ -1576,11 +1577,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const CLAIM_KEY_EVERY_MS = 1000;
   const CLAIM_KEY_MIN_TRIES = 30;
   const claimKeyRuns = new Set();
+  // A TABLE'S KEY ONLY WHEN SOMEBODY WAITS AT IT (kanban #293, the owner 2026-10-13 pick (c): "an empty table must not create a round
+  // key"): a round of a game seated per table (known-game.js tableAnchorOf) makes no claim key when it is assigned; the first page that
+  // asks GET /claim-key for a round of that table names the table wanted here, and the table's one key is made then
+  const wantedTables = new Set();
   function makeClaimKey(rid) {
     if (claimKeyFor || !dkg.canDeal) return;
     const row = round.get(rid);
     if (!row) return;
     const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const table = tableAnchorOf(contract);
+    if (table && !wantedTables.has(toHex(table.anchorId))) return;
     const signerNodes = contract.nodes;
     // ONE RUN PER COMMITTEE, not per round (kanban #345): the claim key is the committee's (dkg.js epochFor), and an RPS grid's
     // rounds all name one committee - one run per round was 30 (a 450-round grid: 450) loops redoing the same key every
@@ -5150,9 +5157,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!round.get(rid)) return text(res, 404, 'this node holds no such round');
         if (!round.signerNodes(rid).some((k) => toHex(k) === toHex(round.pubkey)))
           return text(res, 409, 'this node is not assigned to that round, so it attests no claim key for it');
-        const claimPk = claimKeyOf(new Uint8Array(rid));
-        if (!(claimPk instanceof Uint8Array) || claimPk.length !== 33)
+        let claimPk = claimKeyOf(new Uint8Array(rid));
+        if (!(claimPk instanceof Uint8Array) || claimPk.length !== 33) {
+          // A PLAYER AT A TABLE THAT HAS NO KEY YET (kanban #293 pick (c)): the table is wanted now, and its one key is made
+          const table = tableAnchorOf(decodeRoundContract(new Uint8Array(round.get(rid).contract)));
+          if (table) {
+            const fresh = !wantedTables.has(toHex(table.anchorId));
+            wantedTables.add(toHex(table.anchorId));
+            if (fresh) console.log(`[claim-key] table ${toHex(table.anchorId).slice(0, 16)}: a player waits - its key is made now`);
+            makeClaimKey(new Uint8Array(rid));
+            return text(res, 409, 'this signer node is making that table\'s claim key now: ask again in a few seconds');
+          }
           return text(res, 409, 'this signer node holds no claim key for that round yet');
+        }
         const a = { roundId: new Uint8Array(rid), claimPk, signerNodePubkey: round.pubkey };
         const body = encodeClaimKeyAttestation(a);
         const sig = schnorr.sign(claimKeyAttestationId(a), round.identity.secret);
