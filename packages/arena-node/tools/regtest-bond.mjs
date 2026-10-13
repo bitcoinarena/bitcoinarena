@@ -38,6 +38,19 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   if (!JSON.parse(cli('listwallets')).includes(wallet)) {
     try { cli('loadwallet', wallet); } catch { cli('createwallet', wallet); }
   }
+  // ONE UTXO SCAN AT A TIME, WAITED FOR (kanban #348, measured 2026-10-13: two runners started on one bitcoind at once - the
+  // Up/Down keeper beside the Tick Tock keeper, on the test host and on the test host - and the second died on "Scan already in
+  // progress", error -8): a scan another process runs is waited out, 2 s at a time, up to 4 min, then asked again
+  const scanUtxos = (descriptors) => {
+    for (let i = 0; ; i++) {
+      try { return JSON.parse(cli('scantxoutset', 'start', JSON.stringify(descriptors))); }
+      catch (e) {
+        const said = String((e && (e.stderr || e.message)) || e);
+        if (!/Scan already in progress/.test(said) || i >= 120) throw e;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
+      }
+    }
+  };
   const height = () => Number(cli('getblockcount'));
   const mine = (n = 1) => cli('generatetoaddress', String(n), cli('getnewaddress'));
   // A CHAIN THE OPERATOR MINES IS A CHAIN THE OPERATOR GRINDS (RULED, the owner 2026-09-21 17:01).
@@ -187,7 +200,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     // built off that record carried the advertisement from before it (measured, kanban #295: hosted_games lost)
     markers = null;
     const built = keyAt(nodeKey, g.bondMaturity);
-    const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(built.outputKey)})`])));
+    const scan = scanUtxos([`raw(5120${toHex(built.outputKey)})`]);
     // TEMPLATE 2 PAYS A KEY OF ITS OWN HEIGHT (kanban #295), so no one key finds them: each bond transaction pays this
     // network's marker dust, which nobody spends, and a marker whose transaction commits to a template-2 body of this
     // node key names the bond output to ask the UTXO set about.
@@ -235,7 +248,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
 
   /** This node key's unspent template-2 bond outputs, as scantxoutset answers them, found by the marker (read fresh). */
   function v2BondsOf(nodeKey) {
-    const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(bondMarker(network))})`])));
+    const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
     const found = [];
     const seen = new Set();
     for (const m of (scan.unspents || []).filter((x) => x.height > 0)) {
@@ -269,7 +282,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   let markers = null;
   function newestUpdateOf(bond) {
     if (!markers) {
-      const scan = JSON.parse(cli('scantxoutset', 'start', JSON.stringify([`raw(5120${toHex(bondMarker(network))})`])));
+      const scan = scanUtxos([`raw(5120${toHex(bondMarker(network))})`]);
       markers = (scan.unspents || []).filter((m) => m.height > 0);
     }
     let best = null;

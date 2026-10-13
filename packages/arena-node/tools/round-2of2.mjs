@@ -1299,7 +1299,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
             const r = await fetch(`http://${host}:${node.port}/series`, { method: 'POST', body: lines[k] });
             if (r.ok) return { port: node.port, ok: true, ...(await r.json()) };
             why = await r.text();
-            if (!/no chain view|view .*pending|fetch failed/i.test(why) || t >= 10) break;
+            if (!/no chain view|view .*pending|fetch failed|nobody has funded/i.test(why) || t >= 20) break;
           } catch (e) { why = e.message; }
           await new Promise((res) => setTimeout(res, 3000));
         }
@@ -1311,7 +1311,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         for (let t = 0; t < 20 && !ok; t++) {
           try { const r = await fetch(`${url}/series`, { method: 'POST', body: lines[k], signal: AbortSignal.timeout(30000) }); ok = r.ok; if (!ok) why = await r.text(); }
           catch (e) { why = e.message; }
-          if (!ok && !/no chain view|view .*pending|fetch failed|unreachable/i.test(why)) break;
+          // a seat of the other federation may not hold the funding yet (measured 2026-10-13 18:57Z: 7 of 14 "nobody has funded"; the A<->B
+          // funding sync runs every 30 s): asked again
+          if (!ok && !/no chain view|view .*pending|fetch failed|unreachable|nobody has funded/i.test(why)) break;
           if (!ok) await new Promise((res) => setTimeout(res, 3000));
         }
         answers.push({ port: key.slice(0, 8), ok, why });

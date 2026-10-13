@@ -14,6 +14,7 @@ import { blockHashOf, TESTNET4_ANCHOR_HEIGHT } from '../../arena-protocol/src/ch
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { agreedChain, httpProvider } from './headers.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
@@ -107,18 +108,22 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
   // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before #301).
   got.seating = {};
+  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (kanban #293 pick (c)): that round's certificate, asked and checked as its own
+  const anchor = tableAnchorOf(contract);
+  const seatId = anchor ? anchor.anchorId : roundId;
+  const seatHex = toHex(seatId);
   for (const role of roles) {
     let spoke = false; const refused = [];
     let found = null;
     for (const u of nodes) {
       try {
-        const r = await fetcher(`${baseOf(u)}/seating?round=${roundIdHex}&role=${role}`);
+        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`);
         const body = await r.text();
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
         const cert = JSON.parse(body).cert;
-        const v = verifySeating(fromHex(cert), { roundId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        const v = verifySeating(fromHex(cert), { roundId: seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) { found = { seated: v.seating.seated, from: u }; break; }
         refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }

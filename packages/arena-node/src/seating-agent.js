@@ -16,6 +16,7 @@ import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { signPresent, verifyPresent, decodePresent, seatedFrom, signSeating, seatingId, encodeSeatingCertificate, verifySeating,
   seatingEquivocation, seatingCloseMs, decodeSeatingCertificate, SEATING_ROLES } from '../../arena-protocol/src/seating.js';
 import { endpointsOf } from './roster.js';
+import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 
 /** How far ahead of its start a round is looked at: PRESENT is signed in the last minute before seating_close. */
 export const PRESENT_WINDOW_MS = 60000n;
@@ -93,6 +94,10 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (typeof c.startTimeMs !== 'bigint') continue;
+      // A TABLE IS SEATED ONCE, BY ITS FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf): its later rounds exchange no
+      // PRESENT and sign no seating - the roster seats them with the first round's certificate
+      const anchor = tableAnchorOf(c);
+      if (anchor && !anchor.first) continue;
       starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c });
     }
   };
@@ -300,19 +305,30 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     return { rounds };
   }
 
+  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (kanban #293 pick (c)): every lookup by round maps it there
+  const anchors = new Map();
+  const seatOf = (rid) => {
+    const h = toHex(rid);
+    if (anchors.has(h)) return anchors.get(h);
+    let to = rid;
+    try { const row = round.get(rid); const a = row ? tableAnchorOf(decodeRoundContract(new Uint8Array(row.contract))) : null; if (a) to = a.anchorId; } catch { /* itself */ }
+    anchors.set(h, to);
+    if (anchors.size > 20000) anchors.delete(anchors.keys().next().value);
+    return to;
+  };
   return {
     tick,
     /** For the roster: who the certificate seats (node keys hex), or null while none stands or after equivocation. */
-    seatedFor: (rid, role) => { const s = certs.get(`${toHex(rid)}:${role}`); return s || null; },
+    seatedFor: (rid, role) => { const s = certs.get(`${toHex(seatOf(rid))}:${role}`); return s || null; },
     /** A round's seating, for the doors, the lobby and the entry gate. */
     stateOf: (rid) => {
       const out = {};
       for (const role of SEATING_ROLES) {
-        const key = `${toHex(rid)}:${role}`;
+        const key = `${toHex(seatOf(rid))}:${role}`;
         out[role] = certs.has(key) && certs.get(key) === null ? { equivocated: true } : certs.get(key) ? { seated: certs.get(key) } : null;
       }
       return out;
     },
-    takePresent, presentsOf, mySignature, certOf, keepCert, equivocationOf, takePresents, batchOf,
+    takePresent, presentsOf, mySignature, certOf: (rid, role) => certOf(seatOf(rid), role), keepCert, equivocationOf, takePresents, batchOf,
   };
 }

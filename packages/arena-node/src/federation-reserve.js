@@ -12,7 +12,17 @@ export const reserveOfSummary = (s) => sumOf(s.spendable_utxos) + sumOf(s.unconf
 const V2 = 100;   // a federation_wallet request's JSON-RPC id is V2 + the module id, beside wallet_summary's module id
 
 /** One guardian's reserve: the wallet module found by trying the module ids (the first to answer either method). */
+// THE SAME ROUTES THE FEDERATION CLIENT TAKES (kanban #348, measured 2026-10-13 ~20:10Z: federation B's seats run on the test host, and
+// their guardians' advertised endpoints go out to the the test host's Funnel and back over a ship's Starlink link - every reserve read
+// timed out, "0 of 7 guardians named one reserve", and federation B had no record): FM_WS_API_CONNECT_OVERRIDES, the Fedimint
+// client's own "<advertised>=<reach>" list, rewrites an endpoint before it is opened; with none set nothing changes
+const OVERRIDES = new Map(String(process.env.FM_WS_API_CONNECT_OVERRIDES || '').split(',').filter((x) => x.includes('=')).map((x) => {
+  const i = x.indexOf('='); return [x.slice(0, i).replace(/\/+$/, ''), x.slice(i + 1).replace(/\/+$/, '')];
+}));
+export const routedEndpoint = (endpoint) => OVERRIDES.get(String(endpoint).replace(/\/+$/, '')) || endpoint;
+
 async function askOne(endpoint, { timeoutMs, moduleId, WS }) {
+  endpoint = routedEndpoint(endpoint);
   return new Promise((done) => {
     let ws; const finish = (v) => { try { ws && ws.close(); } catch { /* closed */ } done(v); };
     const timer = setTimeout(() => finish({ ok: false, why: 'no answer in time' }), timeoutMs);
