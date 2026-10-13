@@ -54,15 +54,16 @@ test('on a running seat: the pairing token reads status and signs a vote; config
     assert.equal(st.ok, true);
     assert.equal(typeof st.node, 'string');
     assert.equal(typeof st.roundsHeld, 'number');
-    // THE VOTE ACTION (#332 on #329): the node's bond key signs, the door answers the 76-byte payload and broadcasts nothing
+    // THE VOTE ACTION (#332 on #329): the node's bond key signs, the door answers the 77-byte "ARN" 'V' payload and broadcasts nothing
     const { decodeVote, voteMessage: vm, CHOICE: C } = await import('../../arena-protocol/src/ballot.js');
     const pid = 'ab'.repeat(32);
     const castVote = (body, tok = token) => fetch(base + '/operator/vote', { method: 'POST', headers: { authorization: `Bearer ${tok}` }, body: JSON.stringify(body) });
     const v = await (await castVote({ proposalId: pid, choice: 'yes' })).json();
     assert.equal(v.ok, true, v.why);
     const dec = decodeVote(Uint8Array.from(Buffer.from(v.opReturn, 'hex')));
-    console.log('  VOTE:', JSON.stringify({ bytes: v.opReturn.length / 2, marker: Buffer.from(v.opReturn.slice(0, 6), 'hex').toString(), prefix: toHex(dec.idPrefix), choice: dec.choice }));
-    assert.equal(v.opReturn.length / 2, 76);
+    console.log('  VOTE:', JSON.stringify({ bytes: v.opReturn.length / 2, marker: Buffer.from(v.opReturn.slice(0, 8), 'hex').toString(), prefix: toHex(dec.idPrefix), choice: dec.choice }));
+    assert.equal(v.opReturn.length / 2, 77);
+    assert.equal(v.opReturn.slice(0, 8), '41524e56', '"ARN" \'V\'');
     assert.equal(toHex(dec.idPrefix), pid.slice(0, 16));
     assert.equal(dec.choice, C.YES);
     assert.equal(schnorr.verify(dec.signature, vm(Uint8Array.from(Buffer.from(pid, 'hex')), C.YES), Uint8Array.from(Buffer.from(st.node, 'hex'))), true,

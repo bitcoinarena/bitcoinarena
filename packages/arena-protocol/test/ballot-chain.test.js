@@ -16,13 +16,17 @@ const tx = (outs) => Uint8Array.from([...le(2, 4), 1, ...new Uint8Array(32).fill
   outs.length, ...outs.flatMap((o) => [...le(o.sats, 8), o.script.length, ...o.script]), ...le(0, 4)]);
 const opReturn = (data) => Uint8Array.from([0x6a, ...(data.length <= 75 ? [data.length] : [0x4c, data.length]), ...data]);
 
-test('every 76-byte "BLW" OP_RETURN of a block is a vote, with its height and txid; anything else is not', () => {
+test('every 77-byte "ARN" \'V\' OP_RETURN of a block is a vote, with its height and txid; anything else is not', () => {
   const secret = new Uint8Array(32).fill(5); const id = new Uint8Array(32).fill(0x21);
   const payload = encodeVote({ proposalId: id, choice: CHOICE.YES, signature: schnorr.sign(voteMessage(id, CHOICE.YES), secret) });
   const voting = tx([{ sats: 0, script: opReturn(payload) }, { sats: 1000, script: Uint8Array.of(0x51) }]);
   const other = tx([{ sats: 0, script: opReturn(Uint8Array.from([0x41, 0x52, 0x4e, 1, 2, 3])) }]);
+  // a fork re-affirmation ("ARN" 'F', 76 bytes) and a publication ("ARN" 'R', 36) are no votes: the kind byte and the length
+  const reaffirm = tx([{ sats: 0, script: opReturn(Uint8Array.from([0x41, 0x52, 0x4e, 0x46, ...new Uint8Array(72).fill(1)])) },
+    { sats: 0, script: opReturn(Uint8Array.from([0x41, 0x52, 0x4e, 0x52, ...new Uint8Array(32).fill(2)])) },
+    { sats: 0, script: opReturn(Uint8Array.from([0x41, 0x52, 0x4e, 0x46, ...payload.subarray(4, 76)])) }]);
   const coinbase = splitBlock(RAW).transactions[0];
-  const block = Uint8Array.from([...RAW.slice(0, 80), 3, ...coinbase, ...voting, ...other]);
+  const block = Uint8Array.from([...RAW.slice(0, 80), 4, ...coinbase, ...voting, ...other, ...reaffirm]);
   const found = votesInBlock(block, 812);
   assert.equal(found.length, 1);
   assert.deepEqual([found[0].height, toHex(found[0].payload)], [812, toHex(payload)]);
