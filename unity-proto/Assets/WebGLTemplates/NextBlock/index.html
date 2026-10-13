@@ -1064,7 +1064,11 @@
       || performance.now() > 60000
       // NO UNITY TO WAIT FOR (kanban #350): a game with its own client - Rock Paper Scissors, a market - never starts Unity, so
       // its wallet waited the whole 60 s before the federation join could even begin (the cold first deposit's 41.5 s)
-      || window.ARENA_UNITY === false || (window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock');
+      || window.ARENA_UNITY === false || (window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock')
+      // NOR ON THE GAMES SCREEN (kanban #350, the owner 2026-10-13 07:44: "Balances at the main screen are always stuck at loading";
+      // measured in WebKit without a Tailscale route: the wallet joined 58-62 s after load, every time - this 60 s, since the
+      // screen that picks a game starts no Unity to wait for)
+      || document.body.classList.contains('arena-picking');
     (function look() { if (ready()) ok(); else setTimeout(look, 250); })();
   });
   window.BLWP_LOCK_WASM = () => (window.__blwpLockWasm = window.__blwpLockWasm || unityStartSettled().then(() => import('./blwp_lock_client.js'))
