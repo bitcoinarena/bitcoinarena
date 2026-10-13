@@ -30,3 +30,20 @@ test('the node the rise passes is told at T-30d, T-14d, T-3d and T+0; one whose 
   assert.equal(at(40), null, 'beyond 30 days nothing yet');
   assert.equal(bondMinWarning({ pending, ownBondSats: 90000n, nowHeight: 2000 }), null);
 });
+
+test('the median history a seat holds: one census per height, its bond-weighted median, ascending; then the floor in force (kanban #300)', async () => {
+  const { medianHistory, bondMinInForce, NOTICE_BLOCKS } = await import('../src/bond-min-notice.js');
+  const { bondWeightedMedian } = await import('../src/census-median.js');
+  const node = (bond, declared) => ({ bondSats: bond, advert: { declares: { bondMinSats: declared } } });
+  const rounds = [
+    { censusHeight: 300, entries: [node(100000n, 80000n), node(100000n, 80000n), node(50000n, 50000n)] },
+    { censusHeight: 100, entries: [node(100000n, 50000n), node(100000n, 50000n)] },
+    { censusHeight: 300, entries: [node(1n, 1n)] },
+    { censusHeight: 200, entries: [] },
+  ];
+  const h = medianHistory(rounds, bondWeightedMedian);
+  assert.deepEqual(h.map((x) => [x.height, x.median]), [[100, 50000n], [300, 80000n]], 'the first census per height; one with no declarations gives none');
+  assert.deepEqual(NOTICE_BLOCKS, { mainnet: 4320, testnet4: 144, testnet: 144, regtest: 10 });
+  const f = bondMinInForce(h, 300, NOTICE_BLOCKS.testnet4);
+  assert.deepEqual([f.inForce, f.pending.value, f.pending.effectiveAt], [50000n, 80000n, 444]);
+});

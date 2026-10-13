@@ -260,6 +260,8 @@ async function standingPanel() {
     <div class="row"><span>Share of the bonded capital</span><b>${pct(st.ownWeight)}</b></div>
     <div class="row"><span>Brackets served</span><b>${esc(st.bracketsServed.eligible)} of ${esc(st.bracketsServed.of)} recent rounds</b></div>
     <div class="row"><span>Headroom</span><b>${typeof st.headroom === 'number' ? st.headroom.toFixed(2) + 'x the bond_min now common (' + esc(Number(st.commonBondMinSats).toLocaleString('en-US')) + ' sat)' : '-'}</b></div>
+    ${st.bondMin && st.bondMin.inForce !== null ? `<div class="row"><span>bond_min in force</span><b>${esc(Number(st.bondMin.inForce).toLocaleString('en-US'))} sat${st.bondMin.pending
+      ? ' · rising to ' + esc(Number(st.bondMin.pending.value).toLocaleString('en-US')) + ' sat at block ' + esc(st.bondMin.pending.effectiveAt) + ' if it holds (notice ' + esc(st.bondMin.noticeBlocks) + ' blocks)' : ''}</b></div>` : ''}
     ${warns.length ? warns.map((w) => `<p class="${w.urgent ? 'err' : 'sub'}"><b>${esc(w.kind.toUpperCase())}</b>: ${esc(w.says)}</p>${w.update ? `<p class="sub">Step out: <code>${esc(w.update)}</code></p>` : ''}`).join('')
       : '<p class="sub ok">No warning: this node is seated when drawn, and its bond is above the margin.</p>'}`;
 }

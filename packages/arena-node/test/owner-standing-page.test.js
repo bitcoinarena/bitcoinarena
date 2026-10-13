@@ -35,3 +35,11 @@ test('seated when drawn and a bond above the margin: no warning', async () => {
   const html = await render({ missedInARow: 0, warning: null }, st);
   assert.match(html, /No warning/); assert.doesNotMatch(html, /class="err"/);
 });
+
+test('the bond_min in force and a pending rise, with its escalation in the warnings (kanban #300)', async () => {
+  const st = { ...nodeStanding({ me, rounds: rounds(100000n, [[me, 1000000n]]) }), bondMin: { inForce: '50000', noticeBlocks: 144, pending: { value: '80000', crossedAt: 300, effectiveAt: 444 } } };
+  st.warnings = [{ kind: 'bond_min rise (T-3d)', urgent: true, says: 'bond_min rises to 80000 sat at block 444' }];
+  const html = await render({ missedInARow: 0, warning: null }, st);
+  assert.match(html, /bond_min in force<\/span><b>50,000 sat · rising to 80,000 sat at block 444 if it holds \(notice 144 blocks\)/);
+  assert.match(html, /BOND_MIN RISE \(T-3D\)/);
+});
