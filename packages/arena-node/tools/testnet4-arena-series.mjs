@@ -34,6 +34,8 @@ import { seriesTemplate, seriesLeadIsValid, seriesId, seriesPublicationPayload, 
 import { bondSetFor } from '../src/curve.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { UPDOWN_TN4 } from '../../btc-updown/plugin/btc-updown.js';
+import { GAME as UPDOWN_V2 } from '../../btc-updown/plugin/btc-updown-v2.js';
+import { GAME as NEXTBLOCK_V2 } from '../../nextblock/plugin/nextblock-v2.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { seriesRound, roundsPerSeries } from '../../arena-protocol/src/series.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
@@ -83,16 +85,23 @@ let H = tip; if (!dryAtTip && !atTip) while (mtpOf(H) > cut) H--;
 // SERIES_GAME=updown (kanban #293): the Bitcoin Up or Down market on testnet4 (game 672415c8) - no core, no config, no score;
 // the same seats, federation, relays and stake as Tick Tock's
 const UPDOWN = env.SERIES_GAME === 'updown';
+// SERIES_PROTOCOL_VERSION=2 (2026.0.2, kanban #348/#293; RULED the owner 2026-10-13: versions run in parallel, a game or market needs
+// its version): the round that names no draw - protocol_version 2, no node list - of the v2 game or market. SERIES_FEDERATION_ID
+// names another federation than the base series' (federation B's own series).
+const V2 = env.SERIES_PROTOCOL_VERSION === '2';
+const UPDOWN_GAME = V2 ? UPDOWN_V2 : UPDOWN_TN4;
 const contract = {
-  ...base, networkId: NETWORK_ID_TESTNET4, gameId: NEXTBLOCK.gameId,
+  ...base, networkId: NETWORK_ID_TESTNET4, gameId: (V2 ? NEXTBLOCK_V2 : NEXTBLOCK).gameId,
   donationSetId: donationSetId(TESTNET4_DONATION_SET_KEYS.recipients), censusHeight: H, censusRoot: new Uint8Array(32),
-  ...(UPDOWN ? { gameId: UPDOWN_TN4.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0 } : {}),
+  ...(UPDOWN ? { gameId: UPDOWN_GAME.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0 } : {}),
+  ...(V2 ? { protocolVersion: 2, nodes: [] } : {}),
+  ...(env.SERIES_FEDERATION_ID ? { federationId: fromHex(env.SERIES_FEDERATION_ID) } : {}),
 };
 // ON ITS OWN PERIOD (§0A.7b.4), its locks spanning the latest window of its day (lock-expiry.js marketExpiryBlocks)
 const marketShape = (t) => {
   if (!UPDOWN) return t;
-  t.seriesPeriodMs = UPDOWN_TN4.manifest.roundPeriodMs;
-  const need = marketExpiryBlocks(seriesRound(t, roundsPerSeries(t.seriesPeriodMs) - 1), UPDOWN_TN4.manifest.marketTerms);
+  t.seriesPeriodMs = UPDOWN_GAME.manifest.roundPeriodMs;
+  const need = marketExpiryBlocks(seriesRound(t, roundsPerSeries(t.seriesPeriodMs) - 1), UPDOWN_GAME.manifest.marketTerms);
   if (!need.ok) throw new Error(need.why);
   t.stakeExpiryBlocks = need.blocks;
   return t;
@@ -116,8 +125,8 @@ if (!census.ok) throw new Error(`no census at ${H}: ${census.why}`);
 if (env.ARENA_FEDERATION_READ_DIR) {
   const j = JSON.parse(execFileSync(env.ARENA_STAKE_LOCK_BIN || '/home/arena/blwp-testnet4/patched/bin/blwp-stake-lock',
     ['--mode', 'guardians', '--data-dir', env.ARENA_FEDERATION_READ_DIR], { encoding: 'utf8', timeout: 120000 }).trim().split('\n').pop());
-  if (String(j.federation_id) !== toHex(base.federationId)) throw new Error(`that client directory reaches federation ${String(j.federation_id).slice(0, 16)}, the series names ${toHex(base.federationId).slice(0, 16)}`);
-  const bonded = federationIsBonded({ federationId: base.federationId, guardianKeys: (j.keys || []).map((x) => fromHex(String(x.key))),
+  if (String(j.federation_id) !== toHex(contract.federationId)) throw new Error(`that client directory reaches federation ${String(j.federation_id).slice(0, 16)}, the series names ${toHex(contract.federationId).slice(0, 16)}`);
+  const bonded = federationIsBonded({ federationId: contract.federationId, guardianKeys: (j.keys || []).map((x) => fromHex(String(x.key))),
     threshold: Number(j.threshold), census: census.entries, bondMinSats: base.bondMinSats });
   say({ step: 'guardians', federation: String(j.federation_id).slice(0, 16), threshold: Number(j.threshold), ok: bonded.ok, bonded: bonded.bonded ?? null, why: bonded.why || null });
   if (!bonded.ok) throw new Error(`the seats would refuse every paid round of this series (§23.6): ${bonded.why}`);
