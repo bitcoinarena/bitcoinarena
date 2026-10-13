@@ -28,6 +28,7 @@ import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
+import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -5187,6 +5188,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      // THE SELF-BINDING SCALARS IN FORCE FOR A ROUND (§27A.2, kanban #305): the bond-weighted median of what its census's nodes declare
+      if (req.method === 'GET' && url.pathname === '/census-median') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a census median is asked for by a round id');
+        if (!round.get(new Uint8Array(rid))) return text(res, 404, 'this signer node holds no such round');
+        const census = roster.censusFor(new Uint8Array(rid));
+        if (!census || !census.ok) return text(res, 409, `no census read for that round: ${census ? census.why : 'none'}`);
+        const m = (f) => { const v = bondWeightedMedian(census.entries, f); return v === null ? null : String(v); };
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ bondMinSats: m('bondMinSats'), proposalDepositSats: m('proposalDepositSats'),
+          declaring: census.entries.filter((e) => e.advert && e.advert.declares).length, of: census.entries.length }));
+      }
+
       // THE REPLAY BUDGET (§34, kanban #303): this seat's measured replay speed - the median of its newest replays - and the players a
       // round of T_run can hold inside the 600 s result window at it; no measurement, no number ("do not hard-code ... 20x realtime")
       if (req.method === 'GET' && url.pathname === '/replay-budget') {
