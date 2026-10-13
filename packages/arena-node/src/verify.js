@@ -17,6 +17,7 @@ import { ReplayPool } from './pool.js';
 import { checkObjectionBundle } from './objection-check.js';
 import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
+import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
 import { timed } from './slow.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
@@ -560,8 +561,8 @@ export class Verifier {
    * round's signer nodes can make one, so a peer's word alone ends nothing.
    */
   async #combined(roundIdBytes) {
-    const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
-    if (s && (s.state === 'SUBMITTING' || s.state === 'ACCEPTED')) return true;
+    const st = stateOf(this.round, roundIdBytes);
+    if (st === 'SUBMITTING' || st === 'ACCEPTED') return true;
     if (typeof this.combinedElsewhere !== 'function') return false;
     try { return !!(await this.combinedElsewhere(roundIdBytes)); } catch { return false; }
   }
