@@ -5123,16 +5123,19 @@
       if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));
       // the link's game, else this site's own (kanban #279: the Rock Paper Scissors site opens on Rock Paper Scissors)
       const named = new URLSearchParams(location.search.replace(/^\?/, '')).get('game') || window.ARENA_SITE_GAME;
-      let game = named ? got.games.find((g) => g.id === String(named).toLowerCase() || g.name === named) : null;
-      if (!game && got.games.length === 1) game = got.games[0];
-      if (!game && got.games.length > 1) {
+      // ONE TILE PER GAME (kanban #348): its versions (2026.0.1, 2026.0.2) are one tile - the newest with a live round; a link
+      // naming a version's id still opens that version
+      const tiles = BLWPCLIENT.oneTilePerGame ? BLWPCLIENT.oneTilePerGame(got.games) : got.games;
+      let game = named ? (got.games.find((g) => g.id === String(named).toLowerCase()) || tiles.find((g) => g.name === named)) : null;
+      if (!game && tiles.length === 1) game = tiles[0];
+      if (!game && tiles.length > 1) {
         const el = document.getElementById('arena-games');
         const list = el.querySelector('.list');
         list.textContent = '';
         game = await new Promise((chosen) => {
           // THE TILES (kanban #338): games first, then prediction markets; each its logo, type, signed description and players
           const typeOf = (g) => (g.attested ? 'market' : g.manifest && g.manifest.resultType === 3 ? 'head-to-head' : 'game');
-          const groups = [['Games', got.games.filter((g) => !g.attested)], ['Prediction markets', got.games.filter((g) => g.attested)]];
+          const groups = [['Games', tiles.filter((g) => !g.attested)], ['Prediction markets', tiles.filter((g) => g.attested)]];
           for (const [label, games] of groups) {
             if (!games.length) continue;
             const sec = document.createElement('section'); sec.className = 'group';
@@ -5166,7 +5169,7 @@
               b.append(play, head, desc, signed, stats);
               if (!g.known) { const w = document.createElement('div'); w.className = 'warn'; w.textContent = 'Not pinned by this page: developer ' + g.devKey.slice(0, 16) + ', manifest ' + g.id.slice(0, 16); b.append(w); }
               // THE DESCRIPTION ONLY WHEN ITS DEVELOPER SIGNED IT (game-info.js, #276): checked here, never taken from a seat
-              if (BLWPCLIENT.checkedGameInfo) BLWPCLIENT.checkedGameInfo(g, pageEd25519Verify).then((info) => {
+              if (BLWPCLIENT.checkedGameInfo) (BLWPCLIENT.checkedGameInfoOfTile || BLWPCLIENT.checkedGameInfo)(g, pageEd25519Verify).then((info) => {
                 if (!info) return;
                 desc.className = 'desc'; desc.textContent = info.description;
                 signed.textContent = '\u2713 signed by its developer';
