@@ -143,7 +143,8 @@ say({ step: 'series', id: toHex(id), k, census: H, censusRoot: toHex(census.root
   donationSet: toHex(template.donationSetId).slice(0, 16), nodes: template.nodes.length, tip, tipMtp: new Date(Number(tipMtp)).toISOString() });
 
 // 4. THE PUBLICATION: ONE WALLET OUTPUT, NEVER A BOND OR A MARKER
-const utxos = JSON.parse(wallet('listunspent', '1')).filter((u) => u.spendable && u.solvable
+// SERIES_MINCONF=0 (kanban #293): an unconfirmed output may pay too - a second series spending the first's change confirms with it
+const utxos = JSON.parse(wallet('listunspent', String(env.SERIES_MINCONF ?? '1'))).filter((u) => u.spendable && u.solvable
   && ![50000, 1670, 330, 3000].includes(Math.round(u.amount * 1e8)) && u.amount * 1e8 >= 5000).sort((a, b) => a.amount - b.amount);
 if (!utxos.length) throw new Error('no confirmed non-bond output of at least 5000 sat in the wallet');
 const input = utxos[0];

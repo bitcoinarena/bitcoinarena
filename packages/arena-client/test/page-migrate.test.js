@@ -76,3 +76,22 @@ test('dust stays: a wallet holding no more than the dust line moves nothing', as
   const out = await migrateFromDraining({ from: w.from, to: w.to, record: { status: 'DRAINING', successorId: NEW }, toFederationId: NEW });
   assert.equal(out.moved, 0n); assert.equal(out.state, 'moved');
 });
+
+// THE OWNER 2026-10-13 ~12:00Z: "When a federation is draining the client has automatically to move it to a safe federation" -
+// the target is its OPEN successor, else the lowest-load OPEN known federation; a CRITICAL federation empties the same way
+test('out of a DRAINING or CRITICAL federation: into its OPEN successor, else the lowest-load OPEN one; never into itself', async () => {
+  const { safeFederation } = await import('../src/federations.js');
+  const C = 'cc'.repeat(32);
+  const st = (federation, status, load, extra = {}) => ({ federation, status, load, invite: 'inv-' + federation.slice(0, 2), ...extra });
+  const statuses = [st(OLD, 'DRAINING', 0.1, { successorId: NEW }), st(NEW, 'OPEN', 0.9), st(C, 'OPEN', 0.2)];
+  assert.equal(safeFederation(statuses[0], statuses).federation, NEW, 'the named successor, OPEN, though C has the lower load');
+  assert.equal(safeFederation({ ...statuses[0], successorId: '00'.repeat(32) }, statuses).federation, C, 'no successor: the lowest load');
+  assert.equal(safeFederation(st(OLD, 'CRITICAL', 0.1), statuses).federation, C, 'CRITICAL: the lowest load other than itself');
+  assert.equal(safeFederation(st(OLD, 'DRAINING', 0.1, { successorId: NEW }), [st(NEW, 'DRAINING', 0.1)]), null, 'nowhere safe: null');
+  assert.equal(safeFederation(st(C, 'OPEN', 0.2), statuses), null, 'an OPEN federation is not moved out of');
+  // and the move itself out of a CRITICAL one, into the chosen federation
+  const w = wallets(500000n);
+  const out = await migrateFromDraining({ from: w.from, to: w.to, record: { status: 'CRITICAL', successorId: C }, toFederationId: C });
+  console.log('  CRITICAL MOVE:', JSON.stringify({ state: out.state, moved: String(out.moved), chunks: out.chunks, left: String(w.left()) }));
+  assert.equal(out.state, 'moved'); assert.equal(out.moved, w.got()); assert.ok(out.moved > 0n);
+});
