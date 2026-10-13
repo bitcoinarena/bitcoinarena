@@ -49,3 +49,16 @@ test('the round resolved to that federation keeps its id, locks, and its entry n
   assert.equal(inFederation(one, B), one);
   assert.equal(entryFor(one, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor() }).federationId, undefined);
 });
+
+test('a declared operator rides as the entry\'s tail; none declared leaves the entry\'s bytes and id as they were (kanban #309)', () => {
+  const r = { ...ANY, protocolVersion: 2, federationId: fromHex(A) };
+  const make = (more) => ({ sessionPubkey: new Uint8Array(32).fill(3), roundId: ANY.id, ...entryFor(r, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor(), ...more }) });
+  const plain = make({});
+  const op = new Uint8Array(32).fill(0x0c);
+  const declared = make({ operatorId: op });
+  assert.equal(plain.operatorId, undefined);
+  assert.deepEqual(decodeEntryContract(encodeEntryContract(declared)).operatorId, op);
+  assert.deepEqual(make({ operatorId: new Uint8Array(32) }).operatorId, undefined, 'all zero is no declaration');
+  assert.deepEqual(toHex(encodeEntryContract(make({ operatorId: null }))), toHex(encodeEntryContract(plain)), 'none declared: the same bytes');
+  assert.equal(toHex(encodeEntryContract(declared)).startsWith(toHex(encodeEntryContract(plain))), true, 'the declaration is a tail');
+});
