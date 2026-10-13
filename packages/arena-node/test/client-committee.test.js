@@ -252,7 +252,9 @@ test('an explorer outside the network: the census block must be its block; a tip
   const at = (h) => displayHash(blockHashOf(headers[h - view.firstHeight]));
   const tipHeight = view.firstHeight + headers.length - 1;
   const explorerSays = { right: (h) => at(h), wrongCensus: (h) => (h === Number(contract.censusHeight) ? 'ee'.repeat(32) : at(h)), wrongTip: (h) => (h === tipHeight ? 'ee'.repeat(32) : at(h)) };
-  const fetcher = async (url) => {
+  const objections = [];
+  const fetcher = async (url, o) => {
+    if (url.endsWith('/census-objection')) { objections.push([url, JSON.parse(o.body)]); return new Response('{}', { status: 200 }); }
     const ex = /^https:\/\/(right|wrongCensus|wrongTip)\.explorer\/block-height\/(\d+)$/.exec(url);
     if (ex) return new Response(explorerSays[ex[1]](Number(ex[2])), { status: 200 });
     const body = url.endsWith('/headers') ? headerBytes : url.includes('/census?') ? Buffer.from(JSON.stringify(ev)) : null;
@@ -266,6 +268,8 @@ test('an explorer outside the network: the census block must be its block; a tip
   assert.deepEqual([right.explorer.census.ok, right.explorer.census.checked, right.explorer.tip.ok], [true, 1, true]);
   const census = await ask('wrongCensus');
   assert.equal(census.ok, false); assert.match(census.why, /the census does not stand outside the network: the explorer names block eeeeeeee/);
+  assert.deepEqual(census.objected.map((o) => o.node), nodes, 'the objection is handed to every seat');
+  assert.deepEqual(objections.map(([u, b]) => [u, b.round, b.explorer]), nodes.map((n) => [`${n}/census-objection`, toHex(rid), 'https://wrongCensus.explorer']));
   const tip = await ask('wrongTip');
   assert.equal(tip.ok, true, 'a tip that differs is either side\'s lag on testnet4');
   assert.deepEqual([tip.explorer.census.ok, tip.explorer.tip.ok, !!tip.explorer.tip.mismatch], [true, false, true]);

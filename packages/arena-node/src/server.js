@@ -27,6 +27,8 @@ import { missedInARow, seatingWarning } from './seatings.js';
 import { nodeStanding } from './node-standing.js';
 import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
 import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
+import { blockHashOf } from '../../arena-protocol/src/chain.js';
+import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
@@ -433,7 +435,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and, once ATTESTED, the pari-mutuel table the settlement seats pay from (built here from the entries' picks and the
   // outcome, no game code). null for a round of a replayed game, or of a game this node does not host.
   const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
-  const warningsOf = (c) => { const f = pluginForRound(c, hosted); try { return contractWarnings(c, f.ok ? f.plugin.roundWarnings : null); } catch { return []; } };
+  // A CENSUS OBJECTED (§5A.4, kanban #299): rounds whose census block this seat found, on its own chain, to be another block than an
+  // explorer outside the network names - after a client's objection, checked here; such a round takes no new entry and lists it
+  const censusObjections = new Map();          // round hex -> { explorer, why, atMs }
+  const warningsOf = (c, rid = null) => { const f = pluginForRound(c, hosted); let w = []; try { w = contractWarnings(c, f.ok ? f.plugin.roundWarnings : null); } catch { w = []; }
+    return rid && censusObjections.has(toHex(rid)) ? [...w, 'census_objected'] : w; };
   const outcomeOf = (rid, c, { table = false } = {}) => {
     const plugin = attestedOf(c);
     if (!plugin) return null;
@@ -3126,7 +3132,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         names: namesHeld(held.roundId),
         // WHAT A PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): the engine's and the game's own (its plugin's
         // roundWarnings) - advisory and not signed; a page computes the engine's itself and takes only codes it can name
-        warnings: free ? [] : warningsOf(c),
+        warnings: free ? [] : warningsOf(c, rid),
         needed, signerNodes: c.nodes.length,
         // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
         // joined here, and the two counts. `watching` is not signed.
@@ -4037,6 +4043,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(held.bytes));
       }
 
+      // A CLIENT'S CENSUS OBJECTION (§5A.4, kanban #299): { round, explorer } - checked by this seat on its own chain against that
+      // explorer: its block at the round's census height must be the explorer's. Upheld, the round takes no new entry here and its row
+      // says census_objected; not upheld, refused by name. Nothing a client says is taken on its word.
+      if (req.method === 'POST' && url.pathname === '/census-objection') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a census objection is JSON { round, explorer }'); }
+        const rh = String(j.round || '').toLowerCase(), explorer = String(j.explorer || '');
+        if (!/^[0-9a-f]{64}$/.test(rh) || !/^(https:\/\/[^\s]+|http:\/\/127\.0\.0\.1(:\d+)?(\/[^\s]*)?)$/.test(explorer)) return text(res, 400, 'a census objection names its round (64 hex) and an https explorer');
+        const rid = fromHex(rh); const row = round.get(rid);
+        if (!row) return text(res, 404, 'this seat holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        let view; try { view = await chainFor({ contract: c, roundIdBytes: rid }); } catch (e) { return text(res, 503, `this seat cannot read its chain: ${e.message}`); }
+        const h = Number(c.censusHeight), at = view && view.blocks ? view.blocks[h - view.firstHeight] : null;
+        if (!at) return text(res, 409, `this seat's chain view does not reach the census height ${h}`);
+        const said = await explorerAgrees({ base: explorer, points: [{ height: h, hash: blockHashOf(at.header) }] });
+        if (said.unreachable) return text(res, 409, `not upheld: ${said.why}`);
+        if (!said.mismatch) return text(res, 409, `not upheld: ${said.why} as this seat's chain`);
+        if (censusObjections.size >= 512 && !censusObjections.has(rh)) censusObjections.delete(censusObjections.keys().next().value);
+        censusObjections.set(rh, { explorer, why: said.why, atMs: Date.now() });
+        console.log(`[census] round ${rh.slice(0, 16)}: objection upheld - ${said.why}`);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ upheld: true, round: rh, why: said.why }));
+      }
       if (req.method === 'POST' && url.pathname === '/entry') {
         const contract = decodeEntryContract(await read(req));
         // AN ENTRY INTO A ROUND OF A GAME THIS NODE DOES NOT HOST (kanban #204): that round was never stored, and the node
@@ -4044,6 +4072,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const game = refusedGameOf.get(toHex(contract.roundId));
           if (game) return text(res, 409, `entry refused: this node does not host game ${game.slice(0, 16)} (§0A.4), the game that round plays`); }
         { const why = offerRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
+        { const ob = censusObjections.get(toHex(contract.roundId));
+          if (ob) return text(res, 409, `entry refused: that round's census is objected - ${ob.why} (§5A.4)`); }
         // RESERVE SEATS (§5A.7, kanban #301): a round takes entries only once both roles are seated by a certificate this
         // node holds - and never after two seatings (equivocation: the round is void)
         if (seating) {
