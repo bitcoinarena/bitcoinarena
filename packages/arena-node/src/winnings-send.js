@@ -30,6 +30,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
+import { stateOf } from './settlement-state.js';
 
 /** Where an address's pay request is: a Lightning address (LUD-16), or a donation recipient's LNURL (LUD-01). */
 function payRequestUrl(address) {
@@ -189,8 +190,7 @@ export class WinningsSend {
   dropIfStale(roundIdBytes, base) {
     const kept = this.round.sendAttemptsOf(roundIdBytes).filter((x) => x.attempt === 0);
     if (!kept.length) return false;
-    const settled = this.round.lockSettlement(roundIdBytes);
-    if (settled && settled.state === 'ACCEPTED') return false;
+    if (stateOf(this.round, roundIdBytes) === 'ACCEPTED') return false;
     const wanting = new Map(this.wanting(base).map((w) => [toHex(w.entryId), w.payout.msat]));
     const same = kept.length === wanting.size && kept.every((k) => wanting.get(toHex(k.entryId)) === k.payoutMsat);
     if (same) return false;
@@ -199,7 +199,7 @@ export class WinningsSend {
 
   /** Whether a kept first plan may still give way: nothing settled, nothing sent, no re-send made. */
   replaceable(roundIdBytes) {
-    const settled = this.round.lockSettlement(roundIdBytes);
+    const settled = { state: stateOf(this.round, roundIdBytes) };
     // SIGNED IS SETTLED: a node that holds the combined settlement (SUBMITTING - it signed or was handed the signature -
     // or ACCEPTED) keeps the plan that settlement pays. Measured on 5 of 7: a later asker's lower plan replaced it at
     // three signer nodes after the combine, and the auth never reached its five ("3 of 5 signer nodes committed").

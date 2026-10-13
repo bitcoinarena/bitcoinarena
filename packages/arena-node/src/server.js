@@ -21,6 +21,7 @@ import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
+import { stateOf } from './settlement-state.js';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -455,7 +456,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       sweeping = true;
       try {
       const ids = round.db.prepare('SELECT DISTINCT round_id FROM outcome_attestations').all().map((r) => new Uint8Array(r.round_id));
-      const waiting = ids.filter((rid) => { const k = round.lockSettlement(rid); return !(k && k.state === 'ACCEPTED'); });
+      const waiting = ids.filter((rid) => stateOf(round, rid) !== 'ACCEPTED');
       if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
       for (const rid of waiting) {
         const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
@@ -3183,9 +3184,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
             const rid = new Uint8Array(r.round_id);
             let endMs; try { endMs = Number(roundEndMs(c)); } catch { endMs = Number(c.entryCloseMs); }
-            const k = round.lockSettlement(rid);
             rounds.push({ id: toHex(rid), endMs, objectionWindowMs: Number(c.objectionWindowMs), assigned: round.signerNodes(rid).length > 0,
-              paying: c.stakeMsat > 0n, entries: round.entriesOf(rid).length, settlementAccepted: !!(k && k.state === 'ACCEPTED') });
+              paying: c.stakeMsat > 0n, entries: round.entriesOf(rid).length, settlementAccepted: stateOf(round, rid) === 'ACCEPTED' });
           }
           let custody = null;
           if (guardian && stakeLocks && typeof stakeLocks.guardians === 'function') {
@@ -3809,7 +3809,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // qualifier gets its stake back and its payout, less the node fee and its donation; a loser or a walk-away loses
         // the stake; when the settlement paid nobody, every stake but a walk-away's comes back (forfeit.js nobodyWonReturn),
         // so only the fee and the donation are gone. Until this node's settlement is ACCEPTED it is pending.
-        const settled = round.lockSettlement ? round.lockSettlement(rid) : null;
+        const settled = stateOf(round, rid) ? { state: stateOf(round, rid) } : null;
         const shares = settled && settled.state === 'ACCEPTED' && round.lockSettlementShares ? round.lockSettlementShares(rid) : null;
         const nobodyWon = !!(shares && !shares.length);
         const players = round.entriesOf(rid).map(({ entryId, entry }) => {
@@ -5101,7 +5101,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
         // A ROUND THAT TAKES ANY FEDERATION (2026.0.3): one settlement per federation, each its own row
-        const feds = settlements.fedSummary ? settlements.fedSummary(new Uint8Array(rid)) : [];
+        const feds = settlements.fedSummary ? await settlements.fedSummary(new Uint8Array(rid), { moved: true }) : [];
         if (feds.length) {
           const all = feds.every((f) => f.state === 'ACCEPTED');
           res.writeHead(200, { 'content-type': 'application/json', ...CORS });

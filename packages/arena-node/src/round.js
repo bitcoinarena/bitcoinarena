@@ -2611,6 +2611,18 @@ export class Round {
     return r ? { federation: String(federation).toLowerCase(), txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
   }
 
+  /**
+   * WHERE A ROUND'S SETTLEMENT STANDS, in one federation or in several (2026.0.3 step 6): the one row's state; for a round
+   * that takes any federation ACCEPTED once every federation's transaction is, SUBMITTING while one is not; null with none.
+   */
+  settlementState(roundIdBytes) {
+    const one = this.lockSettlement(roundIdBytes);
+    if (one) return one.state;
+    const feds = this.fedLockSettlementsOf(roundIdBytes);
+    if (!feds.length) return null;
+    return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
+  }
+
   /** Every federation's settlement row of a round (2026.0.3), in federation id order. */
   fedLockSettlementsOf(roundIdBytes) {
     return this.db.prepare('SELECT federation_id, txid, state, why, made_ms FROM fed_lock_settlements WHERE round_id = ? ORDER BY federation_id').all(Buffer.from(roundIdBytes))

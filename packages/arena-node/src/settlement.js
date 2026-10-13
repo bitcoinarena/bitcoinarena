@@ -62,6 +62,8 @@ export const BACKFILL_TRIES = 4;
 /** ...counted at most once per this many ms, whatever the seat restarts (#231): 6 h, the backfill's own clock. */
 export const BACKFILL_TRY_GAP_MS = 6 * 3600 * 1000;
 export const SUBMITTING = 'SUBMITTING';
+/** The txid a round that takes any federation keeps its moves under: it has one transaction per federation (2026.0.3). */
+export const FEDERATIONS_TXID = 'federations';
 export const ACCEPTED = 'ACCEPTED';
 export const REFUSED = 'REFUSED';
 
@@ -297,9 +299,21 @@ export class LockSettlement {
     return built;
   }
 
-  /** What each federation's settlement of a round that takes any federation moved, as this node holds it (GET /lock-settlement). */
-  fedSummary(roundIdBytes) {
-    return this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : [];
+  /**
+   * What each federation's settlement of a round that takes any federation moved, as this node holds it (GET /lock-settlement):
+   * each row, and with `moved` its transaction's payouts in their order (the out_idx a winner redeems by, 2026.0.3 step 7),
+   * rebuilt from the round's plan once a row is ACCEPTED - the same plan every signer node signed.
+   */
+  async fedSummary(roundIdBytes, { moved = false } = {}) {
+    const rows = this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : [];
+    if (!moved || !rows.some((r) => r.state === ACCEPTED)) return rows;
+    let got = null;
+    try { got = await this.planOf(roundIdBytes); } catch { got = null; }
+    const split = got && got.ok && got.split ? got.split.settlements : [];
+    return rows.map((r) => {
+      const s = split.find((x) => x.federation === r.federation);
+      return s ? { ...r, moved: { payouts: s.payouts.map((p) => ({ kind: p.kind || 'qualifier', pk: toHex(p.payoutPk), msat: String(p.msat) })) } } : r;
+    });
   }
 
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
@@ -993,6 +1007,19 @@ export class LockSettlement {
     return { ok: true };
   }
 
+  /**
+   * WHAT A ROUND THAT TAKES ANY FEDERATION MOVES, OVER ALL ITS FEDERATIONS (2026.0.3 step 6): every claimed lock of every
+   * federation's transaction, under the txid "federations", and the whole plan's winners' shares - so a forfeit, a late entry
+   * and the return door read one record, as for a round in one federation (keepMoves).
+   */
+  keepFederationMoves(roundIdBytes, got) {
+    if (!got || !got.split || !Array.isArray(got.split.settlements)) return;
+    const claims = got.split.settlements.flatMap((s) => s.claims.map((c) => `${toHex(c.outpoint.txid)}:${c.outpoint.outIdx}`));
+    this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: FEDERATIONS_TXID, claims,
+      payouts: got.split.settlements.reduce((t, s) => t + s.payouts.length, 0) });
+    if (this.round.putLockSettlementShares) this.round.putLockSettlementShares(roundIdBytes, got.plan.stakeShares || []);
+  }
+
   /** What the signed settlement moves, kept with its intent (W6). */
   keepMoves(roundIdBytes, m) {
     this.round.putLockSettlementMoves({ roundId: roundIdBytes, txid: m.txid,
@@ -1204,6 +1231,7 @@ export class LockSettlement {
       const t = await this.turn(roundIdBytes);
       if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
     }
+    this.keepFederationMoves(roundIdBytes, got);
     const results = [];
     for (const s of got.split.settlements) {
       const fid = s.federation;
