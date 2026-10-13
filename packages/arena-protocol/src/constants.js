@@ -296,6 +296,8 @@ export const TAG = {
   roundCreator: 'ARENA/v1/RoundCreator',
   // A RULE A CONTRACT NAMES (§6 *_rule_hash, kanban #314): the rule's text under this tag
   contractRule: 'ARENA/v1/ContractRule',
+  // A GUARDIAN FOUNDING'S TICKET (§23A.2, kanban #320): the spec's own tag
+  guardianTicket: 'BLWP/v1/GUARDIAN',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
