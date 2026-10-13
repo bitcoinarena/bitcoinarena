@@ -227,6 +227,13 @@ test('the outcome: verified when the pinned attestors signed it, UNVERIFIED for 
   console.log('  FREE LINES:\n   ' + freeLines.join('\n   '));
   assert.match(freeLines[0], /verified\) · your pick was right \(free round\)$/);
   assert.match(freeLines[1], /verified\) · your pick was wrong \(free round\)$/);
+  // NOBODY ON THE OTHER SIDE (kanban #350, the first paid Up/Down window, 2026-10-13 23:45Z): one order alone, its side won -
+  // nothing filled, the lock comes back whole, not "you won 0 sats"
+  const alone = [{ entryId: 'aa'.repeat(32), stakeMsat: 1_000_000n, feeMsat: 10_000n, donationMsat: 0n, pick: 0 }];
+  const aloneTable = JSON.parse(JSON.stringify(pariMutuelTable({ entries: alone, outcome: 0 }), (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.equal(aloneTable.losingPoolMsat, '0');
+  const aloneLines = marketLines({ picks: [pick('aa'.repeat(32), 0)], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'above 100k', final: true, table: aloneTable, check: verified }]]) }).map((l) => l.text);
+  assert.match(aloneLines[0], /verified\) · nobody took the other side: your 1,000 sats come back whole when the lock expires$/);
 });
 
 test('the order (kanban #237): the entry carries its pick, limit price and expiry; an order without a pick or a whole price is refused', async () => {

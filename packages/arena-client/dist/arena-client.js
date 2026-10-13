@@ -22875,8 +22875,12 @@ function entryFromEvidence(item, { contract, headers, firstHeight, bond, verify 
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
   if (bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
-  if (!(advert.roles || []).length) return { ok: false, why: 'that advertisement declares no role' };
-  if (!(advert.protocolVersions || []).includes(contract.protocolVersion)) return { ok: false, why: 'that advertisement does not speak this round\'s version' };
+  // ROLES AND VERSION OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #351/#348): a bond whose update announces this round's
+  // version counts - asked of its first advertisement, every node that announced version 2 by update was refused (the seats'
+  // census had the same order, fixed in e8f039d8). The update, when there is one, is asked below.
+  const updated = !!(proofOf(item.update) && proofOf(item.update).transaction);
+  if (!updated && !(advert.roles || []).length) return { ok: false, why: 'that advertisement declares no role' };
+  if (!updated && !(advert.protocolVersions || []).includes(contract.protocolVersion)) return { ok: false, why: 'that advertisement does not speak this round\'s version' };
   let entry = { txid: tx.txid, vout, pubkey: advert.nodePubkey, bondSats, height, roles: advert.roles, hostedGames: advert.hostedGames, advert, advertId: id,
     ...(ancestor ? { ancestor: true } : {}) };
 
@@ -24200,6 +24204,9 @@ function dailyLobbySearch(daily) {
   if (!daily || typeof daily !== 'object' || Array.isArray(daily)) return null;
   if ('round' in daily) return null;
   const nodes = Array.isArray(daily.node) ? daily.node.map(String) : [];
+  // TWO NODES TO START FROM, NOT THE NETWORK (kanban #351, the owner 2026-10-13: "The client may not have a hard coded node list it must
+  // be found on the fly"): daily.json names where a page starts - two, because a chain is read from two independent sources
+  // (joinQuery) - and the page finds the rest in the census it checks
   if (nodes.length < 2 || typeof daily.bond !== 'string' || !/^[0-9a-f]{128}$/.test(String(daily.advert))) return null;
   const q = new URLSearchParams({ node: nodes.join(','), bond: daily.bond, advert: daily.advert });
   if (typeof daily.federation === 'string' && daily.federation) q.set('federation', daily.federation);
@@ -26010,6 +26017,9 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
     else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
+    // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
+    // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
+    else if (row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
@@ -26308,6 +26318,39 @@ async function checkedGameInfo(game, verifyEd25519) {
   return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null } : null;
 }
 
+// ---- arena-client/src/node-discovery.js
+// THE NODES, FOUND ON THE FLY (kanban #351, the owner 2026-10-13: "The client may not have a hard coded node list it must be found on
+// the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
+// bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's
+// advertisement carries the node's endpoint. Those are the nodes this page talks to from then on, kept for its next start.
+
+/** The https root of a node's advertised endpoint (wss -> https, ws -> http), or null for none. */
+function endpointRoot(endpoint) {
+  const s = String(endpoint || '').trim();
+  if (!/^(wss?|https?):\/\//i.test(s)) return null;
+  return s.replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
+}
+
+/** Every node a checked census names, by its advertised endpoint: one root per node key, in the order of their keys. */
+function censusEndpoints(entries) {
+  const byKey = new Map();
+  for (const e of entries || []) {
+    const root = endpointRoot(e && e.advert && e.advert.endpoint);
+    if (!root || !e.pubkey) continue;
+    const k = toHex(e.pubkey);
+    if (!byKey.has(k)) byKey.set(k, root);
+  }
+  return [...byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map((x) => x[1]);
+}
+
+/** `known` with every root of `found` it lacks, appended - nothing known is dropped or reordered. */
+function mergeNodes(known, found) {
+  const out = [...(known || [])];
+  const have = new Set(out.map((n) => String(n).replace(/\/+$/, '')));
+  for (const n of found || []) { const r = String(n).replace(/\/+$/, ''); if (!have.has(r)) { have.add(r); out.push(r); } }
+  return out;
+}
+
 return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,
          discover: discover, agreedChain: agreedChain,
@@ -26361,6 +26404,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lookOwed: lookOwed, owedToLine: owedToLine, collectOwed: collectOwed, collectAndWithdraw: collectAndWithdraw, findOwedRounds: findOwedRounds,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
+         censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
          lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,

@@ -113,8 +113,12 @@ export function entryFromEvidence(item, { contract, headers, firstHeight, bond, 
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
   if (bondSats < contract.bondMinSats) return { ok: false, why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}` };
-  if (!(advert.roles || []).length) return { ok: false, why: 'that advertisement declares no role' };
-  if (!(advert.protocolVersions || []).includes(contract.protocolVersion)) return { ok: false, why: 'that advertisement does not speak this round\'s version' };
+  // ROLES AND VERSION OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #351/#348): a bond whose update announces this round's
+  // version counts - asked of its first advertisement, every node that announced version 2 by update was refused (the seats'
+  // census had the same order, fixed in e8f039d8). The update, when there is one, is asked below.
+  const updated = !!(proofOf(item.update) && proofOf(item.update).transaction);
+  if (!updated && !(advert.roles || []).length) return { ok: false, why: 'that advertisement declares no role' };
+  if (!updated && !(advert.protocolVersions || []).includes(contract.protocolVersion)) return { ok: false, why: 'that advertisement does not speak this round\'s version' };
   let entry = { txid: tx.txid, vout, pubkey: advert.nodePubkey, bondSats, height, roles: advert.roles, hostedGames: advert.hostedGames, advert, advertId: id,
     ...(ancestor ? { ancestor: true } : {}) };
 
