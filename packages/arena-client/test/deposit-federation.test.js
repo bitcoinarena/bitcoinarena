@@ -45,14 +45,18 @@ import { pageFunction } from './page-script.js';
 test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby round\'s A, a player holding A too', () => {
   const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
   const HTML = readFileSync(PAGE, 'utf8');
-  const a = HTML.indexOf('    function moneyContext(which = \'deposit\') {');
-  const slice = HTML.slice(a, HTML.indexOf('\n    }\n', a) + 7);
+  // depositPick (the one pick, kanban #353) and moneyContext, which follows it
+  const a = HTML.indexOf('    function depositPick(lobbyInvite) {');
+  const m = HTML.indexOf('    function moneyContext(which = \'deposit\') {');
+  assert.ok(a > 0 && m > a, 'depositPick comes before moneyContext');
+  const slice = HTML.slice(a, HTML.indexOf('\n    }\n', m) + 7);
   const run = (held) => {
     const fn = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'walletSeed', 'moneyRound', 'vault', 'localStorage'], [slice], 'return moneyContext;');
     const window = { BLWP_LOBBY: [{ id: 'r1', free: false, raw: { contract: { stakeMsat: 100000n } } }], BLWP_LEDGER_LOBBY: { federation: inviteOf(A) },
       ARENA_FED_LOADS: new Map([[A, st(A, 4.3333)], [B, st(B, 0.0002)]]) };
     const BLWPCLIENT = { depositFederation, withdrawFederation, ledgerFederations: () => held, federationIsKnown: () => true, federationConfirmed: () => false,
-      inviteNamesFederation: sameFederation, marketForRound: () => null, lobbyStakeSats: () => 100 };
+      inviteNamesFederation: sameFederation, marketForRound: () => null, lobbyStakeSats: () => 100,
+      fromHex: (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16))) };
     const ctx = fn(window, BLWPCLIENT, () => 'seed', () => null, () => ({}), {})();
     return { ctx, picked: window.ARENA_DEPOSIT_FEDERATION };
   };
@@ -60,5 +64,7 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   assert.equal(first.ctx.ok, true);
   assert.equal(first.ctx.invite, inviteOf(B), 'a first deposit goes to B (0.0002), not the lobby round\'s A (4.33)');
   assert.equal(first.picked.federation, B);
+  // and the wallet is opened under B's own id, not the lobby round's (kanban #353: B's invite beside A's id opened B's wallet under A's key)
+  assert.equal(Buffer.from(first.ctx.round.federationId).toString('hex'), String(B).toLowerCase());
   assert.equal(run([A]).ctx.invite, inviteOf(B), 'a player already holding A deposits into B, the lower load');
 });
