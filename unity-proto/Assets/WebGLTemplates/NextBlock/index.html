@@ -5359,6 +5359,21 @@
       frame.id = 'arena-client';
       frame.title = game.title;
       frame.src = URL.createObjectURL(new Blob([file.bytes], { type: 'text/html' }));
+      // A CLIENT TALLER THAN ITS FRAME SCROLLS (kanban #350, the owner 2026-10-12: "scrolling down is not possible" in Bitcoin Up or
+      // Down on iOS): the Up/Down client's body is overflow:hidden with only its order list scrolling, and on a phone the market
+      // card and the buy box fill the frame - the list gets no height and nothing below reaches the screen. The frame is this
+      // page's own origin (a blob of the checked bytes), so the page lets the body scroll and the list take its height; the
+      // client's bytes and its manifest hash are unchanged.
+      frame.addEventListener('load', () => {
+        try {
+          const d = frame.contentDocument;
+          if (!d || !d.head) return;
+          const st = d.createElement('style');
+          st.textContent = 'html{height:100%}body{overflow-y:auto!important;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}'
+            + (game.name === 'btc-updown-15m' ? '.list{flex:1 0 auto!important;overflow:visible!important}' : '');
+          d.head.appendChild(st);
+        } catch (e) { console.log('[arena] the client frame could not be made to scroll: ' + (e && e.message ? e.message : e)); }
+      });
       document.body.classList.add('arena-own-client');
       document.body.appendChild(frame);
       // THE DEPOSIT BOX OUTLIVES THE LOADING SCREEN HERE TOO (kanban #237, measured on the paid Up/Down series: no deposit
