@@ -343,12 +343,16 @@ export function decodeRoundContract(bytes) {
 export const roundId = (c) => {
   if (c && c.seriesId !== undefined && c.seriesId !== null) {
     encodeRoundContract(c);                                   // a contract that does not encode has no id
-    const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, c.roundIndex, false);
-    const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
-    return taggedHash(TAG.seriesRound, body);
+    return seriesRoundIdOf(c.seriesId, c.roundIndex);
   }
   return taggedHash(TAG.roundContract, encodeRoundContract(idBodyOf(c)));
 };
+/** Round i of a series' id, H(series_id || i), from the two alone (a seat looking at a series' earlier rounds, #304). */
+export function seriesRoundIdOf(seriesIdBytes, index) {
+  const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, index, false);
+  const body = new Uint8Array(36); body.set(seriesIdBytes, 0); body.set(i, 32);
+  return taggedHash(TAG.seriesRound, body);
+}
 /**
  * THE BYTES A ROUND'S ID HASHES (2026.0.2, kanban #348): a v2 contract's with `nodes` emptied - the seated nodes are the
  * draw's answer, written in by each seat after it, and never an input to the draw - and a v1 contract's whole, as before.

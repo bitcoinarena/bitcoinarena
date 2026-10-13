@@ -2623,6 +2623,16 @@ export class Round {
     return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
   }
 
+  /** A series' proven publication fee (§5A.5, kanban #304): kept once; { txid, feeSats } or null. */
+  putSeriesPublication(seriesIdBytes, { txid, feeSats }) {
+    this.db.prepare('INSERT OR IGNORE INTO series_publications (series_id, txid, fee_sats) VALUES (?, ?, ?)').run(Buffer.from(seriesIdBytes), String(txid), String(feeSats));
+  }
+
+  seriesPublication(seriesIdBytes) {
+    const r = this.db.prepare('SELECT txid, fee_sats FROM series_publications WHERE series_id = ?').get(Buffer.from(seriesIdBytes));
+    return r ? { txid: r.txid, feeSats: BigInt(r.fee_sats) } : null;
+  }
+
   /** A round's creator signature (§6, kanban #313): kept once, the first that stood; 64 bytes or null. */
   putCreatorSignature(roundIdBytes, signature) {
     this.db.prepare('INSERT OR IGNORE INTO round_creators (round_id, signature) VALUES (?, ?)').run(Buffer.from(roundIdBytes), Buffer.from(signature));

@@ -571,9 +571,24 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   if (spendable <= 0n) return refuse(`the guardians' fees on the fee locks (${inputFeesMsat} msat) take the whole fee of ${poolMsat}`);
   const payouts = [];
   const unpaid = [];
+  // THE SERIES PUBLISHER'S FEE BACK (§5A.5, kanban #304; publisher-payout.js): one line, off the top of the NODES' part of the fee
+  // locks - never the donation's - in the round that pays it: `signerNodes.publisher` { payoutPk, msat }. What the nodes' part
+  // can pay, at most the publisher's msat; the nodes share the rest as before.
+  const nodePartMsat = (spendable * table.fee) / poolMsat;
+  let publisherGross = 0n;
+  const pub = signerNodes.publisher;
+  if (pub && pub.msat > 0n) {
+    if (!(pub.payoutPk instanceof Uint8Array) || pub.payoutPk.length !== 33) return refuse('the series publisher is paid to a 33-byte key');
+    const got = largestPayoutMsat(fees, pub.msat + lnv2FeeMsat(fees, pub.msat) < nodePartMsat ? pub.msat + lnv2FeeMsat(fees, pub.msat) : nodePartMsat);
+    if (got > 0n) {
+      publisherGross = got + lnv2FeeMsat(fees, got);
+      payouts.push({ pubkey: pub.payoutPk.subarray(1), payoutPk: pub.payoutPk, owedMsat: pub.msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'publisher' });
+    } else unpaid.push({ pubkey: pub.payoutPk.subarray(1), owedMsat: pub.msat, why: 'the publisher\'s fee back does not pay its own output fee' });
+  }
+  const nodesSpendable = nodePartMsat - publisherGross;
   for (const [key, msat] of owed) {
     const pubkey = fromHex(key);
-    const got = largestPayoutMsat(fees, (msat * spendable) / poolMsat);
+    const got = largestPayoutMsat(fees, publisherGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
     payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
   }

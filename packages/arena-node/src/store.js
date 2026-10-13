@@ -853,6 +853,14 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- A SERIES' PUBLICATION FEE, PROVEN (§5A.5, kanban #304; publisher-payout.js): the first confirmed publication's txid and the
+    -- fee its parents prove - paid back to the series' creator in the first of its rounds with entries.
+    CREATE TABLE IF NOT EXISTS series_publications (
+      series_id BLOB PRIMARY KEY,
+      txid      TEXT NOT NULL,
+      fee_sats  TEXT NOT NULL
+    );
+
     -- A ROUND'S CREATOR SIGNATURE (§6, kanban #313): the BIP-340 signature by the key the contract names over its id, kept
     -- beside the round as the id is (a signature is never inside the bytes it signs), and served at GET /round-creator.
     CREATE TABLE IF NOT EXISTS round_creators (
