@@ -65,6 +65,12 @@ export function openStore(path = ':memory:') {
     -- and the store consistent across a power loss, which can lose only the last commits; FULL synced on every commit -
     -- one per tick batch from every player.
     PRAGMA synchronous = NORMAL;
+    -- FEWER CHECKPOINTS (the owner 2026-10-13: "Fixe die 15% platte"; measured 10:3xZ on the test host: the system disk 78 % busy at
+    -- 1,136 writes/s, each seat inserting ~1,840 seating rows a minute for grid rounds keyed by random round ids): the WAL is
+    -- written back every 10 000 pages (40 MB) instead of 1 000, so a page changed many times between two checkpoints is
+    -- written to the database once, with one pair of syncs; the WAL file is cut back to 64 MB after each.
+    PRAGMA wal_autocheckpoint = 10000;
+    PRAGMA journal_size_limit = 67108864;
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS rounds (
