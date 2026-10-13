@@ -6,11 +6,18 @@
 //              lower proposal id). "parent serialises competing proposals. Both may pass; the first to activate becomes the
 //              config, and the second is void at its activation height because its parent is no longer current" (§27A.7.2)
 //
+//   DEPOSIT    a proposal's deposit_txid, read off its transaction (RULED the owner 2026-10-13, option A): one P2TR output per share
+//              of the network's KEYED donation set, split as a donation is (share_bps floored, the remainder to the first as
+//              published), each output key the recipient key's x-only form, untweaked - the recipient spends it with the key it
+//              already holds, and checking it needs no curve. The height it confirmed at is the proposal's publication (§27A.7.3:
+//              the census is snapshotted there). A network whose set pays LNURLs takes no proposal until it publishes a keyed set.
+//
 // What is live is a pure function of the passed proposals and a height; which proposals passed is the tally's.
 import { splitBlock } from './block.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
 import { decodeVote } from './ballot.js';
 import { toHex } from './hash.js';
+import { splitDonation, donationSetPaysKeys } from './donation.js';
 
 /** The vote outputs of one raw block at `height`: [{ payload, height, txid }], txid hex in Bitcoin's display order. */
 export function votesInBlock(raw, height) {
@@ -44,4 +51,48 @@ export function liveConfig({ genesis, passed = [], height }) {
     history.push({ configHash: p.configHash, config: p.config, since: p.activationHeight, by: p.id });
   }
   return { configHash: history[history.length - 1].configHash, history, void: voided };
+}
+
+/** The P2TR script a deposit share pays: OP_1 PUSH32 the recipient key's x-only form (its 33-byte key without the parity byte). */
+export const depositScriptOf = (recipientPk) => Uint8Array.from([0x51, 0x20, ...recipientPk.subarray(1)]);
+
+/**
+ * WHAT A DEPOSIT OF `depositSats` PAYS (option A): [{ recipientPk, script, sats }], one per share above 0 - for a proposer's wallet
+ * to build, and for depositOf to check. Refused by name for a set that pays LNURLs.
+ */
+export function depositOutputsExpected(depositSats, recipients) {
+  if (!Array.isArray(recipients) || !donationSetPaysKeys(recipients))
+    return { ok: false, why: 'that network\'s donation set pays LNURLs: a proposal deposit is a Bitcoin output per key, so it takes no proposal until it publishes a keyed set' };
+  // the same split as a donation, in whole sats: splitDonation is unit-free (floors by share_bps, the remainder to the first)
+  const split = splitDonation({ donationMsat: BigInt(depositSats), recipients });
+  if (!split.owed) return { ok: false, why: split.why };
+  return { ok: true, outputs: split.shares.filter((sh) => sh.amountMsat > 0n)
+    .map((sh) => ({ recipientPk: sh.recipientPk, script: depositScriptOf(sh.recipientPk), sats: sh.amountMsat })) };
+}
+
+/**
+ * A PROPOSAL'S DEPOSIT, READ OFF ITS TRANSACTION. `raw`: the deposit transaction; `height`: the block it confirmed in. The deposit
+ * is everything it pays to the set's keys, and each key must be paid at least its share of that sum - so the split is exact.
+ * Answers { ok, publishedAt, depositSats } - what proposalStands takes - or { ok: false, why }.
+ */
+export function depositOf({ raw, height, proposal, recipients }) {
+  let tx; try { tx = parseTransaction(raw); } catch (e) { return { ok: false, why: `that is no transaction: ${e.message}` }; }
+  if (!proposal || !(proposal.depositTxid instanceof Uint8Array) || toHex(Uint8Array.from(tx.txid)) !== toHex(proposal.depositTxid))
+    return { ok: false, why: 'that transaction is not the deposit the proposal names (deposit_txid)' };
+  if (!Number.isInteger(height) || height < 0) return { ok: false, why: 'a deposit counts once it is confirmed at a height' };
+  if (!Array.isArray(recipients) || !donationSetPaysKeys(recipients)) return depositOutputsExpected(0, recipients);
+  const paid = new Map(recipients.map((r) => [toHex(depositScriptOf(r.recipientPk)), 0n]));
+  for (const o of tx.outputs) {
+    const k = toHex(o.script);
+    if (paid.has(k)) paid.set(k, paid.get(k) + BigInt(o.value));
+  }
+  const total = [...paid.values()].reduce((a, b) => a + b, 0n);
+  if (total === 0n) return { ok: false, why: 'that transaction pays nothing to the network\'s donation set' };
+  const want = depositOutputsExpected(total, recipients);
+  if (!want.ok) return want;
+  for (const o of want.outputs) {
+    const got = paid.get(toHex(o.script));
+    if (got < o.sats) return { ok: false, why: `a deposit of ${total} sat owes ${toHex(o.recipientPk).slice(0, 16)} ${o.sats} sat, and it is paid ${got}: not the set's split` };
+  }
+  return { ok: true, publishedAt: height, depositSats: total };
 }
