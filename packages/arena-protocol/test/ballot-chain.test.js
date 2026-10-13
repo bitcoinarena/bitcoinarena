@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
-import { votesInBlock, liveConfig } from '../src/ballot-chain.js';
+import { votesInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf } from '../src/ballot-chain.js';
+import { TESTNET4_DONATION_SET } from '../src/testnet4-donation-set.js';
 import { encodeVote, voteMessage, decodeVote, CHOICE, CLASS, proposalStands, proposalBodyId, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../src/ballot.js';
 import { splitBlock } from '../src/block.js';
 import { parseTransaction } from '../src/tx.js';
@@ -71,4 +72,28 @@ test('a repeal - a config the network ran before - runs on the short schedule; a
   assert.match(proposalStands(forward, facts).why, new RegExp(`before the end of cooldown \\(${1000 + m.review + m.voting + m.cooldown}\\)`));
   assert.equal(isRepeal(make(Uint8Array.of(2), 1720), history), false, 'the current config is no repeal: it goes nowhere');
   assert.equal(REPEAL_SCHEDULES.mainnet.voting, 720);
+});
+
+// THE DEPOSIT (RULED the owner 2026-10-13, option A): one P2TR output per share of the network's keyed donation set, split as a donation
+test('a proposal\'s deposit: its transaction pays each key of the keyed set its share; the confirmation height is the publication', () => {
+  const pk = (i) => Uint8Array.from([0x02, ...schnorr.getPublicKey(new Uint8Array(32).fill(i))]);
+  const set = [{ recipientPk: pk(1), shareBps: 6000, label: 'protocol a' }, { recipientPk: pk(2), shareBps: 4000, label: 'protocol b' }];
+  const want = depositOutputsExpected(1001, set);
+  assert.equal(want.ok, true, want.why);
+  assert.deepEqual(want.outputs.map((o) => Number(o.sats)), [601, 400], '600.6 and 400.4 floored, the remainder 1 to the first');
+  assert.equal(toHex(want.outputs[0].script), '5120' + toHex(pk(1).subarray(1)), 'P2TR to the key\'s x-only form');
+  const change = { sats: 50000, script: Uint8Array.of(0x00, 0x14, ...new Uint8Array(20).fill(9)) };
+  const good = tx([{ sats: 601, script: want.outputs[0].script }, { sats: 400, script: want.outputs[1].script }, change]);
+  const proposal = { depositTxid: Uint8Array.from(parseTransaction(good).txid) };
+  const got = depositOf({ raw: good, height: 156400, proposal, recipients: set });
+  console.log('  DEPOSIT:', JSON.stringify({ ...got, depositSats: String(got.depositSats) }));
+  assert.deepEqual([got.ok, got.publishedAt, got.depositSats], [true, 156400, 1001n]);
+  assert.equal(depositOutputsExpected(0, set).outputs.length, 0);
+  // a split that is not the set's, another transaction, an LNURL set: refused by name
+  const skewed = tx([{ sats: 500, script: want.outputs[0].script }, { sats: 501, script: want.outputs[1].script }]);
+  assert.match(depositOf({ raw: skewed, height: 1, proposal: { depositTxid: Uint8Array.from(parseTransaction(skewed).txid) }, recipients: set }).why, /owes .* 601 sat, and it is paid 500/);
+  assert.match(depositOf({ raw: skewed, height: 1, proposal, recipients: set }).why, /not the deposit the proposal names/);
+  assert.match(depositOf({ raw: good, height: 1, proposal, recipients: TESTNET4_DONATION_SET.recipients }).why, /pays LNURLs/);
+  assert.match(depositOf({ raw: good, height: null, proposal, recipients: set }).why, /confirmed at a height/);
+  assert.equal(depositScriptOf(pk(2)).length, 34);
 });
