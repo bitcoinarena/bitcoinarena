@@ -5,8 +5,8 @@
 import { roundResultStands, frontOf, frontName } from '../../arena-protocol/src/round-result.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 
-const WORDS = Object.freeze({ BULLS: 'THE BULLS WIN', BEARS: 'THE BEARS WIN', FLAT: 'NOBODY WINS: THE PRICE CLOSED WHERE IT OPENED' });
-const pct = (open, close) => `${close >= open ? '+' : ''}${(((close - open) / open) * 100).toFixed(2)}%`;
+const VERDICT_WORDS = Object.freeze({ BULLS: 'THE BULLS WIN', BEARS: 'THE BEARS WIN', FLAT: 'NOBODY WINS: THE PRICE CLOSED WHERE IT OPENED' });
+const verdictPct = (open, close) => `${close >= open ? '+' : ''}${(((close - open) / open) * 100).toFixed(2)}%`;
 
 /**
  * `roundId` 32 bytes; `nodes` the seats' base URLs; `committee` the settlement committee's keys (hex or bytes) this client
@@ -36,7 +36,7 @@ export async function roundVerdict({ roundId, nodes, committee, verify, threshol
     const st = roundResultStands({ result: { roundId, openCents: x.openCents, closeCents: x.closeCents, front }, sigs: x.sigs, committee, threshold: need, verify });
     if (!st.ok) continue;
     const name = frontName(front);
-    return { ok: true, front: name, openCents: x.openCents, closeCents: x.closeCents, says: `${WORDS[name]} (${pct(x.openCents, x.closeCents)})`, signers: st.signed.length, needed: need };
+    return { ok: true, front: name, openCents: x.openCents, closeCents: x.closeCents, says: `${VERDICT_WORDS[name]} (${verdictPct(x.openCents, x.closeCents)})`, signers: st.signed.length, needed: need };
   }
   const best = Math.max(0, ...[...byResult.values()].map((x) => x.sigs.length));
   return { ok: false, why: byResult.size ? `no result is signed by ${need} of the committee (at most ${best} agree)` : `no seat has a result yet${said.length ? `: ${said[0]}` : ''}` };

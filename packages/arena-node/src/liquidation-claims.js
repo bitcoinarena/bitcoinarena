@@ -30,7 +30,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     const fid = String(body && body.federation || '').toLowerCase();
     const payoutPk = String(body && body.payoutPk || '').toLowerCase();
     if (!isHex(fid, 64)) return { ok: false, status: 400, why: 'a claim names its federation (64 hex)' };
-    if (!isHex(payoutPk, 64)) return { ok: false, status: 400, why: 'a claim names the x-only key it is paid to (64 hex)' };
+    if (!isHex(payoutPk, 66) || !/^0[23]/.test(payoutPk)) return { ok: false, status: 400, why: 'a claim names the key it is paid to: a refund key, 33 bytes compressed (66 hex)' };
     if (typeof body.ecash !== 'string' || !body.ecash) return { ok: false, status: 400, why: 'a claim presents its notes as e-cash' };
     const liq = await liquidationOf(fid);
     if (!liq) return { ok: false, status: 409, why: 'that federation is not being liquidated: no seat holds it HALTED' };

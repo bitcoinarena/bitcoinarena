@@ -166,7 +166,8 @@ async function payLiquidations() {
       const got = liquidationRemainderPayees({ msat, censusNodes: census.entries.map((e) => e.pubkey), slashed: Object.values(state.handled).map((h) => h.node).filter(Boolean),
         record, donation: forced.recipients });
       if (!got.ok) throw new Error(got.why);
-      return got.payees;
+      // a payout is a lock to a refund key (the tool's `pay`, as #307's): the 33-byte form of each x-only key
+      return got.payees.map((x) => ({ ...x, key: `02${x.key}` }));
     };
     let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
@@ -232,7 +233,10 @@ if (liqClients.size) {
     save: (rows) => { if (claimsFile) writeFileSync(claimsFile, JSON.stringify(rows) + '\n'); },
   });
 }
-const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts, claims });
+// the paid claims' locks, from the state each pass keeps (ARENA_LIQ_PAY_FEDERATION: the safe federation ARENA_LIQ_PAY_DIR is a client of)
+const liquidationPayouts = () => Object.entries(state.liquidations || {}).flatMap(([fid, v]) => (v.payouts || []).concat(v.remainderPayouts || [])
+  .map((p) => ({ federation: fid, into: String(env.ARENA_LIQ_PAY_FEDERATION || '').toLowerCase(), ...p })));
+const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts, claims, liquidationPayouts });
 say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
 await pass();
 if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }

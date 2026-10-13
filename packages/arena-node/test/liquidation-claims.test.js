@@ -10,7 +10,7 @@ import { presentNotes, pendingClaimKey } from '../../arena-client/src/liquidatio
 import { REGTEST_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 
 const FED = 'ab'.repeat(32);
-const P1 = '11'.repeat(32), P2 = '22'.repeat(32);
+const P1 = '02' + '11'.repeat(32), P2 = '02' + '22'.repeat(32);
 const NOTES = { e1: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }, { nonce: '02' + 'a2'.repeat(32), amountMsat: 256000n }],
   e2: [{ nonce: '02' + 'b1'.repeat(32), amountMsat: 1024000n }], e3: [{ nonce: '02' + 'a1'.repeat(32), amountMsat: 512000n }],
   e4: [{ nonce: '02' + 'c1'.repeat(32), amountMsat: 128000n }] };
@@ -139,4 +139,27 @@ test('after drain_blocks the remainder is paid once to its payees, never before 
   const r = await pass();
   assert.deepEqual([r.remainder, pays.length, pays[1]], ['1232000', 2, `${'aa'.repeat(32)}:924000,${'dd'.repeat(32)}:308000`]);
   await pass(); assert.equal(pays.length, 2, 'once');
+});
+
+test('the claim key comes from the seed per federation; the payouts naming it are collected by Refund once; the arbiter lists them', async () => {
+  const { liquidationKeyFor, collectLiquidationPayouts } = await import('../../arena-client/src/liquidation-claim.js');
+  const { pageCurve } = await import('../../arena-client/src/page-curve.js');
+  const seed = new Uint8Array(32).fill(5);
+  const a = liquidationKeyFor(seed, FED, pageCurve), again = liquidationKeyFor(seed, FED, pageCurve), other = liquidationKeyFor(seed, 'cd'.repeat(32), pageCurve);
+  assert.equal(a.payoutPk, again.payoutPk, 'the same seed, the same key');
+  assert.notEqual(a.payoutPk, other.payoutPk, 'another federation, another key');
+  assert.match(a.payoutPk, /^02[0-9a-f]{64}$/);
+  const SAFE = 'ef'.repeat(32);
+  const listed = { payouts: [{ federation: FED, into: SAFE, payoutPk: a.payoutPk, msat: '768000', txid: 'aa'.repeat(32), outIdx: 1 },
+    { federation: FED, into: SAFE, payoutPk: '02' + '33'.repeat(32), msat: '5000', txid: 'aa'.repeat(32), outIdx: 2 }] };
+  const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  const refunds = [];
+  const clientFor = async (fid) => ({ refund: async (txid, outIdx, fields, secret) => { refunds.push([fid, outIdx, JSON.parse(fields).refundPk, secret.length]); return JSON.stringify({ accepted: true }); } });
+  const got = await collectLiquidationPayouts({ listed, seed, curve: pageCurve, clientFor, storage });
+  assert.deepEqual([got.length, got[0].ok, refunds], [1, true, [[SAFE, 1, a.payoutPk, 64]]], 'only its own, in the federation it was paid in');
+  await collectLiquidationPayouts({ listed, seed, curve: pageCurve, clientFor, storage });
+  assert.equal(refunds.length, 1, 'once');
+  const doors = await serveArbiter({ set: { network: 'regtest', k: 5, members: [] }, allow: () => ({ ok: false }), liquidationPayouts: () => listed.payouts });
+  try { const j = await (await fetch(`http://127.0.0.1:${doors.port}/liquidation-payouts?federation=${FED}`)).json(); assert.equal(j.payouts.length, 2); }
+  finally { await doors.close(); }
 });
