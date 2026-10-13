@@ -29,7 +29,8 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { standUpRound, keepBackToBack, tableCounter } from './round-2of2.mjs';
-import { ROCK_PAPER_SCISSORS, RPS_ROUND_FIELDS } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
+import { ROCK_PAPER_SCISSORS as RPS_V1, RPS_ROUND_FIELDS as RPS_FIELDS_V1 } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
+import { GAME as RPS_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v2.js';
 // PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -46,6 +47,9 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
 import { TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 
+// 2026.0.2 (kanban #348): ARENA_PROTOCOL_VERSION=2 opens the v2 game (its manifest requires the round that names no draw)
+const ROCK_PAPER_SCISSORS = process.env.ARENA_PROTOCOL_VERSION === '2' ? RPS_V2 : RPS_V1;
+const RPS_ROUND_FIELDS = Object.freeze({ ...RPS_FIELDS_V1, gameId: ROCK_PAPER_SCISSORS.gameId });
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;

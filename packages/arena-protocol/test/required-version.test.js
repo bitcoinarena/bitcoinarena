@@ -12,7 +12,8 @@ import { KNOWN_GAME as NEXTBLOCK } from '../../nextblock/plugin/known.js';
 test('this build writes its version and reads the versions it lists', () => {
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(PROTOCOL_VERSION));
   assert.equal(speaksVersion(PROTOCOL_VERSION), true);
-  assert.equal(speaksVersion(PROTOCOL_VERSION + 1), false);
+  assert.equal(speaksVersion(2), true, '2026.0.2: the round that names no draw (kanban #348)');
+  assert.equal(speaksVersion(3), false);
 });
 
 test('every live manifest keeps its bytes and its game id: none names a required version', () => {
@@ -40,7 +41,7 @@ test('a manifest that requires a version carries it last and refuses an older ro
     rankNumerator: back.rankNumerator, rankDenominator: back.rankDenominator, minScore: back.minScore, blockTicks: 1 });
   const older = roundFitsManifest(round(PROTOCOL_VERSION), back, id);
   assert.equal(older.ok, false);
-  assert.match(older.why, /requires protocol version \?\.\?\.2; that round runs 2026\.0\.1/);
+  assert.match(older.why, /requires protocol version 2026\.0\.2; that round runs 2026\.0\.1/);
   assert.equal(roundFitsManifest(round(PROTOCOL_VERSION + 1), back, id).ok, true);
   // the same round against the manifest that requires nothing: no version asked
   assert.equal(roundFitsManifest({ ...round(PROTOCOL_VERSION), gameId: gameIdOf(base) }, base).ok, true);
@@ -55,9 +56,10 @@ test('a required version is 1 to 65535', () => {
 test('a wire version is named YYYY.x.y (the owner 2026-10-12: x starts at 0, y the build number) and read back to its u16', async () => {
   const { protocolVersionName, readProtocolVersionName } = await import('../src/protocol-version.js');
   assert.equal(protocolVersionName(PROTOCOL_VERSION), '2026.0.1');
-  assert.equal(protocolVersionName(2), '?.?.2', 'a version this build has no release for is named by its number');
+  assert.equal(protocolVersionName(2), '2026.0.2');
+  assert.equal(protocolVersionName(3), '?.?.3', 'a version this build has no release for is named by its number');
   assert.deepEqual(readProtocolVersionName('2026.0.1'), { ok: true, version: 1, known: true });
-  assert.deepEqual(readProtocolVersionName('2027.0.2'), { ok: true, version: 2, known: false });
+  assert.deepEqual(readProtocolVersionName('2027.0.3'), { ok: true, version: 3, known: false });
   assert.deepEqual(readProtocolVersionName('1'), { ok: true, version: 1, known: true });
   assert.match(readProtocolVersionName('2025.0.1').why, /build 1 is 2026\.0\.1/);
   assert.match(readProtocolVersionName('2026.0').why, /YYYY\.x\.y/);

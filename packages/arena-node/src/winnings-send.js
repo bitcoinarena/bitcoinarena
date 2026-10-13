@@ -26,6 +26,7 @@ import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswers
 import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { encodeCommitments, decodeCommitments, decodeShare } from './pool-wire.js';
 import { largestPayoutMsat, lnv2FeeMsat } from '../../arena-protocol/src/lock-settlement.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
@@ -58,6 +59,19 @@ export class WinningsSend {
     Object.assign(this, { round, port, curve, random, peersFor, fetcher, lnurlFetch, network, scopeParam });
     this.pairs = new Map();      // `${round}:${entry}:${attempt}` -> nonce pair for the auth signature
     this.rebuilt = new Map();    // an unsigned re-send transaction, by everything it is built from
+  }
+
+  /**
+   * THE PORT OF THIS ROUND'S FEDERATION (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation"): a
+   * router's own port for the round's federation, else the one port this node has, as before.
+   */
+  async portFor(roundIdBytes) {
+    const p = this.port;
+    if (!p || typeof p.forFederation !== 'function') return p;
+    const row = this.round.get(roundIdBytes);
+    if (!row) return p;
+    const c = decodeRoundContract(new Uint8Array(row.contract));
+    return (await p.forFederation(toHex(c.federationId))) || p;
   }
 
   /** The address's LUD-06 pay request, as THIS signer node fetches it. */
@@ -93,7 +107,7 @@ export class WinningsSend {
     if (kept.length) return { ok: true, rows: kept };
     const wanting = this.wanting(base);
     if (!wanting.length) return { ok: true, rows: [] };
-    const g = await this.port.gateways();
+    const g = await (await this.portFor(roundIdBytes)).gateways();
     const gw = lowestLiveGateway(g.gateways);
     if (!gw) return refuse('the round\'s federation has no live gateway to send the winnings through');
     const rows = [];
@@ -136,7 +150,7 @@ export class WinningsSend {
     const wanting = new Map(this.wanting(base).map((w) => [toHex(w.entryId), w]));
     if (proposed.length !== wanting.size)
       return refuse(`the plan names ${proposed.length} winning(s) and this signer node's settlement owes ${wanting.size} to a named address`);
-    const g = await this.port.gateways();
+    const g = await (await this.portFor(roundIdBytes)).gateways();
     const rows = [];
     for (const p of proposed) {
       const w = wanting.get(String(p.entry));
@@ -246,8 +260,8 @@ export class WinningsSend {
   }
 
   /** What the committee signs for one send: the invoice's consensus hash, rebuilt by this signer node's own tool. */
-  async authMessage(row, claimPk) {
-    const said = await this.port.send({ paymentHash: row.paymentHash, amountMsat: row.payoutMsat, expiration: row.expiration,
+  async authMessage(row, claimPk, roundIdBytes) {
+    const said = await (await this.portFor(roundIdBytes)).send({ paymentHash: row.paymentHash, amountMsat: row.payoutMsat, expiration: row.expiration,
       claimPk: row.gatewayPk, refundPk: claimPk, invoice: row.invoice });
     return said.message;
   }
@@ -293,7 +307,7 @@ export class WinningsSend {
     const key = signature ? null : [toHex(roundIdBytes), toHex(row.entryId), row.attempt, built.txid, String(prev.payoutMsat),
       String(row.payoutMsat), row.paymentHash, row.gatewayPk, row.expiration, toHex(from.txid), String(from.outIdx)].join(':');
     if (key && this.rebuilt.has(key)) return this.rebuilt.get(key);
-    const tx = await this.port.settle({ claimPk: built.claimPk, claims: [], refunds: [{ outpoint: from, amountMsat: prev.payoutMsat }],
+    const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk: built.claimPk, claims: [], refunds: [{ outpoint: from, amountMsat: prev.payoutMsat }],
       payouts: [{ payoutPk: built.claimPk, msat: row.payoutMsat,
         sent: { paymentHash: row.paymentHash, gatewayPk: row.gatewayPk, expiration: row.expiration } }], nonce, signature });
     if (key && tx) {
@@ -307,7 +321,7 @@ export class WinningsSend {
   async expired(roundIdBytes, row, built) {
     const at = await this.contractOf(roundIdBytes, row, built);
     if (!at) return { expired: false, why: 'no contract for that attempt' };
-    const st = await this.port.status(at);
+    const st = await (await this.portFor(roundIdBytes)).status(at);
     if (!st.stored) return { expired: false, spent: true, why: 'the contract is no longer held: the gateway claimed it, or it was refunded' };
     return { expired: st.stored.blocksLeft <= 0, blocksLeft: st.stored.blocksLeft, height: st.blockCount };
   }
@@ -321,10 +335,10 @@ export class WinningsSend {
   /** The proposer's re-send plan for an expired attempt. */
   async proposeResend(roundIdBytes, prev, built) {
     const entryHex = toHex(prev.entryId);
-    const g = await this.port.gateways();
+    const g = await (await this.portFor(roundIdBytes)).gateways();
     const gw = this.nextGateway(roundIdBytes, entryHex, g.gateways);
     if (!gw) return refuse('no other live gateway to re-send through; the winning waits for one');
-    const fees = await this.port.fees();
+    const fees = await (await this.portFor(roundIdBytes)).fees();
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
     const invoiceMsat = sendableInvoiceMsat(out, gw.sendFeeDefault);
     if (invoiceMsat <= 0n) return refuse('the refunded winning does not cover the next gateway\'s fee');
@@ -365,10 +379,10 @@ export class WinningsSend {
     }
     const ex = await this.expired(roundIdBytes, prev, built);
     if (!ex.expired) return refuse(`attempt ${prev.attempt} has not expired here: ${ex.why || `${ex.blocksLeft} block(s) left`}`);
-    const g = await this.port.gateways();
+    const g = await (await this.portFor(roundIdBytes)).gateways();
     const gw = this.nextGateway(roundIdBytes, String(p.entry), g.gateways);
     if (!gw) return refuse('this signer node sees no other live gateway');
-    const fees = await this.port.fees();
+    const fees = await (await this.portFor(roundIdBytes)).fees();
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
     const pr = await this.payRequest(prev.address, sendableInvoiceMsat(out, gw.sendFeeDefault));
     if (!pr.ok) return refuse(`this signer node could not read the address's pay request: ${pr.why}`);
@@ -384,7 +398,7 @@ export class WinningsSend {
 
   /** The message a kind of signature covers, rebuilt here: `auth` the invoice's hash, `resend` the re-send's txid. */
   async messageFor(kind, roundIdBytes, row, built) {
-    if (kind === 'auth') return this.authMessage(row, built.claimPk);
+    if (kind === 'auth') return this.authMessage(row, built.claimPk, roundIdBytes);
     if (kind === 'resend') { const tx = await this.resendTx(roundIdBytes, row, built); return tx ? fromHex(tx.message) : null; }
     return null;
   }
@@ -517,7 +531,7 @@ export class WinningsSend {
           why: 'the settlement is accepted; the committee signs the invoice and the gateway is asked' });
       const a = await this.sign(roundIdBytes, row, built, 'auth');
       if (!a.ok) { out.push({ entry: entryHex, attempt: row.attempt, ...a }); continue; }
-      const said = await this.port.send({ gateway: row.gatewayUrl, outpoint: at, paymentHash: row.paymentHash, amountMsat: row.payoutMsat,
+      const said = await (await this.portFor(roundIdBytes)).send({ gateway: row.gatewayUrl, outpoint: at, paymentHash: row.paymentHash, amountMsat: row.payoutMsat,
         expiration: row.expiration, claimPk: row.gatewayPk, refundPk: built.claimPk, invoice: row.invoice, auth: a.signature });
       if (said.sent && said.preimage && toHex(sha256(said.preimage)) === row.paymentHash) {
         this.keepPaid(row, said.preimage, `the gateway at ${row.gatewayUrl} paid the winner's invoice; its preimage checked`);

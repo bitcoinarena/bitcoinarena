@@ -120,6 +120,7 @@ export class LockSettlement {
     this.signerNodesFor = signerNodesFor;
     this.dkg = dkg;
     this.port = port;
+
     this.curve = curve;
     this.random = random;
     this.stakeSecrets = stakeSecrets;
@@ -226,6 +227,19 @@ export class LockSettlement {
    * FORFEIT - never while it is still in its re-run window. The plan is `lateLockSettlement` over the shares that
    * settlement kept; the P opened as for any loser; one transaction per (round, entry), its own nonce.
    */
+  /**
+   * THE PORT OF THIS ROUND'S FEDERATION (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation"): a
+   * router's own port for the round's federation, else the one port this node has, as before.
+   */
+  async portFor(roundIdBytes) {
+    const p = this.port;
+    if (!p || typeof p.forFederation !== 'function') return p;
+    const row = this.round.get(roundIdBytes);
+    if (!row) return p;
+    const c = decodeRoundContract(new Uint8Array(row.contract));
+    return (await p.forFederation(toHex(c.federationId))) || p;
+  }
+
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
     if (this.#attestedOf(roundIdBytes)) return refuse('an attested round has no late entry: its picks are all in its one settlement');
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
@@ -278,7 +292,7 @@ export class LockSettlement {
     const fl = this.round.feeLock ? this.round.feeLock(entryIdBytes) : null;
     const feeLock = fl ? { outpoint: outpointOf(fl.outpoint), amountMsat: lockFieldsFromJson(fl.fields).amountMsat, preimage: e.feePreimage } : null;
     let fees = this.fees.get(toHex(roundIdBytes));
-    if (!fees) { fees = await this.port.fees(); this.fees.set(toHex(roundIdBytes), fees); }
+    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(toHex(roundIdBytes), fees); }
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
       signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
@@ -304,7 +318,7 @@ export class LockSettlement {
       }
       claims.push({ ...c, preimage: opened.preimage });
     }
-    const tx = await this.port.settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
+    const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
     this.built.set(key, built);
@@ -420,7 +434,7 @@ export class LockSettlement {
     }
     const key = toHex(roundIdBytes);
     let fees = this.fees.get(key);
-    if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
     let donation = null;
     if (L.market.donationBps > 0 && table.feesDueMsat > 0n) {
       const t = this.donationTargetFor ? this.donationTargetFor(contract) : { ok: false, why: 'this signer node names no donation target' };
@@ -464,7 +478,7 @@ export class LockSettlement {
     }
     const key = toHex(roundIdBytes);
     let fees = this.fees.get(key);
-    if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
     // THE MARKET'S OWN NODE FEE (kanban #235), 0.5 % by default - and its donation, which its entries' fee locks hold with
     // it (entryFeeBpsOf): due now, at resolution, to the round's donation target
     const ofGame = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
@@ -497,7 +511,7 @@ export class LockSettlement {
       if (kept && kept.state === SUBMITTING) {
         const m = await this.lateMessage(roundIdBytes, entryIdBytes);
         if (m.ok && m.txid === kept.txid && this.port && typeof this.port.status === 'function') {
-          const held = async (o) => !!(await this.port.status(o)).stored;
+          const held = async (o) => !!(await (await this.portFor(roundIdBytes)).status(o)).stored;
           let gone = 0;
           for (const c of m.claims) if (!(await held(c.outpoint))) gone++;
           let paid = 0;
@@ -558,7 +572,7 @@ export class LockSettlement {
     }
     this.round.putLateLockSettlement({ roundId: roundIdBytes, entryId: entryIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this signer node dies here, ask the federation for the claimed lock' });
-    const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
+    const sent = await (await this.portFor(roundIdBytes)).settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
     const state = sent.accepted ? ACCEPTED : REFUSED;
     const why = sent.accepted
       ? `claimed the late loser's lock, ${m.plan.poolMsat} msat; paid ${m.plan.payouts.filter((p) => p.kind !== 'signer node').length} winner(s) ${m.plan.paidMsat} msat`
@@ -654,7 +668,7 @@ export class LockSettlement {
       }
       claims.push({ ...c, preimage: opened.preimage });
     }
-    const tx = await this.port.settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
+    const tx = await (await this.portFor(roundIdBytes)).settle({ claimPk, claims, payouts: plan.payouts, nonce: plan.nonce });
     const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, plan, claims, claimPk,
       signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
     this.built.set(key, built);
@@ -707,7 +721,7 @@ export class LockSettlement {
       feeLocks.set(toHex(e.pubkey), { outpoint: outpointOf(fl.outpoint), amountMsat: fields.amountMsat, preimage: e.feePreimage });
     }
     let fees = this.fees.get(key);
-    if (!fees) { fees = await this.port.fees(); this.fees.set(key, fees); }
+    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
     // THE POOL (RULED 2026-09-23): only a qualifier whose entry named a Lightning address at this signer node is paid;
     // the others' shares are split over them, and with none nothing of the stakes is claimed. Every signer node reads
     // its own rows; a peer holding another set rebuilds other amounts and refuses the proposer's plan by name.
@@ -854,7 +868,7 @@ export class LockSettlement {
     const moves = this.round.lockSettlementMoves(roundIdBytes);
     if (!moves || moves.txid !== kept.txid) return { verdict: 'unknown', why: 'this signer node kept no record of what its settlement moves' };
     if (!this.port || typeof this.port.status !== 'function') return { verdict: 'unknown', why: 'this signer node reaches no federation to ask' };
-    const held = async (o) => !!(await this.port.status(o)).stored;
+    const held = async (o) => !!(await (await this.portFor(roundIdBytes)).status(o)).stored;
     const claimsHeld = [];
     for (const c of moves.claims) claimsHeld.push(await held(outpointOf(c)));
     const payoutsHeld = [];
@@ -1008,7 +1022,7 @@ export class LockSettlement {
     this.keepMoves(roundIdBytes, m);
     this.round.putLockSettlement({ roundId: roundIdBytes, txid: m.txid, message: m.message, signature, state: SUBMITTING,
       why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' });
-    const sent = await this.port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
+    const sent = await (await this.portFor(roundIdBytes)).settle({ claimPk: m.claimPk, claims: m.claims, payouts: m.plan.payouts, nonce: m.plan.nonce, signature });
     const state = sent.accepted ? ACCEPTED : REFUSED;
     const stakeClaims = m.plan.claims.filter((c) => c.kind !== 'fee').length;
     const qualifiers = m.plan.payouts.filter((p) => p.kind === 'qualifier' || (p.kind === 'sent' && !p.donation)).length;
@@ -1077,7 +1091,7 @@ export class LockSettlement {
       only = new Set();
       for (const i of keys) {
         let held = false;
-        try { held = !!(await this.port.status({ txid: fromHex(txid), outIdx: BigInt(i) })).stored; } catch { held = false; }
+        try { held = !!(await (await this.portFor(roundIdBytes)).status({ txid: fromHex(txid), outIdx: BigInt(i) })).stored; } catch { held = false; }
         if (held) only.add(i); else redeemed++;
       }
     }

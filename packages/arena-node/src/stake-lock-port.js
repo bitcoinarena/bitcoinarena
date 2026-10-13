@@ -13,6 +13,8 @@
 // crates in would be a daemon in Rust.
 import { execFile, spawn } from 'node:child_process';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { existsSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 
 export const STAKE_LOCK_SETTINGS = ['ARENA_STAKE_LOCK_BIN', 'ARENA_FEDERATION_CLIENT_DIR'];
 
@@ -230,11 +232,68 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
  * client that has joined the round's federation (the signer node's own, read-only here).
  * @returns {{ ok: true, given: false } | { ok: true, given: true, stakeLocks } | { ok: false, why }}
  */
+/**
+ * EVERY FEDERATION, ONE PORT EACH (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation. That is one
+ * network of 14 nodes serving both federations"). With two federations in one census a drawn node serves rounds of a
+ * federation it did not found, so it holds a client of each: its own (`home`, as before) and one per other federation,
+ * joined on first need under `baseDir/<federation id>` with the invite that federation's signed record carries
+ * (`inviteOf`, the records this seat mirrors) - `bin --mode join`, through the connect overrides this node runs with.
+ *
+ * The router IS the home port (every method as before, so nothing that never names a federation changes) plus
+ * `forFederation(idHex)`: the port of that federation - joined first if need be - or null with the reason in `whyNot`.
+ */
+export function federationPorts({ home, bin, baseDir, inviteOf = () => null, makePort = (o) => stakeLockPort(o), joinTimeoutMs = 180000,
+  runJoin = (args) => run(bin, args, joinTimeoutMs), exists = (p) => existsSync(p), log = () => {} }) {
+  const ports = new Map();       // federation id hex -> port
+  const joining = new Map();     // federation id hex -> Promise
+  const whyNot = new Map();
+  let homeId = null;
+  const homeFederation = async () => {
+    if (homeId) return homeId;
+    try { const g = await home.guardians(); homeId = toHex(g.federationId); } catch { /* asked again next time */ }
+    return homeId;
+  };
+  async function forFederation(idHex) {
+    const fid = String(idHex || '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(fid)) return null;
+    if (fid === await homeFederation()) return home;
+    if (ports.has(fid)) return ports.get(fid);
+    const dir = join(baseDir, fid);
+    if (!exists(join(dir, 'client.db'))) {
+      if (!joining.has(fid)) {
+        const invite = inviteOf(fid);
+        if (!invite) { whyNot.set(fid, 'this node holds no signed record, so no invite, of that federation'); return null; }
+        joining.set(fid, runJoin(['--mode', 'join', '--data-dir', dir, '--invite', invite])
+          .then((j) => { if (String(j.federation_id) !== fid) throw new Error(`that invite joined ${String(j.federation_id).slice(0, 16)}`); log(`[federations] joined ${fid.slice(0, 16)}`); },
+            (e) => { throw new Error(`could not join federation ${fid.slice(0, 16)}: ${e.message}`); })
+          .finally(() => joining.delete(fid)));
+      }
+      try { await joining.get(fid); } catch (e) { whyNot.set(fid, e.message); return null; }
+    }
+    if (ports.has(fid)) return ports.get(fid);           // a caller that waited on the same join
+    const port = makePort({ bin, dataDir: dir, readDataDir: dir });
+    ports.set(fid, port);
+    return port;
+  }
+  return Object.assign(Object.create(home), { forFederation, homeFederation, whyNot: (idHex) => whyNot.get(String(idHex).toLowerCase()) || null,
+    close() { home.close(); for (const p of ports.values()) p.close(); } });
+}
+
 export function stakeLocksFromEnv(env) {
   const got = STAKE_LOCK_SETTINGS.filter((k) => env[k]);
   if (!got.length) return { ok: true, given: false };
   if (got.length !== STAKE_LOCK_SETTINGS.length)
     return { ok: false, why: `${STAKE_LOCK_SETTINGS.join(' and ')} go together: set both, or neither` };
-  return { ok: true, given: true, stakeLocks: stakeLockPort({ bin: env.ARENA_STAKE_LOCK_BIN, dataDir: env.ARENA_FEDERATION_CLIENT_DIR,
-    readDataDir: env.ARENA_FEDERATION_CLIENT_READ_DIR || env.ARENA_FEDERATION_CLIENT_DIR }) };
+  const home = stakeLockPort({ bin: env.ARENA_STAKE_LOCK_BIN, dataDir: env.ARENA_FEDERATION_CLIENT_DIR,
+    readDataDir: env.ARENA_FEDERATION_CLIENT_READ_DIR || env.ARENA_FEDERATION_CLIENT_DIR });
+  // the other federations' clients (kanban #348): ARENA_FEDERATION_CLIENTS_DIR, or beside the home client; joined with
+  // ARENA_STAKE_LOCK_JOIN_BIN when given (a build whose join honours the overrides), else the lock tool itself.
+  // `inviteOf` is set by the server once its federation records exist (stakeLocks.inviteOf = ...)
+  const router = federationPorts({ home, bin: env.ARENA_STAKE_LOCK_BIN,
+    baseDir: env.ARENA_FEDERATION_CLIENTS_DIR || join(dirname(env.ARENA_FEDERATION_CLIENT_DIR), 'federations'),
+    inviteOf: (fid) => (typeof router.inviteOf === 'function' ? router.inviteOf(fid) : null),
+    runJoin: (args) => run(env.ARENA_STAKE_LOCK_JOIN_BIN || env.ARENA_STAKE_LOCK_BIN, args, 180000),
+    log: (m) => console.log(m) });
+  router.inviteOf = null;
+  return { ok: true, given: true, stakeLocks: router };
 }

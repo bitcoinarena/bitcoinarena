@@ -2,7 +2,7 @@
 
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
-import { TAG, roleByte } from './constants.js';
+import { TAG, roleByte, namesNoDraw } from './constants.js';
 import { compareEntries, meetsCensusMinimum, eligibleFor } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
 
@@ -65,6 +65,12 @@ export function weightOf(bondSats, bondMin) {
  * is offline when its round comes is replaced - two reserves over the seats, capped where two seatings could stop sharing a
  * signer (`2 x threshold > drawn`): 9 for 7 seats (threshold 5), 3 for 2 (threshold 2). The census may hold fewer.
  */
+/**
+ * THE ROLE A DRAW IS TICKETED ON: its own, and for a v2 round (2026.0.2, kanban #348) the settlement pool's for both - one
+ * ordered list, so the seats of both roles are one set and the round's signer nodes are those 7.
+ */
+export const drawRoleOf = (contract, role) => (namesNoDraw(contract) ? 'settlement' : role);
+
 export function drawnForRole(contract, role) {
   const slots = slotsForRole(contract, role);
   if (!Number.isInteger(slots)) return undefined;
@@ -146,7 +152,9 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   const byKey = new Map();
   for (const e of entries) {
     // the role, and for game/verify the round's game hosted (census.js eligibleFor; kanban #204)
-    if (!eligibleFor(e, contract, role) || out.has(keyOf(e))) continue;
+    // ONE DRAW FOR BOTH ROLES (2026.0.2, kanban #348): a v2 round's node serves both, so it is eligible for both
+    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
+      || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;
@@ -157,7 +165,7 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
 
   const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
     entry,
-    ticket: ticketFor(committeeSeed, entry, role),
+    ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
     weight: weightOf(bondSats, bondMin),
   }));
 
