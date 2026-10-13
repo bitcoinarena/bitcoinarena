@@ -1,6 +1,6 @@
 // THE BALLOT READ OFF THE CHAIN, AND ACTIVATION (spec §27A.7.3, §27A.7.5, kanban #329), the second slice.
 //
-//   VOTES      every OP_RETURN output of a block whose push is a 76-byte "BLW" vote (ballot.js decodeVote), with the height and
+//   VOTES      every OP_RETURN output of a block whose push is a 77-byte "ARN" 'V' vote (ballot.js decodeVote), with the height and
 //              txid the tally needs - the tally then decides which bond, which phase, which one is last
 //   ACTIVATION the config live at a height: from genesis, each PASSED proposal at its activation_height, in order of height (ties:
 //              lower proposal id). "parent serialises competing proposals. Both may pass; the first to activate becomes the

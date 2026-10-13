@@ -3058,7 +3058,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             federations: fedRecords && fedRecords.list ? fedRecords.list().map((f) => ({ federation: f.federation, status: f.status, load: f.load ?? null })) : [] });
         }
         // THE VOTE ACTION (§27A.7.7 / §27A.7.3, kanban #332 on #329's ballot): this node's bond key signs H(proposal_id || choice)
-        // and the door answers the 76-byte OP_RETURN payload. It broadcasts nothing: a vote transaction pays a fee, and no
+        // and the door answers the 77-byte OP_RETURN payload ("ARN" 'V', the owner 2026-10-13). It broadcasts nothing: a vote transaction pays a fee, and no
         // operator scope moves money - the operator's own wallet sends the payload. { proposalId: 64 hex, choice: YES|NO|ABSTAIN }
         if (scope === 'vote') {
           if (req.method !== 'POST') return answer(405, { ok: false, why: 'a vote is POSTed: { proposalId, choice }' });
