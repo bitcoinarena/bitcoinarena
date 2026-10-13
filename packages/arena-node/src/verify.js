@@ -169,8 +169,10 @@ const PEER_WAIT_MS = 2500;
 export class Verifier {
   constructor(round, {
     randomnessFor = NO_RANDOMNESS_SOURCE, chainFor = null, pool = new ReplayPool(), peers = [],
-    peersFor = null, advertsFor = null, plugins = [],
+    peersFor = null, advertsFor = null, plugins = [], conflictsFor = null,
   } = {}) {
+    // WHO IS CONFLICTED IN A ROUND (server.js `conflictsFor`, §5A.13, kanban #309): a node whose operator plays signs no result
+    this.conflictsFor = conflictsFor;
     // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1): a round's runs are replayed by the core its game installed, or not at all.
     this.plugins = hostedPlugins(plugins);
     /**
@@ -1084,6 +1086,11 @@ export class Verifier {
       nodePubkey: this.round.pubkey, stopped,
     });
     if (!built.ok) return { entryId, stored: false, why: built.why };
+    // PLAYER-NODE SEPARATION (§5A.13): "A selected node may not sign anything for a round in which its operator has an Entry
+    // Contract" - signing anyway is the slashable offence (slash.js slashHoldsOnConflict), so it is never done
+    const conflicts = this.conflictsFor ? this.conflictsFor(roundIdBytes) : null;
+    if (conflicts && conflicts.self)
+      return { entryId, stored: false, why: `this signer node is conflicted, its operator ${conflicts.self.slice(0, 16)} plays the round: it signs no result (§5A.13)` };
     // THE TEST FAULT, FIRST RESULT (test-dissent.js dissentsFirstOn, off by default; kanban #26): one score higher
     if (dissentsFirstOn(entryId)) {
       built.result = { ...built.result, score: (built.result.score + 1) >>> 0 };

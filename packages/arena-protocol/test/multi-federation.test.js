@@ -66,7 +66,7 @@ test('an entry names the federation its locks are in, last, after its marker; ev
   const zeroed = Uint8Array.from([...plain, FEDERATION_MARKER, ...ZERO]);
   assert.throws(() => decodeEntryContract(zeroed), /not zero/);
   const stray = Uint8Array.from([...plain, COMMIT_MARKER, ...b32(1), 0x01]);
-  assert.throws(() => decodeEntryContract(stray), /not its federation/);
+  assert.throws(() => decodeEntryContract(stray), /neither its federation nor its operator/);
 });
 
 test('the federation an entry\'s locks are in: its own on a round that takes any (none named is refused), else the round\'s', async () => {

@@ -543,6 +543,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : [])].map(toHex));
+  // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13, kanban #309): its operator plays the round (operator-conflict.js); the
+  // caller names them on `signerNodes.conflicted` (hex), and their shares go to the rest of their pool as any absent node's
+  for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
   let table;
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(feeBps !== undefined ? { feeBps } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
