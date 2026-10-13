@@ -23559,7 +23559,17 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   if (!g) return { ok: false, why: `this client carries no bond terms for ${network}` };
   const t0 = Date.now();
   const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
-  if (!chain.ok) return chain;
+  if (!chain.ok) {
+    // A CENSUS THAT DOES NOT STAND OUTSIDE THE NETWORK IS OBJECTED (§5A.4, kanban #299): handed to every seat, each checks it on its
+    // own chain against the same explorer; upheld, the round takes no new entry there - so other clients refuse it too
+    if (chain.explorer && chain.explorer.census && chain.explorer.census.mismatch && explorer) {
+      chain.objected = await Promise.all(nodes.map(async (u) => {
+        try { const r = await fetcher(`${baseOf(u)}/census-objection`, { method: 'POST', body: JSON.stringify({ round: roundIdHex, explorer }) }); return { node: u, upheld: r.ok }; }
+        catch { return { node: u, upheld: false }; }
+      }));
+    }
+    return chain;
+  }
   if (!evidence.ok) return evidence;
   const t1 = Date.now();
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
@@ -24218,6 +24228,7 @@ function safeFederation(from, statuses = [], { known = () => true } = {}) {
 const WARNING_SAYS = Object.freeze({
   flat_rank_curve: 'Its payout curve is nearly flat (r >= 0.95): the last paying rank is paid almost as much as the first, so playing it safe pays.',
   minimum_score_is_a_danger_rule: 'Its minimum score is above 100 points: a run that scores less is paid nothing.',
+  census_objected: 'Its census was objected: the block it names at its census height is not the block an explorer outside the network names there. Its seats take no new entry (§5A.4).',
   exposure_ignored: 'Its score ignores exposure (not exposure-multiplicative): the safe route pays as well as the risky one.',
   time_factor_degenerate: 'Its time factor does nothing (its floor is not below its ceiling): time does not count in the score.',
 });
