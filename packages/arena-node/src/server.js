@@ -25,6 +25,7 @@ import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/t
 import { stateOf } from './settlement-state.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { nodeStanding } from './node-standing.js';
+import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
 import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
@@ -74,7 +75,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -3270,10 +3271,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (!census || !census.ok) continue;
             const pick = (e) => ({ pubkey: toHex(e.pubkey), bondSats: e.bondSats });
             rows.push({ atMs: Number(c.committeeTimeMs), bondMinSats: c.bondMinSats, entries: (census.entries || []).map(pick),
-              excluded: (census.excluded || []).filter((e) => e.pubkey && e.bondSats !== undefined).map(pick) });
+              excluded: (census.excluded || []).filter((e) => e.pubkey && e.bondSats !== undefined).map(pick),
+              censusHeight: Number(c.censusHeight), full: census.entries || [], network: networkOf(c.networkId) });
           }
           rows.sort((a, b) => b.atMs - a.atMs);
-          return answer(200, nodeStanding({ me, rounds: rows }));
+          const standing = nodeStanding({ me, rounds: rows });
+          // BOND_MIN WITH NOTICE (§27A.3, kanban #300): the bond-weighted medians of the censuses this seat holds, one per census height;
+          // the floor in force at the newest, a rise pending and its date, and - for this node, when the rise passes its bond - the
+          // escalation (T-30d, T-14d, T-3d, T+0)
+          const history = medianHistory(rows.map((r) => ({ censusHeight: r.censusHeight, entries: r.full })), bondWeightedMedian);
+          const newest = history.length ? history[history.length - 1].height : null;
+          const notice = NOTICE_BLOCKS[(rows[0] && rows[0].network) || 'mainnet'] || NOTICE_BLOCKS.mainnet;
+          const floor = newest === null ? { inForce: null, pending: null } : bondMinInForce(history, newest, notice);
+          const warn = newest === null ? null : bondMinWarning({ pending: floor.pending, ownBondSats: standing.ownBondSats === null ? null : BigInt(standing.ownBondSats), nowHeight: newest });
+          return answer(200, { ...standing, bondMin: { inForce: floor.inForce === null ? null : String(floor.inForce), noticeBlocks: notice, censuses: history.length,
+            pending: floor.pending ? { value: String(floor.pending.value), crossedAt: floor.pending.crossedAt, effectiveAt: floor.pending.effectiveAt } : null },
+            warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : [])] });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {

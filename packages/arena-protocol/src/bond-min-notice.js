@@ -42,3 +42,19 @@ export function bondMinWarning({ pending, ownBondSats, nowHeight, blockMs = 6000
   if (days <= 30) return { step: 'T-30d', urgent: false, says: `the floor will rise to ${pending.value} sat ${when}; this node is at ${ownBondSats} sat and keeps every round below that floor.` };
   return null;
 }
+
+/** notice_period per network (§27A.6's table): ~30 days on mainnet, ~1 day on testnet, 10 blocks on regtest. */
+export const NOTICE_BLOCKS = Object.freeze({ mainnet: 4320, testnet4: 144, testnet: 144, regtest: 10 });
+
+/**
+ * THE MEDIAN HISTORY A SEAT HOLDS (kanban #300): one census per census height, from the rounds it holds - `rounds` [{ censusHeight,
+ * entries }] (entries with bondSats and advert.declares) - as [{ height, median }] for bondMinInForce, ascending, nulls dropped.
+ */
+export function medianHistory(rounds, bondWeightedMedian) {
+  const by = new Map();
+  for (const r of rounds || []) if (r && Number.isInteger(r.censusHeight) && !by.has(r.censusHeight)) {
+    const m = bondWeightedMedian(r.entries || [], 'bondMinSats');
+    if (typeof m === 'bigint') by.set(r.censusHeight, m);
+  }
+  return [...by.entries()].map(([height, median]) => ({ height, median })).sort((a, b) => a.height - b.height);
+}
