@@ -21,7 +21,8 @@ const attestor = attestorKey(readFileSync(arg('key')));
 const SOURCES = String(arg('sources', 'coinbase,kraken,bitstamp')).split(',');
 const GAME = arg('game', 'btc-updown-15m');
 // the market by its id (hex) - its name alone also matches an older manifest of the same name
-const GAME_ID = arg('game-id');
+// --game-id: one id, or several comma-separated - the v1 and v2 markets of one game side by side (2026.0.2, kanban #348)
+const GAME_IDS = String(arg('game-id') || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
 const PERIOD_MS = BigInt(arg('period-ms', '900000'));
 const SEATS = String(arg('seats', '')).split(',').filter(Boolean);
 const PEERS = String(arg('peers', '')).split(',').filter(Boolean);
@@ -58,7 +59,7 @@ const roundsOfGame = async () => {
       const j = await r.json();
       const rows = Array.isArray(j) ? j : j.rounds || [];
       // entryCloseMs is decimal ms (a string on the wire)
-      return rows.filter((x) => x.game && (GAME_ID ? x.game.id === GAME_ID : x.game.name === GAME) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs))).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs) }));
+      return rows.filter((x) => x.game && (GAME_IDS.length ? GAME_IDS.includes(String(x.game.id).toLowerCase()) : x.game.name === GAME) && /^[0-9]{1,16}$/.test(String(x.entryCloseMs))).map((x) => ({ id: x.id, closeMs: BigInt(x.entryCloseMs) }));
     } catch { /* the next seat */ }
   }
   return [];
