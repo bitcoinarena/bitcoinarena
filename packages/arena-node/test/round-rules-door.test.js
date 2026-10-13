@@ -30,5 +30,10 @@ test('a round naming rules this build does not run is refused by name; one namin
     assert.equal(refused.status, 409); assert.match(refused.text, /names a slashing rule this build does not run/);
     assert.equal(opened.status, 201, opened.text);
     assert.equal((await fetch(`${base}/round?id=${toHex(roundId(withRoot(mine)))}`)).status, 200);
+    // ITS CENSUS HEALTH (§5A.10, kanban #306): two nodes support play money only - shown on regtest, not enforced
+    const h = await fetch(`${base}/census-health?round=${toHex(roundId(withRoot(mine)))}`);
+    const hj = h.status === 200 ? await h.json() : { status: h.status, why: await h.text() };
+    console.log('  CENSUS HEALTH:', JSON.stringify(hj));
+    assert.equal(h.status, 200, JSON.stringify(hj)); assert.equal(hj.enforced, false); assert.equal(hj.ceilingSats, '0'); assert.match(hj.why, /under 10: play money only/);
   } finally { await d.close(); }
 });
