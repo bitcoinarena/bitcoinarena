@@ -19,8 +19,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash } from '../src/arbiter.js';
-import { createLiquidationClaims } from '../src/liquidation-claims.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
 import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
@@ -121,7 +121,35 @@ async function loadGames() {
   return games;
 }
 
+// THE TABLE PAID (§23A.5 step 4, kanban #323): once a liquidating federation's claim window has closed, its escrow into the set's
+// client of a SAFE federation (ARENA_LIQ_PAY_DIR, through ARENA_STAKE_LOCK_BIN) and each note's payout locked to its key
+async function payLiquidations() {
+  if (!claims || !env.ARENA_LIQ_PAY_DIR || !env.ARENA_STAKE_LOCK_BIN) return;
+  const { execFile } = await import('node:child_process');
+  const run = (args) => new Promise((done) => execFile(env.ARENA_STAKE_LOCK_BIN, [...args, '--data-dir', env.ARENA_LIQ_PAY_DIR], { timeout: 900000, maxBuffer: 1 << 24 },
+    (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
+  state.liquidations = state.liquidations || {};
+  for (const [fid, at] of liqEscrows) {
+    const v = state.liquidations[fid] = state.liquidations[fid] || {};
+    const [txid, vout] = at.split(':');
+    const spendEscrow = async (address) => {
+      const o = await rpc('gettxout', [txid, Number(vout), false]);
+      if (!o) return { why: 'the escrow output is spent or unknown' };
+      const toScript = fromHex((await rpc('validateaddress', [address])).scriptPubKey);
+      const spend = buildEscrowPegin({ escrow: { txid: fromHex(txid).reverse(), vout: Number(vout), value: BigInt(Math.round(Number(o.value) * 1e8)) }, set, toScript,
+        feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000) });
+      if (!spend.ok) return { why: spend.why };
+      const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
+      if (!signed.ok) return { why: signed.why };
+      return post(rpc, signed.hex);
+    };
+    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, keep, say }); } catch (e) { r = { why: e.message }; }
+    if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
+  }
+}
+
 async function pass() {
+  await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
     for (const s of list.slashes || []) {

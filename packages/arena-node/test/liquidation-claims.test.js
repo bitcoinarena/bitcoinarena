@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { createLiquidationClaims } from '../src/liquidation-claims.js';
+import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { notesOfDecoded, fedimintNoteValidator } from '../src/note-validate.js';
 import { serveArbiter } from '../src/arbiter.js';
 import { presentNotes, pendingClaimKey } from '../../arena-client/src/liquidation-claim.js';
@@ -96,4 +96,26 @@ test('the client presents its whole wallet once, keeps the e-cash until it is ta
   assert.deepEqual(posted.map((p) => p[0]), ['https://arb.example/liquidation-claims', 'https://arb.example/liquidation-claims']);
   assert.equal((await presentNotes({ liquidations: liq, held: ['ef'.repeat(32)], walletFor, payoutPk: P1, height: 1012, storage, fetcher })).length, 0, 'a federation this browser holds nothing in');
   assert.match((await presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: P1, height: 1005, storage, fetcher }))[0].why, /claims open at 1010/);
+});
+
+test('the table paid: nothing before the window closes; then the escrow into the safe federation, every note once, a late one by a later pass', async () => {
+  const b = book(); b.at(1012);
+  await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const runs = []; const v = {}; let spent = 0;
+  const run = async (args) => { runs.push(args[1]);
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 9_000_000 };
+    if (args[1] === 'pay') return { txid: `pay${runs.length}`, payouts: args[3].split(',').map((x, i) => ({ refund_pk: x.split(':')[0], amount_msat: Number(x.split(':')[1]), out_idx: i })) };
+    return {}; };
+  const spendEscrow = async (addr) => { spent++; return { txid: 'escrow-into-safe', addr }; };
+  const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => tip(), run, spendEscrow });
+  let h = 1015; const tip = () => h;
+  assert.match((await pass()).why, /claim window closes at 1020/);
+  h = 1021;
+  const first = await pass();
+  assert.deepEqual([first.paid, spent, v.escrowTxid, v.claimedMsat, v.payouts.map((x) => [x.payoutPk, x.msat])], [2, 1, 'escrow-into-safe', '9000000', [[P1, '768000']]]);
+  assert.deepEqual((await pass()), { paid: 0, notes: 2 }, 'nothing paid twice');
+  b.at(1050); await b.claims.offer({ federation: FED, ecash: 'e2', payoutPk: P2 });
+  const late = await pass();
+  assert.deepEqual([late.paid, spent, v.payouts.at(-1).payoutPk, v.payouts.at(-1).msat], [1, 1, P2, '1024000'], 'the late note from what is left, the escrow spent once');
 });
