@@ -575,6 +575,29 @@ const ARBITRATION_KEYS_TESTNET4 = [
 const PROTOCOL_VERSION = 1;
 
 /**
+ * THE VERSIONS THIS BUILD READS (kanban #349, the owner 2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
+ * Versionen required können. Alte nodes die da nicht updaten fliegen raus."). It writes PROTOCOL_VERSION and reads every
+ * version listed here, so a cut-over can run old and new rounds side by side: a build of version N+1 lists N and N+1
+ * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
+ * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
+ */
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
+/**
+ * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
+ * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
+ * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the
+ * testnet4 census held 14 nodes, and no round could name its draw - the draw is seeded by the round id, which hashed the
+ * very `nodes` it had to name (a fixed point only while the census is no larger than the draw). From this version:
+ *   - the round id (and a series id) hash the contract with `nodes` emptied, so the list is no input to its own draw;
+ *   - both roles take ONE draw, the settlement pool's (sortition.js drawRoleOf), so the seated nodes are one set of 7;
+ *   - a seat fills `nodes` with that seated set itself, and every threshold counts those seats (5 of 7).
+ * Other message types are written at PROTOCOL_VERSION as before: the version names the round's rules.
+ */
+const DRAW_FREE_VERSION = 2;
+const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= DRAW_FREE_VERSION;
+const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
+
+/**
  * THE FEWEST PLAYERS A ROUND OPENS FOR. The preflight sizes a signer node's Lightning
  * for it, and the fee-lock gate (lock-settlement.js `feeLockPays`) takes it as
  * the worst case: more players only raise each signer node's fee share.
@@ -1310,7 +1333,7 @@ function decodeCheckpoint(bytes) {
   const type = r.u8();
   if (type !== TYPE_CHECKPOINT) throw new Error('not a checkpoint: type ' + type);
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const c = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
@@ -1539,7 +1562,11 @@ function encodeRoundContract(c) {
   if (!named.ok) throw new Error(named.why);
   const w = new Writer();
   w.u8(TYPE_ROUND_CONTRACT);
-  w.u16(PROTOCOL_VERSION);
+  // THE ROUND'S VERSION (2026.0.2, kanban #348): a contract that names one is written at it - a v2 round's rules differ -
+  // and one that names none at this build's PROTOCOL_VERSION, as before
+  const version = c.protocolVersion === undefined || c.protocolVersion === null ? PROTOCOL_VERSION : c.protocolVersion;
+  if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`);
+  w.u16(version);
 
   // WHICH NETWORK THIS ROUND IS FOR, section 27A.4: "Round Contracts carry it,
   // nodes and clients reject contracts that do not match the one they were
@@ -1745,7 +1772,7 @@ function decodeRoundContract(bytes) {
   const type = r.u8();
   if (type !== TYPE_ROUND_CONTRACT) throw new Error('not a RoundContract: type ' + type);
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION)
+  if (!speaksVersion(version))
     throw new Error('protocol version ' + version + ', this build speaks ' + PROTOCOL_VERSION);
 
   const c = {
@@ -1820,8 +1847,13 @@ const roundId = (c) => {
     const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
     return taggedHash(TAG.seriesRound, body);
   }
-  return taggedHash(TAG.roundContract, encodeRoundContract(c));
+  return taggedHash(TAG.roundContract, encodeRoundContract(idBodyOf(c)));
 };
+/**
+ * THE BYTES A ROUND'S ID HASHES (2026.0.2, kanban #348): a v2 contract's with `nodes` emptied - the seated nodes are the
+ * draw's answer, written in by each seat after it, and never an input to the draw - and a v1 contract's whole, as before.
+ */
+const idBodyOf = (c) => (namesNoDraw(c) ? { ...c, nodes: [] } : c);
 
 /**
  * IS THIS CONTRACT FOR THIS BUILD'S NETWORK, AND FOR RULES IT IS RUNNING?
@@ -1975,7 +2007,7 @@ function decodeEntryContract(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ENTRY_CONTRACT) throw new Error('not an EntryContract');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const e = {
     roundId: r.bytes32(),
     playerPubkey: r.bytes32(),
@@ -2443,7 +2475,7 @@ function decodeInputBatch(bytes) {
   const type = r.u8();
   if (type !== TYPE_INPUT_BATCH) throw new Error('not an input batch');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const b = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
@@ -2591,7 +2623,7 @@ function encodeTranscript(t) {
 function decodeTranscript(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_TRANSCRIPT) throw new Error('not a transcript');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const t = { roundId: r.bytes32(), entryId: r.bytes32() };
   t.batches = r.vec((rr) => decodeInputBatch(rr.bytes(rr.u16())));
   t.marks = r.vec((rr) => rr.bytes(SIGNED_CHECKPOINT_BYTES));
@@ -2989,7 +3021,7 @@ function encodePriceSample({ roundId, tick, priceCents }) {
 function decodePriceSample(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_PRICE_SAMPLE) throw new Error('not a price sample');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const s = { roundId: r.bytes32(), tick: r.u32(), priceCents: r.i32() };
   if (r.at !== bytes.length) throw new Error('trailing bytes after the price sample');
   return s;
@@ -3133,7 +3165,7 @@ function decodeCheckpointReceipt(bytes) {
   if (type !== TYPE_CHECKPOINT_RECEIPT)
     throw new Error('not a checkpoint receipt: type ' + type);
   const version = rd.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const r = {
     checkpointId: rd.bytes32(),
     receivedAtMs: rd.u64(),
@@ -3461,7 +3493,7 @@ function encodePayoutTable({ roundId, table }) {
 function decodePayoutTable(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_PAYOUT_TABLE) throw new Error('not a payout table');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const roundId = r.bytes32();
   const table = r.vec((rr) => ({ pubkey: rr.bytes32(), amountMsat: rr.u64() }));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the payout table');
@@ -4418,7 +4450,7 @@ function decodeAdvert(bytes) {
   const type = r.u8();
   if (type !== TYPE_ADVERT) throw new Error('not an advertisement: type ' + type);
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
 
   const a = {
     nodePubkey: r.bytes32(),
@@ -7043,7 +7075,7 @@ function decodeHandout(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_VSS_HANDOUT) throw new Error('not a VssHandout');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const h = {
     roundId: r.bytes32(),
     playerPubkey: r.bytes32(),
@@ -7563,6 +7595,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  'c693585b01cef147f311e39c304f7b40f99774afc032f58db35ef8094cfa78dc': Object.freeze({
+    name: 'nextblock',
+    // 2026.0.2 (kanban #348): manifest version 2, parent 495516ae, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'd09982face63f0f097c0d5358bb00152d44a0f4cd2bbd76eb8cfd129afc0a5d3': Object.freeze({
     name: 'btc-close',
     cores: Object.freeze({
@@ -7667,6 +7713,16 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  'a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1c06164ea': Object.freeze({
+    name: 'rock-paper-scissors',
+    // 2026.0.2 (kanban #348): manifest version 2, parent 1e9ab4b7, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   '672415c814e61b47ce038cd7f9a9431be8b41123c59502c371d5cd6a79c7684f': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
@@ -7679,7 +7735,59 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  'f5f3f18753b4167fe36d2e18f72c72b6e5cfea93cd5ef98c716d3b9137890375': Object.freeze({
+    name: 'btc-updown-15m',
+    // 2026.0.2 (kanban #348): manifest version 2, parent 672415c8, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
 });
+
+// ---- arena-protocol/src/protocol-version.js
+// A PROTOCOL VERSION'S NAME (kanban #349, the owner 2026-10-12 ~15:05Z): "the version template is YYYY.x.y" - YYYY the year it was
+// released, y the build number, and x starts at 0 for now ("0.0.1 is the newest version").
+//
+// THE WIRE KEEPS ITS u16: what a contract, an advert and a manifest carry is y alone, and y only ever grows, so "at or above"
+// is a comparison of y and no byte moves. YYYY and x are not on the wire; they come from this table of releases, which a
+// build extends when it ships a version. A y this build has no release for is named by its number alone ("?.?.y").
+const PROTOCOL_RELEASES = Object.freeze([
+  Object.freeze({ version: 1, year: 2026, x: 0 }),
+  // the round contract that does not name its draw (kanban #348, RULED the owner 2026-10-13)
+  Object.freeze({ version: 2, year: 2026, x: 0 }),
+]);
+
+const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
+
+/** The YYYY.x.y name of wire version `v`. */
+function protocolVersionName(v) {
+  if (!Number.isInteger(v) || v < 0 || v > 0xffff) return String(v);
+  const r = byVersion.get(v);
+  return r ? `${r.year}.${r.x}.${v}` : `?.?.${v}`;
+}
+
+/**
+ * The wire version a YYYY.x.y name stands for: y, once the name is well formed - and, for a version this build has a
+ * release for, only if YYYY and x are that release's. A plain number is taken as y. Answers { ok, version, known } or why not.
+ */
+function readProtocolVersionName(name) {
+  const s = String(name ?? '').trim();
+  if (/^\d+$/.test(s)) { const v = Number(s); return v >= 1 && v <= 0xffff ? { ok: true, version: v, known: byVersion.has(v) } : { ok: false, why: `${s} is not a protocol version (1..65535)` }; }
+  const m = /^(\d{4})\.(\d+)\.(\d+)$/.exec(s);
+  if (!m) return { ok: false, why: `${s || 'nothing'} is not a version of the form YYYY.x.y` };
+  const [year, x, v] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (v < 1 || v > 0xffff) return { ok: false, why: `${s}: the build number is 1..65535` };
+  const r = byVersion.get(v);
+  if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${protocolVersionName(v)}` };
+  return { ok: true, version: v, known: !!r };
+}
 
 // ---- arena-protocol/src/known-game.js
 // A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
@@ -7694,6 +7802,8 @@ const KNOWN_GOOD_GAMES = Object.freeze({
 //
 // F2's second clause rests on it (FEDERATION.md): the player's key is theirs only if the code that decides the round is
 // code they can know.
+
+
 
 
 const isGameBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -7724,9 +7834,17 @@ const isZero32 = (b) => isGameBytes32(b) && b.every((x) => x === 0);
 // `networkId`: the round's network - a pinned market is good only on the networks it is pinned for. `confirmed`: game ids
 // (hex) of ATTESTED games the player confirmed a second time on this page (§0A.6) - an unpinned market is let through only
 // then, and only with no core and no config (there is nothing of it to run).
-function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null } = {}) {
+function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, confirmed = null, protocolVersion } = {}) {
   if (!isGameBytes32(gameId)) return { ok: false, why: 'that round names no 32-byte game, so nothing says which game decides it' };
   const game = KNOWN_GOOD_GAMES[toHex(gameId)];
+  // THE VERSION THE GAME REQUIRES (kanban #349, manifest.js REQUIRED_VERSION_MARKER): this build must speak it, and the
+  // round must run it or a later one. A pinned game that requires none passes as before.
+  if (game && game.requiredProtocolVersion) {
+    if (!speaksVersion(game.requiredProtocolVersion))
+      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}, which this client does not speak: update the page` };
+    if (!(Number.isInteger(protocolVersion) && protocolVersion >= game.requiredProtocolVersion))
+      return { ok: false, why: `${game.name} requires protocol version ${protocolVersionName(game.requiredProtocolVersion)}; that round runs ${Number.isInteger(protocolVersion) ? protocolVersionName(protocolVersion) : 'none'}` };
+  }
   // A MARKET (§0A.7a): no core, no config; pinned for this network, or confirmed twice by the player
   if ((game && game.attested) || (!game && confirmed && confirmed.has && confirmed.has(toHex(gameId)))) {
     if (!isZero32(simCoreHash) || (configHash !== undefined && !isZero32(configHash)))
@@ -8170,7 +8288,7 @@ function decodeClaimKeyAttestation(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_CLAIM_KEY_ATTESTATION) throw new Error('not a claim-key attestation');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const a = { roundId: r.bytes32(), claimPk: r.bytes(CLAIM_KEY_BYTES), signerNodePubkey: r.bytes32() };
   r.end();
   return a;
@@ -9070,7 +9188,7 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
   }
   // A PAYING ROUND OF AN UNKNOWN GAME, OR ON A CORE ITS GAME DOES NOT LIST, IS REFUSED (§5, §0A.6; #202): no override,
   // no flag. A free round risks nothing and is joined as before.
-  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
+  if (roundPays(round)) { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames, protocolVersion: round.protocolVersion }); if (!core.ok) throw new Error(core.why); }
   // A PICK IS AN OUTCOME INDEX (§0A.7a): the seats check it against the game's outcomes; here only its shape
   if (pick !== undefined && pick !== null && (!Number.isInteger(pick) || pick < 0 || pick > 255)) throw new Error('a pick is an outcome index, 0 to 255');
   const order = limitPrice !== undefined && limitPrice !== null;
@@ -9200,7 +9318,7 @@ async function stakeFor(round, { signerNodes, curve, random, playerPubkey, neede
   if (!round || !round.id) throw new Error('a stake is dealt for a round, and that is not one');
   // NO STAKE ON A CORE THIS CLIENT DOES NOT KNOW (§5). Refused before anything
   // is dealt, so a backdoored round gets no handout, no hold and no signer node.
-  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames }); if (!core.ok) throw new Error(core.why); }
+  { const core = gameIsKnownGood(round.gameId, round.simCoreHash, round.configHash, { networkId: round.networkId, confirmed: confirmedGames, protocolVersion: round.protocolVersion }); if (!core.ok) throw new Error(core.why); }
   // AT THE ROUND'S THRESHOLD, the one the node's door takes and its settle
   // opens at (M3.3-26). The default was a flat 5 whatever the round, and any
   // other number is a stake the door refuses - so it is refused here first.
@@ -9994,7 +10112,7 @@ function decodeDonationSet(bytes) {
   const r = new Reader(bytes);
   const type = r.u8();
   if (type === TYPE_DONATION_SET_KEYS) {
-    if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+    if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
     const recipients = r.vec((rr) => ({ recipientPk: rr.bytes(RECIPIENT_KEY_BYTES), shareBps: rr.u16(), label: rr.str() }));
     if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
     const stands = donationSetStands(recipients);
@@ -10002,7 +10120,7 @@ function decodeDonationSet(bytes) {
     return recipients;
   }
   if (type !== TYPE_DONATION_SET) throw new Error('not a donation set');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const recipients = r.vec((rr) => ({ lnurl: rr.str(), shareBps: rr.u16() }));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
 
@@ -15428,7 +15546,7 @@ function encodeGhost(g) {
 function decodeGhost(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_GHOST) throw new Error('not a ghost');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const g = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
@@ -16553,7 +16671,7 @@ function encodeDonationSetBody(set) {
 function decodeDonationSetBody(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SIGNED_DONATION_SET) throw new Error('not a signed donation set');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const networkId = r.bytes32();
   const serial = r.u64();
   const validFrom = r.u32();
@@ -16601,7 +16719,7 @@ function encodeAuthorityRotation(rotation) {
 function decodeAuthorityRotation(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_AUTHORITY_ROTATION) throw new Error('not an authority rotation');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const rotation = {
     networkId: r.bytes32(),
     serial: r.u64(),
@@ -20240,7 +20358,7 @@ function signPresent({ roundId, role, nodePubkey }, sign) {
 function decodePresent(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_PRESENT) throw new Error('that is not a PRESENT');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('a PRESENT of another protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('a PRESENT of another protocol version');
   const roundId = r.bytes32(); const role = roleOfSeat(r.u8()); const nodePubkey = r.bytes32(); const signature = r.bytes(64);
   if (!role) throw new Error('a PRESENT for no role');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the PRESENT');
@@ -20288,7 +20406,7 @@ function encodeSeatingCertificate({ roundId, role, seated, signatures }) {
 function decodeSeatingCertificate(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SEATING) throw new Error('that is not a SEATING');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('a SEATING of another protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('a SEATING of another protocol version');
   const roundId = r.bytes32(); const role = roleOfSeat(r.u8());
   if (!role) throw new Error('a SEATING for no role');
   const seated = r.vec((rr) => rr.bytes32());
@@ -20515,6 +20633,50 @@ function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
   return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
 }
 
+/**
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4, kanban #323). `claims`: notes presented
+ * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
+ * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
+ *      after drain_blocks
+ *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
+ *      shows it)
+ *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
+ *      while it lasts
+ *   4. only then the remainder, 75 % / 25 % (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ */
+function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
+  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
+  const seen = new Set();
+  const refused = []; const inWindow = []; const late = [];
+  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
+  for (const c of ordered) {
+    const nonce = String(c.nonce).toLowerCase();
+    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
+    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
+    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
+    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    seen.add(nonce);
+    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+  }
+  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
+  const short = owed > escrowMsat;
+  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
+  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
+  for (const c of late) {
+    const msat = c.amountMsat <= left ? c.amountMsat : left;
+    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+  }
+  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
+  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
+  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
+    remainderSplitsAt: when.remainderSplitsAt };
+}
+
 // ---- arena-protocol/src/genesis.js
 // Canonical genesis_parameters and the network_id they produce.
 //
@@ -20712,6 +20874,7 @@ function donationKeysFor(network) {
 // The census: which bonds exist at a height, canonicalised and Merkle-rooted.
 //
 // Two decisions here are load-bearing and both look like details.
+
 
 
 
@@ -21844,8 +22007,8 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view })
     if (!versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
-        why: `that advertisement speaks ${versions.join(', ') || 'no version'} and this `
-          + `round runs ${contract.protocolVersion}`,
+        why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
+          + `round runs ${protocolVersionName(contract.protocolVersion)}`,
       });
       continue;
     }
@@ -22123,6 +22286,12 @@ function weightOf(bondSats, bondMin) {
  * is offline when its round comes is replaced - two reserves over the seats, capped where two seatings could stop sharing a
  * signer (`2 x threshold > drawn`): 9 for 7 seats (threshold 5), 3 for 2 (threshold 2). The census may hold fewer.
  */
+/**
+ * THE ROLE A DRAW IS TICKETED ON: its own, and for a v2 round (2026.0.2, kanban #348) the settlement pool's for both - one
+ * ordered list, so the seats of both roles are one set and the round's signer nodes are those 7.
+ */
+const drawRoleOf = (contract, role) => (namesNoDraw(contract) ? 'settlement' : role);
+
 function drawnForRole(contract, role) {
   const slots = slotsForRole(contract, role);
   if (!Number.isInteger(slots)) return undefined;
@@ -22204,7 +22373,9 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   const byKey = new Map();
   for (const e of entries) {
     // the role, and for game/verify the round's game hosted (census.js eligibleFor; kanban #204)
-    if (!eligibleFor(e, contract, role) || out.has(keyOf(e))) continue;
+    // ONE DRAW FOR BOTH ROLES (2026.0.2, kanban #348): a v2 round's node serves both, so it is eligible for both
+    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
+      || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;
@@ -22215,7 +22386,7 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
 
   const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
     entry,
-    ticket: ticketFor(committeeSeed, entry, role),
+    ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
     weight: weightOf(bondSats, bondMin),
   }));
 
@@ -23000,7 +23171,7 @@ function encodeFederationRecord(r) {
 function decodeFederationRecord(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_FEDERATION_RECORD) throw new Error('not a federation record');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const out = {
     federationId: r.bytes32(), networkId: r.bytes32(), invite: r.str(), nominal: r.u8(), threshold: r.u8(),
     guardians: r.vec((rr) => ({ peerKey: rr.bytes(33), nodePubkey: rr.bytes32(), operatorId: rr.str(), bondTxid: rr.bytes32(), bondVout: rr.u32(), endpoint: rr.str() })),
@@ -24732,6 +24903,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 
 
 
+
 /**
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
  * event - a prediction market), with no core and no run.
@@ -24754,6 +24926,16 @@ const ATTESTORS_MAX = 16;
  * text). Optional: an attested manifest without them keeps the network's fee and today's rules, and its bytes.
  */
 const MARKET_TERMS_MARKER = 0x01;
+
+/**
+ * THE PROTOCOL VERSION A GAME REQUIRES (kanban #349, the owner 2026-10-12: "Spiele und Protokolle müssen bestimmte Protokoll
+ * Versionen required können. Alte nodes die da nicht updaten fliegen raus."): optional, written last after its own marker,
+ * so every manifest without it keeps its bytes and its game id. A round of the game names that version or a later one
+ * (roundFitsManifest, gameIsKnownGood), and the census seats only nodes whose advert lists the round's version - a node
+ * that did not update is not drawn for the game's rounds. A node too old to know the field cannot read the manifest at
+ * all (trailing bytes), so it cannot host the game either.
+ */
+const REQUIRED_VERSION_MARKER = 0x02;
 const MARKET_FEE_BPS_MAX = 500;
 const MARKET_DONATION_BPS_MAX = 500;
 const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -24861,6 +25043,9 @@ function encodeManifestBody(m) {
   if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
   if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
   if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
+  if (m.requiredProtocolVersion !== undefined && m.requiredProtocolVersion !== null
+      && (!Number.isInteger(m.requiredProtocolVersion) || m.requiredProtocolVersion < 1 || m.requiredProtocolVersion > 65535))
+    throw new Error('a required protocol version is 1 to 65535');
 
   const w = new Writer();
   w.u8(TYPE_GAME_MANIFEST);
@@ -24898,13 +25083,15 @@ function encodeManifestBody(m) {
     w.u8(m.moveCount);
     w.u64(m.revealWindowMs);
   }
+  // THE REQUIRED PROTOCOL VERSION, LAST AND ONLY WHEN NAMED: no manifest before it moves
+  if (m.requiredProtocolVersion) { w.u8(REQUIRED_VERSION_MARKER); w.u16(m.requiredProtocolVersion); }
   return w.finish();
 }
 
 function readBody(r) {
   if (r.u8() !== TYPE_GAME_MANIFEST) throw new Error('not a game manifest');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
+  if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
   const body = {
     gameName: r.str(),
     gameDevPubkey: r.bytes32(),
@@ -24935,6 +25122,10 @@ function readBody(r) {
     body.players = r.u8();
     body.moveCount = r.u8();
     body.revealWindowMs = r.u64();
+  }
+  if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === REQUIRED_VERSION_MARKER) {
+    r.u8();
+    body.requiredProtocolVersion = r.u16();
   }
   return body;
 }
@@ -25003,6 +25194,8 @@ function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   const name = `game "${m.gameName}"`;
   if (!contract || !manIs32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game' };
   if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
+  if (m.requiredProtocolVersion && !(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= m.requiredProtocolVersion))
+    return { ok: false, why: `${name} requires protocol version ${protocolVersionName(m.requiredProtocolVersion)}; that round runs ${Number.isInteger(contract.protocolVersion) ? protocolVersionName(contract.protocolVersion) : 'none'}` };
   // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
   if (isAttested(m)) {
     if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))
@@ -25117,7 +25310,7 @@ function decodeAttestation(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_OUTCOME_ATTESTATION) throw new Error('not an outcome attestation');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
+  if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
   const a = { roundId: r.bytes32(), outcome: r.u8(), observedAtMs: r.u64() };
   a.signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(OUTCOME_SIGNATURE_BYTES) }));
   r.end();
