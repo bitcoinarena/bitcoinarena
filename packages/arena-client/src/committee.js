@@ -31,6 +31,7 @@ export const BOND_TERMS = Object.freeze({
 const CHAIN_KEPT_MS = 60000;
 const keptChains = new Map();     // network:censusHeight:committeeTime -> { at, chain, firstHeight }
 const keptCensus = new Map();     // round's census root -> evidence
+const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version (kanban #349)
 const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
 
 const baseOf = (u) => String(u).replace(/\/+$/, '');
@@ -66,6 +67,8 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher }) {
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
       const j = await r.json();
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
+      // the nodes this seat left out for their protocol version (kanban #349): shown, never counted
+      if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
       return { ok: true, entries: j.entries, from: u, refused };
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   }
@@ -160,6 +163,11 @@ export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, o
     refused: got.seats.filter((s) => s.agrees === false).map((s) => `${s.node}: ${s.why}`), derived: got };
 }
 
+/**
+ * THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3, "the page shows node X: protocol too old"): as the seat that
+ * handed over the census named them ([{ node, speaks }]), or []. Shown beside the facts, never counted: the census root decides.
+ */
+export const tooOldFor = (contract) => keptTooOld.get(toHex(contract.censusRoot)) || [];
 /** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
 export const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
 /**
