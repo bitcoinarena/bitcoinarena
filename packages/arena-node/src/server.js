@@ -16,13 +16,16 @@
 // rather than half-built.
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid } from '../../arena-protocol/src/series.js';
+import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
+import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
+import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -1243,6 +1246,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { conflicted, self: conflicted.get(toHex(round.pubkey)) || null,
       serving: servingAfterConflicts({ committee, conflicted, ...(threshold ? { threshold } : {}) }) };
   };
+  // THE SERIES PUBLISHER'S FEE BACK (§5A.5, kanban #304): a series round naming its creator (#313) whose series' publication fee
+  // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0, or the first
+  // round of the series with entries (publisher-payout.js publisherRoundIndex); every other round pays nothing of it
+  const publisherFor = (rid, contract) => {
+    if (!(contract.seriesId instanceof Uint8Array) || !(contract.creatorPubkey instanceof Uint8Array)) return null;
+    const kept = round.seriesPublication(contract.seriesId);
+    if (!kept) return null;
+    const counts = new Map();
+    for (let j = 0; j <= contract.roundIndex; j++) {
+      const n = j === contract.roundIndex ? Math.max(1, round.entriesOf(rid).length) : round.entriesOf(seriesRoundIdOf(contract.seriesId, j)).length;
+      counts.set(j, n);
+      if (n > 0) break;                                     // the first with entries is found: later ones never pay it
+    }
+    if (publisherRoundIndex(counts) !== contract.roundIndex) return null;
+    return { payoutPk: refundKeyOf(contract.creatorPubkey), msat: publisherPayoutMsat(kept.feeSats) };
+  };
   const settlements = new LockSettlement(round, {
     conflictsFor,
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook,
@@ -1268,9 +1287,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let guardian = [];
       try { const g = roster.guardiansFor(rid); if (g.ok) guardian = g.guardians; } catch { guardian = []; }
       // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13): named for feeSettlement, which leaves it out of `eligible`
+      // AND THE SERIES PUBLISHER'S FEE BACK, in the round that pays it (§5A.5, kanban #304)
+      const publisher = publisherFor(rid, contract);
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
         settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian,
-        conflicted: [...conflictsFor(rid).conflicted.keys()] };
+        conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}) };
     },
   });
 
@@ -5119,6 +5140,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      // A SERIES' PUBLICATION, PROVEN (§5A.5, kanban #304): { series, tx, parents } hex. The tx must be the series' first confirmed
+      // publication on this seat's chain (findSeriesPublication), and its parents must prove its fee (publisher-payout.js). Anyone
+      // may post it - every byte proves itself; kept once.
+      if (req.method === 'POST' && url.pathname === '/series-publication') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a series publication is JSON { series, tx, parents }'); }
+        if (!/^[0-9a-f]{64}$/i.test(String(j.series || '')) || !/^[0-9a-f]+$/i.test(String(j.tx || '')) || !Array.isArray(j.parents))
+          return text(res, 400, 'a series publication names its series id, the publication and its parents in hex');
+        const sid = fromHex(String(j.series).toLowerCase());
+        const t = series.find((x) => toHex(seriesId(x)) === toHex(sid));
+        if (!t) return text(res, 404, 'this seat holds no such series');
+        const first = seriesRound(t, 0);
+        let view; try { view = await chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch (e) { return text(res, 503, `this seat cannot read its chain: ${e.message}`); }
+        const pub = findSeriesPublication(view, sid);
+        if (!pub) return text(res, 409, 'this seat\'s chain holds no confirmed publication of that series yet');
+        const tx = fromHex(String(j.tx).toLowerCase());
+        if (toHex(parseTransaction(tx).txid) !== toHex(pub.tx.txid)) return text(res, 409, 'that is not the series\' first confirmed publication');
+        const fee = publicationFee(tx, j.parents.map((h) => fromHex(String(h).toLowerCase())));
+        if (!fee.ok) return text(res, 422, fee.why);
+        round.putSeriesPublication(sid, { txid: toHex(pub.tx.txid), feeSats: fee.feeSats });
+        const kept = round.seriesPublication(sid);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ txid: kept.txid, feeSats: String(kept.feeSats), payoutSats: String(publisherPayoutMsat(kept.feeSats) / 1000n) }));
+      }
+
       // A ROUND'S CREATOR SIGNATURE (§6, kanban #313): what rides beside a contract that names its creator, hex - 404 with none
       if (req.method === 'GET' && url.pathname === '/round-creator') {
         const rid = Buffer.from(url.searchParams.get('id') || '', 'hex');
