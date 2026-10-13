@@ -28,6 +28,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { namesNoDraw } from '../../arena-protocol/src/constants.js';
 import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
@@ -132,6 +133,29 @@ export class Round {
       put.run(roundIdBytes, k);
     }
     return keys.length;
+  }
+
+  /**
+   * A V2 ROUND'S SEATS, WRITTEN IN BY THIS SEAT (2026.0.2, kanban #348, RULED the owner 2026-10-13: "Seats and the page work out
+   * who serves from the census and the beacon ... Thresholds count the 7 seated nodes"). The contract names no draw; this
+   * seat's own answer - the draw's first seats at the beacon, the certified seated set once the seating stands - goes into
+   * its stored contract's `nodes` and into the signer nodes, so every count that reads them counts those seats. The round's
+   * id does not move: a v2 id hashes the contract without `nodes`. A v1 round is never rewritten. Answers whether it changed.
+   */
+  seatDrawFree(roundIdBytes, keys) {
+    const row = this.get(roundIdBytes);
+    if (!row) return false;
+    const c = decodeRoundContract(new Uint8Array(row.contract));
+    if (!namesNoDraw(c)) return false;
+    const want = [...keys].map((k) => toHex(k)).sort();
+    const had = [...(c.nodes || [])].map((k) => toHex(k)).sort();
+    const recorded = this.signerNodes(roundIdBytes).map((k) => toHex(k)).sort();
+    if (want.join() === had.join() && want.join() === recorded.join()) return false;
+    const bytes = encodeRoundContract({ ...c, nodes: keys });
+    this.db.prepare('UPDATE rounds SET contract = ? WHERE round_id = ?').run(bytes, roundIdBytes);
+    this.db.prepare('DELETE FROM signer_nodes WHERE round_id = ?').run(roundIdBytes);
+    this.recordSignerNodes(roundIdBytes, keys);
+    return true;
   }
 
   /** The assigned keys, or an empty list if this node was never assigned that round. */

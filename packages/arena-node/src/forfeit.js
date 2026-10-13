@@ -197,7 +197,9 @@ export class Forfeit {
     const fields = lockFieldsFromJson(lock.fields);
     if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('that lock names another claim key than this round\'s');
     if (!this.port) return refuse('this signer node reaches no federation, so it cannot rebuild the lock');
-    const id = String(await this.port.contractId(fields));
+    // THE ROUND'S OWN FEDERATION'S PORT (kanban #348): every node serves every federation in its census
+    const port = this.port && typeof this.port.forFederation === 'function' ? ((await this.port.forFederation(toHex(contract.federationId))) || this.port) : this.port;
+    const id = String(await port.contractId(fields));
     if (id !== String(lock.contractId)) return refuse('the contract rebuilt from this signer node\'s record is not the one it verified');
     return { ok: true, message: fromHex(id), claimPk, signerNode: held.signerNode, needed: receiptsNeeded(contract.nodes.length) };
   }

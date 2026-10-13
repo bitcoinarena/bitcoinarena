@@ -37,6 +37,13 @@ const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1
   [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const CARRIER_SATS = 3000n;
+// 2026.0.2 (kanban #348): ARENA_ADVERT_PROTOCOL_VERSIONS="1,2" - the versions the node speaks, which the census reads to
+// draw it for a v2 round - and ARENA_ADVERT_ADD_GAMES="<id hex>,..." - games it hosts besides those it advertises (the v2
+// ids); each update carries both, everything else of the advertisement as it was
+const VERSIONS = env.ARENA_ADVERT_PROTOCOL_VERSIONS ? env.ARENA_ADVERT_PROTOCOL_VERSIONS.split(',').map(Number) : null;
+const ADD_GAMES = (env.ARENA_ADVERT_ADD_GAMES || '').split(',').filter((x) => /^[0-9a-f]{64}$/.test(x));
+const gamesWith = (hosted) => [...new Map([...(hosted || []), ...ADD_GAMES.map(fromHex)].map((g) => [toHex(g), g])).values()]
+  .sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1));
 
 const [fundTxid, fundVout] = (env.ARENA_FUND_INPUT || '').split(':');
 if (!/^[0-9a-f]{64}$/.test(fundTxid || '') || !/^\d+$/.test(fundVout || ''))
@@ -62,8 +69,11 @@ for (let n = 1; n <= 7; n++) {
   const want = `${toHex(federationId)}:${guardianKey}`;
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), advertises: now, updatedBy: bond.updatedBy || null, wants: want });
-  if (now.length === 1 && now[0] === want) { say({ node: n, update: 'not needed: its advertisement already names that key' }); continue; }
-  const advert = { ...bond.advert, guardianOf: [{ federationId, guardianKey: fromHex(guardianKey) }], timestamp: BigInt(Date.now()) };
+  const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
+  const gamesDiffer = ADD_GAMES.length && gamesWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
+  if (now.length === 1 && now[0] === want && !versionsDiffer && !gamesDiffer) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
+  const advert = { ...bond.advert, guardianOf: [{ federationId, guardianKey: fromHex(guardianKey) }], timestamp: BigInt(Date.now()),
+    ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}) };
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }
 if (!plans.length) { say({ done: 'every bond already advertises its node\'s current guardian key; nothing posted' }); process.exit(0); }

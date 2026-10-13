@@ -25,7 +25,8 @@ export const PRESENT_BYTES = 1 + 2 + 32 + 1 + 32 + 64;
 export const BATCH_ROUNDS = 64;
 const joinBytes = (list) => { const out = new Uint8Array(list.reduce((n, x) => n + x.length, 0)); let at = 0; for (const x of list) { out.set(x, at); at += x.length; } return out; };
 
-export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null }) {
+export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, nowMs = () => Date.now(), log = () => {}, windowOf = () => null,
+  onSeated = () => {} }) {
   const db = round.db;
   db.exec(`
     CREATE TABLE IF NOT EXISTS seat_presents (round_id BLOB NOT NULL, role TEXT NOT NULL, node TEXT NOT NULL, bytes BLOB NOT NULL,
@@ -79,6 +80,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
     }
     db.prepare('INSERT OR IGNORE INTO seat_certs (round_id, role, cert) VALUES (?, ?, ?)').run(rid, role, bytes);
     if (!certs.has(key) || certs.get(key) !== null) certs.set(key, v.seating.seated.map(toHex));
+    // the seats a v2 round counts are these (2026.0.2, kanban #348): the server writes them into the stored contract
+    try { onSeated(rid, role, v.seating.seated); } catch (e) { log(`[seating] ${toHex(rid).slice(0, 16)} ${role}: ${e.message}`); }
     return { ok: true, kept: true };
   };
 

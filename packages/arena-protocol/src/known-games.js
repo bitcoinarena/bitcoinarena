@@ -17,6 +17,20 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  'c693585b01cef147f311e39c304f7b40f99774afc032f58db35ef8094cfa78dc': Object.freeze({
+    name: 'nextblock',
+    // 2026.0.2 (kanban #348): manifest version 2, parent 495516ae, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'd09982face63f0f097c0d5358bb00152d44a0f4cd2bbd76eb8cfd129afc0a5d3': Object.freeze({
     name: 'btc-close',
     cores: Object.freeze({
@@ -121,8 +135,32 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  'a75f54fd4f978a29ab6d39d9ef85c7adbe0576614634c679ae33d3e1c06164ea': Object.freeze({
+    name: 'rock-paper-scissors',
+    // 2026.0.2 (kanban #348): manifest version 2, parent 1e9ab4b7, requires the round that names no draw
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   '672415c814e61b47ce038cd7f9a9431be8b41123c59502c371d5cd6a79c7684f': Object.freeze({
     name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  'f5f3f18753b4167fe36d2e18f72c72b6e5cfea93cd5ef98c716d3b9137890375': Object.freeze({
+    name: 'btc-updown-15m',
+    // 2026.0.2 (kanban #348): manifest version 2, parent 672415c8, requires the round that names no draw
+    requiredProtocolVersion: 2,
     cores: Object.freeze({
 
     }),

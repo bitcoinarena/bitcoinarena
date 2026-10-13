@@ -252,6 +252,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       // the successor's guardian pool takes this drain's seated guardians (predecessorGuardians), shown with the record
       ...(k.record && k.record.successorId && k.record.successorId.some((x) => x) ? { successor: toHex(k.record.successorId) } : {}) })),
     draining: (fidHex) => draining.get(fidHex) || null,
+    /** THE INVITE A FEDERATION'S SIGNED RECORD CARRIES (kanban #348): how this node joins a federation it did not found. */
+    inviteOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k && k.record && k.record.invite ? String(k.record.invite) : null; },
     // THE DRAIN IS PAID (§23A.6 step 5, kanban #325): the seated guardians of every federation whose verified record says
     // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody. One that fell to
     // CRITICAL while draining is still drained by its seated guardians, and paid ("until its record is CLOSED"); a HALTED one

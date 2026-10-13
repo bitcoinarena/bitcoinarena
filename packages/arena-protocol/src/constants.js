@@ -23,7 +23,20 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
+/**
+ * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
+ * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
+ * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the
+ * testnet4 census held 14 nodes, and no round could name its draw - the draw is seeded by the round id, which hashed the
+ * very `nodes` it had to name (a fixed point only while the census is no larger than the draw). From this version:
+ *   - the round id (and a series id) hash the contract with `nodes` emptied, so the list is no input to its own draw;
+ *   - both roles take ONE draw, the settlement pool's (sortition.js drawRoleOf), so the seated nodes are one set of 7;
+ *   - a seat fills `nodes` with that seated set itself, and every threshold counts those seats (5 of 7).
+ * Other message types are written at PROTOCOL_VERSION as before: the version names the round's rules.
+ */
+export const DRAW_FREE_VERSION = 2;
+export const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= DRAW_FREE_VERSION;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**

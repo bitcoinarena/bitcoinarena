@@ -122,6 +122,49 @@ fn outpoint(s: &str) -> anyhow::Result<OutPoint> {
     Ok(OutPoint { txid: TransactionId::from_str(txid)?, out_idx: idx.parse()? })
 }
 
+/// JOIN A FEDERATION (kanban #348, RULED the owner 2026-10-13: "Every node serves every federation"): a signer node finds a
+/// federation in its census and joins it here, with the invite its signed record carries - as fedimint-cli joins it (the
+/// same modules, RocksDB and 12-word secret, stored first), but through the connect overrides this tool reads
+/// (FM_WS_API_CONNECT_OVERRIDES), which the stock fedimint-cli does not. A directory that holds a secret already keeps it.
+async fn join(data_dir: PathBuf, invite: &str) -> anyhow::Result<ClientHandle> {
+    let invite = fedimint_core::invite_code::InviteCode::from_str(invite).context("that is no invite code")?;
+    let builder = client_builder().await?;
+    std::fs::create_dir_all(&data_dir)?;
+    let db: Database = fedimint_rocksdb::RocksDb::build(data_dir.join("client.db"))
+        .open()
+        .await
+        .context("could not open the client's rocksdb")?
+        .into();
+    let mnemonic = match Client::load_decodable_client_secret_opt::<Vec<u8>>(&db).await? {
+        Some(entropy) => Mnemonic::from_entropy(&entropy)?,
+        None => {
+            // 128 bits from the OS for the 12 words - no RNG crate in this tool's tree
+            let mut entropy = [0u8; 16];
+            std::io::Read::read_exact(&mut std::fs::File::open("/dev/urandom")?, &mut entropy)?;
+            let m = Mnemonic::from_entropy(&entropy)?;
+            Client::store_encodable_client_secret(&db, m.to_entropy()).await?;
+            m
+        }
+    };
+    let root = RootSecret::StandardDoubleDerive(Bip39RootSecretStrategy::<12>::to_root_secret(&mnemonic));
+    let endpoints = ConnectorRegistry::build_from_client_defaults().with_env_var_overrides()?.bind().await?;
+    Ok(builder.preview(endpoints, &invite).await?.join(db, root).await?)
+}
+
+async fn client_builder() -> anyhow::Result<fedimint_client::ClientBuilder> {
+    let mut modules = ClientModuleInitRegistry::new();
+    modules.attach(fedimint_ln_client::LightningClientInit::default());
+    modules.attach(fedimint_mint_client::MintClientInit);
+    modules.attach(fedimint_mintv2_client::MintClientInit);
+    modules.attach(fedimint_wallet_client::WalletClientInit::default());
+    modules.attach(fedimint_meta_client::MetaClientInit);
+    modules.attach(fedimint_lnv2_client::LightningClientInit::default());
+    modules.attach(fedimint_walletv2_client::WalletClientInit);
+    let mut builder = Client::builder().await?;
+    builder.with_module_inits(modules);
+    Ok(builder)
+}
+
 /// THE PLAYER'S CLIENT, OPENED AS fedimint-cli OPENS IT: the same modules, the
 /// same RocksDB, the same root secret from the stored mnemonic.
 async fn open(data_dir: PathBuf) -> anyhow::Result<ClientHandle> {
@@ -206,6 +249,11 @@ async fn main() -> anyhow::Result<()> {
     if mode == "id" {
         let contract = stake_contract(&a, need(&a, "expiration")?.parse()?)?;
         println!("{}", serde_json::json!({ "mode": "id", "contract_id": contract.contract_id().0.to_string() }));
+        return Ok(());
+    }
+    if mode == "join" {
+        let client = join(PathBuf::from(need(&a, "data-dir")?), need(&a, "invite")?).await?;
+        println!("{}", serde_json::json!({ "mode": "join", "federation_id": client.federation_id().to_string() }));
         return Ok(());
     }
     let client = open(PathBuf::from(need(&a, "data-dir")?)).await?;

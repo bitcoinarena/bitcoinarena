@@ -19,7 +19,7 @@ import { selectCommittee, drawCommittee, slotsForRole } from '../../arena-protoc
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
-import { networkOf } from '../../arena-protocol/src/constants.js';
+import { networkOf, namesNoDraw } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
@@ -560,6 +560,16 @@ export class Roster {
 
     const seatedNow = this.signerNodesFor(roundIdBytes);
     if (!seatedNow.ok) return seatedNow;
+    // A V2 ROUND NAMES NO DRAW (2026.0.2, kanban #348, RULED the owner 2026-10-13): nothing is compared against the contract -
+    // its signer nodes are the census's answer alone, the one draw's seats (the certified seated set once the seating
+    // stands, its first 7 before), written into this seat's stored contract (round.seatDrawFree)
+    if (namesNoDraw(contract)) {
+      const picked = this.committeeFor(roundIdBytes, 'settlement');
+      if (!picked.ok) return picked;
+      const keys = picked.committee.map((e) => e.pubkey);
+      this.round.seatDrawFree(roundIdBytes, keys);
+      return { ok: true, signerNodes: keys };
+    }
     // THE CONTRACT NAMES THE DRAW (§5A.7, decision A of kanban #301): every node drawn for either role - 9 for 7 seats where
     // the census has them, the seats themselves where it has no more (testnet4: 7) - and the seating says who serves
     const drawnUnion = new Map();

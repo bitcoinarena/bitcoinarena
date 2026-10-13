@@ -15,7 +15,7 @@ import { stakeExpiryFits } from './lock-expiry.js';
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
 import {
-  TAG, PROTOCOL_VERSION, speaksVersion, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
+  TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -35,7 +35,11 @@ export function encodeRoundContract(c) {
   if (!named.ok) throw new Error(named.why);
   const w = new Writer();
   w.u8(TYPE_ROUND_CONTRACT);
-  w.u16(PROTOCOL_VERSION);
+  // THE ROUND'S VERSION (2026.0.2, kanban #348): a contract that names one is written at it - a v2 round's rules differ -
+  // and one that names none at this build's PROTOCOL_VERSION, as before
+  const version = c.protocolVersion === undefined || c.protocolVersion === null ? PROTOCOL_VERSION : c.protocolVersion;
+  if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`);
+  w.u16(version);
 
   // WHICH NETWORK THIS ROUND IS FOR, section 27A.4: "Round Contracts carry it,
   // nodes and clients reject contracts that do not match the one they were
@@ -316,8 +320,13 @@ export const roundId = (c) => {
     const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
     return taggedHash(TAG.seriesRound, body);
   }
-  return taggedHash(TAG.roundContract, encodeRoundContract(c));
+  return taggedHash(TAG.roundContract, encodeRoundContract(idBodyOf(c)));
 };
+/**
+ * THE BYTES A ROUND'S ID HASHES (2026.0.2, kanban #348): a v2 contract's with `nodes` emptied - the seated nodes are the
+ * draw's answer, written in by each seat after it, and never an input to the draw - and a v1 contract's whole, as before.
+ */
+export const idBodyOf = (c) => (namesNoDraw(c) ? { ...c, nodes: [] } : c);
 
 /**
  * IS THIS CONTRACT FOR THIS BUILD'S NETWORK, AND FOR RULES IT IS RUNNING?
