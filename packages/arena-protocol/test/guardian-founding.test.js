@@ -37,3 +37,21 @@ test('a no-show is replaced by the next alternate in order; more no-shows than a
   const four = replaceNoShows({ drawn: d.drawn, alternates: d.alternates, noShows: d.drawn.slice(0, 4).map((e) => toHex(e.pubkey)) });
   assert.equal(four.ok, false); assert.match(four.why, /drawn again at the next trigger/);
 });
+
+test('what starts a founding: genesis at the first height with nominal operators, a draining federation, or 80 % load for abandon_blocks - the earliest (kanban #320)', async () => {
+  const { foundingTrigger } = await import('../src/guardian-founding.js');
+  const capable = [{ height: 100, operators: 6 }, { height: 110, operators: 9 }, { height: 120, operators: 10 }, { height: 130, operators: 12 }];
+  const g = foundingTrigger({ capable, nominal: 10 });
+  assert.deepEqual([g.ok, g.kind, g.height], [true, 'genesis', 120]);
+  assert.match(foundingTrigger({ capable: capable.slice(0, 2), nominal: 10 }).why, /fewer than federation_nominal 10/);
+  assert.equal(foundingTrigger({ capable, nominal: 10, federationExists: true }).ok, false, 'genesis only while no federation exists');
+  const drain = foundingTrigger({ records: [{ federation: 'aa'.repeat(32), status: 'OPEN', height: 200 }, { federation: 'bb'.repeat(32), status: 'DRAINING', height: 250 }], federationExists: true });
+  assert.deepEqual([drain.kind, drain.height], ['succession', 250]);
+  const at = (h, a, b) => ({ height: h, federations: [{ federation: 'a', status: 'OPEN', load: a }, { federation: 'b', status: 'OPEN', load: b }, { federation: 'c', status: 'DRAINING', load: 0.1 }] });
+  const loads = [at(300, 0.9, 0.85), at(305, 0.9, 0.79), at(306, 0.81, 0.8), at(310, 0.95, 0.9), at(316, 0.99, 0.8)];
+  const l = foundingTrigger({ loads, abandonBlocks: 10, federationExists: true });
+  assert.deepEqual([l.kind, l.height], ['load', 316], 'from 306 (305 dipped under 80 %) for 10 blocks; a draining federation does not count');
+  assert.equal(foundingTrigger({ loads: loads.slice(0, 4), abandonBlocks: 10, federationExists: true }).ok, false);
+  const both = foundingTrigger({ loads, abandonBlocks: 10, records: [{ federation: 'x', status: 'DRAINING', height: 312 }], federationExists: true });
+  assert.deepEqual([both.kind, both.height], ['succession', 312], 'the earliest event wins');
+});
