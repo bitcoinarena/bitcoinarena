@@ -31,7 +31,7 @@ test('a seat keeps a proposal that stands and whose deposit is in the block name
   const chain = new Map();
   const saved = [];
   const seat = createProposals({ confirmedTx: async (txid, block) => (block === BLOCK && chain.has(txid) ? { raw: chain.get(txid), height: 200 } : null),
-    recipientsFor: (net) => (net === toHex(NET) ? SET : null), lowestBondMinSatsFor: () => 100000n, verify, schedule: SCHEDULES.regtest,
+    recipientsFor: (net, height) => (net === toHex(NET) && height === 200 ? SET : null), lowestBondMinSatsFor: () => 100000n, verify, schedule: SCHEDULES.regtest,
     store: { read: () => [], write: (l) => saved.push(l.length) } });
   const good = proposalWithDeposit(1000);
   chain.set(good.txidDisplay, good.raw);
@@ -52,4 +52,31 @@ test('a seat keeps a proposal that stands and whose deposit is in the block name
   assert.match((await seat.add({ proposal: elsewhere.hex, blockHash: BLOCK })).why, /does not hold the deposit/);
   assert.equal((await seat.add({ proposal: 'zz', blockHash: BLOCK })).status, 400);
   assert.equal(seat.list().length, 1);
+});
+
+test('on a running seat: POST /proposal reads the deposit through `ballot`, checks it against the network\'s keyed set in force, GET /proposals serves it', async () => {
+  const { serve } = await import('../src/server.js');
+  const { openStore } = await import('../src/store.js');
+  const { TEST_DONATION_SET_KEYS_REGTEST: KEYS } = await import('../../arena-protocol/src/test-donation-set-keys-regtest.js');
+  const { NETWORK_ID_REGTEST } = await import('../../arena-protocol/src/genesis-ids.js');
+  const want = depositOutputsExpected(700, KEYS.recipients);
+  assert.equal(want.ok, true, want.why);
+  const raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
+  const p = { networkId: NETWORK_ID_REGTEST, parent: new Uint8Array(32).fill(0x10), configHash: new Uint8Array(32).fill(0x20), config: Uint8Array.of(9),
+    class: CLASS.MONEY, activationHeight: 300 + 8, proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
+  const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
+  const BLOCK = 'cc'.repeat(32);
+  const d = await serve(openStore(':memory:'), { port: 0, donationSets: [KEYS],
+    ballot: { confirmedTx: async (txid, block) => (block === BLOCK && txid === toHex(Uint8Array.from(p.depositTxid).reverse()) ? { raw, height: 300 } : null), lowestBondMinSats: 100000n } });
+  try {
+    const base = `http://127.0.0.1:${d.port}`;
+    const post = await fetch(`${base}/proposal`, { method: 'POST', body: JSON.stringify({ proposal: hex, blockHash: BLOCK }) });
+    const got = await post.json();
+    const listed = (await (await fetch(`${base}/proposals`)).json()).proposals;
+    console.log('  SEAT:', JSON.stringify({ status: post.status, class: got.class, publishedAt: got.publishedAt, depositSats: got.depositSats, listed: listed.length, outputs: want.outputs.map((o) => Number(o.sats)) }));
+    assert.equal(post.status, 201, got.why);
+    assert.deepEqual([got.class, got.publishedAt, got.depositSats, listed.length], ['MONEY', 300, '700', 1]);
+    const wrong = await fetch(`${base}/proposal`, { method: 'POST', body: JSON.stringify({ proposal: hex, blockHash: 'dd'.repeat(32) }) });
+    assert.equal(wrong.status, 200, 'kept already: the same proposal answers the one kept');
+  } finally { await d.close(); }
 });

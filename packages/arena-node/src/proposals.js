@@ -11,11 +11,11 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /**
  * `confirmedTx(txidHex, blockHashHex)` -> { raw: Uint8Array, height } or null: the transaction from that block of this seat's
- * chain, and the block's height (main.js: getrawtransaction with the block hash, which needs no txindex). `recipientsFor(networkIdHex)`
- * -> the network's donation set recipients; `lowestBondMinSatsFor(networkIdHex)` -> BigInt; `verify(sig, msg, pubkey)`; `store`:
+ * chain, and the block's height (main.js: getrawtransaction with the block hash, which needs no txindex). `recipientsFor(networkIdHex,
+ * height)` -> the network's donation set in force at that height (its recipients), or null; `lowestBondMinSatsFor(networkIdHex)` -> BigInt; `verify(sig, msg, pubkey)`; `store`:
  * { read() -> [], write(list) }.
  */
-export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet }) {
+export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null }) {
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, x]));
   const save = () => { if (store && store.write) store.write([...held.values()]); };
   return {
@@ -29,13 +29,14 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const id = toHex(proposalId(p));
       if (held.has(id)) return { ok: true, status: 200, ...held.get(id), already: true };
       const net = toHex(p.networkId);
-      const recipients = recipientsFor(net);
-      if (!recipients) return { ok: false, status: 422, why: 'this seat knows no donation set for that network' };
       const tx = await confirmedTx(toHex(Uint8Array.from(p.depositTxid).reverse()), String(blockHash).toLowerCase());
       if (!tx) return { ok: false, status: 422, why: 'that block of this seat\'s chain does not hold the deposit the proposal names' };
+      // the network's donation set IN FORCE AT THE DEPOSIT'S HEIGHT (27A.4): the set the deposit had to pay
+      const recipients = recipientsFor(net, tx.height);
+      if (!recipients) return { ok: false, status: 422, why: `this seat knows no donation set in force for that network at height ${tx.height}` };
       const dep = depositOf({ raw: tx.raw, height: tx.height, proposal: p, recipients });
       if (!dep.ok) return { ok: false, status: 422, why: dep.why };
-      const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net), schedule, verify });
+      const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net), schedule: (scheduleFor && scheduleFor(net)) || schedule, verify });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
