@@ -20,6 +20,10 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
 import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash } from '../src/arbiter.js';
+import { createLiquidationClaims } from '../src/liquidation-claims.js';
+import { fedimintNoteValidator } from '../src/note-validate.js';
+import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
+import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
 
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -141,7 +145,41 @@ const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).m
 const open = new Set();
 const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.handled).some((v) => v.node === toHex(nodeKey))
   ? { ok: false, why: 'a slash proof against this node is open or was posted' } : { ok: true });
-const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts });
+// A HALTED FEDERATION'S CLAIMS (§23A.5, kanban #323): ARENA_LIQ_CLIENTS=<federation hex>=<fedimint-cli data dir>,... - a client of
+// each federation this set joined while it was OPEN, to check presented notes offline; ARENA_LIQ_ESCROWS=<federation hex>=<txid>:<vout>,...
+// - the escrow output its slashes paid; the claims kept in ARENA_LIQ_CLAIMS_FILE; the halt and the spent set read from the seats
+const pairs = (v) => new Map(String(v || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('=')).filter((x) => x.length === 2).map(([k, v2]) => [k.toLowerCase(), v2]));
+const liqClients = pairs(env.ARENA_LIQ_CLIENTS); const liqEscrows = pairs(env.ARENA_LIQ_ESCROWS);
+let claims = null;
+if (liqClients.size) {
+  const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
+  claims = createLiquidationClaims({
+    validate: fedimintNoteValidator({ cli: env.ARENA_FEDIMINT_CLI || 'fedimint-cli', dataDirFor: (fid) => liqClients.get(fid) || null, home: env.ARENA_FEDIMINT_HOME || env.HOME }),
+    liquidationOf: async (fid) => {
+      for (const s of seats) {
+        try {
+          const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json();
+          const l = (j.liquidations || []).find((x) => x.federation === fid);
+          if (!l) continue;
+          const copy = l.spentSet && l.spentSet.copies && l.spentSet.copies[0];
+          return { ...l, spentNonces: copy ? spentNonceSet(decodeSpentSet(fromHex(copy.spentSet))) : null };
+        } catch { /* the next seat */ }
+      }
+      return null;
+    },
+    height: async () => Number(await rpc('getblockcount')),
+    escrowMsatOf: async (fid) => {
+      const at = liqEscrows.get(fid); if (!at) return 0n;
+      const [txid, vout] = at.split(':');
+      const o = await rpc('gettxout', [txid, Number(vout), false]);
+      return o ? BigInt(Math.round(Number(o.value) * 1e8)) * 1000n : 0n;
+    },
+    clocks: clocksFor(network === 'testnet4' ? 'testnet4' : network).clocks,
+    load: () => { try { return claimsFile ? JSON.parse(readFileSync(claimsFile, 'utf8')) : []; } catch { return []; } },
+    save: (rows) => { if (claimsFile) writeFileSync(claimsFile, JSON.stringify(rows) + '\n'); },
+  });
+}
+const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts, claims });
 say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
 await pass();
 if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }

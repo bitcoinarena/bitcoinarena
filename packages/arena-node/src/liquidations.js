@@ -4,12 +4,13 @@
 // the late-claim tail), and the guardians' signed copies of its spent-note set - the newest session wins (spent-set.js).
 //
 // A seat takes a copy (POST /liquidations/spent-set) only for a federation it holds HALTED, only one that stands against that
-// record, and keeps per guardian its newest session. The claim endpoints are the arbitration set's (§5A.3B) and are not here.
+// record, and keeps per guardian its newest session. The claim endpoints are the arbitration set's (§5A.3B, liquidation-claims.js);
+// a seat names where they are (ARENA_LIQUIDATION_CLAIMS).
 import { decodeSpentSet, spentSetStands, newestSpentSet, encodeSpentSet } from '../../arena-protocol/src/spent-set.js';
 import { liquidationSchedule } from '../../arena-protocol/src/federation-slash.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
-export function createLiquidations({ records, clocks, verify }) {
+export function createLiquidations({ records, clocks, verify, claimsUrl = null }) {
   const copies = new Map();                  // federation id hex -> Map(signer hex -> copy)
 
   /** Takes one guardian's signed copy, `{ spentSet: hex, signature: hex }`; answers { ok, kept } or why not. */
@@ -38,6 +39,8 @@ export function createLiquidations({ records, clocks, verify }) {
       const pick = held ? newestSpentSet(all, { record: held.record, verify }) : { copy: null, why: 'no record held' };
       return {
         federation: fid, haltHeight: halt.height, haltRecord: toHex(halt.bytes),
+        // WHERE CLAIMS GO (§23A.5 step 2: "advertises where claims go ... every seat mirrors them"): the arbitration set's door
+        claims: claimsUrl,
         liquidatesAt: halt.height + clocks.abandonBlocks,
         claimWindowCloses: when.claimWindowCloses, lateClaimsUntil: when.lateClaimsUntil, remainderSplitsAt: when.remainderSplitsAt,
         spentSet: pick.copy ? { session: pick.session, signers: pick.signers, disagree: pick.disagree, nonces: pick.copy.nonces.length,
