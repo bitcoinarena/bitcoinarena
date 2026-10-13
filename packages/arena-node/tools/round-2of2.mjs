@@ -34,6 +34,7 @@ import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../are
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
 import { execFileSync } from 'node:child_process';
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { seriesCreatorMessage } from '../../arena-protocol/src/creator.js';
 
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, statSync, appendFileSync, writeFileSync as writeProof, mkdirSync as mkProofDir } from 'node:fs';
@@ -1250,7 +1251,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const root = censusRootFor(templates[0]);
     if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
     for (const t of templates) t.censusRoot = root;
+    // THE CREATOR (kanban #313): `kind.creatorSecret` names this publisher in every template (2026.0.3) and signs each series id
+    if (kind.creatorSecret) for (const t of templates) t.creatorPubkey = schnorr.getPublicKey(kind.creatorSecret);
     const ids = templates.map((t) => seriesId(t));
+    if (kind.creatorSecret) templates.forEach((t, k) => { t.creatorSignature = schnorr.sign(seriesCreatorMessage(ids[k]), kind.creatorSecret); });
     const grid = [];
     for (let s = 0; s < slots; s++) for (let k = 0; k < tables; k++) grid.push(seriesRound(templates[k], s));
     // THE TRANSACTION BY HAND: createrawtransaction takes one `data` output only ("duplicate key: data"), and Bitcoin Core

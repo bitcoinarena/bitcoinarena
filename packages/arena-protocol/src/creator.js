@@ -25,3 +25,19 @@ export function creatorSignatureStands(contract, signature, { verify }) {
   try { good = !!verify(signature, creatorMessage(roundId(contract)), contract.creatorPubkey); } catch { good = false; }
   return good ? { ok: true, why: 'signed by the creator the round names' } : { ok: false, why: 'that signature is not the named creator\'s over this round\'s id' };
 }
+
+/**
+ * A SERIES THAT NAMES ITS CREATOR (kanban #313): one signature over the SERIES id stands for every round of it - a grid of
+ * 10,800 rounds is published by one transaction and posted as one line, so it is signed once. The template's creator key is in
+ * the series id (it is in the template's bytes), so the signature binds the creator to every round the series makes. `seriesIdOf`
+ * is series.js seriesId (injected: series.js imports this package's contracts, as this file does). { ok, why } as above.
+ */
+export const seriesCreatorMessage = (seriesIdBytes) => taggedHash(TAG.seriesCreator, seriesIdBytes);
+export function seriesCreatorStands(template, signature, { verify, seriesIdOf }) {
+  const named = template && template.creatorPubkey instanceof Uint8Array;
+  if (!named) return signature ? { ok: false, why: 'that series names no creator, so no creator signature belongs to it' } : { ok: true, why: 'that series names no creator' };
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) return { ok: false, why: 'that series names its creator, and comes without the creator\'s 64-byte signature over its id' };
+  let good = false;
+  try { good = !!verify(signature, seriesCreatorMessage(seriesIdOf(template)), template.creatorPubkey); } catch { good = false; }
+  return good ? { ok: true, why: 'signed by the creator the series names' } : { ok: false, why: 'that signature is not the named creator\'s over this series\' id' };
+}

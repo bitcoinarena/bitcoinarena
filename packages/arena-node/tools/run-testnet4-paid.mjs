@@ -173,6 +173,11 @@ console.log(round.lobbyUrl);
 if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
 }
+// THE PUBLISHER NAMES ITSELF (§6 creator_pubkey, kanban #313; 2026.0.3): with ARENA_PROTOCOL_VERSION=3 and ARENA_CREATOR_KEY_FILE (a
+// 32-byte secret, hex) every grid this runner publishes names that key as its creator and signs each series id - the key the series
+// publisher's fee is paid back to (#304). A v1/v2 round cannot name one (contracts.js CREATOR_VERSION).
+const CREATOR = env.ARENA_PROTOCOL_VERSION === '3' && env.ARENA_CREATOR_KEY_FILE
+  ? { creatorSecret: Uint8Array.from(Buffer.from(readFileSync(env.ARENA_CREATOR_KEY_FILE, 'utf8').trim(), 'hex')) } : {};
 // PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
 // waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
 // read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
@@ -237,7 +242,7 @@ if (env.PAID_RPS_GRID === '1') {
         fedPick = openingFederation({ listed: fl.federations || [], serves, own });
       } catch { /* its own, said above */ }
       say({ rpsGrid: 'federation', ...fedPick, serves: serves.map((f) => f.slice(0, 16)) });
-      const got = await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
+      const got = await round.openGrid({ ...CREATOR, fields: { ...RPS_ROUND_FIELDS, donationSetId, federationId: fromHex(fedPick.federationId) }, stakeMsat }, { slots, tables, feeRate, maxFeeRate, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee),
         onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `rps-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ rpsGrid: 'published', ...p }); }, onPosted: (p) => say({ rpsGrid: 'posted', ...p }) });
       if (got.dry) { say({ rpsGrid: 'dry', ...got }); return; }
       say({ rpsGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon,
@@ -271,7 +276,7 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
       if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
       const own = toHex(round.contract.federationId);
       say({ nbGrid: 'asked', slots, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString(), federation: own.slice(0, 16) });
-      const got = await round.openGrid({ fields: { donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(own) }, stakeMsat },
+      const got = await round.openGrid({ ...CREATOR, fields: { donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(own) }, stakeMsat },
         { slots, tables: 1, windowMs: BigInt(period), entryAfterStartMs: BigInt(period), firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
           onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `nb-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ nbGrid: 'published', ...p }); },
           onPosted: (p) => say({ nbGrid: 'posted', ...p }) });
@@ -321,7 +326,7 @@ if (env.PAID_UPDOWN_GRID === '1') {
       } catch { /* its own */ }
       say({ updownGrid: 'asked', game: toHex(UPDOWN.gameId).slice(0, 16), slots, committeeTime: new Date(committee).toISOString(),
         firstClose: new Date(firstClose).toISOString(), federation: fedPick.federationId.slice(0, 16) });
-      const got = await round.openGrid({ fields: { gameId: UPDOWN.gameId, simCoreHash: ZERO, configHash: ZERO, minScore: 0,
+      const got = await round.openGrid({ ...CREATOR, fields: { gameId: UPDOWN.gameId, simCoreHash: ZERO, configHash: ZERO, minScore: 0,
         donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fedPick.federationId) }, stakeMsat,
         stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
         { slots, tables: 1, windowMs: period, entryAfterStartMs: 0n, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
