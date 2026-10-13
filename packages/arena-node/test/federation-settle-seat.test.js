@@ -99,9 +99,14 @@ test('two signer nodes settle a round that takes any federation: one signed, sub
   assert.ok(a.accepted && b.accepted, 'each signature verifies under the claim key over that federation\'s own bytes');
   assert.notEqual(a.nonce, b.nonce, 'a nonce per federation');
   // kept per federation at both nodes (the peer by the signature it was handed), and served as /lock-settlement serves it
-  const rows = nodes[0].fedSummary(RID);
+  const rows = await nodes[0].fedSummary(RID, { moved: true });
   assert.deepEqual(rows.map((r) => [r.federation, r.state]), [[A, 'ACCEPTED'], [B, 'ACCEPTED']]);
-  assert.deepEqual(nodes[1].fedSummary(RID).map((r) => [r.federation, r.state]), [[A, 'SUBMITTING'], [B, 'SUBMITTING']]);
+  assert.deepEqual((await nodes[1].fedSummary(RID)).map((r) => [r.federation, r.state]), [[A, 'SUBMITTING'], [B, 'SUBMITTING']]);
+  // WHAT EACH PAID, in its transaction's order - the out_idx a winner redeems by (step 7): W1 is paid in both federations
+  for (const r of rows) {
+    assert.deepEqual(r.moved.payouts, log.find((x) => x.fid === r.federation).payouts.map(([pk, msat]) => ({ kind: 'qualifier', pk: r.moved.payouts.find((p) => p.pk.startsWith(pk)).pk, msat: String(msat) })));
+    assert.ok(r.moved.payouts.some((p) => p.pk === toHex(refund(1))), `${r.federation.slice(0, 4)} pays W1`);
+  }
   // asked again: nothing submitted twice
   const again = await nodes[0].settle(RID);
   assert.equal(again.ok, true); assert.equal(log.length, 2);

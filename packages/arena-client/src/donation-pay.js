@@ -204,7 +204,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
-  const rid = toHex(roundId(round));
+  const rid = toHex(round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
   const answers = await Promise.all(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
     try {

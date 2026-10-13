@@ -1312,6 +1312,66 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
 const PAYOUT_NOTE = 'arena.payout.';
 
 /**
+ * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7, kanban #348): one transaction per federation, listed by the
+ * seats' /lock-settlement as `federations` [{ federation, state, txid, moved: { payouts } }]. The first node that holds them all
+ * ACCEPTED answers; else why not.
+ */
+export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {}) {
+  const said = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`);
+      if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
+      const j = await r.json();
+      if (j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
+        && j.federations.every((f) => f.state === 'ACCEPTED' && f.moved && Array.isArray(f.moved.payouts)))
+        return { ok: true, federations: j.federations, from: node };
+      said.push(`${node}: ${j.state}`);
+    } catch (e) { said.push(`${node}: ${e.message}`); }
+  }
+  return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
+}
+
+/**
+ * THE WINNER COLLECTS IN EVERY FEDERATION THAT PAID IT (2026.0.3 step 7): a round that takes any federation pays each winner the
+ * same fraction of every federation's pot (federation-settlement.js), each a pre-expired payout contract to the same refund key
+ * in that federation's own transaction. Each is spent by Refund into the player's wallet OF THAT FEDERATION - `clientFor(fidHex)`
+ * the open wallet (the page keeps one per federation) - and noted per federation, so a reload asks only for what is left.
+ * Answers { ok, final, collected: [{ federation, txid, outIdx, amountMsat }], waiting: [{ federation, why }], why }.
+ */
+export async function redeemPayoutsAcross({ round, roundId, seed, curve, storage, nodes, clientFor, fetcher = fetch, onStep = () => {}, order = 0 } = {}) {
+  if (typeof clientFor !== 'function') throw new Error('a payout in several federations is collected into each federation\'s own wallet, and none was named');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  onStep('asking the signer nodes for the round\'s settlements');
+  const s = await federationSettlementsOf({ roundId, nodes, fetcher });
+  if (!s.ok) return { ok: false, final: false, collected: [], waiting: [], why: s.why };
+  const collected = [], waiting = [];
+  for (const f of s.federations) {
+    const at = f.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
+    if (at < 0) continue;
+    const fid = String(f.federation).toLowerCase();
+    const noted = `${PAYOUT_NOTE}${toHex(roundId)}.${fid.slice(0, 16)}${orderTag(order)}`;
+    try { const kept = storage && storage.getItem(noted); if (kept) { const k = JSON.parse(kept); collected.push({ ...k, amountMsat: BigInt(k.amountMsat), kept: true }); continue; } } catch { /* no note */ }
+    const p = f.moved.payouts[at];
+    const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
+    onStep(`collecting the payout in federation ${fid.slice(0, 8)}`);
+    let said;
+    try { said = JSON.parse(await (await clientFor(fid)).refund(f.txid, at, JSON.stringify(fields), toHex(player.secret))); }
+    catch (e) { waiting.push({ federation: fid, why: e.message }); continue; }
+    const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+    if (said.accepted === true || spent) {
+      const got = { federation: fid, txid: f.txid, outIdx: at, amountMsat: BigInt(p.msat), spent };
+      collected.push(got);
+      if (storage) try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* a reload asks again */ }
+    } else waiting.push({ federation: fid, why: said.error || 'the federation did not accept the refund' });
+  }
+  if (!collected.length && !waiting.length) return { ok: false, final: true, collected, waiting, why: 'the round\'s settlements pay this seed\'s key nothing: no payout to collect' };
+  return { ok: !waiting.length, final: !waiting.length, collected, waiting,
+    why: waiting.length ? waiting.map((w) => `${w.federation.slice(0, 8)}: ${w.why}`).join('; ') : undefined };
+}
+
+/**
  * A SLASH'S PAYOUT (kanban #307, spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share
  * to its player"): when a node of this round was slashed for this player's entry, the arbitration service lists the share it
  * locked to the player's refund key - the key a settlement payout names - at GET /slash-payouts?round=. It is a pre-expired

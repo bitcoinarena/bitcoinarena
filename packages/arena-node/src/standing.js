@@ -8,6 +8,7 @@
 // Read-only: each entry's finality as this signer node holds it, the payout table over the entries whose results are
 // signed so far (computePayoutTable - the same arithmetic the settlement pays by), and this entry's row. Nothing here
 // signs, settles or moves money.
+import { stateOf } from './settlement-state.js';
 import { computePayoutTable, netStakeMsat, VOID, FORFEIT, ENTRY_VOID } from '../../arena-protocol/src/payout.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
@@ -98,8 +99,8 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
 
 /** This seat's ACCEPTED settlement of the round, if it pays this entry's share - its player paid, or its stake lock claimed. */
 function settledFor(round, roundIdBytes, entryIdBytes, playerPubkey) {
-  const s = typeof round.lockSettlement === 'function' ? round.lockSettlement(roundIdBytes) : null;
-  if (!s || s.state !== 'ACCEPTED') return null;
+  if (stateOf(round, roundIdBytes) !== 'ACCEPTED') return null;
+  const s = (typeof round.lockSettlement === 'function' && round.lockSettlement(roundIdBytes)) || { state: 'ACCEPTED', txid: 'federations' };
   const shares = typeof round.lockSettlementShares === 'function' ? round.lockSettlementShares(roundIdBytes) || [] : [];
   if (shares.some((x) => toHex(x.pubkey) === toHex(playerPubkey) && x.msat > 0n)) return s;
   const moves = typeof round.lockSettlementMoves === 'function' ? round.lockSettlementMoves(roundIdBytes) : null;
