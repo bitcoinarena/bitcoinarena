@@ -18,12 +18,17 @@
 //   ARENA_ARBITER_PORT=31290 ARENA_ARBITER_STATE=<file> node tools/arbiter.mjs [--once]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
 import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
 import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
-import { clocksFor } from '../../arena-protocol/src/federation-slash.js';
+import { clocksFor, liquidationRemainderPayees } from '../../arena-protocol/src/federation-slash.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
+import { donationSetInForce } from '../../arena-protocol/src/authority.js';
+import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
 
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -143,7 +148,27 @@ async function payLiquidations() {
       if (!signed.ok) return { why: signed.why };
       return post(rpc, signed.hex);
     };
-    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, keep, say }); } catch (e) { r = { why: e.message }; }
+    // THE REMAINDER'S PAYEES at the tip: the census this set derives from its own chain (a seat's newest round as the template),
+    // less the slashed and the federation's guardians (its halt record), and the donation set in force (its keys)
+    const remainderPayees = async (fidHex, msat) => {
+      const l = await claims.liquidation(fidHex);
+      if (!l) throw new Error('no seat lists that liquidation');
+      const record = splitSignedRecord(fromHex(l.haltRecord)).record;
+      const list = await get(`${seats[0]}/rounds?next=1`);
+      const contract = decodeRoundContract(await get(`${seats[0]}/round?id=${list.rounds[0].id}`, 'bytes'));
+      const tip = Number(await rpc('getblockcount'));
+      const census = await censusAt(contract, tip);
+      if (!census.ok) throw new Error(`no census at ${tip}: ${census.why}`);
+      const keys = donationKeysForNetworkId(contract.networkId);
+      const forced = donationSetInForce({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery, sets: [TESTNET4_DONATION_SET_KEYS],
+        rotations: [], height: tip, verify: (sg, m, k) => { try { return ed25519.verify(sg, m, k); } catch { return false; } } });
+      if (!forced.ok) throw new Error(`no donation set in force: ${forced.why}`);
+      const got = liquidationRemainderPayees({ msat, censusNodes: census.entries.map((e) => e.pubkey), slashed: Object.values(state.handled).map((h) => h.node).filter(Boolean),
+        record, donation: forced.recipients });
+      if (!got.ok) throw new Error(got.why);
+      return got.payees;
+    };
+    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
     if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
   }
 }

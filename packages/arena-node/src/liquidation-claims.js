@@ -75,7 +75,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       refused: got.refused, remainderMsat: String(got.remainderMsat), split: got.split ? { nodes: String(got.split.nodes), developers: String(got.split.developers) } : null,
       remainderSplitsAt: got.remainderSplitsAt };
   }
-  return { offer, plan };
+  return { offer, plan, liquidation: liquidationOf };
 }
 
 /**

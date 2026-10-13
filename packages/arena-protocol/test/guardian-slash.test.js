@@ -42,3 +42,17 @@ test('the escrow split spends exactly the escrow, less the fee, and refuses dust
   assert.equal(escrowSplitSpend({ escrow, payees: [{ script: s, sats: 6000n }, { script: s, sats: 3001n }], feeSats: 1000n }).ok, false);
   assert.equal(escrowSplitSpend({ escrow, payees: [{ script: s, sats: 8800n }, { script: s, sats: 200n }], feeSats: 1000n }).ok, false);
 });
+
+test('a liquidation remainder: 75 % evenly to the census less the slashed and the federation\'s guardians, 25 % by share_bps, summing to it', async () => {
+  const { liquidationRemainderPayees } = await import('../src/federation-slash.js');
+  const record = { guardians: [1, 2, 3, 4].map((n) => ({ nodePubkey: k(n) })) };
+  const donation = [{ recipientPk: k(20), shareBps: 7000 }, { recipientPk: k(21), shareBps: 3000 }];
+  const r = liquidationRemainderPayees({ msat: 1_232_000n, censusNodes: [1, 2, 3, 4, 5, 6, 7, 8].map(k), slashed: [k(8)], record, donation });
+  assert.equal(r.ok, true, r.why);
+  const nodes = r.payees.filter((p) => p.part === 'node'), dev = r.payees.filter((p) => p.part === 'donation');
+  assert.equal(nodes.length, 3, 'n5-n7: the four guardians and the slashed n8 left out');
+  assert.equal(nodes.reduce((a, p) => a + p.msat, 0n), 924_000n);
+  assert.deepEqual(dev.map((p) => p.msat), [215_600n, 92_400n]);
+  assert.equal(r.payees.reduce((a, p) => a + p.msat, 0n), 1_232_000n);
+  assert.equal(liquidationRemainderPayees({ msat: 1000n, censusNodes: [5, 6].map(k), record, donation: [{ recipientPk: k(20), shareBps: 5000 }] }).ok, false);
+});
