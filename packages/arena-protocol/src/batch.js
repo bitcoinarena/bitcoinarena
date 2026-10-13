@@ -43,7 +43,7 @@
 // property `M2.1` step 2 needs and it costs nothing to have from the start.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_INPUT_BATCH, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_INPUT_BATCH, TAG } from './constants.js';
 
 /** The prices a live tape carries: the core's SAMPLES. */
 export const TAPE_PRICES = 64;
@@ -129,7 +129,7 @@ export function decodeInputBatch(bytes) {
   const type = r.u8();
   if (type !== TYPE_INPUT_BATCH) throw new Error('not an input batch');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const b = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),

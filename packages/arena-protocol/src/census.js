@@ -5,6 +5,7 @@
 import { newestUpdates } from './advert-update.js';
 import { ancestorMarker, ancestorAdvertId, decodeAncestorAdvert } from './ancestor.js';
 import { reaffirmedBonds } from './reaffirm.js';
+import { protocolVersionName } from './protocol-version.js';
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
 import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, networkOf } from './constants.js';
@@ -1138,8 +1139,8 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     if (!versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
-        why: `that advertisement speaks ${versions.join(', ') || 'no version'} and this `
-          + `round runs ${contract.protocolVersion}`,
+        why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
+          + `round runs ${protocolVersionName(contract.protocolVersion)}`,
       });
       continue;
     }

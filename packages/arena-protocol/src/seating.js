@@ -15,7 +15,7 @@
 // round; who serves it is this certificate.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { TAG, TYPE_PRESENT, TYPE_SEATING, PROTOCOL_VERSION } from './constants.js';
+import { TAG, TYPE_PRESENT, TYPE_SEATING, PROTOCOL_VERSION, speaksVersion } from './constants.js';
 
 /** seating_close is this long before the round's start: round i+1 is seated before round i (90 s earlier) starts. */
 export const SEATING_LEAD_MS = 120000n;
@@ -54,7 +54,7 @@ export function signPresent({ roundId, role, nodePubkey }, sign) {
 export function decodePresent(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_PRESENT) throw new Error('that is not a PRESENT');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('a PRESENT of another protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('a PRESENT of another protocol version');
   const roundId = r.bytes32(); const role = roleOfSeat(r.u8()); const nodePubkey = r.bytes32(); const signature = r.bytes(64);
   if (!role) throw new Error('a PRESENT for no role');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the PRESENT');
@@ -102,7 +102,7 @@ export function encodeSeatingCertificate({ roundId, role, seated, signatures }) 
 export function decodeSeatingCertificate(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_SEATING) throw new Error('that is not a SEATING');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('a SEATING of another protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('a SEATING of another protocol version');
   const roundId = r.bytes32(); const role = roleOfSeat(r.u8());
   if (!role) throw new Error('a SEATING for no role');
   const seated = r.vec((rr) => rr.bytes32());

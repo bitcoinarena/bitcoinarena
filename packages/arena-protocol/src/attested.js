@@ -18,7 +18,7 @@
 // each standing on its own, naming different outcomes. That pair is the proof; a round holding it settles on neither.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
 import { isAttested } from './manifest.js';
 
 export const OUTCOME_SIGNATURE_BYTES = 64;
@@ -61,7 +61,7 @@ export function decodeAttestation(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_OUTCOME_ATTESTATION) throw new Error('not an outcome attestation');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
+  if (!speaksVersion(version)) throw new Error(`protocol version ${version}, this build speaks ${PROTOCOL_VERSION}`);
   const a = { roundId: r.bytes32(), outcome: r.u8(), observedAtMs: r.u64() };
   a.signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(OUTCOME_SIGNATURE_BYTES) }));
   r.end();

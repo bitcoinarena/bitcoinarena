@@ -15,7 +15,7 @@ import { stakeExpiryFits } from './lock-expiry.js';
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
 import {
-  TAG, PROTOCOL_VERSION, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
+  TAG, PROTOCOL_VERSION, speaksVersion, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -241,7 +241,7 @@ export function decodeRoundContract(bytes) {
   const type = r.u8();
   if (type !== TYPE_ROUND_CONTRACT) throw new Error('not a RoundContract: type ' + type);
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION)
+  if (!speaksVersion(version))
     throw new Error('protocol version ' + version + ', this build speaks ' + PROTOCOL_VERSION);
 
   const c = {
@@ -471,7 +471,7 @@ export function decodeEntryContract(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ENTRY_CONTRACT) throw new Error('not an EntryContract');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const e = {
     roundId: r.bytes32(),
     playerPubkey: r.bytes32(),
