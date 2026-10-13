@@ -834,3 +834,21 @@ export function contractWarnings(c, gameWarnings = null) {
   if (typeof gameWarnings === 'function') out.push(...gameWarnings(c));
   return out;
 }
+
+/**
+ * THE FEDERATION AN ENTRY'S LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the
+ * one the entry names - an entry naming none is refused; on any other round the round's own - an entry naming another is
+ * refused. Answers { ok, federationId } or { ok: false, why }. Which federations a seat takes is the seat's (OPEN, bonded).
+ */
+export function entryFederation(round, entry) {
+  if (!round || !entry) return { ok: false, why: 'no round or no entry' };
+  const named = entry.federationId instanceof Uint8Array && entry.federationId.length === 32 && !entry.federationId.every((b) => b === 0) ? entry.federationId : null;
+  if (takesAnyFederation(round)) {
+    if (!named) return { ok: false, why: 'that round takes a lock in any federation, and the entry names none: it says where its locks are (2026.0.3)' };
+    return { ok: true, federationId: named };
+  }
+  if (!is32(round.federationId) || round.federationId.every((b) => b === 0)) return { ok: false, why: 'that round names no federation, so its stake is not a lock' };
+  if (named && !named.every((b, i) => b === round.federationId[i]))
+    return { ok: false, why: 'that entry names another federation than its round\'s, which takes one federation only' };
+  return { ok: true, federationId: round.federationId };
+}
