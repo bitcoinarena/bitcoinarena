@@ -20,7 +20,7 @@
 import { msForTicks } from './tick.js';
 import { taggedHash } from './hash.js';
 import { isOldTestnet4Id, isOldTestnet4Series } from './old-series.js';
-import { encodeRoundContract } from './contracts.js';
+import { encodeRoundContract, idBodyOf } from './contracts.js';
 import { PUBLICATION_MAGIC, PUBLICATION_BYTES } from './publication.js';
 import { OP_RETURN, parseTransaction, commitmentsOf } from './tx.js';
 import { NETWORK_ID_TESTNET4 } from './genesis-ids.js';
@@ -197,7 +197,8 @@ export const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
 export function seriesId(template, { periodMs, count } = {}) {
   periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
-  const body = encodeRoundContract(withoutSeries(template));
+  // a v2 template's `nodes` is no part of its id (2026.0.2, kanban #348): its rounds' seats are drawn after it
+  const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
   const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
   bytes.set(body, 0);
   bytes.set(u64(periodMs), body.length);
@@ -256,7 +257,8 @@ export function seriesRoundCheck(contract, templates, { periodMs, count: given }
     || contract.committeeTimeMs !== derived.committeeTimeMs)
     return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
       + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
-  if (!sameBytes(encodeRoundContract(contract), encodeRoundContract(derived)))
+  // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2, kanban #348): compared without it
+  if (!sameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
     return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
   return { ok: true, series: true, index: contract.roundIndex, template: t };
 }

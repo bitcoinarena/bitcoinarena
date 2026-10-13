@@ -6,6 +6,8 @@
 // build extends when it ships a version. A y this build has no release for is named by its number alone ("?.?.y").
 export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 1, year: 2026, x: 0 }),
+  // the round contract that does not name its draw (kanban #348, RULED the owner 2026-10-13)
+  Object.freeze({ version: 2, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

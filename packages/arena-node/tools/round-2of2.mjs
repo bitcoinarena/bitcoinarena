@@ -788,6 +788,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     nodes: [a.round.pubkey, b.round.pubkey, ...rest.map((d) => d.round.pubkey)],
     ...(roundFields || {}),
   };
+  // 2026.0.2 - THE ROUND NAMES NO DRAW (kanban #348, RULED the owner 2026-10-13): ARENA_PROTOCOL_VERSION=2 writes a v2 contract
+  // with no nodes; every seat draws its 7 from the census and the beacon and writes them in itself. A census of 14 nodes
+  // (two federations) can then open a round at all.
+  const V2 = process.env.ARENA_PROTOCOL_VERSION === '2';
+  if (V2) { contract.protocolVersion = 2; contract.nodes = []; }
   // AND A COMMITTEE THE PROTOCOL HAS A THRESHOLD FOR, said here rather than
   // discovered half an hour later. `dkg.deal` asks `receiptsNeeded(nodes.length)`
   // and only 2 (2-of-2) and 7 (5-of-7) have an answer; for anything else it
@@ -795,7 +800,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // background until entry close without logging a thing. Measured on the first
   // three-node round: all three daemons answered "this signer node holds no
   // claim key for that round yet" for 240 s and no stake could be locked.
-  try { receiptsNeeded(contract.nodes.length); }
+  try { receiptsNeeded(V2 ? contract.settlementSlots : contract.nodes.length); }
   catch (e) {
     await a.close(); await b.close(); for (const d of rest) await d.close();
     throw new Error(`${contract.nodes.length} signer nodes cannot hold a round's key: ${e.message}. `
@@ -818,6 +823,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // question from the one the node asks.
   // A FUNCTION OF THE CONTRACT AND THE VIEW, because every round this tool
   // opens (M3.3-34's opener) derives its own root the same way.
+  let lastCensusEntries = [];         // the census the root was derived from: a v2 round is posted to every node of it
   const censusRootFor = (c) => {
   const byTxid = new Map();
   for (const block of censusView.blocks)
@@ -842,6 +848,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     },
   });
   if (!census.ok) throw new Error('this tool could not derive its own census: ' + census.why);
+  lastCensusEntries = census.entries;
   return census.root;
   };
   contract.censusRoot = censusRootFor(contract);
@@ -992,6 +999,14 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   if (funded.nameRound && openFirst) funded.nameRound(roundId(contract));
   if (beforeRound) await beforeRound();
   // BOTH DAEMONS, ONE ROUND: posted to each, and both must name it the same.
+  /** THE OTHER NODES OF THE CENSUS a v2 round is drawn from (kanban #348): [node key hex, https root], ARENA_ROUTE_MAP applied. */
+  function otherCensusSeats() {
+    const own = new Set([a, b, ...rest].map((d) => toHex(d.round.pubkey)));
+    const routes = (process.env.ARENA_ROUTE_MAP || '').split(',').filter(Boolean).map((x) => x.split('='));
+    const reach = (u) => routes.reduce((v, [from, to]) => v.replace(`//${from}`, `//${to}`), String(u).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
+    return [...new Map(lastCensusEntries.filter((e) => !own.has(toHex(e.pubkey)) && e.advert && e.advert.endpoint)
+      .map((e) => [toHex(e.pubkey), reach(e.advert.endpoint)])).entries()];
+  }
   async function postRound(c) {
     const body = encodeRoundContract(c);
     const opened = [];
@@ -1021,6 +1036,24 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const rid = toHex(roundId(c));
     if (opened.some((o) => o !== rid))
       throw new Error(`the ${opened.length} daemons named the round differently: ` + opened.join(' '));
+    // A V2 ROUND GOES TO EVERY NODE OF ITS CENSUS (kanban #348): any of them may be drawn, and a drawn node that never held
+    // the round signs no PRESENT. Each at its advertised endpoint (wss -> https), through ARENA_ROUTE_MAP's host aliases
+    // ("from=to,..."; the test host reaches the the test host's seats at tn4.bitcoin-arena.io); best effort, each answer logged.
+    if (V2) {
+      const others = otherCensusSeats();
+      const said = await Promise.all(others.map(async ([k, url]) => {
+        for (let tries = 0; ; tries++) {
+          try {
+            const r = await fetch(`${url}/round`, { method: 'POST', body, signal: AbortSignal.timeout(30000) });
+            if (r.ok) return `${k.slice(0, 8)} ok`;
+            const why = await r.text();
+            if (!/no chain view|view .*pending|no beacon|no publication transaction/i.test(why) || tries >= 40) return `${k.slice(0, 8)} ${r.status} ${why.slice(0, 80)}`;
+          } catch (e) { if (tries >= 40) return `${k.slice(0, 8)} unreachable ${e.message}`; }
+          await new Promise((res) => setTimeout(res, 3000));
+        }
+      }));
+      console.log(`[publish] v2 round ${rid.slice(0, 16)} posted to the other ${others.length} census nodes: ${said.join('; ')}`);
+    }
     return rid;
   }
   let id = null;
@@ -1272,6 +1305,17 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         }
         return { port: node.port, ok: false, why };
       }));
+      // AND A V2 GRID TO EVERY OTHER NODE OF ITS CENSUS (kanban #348): any of them may be drawn for a round of it
+      if (V2) for (const [key, url] of otherCensusSeats()) {
+        let ok = false, why = '';
+        for (let t = 0; t < 20 && !ok; t++) {
+          try { const r = await fetch(`${url}/series`, { method: 'POST', body: lines[k], signal: AbortSignal.timeout(30000) }); ok = r.ok; if (!ok) why = await r.text(); }
+          catch (e) { why = e.message; }
+          if (!ok && !/no chain view|view .*pending|fetch failed|unreachable/i.test(why)) break;
+          if (!ok) await new Promise((res) => setTimeout(res, 3000));
+        }
+        answers.push({ port: key.slice(0, 8), ok, why });
+      }
       for (const x of answers) if (!x.ok) console.log(`[grid] series ${toHex(ids[k]).slice(0, 16)} refused by ${x.port}: ${x.why}`);
       posted.push({ series: toHex(ids[k]), seats: answers.filter((x) => x.ok).length, of: answers.length });
     }
