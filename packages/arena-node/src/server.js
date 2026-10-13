@@ -23,6 +23,7 @@ import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { missedInARow, seatingWarning } from './seatings.js';
+import { nodeStanding } from './node-standing.js';
 import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
@@ -3243,6 +3244,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           const missed = missedInARow(rows);
           return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
+        }
+        // THIS NODE'S STANDING (§5A.10B, kanban #310): own weight, brackets served, headroom - from the censuses of the newest rounds
+        // held, and the warnings an operator needs before the floor passes the bond
+        if (req.method === 'GET' && url.pathname === '/owner/standing') {
+          const me = toHex(round.pubkey);
+          const rows = [];
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            let census; try { census = roster.censusFor(new Uint8Array(r.round_id)); } catch { continue; }
+            if (!census || !census.ok) continue;
+            const pick = (e) => ({ pubkey: toHex(e.pubkey), bondSats: e.bondSats });
+            rows.push({ atMs: Number(c.committeeTimeMs), bondMinSats: c.bondMinSats, entries: (census.entries || []).map(pick),
+              excluded: (census.excluded || []).filter((e) => e.pubkey && e.bondSats !== undefined).map(pick) });
+          }
+          rows.sort((a, b) => b.atMs - a.atMs);
+          return answer(200, nodeStanding({ me, rounds: rows }));
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
