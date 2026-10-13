@@ -24,7 +24,9 @@ import { cancelId } from '../../arena-protocol/src/order-book.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, decodeEntryContract, entryFederation } from '../../arena-protocol/src/contracts.js';
+import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
+import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound } from './plugins.js';
 import { marketVoided } from '../../arena-protocol/src/attested.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
@@ -65,7 +67,22 @@ export const REFUSED = 'REFUSED';
 
 /** Whether a round's stake is a federation stake lock (and so settled here). */
 export const locksStake = (contract) => contract.federationId instanceof Uint8Array
-  && contract.federationId.some((b) => b !== 0) && contract.stakeMsat > 0n;
+  && (contract.federationId.some((b) => b !== 0) || takesAnyFederation(contract)) && contract.stakeMsat > 0n;
+
+const NO_FEES = { ppm: 0n, baseMsat: 0n };
+/**
+ * A ROUND THAT TAKES ANY FEDERATION, SETTLED (2026.0.3, kanban #348): its plan decided once - lockSettlement with no fee, since
+ * every federation prices its own (splitByFederation) - and split into one balanced transaction per federation. `args`:
+ * lockSettlement's; `federationOf(outpoint)` -> the federation hex a claimed lock is in; `feesOf(fidHex)` -> its fee rule.
+ */
+export function federationPlans(args, { federationOf, feesOf }) {
+  const plan = lockSettlement({ ...args, fees: NO_FEES });
+  if (!plan.ok) return { ok: false, why: plan.why };
+  if (plan.nothing) return { ok: false, why: plan.why };
+  const split = splitByFederation(plan, { roundId: args.roundId, federationOf, feesOf });
+  if (!split.ok) return { ok: false, why: split.why };
+  return { ok: true, plan, split };
+}
 
 // A PLAN NAMED BY EVERYTHING IN IT (NODE-OPT-1648): claims, payouts, nonce, the claim key and the seat it names - bigints
 // as decimal, bytes as hex - so an identical plan has the identical name and any change in it a different one.
@@ -238,6 +255,48 @@ export class LockSettlement {
     if (!row) return p;
     const c = decodeRoundContract(new Uint8Array(row.contract));
     return (await p.forFederation(toHex(c.federationId))) || p;
+  }
+
+  /** THE PORT OF ONE FEDERATION by its id hex (2026.0.3): a router's port for it, else the one port this node has. */
+  async portForFederation(fid) {
+    const p = this.port;
+    if (!p || typeof p.forFederation !== 'function') return p;
+    return (await p.forFederation(String(fid).toLowerCase())) || null;
+  }
+
+  /**
+   * ONE FEDERATION'S SETTLEMENT BYTES of a round that takes any federation (2026.0.3): that federation's part of the split -
+   * its claimed locks (each loser's P opened as message() opens it), its payouts, its nonce - built by that federation's port.
+   */
+  async fedMessage(roundIdBytes, fid) {
+    const key = `${toHex(roundIdBytes)}:fed:${String(fid).toLowerCase()}`;
+    const kept = this.built.get(key);
+    if (kept) return kept;
+    const got = await this.planOf(roundIdBytes);
+    if (!got.ok) return got;
+    if (!got.anyFed) return refuse('that round settles in its one federation: it has no per-federation settlement');
+    const s = got.split.settlements.find((x) => x.federation === String(fid).toLowerCase());
+    if (!s) return refuse(`that round's settlement moves nothing in federation ${String(fid).slice(0, 16)}`, 404);
+    const claims = [];
+    for (const c of s.claims) {
+      if (c.kind === 'fee') { claims.push(c); continue; }
+      const entryId = got.lockEntry.get(toHex(c.pubkey));
+      const opened = await this.stakeSecrets.open({ roundId: roundIdBytes, entryId, needed: receiptsNeeded(got.contract.nodes.length) });
+      if (!opened.ok) return refuse(`a loser's P could not be opened: ${opened.why}`);
+      claims.push({ ...c, preimage: opened.preimage });
+    }
+    const port = await this.portForFederation(fid);
+    if (!port || typeof port.settle !== 'function') return refuse(`this signer node cannot reach federation ${String(fid).slice(0, 16)}, so it builds nothing there`);
+    const tx = await port.settle({ claimPk: got.claimPk, claims, payouts: s.payouts, nonce: s.nonce });
+    const built = { ok: true, message: fromHex(tx.message), txid: tx.txid, settlement: s, plan: got.plan, claims, claimPk: got.claimPk,
+      signerNode: got.held.signerNode, needed: receiptsNeeded(got.contract.nodes.length), federation: String(fid).toLowerCase() };
+    this.built.set(key, built);
+    return built;
+  }
+
+  /** What each federation's settlement of a round that takes any federation moved, as this node holds it (GET /lock-settlement). */
+  fedSummary(roundIdBytes) {
+    return this.round.fedLockSettlementsOf ? this.round.fedLockSettlementsOf(roundIdBytes) : [];
   }
 
   async lateMessage(roundIdBytes, entryIdBytes, { onlyBase = false } = {}) {
@@ -645,6 +704,7 @@ export class LockSettlement {
     if (kept) return kept;
     const got = await this.planOf(roundIdBytes, { withSends: true });
     if (!got.ok) return got;
+    if (got.anyFed) return refuse('that round takes any federation: it is signed one federation at a time (name the federation)');
     const { plan, contract, claimPk, held, locks, lockEntry } = got;
     // THE SAME PLAN IS NOT BUILT TWICE (NODE-OPT-1648): `built` is dropped whenever send plans are checked - the coordinator
     // proposes the same ones every winnings sweep while a send is held - and every drop rebuilt the settlement: the losers'
@@ -692,9 +752,11 @@ export class LockSettlement {
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
+    const anyFed = takesAnyFederation(contract);
     // AN ATTESTED ROUND (§0A.7a): its plan is its pari-mutuel table's, on a final outcome only
     { const a = this.#attestedOf(roundIdBytes);
       if (a) {
+        if (anyFed) return refuse('an attested round that takes any federation is not settled per federation yet (2026.0.3 step 5c)');
         if (!a.finality.final) return refuse(this.#attestedHold(roundIdBytes)?.why || 'an attested round whose outcome is not final');
         return this.#attestedPlan(roundIdBytes, a, claimPk, held);
       } }
@@ -719,6 +781,37 @@ export class LockSettlement {
       const fields = lockFieldsFromJson(fl.fields);
       if (toHex(fields.claimPk) !== toHex(claimPk)) return refuse('a fee lock of this round names another claim key than the round\'s');
       feeLocks.set(toHex(e.pubkey), { outpoint: outpointOf(fl.outpoint), amountMsat: fields.amountMsat, preimage: e.feePreimage });
+    }
+    // A ROUND THAT TAKES ANY FEDERATION: each claimed lock's federation is its entry's (entryFederation), each federation's fee
+    // rule its own port's, read once; the plan decided once and split into one transaction per federation (federationPlans)
+    if (anyFed) {
+      const fedOf = new Map();
+      for (const e of on.entries) {
+        const raw = this.round.entry ? this.round.entry(e.entryId) : null;
+        if (!raw) continue;
+        const ef = entryFederation(contract, decodeEntryContract(raw));
+        if (!ef.ok) return refuse(`no lock is claimed: ${ef.why}`);
+        const fid = toHex(ef.federationId);
+        const sl = locks.get(toHex(e.pubkey)); if (sl) fedOf.set(`${toHex(sl.outpoint.txid)}:${sl.outpoint.outIdx}`, fid);
+        const fl = feeLocks.get(toHex(e.pubkey)); if (fl) fedOf.set(`${toHex(fl.outpoint.txid)}:${fl.outpoint.outIdx}`, fid);
+      }
+      const feesByFed = new Map();
+      for (const fid of new Set(fedOf.values())) {
+        const fk = `${key}:fed:${fid}`;
+        let f = this.fees.get(fk);
+        if (!f) {
+          const port = await this.portForFederation(fid);
+          if (!port || typeof port.fees !== 'function') return refuse(`this signer node cannot reach federation ${fid.slice(0, 16)}, so it settles nothing there`);
+          f = await port.fees(); this.fees.set(fk, f);
+        }
+        feesByFed.set(fid, f);
+      }
+      const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
+      const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, feeLocks,
+        signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null },
+        { federationOf: (o) => fedOf.get(`${toHex(o.txid)}:${o.outIdx}`) || null, feesOf: (fid) => feesByFed.get(fid) || null });
+      if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
+      return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry };
     }
     let fees = this.fees.get(key);
     if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
@@ -781,15 +874,15 @@ export class LockSettlement {
   }
 
   /** ROUND ONE: this signer node's nonce commitment for the settlement it would sign. */
-  async commit(roundIdBytes, { txid = null, entry = null } = {}) {
-    const m = entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
+  async commit(roundIdBytes, { txid = null, entry = null, federation = null } = {}) {
+    const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
     // A COMMITMENT ONLY TO THE BYTES THE ASKER BUILT (measured on a 5-of-7): a signer node that rebuilt another
     // settlement - it saw a run end differently - would otherwise commit, and its share over its own bytes spoils the
     // combined signature for everyone. It refuses by name, and the threshold of the others decides.
     if (txid && String(txid).toLowerCase() !== String(m.txid).toLowerCase())
       return refuse(`this signer node rebuilt settlement ${String(m.txid).slice(0, 16)}, not ${String(txid).slice(0, 16)}: it commits to no other bytes`, 409);
-    const key = entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes);
+    const key = federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes);
     let pair = this.pairs.get(key);
     if (!pair || toHex(pair.message) !== toHex(m.message)) {
       const hiding = nonceGenerate340(this.random(32), m.signerNode.share);
@@ -802,10 +895,10 @@ export class LockSettlement {
   }
 
   /** ROUND TWO: this signer node's signature share over the txid it rebuilt, for ONE commitment list. */
-  async share(roundIdBytes, commitments, { entry = null } = {}) {
-    const m = entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
+  async share(roundIdBytes, commitments, { entry = null, federation = null } = {}) {
+    const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
-    const pair = this.pairs.get(entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes));
+    const pair = this.pairs.get(federation ? `${toHex(roundIdBytes)}:fed:${String(federation).toLowerCase()}` : entry ? `${toHex(roundIdBytes)}:${toHex(entry)}` : toHex(roundIdBytes));
     if (!pair || toHex(pair.message) !== toHex(m.message)) return refuse('this signer node committed to no settlement of that round');
     const own = commitments.find((c) => String(c.id) === String(pair.commitment.id));
     if (!own || toHex(own.hiding) !== toHex(pair.commitment.hiding) || toHex(own.binding) !== toHex(pair.commitment.binding))
@@ -822,10 +915,17 @@ export class LockSettlement {
   }
 
   /** A combined signature handed over by a peer: kept only if it verifies over what THIS signer node rebuilt. */
-  async take(roundIdBytes, signature, { entry = null } = {}) {
-    const m = entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
+  async take(roundIdBytes, signature, { entry = null, federation = null } = {}) {
+    const m = federation ? await this.fedMessage(roundIdBytes, federation) : entry ? await this.lateMessage(roundIdBytes, entry) : await this.message(roundIdBytes);
     if (!m.ok) return m;
     if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) return refuse('that settlement signature does not verify under the round\'s claim key');
+    if (federation) {
+      const held = this.round.fedLockSettlement(roundIdBytes, federation);
+      if (!held || (held.state === SUBMITTING && held.txid !== m.txid))
+        this.round.putFedLockSettlement({ roundId: roundIdBytes, federation, txid: m.txid, message: m.message, signature, state: SUBMITTING,
+          why: 'signed by the signer nodes; submitted by the signer node that combined it' });
+      return { ok: true };
+    }
     if (entry) {
       const held = this.round.lateLockSettlement(roundIdBytes, entry);
       if (!held || (held.state === SUBMITTING && held.txid !== m.txid))
@@ -921,6 +1021,8 @@ export class LockSettlement {
   #settling = new Map();
 
   async #settleOnce(roundIdBytes) {
+    { const row = this.round.get(roundIdBytes);
+      if (row && takesAnyFederation(decodeRoundContract(new Uint8Array(row.contract)))) return this.#settleFederations(roundIdBytes); }
     const held = this.#attestedHold(roundIdBytes);
     if (held) return held;
     const kept = this.round.lockSettlement(roundIdBytes);
@@ -1039,6 +1141,70 @@ export class LockSettlement {
     if (sent.accepted) this.indexDonationKeys(roundIdBytes, m.txid, m.plan);
     const winnings = sent.accepted ? await this.sendWinnings(roundIdBytes) : null;
     return { ok: sent.accepted, state, why, txid: m.txid, signature, plan: m.plan, answer: sent, winnings };
+  }
+
+  /**
+   * A ROUND THAT TAKES ANY FEDERATION, SETTLED ONE FEDERATION AT A TIME (2026.0.3, kanban #348): for each federation of the split
+   * whose row is not ACCEPTED, the steps of the round's one settlement - this node's turn, the peers' commitments and shares over
+   * THAT federation's bytes (`&federation=`), the combined signature checked under the claim key, the intent on disk, the submit
+   * through that federation's port, the guardians' answer kept - each under its own nonce and its own row.
+   */
+  async #settleFederations(roundIdBytes) {
+    const got = await this.planOf(roundIdBytes);
+    if (!got.ok) return got;
+    if (this.winnings) {
+      const t = await this.turn(roundIdBytes);
+      if (!t.mine) return refuse(`not this signer node's turn to combine: ${t.why}`, 409);
+    }
+    const results = [];
+    for (const s of got.split.settlements) {
+      const fid = s.federation;
+      const kept = this.round.fedLockSettlement(roundIdBytes, fid);
+      if (kept && kept.state === ACCEPTED) { results.push({ federation: fid, state: ACCEPTED, txid: kept.txid, kept: true }); continue; }
+      const m = await this.fedMessage(roundIdBytes, fid);
+      if (!m.ok) { results.push({ federation: fid, ok: false, why: m.why }); continue; }
+      let signature = kept && kept.signature && kept.txid === m.txid ? kept.signature : null;
+      if (!signature) {
+        const q = `round=${toHex(roundIdBytes)}&federation=${fid}`;
+        const own = await this.commit(roundIdBytes, { federation: fid });
+        if (!own.ok) { results.push({ federation: fid, ok: false, why: own.why }); continue; }
+        const signers = [{ base: null, commitment: own.commitment }];
+        const refused = [];
+        for (const base of this.peersFor(roundIdBytes)) {
+          try {
+            const r = await this.fetcher(`${base}/settle-commit?${q}&txid=${m.txid}`, { method: 'POST' });
+            if (!r.ok) { refused.push(`${base}: ${(await r.text()).trim()}`); continue; }
+            signers.push({ base, commitment: decodeCommitments(new Uint8Array(await r.arrayBuffer()))[0] });
+          } catch (e) { refused.push(`${base}: ${e.message}`); }
+        }
+        if (signers.length < m.needed) { results.push({ federation: fid, ok: false, why: `${signers.length} of the ${m.needed} signer nodes committed: ${refused.join('; ')}` }); continue; }
+        const commitments = signers.map((x) => x.commitment).sort((a, b) => a.id - b.id);
+        const shares = [];
+        let failed = null;
+        for (const x of signers) {
+          if (x.base === null) { const mine = await this.share(roundIdBytes, commitments, { federation: fid }); if (!mine.ok) { failed = mine.why; break; } shares.push(mine.share); continue; }
+          const r = await this.fetcher(`${x.base}/settle-share?${q}`, { method: 'POST', body: encodeCommitments(commitments) });
+          if (!r.ok) { failed = `${x.base} gave no share: ${(await r.text()).trim()}`; break; }
+          shares.push(decodeShare(new Uint8Array(await r.arrayBuffer())));
+        }
+        if (failed) { results.push({ federation: fid, ok: false, why: failed }); continue; }
+        ({ signature } = aggregate340({ commitments, message: m.message, groupPublicKey: m.claimPk, shares, curve: this.curve }));
+        if (!schnorr.verify(signature, m.message, m.claimPk.subarray(1))) { results.push({ federation: fid, ok: false, why: 'the combined signature does not verify under the round\'s claim key' }); continue; }
+        for (const x of signers) { if (x.base === null) continue; try { await this.fetcher(`${x.base}/settle-signature?${q}`, { method: 'POST', body: signature }); } catch { /* it asks again */ } }
+      }
+      this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, txid: m.txid, message: m.message, signature, state: SUBMITTING,
+        why: 'about to submit; if this signer node dies here, ask the federation for the claimed locks' });
+      const port = await this.portForFederation(fid);
+      const sent = await port.settle({ claimPk: m.claimPk, claims: m.claims, payouts: s.payouts, nonce: s.nonce, signature });
+      const state = sent.accepted ? ACCEPTED : REFUSED;
+      const why = sent.accepted ? `federation ${fid.slice(0, 16)}: claimed ${s.claims.length} lock(s), ${s.poolMsat + s.feePoolMsat} msat; paid ${s.payouts.length} payout(s)`
+        : `the guardians of federation ${fid.slice(0, 16)} refused it: ${sent.error}`;
+      this.round.putFedLockSettlement({ roundId: roundIdBytes, federation: fid, txid: m.txid, message: m.message, signature, state, why });
+      results.push({ federation: fid, ok: !!sent.accepted, state, txid: m.txid, why });
+    }
+    const all = results.length > 0 && results.every((r) => r.state === ACCEPTED);
+    return { ok: all, state: all ? ACCEPTED : SUBMITTING, federations: results,
+      why: results.map((r) => `${r.federation.slice(0, 8)}: ${r.state || 'not built'}${r.why ? ` (${r.why})` : ''}`).join('; ') };
   }
 
   /**
