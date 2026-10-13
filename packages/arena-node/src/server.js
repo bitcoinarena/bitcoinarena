@@ -27,6 +27,7 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
+import { CHOICE, voteMessage, encodeVote } from '../../arena-protocol/src/ballot.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
@@ -3056,10 +3057,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return answer(200, { ok: true, node: toHex(round.pubkey), owner: owner ? owner.state() : null, roundsHeld: held,
             federations: fedRecords && fedRecords.list ? fedRecords.list().map((f) => ({ federation: f.federation, status: f.status, load: f.load ?? null })) : [] });
         }
-        // NOT BUILT YET, SAID BY NAME: the ballot (§27A.7.2-4, kanban #329) a vote is cast in, and the declarations (§27A.2)
-        return answer(501, { ok: false, scope, why: scope === 'vote'
-          ? 'there is no ballot to vote in yet (spec 27A.7.2-27A.7.4, kanban #329); until it is built a rule change is made by the network authority (27A.7.8)'
-          : 'the declarations a config token edits (spec 27A.2 medians, delivery addresses) are not built yet' });
+        // THE VOTE ACTION (§27A.7.7 / §27A.7.3, kanban #332 on #329's ballot): this node's bond key signs H(proposal_id || choice)
+        // and the door answers the 76-byte OP_RETURN payload. It broadcasts nothing: a vote transaction pays a fee, and no
+        // operator scope moves money - the operator's own wallet sends the payload. { proposalId: 64 hex, choice: YES|NO|ABSTAIN }
+        if (scope === 'vote') {
+          if (req.method !== 'POST') return answer(405, { ok: false, why: 'a vote is POSTed: { proposalId, choice }' });
+          let body;
+          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return answer(400, { ok: false, why: 'that is not JSON' }); }
+          const id = String(body.proposalId || '').toLowerCase();
+          const choice = CHOICE[String(body.choice || '').toUpperCase()];
+          if (!/^[0-9a-f]{64}$/.test(id)) return answer(400, { ok: false, why: 'a vote names a proposal id of 64 hex characters' });
+          if (!choice) return answer(400, { ok: false, why: 'a vote is YES, NO or ABSTAIN' });
+          const pid = fromHex(id);
+          const signature = schnorr.sign(voteMessage(pid, choice), round.identity.secret);
+          const payload = encodeVote({ proposalId: pid, choice, signature });
+          console.log(`[operator] vote ${String(body.choice).toUpperCase()} on proposal ${id.slice(0, 16)} signed by this node's bond key; the operator's wallet broadcasts it`);
+          return answer(200, { ok: true, node: toHex(round.pubkey), proposalId: id, choice: String(body.choice).toUpperCase(), opReturn: toHex(payload),
+            broadcast: 'send it as an OP_RETURN output from your own wallet: this node moves no money (spec 27A.7.7)' });
+        }
+        // NOT BUILT YET, SAID BY NAME: the declarations (§27A.2) a config token edits
+        return answer(501, { ok: false, scope, why: 'the declarations a config token edits (spec 27A.2 medians, delivery addresses) are not built yet' });
       }
       if (url.pathname === '/owner' || url.pathname.startsWith('/owner/')) {
         if (!owner) return text(res, 404, 'this node runs without an owner area');
