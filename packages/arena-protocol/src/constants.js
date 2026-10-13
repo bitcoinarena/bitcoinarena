@@ -265,6 +265,8 @@ export const TYPE_FEDERATION_RECORD = 0x20;
 // seated nodes all sign - which nodes serve the round. Two seatings for one round and role are equivocation.
 export const TYPE_PRESENT = 0x21;
 export const TYPE_SEATING = 0x22;
+// A CONFIG PROPOSAL (§27A.7.2, kanban #329): the full named configuration a ballot decides
+export const TYPE_CONFIG_PROPOSAL = 0x23;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -409,6 +411,10 @@ export const TAG = {
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
   priceTape: 'ARENA/v1/PriceTape',
+  // THE BALLOT (§27A.7.2-3, kanban #329): a proposal's body the proposer signs, its id, and what a bond key signs to vote
+  configProposalBody: 'ARENA/v1/ConfigProposalBody',
+  configProposal: 'ARENA/v1/ConfigProposal',
+  vote: 'ARENA/v1/Vote',
 };
 
 /**
