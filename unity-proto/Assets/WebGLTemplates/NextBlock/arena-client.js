@@ -21810,7 +21810,7 @@ function resolveBody(seen, entry, verifyAdvert) {
   };
 }
 
-function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view }) {
+function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, versionAfterUpdates = false }) {
   if (!contract || typeof contract.bondMinSats !== 'bigint')
     return { ok: false, why: 'that round names no bond floor to measure against' };
 
@@ -22003,8 +22003,12 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view })
     const roles = read.advert.roles || [];
     if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
 
+    // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #348, measured 2026-10-13 05:20Z: the first v2 grid's
+    // census came out EMPTY - every node announced version 2 in an advertisement update confirmed at 156338, and this pass
+    // refused each one on the version its bond committed to at creation, before deriveCensus applied the update). With
+    // updates to come (`versionAfterUpdates`), deriveCensus asks the version of the newest advertisement instead.
     const versions = read.advert.protocolVersions || [];
-    if (!versions.includes(contract.protocolVersion)) {
+    if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
         why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
@@ -22138,7 +22142,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
   // resolving from entries whose height and spend state it could re-read and
   // did not would be the door-nobody-walks-through fault one function deeper.
   const resolved = resolveCensus(scanned.entries, {
-    contract, resolve, verifyAdvert, bond, view: chain,
+    contract, resolve, verifyAdvert, bond, view: chain, versionAfterUpdates: typeof verifyUpdate === 'function',
   });
   if (!resolved.ok) return resolved;
 
@@ -22180,7 +22184,16 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
     eligible = [];
     for (const e of before) {
       const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
-      if (!u) { eligible.push(e); continue; }
+      if (!u) {
+        // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
+        const own = (e.advert && e.advert.protocolVersions) || [];
+        if (!own.includes(contract.protocolVersion)) {
+          updatedOut.push({ ...e, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
+            + `round runs ${protocolVersionName(contract.protocolVersion)}` });
+          continue;
+        }
+        eligible.push(e); continue;
+      }
       const roles = u.advert.roles || [];
       const versions = u.advert.protocolVersions || [];
       if (!roles.length || !versions.includes(contract.protocolVersion)) {
