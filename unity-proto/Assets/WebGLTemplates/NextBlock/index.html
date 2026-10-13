@@ -741,6 +741,9 @@
       </div>
       <!-- ALL FEDERATIONS AT A GLANCE (kanban #347, the owner 2026-10-12: on the deposit part of Settings, inline): funds held,
            how many, health before deposits stop (green / yellow / red, its meaning in the tooltip) and possible capacity -->
+      <div id="arena-operator" style="margin:8px 0 10px;font-size:13px;line-height:1.5"><b>Do you run Arena nodes?</b> Then say which operator you are: a node of yours never signs or earns in a round you play (§5A.13).
+        <input id="arena-operator-key" placeholder="your operator key, 64 hex (empty: none)" autocomplete="off" autocapitalize="none" spellcheck="false" style="width:100%;margin-top:4px">
+        <button id="arena-operator-save" type="button">Save</button> <span class="muted" id="arena-operator-said"></span></div>
       <div id="arena-custody" style="margin:8px 0 10px;padding:9px 11px;border:1px solid #2a3442;border-radius:10px;background:#11161d;font-size:13px;line-height:1.5"></div>
       <div id="blwp-money-actions">
         <button id="blwp-deposit-go" type="button">Deposit</button>
@@ -2987,7 +2990,7 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-            donationMsat: donation.donationMsat, joinTick: 0,
+            donationMsat: donation.donationMsat, joinTick: 0, ...(window.ARENA_OPERATOR_DECLARED && window.ARENA_OPERATOR_DECLARED() ? { operatorId: window.ARENA_OPERATOR_DECLARED() } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         entry.commit = BLWPCLIENT.moveCommitment({ roundId: entry.roundId, sessionPubkey, move: hidden.move, salt: hidden.salt });
         // HELD WHEN THE SEATS TOOK THE ENTRY (kanban #293): the move is the tab's once all its seats answered 201; the locks are
@@ -3024,7 +3027,7 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-            donationMsat: donation.donationMsat, joinTick: 0, pick: chosen.pick, confirmedGames: confirmedMarkets(),
+            donationMsat: donation.donationMsat, joinTick: 0, ...(window.ARENA_OPERATOR_DECLARED && window.ARENA_OPERATOR_DECLARED() ? { operatorId: window.ARENA_OPERATOR_DECLARED() } : {}), pick: chosen.pick, confirmedGames: confirmedMarkets(),
             // AN ORDER (kanban #237): the pick at most this price of the scale, until this time - from a market client's order
             ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
@@ -4312,6 +4315,23 @@
       window.ARENA_CUSTODY_SHOWN = { ...sum, band: said.band };
     };
     window.ARENA_PAINT_CUSTODY = paintCustody;
+    // THE OPERATOR THIS PLAYER DECLARES (§7 operator_id_declaration, §5A.13, kanban #309): kept in this browser, written into every
+    // entry it makes - "none" (empty) writes nothing, so every other entry keeps its bytes
+    const OPERATOR_KEY = 'arena.operator-id';
+    const operatorDeclared = () => { try { const h = String(localStorage.getItem(OPERATOR_KEY) || '').trim().toLowerCase(); return /^[0-9a-f]{64}$/.test(h) && !/^0+$/.test(h) ? BLWPCLIENT.fromHex(h) : null; } catch { return null; } };
+    window.ARENA_OPERATOR_DECLARED = operatorDeclared;
+    {
+      const input = document.getElementById('arena-operator-key'), save = document.getElementById('arena-operator-save'), said = document.getElementById('arena-operator-said');
+      if (input && save) {
+        try { input.value = localStorage.getItem(OPERATOR_KEY) || ''; } catch { /* no storage */ }
+        save.addEventListener('click', () => {
+          const h = input.value.trim().toLowerCase();
+          if (h && (!/^[0-9a-f]{64}$/.test(h) || /^0+$/.test(h))) { said.textContent = 'an operator key is 64 hex characters, not all zero'; return; }
+          try { if (h) localStorage.setItem(OPERATOR_KEY, h); else localStorage.removeItem(OPERATOR_KEY); } catch { said.textContent = 'this browser keeps nothing'; return; }
+          said.textContent = h ? 'saved: your entries declare operator ' + h.slice(0, 8) : 'saved: no operator declared';
+        });
+      }
+    }
     window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); paintCustody(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
     // THE OTHER WALLETS THIS BROWSER KEEPS (the owner 2026-10-02: "now fix the balances" - his 402 sat sat in another kept
     // phrase's wallet while this tab showed 0; seven phrases in one browser, three of them holding sats). Every kept phrase
