@@ -129,11 +129,22 @@ export function encodeAdvert(a) {
   // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED the owner 2026-09-28; kanban #302): `serving = false`, published as an advertisement
   // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
   // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
+  // THE NODE'S DECLARED SCALARS (§27A.2, kanban #305): its preferred bond_min and proposal deposit - "declaring it must bind the
+  // declarer" - over which the census takes the bond-weighted median. 17 bytes after their marker, before serving; none declared is
+  // no bytes, so every advertisement before this keeps its bytes.
+  if (a.declares !== undefined && a.declares !== null) {
+    const d = a.declares;
+    if (typeof d.bondMinSats !== 'bigint' || typeof d.proposalDepositSats !== 'bigint' || d.bondMinSats < 0n || d.proposalDepositSats < 0n)
+      throw new Error('a node declares bond_min and proposal_deposit in BigInt sats');
+    w.u8(DECLARES_MARKER); w.u64(d.bondMinSats); w.u64(d.proposalDepositSats);
+  }
   if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
   if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
 }
 
+/** The byte before a node's declared scalars (§27A.2, kanban #305), before serving. */
+export const DECLARES_MARKER = 0x5d;
 /** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
 export const NOT_SERVING_MARKER = 0x5f;
 
@@ -189,6 +200,9 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  // the declared scalars (17 bytes) and serving = false (1), each only when written: 0, 1, 17 or 18 bytes left
+  const left = bytes.length - r.at;
+  if ((left === 17 || left === 18) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
   // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
   if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
