@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
 const a = HTML.indexOf("      window.BLWP_WALLETS = window.BLWP_WALLETS || new Map();");
-const b = HTML.indexOf('      // OUT OF A DRAINING FEDERATION, BY ITSELF');
+const b = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
 const src = HTML.slice(a, b);
 
 test('the balance is every held federation\'s sum, a wallet opened for each held federation with a verified invite', async () => {
@@ -28,4 +28,29 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
   assert.equal(got.sats, 3750, '1,500 + 2,250 sat');
   assert.equal(got.federation, '2 federations');
   assert.deepEqual(opened, ['bb'], 'B opened (held, invite verified); C held but no verified invite: not opened; A already kept');
+});
+
+test('a tap on any balance opens the split: each federation\'s sats, its status and load, and the total', () => {
+  const a2 = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
+  const src2 = HTML.slice(a2, HTML.indexOf('      // OUT OF A DRAINING FEDERATION, BY ITSELF'));
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
+  // a minimal document: elements that keep their children's text
+  const mk = (tag) => { const e = { tag, children: [], style: {}, className: '', _t: '', listeners: {},
+    append(...c) { this.children.push(...c); }, addEventListener(k, f) { this.listeners[k] = f; }, contains: () => false,
+    set textContent(v) { this._t = v; this.children = []; }, get textContent() { return this._t + this.children.map((c) => c.textContent).join(' | '); } }; return e; };
+  const split = mk('div'); split.style.display = 'none';
+  const bars = { '#arena-wallet-bar .wb-bal': mk('span'), '#blwp-lobby-balance': mk('div'), '#blwp-set-wallet .bal-grid': mk('div') };
+  const document = { getElementById: (id) => (id === 'arena-bal-split' ? split : null), createElement: mk, querySelector: (sel) => bars[sel] || null, addEventListener: () => {} };
+  const window = { BLWP_WALLET_BALANCE: { sats: 3750, pending: 0, parts: [{ federation: A, sats: 1500 }, { federation: B, sats: 2250 }] },
+    ARENA_FED_LOADS: new Map([[A, { status: 'OPEN', load: 0.43 }], [B, { status: 'DRAINING', load: 0.12 }]]) };
+  new Function('window', 'document', src2)(window, document);
+  bars['#arena-wallet-bar .wb-bal'].listeners.click({ stopPropagation: () => {} });
+  const text = split.textContent;
+  console.log('  SPLIT:', text);
+  assert.equal(split.style.display, '');
+  assert.match(text, /Federation bbbbbbbb… \| DRAINING · load 12 % \| 2,250 sat/);
+  assert.match(text, /Federation aaaaaaaa… \| OPEN · load 43 % \| 1,500 sat/);
+  assert.match(text, /Total \(2 federations\) \| 3,750 sat/);
+  assert.ok(text.indexOf('bbbbbbbb') < text.indexOf('aaaaaaaa'), 'the larger first');
+  for (const sel of Object.keys(bars)) assert.equal(typeof bars[sel].listeners.click, 'function', sel + ' opens it');
 });
