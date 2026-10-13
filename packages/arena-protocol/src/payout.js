@@ -7,7 +7,7 @@
 
 import { Writer, Reader } from './encode.js';
 import { taggedHash, bytesToBigInt } from './hash.js';
-import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION } from './constants.js';
+import { TAG, TYPE_PAYOUT_TABLE, PROTOCOL_VERSION, speaksVersion } from './constants.js';
 
 export const DELIVERED = 'DELIVERED';
 export const FAILED = 'FAILED';
@@ -280,7 +280,7 @@ export function encodePayoutTable({ roundId, table }) {
 export function decodePayoutTable(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_PAYOUT_TABLE) throw new Error('not a payout table');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const roundId = r.bytes32();
   const table = r.vec((rr) => ({ pubkey: rr.bytes32(), amountMsat: rr.u64() }));
   if (r.at !== bytes.length) throw new Error('trailing bytes after the payout table');

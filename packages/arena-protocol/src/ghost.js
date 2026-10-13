@@ -28,7 +28,7 @@
 // picture belongs to it.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { TAG, PROTOCOL_VERSION, TYPE_GHOST } from './constants.js';
+import { TAG, PROTOCOL_VERSION, speaksVersion, TYPE_GHOST } from './constants.js';
 import { batchId, batchTicks } from './batch.js';
 import { GENESIS } from './transcript.js';
 import { entryId } from './contracts.js';
@@ -78,7 +78,7 @@ export function encodeGhost(g) {
 export function decodeGhost(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_GHOST) throw new Error('not a ghost');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
   const g = {
     roundId: r.bytes32(),
     entryId: r.bytes32(),
