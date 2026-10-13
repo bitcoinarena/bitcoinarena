@@ -22,6 +22,7 @@ import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
+import { missedInARow, seatingWarning } from './seatings.js';
 import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
@@ -3226,6 +3227,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             catch (e) { custody = { guardian: true, keys: [], threshold: Infinity, why: e.message }; }
           }
           return answer(200, leaveStatus({ rounds, nowMs, leavingAtMs: owner.leavingAtMs(), custody }));
+        }
+        // THE SEATINGS THIS NODE MISSED (§5A.3, kanban #302): over the newest rounds held whose seating stands, drawn and not seated,
+        // in a row - and from three on, the warning with the serving = false update offered
+        if (req.method === 'GET' && url.pathname === '/owner/seatings') {
+          const me = toHex(round.pubkey);
+          const rows = [];
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            if (Number(c.committeeTimeMs) > Date.now()) continue;
+            let s; try { s = roster.committeeFor(new Uint8Array(r.round_id), 'settlement'); } catch { continue; }
+            if (!s || !s.ok || !s.seated) continue;
+            rows.push({ round: toHex(new Uint8Array(r.round_id)), atMs: Number(c.committeeTimeMs), drawn: (s.drawn || []).some((e) => toHex(e.pubkey) === me),
+              seated: s.committee.some((e) => toHex(e.pubkey) === me) });
+          }
+          const missed = missedInARow(rows);
+          return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
