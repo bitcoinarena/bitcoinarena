@@ -243,3 +243,30 @@ test('the page derives the settlement committee over the seats\' doors, deals to
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher: allLie, anchorAt, nowMs: Date.now() + 1 }),
     /every node that answered names another settlement committee/);
 });
+
+test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused (kanban #299)', async () => {
+  const { displayHash } = await import('../../arena-client/src/explorer-check.js');
+  const { rid, view, ev, contract } = setup();
+  const headers = headersOf(view);
+  const headerBytes = Buffer.concat(headers.map((h) => Buffer.from(h)));
+  const at = (h) => displayHash(blockHashOf(headers[h - view.firstHeight]));
+  const tipHeight = view.firstHeight + headers.length - 1;
+  const explorerSays = { right: (h) => at(h), wrongCensus: (h) => (h === Number(contract.censusHeight) ? 'ee'.repeat(32) : at(h)), wrongTip: (h) => (h === tipHeight ? 'ee'.repeat(32) : at(h)) };
+  const fetcher = async (url) => {
+    const ex = /^https:\/\/(right|wrongCensus|wrongTip)\.explorer\/block-height\/(\d+)$/.exec(url);
+    if (ex) return new Response(explorerSays[ex[1]](Number(ex[2])), { status: 200 });
+    const body = url.endsWith('/headers') ? headerBytes : url.includes('/census?') ? Buffer.from(JSON.stringify(ev)) : null;
+    return body ? new Response(body, { status: 200 }) : new Response('no', { status: 404 });
+  };
+  const nodes = ['https://seat-a.example', 'https://seat-b.example'];
+  const anchorAt = { hash: blockHashOf(headers[0]), height: view.firstHeight };
+  const ask = (name) => clientCommittee(toHex(rid), contract, nodes, { curve: pageCurve, fetcher, anchorAt, compare: false, explorer: `https://${name}.explorer` });
+  const right = await ask('right');
+  assert.equal(right.ok, true, right.why);
+  assert.deepEqual([right.explorer.census.ok, right.explorer.census.checked, right.explorer.tip.ok], [true, 1, true]);
+  const census = await ask('wrongCensus');
+  assert.equal(census.ok, false); assert.match(census.why, /the census does not stand outside the network: the explorer names block eeeeeeee/);
+  const tip = await ask('wrongTip');
+  assert.equal(tip.ok, true, 'a tip that differs is either side\'s lag on testnet4');
+  assert.deepEqual([tip.explorer.census.ok, tip.explorer.tip.ok, !!tip.explorer.tip.mismatch], [true, false, true]);
+});

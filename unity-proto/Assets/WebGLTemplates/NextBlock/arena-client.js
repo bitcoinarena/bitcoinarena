@@ -23417,6 +23417,40 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
     checkedCensus: { root: census.root, entries: census.entries } };
 }
 
+// ---- arena-client/src/explorer-check.js
+// A SECOND, INDEPENDENT VIEW OF THE CHAIN (§5A.4, §25.1, kanban #299): "paying rounds need headers from >= 2 independent sources". By
+// default both of a page's header sources are the round's own nodes (join.js) - two parties, but both of the network being checked.
+// An Esplora-style block explorer (mempool.space and its kind: GET /block-height/<h> -> the block hash) is a party outside it. It serves
+// no header blob, so it is asked as a SPOT CHECK: the block the agreed chain has at a height - the census height, the tip - must be the
+// block the explorer names there. A mismatch refuses the round by name; an explorer that cannot be reached is said, not taken as agreement.
+
+/** The display hash (big-endian hex, as explorers write it) of a block hash in internal byte order. */
+const displayHash = (internal) => toHex(Uint8Array.from(internal).reverse());
+
+/**
+ * Does the explorer at `base` name the same block at each of `points` [{ height, hash (internal bytes) }]? Answers { ok, checked,
+ * why } - ok false with `mismatch` when it names another block, with `unreachable` when it could not be asked.
+ */
+async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 } = {}) {
+  if (!base) return { ok: false, unreachable: true, checked: 0, why: 'no explorer is configured' };
+  let checked = 0;
+  for (const p of points || []) {
+    const want = displayHash(p.hash);
+    let said;
+    try {
+      const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+      const r = await fetcher(`${String(base).replace(/\/+$/, '')}/block-height/${p.height}`, ctl ? { signal: ctl.signal } : {});
+      if (timer) clearTimeout(timer);
+      if (!r.ok) return { ok: false, unreachable: true, checked, why: `the explorer answered ${r.status} for block ${p.height}` };
+      said = String(await r.text()).trim().toLowerCase();
+    } catch (e) { return { ok: false, unreachable: true, checked, why: `the explorer could not be asked for block ${p.height}: ${e.message}` }; }
+    if (said !== want) return { ok: false, mismatch: true, checked, why: `the explorer names block ${said.slice(0, 16)}… at height ${p.height} and the nodes' chain ${want.slice(0, 16)}…: not one chain, the round is refused` };
+    checked++;
+  }
+  return { ok: true, checked, why: `the explorer names the same block at ${checked} height${checked === 1 ? '' : 's'}` };
+}
+
 // ---- arena-client/src/committee.js
 // THE COMMITTEE THIS CLIENT DEALS TO, BUILT BY THE CLIENT (kanban #296, spec 5A.6). It used to be asked of every node
 // (`fetchSettlementSignerNodes`, GET /committee) and taken when they agreed - seats that agree can name anybody. Now:
@@ -23427,6 +23461,7 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+
 
 
 
@@ -23462,8 +23497,8 @@ const originOf = (u) => { try { const x = new URL(u); const head = x.pathname.sp
 /** The height of the network's anchor block: testnet4's compiled-in one, else Bitcoin's genesis. */
 const anchorHeightFor = (networkId) => (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? TESTNET4_ANCHOR_HEIGHT : 0);
 
-async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt }) {
-  const key = `${toHex(contract.networkId)}:${contract.censusHeight}:${contract.committeeTimeMs}`;
+async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer = null }) {
+  const key = `${toHex(contract.networkId)}:${contract.censusHeight}:${contract.committeeTimeMs}:${explorer || ''}`;
   const had = keptChains.get(key);
   if (had && nowMs - had.at < CHAIN_KEPT_MS) return had;
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
@@ -23472,7 +23507,19 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt }) {
   if (!chain.ok) return { ok: false, why: `no agreed headers: ${chain.why}` };
   const at = chain.headers.findIndex((h) => toHex(blockHashOf(h)) === toHex(anchor));
   if (at < 0) return { ok: false, why: 'the agreed headers do not hold the anchor' };
-  const got = { ok: true, at: nowMs, chain, firstHeight: (anchorAt ? anchorAt.height : anchorHeightFor(contract.networkId)) - at };
+  const firstHeight = (anchorAt ? anchorAt.height : anchorHeightFor(contract.networkId)) - at;
+  // A PARTY OUTSIDE THE NETWORK (§5A.4, kanban #299): with an explorer named, the agreed chain's block at the CENSUS HEIGHT must be the
+  // explorer's - another block refuses the round by name. The TIP is asked too and only said: testnet4 reorganises 11-14 blocks deep,
+  // so a tip that differs can be either side's lag. An explorer that cannot be asked is said, never taken as agreement.
+  let explorerSaid = null;
+  if (explorer) {
+    const at = (height) => (height >= firstHeight && height < firstHeight + chain.headers.length ? [{ height, hash: blockHashOf(chain.headers[height - firstHeight]) }] : []);
+    const census = await explorerAgrees({ base: explorer, points: at(Number(contract.censusHeight)), fetcher });
+    if (census.mismatch) return { ok: false, why: `the census does not stand outside the network: ${census.why}`, explorer: { census } };
+    const tip = await explorerAgrees({ base: explorer, points: at(firstHeight + chain.headers.length - 1), fetcher });
+    explorerSaid = { census, tip };
+  }
+  const got = { ok: true, at: nowMs, chain, firstHeight, explorer: explorerSaid };
   keptChains.set(key, got);
   return got;
 }
@@ -23502,7 +23549,7 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher }) {
  */
 // `anchorAt` ({ hash, height }) is for a test's own chain only: a page never passes it, and takes the network's compiled-in one.
 async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = fetch, least = 2, compare = true, nowMs = Date.now(),
-  roles = ['game', 'settlement'], anchorAt = null } = {}) {
+  roles = ['game', 'settlement'], anchorAt = null, explorer = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'no node to ask for the chain and the census' };
   if (!curve || typeof curve.bondTweakPoint !== 'function' || typeof curve.bondCombine !== 'function' || typeof curve.verify !== 'function')
     return { ok: false, why: 'this page brings no curve to rebuild the bonds with' };
@@ -23511,7 +23558,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   const g = BOND_TERMS[network];
   if (!g) return { ok: false, why: `this client carries no bond terms for ${network}` };
   const t0 = Date.now();
-  const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
+  const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
   if (!chain.ok) return chain;
   if (!evidence.ok) return evidence;
   const t1 = Date.now();
@@ -23564,7 +23611,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
       } catch (e) { seats.push({ node: u, agrees: null, why: e.message }); }
     }));
   }
-  return { ...got, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
+  return { ...got, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
     seats, ms: { chainAndCensus: t1 - t0, total: Date.now() - t0 } };
 }
 
