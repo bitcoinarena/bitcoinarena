@@ -277,6 +277,9 @@ export const TYPE_CONFIG_PROPOSAL = 0x23;
 // A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5, kanban #322); 0x23 is the ballot's (#329)
 export const TYPE_ABSENCE_ATTESTATION = 0x24;
 export const TYPE_DEPARTURE_NOTICE = 0x25;
+// A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1, kanban #323); 0x23 is the
+// ballot's (#329), 0x24 and 0x25 absence and departure (#322)
+export const TYPE_SPENT_SET = 0x26;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -417,6 +420,8 @@ export const TAG = {
   // §5A.7 reserve seats (kanban #301)
   seatPresent: 'ARENA/v1/SeatPresent',
   seating: 'ARENA/v1/Seating',
+  // §23A.5 a guardian's signed copy of a halted federation's spent-note set (kanban #323)
+  spentSet: 'ARENA/v1/SpentSet',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
