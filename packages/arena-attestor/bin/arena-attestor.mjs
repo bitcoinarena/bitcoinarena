@@ -10,7 +10,7 @@
 // served at GET /attestation?round=; the other attestors' words are pulled, and with the threshold of signatures over one
 // body the attestation goes to every seat (POST /outcome), again until each seat holds it. One line per event in the log.
 import http from 'node:http';
-import { readFileSync, appendFileSync } from 'node:fs';
+import { readFileSync, appendFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { readSources } from '../src/sources.js';
 import { attestorKey, attestWindow, combine, wordToJson, wordFromJson } from '../src/attestor.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
@@ -32,11 +32,33 @@ const PORT = Number(arg('port', '21661'));
 const LOG = arg('log');
 const SAMPLE_MS = Number(arg('sample-ms', '10000'));
 const KEEP_MS = 2 * 3600 * 1000;
+// THE READINGS ON DISK (kanban #293, measured 2026-10-13: a restart at 10:02:58Z signed nothing for the window that began at 10:00Z -
+// "no reading a minute before the window's start" - its start reading lived only in the old process's memory): every median is
+// kept in --samples-file (default: the log beside it, .samples), and read back at start, so a restart loses no window
+const SAMPLES_FILE = arg('samples-file', LOG ? `${LOG}.samples` : null);
 
 const log = (o) => { const line = JSON.stringify({ at: new Date().toISOString(), attestor: NAME, ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)); console.log(line); if (LOG) appendFileSync(LOG, line + '\n'); };
 if (!ATTESTORS.includes(toHex(attestor.pubkey))) { log({ step: 'refused', why: `this key ${toHex(attestor.pubkey).slice(0, 16)} is not one of the market's attestors` }); process.exit(2); }
 
 const samples = [];                    // { atMs, price } - this attestor's medians
+let samplesFromDisk = 0;
+if (SAMPLES_FILE && existsSync(SAMPLES_FILE)) {
+  try {
+    const now = BigInt(Date.now());
+    for (const x of JSON.parse(readFileSync(SAMPLES_FILE, 'utf8'))) {
+      const atMs = BigInt(x.atMs);
+      if (Number(now - atMs) <= KEEP_MS) samples.push({ atMs, price: x.big ? BigInt(x.price) : Number(x.price) });
+    }
+    samplesFromDisk = samples.length;
+  } catch (e) { console.error(`[attestor] the readings on disk did not read: ${e.message}`); }
+}
+const keepSamples = () => {
+  if (!SAMPLES_FILE) return;
+  try {
+    writeFileSync(`${SAMPLES_FILE}.tmp`, JSON.stringify(samples.map((x) => ({ atMs: String(x.atMs), price: String(x.price), big: typeof x.price === 'bigint' }))));
+    renameSync(`${SAMPLES_FILE}.tmp`, SAMPLES_FILE);
+  } catch (e) { console.error(`[attestor] the readings were not kept on disk: ${e.message}`); }
+};
 const words = new Map();               // round hex -> this attestor's word (or { none: why })
 const posted = new Map();              // round hex -> Set of seats that hold its attestation
 const sample = async () => {
@@ -44,6 +66,7 @@ const sample = async () => {
   const atMs = BigInt(Date.now());
   if (r.median !== null) samples.push({ atMs, price: r.median });
   while (samples.length && Number(atMs - samples[0].atMs) > KEEP_MS) samples.shift();
+  if (r.median !== null) keepSamples();
   if (r.median === null) log({ step: 'no reading', sources: r.sources });
 };
 
@@ -114,7 +137,7 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ attestor: NAME, key: toHex(attestor.pubkey), sources: SOURCES, samples: samples.length, last: last ? { at: new Date(Number(last.atMs)).toISOString(), cents: String(last.price) } : null, words: words.size }));
   }
   res.writeHead(404); res.end();
-}).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, key: toHex(attestor.pubkey), sources: SOURCES, seats: SEATS, peers: PEERS }));
+}).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
 
 await sample();
 setInterval(() => sample().catch((e) => log({ step: 'sample failed', why: e.message })), SAMPLE_MS);
