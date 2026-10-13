@@ -106,7 +106,17 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   if (!g) return { ok: false, why: `this client carries no bond terms for ${network}` };
   const t0 = Date.now();
   const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
-  if (!chain.ok) return chain;
+  if (!chain.ok) {
+    // A CENSUS THAT DOES NOT STAND OUTSIDE THE NETWORK IS OBJECTED (§5A.4, kanban #299): handed to every seat, each checks it on its
+    // own chain against the same explorer; upheld, the round takes no new entry there - so other clients refuse it too
+    if (chain.explorer && chain.explorer.census && chain.explorer.census.mismatch && explorer) {
+      chain.objected = await Promise.all(nodes.map(async (u) => {
+        try { const r = await fetcher(`${baseOf(u)}/census-objection`, { method: 'POST', body: JSON.stringify({ round: roundIdHex, explorer }) }); return { node: u, upheld: r.ok }; }
+        catch { return { node: u, upheld: false }; }
+      }));
+    }
+    return chain;
+  }
   if (!evidence.ok) return evidence;
   const t1 = Date.now();
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
