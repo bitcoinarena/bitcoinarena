@@ -195,6 +195,9 @@ if (env.PAID_RPS_GRID === '1') {
     let wantAt = 0;
     try { wantAt = (await (await fetch(`http://${NODE_HOST}:${pa}/h2h-want`, { signal: AbortSignal.timeout(5000) })).json()).wants[gid] || 0; } catch { if (!now1) return; }
     if (now1) { wantAt = Date.now(); now1 = false; }
+    // RPS_GRID_ALWAYS=1 (kanban #353, the owner 2026-10-13 ~21:45Z: paid rounds of all 3 games in both federations by 10:00): tables are kept
+    // published ahead whether or not a page asked - since pick (c) (kanban #293) an empty table makes no claim key and is seated once
+    if (env.RPS_GRID_ALWAYS === '1') wantAt = Date.now();
     if (Date.now() - wantAt > 180000 || lastCloseMs > Date.now() + aheadMs) return;
     busy = true;
     try {
