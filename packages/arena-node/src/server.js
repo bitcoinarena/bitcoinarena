@@ -26,6 +26,7 @@ import { missedInARow, seatingWarning } from './seatings.js';
 import { nodeStanding } from './node-standing.js';
 import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
+import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -4036,6 +4037,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lockRow = round.get(contract.roundId);
         if (lockRow && contract.stakeMsat > 0n) {
           const rc = decodeRoundContract(new Uint8Array(lockRow.contract));
+          // THE STAKE CEILING FROM CENSUS HEALTH (§5A.10, kanban #306): enforced off the test networks (as ruling A of the load rule) -
+          // a test network shows it at GET /census-health and refuses nothing
+          if (!isTestNetwork(rc.networkId)) {
+            const census = roster.censusFor(contract.roundId);
+            const h = census && census.ok ? stakeWithinCeiling({ entries: census.entries, stakeSats: rc.stakeMsat / 1000n }) : { ok: false, why: 'this seat reads no census for that round' };
+            if (!h.ok) return text(res, 409, `entry refused: ${h.why} (§5A.10)`);
+          }
           // Every paying round is a FEDERATION round naming its federation: the custody field has one value
           // and a paying round with a zero federation id does not encode (§23.6). No custody test is left here.
           {
@@ -5178,6 +5186,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      // WHAT A ROUND'S CENSUS SUPPORTS (§5A.10, kanban #306): its stake against the ceiling its census's health derives - nodes and
+      // bonded capital per role; enforced off the test networks, shown on them
+      if (req.method === 'GET' && url.pathname === '/census-health') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'census health is asked for by a round id');
+        const row = round.get(new Uint8Array(rid));
+        if (!row) return text(res, 404, 'this signer node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const census = roster.censusFor(new Uint8Array(rid));
+        if (!census || !census.ok) return text(res, 409, `no census read for that round: ${census ? census.why : 'none'}`);
+        const h = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n });
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ ok: h.ok, stakeSats: String(c.stakeMsat / 1000n), ceilingSats: String(h.ceilingSats), why: h.why,
+          enforced: !isTestNetwork(c.networkId) }));
+      }
+
       // A SERIES' PUBLICATION, PROVEN (§5A.5, kanban #304): { series, tx, parents } hex. The tx must be the series' first confirmed
       // publication on this seat's chain (findSeriesPublication), and its parents must prove its fee (publisher-payout.js). Anyone
       // may post it - every byte proves itself; kept once.
