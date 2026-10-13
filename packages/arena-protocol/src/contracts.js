@@ -464,6 +464,14 @@ export function encodeEntryContract(e) {
     w.u8(FEDERATION_MARKER);
     w.bytes32(e.federationId);
   }
+  // THE OPERATOR THIS PLAYER IS (§7 `operator_id_declaration`, §5A.13, kanban #309): "none" or the operator's key. WRITTEN ONLY
+  // WHEN IT NAMES ONE, last, after its own marker: "none" is no bytes, so every other entry keeps exactly its bytes and its id.
+  if (e.operatorId !== undefined && e.operatorId !== null) {
+    if (!(e.operatorId instanceof Uint8Array) || e.operatorId.length !== 32 || e.operatorId.every((b) => b === 0))
+      throw new Error('an entry declares its operator in 32 bytes, not zero ("none" is no declaration)');
+    w.u8(OPERATOR_MARKER);
+    w.bytes32(e.operatorId);
+  }
   return w.finish();
 }
 
@@ -475,6 +483,8 @@ export const COMMIT_MARKER = 0xa8;
 export const ORDER_MARKER = 0xa9;
 /** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
 export const FEDERATION_MARKER = 0xaa;
+/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), last of all. */
+export const OPERATOR_MARKER = 0xab;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 export const STAKE_POINT_BYTES = 33;
@@ -509,25 +519,32 @@ export function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && bytes[r.at] !== FEDERATION_MARKER) {
+  // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER;
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
   }
-  if (r.at < bytes.length && bytes[r.at] !== FEDERATION_MARKER) {
+  if (r.at < bytes.length && !tail(bytes[r.at])) {
     const marker = r.u8();
     if (marker === PICK_MARKER) e.pick = r.u8();
     else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
     else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
-    if (marker === PICK_MARKER && r.at < bytes.length && bytes[r.at] !== FEDERATION_MARKER) {
+    if (marker === PICK_MARKER && r.at < bytes.length && !tail(bytes[r.at])) {
       if (r.u8() !== ORDER_MARKER) throw new Error('these bytes carry something after the pick that is not an order');
       e.limitPrice = r.u32();
       e.orderExpiryMs = r.u64();
     }
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== FEDERATION_MARKER) throw new Error('these bytes carry something after the entry that is not its federation');
+  if (r.at < bytes.length && bytes[r.at] === FEDERATION_MARKER) {
+    r.u8();
     e.federationId = r.bytes32();
     if (e.federationId.every((b) => b === 0)) throw new Error('an entry names its federation in 32 bytes, not zero');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== OPERATOR_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation nor its operator');
+    e.operatorId = r.bytes32();
+    if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
   }
   r.end();
   return e;

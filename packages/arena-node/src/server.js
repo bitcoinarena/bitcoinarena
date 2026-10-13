@@ -19,6 +19,8 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
+import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
+import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -1217,7 +1219,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     schedulePrices();
   }
+  // WHO IS CONFLICTED IN A ROUND (§5A.13, kanban #309): the committee nodes whose advertised operator plays it - a player's own
+  // key or the operator its entry declares (operator-conflict.js); `self` this node's operator when it is one of them, and
+  // whether the settlement committee still holds its threshold without them
+  const conflictsFor = (rid) => {
+    const game = roster.committeeFor(rid, 'game');
+    const settle = roster.committeeFor(rid, 'settlement');
+    const nodes = [...(game.ok ? game.committee : []), ...(settle.ok ? settle.committee : [])];
+    let entries = [];
+    try { entries = round.entriesOf(rid).map((x) => x.entry); } catch { entries = []; }
+    const conflicted = conflictedNodes({ nodes, entries });
+    const committee = settle.ok ? settle.committee.map((e) => e.pubkey) : [];
+    let threshold;
+    try { threshold = committeeThreshold(committee.length); } catch { threshold = undefined; }
+    return { conflicted, self: conflicted.get(toHex(round.pubkey)) || null,
+      serving: servingAfterConflicts({ committee, conflicted, ...(threshold ? { threshold } : {}) }) };
+  };
   const settlements = new LockSettlement(round, {
+    conflictsFor,
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
@@ -1240,8 +1259,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // AND THE GUARDIAN POOL (§22A v4.6.4): the census nodes guarding the round's federation; none - the two-pool table
       let guardian = [];
       try { const g = roster.guardiansFor(rid); if (g.ok) guardian = g.guardians; } catch { guardian = []; }
+      // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13): named for feeSettlement, which leaves it out of `eligible`
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
-        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian };
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian,
+        conflicted: [...conflictsFor(rid).conflicted.keys()] };
     },
   });
 
@@ -1305,6 +1326,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const verifier = new Verifier(round, {
     plugins: hosted,
+    conflictsFor,
     advertsFor: advertsFor || ((rid) => {
       const census = roster.censusFor(rid);
       return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
