@@ -28,3 +28,25 @@ test('at most N requests in flight per origin; the rest wait; another origin is 
   await Promise.all([...Array.from({ length: 3 }, () => f('http://a/x')), ...Array.from({ length: 3 }, () => f('http://b/x'))]);
   assert.equal(most, 6, 'two origins, 3 each at once');
 });
+
+// ONE LANE PER SEAT, AND A WAITING CALL KEEPS ITS DEADLINE (kanban #348, measured 2026-10-13 ~20:45Z: seven seats behind one host shared
+// 8 slots, and a 5 s call queued behind 30 s ones without bound - a test host seat's seating agent stopped signing PRESENTs)
+test('seats behind one host have a lane each; a queued call is aborted by its own signal while it waits', async () => {
+  const pending = [];
+  const inner = (url, opts) => new Promise((ok, no) => { pending.push({ url, ok }); if (opts && opts.signal) opts.signal.addEventListener('abort', () => no(new Error('aborted in flight')), { once: true }); });
+  const f = cappedFetch(inner, { maxPerOrigin: 1, timeoutMs: 60000 });
+  f('https://h.example/guardian-1/a'); f('https://h.example/guardian-2/a');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(pending.length, 2, 'two seats behind one host each got their lane');
+  const ctl = new AbortController();
+  const queued = f('https://h.example/guardian-1/b', { signal: ctl.signal });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(pending.length, 2, 'the third waits for guardian-1\'s lane');
+  assert.deepEqual(f.inFlight()['https://h.example/guardian-1'], { busy: 1, waiting: 1 });
+  ctl.abort(new Error('gave up'));
+  await assert.rejects(queued, /gave up/);
+  assert.deepEqual(f.inFlight()['https://h.example/guardian-1'], { busy: 1, waiting: 0 }, 'the aborted call left the queue');
+  pending[0].ok({ ok: true });
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(pending.length, 2, 'nothing waited behind it any more');
+});

@@ -26,19 +26,38 @@ export function routed(url, routes) {
 
 /** A fetch that routes, caps the requests in flight per origin, and times out a request that brings no signal. */
 export function cappedFetch(inner, { routes = [], maxPerOrigin = 8, timeoutMs = 30000 } = {}) {
-  const lanes = new Map();   // origin -> { busy, waiting: [resolve] }
-  const take = async (origin) => {
-    let l = lanes.get(origin); if (!l) { l = { busy: 0, waiting: [] }; lanes.set(origin, l); }
-    if (l.busy >= maxPerOrigin) await new Promise((r) => l.waiting.push(r));
+  const lanes = new Map();   // lane -> { busy, waiting: [{ go, abort }] }
+  // ONE LANE PER SEAT, NOT PER HOST (kanban #348, measured 2026-10-13 ~20:45Z: the 7 test host seats answer behind one host,
+  // tn4.bitcoin-arena.io/guardian-N, so a test host seat had 8 requests in flight to all seven together; over the ship's link the queue
+  // grew and its seating agent stopped signing PRESENTs - 4 present of 9 drawn, no certificate): the host and the first path segment
+  // - read off the address as CALLED (before routing), and only for a public https host, where seats sit behind one host by path
+  // prefix (/guardian-N, /fed2-N); a seat's direct address (http://ip:port) is one lane, as before
+  const laneOf = (u) => { const x = new URL(u); if (x.protocol !== 'https:') return x.origin; const seg = x.pathname.split('/').filter(Boolean)[0] || ''; return `${x.origin}/${seg}`; };
+  // AND A WAITING CALL KEEPS ITS OWN DEADLINE: its signal aborts it in the queue too, not only once it is sent (a 5 s call waited
+  // behind 30 s ones without bound)
+  const take = async (lane, signal) => {
+    let l = lanes.get(lane); if (!l) { l = { busy: 0, waiting: [] }; lanes.set(lane, l); }
+    if (l.busy >= maxPerOrigin) {
+      await new Promise((go, no) => {
+        const w = { go, abort: null };
+        if (signal) {
+          if (signal.aborted) { no(signal.reason || new Error('aborted')); return; }
+          w.abort = () => { const i = l.waiting.indexOf(w); if (i >= 0) l.waiting.splice(i, 1); no(signal.reason || new Error('aborted')); };
+          signal.addEventListener('abort', w.abort, { once: true });
+        }
+        l.waiting.push(w);
+      });
+    }
     l.busy++;
-    return () => { l.busy--; const next = l.waiting.shift(); if (next) next(); };
+    return () => { l.busy--; const next = l.waiting.shift(); if (next) next.go(); };
   };
   const f = async (input, init = {}) => {
-    const url = routed(typeof input === 'string' || input instanceof URL ? String(input) : input.url, routes);
-    let origin; try { origin = new URL(url).origin; } catch { return inner(input, init); }
-    const done = await take(origin);
+    const called = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
+    const url = routed(called, routes);
+    let lane; try { lane = laneOf(called); } catch { return inner(input, init); }
+    const opts = init && init.signal ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) };
+    const done = await take(lane, opts.signal);
     try {
-      const opts = init && init.signal ? init : { ...init, signal: AbortSignal.timeout(timeoutMs) };
       return await inner(typeof input === 'string' || input instanceof URL ? url : new Request(url, input), opts);
     } finally { done(); }
   };
