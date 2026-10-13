@@ -61,6 +61,9 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
+import { installFetchRoutes } from './fetch-routes.js';
+// THE SEAT'S OWN FETCHES ROUTED AND CAPPED, before anything is asked of a peer (fetch-routes.js, kanban #348)
+{ const f = installFetchRoutes(process.env); console.log(`[fetch] ${f.routes} route(s), at most ${f.maxPerOrigin} request(s) in flight per origin, ${f.timeoutMs} ms timeout`); }
 
 const port = Number(process.argv[2] || 8080);
 const path = process.argv[3] || 'round.db';
