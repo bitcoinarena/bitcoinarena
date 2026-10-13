@@ -80,8 +80,10 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     for (const h of heights.slice(0, 64)) {
       for (const x of byHeight.get(h) || []) {
         const census = roster.censusFor(x.rid);
-        if (census.ok) return { ok: true, census, height: h, networkId: x.contract.networkId };
-        why = census.why;
+        // A CENSUS THAT HOLDS NO NODE IS NO BASIS (kanban #348, the owner's playtest 2026-10-13 07:42: "No federation info"): the
+        // first v2 grids carried an empty census (fixed in e8f039d8), and as the highest census height they hid every record
+        if (census.ok && (census.entries || []).length) return { ok: true, census, height: h, networkId: x.contract.networkId };
+        why = census.ok ? `the census at height ${h} holds no node` : census.why;
       }
     }
     if (atHeight !== null) return { ok: false, why: why ? `census height ${atHeight}: ${why}` : `this seat holds no round with census height ${atHeight}` };
