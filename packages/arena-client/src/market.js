@@ -209,6 +209,9 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
     else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
+    // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
+    // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
+    else if (row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
