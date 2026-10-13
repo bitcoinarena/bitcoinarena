@@ -241,7 +241,21 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     slashing transaction by the arbitration keys, 75% evenly to the active
     census nodes minus that federation's guardians, 25% to the donation
     set; and a departure with notice that is *not* slashed and leaves the
-    bond and the census seat as they were
+    bond and the census seat as they were. **RUN 2026-10-13 ~22:40Z (kanban
+    #326, `tools/rehearsal-14.mjs`, private regtest on the test host):** census
+    of 8 bonded nodes, A = n1-n4 and B = n5-n8, 3 of 4. A4 absent 10 blocks
+    (abandon_blocks): 2 attestations, or one spanning 9 blocks, prove
+    nothing; 3 stand. The slashing transaction (5 of 7 arbitration keys; 4
+    refused) commits the proof id and slash_height 145 and moves the
+    100,000,000 sat bond into the escrow (99,997,000, fee 3,000). A CLOSED:
+    the escrow pays n5-n8 18,749,062-18,749,064 sat each (74,996,250, 75 %)
+    and the donation set 24,998,750 (25 %), fee 2,000; 4 of 7 refused,
+    mined. B3 (n7) gives notice at 147 for 157 (one block less is refused),
+    serves to 157 and stops: B1, B2, B4 attest from 157, and the slash is
+    refused (DEPARTED); his bond is unspent, so he keeps his census seat.
+    The same absence from 156 is ABANDONED and slashed. Found and fixed: a
+    seat's record took a due notice before the proof, so a guardian who
+    stopped before leave_after was recorded DEPARTED.
 15. **the seed alone, another device:** twelve words typed into a fresh
     browser find the federation among three, recover the notes and the
     unredeemed contracts, and show the same display name. **AS BUILT

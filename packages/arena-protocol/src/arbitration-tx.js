@@ -131,6 +131,29 @@ export function escrowSpend({ escrow, toScript, feeSats }) {
   return { ok: true, tx, prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats }, amounts: { pegIn: value } };
 }
 
+/**
+ * A SLASHED GUARDIAN'S ESCROW, PAID OUT ONCE ITS FEDERATION IS CLOSED (§23A.5, FEDERATION.md rehearsal 14): the arbitration set
+ * spends the escrow output to the payees federation-slash.js `guardianSlashPayees` names - each census node outside the
+ * federation's guardians, and the donation set. Signed as `escrowSpend` is.
+ *
+ *   escrow   { txid (internal byte order), vout, value (sat, BigInt), script }
+ *   payees   [{ script, sats (BigInt), pays }] - with the fee, exactly the escrow
+ */
+export function escrowSplitSpend({ escrow, payees, feeSats }) {
+  if (typeof feeSats !== 'bigint' || feeSats < 0n) return { ok: false, why: 'the fee is BigInt satoshi' };
+  if (!escrow || typeof escrow.value !== 'bigint' || !(escrow.script instanceof Uint8Array)) return { ok: false, why: 'the escrow is { txid, vout, value: BigInt sat, script }' };
+  if (!Array.isArray(payees) || !payees.length) return { ok: false, why: 'no payee to pay' };
+  const total = payees.reduce((a, p) => a + p.sats, 0n);
+  if (total + feeSats !== escrow.value) return { ok: false, why: `the payees take ${total} sat and the fee ${feeSats}, and the escrow holds ${escrow.value}` };
+  for (const p of payees) {
+    if (!(p.script instanceof Uint8Array) || !p.script.length) return { ok: false, why: `no script for ${p.pays || 'a payee'}` };
+    if (p.sats < P2TR_DUST_SATS) return { ok: false, why: `${p.pays || 'a payee'} would be paid ${p.sats} sat, below dust` };
+  }
+  const tx = { version: 2, locktime: 0, inputs: [{ txid: escrow.txid, vout: escrow.vout, sequence: 0xfffffffd }],
+    outputs: payees.map((p) => ({ value: p.sats, script: p.script, pays: p.pays })) };
+  return { ok: true, tx, prevouts: [{ value: escrow.value, script: escrow.script }], fee: { sats: feeSats } };
+}
+
 /** What each arbitration key signs: the BIP-341 script-path sighash of the spend's one input under the slash leaf. */
 export function arbitrationSighash(built, leaf) {
   return tapSighash({ ...built.tx, prevouts: built.prevouts, inputIndex: 0, leafHash: leaf });
