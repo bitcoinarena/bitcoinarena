@@ -11149,6 +11149,20 @@ function paysIntoALock(round, invite, LockClient) {
 const openWallets = new WeakMap();
 async function playerWallet({ round, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
   paysIntoALock(round, invite, LockClient);
+  return openPlayerWallet({ federationId: round.federationId, invite, seed, LockClient, storage, onStep, openWaitMs, joinWaitMs, ancestor });
+}
+
+/**
+ * THE SAME PLAYER WALLET, OPENED FROM ITS FEDERATION ALONE (kanban #350, the owner 2026-10-12: the cold first deposit waited
+ * 41.5 s - the join of the federation began at the Deposit tap). The page opens it before any round is listed, from the
+ * invite daily.json names; it is kept under the same key a round's playerWallet asks for, so the deposit and the join find
+ * it open. `federationId` is its 32 bytes.
+ */
+async function openPlayerWallet({ federationId, invite, seed, LockClient, storage, onStep = () => {}, openWaitMs = 15000, joinWaitMs = 180000, ancestor = false } = {}) {
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a player wallet is opened for a 32-byte federation id');
+  if (!invite || typeof invite !== 'string') throw new Error('a player wallet is opened from its federation\'s invite');
+  if (!LockClient || typeof LockClient.join !== 'function') throw new Error('a player wallet is opened by the lock client, and none was loaded');
+  const round = { federationId };
   // `ancestor`: the seed's BLWP-era wallet (ancestorWalletSecretFor), opened only to be swept into this one (kanban #209)
   const secret = (ancestor ? ancestorWalletSecretFor : walletSecretFor)(seed, round.federationId);
   const key = `${toHex(round.federationId)}:${toHex(secret)}`;
@@ -11453,7 +11467,7 @@ async function playerWithdrawable({ round, invite, seed, LockClient, storage, on
  * stays payable: one paid after another was claimed is credited to the same wallet.
  */
 function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gateways = [], onDeposit = () => {},
-  storage = null, federationId = null, restMsat = null, sizeOf = null } = {}) {
+  storage = null, federationId = null, restMsat = null, sizeOf = null, choices = null } = {}) {
   let settle; let fail;
   // WHAT CAME OF IT (option 2, the owner 2026-10-01): once a paid deposit is claimed, the round is looked at again -
   // `outcome` resolves { funded: true } or { funded: false, rest } with the offer for exactly the rest
@@ -11502,7 +11516,7 @@ function depositOffer({ client, stakeMsat, haveMsat = null, needMsat = null, gat
   const restPay = rest === null ? null : restInvoiceMsat(rest);
   return { stakeMsat: BigInt(stakeMsat || 0n), perRoundStake: BigInt(stakeMsat || 0n), haveMsat, needMsat, invoice, claimed, made, restMsat: rest, restPayMsat: restPay,
     // THE TABS (1, 2, 5, 10 rounds and Custom, gross), or - for the rest of a round's fees - the one amount
-    choices: rest === null ? depositChoices(stakeMsat, sizeOf) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }],
+    choices: choices || (rest === null ? depositChoices(stakeMsat, sizeOf) : [{ key: 'rest', label: 'The rest', rounds: null, msat: restPay }]),
     outcome, decided: (o) => decide(o),
     watch: (fn) => { watchers.push(fn); },
     close: (why) => fail(new Error(why || 'the deposit was closed: nothing was paid')) };
@@ -11557,6 +11571,21 @@ async function settingsDepositOffer({ round, invite, seed, LockClient, storage, 
   return offer;
 }
 function depositRow(storage, round, d) { depositRowOnce(storage, round.federationId, d); }
+/**
+ * A DEPOSIT BEFORE ANY ROUND (kanban #350, the owner 2026-10-12 "Yes" to Deposit on the games screen before a game is picked): no
+ * round to count rounds in, so the tabs are plain amounts - 1,000 / 5,000 / 10,000 / 50,000 sat and Custom - into the same
+ * player wallet, opened from its federation alone (openPlayerWallet).
+ */
+const WALLET_DEPOSIT_SATS = Object.freeze([1000, 5000, 10000, 50000]);
+const walletDepositChoices = () => [...WALLET_DEPOSIT_SATS.map((sat) => ({ key: `sat${sat}`, label: `${sat.toLocaleString('en-US')} sat`, rounds: null, msat: BigInt(sat) * 1000n })),
+  { key: 'custom', label: 'Custom', rounds: null, msat: null }];
+async function walletDepositOffer({ federationId, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onClaimed = () => {} } = {}) {
+  const client = await openPlayerWallet({ federationId, invite, seed, LockClient, storage });
+  const offer = depositOffer({ client, stakeMsat: 0n, haveMsat: BigInt(await client.balanceMsat()), gateways, onDeposit, storage, federationId,
+    choices: walletDepositChoices() });
+  offer.claimed.then((d) => { depositRowOnce(storage, federationId, d); onClaimed(d); offer.decided({ funded: true }); }, () => {});
+  return offer;
+}
 const DEPOSIT_MARGIN_PPM = 6000n;
 const DEPOSIT_MARGIN_MSAT = 10000n;
 /**
@@ -20486,6 +20515,50 @@ function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
   return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
 }
 
+/**
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4, kanban #323). `claims`: notes presented
+ * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
+ * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
+ *      after drain_blocks
+ *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
+ *      shows it)
+ *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
+ *      while it lasts
+ *   4. only then the remainder, 75 % / 25 % (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ */
+function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
+  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
+  const seen = new Set();
+  const refused = []; const inWindow = []; const late = [];
+  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
+  for (const c of ordered) {
+    const nonce = String(c.nonce).toLowerCase();
+    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
+    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
+    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
+    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    seen.add(nonce);
+    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+  }
+  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
+  const short = owed > escrowMsat;
+  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
+  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
+  for (const c of late) {
+    const msat = c.amountMsat <= left ? c.amountMsat : left;
+    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+  }
+  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
+  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
+  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
+    remainderSplitsAt: when.remainderSplitsAt };
+}
+
 // ---- arena-protocol/src/genesis.js
 // Canonical genesis_parameters and the network_id they produce.
 //
@@ -22831,7 +22904,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     verify: curve.verify, census: keptChecked.get(toHex(contract.censusRoot)) || null });
   if (!got.ok) return got;
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
-  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus);
+  keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
   // THE SEATING (§5A.7 reserve seats, kanban #301): each role's certificate, asked of the seats and checked against the draw
   // this client made itself - every seated node signed it, in score order, within the seats and at least the threshold. A
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
@@ -22895,6 +22968,18 @@ async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {
 
 /** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
 const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
+/**
+ * THE NEWEST CENSUS THIS CLIENT CHECKED, and how many nodes it bonds (kanban #348, the owner 2026-10-12: "in the same settings
+ * window show how many nodes the network currently has"): the census at the highest height among the rounds this page checked,
+ * its distinct node keys counted. null before any census is checked.
+ */
+function newestCheckedCensus() {
+  let best = null;
+  for (const c of keptChecked.values()) if (c && Array.isArray(c.entries) && (!best || (c.height || 0) > (best.height || 0))) best = c;
+  if (!best) return null;
+  const keys = new Set(best.entries.map((e) => toHex(e.pubkey)));
+  return { height: best.height || null, nodes: keys.size, entries: best.entries };
+}
 
 // ---- arena-protocol/src/federation-record.js
 // A FEDERATION'S RECORD (spec §23A.4, kanban #321): what its guardians say about it, signed by at least its threshold.
@@ -25763,6 +25848,9 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
     else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
+    // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
+    // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
+    else if (row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
@@ -26095,7 +26183,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         playerWallet: playerWallet, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
@@ -26115,7 +26203,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          lobbyQuery: lobbyQuery, fetchLobby: fetchLobby, lobbyLine: lobbyLine, lobbyJoinSearch: lobbyJoinSearch,
          fetchGames: fetchGames, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
