@@ -126,8 +126,16 @@ export function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED the owner 2026-09-28; kanban #302): `serving = false`, published as an advertisement
+  // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
+  // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
+  if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
+  if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
 }
+
+/** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
+export const NOT_SERVING_MARKER = 0x5f;
 
 /** Two game ids in byte order; equal is not an order (a game is hosted once). */
 function compareGameIds(x, y) {
@@ -181,6 +189,8 @@ export function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
+  if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
   return a;
 }

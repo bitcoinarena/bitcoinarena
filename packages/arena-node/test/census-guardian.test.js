@@ -122,3 +122,41 @@ test('a v2 census counts a node whose update announces version 2, and not one wh
   console.log('  TOO OLD:', JSON.stringify({ step: out1.step, tooOld: out1.tooOld, speaks: out1.speaks, why: out1.why }));
   assert.equal(out1.tooOld, true); assert.equal(out1.step, 'update'); assert.match(out1.why, /update speaks 2026\.0\.1 and this round runs 2026\.0\.2/);
 });
+
+// STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED the owner 2026-09-28; kanban #302): an advertisement update with serving = false takes the
+// node out of every census at or above its block, its bond untouched; one with serving = true brings it back the same way. The
+// advertisement bytes of a serving node are what they were.
+test('an update saying serving = false steps the node out of the census from its block on; serving = true brings it back', async () => {
+  const { advertUpdateTransaction, blockOf } = await import('../../arena-protocol/tools/bond.js');
+  const { hash256 } = await import('../../arena-protocol/src/tx.js');
+  const { blockHashOf } = await import('../../arena-protocol/src/chain.js');
+  const { encodeAdvert, decodeAdvert, NOT_SERVING_MARKER } = await import('../../arena-protocol/src/advert.js');
+  const honest = deriveCensus(view, { contract, resolve, bond: BOND }).entries[0];
+  // the bytes: serving is no bytes, serving = false one marker byte last
+  const serving = encodeAdvert(honest.advert), out = encodeAdvert({ ...honest.advert, serving: false });
+  assert.deepEqual(encodeAdvert({ ...honest.advert, serving: true }), serving);
+  assert.deepEqual(out.subarray(0, serving.length), serving); assert.equal(out.length, serving.length + 1); assert.equal(out.at(-1), NOT_SERVING_MARKER);
+  assert.equal(decodeAdvert(serving).serving, undefined, 'a serving node decodes as it always did'); assert.equal(decodeAdvert(out).serving, false);
+  const last = blocks.at(-1).header;
+  const time = new DataView(last.buffer, last.byteOffset).getUint32(68, true) + 600;
+  const withUpdate = (adv, ts, prev = last, more = []) => {
+    const tx = advertUpdateTransaction({ ...adv, timestamp: ts }, { bondTxid: honest.txid, bondVout: honest.vout, signature: new Uint8Array(64).fill(1) });
+    const { header } = blockOf(hash256, [parseTransaction(tx).txid], { previous: blockHashOf(prev), time: time + more.length * 600 });
+    return { header, transactions: [tx] };
+  };
+  const b1 = withUpdate({ ...honest.advert, serving: false }, 1790000000000n);
+  const stepped = { blocks: [...blocks, b1], firstHeight: view.firstHeight };
+  const at = { ...contract, censusHeight: view.firstHeight + blocks.length };
+  const gone = deriveCensus(stepped, { contract: at, resolve, bond: BOND, verifyUpdate: () => true });
+  const left = gone.excluded.find((x) => whoIs(x.pubkey) === 'honest');
+  console.log('  STEPPED OUT:', JSON.stringify({ notServing: left && left.notServing, why: left && left.why }));
+  assert.equal(gone.entries.some((e) => whoIs(e.pubkey) === 'honest'), false, 'a node that stepped out is in the census');
+  assert.equal(left.notServing, true); assert.match(left.why, /serving = false: its node stepped out of the census, its bond untouched/);
+  // a census below the update's block still counts it (the series already created keep it)
+  const before = deriveCensus(stepped, { contract: { ...at, censusHeight: at.censusHeight - 1 }, resolve, bond: BOND, verifyUpdate: () => true });
+  assert.ok(before.entries.map((e) => whoIs(e.pubkey)).includes('honest'), 'a census below the update\'s block left the node out');
+  // serving = true in a later update: back from that block's census on
+  const b2 = withUpdate({ ...honest.advert, serving: true }, 1790000000001n, b1.header, [b1]);
+  const back = deriveCensus({ blocks: [...blocks, b1, b2], firstHeight: view.firstHeight }, { contract: { ...at, censusHeight: at.censusHeight + 1 }, resolve, bond: BOND, verifyUpdate: () => true });
+  assert.ok(back.entries.map((e) => whoIs(e.pubkey)).includes('honest'), 'serving = true did not bring the node back');
+});

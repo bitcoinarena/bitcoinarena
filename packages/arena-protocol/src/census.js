@@ -1134,6 +1134,11 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     // node that has not said it can serve the round it is being counted into.
     const roles = read.advert.roles || [];
     if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
+    // STEPPED OUT (§5A.3 "advertisement declares serving = true", kanban #302): with updates to come, the newest one decides below
+    if (!versionAfterUpdates && read.advert.serving === false) {
+      excluded.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+      continue;
+    }
 
     // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #348, measured 2026-10-13 05:20Z: the first v2 grid's
     // census came out EMPTY - every node announced version 2 in an advertisement update confirmed at 156338, and this pass
@@ -1319,6 +1324,10 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
     for (const e of before) {
       const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
       if (!u) {
+        if (e.advert && e.advert.serving === false) {
+          updatedOut.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+          continue;
+        }
         // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
         const own = (e.advert && e.advert.protocolVersions) || [];
         if (!own.includes(contract.protocolVersion)) {
@@ -1332,6 +1341,12 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       const versions = u.advert.protocolVersions || [];
       if (!roles.length) {
         updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
+        continue;
+      }
+      // STEPPED OUT (§5A.3, kanban #302): "From the first series whose census_height is at or above that update's block, the node is
+      // not in the census and is never drawn"; an update with serving = true brings it back the same way
+      if (u.advert.serving === false) {
+        updatedOut.push({ ...e, notServing: true, why: `its newest advertisement update (block ${u.height}) says serving = false: its node stepped out of the census, its bond untouched` });
         continue;
       }
       if (!versions.includes(contract.protocolVersion)) {
