@@ -56,6 +56,9 @@ test('a launcher-started node that holds a guardian key starts its own guardian 
     assert.deepEqual([r.adverts[0].guardianCapable, r.adverts[0].guardianEndpoint], [true, endpoint], "A's advert is its own answer");
     assert.deepEqual([r.adverts[1].guardianCapable, r.adverts[1].guardianEndpoint], [false, ''], "B's advert says not a guardian");
     assert.equal(existsSync(join(store, 'b.db.guardian')), false, 'no guardian directory is made for a node without a key');
+    // THE STAND-IN IS SPAWNED, NOT AWAITED: its first line lands when the child shell runs - measured red under a loaded machine
+    // when read at once, so it is waited for (5 s at most), as the launcher itself never waits on it
+    for (let t = 0; t < 50 && !existsSync(started); t++) await new Promise((ok) => setTimeout(ok, 100));
     assert.ok(existsSync(started), 'A started its fedimintd');
   } finally { for (const d of r.daemons) await d.close(); rmSync(dir, { recursive: true, force: true }); }
 });
