@@ -279,6 +279,8 @@ export const TAG = {
   roundContract: 'ARENA/v1/RoundContract',
   // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
   seriesRound: 'ARENA/v1/SeriesRound',
+  // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352): a node's rank for a slot
+  duty: 'BLWP/v1/DUTY',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',

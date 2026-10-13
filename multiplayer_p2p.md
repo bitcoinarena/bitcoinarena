@@ -2002,6 +2002,29 @@ ignored. Nothing is chosen, so there is nothing to grind: the old argument
 candidate". If no publication confirms in time - before `series_start(k)` on
 mainnet, below the beacon block on testnet4 - series `k` does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
+**One node on duty posts the next 24 h, and a missed slot falls to the next (RULED, the owner 2026-10-13 ~18:35Z, kanban #352).**
+"Wir müssen jeden Tag verlässlich follow up rounds für alle Spiele und Networks posten, jeden Tag für die nächsten 24h. Das macht
+immer eine bestimmte deterministische node die gerade Dienst hat ... diese node postet die Runden die in 24h starten. Wichtig ist dass
+keine gap entsteht. Wenn die Node ihren Slot verpasst, macht die nächste Node, verantwortlich für die nächste Runde das, und die Runde
+danach wenn die zweite Node wieder ihren Slot verpasst hat. Bis es gepostet ist. Nur eine node postet die runde." This replaces "every
+node publishes" for the rounds of every game and every network (each federation):
+
+```text
+slot            one UTC hour; slot i posts the rounds of hour i + 24, [(i+24) h, (i+25) h), one grid per game and network
+                (an "item"); consecutive slots cover consecutive hours - no gap, no overlap
+on duty         the census at the slot's anchor - the first block whose median time past is beyond the slot's start less 3 h,
+                the same for everybody once it exists - ranked by H('BLWP/v1/DUTY' || network_id || slot || node_pubkey);
+                the first is on duty. Anyone computes it.
+posted          a slot of an item is posted when a transaction carries OP_RETURN "ARN" 'D' slot item_tag (12 bytes) beside the
+                grid's series publications, seen in the chain or the mempool
+missed          the CURRENT slot's duty node posts its own slot and, from 5 min into its slot, every slot of the last 20 not posted
+                yet, oldest first. So a missed slot falls to the next slot's node, and to the one after if that one misses too,
+                until it is posted - and at any moment only one node (the current slot's) posts. A missed slot keeps > 4 h of lead.
+committee time  each grid's first start less 6 h: its publication confirms long before, and its beacon is 6 deep before it
+                starts (measured 2026-10-13: testnet4 made one block per ~20 min while a miner's timestamps ran 1 h 44 min ahead;
+                a grid whose committee came 45 min after its publication waited ~2 h for a 6-deep beacon)
+```
+
 **Who pays the fee.** The publisher pays it from its own wallet and is
 reimbursed from the node fee (§22A, 5% in Bitcoin Arena) of the series' round 0 - or, if round
 0 has no entries, the first round of the series that settles with any. The
