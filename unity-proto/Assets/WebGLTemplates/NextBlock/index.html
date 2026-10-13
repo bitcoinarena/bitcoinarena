@@ -1115,6 +1115,9 @@
       }
     }
     window.WebSocket = RoutedWebSocket;
+    // A URL OVER ITS SECOND ROUTE, for what is neither a socket nor a fetch - an <img> (kanban #350, measured 2026-10-13 in WebKit
+    // without a Tailscale route: every game icon failed on the Funnel host and the games screen showed "T" and "R")
+    window.BLWP_ROUTED_URL = (u) => routed(u).url;
     // AND EVERY HTTP REQUEST TO A SEAT, THE SAME WAY (the owner 2026-10-12 21:40 local, a phone without Tailscale: "Looking for the
     // game's nodes … (try 3 of 8)", and no other address than testnet.bitcoin-arena.io opens there): the sockets took the
     // bitcoin-arena.io route, but GET /games, /rounds and the rest still went to the Funnel host alone. Now a seat's request
@@ -3705,8 +3708,12 @@
       const bar = document.getElementById('arena-wallet-bar');
       if (!bar || !(document.body.classList.contains('arena-own-client') || document.body.classList.contains('arena-picking'))) return;
       const bal = window.BLWP_WALLET_BALANCE;
+      // NO WALLET YET, NOTHING LOADING (kanban #350, measured 2026-10-13 in WebKit: a visitor who has not created a wallet saw
+      // "Loading …" for as long as the page stayed open - no balance is read before there is a wallet)
+      const start = document.getElementById('arena-wallet-start');
+      const noWallet = !!start && getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().height > 0;
       document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
-        : window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
+        : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
       document.getElementById('arena-wb-pending').textContent = bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '';
       // THE PAYING ROUND'S SETTLEMENT FACTS (kanban #317): the part of its lobby line from "signer nodes" / "selected nodes" on
       const ap = document.getElementById('arena-approval');
@@ -5129,7 +5136,11 @@
               const b = document.createElement('button'); b.type = 'button'; b.className = 'tile game ' + (kind === 'market' ? 'market' : 'play-game'); b.dataset.game = g.id;
               const head = document.createElement('div'); head.className = 'head';
               const logo = document.createElement('div'); logo.className = 'logo';
-              if (g.icon) { const i = document.createElement('img'); i.src = g.icon; i.alt = ''; i.onerror = () => { logo.textContent = (g.title || '?').slice(0, 1); }; logo.append(i); }
+              if (g.icon) {
+                // its second route first, then the address as listed, then its initial
+                const i = document.createElement('img'); const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(g.icon) : g.icon;
+                i.src = via; i.alt = ''; i.onerror = () => { if (i.src !== g.icon && via !== g.icon) { i.src = g.icon; return; } logo.textContent = (g.title || '?').slice(0, 1); }; logo.append(i);
+              }
               else logo.textContent = (g.title || '?').slice(0, 1);
               const who = document.createElement('div');
               const name = document.createElement('div'); name.className = 'name'; name.textContent = g.title;
@@ -5181,7 +5192,7 @@
       if (game.name !== 'nextblock') {
         const head = document.querySelector('#blwp-settings .settings-head h2');
         if (head) { const small = head.querySelector('small'); if (small) small.textContent = game.title || game.name;
-          const mark = head.querySelector('img.mark'); if (mark) { if (game.icon) mark.src = game.icon; else mark.remove(); } }
+          const mark = head.querySelector('img.mark'); if (mark) { if (game.icon) { const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(game.icon) : game.icon; mark.onerror = () => { if (mark.src !== game.icon) mark.src = game.icon; }; mark.src = via; } else mark.remove(); } }
         if (document.documentElement.classList.contains('arena-root')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name; const i = document.getElementById('site-icons'); if (i) i.textContent = ''; }
       }
       window.ARENA_GAME_ID = game.id;
