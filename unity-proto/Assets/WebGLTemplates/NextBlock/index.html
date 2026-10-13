@@ -383,6 +383,19 @@
     body.arena-own-client #arena-client { top: calc(41px + env(safe-area-inset-top, 0px)); height: calc(100% - 41px - env(safe-area-inset-top, 0px)); }
     #arena-wallet-bar .wb-bal { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #arena-wallet-bar .wb-bal b { color: #f7931a; }
+    /* THE BALANCE, TAPPED (the owner 2026-10-13: "Die UI muss auch anzeigen wenn ich auf die balances klicke wieviel Geld in welcher
+       Federation gespeichert ist"): every balance opens the split over the federations */
+    #arena-wallet-bar .wb-bal, #blwp-lobby-balance, #blwp-set-wallet .bal-grid { cursor: pointer; }
+    #arena-bal-split { position: fixed; z-index: 60; left: 50%; top: calc(56px + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+      width: min(92vw, 380px); background: #11161d; color: #e8edf3; border: 1px solid #2a3440; border-radius: 12px; padding: 14px 16px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.55); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+    #arena-bal-split h4 { margin: 0 0 8px; font-size: 15px; }
+    #arena-bal-split .row { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid #222b35; }
+    #arena-bal-split .row .fed { color: #aab4c0; font-family: ui-monospace, monospace; }
+    #arena-bal-split .row .st { color: #7d8896; font-size: 12px; }
+    #arena-bal-split .row b { color: #f7931a; white-space: nowrap; }
+    #arena-bal-split .total { border-top: 1px solid #3a4655; font-weight: 600; }
+    #arena-bal-split button { margin-top: 10px; width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #2a3440; background: #1a222c; color: #e8edf3; }
     #arena-wallet-bar button { padding: 6px 10px; border-radius: 4px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; font: 600 13px system-ui, sans-serif; cursor: pointer; }
     #arena-wallet-bar #arena-wb-deposit { background: #f7931a; border-color: #f7931a; color: #1a1000; }
     #arena-wb-why { position: absolute; top: 100%; left: 8px; right: 8px; padding: 6px 8px; background: #2a1d0b; border: 1px solid #5a4a22; border-radius: 4px; }
@@ -698,6 +711,7 @@
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
     <div id="arena-wb-why" role="status"></div>
   </div>
+  <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
   <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-exit" type="button">exit game</button></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (the owner 2026-09-29): placed over the row Unity reports as `balance`, where
        NAME and KEY stood, above the rounds. -->
@@ -5509,6 +5523,46 @@
           }
         } finally { window.BLWP_BALANCE_TRIED = true; summing = null; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
       })());
+      // WHERE THE MONEY SITS, ON A TAP (the owner 2026-10-13: "Die UI muss auch anzeigen wenn ich auf die balances klicke wieviel
+      // Geld in welcher Federation gespeichert ist"): every balance on the page - the wallet bar, the lobby's chips, Settings -
+      // opens the split: each federation's sats, its status and load from the record this page verified, and the sum
+      const splitEl = () => document.getElementById('arena-bal-split');
+      const paintSplit = () => {
+        const el = splitEl(); if (!el) return;
+        const bal = window.BLWP_WALLET_BALANCE; const loads = window.ARENA_FED_LOADS || new Map();
+        const sat = (n) => Number(n || 0).toLocaleString('en-US') + ' sat';
+        el.textContent = '';
+        const h = document.createElement('h4'); h.textContent = 'Your balance by federation'; el.append(h);
+        const parts = bal && Array.isArray(bal.parts) ? bal.parts : [];
+        if (!parts.length) { const r = document.createElement('div'); r.className = 'row'; r.textContent = bal ? 'No federation holds funds of this wallet yet' : 'Loading your wallet \u2026'; el.append(r); }
+        for (const x of [...parts].sort((a, b) => b.sats - a.sats)) {
+          const st = loads.get(x.federation);
+          const r = document.createElement('div'); r.className = 'row';
+          const left = document.createElement('div');
+          const f = document.createElement('div'); f.className = 'fed'; f.textContent = 'Federation ' + x.federation.slice(0, 8) + '\u2026';
+          const s = document.createElement('div'); s.className = 'st';
+          s.textContent = st ? st.status + (typeof st.load === 'number' ? ' \u00b7 load ' + Math.round(st.load * 100) + ' %' : '') + (st.guardians ? ' \u00b7 ' + st.guardians + ' guardians' : '') : 'status not read yet';
+          left.append(f, s);
+          const v = document.createElement('b'); v.textContent = sat(x.sats);
+          r.append(left, v); el.append(r);
+        }
+        if (bal) {
+          const t = document.createElement('div'); t.className = 'row total';
+          const a = document.createElement('div'); a.textContent = 'Total' + (parts.length > 1 ? ' (' + parts.length + ' federations)' : '');
+          const v = document.createElement('b'); v.textContent = sat(bal.sats) + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : ''); t.append(a, v); el.append(t);
+        }
+        const c = document.createElement('button'); c.type = 'button'; c.textContent = 'Close'; c.addEventListener('click', () => { el.style.display = 'none'; }); el.append(c);
+      };
+      window.ARENA_SHOW_BALANCE_SPLIT = () => {
+        const el = splitEl(); if (!el) return;
+        paintSplit(); el.style.display = '';
+        if (window.BLWP_SUM_BALANCES) window.BLWP_SUM_BALANCES().then(() => { if (el.style.display !== 'none') paintSplit(); }, () => {});
+      };
+      for (const sel of ['#arena-wallet-bar .wb-bal', '#blwp-lobby-balance', '#blwp-set-wallet .bal-grid']) {
+        const el = document.querySelector(sel);
+        if (el) el.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_SHOW_BALANCE_SPLIT(); });
+      }
+      document.addEventListener('click', (e) => { const el = splitEl(); if (el && el.style.display !== 'none' && !el.contains(e.target)) el.style.display = 'none'; });
       // OUT OF A DRAINING FEDERATION, BY ITSELF (the owner 2026-10-13 ~12:00Z: "When a federation is draining the client has
       // automatically to move it to a safe federation"): each time the federations' records are checked, every federation this
       // browser holds notes in whose record says DRAINING or CRITICAL is emptied into its successor, else the lowest-load OPEN
