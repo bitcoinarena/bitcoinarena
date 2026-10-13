@@ -3662,6 +3662,10 @@
       const waitBox = which === 'deposit' ? (() => {
         const el = document.getElementById('blwp-deposit');
         if (!el) return null;
+        // ON TOP OF THE GAMES SCREEN (kanban #350, the owner 2026-10-13 08:5x: "Deposit doesn't open at all modal when I click it";
+        // measured in WebKit: the box opened inside the loading screen's #boot, whose stacking context (z 10) lies under
+        // #arena-games (z 37) - nothing showed until 15 s later): out of #boot, to the page itself, as over a game
+        if (el.parentElement !== document.body) document.body.appendChild(el);
         el.textContent = ''; el.className = 'deposit-modal over-settings';
         el.style.width = 'min(92vw, 420px)';   // the waiting box was as narrow as its title and cut its line (the owner's 17:46 screenshot)
         const close = document.createElement('button'); close.type = 'button'; close.className = 'dep-close'; close.textContent = '\u2715'; close.title = 'Close';
@@ -3772,6 +3776,8 @@
     function showDepositOffer(offer, { message = '', title = 'Deposit', overSettings = false } = {}) {
       const el = document.getElementById('blwp-deposit');
       if (!el) return;
+      // over the games screen too (kanban #350): never inside #boot's stacking context once the games screen is up
+      if (el.parentElement !== document.body && document.body.classList.contains('arena-picking')) document.body.appendChild(el);
       el.textContent = '';
       el.className = 'deposit-modal' + (overSettings ? ' over-settings' : '');
       const add = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; el.appendChild(x); return x; };
@@ -5398,7 +5404,26 @@
       // AFTER THE GAMES ARE READ (the owner 2026-10-12 21:40 local, a phone off the tailnet: "Looking for the game's nodes … (try 3 of
       // 8)"): the wallet's 21 guardian websockets went first, and the Funnel holds one source to ~20 connections an address, so the
       // page's own GET /games found none free. Started once chooseTheGame has answered - still before any round is listed.
+      // THE FEDERATIONS' RECORDS FROM THE GAMES SCREEN TOO (kanban #350, the owner 2026-10-13 08:5x: "federation always shows pending";
+      // measured in WebKit: Settings said "Federations: loading …" for as long as the page stayed on the games screen - the records
+      // were checked only in prepRound, for a round a game's lobby shows): one paying round read from the seats, and its census
+      // the records are checked against, exactly as a lobby's round
+      const checkFederationsEarly = async (nodes) => {
+        if (window.ARENA_FED_TRIED || window.ARENA_FED_EARLY || !nodes || !nodes.length) return;
+        window.ARENA_FED_EARLY = true;
+        for (const node of nodes.slice(0, 3)) {
+          try {
+            const rows = await (await fetch(node.replace(/\/+$/, '') + '/rounds?next=2', { cache: 'no-store' })).json();
+            const r = (rows.rounds || []).find((x) => !x.free && x.phase === 'open');
+            if (!r) continue;
+            const got = await BLWPCLIENT.fetchRound(r.id, nodes);
+            if (got && got.contract && BLWPCLIENT.roundLocks(got.contract)) { prepRound(r.id, got.contract, nodes); return; }
+          } catch (e) { console.log('[arena] federation records from the games screen: ' + (e && e.message ? e.message : e)); }
+        }
+        window.ARENA_FED_EARLY = false;
+      };
       window.ARENA_OPEN_WALLET_EARLY = function openWalletEarly(lobby) {
+        checkFederationsEarly((testnet ? testnet.named : named).nodes).catch(() => {});
         if (window.BLWP_WALLET_EARLY || !lobby || !lobby.federation || !BLWPCLIENT.openPlayerWallet) return;
         const seed = walletSeed();
         if (!seed) { setTimeout(() => openWalletEarly(lobby), 1000); return; }
