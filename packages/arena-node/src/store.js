@@ -853,6 +853,20 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3, kanban #348) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
+    -- one row per (round, federation), with the same intent and state as a round's own settlement row.
+    CREATE TABLE IF NOT EXISTS fed_lock_settlements (
+      round_id      BLOB NOT NULL,
+      federation_id TEXT NOT NULL,
+      txid          TEXT NOT NULL,
+      message       BLOB NOT NULL,
+      signature     BLOB NOT NULL,
+      state         TEXT NOT NULL,
+      why           TEXT NOT NULL,
+      made_ms       INTEGER NOT NULL,
+      PRIMARY KEY (round_id, federation_id)
+    );
+
     -- WHAT THE SIGNED SETTLEMENT MOVES (W6): its claimed outpoints and how many
     -- payout contracts it makes, kept with its intent - so a signer node restarted inside
     -- it asks the federation without rebuilding the bytes it signed.
