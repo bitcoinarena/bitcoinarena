@@ -55,12 +55,13 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
   }
 
   /** GET /liquidation-claims?federation=: who is paid what from the escrow, at the tip, by settleClaims' order. */
-  async function plan(fidHex) {
+  async function plan(fidHex, { escrowMsat: given = null } = {}) {
     const fid = String(fidHex || '').toLowerCase();
     const liq = await liquidationOf(fid);
     if (!liq) return { ok: false, status: 404, why: 'that federation is not being liquidated' };
     const mine = [...(claims.get(fid) || new Map()).values()];
-    const escrowMsat = BigInt(await escrowMsatOf(fid));
+    // what the escrow holds: on chain until it is pegged in, then what the safe federation credited for it (payOutLiquidation)
+    const escrowMsat = given !== null ? BigInt(given) : BigInt(await escrowMsatOf(fid));
     const got = settleClaims({ escrowMsat, claims: mine, spentNonces: liq.spentNonces || null, haltHeight: liq.haltHeight, atHeight: await height(),
       clocks, noteSigned: () => true });
     if (!got.ok) return { ok: false, status: 409, why: got.why };
@@ -68,9 +69,54 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
     const byKey = new Map();
     for (const p of got.paid) byKey.set(payTo.get(p.nonce), (byKey.get(payTo.get(p.nonce)) || 0n) + p.msat);
     return { ok: true, federation: fid, escrowMsat: String(escrowMsat), notes: mine.length, proRata: got.proRata, rate: got.rate,
+      paidNotes: got.paid.map((p) => ({ nonce: p.nonce, msat: String(p.msat), late: p.late, payoutPk: payTo.get(p.nonce) })),
+      claimWindowCloses: liq.claimWindowCloses, lateClaimsUntil: liq.lateClaimsUntil,
       spentSetPublished: got.spentSetPublished, payouts: [...byKey.entries()].map(([payoutPk, msat]) => ({ payoutPk, msat: String(msat) })),
       refused: got.refused, remainderMsat: String(got.remainderMsat), split: got.split ? { nodes: String(got.split.nodes), developers: String(got.split.developers) } : null,
       remainderSplitsAt: got.remainderSplitsAt };
   }
   return { offer, plan };
+}
+
+/**
+ * PAYING THE TABLE (§23A.5 step 4, kanban #323), one pass at a time, every step kept (`v`, the service's state for this
+ * federation) before the next, as payOutSlash does for a slash (§5A.3B, #307):
+ *   1. from the claim window's close: the whole escrow is spent by k of the set to a peg-in address of its own client of a SAFE
+ *      federation (`run` the stake-lock tool over that client), and claimed there;
+ *   2. the table (`claims.plan`, over what that federation credited) is paid note by note: every note not paid yet, summed per
+ *      payout key, locked to that key (the tool's `pay`) - so a late note is paid by a later pass from what is left, never twice;
+ *   3. the remainder's 75 / 25 after drain_blocks is not paid here yet.
+ * `spendEscrow(toScript)` builds, signs and posts the escrow's spend (buildEscrowPegin + assemble + post) and answers { txid } or why.
+ */
+export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, keep = () => {}, say = () => {} }) {
+  const p0 = await claims.plan(fid);
+  if (!p0.ok) return { why: p0.why };
+  if ((await height()) <= p0.claimWindowCloses) return { why: `the claim window closes at ${p0.claimWindowCloses}` };
+  if (!v.escrowTxid) {
+    const addr = await run(['--mode', 'pegin-address']);
+    if (!addr.address) return { why: `no peg-in address: ${addr.error || JSON.stringify(addr)}` };
+    const sent = await spendEscrow(addr.address);
+    if (!sent || !sent.txid) return { why: sent && sent.why ? sent.why : 'the escrow was not spent' };
+    Object.assign(v, { escrowTxid: sent.txid, pegInAddress: addr.address }); keep();
+    say({ federation: fid.slice(0, 16), escrowIntoSafeFederation: sent.txid });
+  }
+  if (!v.claimedMsat) {
+    const c = await run(['--mode', 'pegin-claim', '--address', v.pegInAddress, '--timeout-s', '840']);
+    if (!(c.balance_after_msat > c.balance_before_msat)) return { why: `the peg-in is not claimed yet: ${c.error || JSON.stringify(c)}` };
+    v.claimedMsat = String(BigInt(c.balance_after_msat) - BigInt(c.balance_before_msat)); keep();
+  }
+  const p = await claims.plan(fid, { escrowMsat: BigInt(v.claimedMsat) });
+  if (!p.ok) return { why: p.why };
+  const done = new Set(v.paidNonces || []);
+  const due = p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
+  if (!due.length) return { paid: 0, notes: done.size };
+  const byKey = new Map();
+  for (const n of due) byKey.set(n.payoutPk, (byKey.get(n.payoutPk) || 0n) + BigInt(n.msat));
+  const paid = await run(['--mode', 'pay', '--payouts', [...byKey.entries()].map(([k, m]) => `${k}:${m}`).join(',')]);
+  if (!paid.txid) return { why: `no payout transaction: ${paid.error || JSON.stringify(paid)}` };
+  v.paidNonces = [...done, ...due.map((n) => n.nonce)];
+  v.payouts = [...(v.payouts || []), ...(paid.payouts || []).map((x) => ({ payoutPk: x.refund_pk, msat: String(x.amount_msat), txid: paid.txid, outIdx: x.out_idx }))];
+  keep();
+  say({ federation: fid.slice(0, 16), paidNotes: due.length, keys: byKey.size, txid: paid.txid });
+  return { paid: due.length, notes: v.paidNonces.length, txid: paid.txid };
 }
