@@ -61,3 +61,23 @@ test('the creator signature stands only by the named key over this round\'s id; 
   assert.equal(creatorSignatureStands(decodeRoundContract(encodeRoundContract(round)), null, { verify }).ok, true);
   assert.equal(creatorSignatureStands(decodeRoundContract(encodeRoundContract(round)), sig, { verify }).ok, false);
 });
+
+test('a series naming its creator: one signature over the series id stands for it, and travels on its series line (kanban #313)', async () => {
+  const { seriesCreatorMessage, seriesCreatorStands } = await import('../src/creator.js');
+  const { seriesId } = await import('../src/series.js');
+  const { parseSeriesLine, seriesLineOf } = await import('../../arena-node/src/series-line.js');
+  const t = { ...round, creatorPubkey: CREATOR, seriesGrid: true, seriesPeriodMs: 8000n, seriesCount: 10800, committeeTimeMs: 0n, startTimeMs: 2700000n, entryCloseMs: 2780000n };
+  const sid = seriesId(t);
+  const sig = schnorr.sign(seriesCreatorMessage(sid), SECRET);
+  assert.equal(seriesCreatorStands(t, sig, { verify, seriesIdOf: seriesId }).ok, true);
+  assert.match(seriesCreatorStands(t, null, { verify, seriesIdOf: seriesId }).why, /comes without the creator's 64-byte signature/);
+  assert.match(seriesCreatorStands(t, schnorr.sign(seriesCreatorMessage(sid), b32(0x22)), { verify, seriesIdOf: seriesId }).why, /not the named creator's/);
+  const { creatorPubkey: _c, ...unnamed } = t; void _c;
+  assert.match(seriesCreatorStands(unnamed, sig, { verify, seriesIdOf: seriesId }).why, /names no creator/);
+  const line = seriesLineOf({ ...t, creatorSignature: sig }, encodeRoundContract);
+  assert.match(line, / grid period=8000 count=10800 creator=[0-9a-f]{128}$/);
+  const back = parseSeriesLine(line);
+  assert.deepEqual([Buffer.from(back.creatorSignature).toString('hex'), Buffer.from(seriesId(back)).toString('hex')], [Buffer.from(sig).toString('hex'), Buffer.from(sid).toString('hex')],
+    'the signature beside the id, the id unchanged by it');
+  assert.equal(seriesCreatorStands(back, back.creatorSignature, { verify, seriesIdOf: seriesId }).ok, true);
+});

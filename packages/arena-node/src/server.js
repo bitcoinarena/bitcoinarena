@@ -25,7 +25,7 @@ import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/t
 import { stateOf } from './settlement-state.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { nodeStanding } from './node-standing.js';
-import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
+import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
@@ -2638,6 +2638,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!lead.ok) return { ok: false, code: 409, why: lead.why };
     const sid = seriesId(t), id = toHex(sid);
     if (writers.some((w) => toHex(w.id) === id)) return { ok: true, series: id, rounds: t.seriesCount, held: true };
+    // A SERIES THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID (kanban #313): the line's creator=<signature>
+    { const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
+      if (!cr.ok) return { ok: false, code: 403, why: `series ${id.slice(0, 16)}: ${cr.why}` }; }
     if (refuseSeries(t)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} is not written here: its game is not hosted, or its donation set or federation is refused` };
     if (persist && !funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: sid }, node: fundingView }))
       return { ok: false, code: 402, why: `this node stores nothing for a series nobody has funded (series ${id.slice(0, 16)})` };
