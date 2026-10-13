@@ -7,6 +7,7 @@ import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { toHex } from '../src/hash.js';
 
 const TN4 = '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e';
+const TN4_B = 'b18947f085d40df3ce4bc8ac64df9c45256223e88fe7fdbdebf3eae13fb10b73';
 
 test('337ae01a on testnet4 and the regtest test federation are known, by hex or by bytes, in any case', () => {
   assert.equal(federationIsKnown(TN4), true);
@@ -15,7 +16,12 @@ test('337ae01a on testnet4 and the regtest test federation are known, by hex or 
   assert.equal(federationIsKnown(toHex(TEST_FEDERATION_ID)), true);
   assert.equal(knownFederation(TN4).network, 'testnet4');
   assert.equal(knownFederation(toHex(TEST_FEDERATION_ID)).network, 'regtest');
-  assert.equal(Object.keys(KNOWN_GOOD_FEDERATIONS).length, 2);
+  assert.equal(Object.keys(KNOWN_GOOD_FEDERATIONS).length, 3);
+});
+
+test('federation B on testnet4 is known too (kanban #348): a deposit may go to the one with less funds', () => {
+  assert.equal(federationIsKnown(TN4_B), true);
+  assert.deepEqual(knownFederation(TN4_B), { name: 'Arena testnet4 B', network: 'testnet4', nominal: 7, threshold: 5 });
 });
 
 test('anything else is not known', () => {

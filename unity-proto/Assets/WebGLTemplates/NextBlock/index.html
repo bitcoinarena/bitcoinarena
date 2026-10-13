@@ -3798,8 +3798,9 @@
         return (async () => {
           try {
             const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
-            const federationId = BLWPCLIENT.fromHex(String(wasm.LockClient.federationIdOf(lob0.federation)));
-            const offer = await BLWPCLIENT.walletDepositOffer({ federationId, invite: lob0.federation, seed: seed0, LockClient: wasm.LockClient, storage: vault(),
+            const into = depositPick(lob0.federation).invite || lob0.federation;
+            const federationId = BLWPCLIENT.fromHex(String(wasm.LockClient.federationIdOf(into)));
+            const offer = await BLWPCLIENT.walletDepositOffer({ federationId, invite: into, seed: seed0, LockClient: wasm.LockClient, storage: vault(),
               gateways: window.BLWP_LEDGER_GATEWAYS || [], onClaimed: () => { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } });
             showDepositOffer(offer, { title: 'Deposit into your player wallet', overSettings: true });
             say('');
@@ -4199,6 +4200,18 @@
       const r = series[0] || other[0];
       return r ? { free: false, raw: r } : null;
     }
+    // WHERE A DEPOSIT GOES (RULED the owner 2026-10-13 ~11:50Z: "always take the federation with less funds"): the lowest-load OPEN,
+    // known federation of the statuses this page verified, else the lobby's - one pick for a round's deposit and for the
+    // wallet bar's deposit with no game picked (kanban #353: that one took the lobby's federation, so B at load 0 got nothing)
+    function depositPick(lobbyInvite) {
+      const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
+      const pick = BLWPCLIENT.depositFederation ? BLWPCLIENT.depositFederation({ lobbyInvite, statuses,
+        held: BLWPCLIENT.ledgerFederations(vault()),
+        known: (fid) => BLWPCLIENT.federationIsKnown(fid) || BLWPCLIENT.federationConfirmed(localStorage, fid),
+        sameFederation: (inv, fid) => { try { return BLWPCLIENT.inviteNamesFederation(inv, fid); } catch { return false; } } }) : { invite: lobbyInvite };
+      window.ARENA_DEPOSIT_FEDERATION = pick;
+      return pick;
+    }
     function moneyContext(which = 'deposit') {
       const row = (window.BLWP_LOBBY || []).find((r) => !r.free && r.raw && r.raw.contract) || moneyRound();
       const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
@@ -4215,15 +4228,17 @@
       // A FIRST DEPOSIT GOES TO THE LOWEST-LOAD FEDERATION (§23A.3, kanban #324 step 1): from the statuses this page verified,
       // OPEN and known-good or confirmed here, when this browser holds no federation's wallet yet; else the lobby's
       const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
-      const pick = BLWPCLIENT.depositFederation ? BLWPCLIENT.depositFederation({ lobbyInvite: lob.federation, statuses,
-        held: BLWPCLIENT.ledgerFederations(vault()),
-        known: (fid) => BLWPCLIENT.federationIsKnown(fid) || BLWPCLIENT.federationConfirmed(localStorage, fid),
-        sameFederation: (inv, fid) => { try { return BLWPCLIENT.inviteNamesFederation(inv, fid); } catch { return false; } } }) : { invite: lob.federation };
-      window.ARENA_DEPOSIT_FEDERATION = pick;
+      const pick = depositPick(lob.federation);
       // A WITHDRAW READS WHERE THE MONEY IS: the federation of the summed balance holding the most (kanban #348)
       const out = which === 'withdraw' && BLWPCLIENT.withdrawFederation ? BLWPCLIENT.withdrawFederation({ lobbyInvite: lob.federation,
         parts: (window.BLWP_WALLET_BALANCE && window.BLWP_WALLET_BALANCE.parts) || [], statuses }) : null;
-      return { ok: true, round, roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n,
+      // ONE FEDERATION PER WALLET OPENED (kanban #353): the wallet is opened under the round's federation id with the invite named
+      // here, so the two are made one - a deposit goes to the lowest-load federation (depositPick) and a withdraw reads the one
+      // holding the most, each under that federation's own id (with B known, an A round's id beside B's invite opened B's wallet
+      // under A's key)
+      const into = which === 'withdraw' ? (out && out.invite ? out : null) : (pick && pick.invite && pick.federation ? pick : null);
+      return { ok: true, round: into ? Object.assign({}, round, { federationId: BLWPCLIENT.fromHex(String(into.federation)) }) : round,
+        roundIdHex: row.id || null, roundStake: BigInt(BLWPCLIENT.lobbyStakeSats(row.raw)) * 1000n,
         invite: (out && out.invite) || pick.invite || lob.federation, seed, depositFederation: pick, withdrawFrom: out, gateways: window.BLWP_LEDGER_GATEWAYS || [] };
     }
     function openWithdraw(ctx) {
