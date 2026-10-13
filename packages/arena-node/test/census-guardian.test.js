@@ -86,3 +86,28 @@ test('an update of the honest bond at or below the census height replaces its ad
   const early = deriveCensus(longer, { contract: { ...at, censusHeight: tipHeight - 1 }, resolve, bond: BOND, verifyUpdate: () => true });
   assert.equal(early.entries.find((x) => whoIs(x.pubkey) === 'honest').updatedBy, undefined);
 });
+
+// 2026.0.2 (kanban #348, measured 2026-10-13 05:20Z on testnet4): THE VERSION IS THE NEWEST ADVERTISEMENT'S. Every node announced
+// version 2 in an update; the first v2 grid's census came out empty, because the version was asked of the bond's first
+// advertisement before the update was applied. An update to [1, 2] now puts the node into a v2 census; without it, not.
+test('a v2 census counts a node whose update announces version 2, and not one whose bond alone speaks version 1', async () => {
+  const { advertUpdateTransaction, blockOf } = await import('../../arena-protocol/tools/bond.js');
+  const { hash256 } = await import('../../arena-protocol/src/tx.js');
+  const { blockHashOf } = await import('../../arena-protocol/src/chain.js');
+  const honest = deriveCensus(view, { contract, resolve, bond: BOND }).entries[0];
+  assert.deepEqual(honest.advert.protocolVersions, [1]);
+  const tx = advertUpdateTransaction({ ...honest.advert, protocolVersions: [1, 2], timestamp: 1790000000000n },
+    { bondTxid: honest.txid, bondVout: honest.vout, signature: new Uint8Array(64).fill(1) });
+  const last = blocks.at(-1).header;
+  const time = new DataView(last.buffer, last.byteOffset).getUint32(68, true) + 600;
+  const { header } = blockOf(hash256, [parseTransaction(tx).txid], { previous: blockHashOf(last), time });
+  const longer = { blocks: [...blocks, { header, transactions: [tx] }], firstHeight: view.firstHeight };
+  const v2 = { ...contract, protocolVersion: 2, censusHeight: view.firstHeight + blocks.length };
+  const updated = deriveCensus(longer, { contract: v2, resolve, bond: BOND, verifyUpdate: () => true });
+  assert.equal(updated.ok, true, updated.why);
+  assert.deepEqual(updated.entries.map((e) => whoIs(e.pubkey)), ['honest']);
+  assert.deepEqual(updated.entries[0].advert.protocolVersions, [1, 2]);
+  const notUpdated = deriveCensus(view, { contract: { ...contract, protocolVersion: 2 }, resolve, bond: BOND, verifyUpdate: () => true });
+  assert.equal(notUpdated.entries.length, 0);
+  assert.match(notUpdated.excluded.find((x) => whoIs(x.pubkey) === 'honest').why, /speaks 2026\.0\.1 and this round runs 2026\.0\.2/);
+});
