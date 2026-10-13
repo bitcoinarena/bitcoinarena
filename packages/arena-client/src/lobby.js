@@ -25,6 +25,7 @@
 // AND WHO IS JOINED, BY THE NAMES THEY CHOSE: each signer node serves the name records
 // its joined players signed (lobby-name.js); a row carries the ones that check
 // (identity.js `checkedNames`) - never a key in place of a name.
+import { protocolVersionName } from '../../arena-protocol/src/protocol-version.js';
 import { joinQuery, fetchRound, roundPays } from './join.js';
 import { checkedNames } from './identity.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
@@ -421,14 +422,17 @@ export function approvalFacts(row, census = null) {
 }
 
 /** The lobby line's words for approvalFacts. */
-export function approvalWords(f) {
-  if (!f || f.pending) return ' · selected nodes: pending (§5A.5)';
+export function approvalWords(f, tooOld = []) {
+  // NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3): "node X: protocol too old"
+  const old = Array.isArray(tooOld) && tooOld.length
+    ? ` · left out, protocol too old: ${tooOld.map((x) => `${String(x.node).slice(0, 8)} (speaks ${(x.speaks || []).map(protocolVersionName).join(', ') || 'none'})`).join(', ')}` : '';
+  if (!f || f.pending) return ' · selected nodes: pending (§5A.5)' + old;
   const ops = !f.censusKnown ? 'operators not read yet' : `${f.operators.length} operator${f.operators.length === 1 ? '' : 's'}${f.operators.length ? ` (${f.operators.map((o) => o.slice(0, 8)).join(', ')})` : ''}`;
   return ` · ${ops} · in both committees: ${f.both} of ${f.of}` + (f.operatorsPlaying.length
-    ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing');
+    ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing') + old;
 }
 
-export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null } = {}) {
+export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOld = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
@@ -452,7 +456,8 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
     ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
     : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
   // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13, kanban #317): operators, overlap, an operator playing
-  const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census));
+  const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census),
+    typeof tooOld === 'function' ? (row.contract && row.contract.censusRoot ? tooOld(row.contract) : []) : tooOld || []);
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
