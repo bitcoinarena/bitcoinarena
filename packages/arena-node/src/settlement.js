@@ -399,6 +399,8 @@ export class LockSettlement {
     if (!a) return null;
     const kept = this.round.lockSettlement(roundIdBytes);
     if (kept && kept.state === ACCEPTED) return null;
+    // a round that takes any federation keeps one row per federation: one ACCEPTED is a settlement that went in
+    if (this.round.fedLockSettlementsOf && (this.round.fedLockSettlementsOf(roundIdBytes) || []).some((r) => r.state === ACCEPTED)) return null;
     // REFUND AT THE DEADLINE (kanban #235): a market round with no standing outcome by its deadline, or whose attestors
     // contradicted themselves, is VOID - nothing is claimed, every stake comes back by the return door (forfeit.js)
     const voided = marketVoided(a.held, { entryCloseMs: a.contract.entryCloseMs, terms: a.plugin.manifest.marketTerms || null, nowMs: this.round.now ? this.round.now() : Date.now() });
@@ -496,18 +498,69 @@ export class LockSettlement {
     }
     const key = toHex(roundIdBytes);
     let fees = this.fees.get(key);
-    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
+    if (!fees && !takesAnyFederation(contract)) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
     let donation = null;
     if (L.market.donationBps > 0 && table.feesDueMsat > 0n) {
       const t = this.donationTargetFor ? this.donationTargetFor(contract) : { ok: false, why: 'this signer node names no donation target' };
       if (!t.ok) return refuse(`no lock is claimed: the book's fees carry a donation, and ${t.why}`);
       donation = { recipients: t.target };
     }
-    const plan = bookLockSettlement({ roundId: roundIdBytes, table, entries, locks, feeLocks, fees, contract,
+    const book = (f) => bookLockSettlement({ roundId: roundIdBytes, table, entries, locks, feeLocks, fees: f, contract,
       nodeBps: L.market.nodeBps, donationBps: L.market.donationBps, donation });
+    if (takesAnyFederation(contract))
+      return this.#anyFederationPlan(roundIdBytes, contract, entries.map((e) => ({ entryId: fromHex(e.entryId), pubkey: e.pubkey })), locks, feeLocks,
+        book, { claimPk, held, lockEntry, table });
+    const plan = book(fees);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
     return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
+  }
+
+  /**
+   * WHERE A ROUND THAT TAKES ANY FEDERATION HOLDS EACH CLAIMED LOCK (2026.0.3, kanban #348): each lock's federation is its
+   * entry's (entryFederation), each federation's fee rule its own port's, read once per round. `entries` [{ entryId (bytes),
+   * pubkey }]; answers { ok, federationOf(outpoint), feesOf(fidHex) } for splitByFederation, or a refusal.
+   */
+  async #federationsOf(roundIdBytes, contract, entries, locks, feeLocks) {
+    const key = toHex(roundIdBytes);
+    const fedOf = new Map();
+    for (const e of entries) {
+      const raw = this.round.entry ? this.round.entry(e.entryId) : null;
+      if (!raw) continue;
+      const ef = entryFederation(contract, decodeEntryContract(raw));
+      if (!ef.ok) return refuse(`no lock is claimed: ${ef.why}`);
+      const fid = toHex(ef.federationId);
+      const sl = locks.get(toHex(e.pubkey)); if (sl) fedOf.set(`${toHex(sl.outpoint.txid)}:${sl.outpoint.outIdx}`, fid);
+      const fl = feeLocks.get(toHex(e.pubkey)); if (fl) fedOf.set(`${toHex(fl.outpoint.txid)}:${fl.outpoint.outIdx}`, fid);
+    }
+    const feesByFed = new Map();
+    for (const fid of new Set(fedOf.values())) {
+      const fk = `${key}:fed:${fid}`;
+      let f = this.fees.get(fk);
+      if (!f) {
+        const port = await this.portForFederation(fid);
+        if (!port || typeof port.fees !== 'function') return refuse(`this signer node cannot reach federation ${fid.slice(0, 16)}, so it settles nothing there`);
+        f = await port.fees(); this.fees.set(fk, f);
+      }
+      feesByFed.set(fid, f);
+    }
+    return { ok: true, federationOf: (o) => fedOf.get(`${toHex(o.txid)}:${o.outIdx}`) || null, feesOf: (fid) => feesByFed.get(fid) || null };
+  }
+
+  /**
+   * AN ATTESTED OR BOOK ROUND THAT TAKES ANY FEDERATION (2026.0.3 step 5c): its plan decided once with no fee - `planWith(fees)`
+   * is the round's own settlement (attestedLockSettlement, bookLockSettlement) - then split into one transaction per federation,
+   * each priced by its own guardians' rule; answered in the shape the lock rounds' per-federation settlement takes.
+   */
+  async #anyFederationPlan(roundIdBytes, contract, entries, locks, feeLocks, planWith, rest) {
+    const fed = await this.#federationsOf(roundIdBytes, contract, entries, locks, feeLocks);
+    if (!fed.ok) return fed;
+    const plan = planWith(NO_FEES);
+    if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
+    if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
+    const split = splitByFederation(plan, { roundId: roundIdBytes, ...fed });
+    if (!split.ok) return refuse(`no lock is claimed: ${split.why}`);
+    return { ok: true, anyFed: true, plan, split, base: { plan, entryOf: rest.lockEntry }, contract, locks, ...rest };
   }
 
   async #attestedPlan(roundIdBytes, a, claimPk, held) {
@@ -540,7 +593,7 @@ export class LockSettlement {
     }
     const key = toHex(roundIdBytes);
     let fees = this.fees.get(key);
-    if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
+    if (!fees && !takesAnyFederation(contract)) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(key, fees); }
     // THE MARKET'S OWN NODE FEE (kanban #235), 0.5 % by default - and its donation, which its entries' fee locks hold with
     // it (entryFeeBpsOf): due now, at resolution, to the round's donation target
     const ofGame = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
@@ -551,9 +604,13 @@ export class LockSettlement {
       if (!t.ok) return refuse(`no lock is claimed: a market's fee locks hold its donation, and ${t.why}`);
       donation = { recipients: t.target };
     }
-    const plan = attestedLockSettlement({ roundId: roundIdBytes, table, entries, locks, fees, feeLocks,
+    const attested = (f) => attestedLockSettlement({ roundId: roundIdBytes, table, entries, locks, fees: f, feeLocks,
       signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract,
       feeBps: manifest ? feeBpsOf(manifest) : undefined, donation });
+    if (takesAnyFederation(contract))
+      return this.#anyFederationPlan(roundIdBytes, contract, entries.map((e) => ({ entryId: e.entryIdBytes, pubkey: e.pubkey })), locks, feeLocks,
+        attested, { claimPk, held, lockEntry, table });
+    const plan = attested(fees);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);
     return { ok: true, plan, base: { plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry, table };
@@ -765,7 +822,6 @@ export class LockSettlement {
     // AN ATTESTED ROUND (§0A.7a): its plan is its pari-mutuel table's, on a final outcome only
     { const a = this.#attestedOf(roundIdBytes);
       if (a) {
-        if (anyFed) return refuse('an attested round that takes any federation is not settled per federation yet (2026.0.3 step 5c)');
         if (!a.finality.final) return refuse(this.#attestedHold(roundIdBytes)?.why || 'an attested round whose outcome is not final');
         return this.#attestedPlan(roundIdBytes, a, claimPk, held);
       } }
@@ -794,31 +850,11 @@ export class LockSettlement {
     // A ROUND THAT TAKES ANY FEDERATION: each claimed lock's federation is its entry's (entryFederation), each federation's fee
     // rule its own port's, read once; the plan decided once and split into one transaction per federation (federationPlans)
     if (anyFed) {
-      const fedOf = new Map();
-      for (const e of on.entries) {
-        const raw = this.round.entry ? this.round.entry(e.entryId) : null;
-        if (!raw) continue;
-        const ef = entryFederation(contract, decodeEntryContract(raw));
-        if (!ef.ok) return refuse(`no lock is claimed: ${ef.why}`);
-        const fid = toHex(ef.federationId);
-        const sl = locks.get(toHex(e.pubkey)); if (sl) fedOf.set(`${toHex(sl.outpoint.txid)}:${sl.outpoint.outIdx}`, fid);
-        const fl = feeLocks.get(toHex(e.pubkey)); if (fl) fedOf.set(`${toHex(fl.outpoint.txid)}:${fl.outpoint.outIdx}`, fid);
-      }
-      const feesByFed = new Map();
-      for (const fid of new Set(fedOf.values())) {
-        const fk = `${key}:fed:${fid}`;
-        let f = this.fees.get(fk);
-        if (!f) {
-          const port = await this.portForFederation(fid);
-          if (!port || typeof port.fees !== 'function') return refuse(`this signer node cannot reach federation ${fid.slice(0, 16)}, so it settles nothing there`);
-          f = await port.fees(); this.fees.set(fk, f);
-        }
-        feesByFed.set(fid, f);
-      }
       const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
+      const fed = await this.#federationsOf(roundIdBytes, contract, on.entries.map((e) => ({ entryId: e.entryId, pubkey: e.pubkey })), locks, feeLocks);
+      if (!fed.ok) return fed;
       const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, feeLocks,
-        signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null },
-        { federationOf: (o) => fedOf.get(`${toHex(o.txid)}:${o.outIdx}`) || null, feesOf: (fid) => feesByFed.get(fid) || null });
+        signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null }, fed);
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry };
     }
@@ -1159,6 +1195,9 @@ export class LockSettlement {
    * through that federation's port, the guardians' answer kept - each under its own nonce and its own row.
    */
   async #settleFederations(roundIdBytes) {
+    // AN ATTESTED ROUND IS HELD, OR VOID, AS IN ONE FEDERATION (#attestedHold): nothing moves in any federation before its outcome
+    const hold = this.#attestedHold(roundIdBytes);
+    if (hold) return hold;
     const got = await this.planOf(roundIdBytes);
     if (!got.ok) return got;
     if (this.winnings) {
