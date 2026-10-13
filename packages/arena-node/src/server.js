@@ -27,7 +27,8 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
-import { CHOICE, voteMessage, encodeVote } from '../../arena-protocol/src/ballot.js';
+import { CHOICE, voteMessage, encodeVote, SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { createProposals } from './proposals.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
@@ -263,7 +264,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "Node software SHOULD make certificate provisioning a first-class setup
   // step"): { cert, key } PEM - the same doors and sockets over https/wss on the same port; none, plain http as ever
   tls = null,
-  randomnessFor, chainFor, peers = [], headerBytes, bondProof, proposals = null,
+  randomnessFor, chainFor, peers = [], headerBytes, bondProof, proposals: givenProposals = null,
+  // THE BALLOT'S PROPOSALS (kanban #329): { confirmedTx(txidHex, blockHashHex), lowestBondMinSats } - main.js reads bitcoind
+  ballot = null,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
   // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
@@ -699,6 +702,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
   };
+  // THE PROPOSALS THIS SEAT KEEPS (kanban #329, proposals.js): a deposit pays the network's donation set in force at its height
+  const proposals = givenProposals || (ballot ? createProposals({ confirmedTx: ballot.confirmedTx,
+    recipientsFor: (net, height) => {
+      const networkId = fromHex(net); const keys = donationKeysForNetworkId(networkId);
+      if (!keys) return null;
+      const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
+        rotations: donationRotations, height, verify: verifyDonation });
+      return forced.ok ? forced.recipients : null;
+    },
+    lowestBondMinSatsFor: () => ballot.lowestBondMinSats,
+    // regtest votes on its short schedule (1 / 6 / 1); every other network on the genesis one (27A.7.4)
+    scheduleFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return k && k.network === 'regtest' ? SCHEDULES.regtest : SCHEDULES.mainnet; },
+    verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
+    store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
+      write: (list) => { round.db.exec('CREATE TABLE IF NOT EXISTS ballot_proposals (id TEXT PRIMARY KEY, json TEXT NOT NULL)');
+        const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); } } }) : null);
   // WHAT A PLAYER'S DONATION IN THIS ROUND PAYS (§0A.8, kanban #205): half to the network's set - the protocol devs - and
   // half to the round's game's set - its developer's, as its registration carries it, checked against its manifest. A
   // round of a game this node does not host, or with no network set, has no target, and its entries' donations are judged

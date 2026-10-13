@@ -268,6 +268,20 @@ if (url) {
   // (No census is read ahead for rounds owing an on-chain pool payout: that payout is gone with the withdrawn custody -
   // §23.6, RULED 2026-09-25. A round's view is read the first time it is asked for, below.)
   Object.assign(options, {
+    // THE BALLOT'S PROPOSALS (kanban #329): a deposit read from the block its proposer names - getrawtransaction with a block hash
+    // needs no txindex - and that block's height, only while it is on this bitcoind's main chain. The lowest bracket's bond_min
+    // is the rounds' floor until the 27A.2 median is built (testnet4's rounds name 50 000 sat): ARENA_LOWEST_BOND_MIN_SATS.
+    ballot: {
+      confirmedTx: async (txid, blockHash) => {
+        try {
+          const head = await call('getblockheader', [blockHash]);
+          if (!head || !(Number(head.confirmations) >= 1)) return null;
+          const hex = await call('getrawtransaction', [txid, false, blockHash]);
+          return { raw: fromHex(String(hex)), height: Number(head.height) };
+        } catch { return null; }
+      },
+      lowestBondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000),
+    },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
     chainTip: async () => Number(await call('getblockcount')),
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
