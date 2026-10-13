@@ -65,3 +65,45 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
   }
   return { ok: true, seated, used, why: used ? `${used} no-show${used === 1 ? '' : 's'} replaced by the alternates in order` : 'every drawn guardian took part' };
 }
+
+/**
+ * WHAT STARTS A FOUNDING (§23A.2, kanban #320): one of three events, each at a Bitcoin height that becomes the founding's
+ * `trigger_height`; the earliest that has happened wins. Pure: the caller reads the facts off the chain and the records.
+ *
+ *   genesis     `capable`: [{ height, operators }] - guardian-capable census nodes of distinct operators at each height, ascending;
+ *               the network's first federation at the first height with at least `nominal` of them, only while no federation exists
+ *               ("a network with six willing operators has no mainnet federation ... and says so rather than opening with six")
+ *   succession  `records`: [{ federation, status, height, replace }] - a federation that entered DRAINING, or whose guardians decided
+ *               by threshold signature to be replaced (`replace: true`), at that record's height
+ *   load        `loads`: [{ height, federations: [{ federation, status, load }] }], ascending - every OPEN federation at or above 80 %
+ *               of its exposure cap (load >= 0.8) at every height for `abandonBlocks`; the trigger is the height that completes it
+ * Answers { ok, kind, height, why } for the earliest, or { ok: false, why } naming what is missing.
+ */
+export const LOAD_TRIGGER = 0.8;
+export function foundingTrigger({ capable = [], records = [], loads = [], nominal, abandonBlocks, federationExists = false }) {
+  const found = [];
+  if (!federationExists && Number.isInteger(nominal)) {
+    const g = capable.find((x) => x.operators >= nominal);
+    if (g) found.push({ kind: 'genesis', height: g.height, why: `${g.operators} guardian-capable operators at ${g.height}, at least federation_nominal ${nominal}: the first federation is drawn` });
+  }
+  for (const r of records) {
+    if (r.status === 'DRAINING' || r.replace === true)
+      found.push({ kind: 'succession', height: r.height, why: `federation ${String(r.federation).slice(0, 16)} ${r.replace ? 'decided by threshold signature to be replaced' : 'entered DRAINING'} at ${r.height}: its successor is drawn` });
+  }
+  if (Number.isInteger(abandonBlocks) && abandonBlocks > 0) {
+    let since = null;
+    for (const at of [...loads].sort((a, b) => a.height - b.height)) {
+      const open = (at.federations || []).filter((f) => f.status === 'OPEN');
+      const full = open.length > 0 && open.every((f) => typeof f.load === 'number' && f.load >= LOAD_TRIGGER);
+      if (!full) { since = null; continue; }
+      if (since === null) since = at.height;
+      if (at.height - since >= abandonBlocks) {
+        found.push({ kind: 'load', height: at.height, why: `every OPEN federation at or above ${LOAD_TRIGGER * 100} % of its cap from ${since} to ${at.height} (abandon_blocks ${abandonBlocks}): a new federation is drawn` });
+        break;
+      }
+    }
+  }
+  if (!found.length) return { ok: false, why: federationExists ? 'no federation is draining or replaced, and the OPEN ones are not all at 80 % for abandon_blocks' : `fewer than federation_nominal ${nominal} guardian-capable operators so far: no federation, and no paying round` };
+  found.sort((a, b) => a.height - b.height);
+  return { ok: true, ...found[0] };
+}
