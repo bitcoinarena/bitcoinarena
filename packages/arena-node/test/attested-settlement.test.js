@@ -11,6 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, openLockRound, lockAndPlay, closeRound, standing } from './lock-round-fixture.js';
+import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 import { b32, LOSER, wait } from './window-fixture.js';
 import { skipTo, testNow } from './test-clock.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -201,11 +202,13 @@ test('nobody right: nothing is claimed, the fees neither, every stake back at on
 // REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market whose manifest names a resolution time and a deadline -
 // here 1 minute after entry close and 1 minute for its attestors - and no attestation by then: the round is VOID, nothing
 // is claimed, and every stake comes back at once. Before the deadline it is only held.
-const TERMS_MARKET = testAttestedGame({ name: 'btc-close-terms', outcomes: OUTCOMES, marketTerms: { nodeFeeBps: 50, donationBps: 50,
-  question: 'Where does BTC/USD close?', resolveAfterCloseMs: 60000n, deadlineAfterResolveMs: 60000n, sourceRule: 'median of three test feeds' } });
+const TERMS = { nodeFeeBps: 50, donationBps: 50,
+  question: 'Where does BTC/USD close?', resolveAfterCloseMs: 60000n, deadlineAfterResolveMs: 60000n, sourceRule: 'median of three test feeds' };
+const TERMS_MARKET = testAttestedGame({ name: 'btc-close-terms', outcomes: OUTCOMES, marketTerms: TERMS });
 test('a market with terms and no outcome by its deadline: VOID, nothing claimed, every stake back at once; held before it', async () => {
   const round = { ...ROUND, gameId: TERMS_MARKET.registration.gameId };
-  const w = await lockRound({ stakeMsat: STAKE, round, endMs: testNow() + 900000,
+  // its locks last to its deadline and objection window (lock-expiry.js marketExpiryBlocks, the seat's own guard at open)
+  const w = await lockRound({ stakeMsat: STAKE, round, endMs: testNow() + 900000, stakeExpiryFor: (c) => marketExpiryBlocks(c, TERMS).blocks,
     serveOpts: { plugins: [NEXTBLOCK, TERMS_MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] } });
   skipTo(Number(w.c.committeeTimeMs) + 100);
   try {
