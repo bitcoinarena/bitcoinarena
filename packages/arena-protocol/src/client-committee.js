@@ -14,6 +14,7 @@
 //             (beaconFromChain), its hash the randomness (committeeSeedFromBeacon);
 //   SORTITION selectCommittee over the verified entries, the function a seat's Roster.committeeFor runs.
 // This package carries no curve and no signature scheme: `bond` brings the curve operations, `verify` BIP-340.
+import { tableAnchorOf } from './known-game.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf } from './tx.js';
 import { splitSignedAdvert, decodeAdvert, advertId } from './advert.js';
 import { provesTransaction, recognizeBond, merkleRootFromProof } from './chain.js';
@@ -171,7 +172,9 @@ export function committeeFromChain({ contract, roundId, headers, firstHeight, ev
   if (!census.ok) return census;
   const beacon = beaconFromChain(contract, { headers, firstHeight });
   if (!beacon.ok) return { ok: false, why: `no beacon: ${beacon.why}` };
-  const seeded = committeeSeedFromBeacon(contract, { roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
+  // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf), as the seats do
+  const anchor = tableAnchorOf(contract);
+  const seeded = committeeSeedFromBeacon(contract, { roundId: anchor ? anchor.anchorId : roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
   if (!seeded.ok) return { ok: false, why: seeded.why };
   const committees = {};
   // THE DRAW (§5A.7 reserve seats, kanban #301): more than the seats, in score order - a seating certificate is checked
