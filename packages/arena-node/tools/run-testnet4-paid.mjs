@@ -31,6 +31,9 @@ import { execFileSync } from 'node:child_process';
 import { standUpRound, keepBackToBack, tableCounter } from './round-2of2.mjs';
 import { ROCK_PAPER_SCISSORS as RPS_V1, RPS_ROUND_FIELDS as RPS_FIELDS_V1 } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { GAME as RPS_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v2.js';
+import { UPDOWN_TN4 } from '../../btc-updown/plugin/btc-updown.js';
+import { GAME as UPDOWN_V2 } from '../../btc-updown/plugin/btc-updown-v2.js';
+import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 // PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -240,6 +243,58 @@ if (env.PAID_RPS_GRID === '1') {
     } catch (e) { say({ rpsGridNotOpened: e.message }); } finally { busy = false; }
   };
   look(); setInterval(look, 30000);
+}
+// BITCOIN UP OR DOWN AS A GRID (kanban #348/#293, the owner 2026-10-13 "Ja": Up/Down rounds tonight in every federation - a daily
+// series needs 24 h from its committee to its start; a grid needs 45 min): PAID_UPDOWN_GRID=1 publishes one table of
+// UPDOWN_GRID_SLOTS (default 96, 24 h) 15-minute windows on the UTC grid - each round's entries close at its start, its window
+// the 15 min before (attested.js marketWindowOf) - on the lowest-load OPEN federation this opener serves, its locks lasting
+// through the grid's last window (lock-expiry.js marketExpiryBlocks), and keeps the next one UPDOWN_GRID_AHEAD_MS ahead.
+if (env.PAID_UPDOWN_GRID === '1') {
+  const UPDOWN = env.ARENA_PROTOCOL_VERSION === '2' ? UPDOWN_V2 : UPDOWN_TN4;
+  const period = BigInt(UPDOWN.manifest.roundPeriodMs);
+  const slots = Number(env.UPDOWN_GRID_SLOTS || 96);
+  const aheadMs = Number(env.UPDOWN_GRID_AHEAD_MS || 3 * 3600000);
+  const feeRate = Number(env.UPDOWN_GRID_FEE_RATE || 2), maxFeeRate = Number(env.UPDOWN_GRID_MAX_FEE_RATE || 4);
+  const ZERO = new Uint8Array(32);
+  let lastCloseMs = Number(env.UPDOWN_GRID_AFTER_MS || 0), busy = false;
+  const keep = async () => {
+    if (busy || lastCloseMs > Date.now() + aheadMs) return;
+    busy = true;
+    try {
+      const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
+      const committee = mtp + Number(env.UPDOWN_GRID_COMMITTEE_LEAD_MS || env.RPS_GRID_COMMITTEE_LEAD_MS || 45 * 60000) + 500;
+      // the first close on the 15-minute UTC grid, at least 45 min past the committee time and right after the last grid's
+      const p = Number(period);
+      const firstClose = Math.ceil(Math.max(committee + 45 * 60000 + 1000, Date.now() + 60000, lastCloseMs + p) / p) * p;
+      const keys = donationKeysForNetworkId(round.contract.networkId);
+      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+        rotations: [], height: round.contract.censusHeight,
+        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+      const own = toHex(round.contract.federationId);
+      const serves = [own, ...String(env.ARENA_OTHER_FEDERATION_INVITES || '').split(',').map((x) => x.trim()).filter(Boolean)
+        .map((inv) => { try { return String(readInvite(inv).federationId); } catch { return null; } }).filter(Boolean)];
+      let fedPick = { federationId: own, load: null, why: 'the seats\' federation records were not read: its own' };
+      try {
+        const fl = await (await fetch(`http://${NODE_HOST}:${pa}/federations`, { signal: AbortSignal.timeout(15000) })).json();
+        fedPick = openingFederation({ listed: fl.federations || [], serves, own });
+      } catch { /* its own */ }
+      say({ updownGrid: 'asked', game: toHex(UPDOWN.gameId).slice(0, 16), slots, committeeTime: new Date(committee).toISOString(),
+        firstClose: new Date(firstClose).toISOString(), federation: fedPick.federationId.slice(0, 16) });
+      const got = await round.openGrid({ fields: { gameId: UPDOWN.gameId, simCoreHash: ZERO, configHash: ZERO, minScore: 0,
+        donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fedPick.federationId) }, stakeMsat,
+        stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
+        { slots, tables: 1, windowMs: period, entryAfterStartMs: 0n, firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
+          onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `updown-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ updownGrid: 'published', ...p }); },
+          onPosted: (p) => say({ updownGrid: 'posted', ...p }) });
+      if (got.dry) { say({ updownGrid: 'dry', ...got }); return; }
+      say({ updownGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, beacon: got.beacon, rounds: got.rounds, posted: got.posted,
+        lastClose: got.lastCloseMs ? new Date(Number(got.lastCloseMs)).toISOString() : undefined });
+      if (got.ok) lastCloseMs = Number(got.lastCloseMs);
+    } catch (e) { say({ updownGridNotOpened: e.message }); } finally { busy = false; }
+  };
+  keep(); setInterval(keep, 60000);
 }
 // PAID ROCK PAPER SCISSORS BACK TO BACK (kanban #293, the owner 2026-10-10: head-to-head needs no series, and a paid round is
 // still paid - 100 sats as Tick Tock's): PAID_RPS=1 keeps a paying RPS round closing every 8 s, published ahead, at this
