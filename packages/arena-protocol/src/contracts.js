@@ -15,7 +15,7 @@ import { stakeExpiryFits } from './lock-expiry.js';
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
 import {
-  TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
+  TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, takesAnyFederation, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -455,6 +455,15 @@ export function encodeEntryContract(e) {
     w.u8(COMMIT_MARKER);
     w.bytes32(e.commit);
   }
+  // THE FEDERATION ITS LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the entry
+  // names where its stake and fee locks are. WRITTEN ONLY WHEN THERE IS ONE, last, after its own marker: every other entry keeps
+  // exactly its bytes and its id.
+  if (e.federationId !== undefined && e.federationId !== null) {
+    if (!(e.federationId instanceof Uint8Array) || e.federationId.length !== 32 || e.federationId.every((b) => b === 0))
+      throw new Error('an entry names its federation in 32 bytes, not zero');
+    w.u8(FEDERATION_MARKER);
+    w.bytes32(e.federationId);
+  }
   return w.finish();
 }
 
@@ -464,6 +473,8 @@ export const PICK_MARKER = 0xa7;
 export const COMMIT_MARKER = 0xa8;
 /** The byte before a market order's limit price and expiry (kanban #278), after its pick. */
 export const ORDER_MARKER = 0xa9;
+/** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
+export const FEDERATION_MARKER = 0xaa;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 export const STAKE_POINT_BYTES = 33;
@@ -498,20 +509,25 @@ export function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER) {
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && bytes[r.at] !== FEDERATION_MARKER) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
   }
-  if (r.at < bytes.length) {
+  if (r.at < bytes.length && bytes[r.at] !== FEDERATION_MARKER) {
     const marker = r.u8();
     if (marker === PICK_MARKER) e.pick = r.u8();
     else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
     else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
-    if (marker === PICK_MARKER && r.at < bytes.length) {
+    if (marker === PICK_MARKER && r.at < bytes.length && bytes[r.at] !== FEDERATION_MARKER) {
       if (r.u8() !== ORDER_MARKER) throw new Error('these bytes carry something after the pick that is not an order');
       e.limitPrice = r.u32();
       e.orderExpiryMs = r.u64();
     }
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== FEDERATION_MARKER) throw new Error('these bytes carry something after the entry that is not its federation');
+    e.federationId = r.bytes32();
+    if (e.federationId.every((b) => b === 0)) throw new Error('an entry names its federation in 32 bytes, not zero');
   }
   r.end();
   return e;
@@ -723,6 +739,8 @@ export function custodyFieldsAreValid(c, { manifest = null } = {}) {
 export function federationIsNamed(c) {
   if (!c) return { ok: false, why: 'no contract' };
   if (!(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
+  // FROM 2026.0.3 A ZERO federation_id IS "ANY": each entry names the federation its lock is in (takesAnyFederation)
+  if (takesAnyFederation(c)) return { ok: true };
   if (!is32(c.federationId) || c.federationId.every((b) => b === 0))
     return {
       ok: false,
