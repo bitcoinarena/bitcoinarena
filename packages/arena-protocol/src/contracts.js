@@ -218,6 +218,21 @@ export function encodeRoundContract(c) {
     w.bytes32(c.seriesId);
     w.u32(c.roundIndex);
   } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
+  // THE RULES IT IS SETTLED UNDER (§6 equivocation_rule_hash ... bond_min per role, kanban #313's sibling #314; 2026.0.3): after their
+  // own marker, before the creator's key, only when named - 148 bytes: four rule hashes, disconnect_rule, claim_window_days, and the
+  // bond floor of each role (rules.js). Every tail length that can follow stays distinct, so a contract naming none keeps its id.
+  if (c.rules !== undefined && c.rules !== null) {
+    if (!(version >= CREATOR_VERSION)) throw new Error(`a round names its rules from protocol version ${CREATOR_VERSION} on`);
+    const r = c.rules;
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+      if (!(r[k] instanceof Uint8Array) || r[k].length !== 32) throw new Error(`a round names its ${k} rule by a 32-byte hash`);
+    if (!Number.isInteger(r.disconnect) || r.disconnect < 0 || r.disconnect > 255) throw new Error('disconnect_rule is a byte');
+    if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 0 || r.claimWindowDays > 0xffff) throw new Error('claim_window_days is 0 to 65535');
+    if (typeof r.bondMinGameVerifySats !== 'bigint' || typeof r.bondMinSettlementSats !== 'bigint') throw new Error('a round names each role\'s bond floor in BigInt sats');
+    w.u8(RULES_MARKER);
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) w.bytes32(r[k]);
+    w.u8(r.disconnect); w.u16(r.claimWindowDays); w.u64(r.bondMinGameVerifySats); w.u64(r.bondMinSettlementSats);
+  }
   // THE CREATOR'S KEY (§6 `creator_pubkey`, kanban #313; 2026.0.3): the x-only key whose BIP-340 signature over the round id rides
   // beside the contract (creator.js), as the id does. Last, after its own marker, and only when named: 33 bytes, so a tail of
   // 33/37/69/73 bytes is never one of the 0/4/36/40 above, and every contract that names none keeps its bytes and its id.
@@ -231,6 +246,9 @@ export function encodeRoundContract(c) {
   return w.finish();
 }
 
+/** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
+export const RULES_MARKER = 0xc2;
+const RULES_BYTES = 148;
 /** The byte before a round's creator key (§6, kanban #313), last of the contract. */
 export const CREATOR_MARKER = 0xc1;
 /** The protocol version a round may name its creator from (2026.0.3). */
@@ -306,11 +324,17 @@ export function decodeRoundContract(bytes) {
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
   let left = r.b.length - r.at;
-  // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first
-  const creatorAt = [33, 37, 69, 73].includes(left) ? r.b.length - 33 : -1;
+  // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
+  const base = [0, 4, 36, 40];
+  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? r.b.length - 33 : -1;
   if (creatorAt >= 0) {
     if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
     left -= 33;
+  }
+  const rulesAt = base.some((b) => left === b + RULES_BYTES) ? r.at + left - RULES_BYTES : -1;
+  if (rulesAt >= 0) {
+    if (r.b[rulesAt] !== RULES_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
+    left -= RULES_BYTES;
   }
   if (left !== 0 && left !== 4 && left !== 36 && left !== 40) throw new Error(`a round contract with ${left} trailing bytes`);
   if (left === 4 || left === 40) {
@@ -322,6 +346,14 @@ export function decodeRoundContract(bytes) {
   if (left === 36 || left === 40) {
     c.seriesId = r.bytes32();
     c.roundIndex = r.u32();
+  }
+  if (rulesAt >= 0) {
+    r.u8();
+    const rules = {};
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) rules[k] = r.bytes32();
+    rules.disconnect = r.u8(); rules.claimWindowDays = r.u16(); rules.bondMinGameVerifySats = r.u64(); rules.bondMinSettlementSats = r.u64();
+    c.rules = rules;
+    if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its rules from protocol version ${CREATOR_VERSION} on`);
   }
   if (creatorAt >= 0) {
     r.u8();
