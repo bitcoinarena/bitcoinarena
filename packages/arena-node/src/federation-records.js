@@ -170,17 +170,16 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // abandon_blocks - gone ABANDONED since the proof's height, under the proof's id; the attestations go along on the second
     // ask, so every guardian seat checks exactly that set
     // AND WHO GAVE NOTICE (§23A.5): a standing departure notice due at this height - DEPARTED from its leave_after, under its id
+    // BOTH HELD for one guardian (FEDERATION.md rehearsal 14, kanban #326): "a departure that stops serving before its leave_after"
+    // is abandonment (§23A.5) - the proof wins when the absence it attests began before the notice's leave_after
     const departed = [];
-    if (absences && Number.isInteger(departureNotice)) for (const g of plain.guardians) {
-      if (gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))) continue;
-      const d = absences.departureFor(plain.record, g.peerKey, departureNotice, b.height);
-      if (d.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); departed.push(d.notice); }
-    }
     const absent = [];
-    if (absences && Number.isInteger(abandonBlocks)) for (const g of plain.guardians) {
+    if (absences) for (const g of plain.guardians) {
       if (gone.some((x) => toHex(x.peerKey) === toHex(g.peerKey))) continue;
-      const p = absences.proofFor(plain.record, g.peerKey, abandonBlocks);
-      if (p.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id }); absent.push(...p.attestations); }
+      const d = Number.isInteger(departureNotice) ? absences.departureFor(plain.record, g.peerKey, departureNotice, b.height) : { ok: false };
+      const p = Number.isInteger(abandonBlocks) ? absences.proofFor(plain.record, g.peerKey, abandonBlocks) : { ok: false };
+      if (p.ok && (!d.ok || p.sinceHeight < d.sinceHeight)) { gone.push({ peerKey: g.peerKey, sinceHeight: p.sinceHeight, kind: GONE.ABANDONED, proofRef: p.id }); absent.push(...p.attestations); }
+      else if (d.ok) { gone.push({ peerKey: g.peerKey, sinceHeight: d.sinceHeight, kind: GONE.DEPARTED, proofRef: d.id }); departed.push(d.notice); }
     }
     // THE BODY WITH THEM GONE, and the signatures over exactly it: a guardian's signature counts for the body it signed,
     // so with anyone gone every seat signs again - the leave statements move the body, and the seat asks once more
