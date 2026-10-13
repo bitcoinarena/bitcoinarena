@@ -2035,6 +2035,14 @@
     // complete transcript to at least two committee nodes ... before showing the victory screen. This is what makes the veto work for
     // a player who closes the browser immediately afterwards." The batches stream live, so this asks the nodes what they hold
     // (secureTranscript) and, until two hold the whole run, holds a line over the result card: "keep this tab open".
+    // THE CHAIN CHECKED OUTSIDE THE NETWORK (§5A.4, kanban #299): a paid join's census and tip are spot-checked against a block explorer -
+    // mempool.space for testnet4 rounds by default; `arena.explorer` in this browser's storage names another Esplora base, or `off`
+    window.ARENA_EXPLORER_FOR = (round) => {
+      let said = null; try { said = localStorage.getItem('arena.explorer'); } catch { /* no storage: the default */ }
+      if (said === 'off') return null;
+      if (said && /^https:\/\//.test(said)) return said;
+      return round && round.networkId && BLWPCLIENT.toHex(round.networkId) === '1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15' ? 'https://mempool.space/testnet4/api' : null;
+    };
     window.BLWP_SECURE_RUN = async (word, run, { tries = 30, everyMs = 3000 } = {}) => {
       if (!run || !/DELIVERED/.test(String(word || '')) || !BLWPCLIENT.secureTranscript) return null;
       const M = window.unityInstance && window.unityInstance.Module;
@@ -2215,7 +2223,7 @@
       // THE COMMITTEE THIS PAGE BUILDS ITSELF (kanban #296, spec 5A.6): the headers agreed from the round's nodes, the
       // round's census checked entry by entry against them and as a set against its census_root, the beacon off the same
       // headers and the seats' sortition. The nodes' own /committee is only compared - one that differs is named.
-      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE }).then(async (sn) => {
+      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE, explorer: window.ARENA_EXPLORER_FOR ? window.ARENA_EXPLORER_FOR(round) : null }).then(async (sn) => {
         // AND THE FEDERATION'S RECORD, checked against the same census (kanban #321): what this page may do with it
         try {
           const census = BLWPCLIENT.checkedCensusFor(round);
@@ -5581,7 +5589,7 @@
             let best = null;
             for (const x of read.slice(0, 3)) {
               try {
-                await Promise.race([BLWPCLIENT.clientSettlementSignerNodes(x.r.id, x.c, nodes, { curve: window.BLWP_CURVE }),
+                await Promise.race([BLWPCLIENT.clientSettlementSignerNodes(x.r.id, x.c, nodes, { curve: window.BLWP_CURVE, explorer: window.ARENA_EXPLORER_FOR ? window.ARENA_EXPLORER_FOR(x.c) : null }),
                   new Promise((_, no) => setTimeout(() => no(new Error('no committee in 20 s')), 20000))]);
                 const census = BLWPCLIENT.checkedCensusFor(x.c);
                 const n = census && census.entries ? census.entries.length : 0;
