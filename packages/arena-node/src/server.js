@@ -27,6 +27,7 @@ import { nodeStanding } from './node-standing.js';
 import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
+import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
@@ -5186,6 +5187,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      // THE REPLAY BUDGET (§34, kanban #303): this seat's measured replay speed - the median of its newest replays - and the players a
+      // round of T_run can hold inside the 600 s result window at it; no measurement, no number ("do not hard-code ... 20x realtime")
+      if (req.method === 'GET' && url.pathname === '/replay-budget') {
+        const speedX = verifier.pool && typeof verifier.pool.measuredSpeed === 'function' ? verifier.pool.measuredSpeed() : null;
+        const runMs = Number(url.searchParams.get('runMs') || 82000);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ speedX, samples: verifier.pool && verifier.pool.samples ? verifier.pool.samples.length : 0, runMs,
+          maxPlayersPerRound: speedX ? maxPlayersPerRound({ speedX, runMs }) : null,
+          retention: 'transcripts are kept: this seat prunes none, so they outlast the objection and claim windows' }));
+      }
+
       // WHAT A ROUND'S CENSUS SUPPORTS (§5A.10, kanban #306): its stake against the ceiling its census's health derives - nodes and
       // bonded capital per role; enforced off the test networks, shown on them
       if (req.method === 'GET' && url.pathname === '/census-health') {
