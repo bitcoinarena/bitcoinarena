@@ -247,6 +247,42 @@ if (env.PAID_RPS_GRID === '1') {
   };
   look(); setInterval(look, 30000);
 }
+// TICK TOCK AS A 24 H GRID (kanban #353, the owner 2026-10-13 ~22:00Z: "Poste immer 24h Runden"): PAID_NEXTBLOCK_GRID=1 keeps one table of
+// NB_GRID_SLOTS (default 4: 24 h) rounds of the single rounds' own shape - NB_GRID_PERIOD_MS (default 6 h) apart, each open for
+// entries its whole period, so one closes as the next starts - published NB_GRID_AHEAD_MS (default 30 h) ahead in the runner's
+// own federation, game and core, each table right after the last (NB_GRID_AFTER_MS: a table already published, its last close).
+if (env.PAID_NEXTBLOCK_GRID === '1') {
+  const slots = Number(env.NB_GRID_SLOTS || 4), period = Number(env.NB_GRID_PERIOD_MS || 6 * 3600000);
+  const aheadMs = Number(env.NB_GRID_AHEAD_MS || 30 * 3600000);
+  const feeRate = Number(env.NB_GRID_FEE_RATE || 2), maxFeeRate = Number(env.NB_GRID_MAX_FEE_RATE || 8);
+  let lastCloseMs = Number(env.NB_GRID_AFTER_MS || 0), busy = false;
+  const keep = async () => {
+    if (busy || lastCloseMs > Date.now() + aheadMs) return;
+    busy = true;
+    try {
+      const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
+      const committee = mtp + Number(env.NB_GRID_COMMITTEE_LEAD_MS || 4 * 3600000) + 500;
+      const firstClose = Math.max(committee + 45 * 60000 + period + 1000, Date.now() + 60000, lastCloseMs + period);
+      const keys = donationKeysForNetworkId(round.contract.networkId);
+      const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+        sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+        rotations: [], height: round.contract.censusHeight,
+        verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+      if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+      const own = toHex(round.contract.federationId);
+      say({ nbGrid: 'asked', slots, committeeTime: new Date(committee).toISOString(), firstClose: new Date(firstClose).toISOString(), federation: own.slice(0, 16) });
+      const got = await round.openGrid({ fields: { donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(own) }, stakeMsat },
+        { slots, tables: 1, windowMs: BigInt(period), entryAfterStartMs: BigInt(period), firstCloseMs: BigInt(firstClose), committeeTimeMs: BigInt(committee), feeRate, maxFeeRate,
+          onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `nb-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ nbGrid: 'published', ...p }); },
+          onPosted: (p) => say({ nbGrid: 'posted', ...p }) });
+      if (got.dry) { say({ nbGrid: 'dry', ...got }); return; }
+      say({ nbGrid: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, beacon: got.beacon, rounds: got.rounds, posted: got.posted,
+        lastClose: got.lastCloseMs ? new Date(Number(got.lastCloseMs)).toISOString() : undefined });
+      if (got.ok) lastCloseMs = Number(got.lastCloseMs);
+    } catch (e) { say({ nbGridNotOpened: e.message }); } finally { busy = false; }
+  };
+  keep(); setInterval(keep, 60000);
+}
 // BITCOIN UP OR DOWN AS A GRID (kanban #348/#293, the owner 2026-10-13 "Ja": Up/Down rounds tonight in every federation - a daily
 // series needs 24 h from its committee to its start; a grid needs 45 min): PAID_UPDOWN_GRID=1 publishes one table of
 // UPDOWN_GRID_SLOTS (default 96, 24 h) 15-minute windows on the UTC grid - each round's entries close at its start, its window
