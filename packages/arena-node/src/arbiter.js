@@ -265,7 +265,7 @@ export { REPLAY_CONTRADICTS };
  * pubnonces; POST /musig/partial { sessionId, aggnonce } -> their partial signatures (each nonce used once); GET /status
  * -> the set and what it posted. `posted` is the arbiter loop's record of path B spends it broadcast.
  */
-export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', posted = [], payouts = () => [], claims = null }) {
+export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', posted = [], payouts = () => [], claims = null, liquidationPayouts = () => [] }) {
   const { createServer } = await import('node:http');
   const party = musigParty({ set, allow });
   const server = createServer(async (req, res) => {
@@ -281,6 +281,12 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
       return answer(200, { network: set.network, payouts: payouts().filter((p) => !round || p.round === round) });
     }
     // A HALTED FEDERATION'S CLAIMS (§23A.5, kanban #323): the notes a client presents, and the table the window's end pays
+    // THE CLAIMS PAID (kanban #323): each lock the set made to a claim's key - the halted federation, the federation it was paid in
+    // (`into`), the key, msat, txid and out_idx - so a page collects its own by Refund, as a slash payout
+    if (req.method === 'GET' && url.pathname === '/liquidation-payouts') {
+      const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+      return answer(200, { network: set.network, payouts: liquidationPayouts().filter((p) => !fid || p.federation === fid) });
+    }
     if (url.pathname === '/liquidation-claims' && claims) {
       if (req.method === 'GET') { const p = await claims.plan(url.searchParams.get('federation')); return answer(p.ok ? 200 : (p.status || 409), p); }
       if (req.method === 'POST') {

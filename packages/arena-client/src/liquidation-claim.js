@@ -6,8 +6,8 @@
 // presented with the player's payout key. The e-cash is written to storage BEFORE it is presented and removed only once the
 // arbitration set took it, so a closed tab or a refused post loses nothing: the next start presents the same string again,
 // and notes claimed before are named, not lost.
-const KEY = 'blwp-liquidation-ecash-';
-export const pendingClaimKey = (fid) => `${KEY}${String(fid).toLowerCase()}`;
+const LIQUIDATION_ECASH_PREFIX = 'blwp-liquidation-ecash-';
+export const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
 
 /**
  * `liquidations`: a seat's GET /liquidations entries; `held`: federation ids hex this browser holds a wallet in (ledgerFederations);
@@ -37,6 +37,43 @@ export async function presentNotes({ liquidations, held, walletFor, payoutPk, he
       if (taken) storage.removeItem(pendingClaimKey(fid));
       out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !taken });
     } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true }); }
+  }
+  return out;
+}
+
+// THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
+// round id of its own, H(tag || federation id)), so a seed restored on another device collects what the first presented.
+// A payout is a pre-expired lock to refundKeyOf(that key), collected by Refund under it - as a slash payout is (kanban #307).
+import { playerSecretFor } from '../../arena-protocol/src/player-key.js';
+import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
+import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+
+export function liquidationKeyFor(seed, federationHex, curve) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a claim key comes from the player\'s 32-byte seed');
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('a claim key is a key on a curve, and none was injected');
+  const secret = playerSecretFor(seed, taggedHash('ARENA/v1/LiquidationKey', fromHex(String(federationHex).toLowerCase())), 0);
+  const pubkey = curve.pointX(secret);
+  return { secret, pubkey, payoutPk: toHex(refundKeyOf(pubkey)) };
+}
+
+/**
+ * THE PAYOUTS OF A LIQUIDATION THAT NAME THIS SEED (`listed`: the arbitration set's GET /liquidation-payouts), each collected
+ * by Refund into `client` - this player's wallet of the federation the payout was locked in - once (`storage` notes it).
+ */
+export async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage }) {
+  const out = [];
+  for (const p of (listed && listed.payouts) || []) {
+    const key = liquidationKeyFor(seed, p.federation, curve);
+    if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
+    const note = `blwp-liquidation-paid-${p.txid}:${p.outIdx}`;
+    if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
+    const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
+    try {
+      const client = await clientFor(p.into);
+      const said = JSON.parse(await client.refund(p.txid, Number(p.outIdx), JSON.stringify(fields), toHex(key.secret)));
+      if (said.accepted === true) storage.setItem(note, JSON.stringify({ msat: p.msat, at: Date.now() }));
+      out.push({ ...p, ok: said.accepted === true, why: said.accepted === true ? null : (said.error || 'the federation did not accept the refund') });
+    } catch (e) { out.push({ ...p, ok: false, why: e.message }); }
   }
   return out;
 }

@@ -581,7 +581,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -595,6 +595,13 @@ const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
  */
 const DRAW_FREE_VERSION = 2;
 const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= DRAW_FREE_VERSION;
+// EVERY GAME THROUGH EVERY FEDERATION (2026.0.3, kanban #348; the owner 2026-10-13 ~11:45Z: "Es muss möglich sein für alle Spiele über
+// alle Federation zu zahlen"): from version 3 a paying round need not name one federation - a zero federation_id takes a stake
+// lock in any federation its seats hold OPEN, each entry naming its own (contracts.js FEDERATION_MARKER) - and it settles one
+// balanced federation transaction per federation by one payout table.
+const MULTI_FEDERATION_VERSION = 3;
+const takesAnyFederation = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= MULTI_FEDERATION_VERSION
+  && c.federationId instanceof Uint8Array && c.federationId.length === 32 && c.federationId.every((b) => b === 0);
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -825,6 +832,15 @@ const TYPE_PRESENT = 0x21;
 const TYPE_SEATING = 0x22;
 // A CONFIG PROPOSAL (§27A.7.2, kanban #329): the full named configuration a ballot decides
 const TYPE_CONFIG_PROPOSAL = 0x23;
+// A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5, kanban #322); 0x23 is the ballot's (#329)
+const TYPE_ABSENCE_ATTESTATION = 0x24;
+const TYPE_DEPARTURE_NOTICE = 0x25;
+// A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1, kanban #323); 0x23 is the
+// ballot's (#329), 0x24 and 0x25 absence and departure (#322)
+const TYPE_SPENT_SET = 0x26;
+// WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): open and close of the attested tape and the front, signed by the
+// settlement committee
+const TYPE_ROUND_RESULT = 0x27;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -837,6 +853,12 @@ const TAG = {
   roundContract: 'ARENA/v1/RoundContract',
   // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
   seriesRound: 'ARENA/v1/SeriesRound',
+  // WHAT A ROUND'S CREATOR SIGNS (§6 creator_signature, kanban #313): the round's id, under this tag
+  roundCreator: 'ARENA/v1/RoundCreator',
+  // A RULE A CONTRACT NAMES (§6 *_rule_hash, kanban #314): the rule's text under this tag
+  contractRule: 'ARENA/v1/ContractRule',
+  // A GUARDIAN FOUNDING'S TICKET (§23A.2, kanban #320): the spec's own tag
+  guardianTicket: 'BLWP/v1/GUARDIAN',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
@@ -965,6 +987,10 @@ const TAG = {
   // §5A.7 reserve seats (kanban #301)
   seatPresent: 'ARENA/v1/SeatPresent',
   seating: 'ARENA/v1/Seating',
+  // §23A.5 a guardian's signed copy of a halted federation's spent-note set (kanban #323)
+  spentSet: 'ARENA/v1/SpentSet',
+  // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close (kanban #312)
+  roundResult: 'ARENA/v1/RoundResult',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
@@ -973,6 +999,10 @@ const TAG = {
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
   vote: 'ARENA/v1/Vote',
+  // ABSENCE AND DEPARTURE (§23A.4-5, kanban #322): what a guardian signs, and an abandonment proof's id
+  absenceAttestation: 'ARENA/v1/AbsenceAttestation',
+  departureNotice: 'ARENA/v1/DepartureNotice',
+  abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
 /**
@@ -1751,8 +1781,41 @@ function encodeRoundContract(c) {
     w.bytes32(c.seriesId);
     w.u32(c.roundIndex);
   } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
+  // THE RULES IT IS SETTLED UNDER (§6 equivocation_rule_hash ... bond_min per role, kanban #313's sibling #314; 2026.0.3): after their
+  // own marker, before the creator's key, only when named - 148 bytes: four rule hashes, disconnect_rule, claim_window_days, and the
+  // bond floor of each role (rules.js). Every tail length that can follow stays distinct, so a contract naming none keeps its id.
+  if (c.rules !== undefined && c.rules !== null) {
+    if (!(version >= CREATOR_VERSION)) throw new Error(`a round names its rules from protocol version ${CREATOR_VERSION} on`);
+    const r = c.rules;
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+      if (!(r[k] instanceof Uint8Array) || r[k].length !== 32) throw new Error(`a round names its ${k} rule by a 32-byte hash`);
+    if (!Number.isInteger(r.disconnect) || r.disconnect < 0 || r.disconnect > 255) throw new Error('disconnect_rule is a byte');
+    if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 0 || r.claimWindowDays > 0xffff) throw new Error('claim_window_days is 0 to 65535');
+    if (typeof r.bondMinGameVerifySats !== 'bigint' || typeof r.bondMinSettlementSats !== 'bigint') throw new Error('a round names each role\'s bond floor in BigInt sats');
+    w.u8(RULES_MARKER);
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) w.bytes32(r[k]);
+    w.u8(r.disconnect); w.u16(r.claimWindowDays); w.u64(r.bondMinGameVerifySats); w.u64(r.bondMinSettlementSats);
+  }
+  // THE CREATOR'S KEY (§6 `creator_pubkey`, kanban #313; 2026.0.3): the x-only key whose BIP-340 signature over the round id rides
+  // beside the contract (creator.js), as the id does. Last, after its own marker, and only when named: 33 bytes, so a tail of
+  // 33/37/69/73 bytes is never one of the 0/4/36/40 above, and every contract that names none keeps its bytes and its id.
+  if (c.creatorPubkey !== undefined && c.creatorPubkey !== null) {
+    if (!(c.creatorPubkey instanceof Uint8Array) || c.creatorPubkey.length !== 32 || c.creatorPubkey.every((b) => b === 0))
+      throw new Error('a round names its creator by a 32-byte x-only key');
+    if (!(version >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
+    w.u8(CREATOR_MARKER);
+    w.bytes32(c.creatorPubkey);
+  }
   return w.finish();
 }
+
+/** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
+const RULES_MARKER = 0xc2;
+const RULES_BYTES = 148;
+/** The byte before a round's creator key (§6, kanban #313), last of the contract. */
+const CREATOR_MARKER = 0xc1;
+/** The protocol version a round may name its creator from (2026.0.3). */
+const CREATOR_VERSION = 3;
 
 /**
  * A CUSTODY BYTE THIS NETWORK HAS, OR THE RECORD DOES NOT PARSE (RULED, the owner 2026-09-22 22:59).
@@ -1823,7 +1886,19 @@ function decodeRoundContract(bytes) {
   // The start deadline, present only when the round named one that is not the
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
-  const left = r.b.length - r.at;
+  let left = r.b.length - r.at;
+  // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
+  const base = [0, 4, 36, 40];
+  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? r.b.length - 33 : -1;
+  if (creatorAt >= 0) {
+    if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
+    left -= 33;
+  }
+  const rulesAt = base.some((b) => left === b + RULES_BYTES) ? r.at + left - RULES_BYTES : -1;
+  if (rulesAt >= 0) {
+    if (r.b[rulesAt] !== RULES_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
+    left -= RULES_BYTES;
+  }
   if (left !== 0 && left !== 4 && left !== 36 && left !== 40) throw new Error(`a round contract with ${left} trailing bytes`);
   if (left === 4 || left === 40) {
     const d = r.u32();
@@ -1834,6 +1909,20 @@ function decodeRoundContract(bytes) {
   if (left === 36 || left === 40) {
     c.seriesId = r.bytes32();
     c.roundIndex = r.u32();
+  }
+  if (rulesAt >= 0) {
+    r.u8();
+    const rules = {};
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) rules[k] = r.bytes32();
+    rules.disconnect = r.u8(); rules.claimWindowDays = r.u16(); rules.bondMinGameVerifySats = r.u64(); rules.bondMinSettlementSats = r.u64();
+    c.rules = rules;
+    if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its rules from protocol version ${CREATOR_VERSION} on`);
+  }
+  if (creatorAt >= 0) {
+    r.u8();
+    c.creatorPubkey = r.bytes32();
+    if (c.creatorPubkey.every((b) => b === 0)) throw new Error('a round names its creator by a 32-byte x-only key');
+    if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
@@ -1849,12 +1938,16 @@ function decodeRoundContract(bytes) {
 const roundId = (c) => {
   if (c && c.seriesId !== undefined && c.seriesId !== null) {
     encodeRoundContract(c);                                   // a contract that does not encode has no id
-    const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, c.roundIndex, false);
-    const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
-    return taggedHash(TAG.seriesRound, body);
+    return seriesRoundIdOf(c.seriesId, c.roundIndex);
   }
   return taggedHash(TAG.roundContract, encodeRoundContract(idBodyOf(c)));
 };
+/** Round i of a series' id, H(series_id || i), from the two alone (a seat looking at a series' earlier rounds, #304). */
+function seriesRoundIdOf(seriesIdBytes, index) {
+  const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, index, false);
+  const body = new Uint8Array(36); body.set(seriesIdBytes, 0); body.set(i, 32);
+  return taggedHash(TAG.seriesRound, body);
+}
 /**
  * THE BYTES A ROUND'S ID HASHES (2026.0.2, kanban #348): a v2 contract's with `nodes` emptied - the seated nodes are the
  * draw's answer, written in by each seat after it, and never an input to the draw - and a v1 contract's whole, as before.
@@ -1988,6 +2081,23 @@ function encodeEntryContract(e) {
     w.u8(COMMIT_MARKER);
     w.bytes32(e.commit);
   }
+  // THE FEDERATION ITS LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the entry
+  // names where its stake and fee locks are. WRITTEN ONLY WHEN THERE IS ONE, last, after its own marker: every other entry keeps
+  // exactly its bytes and its id.
+  if (e.federationId !== undefined && e.federationId !== null) {
+    if (!(e.federationId instanceof Uint8Array) || e.federationId.length !== 32 || e.federationId.every((b) => b === 0))
+      throw new Error('an entry names its federation in 32 bytes, not zero');
+    w.u8(FEDERATION_MARKER);
+    w.bytes32(e.federationId);
+  }
+  // THE OPERATOR THIS PLAYER IS (§7 `operator_id_declaration`, §5A.13, kanban #309): "none" or the operator's key. WRITTEN ONLY
+  // WHEN IT NAMES ONE, last, after its own marker: "none" is no bytes, so every other entry keeps exactly its bytes and its id.
+  if (e.operatorId !== undefined && e.operatorId !== null) {
+    if (!(e.operatorId instanceof Uint8Array) || e.operatorId.length !== 32 || e.operatorId.every((b) => b === 0))
+      throw new Error('an entry declares its operator in 32 bytes, not zero ("none" is no declaration)');
+    w.u8(OPERATOR_MARKER);
+    w.bytes32(e.operatorId);
+  }
   return w.finish();
 }
 
@@ -1997,6 +2107,10 @@ const PICK_MARKER = 0xa7;
 const COMMIT_MARKER = 0xa8;
 /** The byte before a market order's limit price and expiry (kanban #278), after its pick. */
 const ORDER_MARKER = 0xa9;
+/** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
+const FEDERATION_MARKER = 0xaa;
+/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), last of all. */
+const OPERATOR_MARKER = 0xab;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 const STAKE_POINT_BYTES = 33;
@@ -2031,20 +2145,32 @@ function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER) {
+  // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER;
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
   }
-  if (r.at < bytes.length) {
+  if (r.at < bytes.length && !tail(bytes[r.at])) {
     const marker = r.u8();
     if (marker === PICK_MARKER) e.pick = r.u8();
     else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
     else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
-    if (marker === PICK_MARKER && r.at < bytes.length) {
+    if (marker === PICK_MARKER && r.at < bytes.length && !tail(bytes[r.at])) {
       if (r.u8() !== ORDER_MARKER) throw new Error('these bytes carry something after the pick that is not an order');
       e.limitPrice = r.u32();
       e.orderExpiryMs = r.u64();
     }
+  }
+  if (r.at < bytes.length && bytes[r.at] === FEDERATION_MARKER) {
+    r.u8();
+    e.federationId = r.bytes32();
+    if (e.federationId.every((b) => b === 0)) throw new Error('an entry names its federation in 32 bytes, not zero');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== OPERATOR_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation nor its operator');
+    e.operatorId = r.bytes32();
+    if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
   }
   r.end();
   return e;
@@ -2256,6 +2382,8 @@ function custodyFieldsAreValid(c, { manifest = null } = {}) {
 function federationIsNamed(c) {
   if (!c) return { ok: false, why: 'no contract' };
   if (!(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
+  // FROM 2026.0.3 A ZERO federation_id IS "ANY": each entry names the federation its lock is in (takesAnyFederation)
+  if (takesAnyFederation(c)) return { ok: true };
   if (!is32(c.federationId) || c.federationId.every((b) => b === 0))
     return {
       ok: false,
@@ -2348,6 +2476,24 @@ function contractWarnings(c, gameWarnings = null) {
   if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
   if (typeof gameWarnings === 'function') out.push(...gameWarnings(c));
   return out;
+}
+
+/**
+ * THE FEDERATION AN ENTRY'S LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the
+ * one the entry names - an entry naming none is refused; on any other round the round's own - an entry naming another is
+ * refused. Answers { ok, federationId } or { ok: false, why }. Which federations a seat takes is the seat's (OPEN, bonded).
+ */
+function entryFederation(round, entry) {
+  if (!round || !entry) return { ok: false, why: 'no round or no entry' };
+  const named = entry.federationId instanceof Uint8Array && entry.federationId.length === 32 && !entry.federationId.every((b) => b === 0) ? entry.federationId : null;
+  if (takesAnyFederation(round)) {
+    if (!named) return { ok: false, why: 'that round takes a lock in any federation, and the entry names none: it says where its locks are (2026.0.3)' };
+    return { ok: true, federationId: named };
+  }
+  if (!is32(round.federationId) || round.federationId.every((b) => b === 0)) return { ok: false, why: 'that round names no federation, so its stake is not a lock' };
+  if (named && !named.every((b, i) => b === round.federationId[i]))
+    return { ok: false, why: 'that entry names another federation than its round\'s, which takes one federation only' };
+  return { ok: true, federationId: round.federationId };
 }
 
 // ---- arena-protocol/src/batch.js
@@ -4436,8 +4582,27 @@ function encodeAdvert(a) {
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   w.vec(a.hostedGames, (g, ww) => ww.bytes32(g));
   w.u64(a.timestamp);
+  // STEPPING OUT WITHOUT UNBONDING (§5A.3, RULED the owner 2026-09-28; kanban #302): `serving = false`, published as an advertisement
+  // update, takes the node out of every census from that update's block on - its bond untouched. Written only when false, one
+  // marker byte last: "serving" is no bytes, so every advertisement before this keeps its bytes and the hash its bond committed to.
+  // THE NODE'S DECLARED SCALARS (§27A.2, kanban #305): its preferred bond_min and proposal deposit - "declaring it must bind the
+  // declarer" - over which the census takes the bond-weighted median. 17 bytes after their marker, before serving; none declared is
+  // no bytes, so every advertisement before this keeps its bytes.
+  if (a.declares !== undefined && a.declares !== null) {
+    const d = a.declares;
+    if (typeof d.bondMinSats !== 'bigint' || typeof d.proposalDepositSats !== 'bigint' || d.bondMinSats < 0n || d.proposalDepositSats < 0n)
+      throw new Error('a node declares bond_min and proposal_deposit in BigInt sats');
+    w.u8(DECLARES_MARKER); w.u64(d.bondMinSats); w.u64(d.proposalDepositSats);
+  }
+  if (a.serving !== undefined && a.serving !== true && a.serving !== false) throw new Error('serving is true or false');
+  if (a.serving === false) w.u8(NOT_SERVING_MARKER);
   return w.finish();
 }
+
+/** The byte before a node's declared scalars (§27A.2, kanban #305), before serving. */
+const DECLARES_MARKER = 0x5d;
+/** The last byte of an advertisement that steps its node out of the census (serving = false, §5A.3). */
+const NOT_SERVING_MARKER = 0x5f;
 
 /** Two game ids in byte order; equal is not an order (a game is hosted once). */
 function compareGameIds(x, y) {
@@ -4491,6 +4656,11 @@ function decodeAdvert(bytes) {
   for (let i = 1; i < a.hostedGames.length; i++)
     if (compareGameIds(a.hostedGames[i - 1], a.hostedGames[i]) >= 0) throw new Error('hosted_games is not sorted or names a game twice');
   a.timestamp = r.u64();
+  // the declared scalars (17 bytes) and serving = false (1), each only when written: 0, 1, 17 or 18 bytes left
+  const left = bytes.length - r.at;
+  if ((left === 17 || left === 18) && bytes[r.at] === DECLARES_MARKER) { r.u8(); a.declares = { bondMinSats: r.u64(), proposalDepositSats: r.u64() }; }
+  // serving = false only when it says so; a serving node's advertisement decodes as it always did (no field)
+  if (r.at === bytes.length - 1 && bytes[r.at] === NOT_SERVING_MARKER) { r.u8(); a.serving = false; }
   if (r.at !== bytes.length) throw new Error('trailing bytes after the advertisement');
   return a;
 }
@@ -7723,6 +7893,9 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     name: 'rock-paper-scissors',
     // 2026.0.2 (kanban #348): manifest version 2, parent 1e9ab4b7, requires the round that names no draw
     requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (kanban #293, the owner 2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
     cores: Object.freeze({
       'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
     }),
@@ -7768,6 +7941,8 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 1, year: 2026, x: 0 }),
   // the round contract that does not name its draw (kanban #348, RULED the owner 2026-10-13)
   Object.freeze({ version: 2, year: 2026, x: 0 }),
+  // every game through every federation: a round that names no single federation, each entry its own (kanban #348)
+  Object.freeze({ version: 3, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -7901,6 +8076,23 @@ function termsOfKnownGame(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   if (!game || !game.terms) return null;
   return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
+}
+
+/**
+ * A TABLE'S ANCHOR (kanban #293, the owner 2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
+ * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
+ * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the
+ * table draws its committee on that round's id (beacon.js committeeSeedFromBeacon) and takes that round's seating certificate, so
+ * all of them name one committee and one claim key (the seats' DKG is per committee). null for every other round: it draws and seats
+ * itself, as before.
+ */
+function tableAnchorOf(contract) {
+  if (!contract || !(contract.seriesId instanceof Uint8Array) || !Number.isInteger(contract.roundIndex)) return null;
+  if (!(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= 2)) return null;
+  const known = KNOWN_GOOD_GAMES[toHex(contract.gameId)];
+  if (!known || known.seatsPerTable !== true) return null;
+  const body = new Uint8Array(36); body.set(contract.seriesId, 0);      // round 0's id: H(series_id || 0), as contracts.js roundId
+  return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
 }
 
 // ---- arena-protocol/src/fee.js
@@ -8389,6 +8581,7 @@ function claimKeyIsAttested({ roundId, claimPk, signatures, signerNodes, settlem
 
 
 
+
 /**
  * THE ENTRY FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
  * player confirmed - its manifest's), else the pinned game's, else the network's 5 %. A MARKET'S IS ITS NODE FEE AND ITS
@@ -8666,7 +8859,20 @@ const stakeOf = (round) => (round && round.orderStakeMsat !== undefined && round
  * non-zero federation_id (§6, §23.6).
  */
 const roundLocks = (round) => roundPays(round)
-  && round.federationId instanceof Uint8Array && round.federationId.some((b) => b !== 0);
+  && round.federationId instanceof Uint8Array && (round.federationId.some((b) => b !== 0) || takesAnyFederation(round));
+
+/**
+ * A ROUND THAT TAKES ANY FEDERATION, RESOLVED TO THE ONE THIS PLAYER LOCKS IN (2026.0.3 step 7, kanban #348): the same round - its
+ * id kept, since the id is its contract's and the contract names no federation - with `federationId` the chosen one, so the
+ * wallet, the lock and the entry below need nothing else; `anyFederation` tells entryFor to name it on the entry. Any other
+ * round is answered as it is.
+ */
+function inFederation(round, federationId) {
+  if (!round || !takesAnyFederation(round)) return round;
+  const fid = typeof federationId === 'string' ? fromHex(federationId) : federationId;
+  if (!(fid instanceof Uint8Array) || fid.length !== 32 || fid.every((b) => b === 0)) throw new Error('a round that takes any federation is locked in a named one');
+  return { ...round, id: round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round), federationId: fid, anyFederation: true };
+}
 
 /** 1 type + 2 version + 32 round + 33 claim key + 32 signer node, then a 64-byte signature. */
 const ATTESTATION_BYTES = 100;
@@ -9274,6 +9480,8 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
     ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
       ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
+    // THE FEDERATION ITS LOCKS ARE IN, on a round that takes any (inFederation; contracts.js FEDERATION_MARKER)
+    ...(round.anyFederation ? { federationId: round.federationId } : {}),
     // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
@@ -10738,6 +10946,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
     claims.push({ pubkey: e.pubkey, outpoint: f.outpoint, amountMsat: f.amountMsat, preimage: f.preimage, kind: 'fee' });
   }
   const eligible = new Set([...signerNodes[GAME_VERIFY], ...signerNodes[SETTLEMENT], ...(Array.isArray(signerNodes[GUARDIAN]) ? signerNodes[GUARDIAN] : [])].map(toHex));
+  // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13, kanban #309): its operator plays the round (operator-conflict.js); the
+  // caller names them on `signerNodes.conflicted` (hex), and their shares go to the rest of their pool as any absent node's
+  for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
   let table;
   try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(feeBps !== undefined ? { feeBps } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
@@ -10763,9 +10974,24 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   if (spendable <= 0n) return refuse(`the guardians' fees on the fee locks (${inputFeesMsat} msat) take the whole fee of ${poolMsat}`);
   const payouts = [];
   const unpaid = [];
+  // THE SERIES PUBLISHER'S FEE BACK (§5A.5, kanban #304; publisher-payout.js): one line, off the top of the NODES' part of the fee
+  // locks - never the donation's - in the round that pays it: `signerNodes.publisher` { payoutPk, msat }. What the nodes' part
+  // can pay, at most the publisher's msat; the nodes share the rest as before.
+  const nodePartMsat = (spendable * table.fee) / poolMsat;
+  let publisherGross = 0n;
+  const pub = signerNodes.publisher;
+  if (pub && pub.msat > 0n) {
+    if (!(pub.payoutPk instanceof Uint8Array) || pub.payoutPk.length !== 33) return refuse('the series publisher is paid to a 33-byte key');
+    const got = largestPayoutMsat(fees, pub.msat + lnv2FeeMsat(fees, pub.msat) < nodePartMsat ? pub.msat + lnv2FeeMsat(fees, pub.msat) : nodePartMsat);
+    if (got > 0n) {
+      publisherGross = got + lnv2FeeMsat(fees, got);
+      payouts.push({ pubkey: pub.payoutPk.subarray(1), payoutPk: pub.payoutPk, owedMsat: pub.msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'publisher' });
+    } else unpaid.push({ pubkey: pub.payoutPk.subarray(1), owedMsat: pub.msat, why: 'the publisher\'s fee back does not pay its own output fee' });
+  }
+  const nodesSpendable = nodePartMsat - publisherGross;
   for (const [key, msat] of owed) {
     const pubkey = fromHex(key);
-    const got = largestPayoutMsat(fees, (msat * spendable) / poolMsat);
+    const got = largestPayoutMsat(fees, publisherGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
     if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
     payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
   }
@@ -12346,6 +12572,66 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
   return { ...got, client };
 }
 const PAYOUT_NOTE = 'arena.payout.';
+
+/**
+ * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7, kanban #348): one transaction per federation, listed by the
+ * seats' /lock-settlement as `federations` [{ federation, state, txid, moved: { payouts } }]. The first node that holds them all
+ * ACCEPTED answers; else why not.
+ */
+async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {}) {
+  const said = [];
+  for (const node of [...new Set(nodes || [])]) {
+    try {
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`);
+      if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
+      const j = await r.json();
+      if (j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
+        && j.federations.every((f) => f.state === 'ACCEPTED' && f.moved && Array.isArray(f.moved.payouts)))
+        return { ok: true, federations: j.federations, from: node };
+      said.push(`${node}: ${j.state}`);
+    } catch (e) { said.push(`${node}: ${e.message}`); }
+  }
+  return { ok: false, why: `no signer node holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
+}
+
+/**
+ * THE WINNER COLLECTS IN EVERY FEDERATION THAT PAID IT (2026.0.3 step 7): a round that takes any federation pays each winner the
+ * same fraction of every federation's pot (federation-settlement.js), each a pre-expired payout contract to the same refund key
+ * in that federation's own transaction. Each is spent by Refund into the player's wallet OF THAT FEDERATION - `clientFor(fidHex)`
+ * the open wallet (the page keeps one per federation) - and noted per federation, so a reload asks only for what is left.
+ * Answers { ok, final, collected: [{ federation, txid, outIdx, amountMsat }], waiting: [{ federation, why }], why }.
+ */
+async function redeemPayoutsAcross({ round, roundId, seed, curve, storage, nodes, clientFor, fetcher = fetch, onStep = () => {}, order = 0 } = {}) {
+  if (typeof clientFor !== 'function') throw new Error('a payout in several federations is collected into each federation\'s own wallet, and none was named');
+  const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
+  const mine = toHex(refundKeyOf(player.pubkey));
+  onStep('asking the signer nodes for the round\'s settlements');
+  const s = await federationSettlementsOf({ roundId, nodes, fetcher });
+  if (!s.ok) return { ok: false, final: false, collected: [], waiting: [], why: s.why };
+  const collected = [], waiting = [];
+  for (const f of s.federations) {
+    const at = f.moved.payouts.findIndex((p) => p.kind === 'qualifier' && String(p.pk).toLowerCase() === mine);
+    if (at < 0) continue;
+    const fid = String(f.federation).toLowerCase();
+    const noted = `${PAYOUT_NOTE}${toHex(roundId)}.${fid.slice(0, 16)}${orderTag(order)}`;
+    try { const kept = storage && storage.getItem(noted); if (kept) { const k = JSON.parse(kept); collected.push({ ...k, amountMsat: BigInt(k.amountMsat), kept: true }); continue; } } catch { /* no note */ }
+    const p = f.moved.payouts[at];
+    const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: mine, refundPk: mine, expiration: 0 };
+    onStep(`collecting the payout in federation ${fid.slice(0, 8)}`);
+    let said;
+    try { said = JSON.parse(await (await clientFor(fid)).refund(f.txid, at, JSON.stringify(fields), toHex(player.secret))); }
+    catch (e) { waiting.push({ federation: fid, why: e.message }); continue; }
+    const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+    if (said.accepted === true || spent) {
+      const got = { federation: fid, txid: f.txid, outIdx: at, amountMsat: BigInt(p.msat), spent };
+      collected.push(got);
+      if (storage) try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* a reload asks again */ }
+    } else waiting.push({ federation: fid, why: said.error || 'the federation did not accept the refund' });
+  }
+  if (!collected.length && !waiting.length) return { ok: false, final: true, collected, waiting, why: 'the round\'s settlements pay this seed\'s key nothing: no payout to collect' };
+  return { ok: !waiting.length, final: !waiting.length, collected, waiting,
+    why: waiting.length ? waiting.map((w) => `${w.federation.slice(0, 8)}: ${w.why}`).join('; ') : undefined };
+}
 
 /**
  * A SLASH'S PAYOUT (kanban #307, spec §5A.3B: "the arbitration set pegs it into the round's federation and locks each share
@@ -17186,7 +17472,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
-  const rid = toHex(roundId(round));
+  const rid = toHex(round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
   const answers = await Promise.all(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
     try {
@@ -20641,9 +20927,14 @@ function lifecycleBlocks(clocks) {
 function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   if (!Number.isInteger(haltHeight) || haltHeight < 0)
     return { ok: false, why: 'a halt happens at a block height' };
+  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
+  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
+  // claim_blocks before (kanban #323, found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
+  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
   return {
     ok: true,
-    claimWindowCloses: haltHeight + clocks.claimBlocks,
+    claimWindowOpens: haltHeight + clocks.abandonBlocks,
+    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
     lateClaimsUntil: haltHeight + clocks.drainBlocks,
     remainderSplitsAt: haltHeight + clocks.drainBlocks,
   };
@@ -20699,6 +20990,66 @@ function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight,
   return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
     spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
     remainderSplitsAt: when.remainderSplitsAt };
+}
+
+const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
+
+/**
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
+ * the owner 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
+ * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
+ * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
+ */
+function guardianSlashStands({ proof, departure = null }) {
+  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  if (departure && departure.ok) {
+    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
+    if (proof.sinceHeight >= departure.leaveAfterHeight)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
+    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
+  }
+  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
+}
+
+/**
+ * WHO A SLASHED GUARDIAN'S BOND PAYS once its federation is CLOSED with nothing lost (§23A.5, FEDERATION.md rehearsal 14):
+ * 75 % evenly to the census nodes active at the slash height LESS EVERY GUARDIAN OF THAT FEDERATION (they guarded the federation
+ * that lost one), 25 % to the donation set (splitNodesDevelopers). Amounts in sat, BigInt; the nodes' division's leftover
+ * satoshi go to the first node in key order, so the outputs sum to the amount. Answers { ok, nodes: [{ key, sats }], developers }.
+ */
+function guardianSlashPayees({ amountSats, censusNodes, record }) {
+  if (typeof amountSats !== 'bigint' || amountSats <= 0n) return { ok: false, why: 'a slashed bond is a positive number of sat' };
+  const guardians = new Set((record && record.guardians || []).map((g) => hexKey(g.nodePubkey)));
+  const keys = [...new Set((censusNodes || []).map(hexKey))].filter((k) => k && !guardians.has(k)).sort();
+  if (!keys.length) return { ok: false, why: 'no census node outside the federation\'s guardians to pay' };
+  const { nodes, developers } = splitNodesDevelopers(amountSats);
+  const each = nodes / BigInt(keys.length);
+  const out = keys.map((key) => ({ key, sats: each }));
+  out[0].sats += nodes - each * BigInt(keys.length);
+  return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
+}
+
+/**
+ * A LIQUIDATION'S REMAINDER, BY NAME (§23A.5: "only the remainder then, 75% / 25% as above" - "75% evenly to every active census
+ * node at that height ... minus the slashed nodes and minus every guardian of the federation concerned; 25% to the donation set
+ * of §22A - the developers - by share_bps"). `msat` BigInt; `censusNodes` keys at the spending height; `slashed` keys; `record`
+ * the federation's; `donation` the donation set in force, recipients with `recipientPk` (x-only, hex or bytes) and `shareBps`.
+ * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
+ * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
+ */
+function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
+  if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
+  const out = new Set((slashed || []).map(hexKey));
+  const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
+  if (!nodes.ok) return nodes;
+  const keyed = (donation || []).filter((r) => r && r.recipientPk !== undefined && Number.isInteger(r.shareBps) && r.shareBps > 0)
+    .map((r) => ({ key: hexKey(r.recipientPk), bps: BigInt(r.shareBps) })).sort((a, b) => (a.key < b.key ? -1 : 1));
+  const bps = keyed.reduce((a, r) => a + r.bps, 0n);
+  if (!keyed.length || bps !== 10000n) return { ok: false, why: 'the donation set in force names no key recipients whose shares make 10000 bps' };
+  const dev = keyed.map((r) => ({ key: r.key, msat: (nodes.developers * r.bps) / 10000n, part: 'donation' }));
+  dev[0].msat += nodes.developers - dev.reduce((a, r) => a + r.msat, 0n);
+  return { ok: true, payees: [...nodes.nodes.map((n) => ({ key: n.key, msat: n.sats, part: 'node' })), ...dev] };
 }
 
 // ---- arena-protocol/src/genesis.js
@@ -22026,6 +22377,11 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // node that has not said it can serve the round it is being counted into.
     const roles = read.advert.roles || [];
     if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
+    // STEPPED OUT (§5A.3 "advertisement declares serving = true", kanban #302): with updates to come, the newest one decides below
+    if (!versionAfterUpdates && read.advert.serving === false) {
+      excluded.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+      continue;
+    }
 
     // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #348, measured 2026-10-13 05:20Z: the first v2 grid's
     // census came out EMPTY - every node announced version 2 in an advertisement update confirmed at 156338, and this pass
@@ -22211,6 +22567,10 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
     for (const e of before) {
       const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
       if (!u) {
+        if (e.advert && e.advert.serving === false) {
+          updatedOut.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+          continue;
+        }
         // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
         const own = (e.advert && e.advert.protocolVersions) || [];
         if (!own.includes(contract.protocolVersion)) {
@@ -22224,6 +22584,12 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       const versions = u.advert.protocolVersions || [];
       if (!roles.length) {
         updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
+        continue;
+      }
+      // STEPPED OUT (§5A.3, kanban #302): "From the first series whose census_height is at or above that update's block, the node is
+      // not in the census and is never drawn"; an update with serving = true brings it back the same way
+      if (u.advert.serving === false) {
+        updatedOut.push({ ...e, notServing: true, why: `its newest advertisement update (block ${u.height}) says serving = false: its node stepped out of the census, its bond untouched` });
         continue;
       }
       if (!versions.includes(contract.protocolVersion)) {
@@ -22263,8 +22629,69 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
   };
 }
 
+// ---- arena-protocol/src/rules.js
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
+// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role; kanban #314; 2026.0.3). Until now these were bound only
+// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
+// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
+// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
+
+
+const te = new TextEncoder();
+const RULE_TEXTS = Object.freeze({
+  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
+    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
+    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
+  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
+    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
+    + 'entries ENTRY_VOID.',
+  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
+    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
+  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+    + 'census nodes, 25 % to the donation set.',
+});
+/** A rule's hash: its text under the rule tag. */
+const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
+const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
+const DISCONNECT_LAST_MARK = 1;
+const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
+
+/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
+function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
+  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
+    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
+}
+
+/**
+ * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
+ * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * role no lower than the round's bond_min.
+ */
+function rulesStand(contract) {
+  const r = contract && contract.rules;
+  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
+  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
+  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
+  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
+    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
+  return { ok: true, why: 'that round names the rules this build settles under' };
+}
+
+/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
+function roleFloorSats(contract, role) {
+  const r = contract && contract.rules;
+  if (!r) return contract.bondMinSats;
+  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
+}
+
 // ---- arena-protocol/src/sortition.js
 // Committee selection: bond-weighted, linear, and decided in integers.
+
 
 
 
@@ -22386,7 +22813,11 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   // v4.4 unsafe".
   if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
     throw new Error('that round names no positive bond floor to weigh against');
-  const bondMin = contract.bondMinSats;
+  // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per role, kanban #314; rules.js): the role's floor weighs and
+  // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
+  const bondMin = namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
   //
@@ -22428,7 +22859,7 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
   // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
 
-  const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
+  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats }) => ({
     entry,
     ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
     weight: weightOf(bondSats, bondMin),
@@ -22820,6 +23251,7 @@ function beaconIsTheChains(contract, beacon, view) {
 
 
 
+
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
 const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
@@ -22964,7 +23396,9 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
   if (!census.ok) return census;
   const beacon = beaconFromChain(contract, { headers, firstHeight });
   if (!beacon.ok) return { ok: false, why: `no beacon: ${beacon.why}` };
-  const seeded = committeeSeedFromBeacon(contract, { roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
+  // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf), as the seats do
+  const anchor = tableAnchorOf(contract);
+  const seeded = committeeSeedFromBeacon(contract, { roundId: anchor ? anchor.anchorId : roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
   if (!seeded.ok) return { ok: false, why: seeded.why };
   const committees = {};
   // THE DRAW (§5A.7 reserve seats, kanban #301): more than the seats, in score order - a seating certificate is checked
@@ -22989,6 +23423,7 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+
 
 
 
@@ -23088,18 +23523,22 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
   // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before #301).
   got.seating = {};
+  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (kanban #293 pick (c)): that round's certificate, asked and checked as its own
+  const anchor = tableAnchorOf(contract);
+  const seatId = anchor ? anchor.anchorId : roundId;
+  const seatHex = toHex(seatId);
   for (const role of roles) {
     let spoke = false; const refused = [];
     let found = null;
     for (const u of nodes) {
       try {
-        const r = await fetcher(`${baseOf(u)}/seating?round=${roundIdHex}&role=${role}`);
+        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`);
         const body = await r.text();
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
         const cert = JSON.parse(body).cert;
-        const v = verifySeating(fromHex(cert), { roundId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        const v = verifySeating(fromHex(cert), { roundId: seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) { found = { seated: v.seating.seated, from: u }; break; }
         refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
@@ -23567,6 +24006,23 @@ function depositFederation({ lobbyInvite, statuses = [], held = [], known = () =
 }
 
 /**
+ * WHERE A STAKE IS LOCKED FOR A ROUND THAT TAKES ANY FEDERATION (2026.0.3 step 7, kanban #348; the owner 2026-10-13: "Es muss möglich
+ * sein für alle Spiele über alle Federation zu zahlen", "It should always take the federation with less funds so it's evened out").
+ * A lock spends notes of one federation, so only a federation whose wallet here covers the stake can hold it; among those the
+ * lowest-load OPEN, known one (pickFederation). `parts` [{ federation, msat }] the wallet per federation (the summed balance's
+ * parts); `statuses` federationStatuses' answers with invites. Answers { federation, invite, why } or { federation: null, why }.
+ */
+function lockFederation({ stakeMsat, parts = [], statuses = [], known = () => true } = {}) {
+  const need = BigInt(stakeMsat || 0);
+  const covers = new Set((parts || []).filter((p) => p && p.federation && BigInt(p.msat ?? 0) >= need).map((p) => String(p.federation).toLowerCase()));
+  if (!covers.size) return { federation: null, why: `no federation's wallet here holds the ${need / 1000n} sat stake: deposit first (it goes to the lowest-load federation)` };
+  const pick = pickFederation((statuses || []).filter((f) => f && f.invite && covers.has(String(f.federation).toLowerCase())), { known });
+  if (!pick) return { federation: null, why: 'no federation that holds the stake here is OPEN and known' };
+  return { federation: String(pick.federation).toLowerCase(), invite: pick.invite,
+    why: `lock in federation ${String(pick.federation).slice(0, 16)}: it holds the stake here and has the lowest load of those that do (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
+}
+
+/**
  * MOVE, OFFERED (§23A.3): a returning player stays in their federation; Move is offered when it is above 90 % load and
  * another OPEN federation is below 50 % - that one named. (DRAINING and CRITICAL are not offers: §23A.6 moves by itself.)
  */
@@ -23724,6 +24180,193 @@ function entryWarnings(contract, fromSeats = []) {
 
 /** The sentences a page shows for the codes. */
 const warningsSay = (codes) => (codes || []).map((k) => WARNING_SAYS[k]).filter(Boolean);
+
+// ---- arena-client/src/liquidation-claim.js
+// THE CLIENT PRESENTS ITS NOTES TO A LIQUIDATION (spec §23A.5 step 2, kanban #323): "The client does the rest on its own: on
+// every start it presents each unspent note it holds for that federation, as it would present them to the federation itself."
+//
+// For each federation a seat lists at GET /liquidations whose claim window is open and that names where claims go, and that this
+// browser holds a wallet in: the whole wallet as out-of-band e-cash (the lock client's sendAllEcash - the notes leave the wallet),
+// presented with the player's payout key. The e-cash is written to storage BEFORE it is presented and removed only once the
+// arbitration set took it, so a closed tab or a refused post loses nothing: the next start presents the same string again,
+// and notes claimed before are named, not lost.
+const LIQUIDATION_ECASH_PREFIX = 'blwp-liquidation-ecash-';
+const pendingClaimKey = (fid) => `${LIQUIDATION_ECASH_PREFIX}${String(fid).toLowerCase()}`;
+
+/**
+ * `liquidations`: a seat's GET /liquidations entries; `held`: federation ids hex this browser holds a wallet in (ledgerFederations);
+ * `walletFor(fid)`: the open lock client of that federation (with sendAllEcash); `payoutPk`: 64 hex, the key the claim is paid
+ * to; `height`: the chain tip the page read; `storage`: getItem/setItem/removeItem. Answers one row per federation acted on.
+ */
+async function presentNotes({ liquidations, held, walletFor, payoutPk, height, storage, fetcher = fetch }) {
+  const out = [];
+  const mine = new Set((held || []).map((f) => String(f).toLowerCase()));
+  for (const l of liquidations || []) {
+    const fid = String(l.federation || '').toLowerCase();
+    if (!mine.has(fid) || !l.claims) continue;
+    if (Number.isInteger(height) && (height < l.liquidatesAt || height > l.lateClaimsUntil)) { out.push({ federation: fid, ok: false, why: height < l.liquidatesAt ? `claims open at ${l.liquidatesAt}` : 'the claims closed' }); continue; }
+    let ecash = storage.getItem(pendingClaimKey(fid));
+    if (!ecash) {
+      let sent;
+      try { sent = JSON.parse(await (await walletFor(fid)).sendAllEcash()); } catch (e) { out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); continue; }
+      if (!sent || !sent.ecash) { out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' }); continue; }
+      ecash = sent.ecash;
+      storage.setItem(pendingClaimKey(fid), ecash);   // kept before it leaves the page
+    }
+    try {
+      const r = await fetcher(String(l.claims).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '') + '/liquidation-claims',
+        { method: 'POST', body: JSON.stringify({ federation: fid, ecash, payoutPk }), signal: AbortSignal.timeout(30000) });
+      const j = await r.json().catch(() => ({}));
+      const taken = r.ok || (Array.isArray(j.refused) && j.refused.length && j.refused.every((x) => /claimed before|spent set/.test(x.why)));
+      if (taken) storage.removeItem(pendingClaimKey(fid));
+      out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !taken });
+    } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true }); }
+  }
+  return out;
+}
+
+// THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
+// round id of its own, H(tag || federation id)), so a seed restored on another device collects what the first presented.
+// A payout is a pre-expired lock to refundKeyOf(that key), collected by Refund under it - as a slash payout is (kanban #307).
+
+
+
+function liquidationKeyFor(seed, federationHex, curve) {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) throw new Error('a claim key comes from the player\'s 32-byte seed');
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('a claim key is a key on a curve, and none was injected');
+  const secret = playerSecretFor(seed, taggedHash('ARENA/v1/LiquidationKey', fromHex(String(federationHex).toLowerCase())), 0);
+  const pubkey = curve.pointX(secret);
+  return { secret, pubkey, payoutPk: toHex(refundKeyOf(pubkey)) };
+}
+
+/**
+ * THE PAYOUTS OF A LIQUIDATION THAT NAME THIS SEED (`listed`: the arbitration set's GET /liquidation-payouts), each collected
+ * by Refund into `client` - this player's wallet of the federation the payout was locked in - once (`storage` notes it).
+ */
+async function collectLiquidationPayouts({ listed, seed, curve, clientFor, storage }) {
+  const out = [];
+  for (const p of (listed && listed.payouts) || []) {
+    const key = liquidationKeyFor(seed, p.federation, curve);
+    if (String(p.payoutPk).toLowerCase() !== key.payoutPk) continue;
+    const note = `blwp-liquidation-paid-${p.txid}:${p.outIdx}`;
+    if (storage.getItem(note)) { out.push({ ...p, ok: true, kept: true }); continue; }
+    const fields = { paymentImage: { kind: 'hash', bytes: '00'.repeat(32) }, amountMsat: String(p.msat), claimPk: key.payoutPk, refundPk: key.payoutPk, expiration: 0 };
+    try {
+      const client = await clientFor(p.into);
+      const said = JSON.parse(await client.refund(p.txid, Number(p.outIdx), JSON.stringify(fields), toHex(key.secret)));
+      if (said.accepted === true) storage.setItem(note, JSON.stringify({ msat: p.msat, at: Date.now() }));
+      out.push({ ...p, ok: said.accepted === true, why: said.accepted === true ? null : (said.error || 'the federation did not accept the refund') });
+    } catch (e) { out.push({ ...p, ok: false, why: e.message }); }
+  }
+  return out;
+}
+
+// ---- arena-protocol/src/round-result.js
+// WHO WON A PRICE ROUND (spec §13 RoundResult, kanban #312): "Who won the round is decided once, by the price, at the round's
+// end ... RoundResult { round_id, open_cents, close_cents (first and last attested sample of the round), front (BULLS if
+// close > open, BEARS if lower, FLAT if equal), node_pubkey, signature (5-of-7 of the settlement committee) }". It is what
+// every client shows as THE BULLS WIN / THE BEARS WIN, the same for every player; it moves no money and enters no score.
+//
+// DECIDED HERE (the spec names the fields, not the bytes): the front is one byte (1 BULLS, 2 BEARS, 3 FLAT) and must agree
+// with open and close, or the object does not parse; each node signs the result's id with its node key (BIP-340) and the
+// signatures sit BESIDE the object, as for a price sample (price-sample.js), so the id never changes when it is signed.
+
+
+
+
+const FRONT = Object.freeze({ BULLS: 1, BEARS: 2, FLAT: 3 });
+const NAMES = Object.freeze({ 1: 'BULLS', 2: 'BEARS', 3: 'FLAT' });
+const frontName = (f) => NAMES[f] || null;
+
+/** BULLS if close > open, BEARS if lower, FLAT if equal (§13). */
+function frontOf(openCents, closeCents) {
+  for (const c of [openCents, closeCents]) if (!Number.isInteger(c) || c <= 0) throw new Error('a price is a whole, positive number of cents');
+  return closeCents > openCents ? FRONT.BULLS : closeCents < openCents ? FRONT.BEARS : FRONT.FLAT;
+}
+
+function encodeRoundResult({ roundId, openCents, closeCents, front }) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) throw new Error('a round result names its 32-byte round');
+  const f = frontOf(openCents, closeCents);
+  if (front !== undefined && front !== f) throw new Error(`a front of ${frontName(front) || front} does not follow from ${openCents} -> ${closeCents} cents`);
+  const w = new Writer();
+  w.u8(TYPE_ROUND_RESULT); w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId); w.i32(openCents); w.i32(closeCents); w.u8(f);
+  return w.finish();
+}
+function decodeRoundResult(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_ROUND_RESULT) throw new Error('not a round result');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const x = { roundId: r.bytes32(), openCents: r.i32(), closeCents: r.i32(), front: r.u8() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the round result');
+  encodeRoundResult(x);   // the front must follow from open and close
+  return x;
+}
+const roundResultId = (x) => taggedHash(TAG.roundResult, encodeRoundResult(x));
+
+/**
+ * THE RESULT A NODE MAKES FROM THE ATTESTED SAMPLES IT HOLDS: open is the first attested sample of the round, close the last
+ * one at or before `endTick` (the round's last tick). `samples`: [{ tick, priceCents }] (attested - the caller holds only
+ * those). Answers { ok, result } or why not.
+ */
+function roundResultFrom({ roundId, samples, endTick }) {
+  const inRound = (samples || []).filter((s) => s && Number.isInteger(s.tick) && s.tick >= 0 && s.tick <= endTick && Number.isInteger(s.priceCents) && s.priceCents > 0)
+    .sort((a, b) => a.tick - b.tick);
+  if (!inRound.length) return { ok: false, why: 'no attested sample of the round is held' };
+  const openCents = inRound[0].priceCents, closeCents = inRound[inRound.length - 1].priceCents;
+  return { ok: true, result: { roundId, openCents, closeCents, front: frontOf(openCents, closeCents) },
+    openTick: inRound[0].tick, closeTick: inRound[inRound.length - 1].tick, samples: inRound.length };
+}
+
+/** A result stands when `threshold` distinct keys of the settlement `committee` signed its id (as an attested price does). */
+function roundResultStands({ result, sigs, committee, threshold, verify }) {
+  let id; try { id = roundResultId(result); } catch (e) { return { ok: false, signed: [], why: e.message }; }
+  return priceAttestationStands({ id, sigs, committee, threshold, verify });
+}
+
+// ---- arena-client/src/round-verdict.js
+// WHO WON THE ROUND, AS THE CLIENT SHOWS IT (§13 RoundResult, kanban #312): "what every client shows as THE BULLS WIN / THE
+// BEARS WIN, the same for every player in the round, whenever they drove". Each seat answers its own signed result at
+// GET /round-result once the round has ended; the client takes the one result that `threshold` distinct keys of the round's
+// settlement committee - the committee THIS client derived, never a seat's word for it - signed, and shows nothing otherwise.
+
+
+const VERDICT_WORDS = Object.freeze({ BULLS: 'THE BULLS WIN', BEARS: 'THE BEARS WIN', FLAT: 'NOBODY WINS: THE PRICE CLOSED WHERE IT OPENED' });
+const verdictPct = (open, close) => `${close >= open ? '+' : ''}${(((close - open) / open) * 100).toFixed(2)}%`;
+
+/**
+ * `roundId` 32 bytes; `nodes` the seats' base URLs; `committee` the settlement committee's keys (hex or bytes) this client
+ * derived; `verify(signature, message, key)` BIP-340. Answers { ok, front, openCents, closeCents, says, signers } or why not.
+ */
+async function roundVerdict({ roundId, nodes, committee, verify, threshold = null, fetcher = fetch, timeoutMs = 8000 }) {
+  if (!(roundId instanceof Uint8Array) || roundId.length !== 32) return { ok: false, why: 'no 32-byte round id' };
+  if (!Array.isArray(committee) || !committee.length) return { ok: false, why: 'no settlement committee to count signatures against' };
+  let need = threshold;
+  if (!Number.isInteger(need)) { try { need = receiptsNeeded(committee.length); } catch { need = committee.length; } }
+  const hex = Array.from(roundId, (b) => b.toString(16).padStart(2, '0')).join('');
+  const byResult = new Map();   // `${open}:${close}` -> { openCents, closeCents, sigs }
+  const said = [];
+  await Promise.all((nodes || []).map(async (base) => {
+    try {
+      const r = await fetcher(`${String(base).replace(/\/+$/, '')}/round-result?round=${hex}`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) { said.push(`${base}: ${(await r.text()).slice(0, 120)}`); return; }
+      const j = await r.json();
+      if (!Number.isInteger(j.openCents) || !Number.isInteger(j.closeCents) || !j.key || !j.signature) return;
+      const k = `${j.openCents}:${j.closeCents}`;
+      if (!byResult.has(k)) byResult.set(k, { openCents: j.openCents, closeCents: j.closeCents, sigs: [] });
+      byResult.get(k).sigs.push({ key: j.key, signature: j.signature });
+    } catch (e) { said.push(`${base}: ${e.message}`); }
+  }));
+  for (const x of byResult.values()) {
+    const front = frontOf(x.openCents, x.closeCents);
+    const st = roundResultStands({ result: { roundId, openCents: x.openCents, closeCents: x.closeCents, front }, sigs: x.sigs, committee, threshold: need, verify });
+    if (!st.ok) continue;
+    const name = frontName(front);
+    return { ok: true, front: name, openCents: x.openCents, closeCents: x.closeCents, says: `${VERDICT_WORDS[name]} (${verdictPct(x.openCents, x.closeCents)})`, signers: st.signed.length, needed: need };
+  }
+  const best = Math.max(0, ...[...byResult.values()].map((x) => x.sigs.length));
+  return { ok: false, why: byResult.size ? `no result is signed by ${need} of the committee (at most ${best} agree)` : `no seat has a result yet${said.length ? `: ${said[0]}` : ''}` };
+}
 
 // ---- arena-protocol/src/match.js
 // A SCORE ACROSS ROUNDS (kanban #280, the owner 2026-10-09: "The protocol must support a score across rounds, when the same two
@@ -26516,6 +27159,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
          lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, withdrawFederation: withdrawFederation, safeFederation: safeFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, evacuatePlayerWallet: evacuatePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
+         presentNotes: presentNotes, liquidationKeyFor: liquidationKeyFor, collectLiquidationPayouts: collectLiquidationPayouts, roundVerdict: roundVerdict,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,
          dailyLobbySearch: dailyLobbySearch,

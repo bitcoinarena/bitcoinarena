@@ -3288,6 +3288,42 @@
       }
     }
     window.ARENA_COLLECT_SLASH = collectSlashPayouts;
+    // A HALTED FEDERATION'S CLAIMS (kanban #323, §23A.5 step 2: "The client does the rest on its own: on every start it presents
+    // each unspent note it holds for that federation"): on load and every 10 min, for each liquidation a seat lists of a federation
+    // this browser holds a wallet in, the whole wallet is presented to the arbitration set (kept in storage until it is taken), and
+    // every payout that set locked to this seed's claim key is collected into this browser's wallet of the federation it was paid in
+    async function claimLiquidations() {
+      const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
+      if (!lob || !lob.nodes || !lob.nodes.length || !seed || !BLWPCLIENT.presentNotes || !window.BLWP_CURVE) return;
+      let liq = null;
+      for (const n of lob.nodes) {
+        try { const r = await fetch(String((n && n.url) || n).replace(/\/+$/, '') + '/liquidations', { cache: 'no-store' }); if (r.ok) { liq = (await r.json()).liquidations || []; break; } } catch { /* the next seat */ }
+      }
+      if (!liq || !liq.length) return;
+      const held = BLWPCLIENT.ledgerFederations(vault());
+      const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
+      const inviteOf = (fid) => { const st = statuses.find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
+      const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+      const walletFor = async (fid) => {
+        const invite = inviteOf(fid);
+        if (!invite) throw new Error('this page holds no invite of federation ' + String(fid).slice(0, 8));
+        return BLWPCLIENT.openPlayerWallet({ federationId: BLWPCLIENT.fromHex(String(fid)), invite, seed, LockClient: wasm.LockClient, storage: vault() });
+      };
+      for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
+        const key = BLWPCLIENT.liquidationKeyFor(seed, l.federation, window.BLWP_CURVE);
+        const said = await BLWPCLIENT.presentNotes({ liquidations: [l], held, walletFor, payoutPk: key.payoutPk, storage: vault() });
+        for (const x of said) console.log('[blwp] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? x.accepted.length + ' note(s) presented' : x.why));
+      }
+      // each arbitration set once, however a seat wrote its door
+      for (const a of [...new Set(liq.map((l) => l.claims).filter(Boolean).map((c) => String(c).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '')))]) {
+        let listed;
+        try { const r = await fetch(a + '/liquidation-payouts', { cache: 'no-store' }); if (!r.ok) continue; listed = await r.json(); } catch { continue; }
+        const got = await BLWPCLIENT.collectLiquidationPayouts({ listed, seed, curve: window.BLWP_CURVE, clientFor: walletFor, storage: vault() });
+        for (const g of got.filter((x) => !x.kept)) console.log('[blwp] liquidation payout ' + g.msat + ' msat: ' + (g.ok ? 'collected' : g.why));
+        if (got.some((g) => g.ok && !g.kept) && window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
+      }
+    }
+    window.ARENA_CLAIM_LIQUIDATIONS = claimLiquidations;
     async function lookThePayout() {
       if (payoutAsking) {
         if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
@@ -5654,6 +5690,7 @@
       window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
+      if (!window.ARENA_LIQ_TIMER) { const liq = () => claimLiquidations().catch((e) => console.warn('[blwp] liquidation claims: ' + (e && e.message ? e.message : e))); liq(); window.ARENA_LIQ_TIMER = setInterval(liq, 600000); }
       // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
