@@ -2758,7 +2758,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (stakeLocks && 'inviteOf' in stakeLocks) stakeLocks.inviteOf = (fid) => fedRecords.inviteOf(fid);
   // A HALTED FEDERATION'S LIQUIDATION (§23A.5, kanban #323), mirrored at GET /liquidations, on the clocks of this seat's chain
   liquidations = createLiquidations({ records: fedRecords, clocks: FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet,
-    verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
+    verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } }, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null });
   // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
   roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
