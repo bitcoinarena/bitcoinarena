@@ -218,8 +218,23 @@ export function encodeRoundContract(c) {
     w.bytes32(c.seriesId);
     w.u32(c.roundIndex);
   } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
+  // THE CREATOR'S KEY (§6 `creator_pubkey`, kanban #313; 2026.0.3): the x-only key whose BIP-340 signature over the round id rides
+  // beside the contract (creator.js), as the id does. Last, after its own marker, and only when named: 33 bytes, so a tail of
+  // 33/37/69/73 bytes is never one of the 0/4/36/40 above, and every contract that names none keeps its bytes and its id.
+  if (c.creatorPubkey !== undefined && c.creatorPubkey !== null) {
+    if (!(c.creatorPubkey instanceof Uint8Array) || c.creatorPubkey.length !== 32 || c.creatorPubkey.every((b) => b === 0))
+      throw new Error('a round names its creator by a 32-byte x-only key');
+    if (!(version >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
+    w.u8(CREATOR_MARKER);
+    w.bytes32(c.creatorPubkey);
+  }
   return w.finish();
 }
+
+/** The byte before a round's creator key (§6, kanban #313), last of the contract. */
+export const CREATOR_MARKER = 0xc1;
+/** The protocol version a round may name its creator from (2026.0.3). */
+export const CREATOR_VERSION = 3;
 
 /**
  * A CUSTODY BYTE THIS NETWORK HAS, OR THE RECORD DOES NOT PARSE (RULED, the owner 2026-09-22 22:59).
@@ -290,7 +305,13 @@ export function decodeRoundContract(bytes) {
   // The start deadline, present only when the round named one that is not the
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
-  const left = r.b.length - r.at;
+  let left = r.b.length - r.at;
+  // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first
+  const creatorAt = [33, 37, 69, 73].includes(left) ? r.b.length - 33 : -1;
+  if (creatorAt >= 0) {
+    if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
+    left -= 33;
+  }
   if (left !== 0 && left !== 4 && left !== 36 && left !== 40) throw new Error(`a round contract with ${left} trailing bytes`);
   if (left === 4 || left === 40) {
     const d = r.u32();
@@ -301,6 +322,12 @@ export function decodeRoundContract(bytes) {
   if (left === 36 || left === 40) {
     c.seriesId = r.bytes32();
     c.roundIndex = r.u32();
+  }
+  if (creatorAt >= 0) {
+    r.u8();
+    c.creatorPubkey = r.bytes32();
+    if (c.creatorPubkey.every((b) => b === 0)) throw new Error('a round names its creator by a 32-byte x-only key');
+    if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
