@@ -116,8 +116,11 @@ export class LockSettlement {
    */
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
-    turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), finalityOf = resultFinality } = {}) {
+    turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
+    finalityOf = resultFinality } = {}) {
     this.round = round;
+    // WHO IS CONFLICTED IN A ROUND (server.js `conflictsFor`, §5A.13): { self (operator hex or null), serving } or null
+    this.conflictsFor = conflictsFor;
     this.now = now;
     // THE ROUND'S SIGNED DONATION SET (server.js `donationSetFor`): where a walk-away's claimed lock sends its 25%.
     this.donationSetFor = donationSetFor;
@@ -752,6 +755,12 @@ export class LockSettlement {
     const held = this.dkg.signerNodeFor(contract.nodes);
     if (!held.ok) return refuse(`this signer node holds no share of the round's claim key: ${held.why}`);
     const claimPk = held.pool.groupPublicKey;
+    // PLAYER-NODE SEPARATION (§5A.13, kanban #309): a signer node whose operator plays the round takes no part in its settlement,
+    // and a committee its conflicted nodes leave under the threshold settles nothing - the entries are ENTRY_VOID, each lock
+    // returns to its player at expiry
+    const conflicts = this.conflictsFor ? this.conflictsFor(roundIdBytes) : null;
+    if (conflicts && conflicts.self) return refuse(`this signer node is conflicted, its operator ${conflicts.self.slice(0, 16)} plays the round: it takes no part in the settlement (§5A.13)`);
+    if (conflicts && conflicts.serving.voids) return refuse(conflicts.serving.why);
     const anyFed = takesAnyFederation(contract);
     // AN ATTESTED ROUND (§0A.7a): its plan is its pari-mutuel table's, on a final outcome only
     { const a = this.#attestedOf(roundIdBytes);
