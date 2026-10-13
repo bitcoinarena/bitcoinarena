@@ -263,7 +263,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "Node software SHOULD make certificate provisioning a first-class setup
   // step"): { cert, key } PEM - the same doors and sockets over https/wss on the same port; none, plain http as ever
   tls = null,
-  randomnessFor, chainFor, peers = [], headerBytes, bondProof,
+  randomnessFor, chainFor, peers = [], headerBytes, bondProof, proposals = null,
   // A LIGHTNING INVOICE READER, AND NOTHING MORE (§23.6, RULED 2026-09-22 22:59). `/federation-invoice`
   // uses its `decode` to read what the federation's LNv2 invoice commits to. It no longer issues, looks up,
   // settles or cancels holds, and it pays nothing: that was the withdrawn Lightning custody's custody by one operator.
@@ -3298,6 +3298,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // from providers and count against its own federation's keys. Candidates, not a count.
       // THE ROUND'S CENSUS AS EVIDENCE (kanban #296, spec 5A.6): every bond with its merkle branch, update and
       // re-affirmation, for a client that builds the committee itself and checks the set against census_root
+      // THE BALLOT'S PROPOSALS (kanban #329, proposals.js): kept when they stand and their deposit is on this seat's chain
+      if (proposals && url.pathname === '/proposals' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ proposals: proposals.list() }));
+      }
+      if (proposals && url.pathname === '/proposal' && req.method === 'POST') {
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return text(res, 400, 'that is not JSON'); }
+        const got = await proposals.add(body);
+        res.writeHead(got.status, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       if (req.method === 'GET' && url.pathname === '/census') {
         const got = roster.censusEvidenceFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
         if (!got.ok) return text(res, 404, got.why);
