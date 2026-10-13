@@ -4876,8 +4876,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lateHex = url.searchParams.get('entry');
         const entry = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
         if (entry && entry.length !== 32) return text(res, 400, 'a late settlement is asked for by a 32-byte entry id');
+        // ONE FEDERATION'S SETTLEMENT of a round that takes any federation (2026.0.3) is asked for by that federation's id
+        const federation = url.searchParams.get('federation');
+        if (federation !== null && !/^[0-9a-f]{64}$/.test(federation)) return text(res, 400, 'a federation\'s settlement is asked for by its 64-hex id');
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry });
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -4885,14 +4888,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-share') {
           let list;
           try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await settlements.share(r8, list, { entry });
+          const got = await settlements.share(r8, list, { entry, federation });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));
         }
         const signature = new Uint8Array(await read(req));
         if (signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
-        const got = await settlements.take(r8, signature, { entry });
+        const got = await settlements.take(r8, signature, { entry, federation });
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 
@@ -5075,6 +5078,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/lock-settlement') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
+        // A ROUND THAT TAKES ANY FEDERATION (2026.0.3): one settlement per federation, each its own row
+        const feds = settlements.fedSummary ? settlements.fedSummary(new Uint8Array(rid)) : [];
+        if (feds.length) {
+          const all = feds.every((f) => f.state === 'ACCEPTED');
+          res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify({ state: all ? 'ACCEPTED' : feds.some((f) => f.state === 'REFUSED') ? 'REFUSED' : 'SUBMITTING', federations: feds }));
+        }
         const kept = round.lockSettlement(new Uint8Array(rid));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(kept

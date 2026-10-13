@@ -2599,6 +2599,24 @@ export class Round {
     return r ? { txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
   }
 
+  /** One federation's settlement of a round that takes any federation (2026.0.3): the same row as a round's own. */
+  putFedLockSettlement({ roundId, federation, txid, message, signature, state, why }) {
+    this.db.prepare('INSERT OR REPLACE INTO fed_lock_settlements (round_id, federation_id, txid, message, signature, state, why, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), String(federation).toLowerCase(), String(txid), Buffer.from(message), Buffer.from(signature), state, why, this.now());
+  }
+
+  fedLockSettlement(roundIdBytes, federation) {
+    const r = this.db.prepare('SELECT txid, message, signature, state, why, made_ms FROM fed_lock_settlements WHERE round_id = ? AND federation_id = ?')
+      .get(Buffer.from(roundIdBytes), String(federation).toLowerCase());
+    return r ? { federation: String(federation).toLowerCase(), txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), state: r.state, why: r.why, madeMs: Number(r.made_ms) } : null;
+  }
+
+  /** Every federation's settlement row of a round (2026.0.3), in federation id order. */
+  fedLockSettlementsOf(roundIdBytes) {
+    return this.db.prepare('SELECT federation_id, txid, state, why, made_ms FROM fed_lock_settlements WHERE round_id = ? ORDER BY federation_id').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ federation: r.federation_id, txid: r.txid, state: r.state, why: r.why, madeMs: Number(r.made_ms) }));
+  }
+
   /** Every round whose lock settlement this signer node holds in `state` (W6: SUBMITTING, asked again at start). */
   lockSettlementsIn(state) {
     return this.db.prepare('SELECT round_id FROM lock_settlements WHERE state = ? ORDER BY made_ms').all(state)
