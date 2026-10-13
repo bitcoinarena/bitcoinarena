@@ -20515,6 +20515,50 @@ function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
   return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
 }
 
+/**
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4, kanban #323). `claims`: notes presented
+ * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
+ * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
+ *      after drain_blocks
+ *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
+ *      shows it)
+ *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
+ *      while it lasts
+ *   4. only then the remainder, 75 % / 25 % (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ */
+function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
+  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
+  const seen = new Set();
+  const refused = []; const inWindow = []; const late = [];
+  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
+  for (const c of ordered) {
+    const nonce = String(c.nonce).toLowerCase();
+    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
+    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
+    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
+    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    seen.add(nonce);
+    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+  }
+  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
+  const short = owed > escrowMsat;
+  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
+  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
+  for (const c of late) {
+    const msat = c.amountMsat <= left ? c.amountMsat : left;
+    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+  }
+  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
+  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
+  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
+    remainderSplitsAt: when.remainderSplitsAt };
+}
+
 // ---- arena-protocol/src/genesis.js
 // Canonical genesis_parameters and the network_id they produce.
 //
@@ -25804,6 +25848,9 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // A FREE ROUND: nothing staked, so the pick was right or wrong and nothing more
     if (BigInt(p.stakeMsat) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · ${row.won ? 'your pick was right' : 'your pick was wrong'} (free round)` });
     else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
+    // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
+    // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
+    else if (row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
