@@ -191,6 +191,7 @@ async function area() {
       <div class="row"><span>Node key</span><b>${esc(state.node.slice(0, 16))}…</b></div>
       <div class="row"><span>Guardian</span><b>${me.guardian ? 'yes · ' + esc(me.guardian) : 'no'}</b></div>
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
+    <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Donations</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
     <h2>Games from other seats</h2><div class="card" id="store">
@@ -223,6 +224,7 @@ async function area() {
   if ($('show')) $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
   $('forget').onclick = () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); };
   donations();
+  standingPanel();
   leavePanel();
   storePanel();
   networkPanel();
@@ -242,6 +244,24 @@ async function area() {
       $('copy').onclick = () => { navigator.clipboard.writeText(out.hex).then(() => { $('copy').textContent = 'Copied ✓'; }, () => { $('mhex').select(); }); };
     } catch (e) { $('serr').textContent = e.message; }
   };
+}
+// THIS NODE'S STANDING (kanban #302 §5A.3, #310 §5A.10B): the seatings it was drawn for and missed - from three in a row the
+// warning and the serving = false update offered - and its bond against the bracket now common: own weight, brackets served,
+// headroom, and each warning in the seat's own words (FALLING SHARE is no fault; LOSING BRACKETS / NEAR THE FLOOR are urgent)
+async function standingPanel() {
+  let seat, st;
+  try { [seat, st] = await Promise.all(['/owner/seatings', '/owner/standing'].map(async (p) => (await fetch(at(p), { cache: 'no-store' })).json())); }
+  catch (e) { $('standing').innerHTML = `<p class="err">${esc(e.message)}</p>`; return; }
+  const pct = (x) => (typeof x === 'number' ? (x * 100).toFixed(1) + ' %' : '-');
+  const warns = [...(seat.warning ? [{ urgent: true, kind: 'missed seatings', says: seat.warning.says, update: seat.warning.update }] : []), ...(st.warnings || [])];
+  $('standing').innerHTML = `
+    <div class="row"><span>Seatings missed in a row</span><b>${esc(seat.missedInARow)}</b></div>
+    <div class="row"><span>Bond</span><b>${st.ownBondSats === null ? 'not in the census read' : esc(Number(st.ownBondSats).toLocaleString('en-US')) + ' sat'}</b></div>
+    <div class="row"><span>Share of the bonded capital</span><b>${pct(st.ownWeight)}</b></div>
+    <div class="row"><span>Brackets served</span><b>${esc(st.bracketsServed.eligible)} of ${esc(st.bracketsServed.of)} recent rounds</b></div>
+    <div class="row"><span>Headroom</span><b>${typeof st.headroom === 'number' ? st.headroom.toFixed(2) + 'x the bond_min now common (' + esc(Number(st.commonBondMinSats).toLocaleString('en-US')) + ' sat)' : '-'}</b></div>
+    ${warns.length ? warns.map((w) => `<p class="${w.urgent ? 'err' : 'sub'}"><b>${esc(w.kind.toUpperCase())}</b>: ${esc(w.says)}</p>${w.update ? `<p class="sub">Step out: <code>${esc(w.update)}</code></p>` : ''}`).join('')
+      : '<p class="sub ok">No warning: this node is seated when drawn, and its bond is above the margin.</p>'}`;
 }
 // LEAVE WITHOUT BEING SLASHED (kanban #276 step 2): from the moment the owner signs Leave this seat takes no new round and
 // serves the ones it holds to their end; it is free once the last is past its objection window and settled. Custody: only if
