@@ -1325,8 +1325,30 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       for (const x of answers) if (!x.ok) console.log(`[grid] series ${toHex(ids[k]).slice(0, 16)} refused by ${x.port}: ${x.why}`);
       posted.push({ series: toHex(ids[k]), seats: answers.filter((x) => x.ok).length, of: answers.length });
     }
+    // THE PUBLISHER'S FEE, PROVEN (§5A.5, kanban #304): a grid that names its creator posts its publication and that transaction's
+    // parents (the wallet's own, so it holds them) to every seat it posted the series to - each seat proves the fee from the bytes and
+    // pays it back (capped) to the creator's key in the series' first round with entries
+    let proven = null;
+    if (kind.creatorSecret) {
+      try {
+        const txHex = (await chainRpc('gettransaction', [got.txid])).hex;
+        const tx = parseTransaction(fromHex(txHex));
+        const parents = [];
+        for (const i of tx.inputs) parents.push((await chainRpc('gettransaction', [toHex(Uint8Array.from(i.previousTxid).reverse())])).hex);
+        const seats = [...[a, b, ...rest].map((node) => `http://${host}:${node.port}`), ...(V2 ? [...otherCensusSeats()].map(([, url]) => url) : [])];
+        proven = [];
+        for (const id of ids) {
+          const said = await Promise.all(seats.map(async (u) => {
+            try { const r = await fetch(`${u}/series-publication`, { method: 'POST', body: JSON.stringify({ series: toHex(id), tx: txHex, parents }), signal: AbortSignal.timeout(30000) });
+              return r.ok ? { ok: true, ...(await r.json()) } : { ok: false, why: (await r.text()).slice(0, 120) }; } catch (e) { return { ok: false, why: e.message }; }
+          }));
+          proven.push({ series: toHex(id), seats: said.filter((x) => x.ok).length, of: seats.length, feeSats: (said.find((x) => x.ok) || {}).feeSats || null,
+            why: (said.find((x) => !x.ok) || {}).why || null });
+        }
+      } catch (e) { proven = [{ why: `the publication was not proven: ${e.message}` }]; }
+    }
     for (const c of grid) held.push(c);
-    onPosted({ posted, rounds: grid.length, publishedAt: got.publishedAt, beacon: got.named.height, firstStart: new Date(Number(start)).toISOString() });
+    onPosted({ posted, proven, rounds: grid.length, publishedAt: got.publishedAt, beacon: got.named.height, firstStart: new Date(Number(start)).toISOString() });
     return { ok: true, txid: got.txid, publishedAt: got.publishedAt, beacon: got.named.height, rounds: grid.length, posted,
       lastCloseMs: grid[grid.length - 1].entryCloseMs, ids: grid.map((c) => toHex(roundId(c))), series: ids.map((id) => toHex(id)) };
   }
