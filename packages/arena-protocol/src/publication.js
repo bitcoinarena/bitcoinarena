@@ -19,8 +19,8 @@
 // contract, as `round_id` and `creator_signature` do.
 //
 // THE KIND BYTE IS OURS. The spec writes `ROUND` and fixes no value for it; it
-// is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) carries no
-// kind byte but is 76 bytes, so the exact length keeps the two apart.
+// is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
+// (ballot.js, the owner 2026-10-13), 77 bytes: the kind byte keeps them apart.
 import { commitmentsOf, parseTransaction, OP_RETURN } from './tx.js';
 
 export const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
