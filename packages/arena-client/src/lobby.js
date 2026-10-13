@@ -34,6 +34,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { marketOf } from '../../arena-protocol/src/known-game.js';
 import { entryWarnings } from './entry-warnings.js';
+import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
 
 /** How far a signer node's signed time may be from this page's clock and still count. */
 export const LOBBY_SKEW_MS = 60000;
@@ -421,6 +422,14 @@ export function approvalFacts(row, census = null) {
     of: settlement.length, operatorsPlaying: operators.filter((o) => players.has(o)), censusKnown: opOf.size > 0 };
 }
 
+/** The lobby line's words for a stake ceiling (census-health.js stakeWithinCeiling's answer). */
+export function ceilingWords(c, contract) {
+  const test = contract && contract.networkId && isTestNetwork(contract.networkId);
+  const limit = c.ceilingSats === 0n ? 'play money only' : `up to ${String(c.ceilingSats)} sat a stake`;
+  return c.ok ? ` · stake ceiling: ${limit} - this stake is within it`
+    : ` · stake ceiling: ${limit} - this stake is over it${test ? ' (a test network: shown, not enforced)' : ': refused'}`;
+}
+
 /** The lobby line's words for approvalFacts. */
 export function approvalWords(f, tooOld = []) {
   // NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3): "node X: protocol too old"
@@ -458,6 +467,10 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13, kanban #317): operators, overlap, an operator playing
   const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census),
     typeof tooOld === 'function' ? (row.contract && row.contract.censusRoot ? tooOld(row.contract) : []) : tooOld || []);
-  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}`
+  // THE STAKE CEILING THE CENSUS SUPPORTS (§5A.10, kanban #306): computed here from the census this page checked; a test network
+  // shows it and refuses nothing (ruling A of the load rule), mainnet refuses a stake over it
+  const entries = row.free ? null : (typeof census === 'function' ? census(row.contract) : census);
+  const ceiling = !entries || !entries.length || !row.contract ? '' : ceilingWords(stakeWithinCeiling({ entries, stakeSats: row.stakeMsat / 1000n }), row.contract);
+  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}${ceiling}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
