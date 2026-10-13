@@ -1,4 +1,4 @@
-// THE CONFIG BALLOT'S FIRST SLICE (spec §27A.7.2-4, kanban #329): the proposal on its face, the 76-byte vote, the tally.
+// THE CONFIG BALLOT'S FIRST SLICE (spec §27A.7.2-4, kanban #329): the proposal on its face, the 77-byte vote, the tally.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
@@ -29,15 +29,17 @@ test('a proposal: the full config, signed by its proposer, activation not before
   assert.notEqual(Buffer.from(proposalId(p)).toString('hex'), Buffer.from(proposalId(signed(draft({ configHash: b32(0x21) })))).toString('hex'));
 });
 
-test('a vote is 76 bytes: "BLW", the proposal id\'s first 8 bytes, the choice, the bond key\'s signature', () => {
+test('a vote is 77 bytes: "ARN" \'V\' (the owner 2026-10-13), the proposal id\'s first 8 bytes, the choice, the bond key\'s signature', () => {
   const p = signed(draft()); const id = proposalId(p);
   const v = encodeVote({ proposalId: id, choice: CHOICE.YES, signature: schnorr.sign(voteMessage(id, CHOICE.YES), key(5).secret) });
   assert.equal(v.length, VOTE_BYTES);
-  assert.equal(Buffer.from(v.subarray(0, 3)).toString(), 'BLW');
+  assert.equal(v.length, 77);
+  assert.equal(Buffer.from(v.subarray(0, 4)).toString(), 'ARNV');
   const d = decodeVote(v);
   assert.deepEqual([Buffer.from(d.idPrefix).toString('hex'), d.choice], [Buffer.from(id.subarray(0, 8)).toString('hex'), CHOICE.YES]);
   assert.equal(decodeVote(v.subarray(1)), null);
-  const bad = Uint8Array.from(v); bad[11] = 9; assert.equal(decodeVote(bad), null);
+  const bad = Uint8Array.from(v); bad[12] = 9; assert.equal(decodeVote(bad), null);
+  const fork = Uint8Array.from(v); fork[3] = 0x46; assert.equal(decodeVote(fork), null, '"ARN" \'F\' is a re-affirmation, never a vote');
 });
 
 /** Ten bonds of 10 000 sat; node i votes `choice` at `height`. */

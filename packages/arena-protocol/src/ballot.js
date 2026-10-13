@@ -7,7 +7,9 @@
 //
 // Two choices the spec leaves open, made here and named:
 //   - the config travels as its bytes with the config_hash it declares; the canonical encoding of game_config is a later slice
-//   - the vote's marker is the spec's "BLW" (§27A.7.3 lays out its 76 bytes); the series publications use "ARN"
+//   - the vote's marker is "ARN" 'V' (RULED the owner 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
+//     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
+//     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { TAG, PROTOCOL_VERSION, TYPE_CONFIG_PROPOSAL } from './constants.js';
@@ -40,8 +42,8 @@ export const THRESHOLDS = Object.freeze({
   [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
   [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
 });
-export const VOTE_MARKER = Uint8Array.from([0x42, 0x4c, 0x57]);           // "BLW"
-export const VOTE_BYTES = 3 + 8 + 1 + 64;                                  // 76, inside the 80-byte OP_RETURN limit
+export const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
+export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const className = (c) => Object.keys(CLASS).find((k) => CLASS[k] === c);
@@ -98,20 +100,20 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
 
 /** What a bond key signs to vote: H(proposal_id || choice). */
 export const voteMessage = (id, choice) => taggedHash(TAG.vote, Uint8Array.from([...id, choice]));
-/** THE OP_RETURN PAYLOAD (§27A.7.3): "BLW", proposal_id[0:8], choice, the bond key's signature - 76 bytes. */
+/** THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes. */
 export function encodeVote({ proposalId: id, choice, signature }) {
   if (!is32(id)) throw new Error('a vote names a 32-byte proposal id');
   if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
   if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
   const out = new Uint8Array(VOTE_BYTES);
-  out.set(VOTE_MARKER, 0); out.set(id.subarray(0, 8), 3); out[11] = choice; out.set(signature, 12);
+  out.set(VOTE_MARKER, 0); out.set(id.subarray(0, 8), 4); out[12] = choice; out.set(signature, 13);
   return out;
 }
 export function decodeVote(payload) {
   if (!(payload instanceof Uint8Array) || payload.length !== VOTE_BYTES) return null;
-  if (payload[0] !== VOTE_MARKER[0] || payload[1] !== VOTE_MARKER[1] || payload[2] !== VOTE_MARKER[2]) return null;
-  if (!Object.values(CHOICE).includes(payload[11])) return null;
-  return { idPrefix: payload.slice(3, 11), choice: payload[11], signature: payload.slice(12) };
+  if (VOTE_MARKER.some((b, i) => payload[i] !== b)) return null;
+  if (!Object.values(CHOICE).includes(payload[12])) return null;
+  return { idPrefix: payload.slice(4, 12), choice: payload[12], signature: payload.slice(13) };
 }
 
 /**
