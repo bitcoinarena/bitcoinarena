@@ -24,7 +24,7 @@
 // `contractId(fields)` the stock hash (blwp-stake-lock, over the Rust client
 // crates). The fee lock is not checked here: its claim hash and the §22A node
 // slots wait on a ruling (PRIORITIES).
-import { decodeEntryContract, decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { decodeEntryContract, decodeRoundContract, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
@@ -134,8 +134,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   const row = round.get(entry.roundId);
   if (!row) return { ok: false, why: 'this node holds no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
-  if (zero(contract.federationId))
-    return { ok: false, why: 'that round names no federation, so its stake is not a lock' };
+  // THE ENTRY'S FEDERATION (2026.0.3): the one it names on a round that takes any, else the round's (entryFederation)
+  const fed = entryFederation(contract, entry);
+  if (!fed.ok) return { ok: false, why: fed.why.replace('its stake is not a lock', 'its stake is not a lock') };
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a stake lock' };
   const outpoint = entry.stakeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no stake lock outpoint' };
@@ -160,7 +161,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (the owner 2026-10-03): a stake whose donation outputs are wrong or missing is
   // not counted - nothing is kept for it, and the lock may be handed over again.
-  const donated = await verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients: donationRecipients, federationId: contract.federationId });
+  const donated = await verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients: donationRecipients, federationId: fed.federationId });
   if (!donated.ok) return donated;
   if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
 
@@ -189,8 +190,9 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   const row = round.get(entry.roundId);
   if (!row) return { ok: false, why: 'this node holds no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
-  if (zero(contract.federationId))
-    return { ok: false, why: 'that round names no federation, so its fee is not a lock' };
+  // THE ENTRY'S FEDERATION (2026.0.3): the one it names on a round that takes any, else the round's (entryFederation)
+  const fed = entryFederation(contract, entry);
+  if (!fed.ok) return { ok: false, why: fed.why.replace('its stake is not a lock', 'its fee is not a lock') };
   if (!port) return { ok: false, why: 'this node reaches no federation, so it cannot verify a fee lock' };
   const outpoint = entry.feeLockOutpoint;
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no fee lock outpoint' };

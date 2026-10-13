@@ -30,7 +30,7 @@ import { relayPost, relayMarks } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { createProposals } from './proposals.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
-import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
@@ -57,7 +57,7 @@ import { federationRecords } from './federation-records.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -1528,6 +1528,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
     return contract && contract.federationId instanceof Uint8Array ? stakeLocks.forFederation(toHex(contract.federationId)) : null;
   }
+  // THE PORT OF ONE FEDERATION, BY ITS ID (2026.0.3, kanban #348): a round that takes any federation has none of its own -
+  // each entry's locks are in the federation the entry names (entryFederation)
+  async function portOfFederation(fid) {
+    if (!stakeLocks) return null;
+    if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
+    return fid instanceof Uint8Array ? stakeLocks.forFederation(toHex(fid)) : null;
+  }
+  /** The port of a stored entry's federation (its round's, or the one it names on a round that takes any), or null. */
+  async function portOfEntryBytes(stored) {
+    try {
+      const e = decodeEntryContract(stored);
+      const row = round.get(e.roundId);
+      if (!row) return null;
+      const fed = entryFederation(decodeRoundContract(new Uint8Array(row.contract)), e);
+      return fed.ok ? portOfFederation(fed.federationId) : null;
+    } catch { return null; }
+  }
   async function portOfRid(rid) {
     const row = round.get(rid instanceof Uint8Array ? rid : new Uint8Array(rid));
     if (!row) return null;
@@ -1535,11 +1552,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const portRefusal = (contract) => `this signer node cannot reach federation ${toHex(contract.federationId).slice(0, 16)} yet`
     + `${stakeLocks && typeof stakeLocks.whyNot === 'function' && stakeLocks.whyNot(toHex(contract.federationId)) ? `: ${stakeLocks.whyNot(toHex(contract.federationId))}` : ''}`;
-  async function guardiansBonded(rid, contract) {
+  async function guardiansBonded(rid, contract, fid = contract.federationId) {
     if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
       return { ok: false, why: REACHES_NO_FEDERATION };
-    const fport = await portOfRound(contract);
-    if (!fport) return { ok: false, why: portRefusal(contract) };
+    const fport = await portOfFederation(fid);
+    if (!fport) return { ok: false, why: portRefusal({ federationId: fid }) };
     // THE POSTED CONTRACT, stored or not: POST /round asks this before round.open (RULED 2026-09-25).
     // PICK B (old-series.js): series 3cfbe516's guardians are counted where their advertisements name them (154300).
     const oldSeries = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId);
@@ -1558,10 +1575,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let g;
     try { g = await fport.guardians(); }
     catch (e) { return { ok: false, why: `this signer node could not read its federation's guardians: ${e.message}` }; }
-    if (!g || toHex(g.federationId) !== toHex(contract.federationId))
+    if (!g || toHex(g.federationId) !== toHex(fid))
       return { ok: false, why: `this signer node reaches federation ${g ? toHex(g.federationId).slice(0, 16) : 'none'} and that round names `
-        + `${toHex(contract.federationId).slice(0, 16)}, so it cannot count that federation's guardians` };
-    const bonded = federationIsBonded({ federationId: contract.federationId, guardianKeys: g.keys, threshold: g.threshold,
+        + `${toHex(fid).slice(0, 16)}, so it cannot count that federation's guardians` };
+    const bonded = federationIsBonded({ federationId: fid, guardianKeys: g.keys, threshold: g.threshold,
       census: census.entries, bondMinSats: contract.bondMinSats });
     return bonded.ok ? bonded : { ok: false, why: `this signer node assigns no round on an unbonded federation (§23.6): ${bonded.why}` };
   }
@@ -3405,8 +3422,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // commits through each gateway is where it is shown. A node with no lock port takes no stake in a
         // FEDERATION round at all, and is not the one this asks.
         // THE ROUND'S OWN FEDERATION'S PORT (kanban #348): every node serves every federation in its census
-        const fport = contract.stakeMsat > 0n && stakeLocks ? await portOfRound(contract) : null;
-        if (contract.stakeMsat > 0n && stakeLocks && !fport) return text(res, 409, portRefusal(contract));
+        // A ROUND THAT TAKES ANY FEDERATION (2026.0.3) has none to ask here: each entry's federation is asked at /entry
+        const anyFed = takesAnyFederation(contract);
+        const fport = contract.stakeMsat > 0n && stakeLocks && !anyFed ? await portOfRound(contract) : null;
+        if (contract.stakeMsat > 0n && stakeLocks && !anyFed && !fport) return text(res, 409, portRefusal(contract));
         if (contract.stakeMsat > 0n && fport) {
           if (typeof fport.gateways !== 'function')
             return text(res, 409, 'this signer node\'s lock port cannot list the federation\'s gateways, so it cannot count '
@@ -3439,7 +3458,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND ITS FEDERATION IS BONDED (§23.6, P3; RULED the owner 2026-09-25): asked here, before round.open, with
         // guardiansBonded's own refusal - measured before: under threshold and none bonded were 409 with the round already
         // stored and listed, because this was asked after round.open. A paying round reaching here has a chain view (above).
-        if (chainFor && contract.stakeMsat > 0n) {
+        if (chainFor && contract.stakeMsat > 0n && !anyFed) {
           const bonded = await guardiansBonded(roundIdOf(contract), contract);
           if (!bonded.ok) return text(res, 409, bonded.why);
         }
@@ -3918,8 +3937,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // and a paying round with a zero federation id does not encode (§23.6). No custody test is left here.
           {
             let gate;
-            const fport = await portOfRound(rc);
-            if (!fport) return text(res, 409, portRefusal(rc));
+            // THE ENTRY'S FEDERATION (2026.0.3, kanban #348): on a round that takes any, the one the entry names - asked here
+            // what /round asks of a round's own: reachable, not draining, two live gateways, no base fee, guardians bonded
+            const efed = entryFederation(rc, contract);
+            if (!efed.ok) return text(res, 409, efed.why);
+            const fport = await portOfFederation(efed.federationId);
+            if (!fport) return text(res, 409, portRefusal({ federationId: efed.federationId }));
+            if (takesAnyFederation(rc)) {
+              const dr = drainingRefusal({ ...rc, federationId: efed.federationId });
+              if (dr) return text(res, 409, `this node takes no entry with a lock in that federation: ${dr}`);
+              if (typeof fport.gateways === 'function') {
+                let seen;
+                try { seen = await doorGateways(fport, toHex(efed.federationId)); }
+                catch (e) { return text(res, 409, `this signer node could not list that federation's gateways: ${e.message}`); }
+                const n = federationGatewayCount(seen.gateways);
+                if (n.distinctLive < 2) return text(res, 409, `that entry's federation has ${n.distinctLive} distinct live gateway(s): a paying entry needs at least two (§23.6)`);
+              }
+              if (chainFor) {
+                const bonded = await guardiansBonded(contract.roundId, rc, efed.federationId);
+                if (!bonded.ok) return text(res, 409, bonded.why);
+              }
+            }
             try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsOf(g.plugin.manifest) : undefined }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
@@ -3929,7 +3967,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // such a federation; this is the same refusal on the node, so no entry is taken either.
             // An unknown rule is not a base fee, and is not refused here.
             let noBase = { ok: true };
-            try { noBase = federationTakesNoBaseFee({ fees: typeof fport.fees === 'function' ? await doorFees(fport, toHex(rc.federationId)) : null }); }
+            try { noBase = federationTakesNoBaseFee({ fees: typeof fport.fees === 'function' ? await doorFees(fport, toHex(efed.federationId)) : null }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
             if (!noBase.ok) return text(res, 409, `this node takes no entry in that round: ${noBase.why}`);
             const namesNone = contract.feeLockOutpoint.txid.every((x) => x === 0) || contract.feePreimage.every((x) => x === 0);
@@ -4684,7 +4722,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
           if (ds.ok) donationRecipients = ds.target; }
         let got;
-        try { got = await verifyStakeLock({ round, port: (await portOfRid(decodeEntryContract(stored).roundId)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
+        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         // AN ORDER (comment 1127): tradable here once both its locks are verified
@@ -4707,7 +4745,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
-        try { got = await verifyFeeLock({ round, port: (await portOfRid(decodeEntryContract(stored).roundId)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+        try { got = await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -4732,15 +4770,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rc = decodeRoundContract(new Uint8Array(row.contract));
         const refusedWhy = offerRefusal(rc);
         if (!refusedWhy) return text(res, 409, 'this signer node offers that round: a stake in it is entered and settled with the round, never returned as refused');
-        if (rc.stakeMsat === 0n || rc.federationId.every((b) => b === 0)) return text(res, 409, 'that round takes no stake lock');
+        if (rc.stakeMsat === 0n || (rc.federationId.every((b) => b === 0) && !takesAnyFederation(rc))) return text(res, 409, 'that round takes no stake lock');
         if (!stakeLocks) return text(res, 409, 'this signer node reaches no federation, so it cannot read the lock');
-        let fields, outpoint;
+        let fields, outpoint, lockFed = null;
         try {
           const body = JSON.parse(Buffer.from(await read(req)).toString('utf8'));
           fields = lockFieldsFromJson(body.fields);
           const [txid, outIdx] = String(body.outpoint || '').split(':');
           if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(outIdx || '')) throw new Error('an outpoint is txid:index');
           outpoint = { txid: new Uint8Array(Buffer.from(txid, 'hex')), outIdx: BigInt(outIdx) };
+          // ON A ROUND THAT TAKES ANY FEDERATION the body names the federation the lock is in (2026.0.3)
+          if (takesAnyFederation(rc)) {
+            if (!/^[0-9a-f]{64}$/.test(String(body.federation || ''))) throw new Error('that round takes any federation: name the one the lock is in (federation, 64 hex)');
+            lockFed = new Uint8Array(Buffer.from(body.federation, 'hex'));
+          }
         } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
         if (round.stakeLockAt(outpoint) || (round.feeLockAt && round.feeLockAt(outpoint)))
           return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
@@ -4767,7 +4810,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const player = toHex(held.handout.playerPubkey);
         if (round.entriesOf(rid).some(({ entry }) => toHex(entry.playerPubkey) === player))
           return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
-        const lport = (await portOfRid(rid)) || stakeLocks;
+        const lport = (lockFed ? await portOfFederation(lockFed) : await portOfRid(rid)) || stakeLocks;
         const [st, id] = await Promise.all([lport.status(outpoint), lport.contractId(fields)]);
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');

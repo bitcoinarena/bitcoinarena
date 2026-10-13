@@ -68,3 +68,16 @@ test('an entry names the federation its locks are in, last, after its marker; ev
   const stray = Uint8Array.from([...plain, COMMIT_MARKER, ...b32(1), 0x01]);
   assert.throws(() => decodeEntryContract(stray), /not its federation/);
 });
+
+test('the federation an entry\'s locks are in: its own on a round that takes any (none named is refused), else the round\'s', async () => {
+  const { entryFederation } = await import('../src/contracts.js');
+  const any = { ...round, protocolVersion: 3, federationId: ZERO };
+  const one = { ...round, protocolVersion: 3 };
+  const fed = b32(0xfe);
+  assert.deepEqual(entryFederation(any, { ...entry, federationId: fed }), { ok: true, federationId: fed });
+  assert.match(entryFederation(any, entry).why, /names none/);
+  assert.deepEqual(entryFederation(one, entry).federationId, TEST_FEDERATION_ID, 'a one-federation round: its own');
+  assert.deepEqual(entryFederation(one, { ...entry, federationId: TEST_FEDERATION_ID }).federationId, TEST_FEDERATION_ID, 'naming the same is fine');
+  assert.match(entryFederation(one, { ...entry, federationId: fed }).why, /another federation than its round's/);
+  assert.match(entryFederation({ ...round, protocolVersion: 2, federationId: ZERO }, entry).why, /names no federation/);
+});
