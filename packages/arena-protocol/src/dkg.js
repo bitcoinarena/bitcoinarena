@@ -27,7 +27,7 @@
 // THE CURVE IS INJECTED, like everywhere else in this package: nothing here
 // vendors an implementation of the thing that pins money.
 import { Writer, Reader } from './encode.js';
-import { TAG, TYPE_DKG_CONTRIBUTION, TYPE_DKG_AGREEMENT, PROTOCOL_VERSION } from './constants.js';
+import { TAG, TYPE_DKG_CONTRIBUTION, TYPE_DKG_AGREEMENT, PROTOCOL_VERSION, speaksVersion } from './constants.js';
 import { taggedHash, toHex, bytesToBigInt } from './hash.js';
 import { shareOpensTo, splitSecret, FIELD, SHARES_NEEDED, scalarFrom32, scalarTo32 } from './shares.js';
 import { openShare, sealShare, VSS_SEALED_BYTES } from './seal.js';
@@ -172,7 +172,7 @@ export function decodeContribution(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_DKG_CONTRIBUTION) throw new Error('not a DkgContribution');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const c = {
     epochId: r.bytes32(),
     from: r.bytes32(),
@@ -492,7 +492,7 @@ export function decodeAgreement(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_DKG_AGREEMENT) throw new Error('not a DKG agreement');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const a = { epochId: r.bytes32(), signerNode: r.bytes32(), held: r.vec((rr) => ({ dealer: rr.bytes32(), id: rr.bytes32() })) };
   r.end();
   return a;

@@ -13,7 +13,7 @@
 // The curve is not this package's business: `verify(signature, digest, key)` is injected, as rerun.js takes it.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_FINAL_SIGNATURE, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_FINAL_SIGNATURE, TAG } from './constants.js';
 import { receiptsNeeded } from './threshold.js';
 import { withinTolerance } from './window.js';
 
@@ -40,7 +40,7 @@ export function decodeFinalSig(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_FINAL_SIGNATURE) throw new Error('not a FINAL signature');
   const version = r.u16();
-  if (version !== PROTOCOL_VERSION) throw new Error('protocol version ' + version);
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const x = { roundId: r.bytes32(), entryId: r.bytes32(), runId: r.bytes32(), signerPubkey: r.bytes32(), signedAtMs: r.u64() };
   r.end();
   return x;
