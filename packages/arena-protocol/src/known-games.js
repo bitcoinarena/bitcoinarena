@@ -139,6 +139,9 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     name: 'rock-paper-scissors',
     // 2026.0.2 (kanban #348): manifest version 2, parent 1e9ab4b7, requires the round that names no draw
     requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (kanban #293, the owner 2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
     cores: Object.freeze({
       'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
     }),

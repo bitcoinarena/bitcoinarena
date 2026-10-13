@@ -14,6 +14,7 @@
 // second implementation of any of them here is exactly the divergence 5A.2
 // exists to prevent, and the guard test in `round.test.js` counts the files
 // that reach the census the same way it counts the files that reach the core.
+import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { selectCommittee, drawCommittee, slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -172,8 +173,10 @@ export class Roster {
     // committee_time" is the question every node can ask, and a beacon the
     // creator could have held is refused for that before anything else is
     // considered - a node with no chain view still refuses it.
+    // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf): one committee per table
+    const anchor = tableAnchorOf(contract);
     const seeded = committeeSeedFromBeacon(contract, {
-      roundId: roundIdBytes, randomness, height: given && given.height, timeMs: given && given.timeMs,
+      roundId: anchor ? anchor.anchorId : roundIdBytes, randomness, height: given && given.height, timeMs: given && given.timeMs,
     });
     if (!seeded.ok) return seeded;
 
@@ -627,7 +630,9 @@ export class Roster {
     const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
     const census = contract ? this.censusFor(roundIdBytes) : null;
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
-    const seated = this.seatedFor ? this.seatedFor(roundIdBytes, role) : null;
+    // AND TAKE THE TABLE'S SEATING (kanban #293 pick (c)): the certificate of the table's first round seats every round of it
+    const anchor = contract ? tableAnchorOf(contract) : null;
+    const seated = this.seatedFor ? this.seatedFor(anchor ? anchor.anchorId : roundIdBytes, role) : null;
     const kept = census && census.ok && seeded && seeded.ok && seeded.seed
       ? `${toHex(roundIdBytes)}:${role}:${toHex(census.root)}:${toHex(seeded.seed)}:${seated ? seated.join(',') : '-'}` : null;
     if (kept && this.committees.has(kept)) return this.committees.get(kept);
