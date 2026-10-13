@@ -2028,6 +2028,32 @@
       setTimeout(() => readResultSummary(run, nodes), 1000);
       resultTimer = setInterval(() => readResultSummary(run, nodes), 2000);
     };
+    // THE RUN IS SAFE BEFORE IT IS CELEBRATED (§13A "Client duty", kanban #315): "on delivery, the reference client uploads its
+    // complete transcript to at least two committee nodes ... before showing the victory screen. This is what makes the veto work for
+    // a player who closes the browser immediately afterwards." The batches stream live, so this asks the nodes what they hold
+    // (secureTranscript) and, until two hold the whole run, holds a line over the result card: "keep this tab open".
+    window.BLWP_SECURE_RUN = async (word, run, { tries = 30, everyMs = 3000 } = {}) => {
+      if (!run || !/DELIVERED/.test(String(word || '')) || !BLWPCLIENT.secureTranscript) return null;
+      const M = window.unityInstance && window.unityInstance.Module;
+      const n = M && (M.blwpRunNet || M.blwpNet);
+      const finalTick = n && n.client && Number.isInteger(n.client.nextTick) ? n.client.nextTick : null;
+      if (!finalTick || !run.roundHex || !run.entryHex) return null;
+      let el = document.getElementById('blwp-securing');
+      if (!el) { el = document.createElement('div'); el.id = 'blwp-securing';
+        el.style.cssText = 'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:60;padding:8px 14px;border-radius:8px;background:rgba(10,14,20,.92);color:#ffd27a;font:600 14px system-ui;max-width:92vw;text-align:center';
+        document.body.appendChild(el); }
+      el.style.display = ''; el.textContent = 'Securing your run with the signer nodes … keep this tab open';
+      let got = null;
+      for (let i = 0; i < tries; i++) {
+        got = await BLWPCLIENT.secureTranscript({ roundId: BLWPCLIENT.fromHex(run.roundHex), entryId: BLWPCLIENT.fromHex(run.entryHex), nodes: run.nodes || [], finalTick });
+        if (got.safe) { el.style.color = '#7ee08a'; el.textContent = 'Your run is safe: ' + got.holders.length + ' signer nodes hold all of it'; setTimeout(() => { el.style.display = 'none'; }, 4000); break; }
+        el.textContent = 'Securing your run: ' + got.holders.length + ' of 2 signer nodes hold all of it … keep this tab open';
+        await new Promise((r) => setTimeout(r, everyMs));
+      }
+      window.BLWP_RUN_SAFE = got;
+      if (got && !got.safe) { el.style.color = '#ff8a7a'; el.textContent = 'Your run is not yet held by two signer nodes - keep this tab open (' + got.why + ')'; }
+      return got;
+    };
     window.BLWP_RUN_OVER = (word, run) => {
       if (run) prefetchReplayNodes(run.roundHex, run.nodes);
       window.BLWP_CHAIN = undefined;
@@ -2059,6 +2085,8 @@
       window.BLWP_CARD_UP = true;
       // and the result summary on it, read from the round's signer nodes while it stands
       startResultSummary(run);
+      // and the run made safe on two signer nodes before it is celebrated (kanban #315)
+      if (window.BLWP_SECURE_RUN && (!window.BLWP_SECURING || window.BLWP_SECURING !== (run && run.entryHex))) { window.BLWP_SECURING = run && run.entryHex; window.BLWP_SECURE_RUN(word, run).catch(() => {}); }
       { const pl = document.getElementById('blwp-players'); if (pl) pl.style.display = 'none'; }
       if (noLobby && !window.BLWP_LOBBY_STARTING) {
         window.BLWP_LOBBY_STARTING = true;
