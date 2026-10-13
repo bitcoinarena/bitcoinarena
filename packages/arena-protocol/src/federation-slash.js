@@ -256,3 +256,25 @@ export function guardianSlashPayees({ amountSats, censusNodes, record }) {
   out[0].sats += nodes - each * BigInt(keys.length);
   return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
 }
+
+/**
+ * A LIQUIDATION'S REMAINDER, BY NAME (§23A.5: "only the remainder then, 75% / 25% as above" - "75% evenly to every active census
+ * node at that height ... minus the slashed nodes and minus every guardian of the federation concerned; 25% to the donation set
+ * of §22A - the developers - by share_bps"). `msat` BigInt; `censusNodes` keys at the spending height; `slashed` keys; `record`
+ * the federation's; `donation` the donation set in force, recipients with `recipientPk` (x-only, hex or bytes) and `shareBps`.
+ * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
+ * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
+ */
+export function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
+  if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
+  const out = new Set((slashed || []).map(hexKey));
+  const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
+  if (!nodes.ok) return nodes;
+  const keyed = (donation || []).filter((r) => r && r.recipientPk !== undefined && Number.isInteger(r.shareBps) && r.shareBps > 0)
+    .map((r) => ({ key: hexKey(r.recipientPk), bps: BigInt(r.shareBps) })).sort((a, b) => (a.key < b.key ? -1 : 1));
+  const bps = keyed.reduce((a, r) => a + r.bps, 0n);
+  if (!keyed.length || bps !== 10000n) return { ok: false, why: 'the donation set in force names no key recipients whose shares make 10000 bps' };
+  const dev = keyed.map((r) => ({ key: r.key, msat: (nodes.developers * r.bps) / 10000n, part: 'donation' }));
+  dev[0].msat += nodes.developers - dev.reduce((a, r) => a + r.msat, 0n);
+  return { ok: true, payees: [...nodes.nodes.map((n) => ({ key: n.key, msat: n.sats, part: 'node' })), ...dev] };
+}
