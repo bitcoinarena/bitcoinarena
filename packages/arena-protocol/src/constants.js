@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -37,6 +37,13 @@ export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
  */
 export const DRAW_FREE_VERSION = 2;
 export const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= DRAW_FREE_VERSION;
+// EVERY GAME THROUGH EVERY FEDERATION (2026.0.3, kanban #348; the owner 2026-10-13 ~11:45Z: "Es muss möglich sein für alle Spiele über
+// alle Federation zu zahlen"): from version 3 a paying round need not name one federation - a zero federation_id takes a stake
+// lock in any federation its seats hold OPEN, each entry naming its own (contracts.js FEDERATION_MARKER) - and it settles one
+// balanced federation transaction per federation by one payout table.
+export const MULTI_FEDERATION_VERSION = 3;
+export const takesAnyFederation = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= MULTI_FEDERATION_VERSION
+  && c.federationId instanceof Uint8Array && c.federationId.length === 32 && c.federationId.every((b) => b === 0);
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
