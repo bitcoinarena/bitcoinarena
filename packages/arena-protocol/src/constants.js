@@ -292,6 +292,8 @@ export const TAG = {
   roundContract: 'ARENA/v1/RoundContract',
   // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
   seriesRound: 'ARENA/v1/SeriesRound',
+  // WHAT A ROUND'S CREATOR SIGNS (§6 creator_signature, kanban #313): the round's id, under this tag
+  roundCreator: 'ARENA/v1/RoundCreator',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',

@@ -22,6 +22,7 @@ import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
+import { creatorSignatureStands } from '../../arena-protocol/src/creator.js';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -3396,6 +3397,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
+        // A ROUND THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID (§6, kanban #313), as `?creator=<hex>`:
+        // checked before anything else is asked, kept beside the round. A round this seat already holds is not asked again.
+        if (contract.creatorPubkey) {
+          const rid = roundIdOf(contract);
+          const said = String(url.searchParams.get('creator') || '');
+          const sig = /^[0-9a-f]{128}$/i.test(said) ? fromHex(said.toLowerCase()) : null;
+          const st = creatorSignatureStands(contract, sig, { verify: (s, m, k) => schnorr.verify(s, m, k) });
+          if (!st.ok && !(round.get(rid) && round.creatorSignature(rid))) return text(res, 403, st.why);
+          if (st.ok) round.putCreatorSignature(rid, sig);
+        }
         // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
         // round is refused by the same game rather than as a round nobody heard of
         { const refused = unhostedRefusal(contract); if (refused) return text(res, 409, refused); }
@@ -5108,6 +5119,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      // A ROUND'S CREATOR SIGNATURE (§6, kanban #313): what rides beside a contract that names its creator, hex - 404 with none
+      if (req.method === 'GET' && url.pathname === '/round-creator') {
+        const rid = Buffer.from(url.searchParams.get('id') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a creator signature is asked for by a round id');
+        const sig = round.creatorSignature(new Uint8Array(rid));
+        if (!sig) return text(res, 404, 'this signer node holds no creator signature for that round');
+        return text(res, 200, toHex(sig));
+      }
+
       if (req.method === 'GET' && url.pathname === '/lock-settlement') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');

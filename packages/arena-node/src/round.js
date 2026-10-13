@@ -2623,6 +2623,16 @@ export class Round {
     return feds.every((r) => r.state === 'ACCEPTED') ? 'ACCEPTED' : 'SUBMITTING';
   }
 
+  /** A round's creator signature (§6, kanban #313): kept once, the first that stood; 64 bytes or null. */
+  putCreatorSignature(roundIdBytes, signature) {
+    this.db.prepare('INSERT OR IGNORE INTO round_creators (round_id, signature) VALUES (?, ?)').run(Buffer.from(roundIdBytes), Buffer.from(signature));
+  }
+
+  creatorSignature(roundIdBytes) {
+    const r = this.db.prepare('SELECT signature FROM round_creators WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return r ? new Uint8Array(r.signature) : null;
+  }
+
   /** Every federation's settlement row of a round (2026.0.3), in federation id order. */
   fedLockSettlementsOf(roundIdBytes) {
     return this.db.prepare('SELECT federation_id, txid, state, why, made_ms FROM fed_lock_settlements WHERE round_id = ? ORDER BY federation_id').all(Buffer.from(roundIdBytes))

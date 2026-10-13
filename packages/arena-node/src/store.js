@@ -853,6 +853,13 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- A ROUND'S CREATOR SIGNATURE (§6, kanban #313): the BIP-340 signature by the key the contract names over its id, kept
+    -- beside the round as the id is (a signature is never inside the bytes it signs), and served at GET /round-creator.
+    CREATE TABLE IF NOT EXISTS round_creators (
+      round_id  BLOB PRIMARY KEY,
+      signature BLOB NOT NULL
+    );
+
     -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3, kanban #348) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
     -- one row per (round, federation), with the same intent and state as a round's own settlement row.
     CREATE TABLE IF NOT EXISTS fed_lock_settlements (
