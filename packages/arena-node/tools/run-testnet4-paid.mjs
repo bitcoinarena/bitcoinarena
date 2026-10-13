@@ -173,6 +173,101 @@ console.log(round.lobbyUrl);
 if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id) => say({ opened: id, stakeMsat: String(stakeMsat), custody: 'FEDERATION' }),
   onError: (e) => say({ paidNotOpened: e.message }) });
 }
+// THE DUTY TO POST THE NEXT 24 H (kanban #352, the owner 2026-10-13 ~18:35Z; arena-protocol/src/duty.js, spec §5A.5): PAID_DUTY=1 runs ONE
+// plan item - DUTY_GAME (rps | updown) in DUTY_FEDERATION (federation id hex), named DUTY_ITEM - on every machine of the network. Every
+// 30 s it reads the chain: the slot's anchor, the census there, the duty order; when the node on duty for the current slot is one this
+// machine runs (DUTY_LOCAL_KEYS, else its own daemons) it posts what slotsToPost names - its own slot and, from 5 min in, every missed
+// slot of the last 20, oldest first - one grid of the slot's target hour, carrying the duty marker, then the series to every seat.
+// Every other machine posts nothing. DUTY_DRY=1: decide and say, publish nothing.
+if (env.PAID_DUTY === '1') {
+  const { slotOf, slotStartMs, targetWindow, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, slotsToPost, DUTY_COMMITTEE_LEAD_MS }
+    = await import('../../arena-protocol/src/duty.js');
+  const { medianTimePast } = await import('../../arena-protocol/src/beacon.js');
+  const item = env.DUTY_ITEM, game = env.DUTY_GAME, fed = String(env.DUTY_FEDERATION || '').toLowerCase();
+  if (!item || !['rps', 'updown', 'nextblock'].includes(game) || !/^[0-9a-f]{64}$/.test(fed)) throw new Error('PAID_DUTY=1 needs DUTY_ITEM, DUTY_GAME rps|updown|nextblock and DUTY_FEDERATION');
+  const tag = toHex(itemTag(item));
+  const local = new Set((env.DUTY_LOCAL_KEYS ? env.DUTY_LOCAL_KEYS.split(',') : round.daemons.map((d) => toHex(d.round.pubkey))).map((k) => k.trim().toLowerCase()));
+  const feeRate = Number(env.DUTY_FEE_RATE || 2), maxFeeRate = Number(env.DUTY_MAX_FEE_RATE || 8);
+  const dry = env.DUTY_DRY === '1';
+  // DUTY_FROM_SLOT: the first slot this duty owns - the slots before it were covered by the grids published before the duty began
+  // (the 24 h keepers), so they are never caught up
+  const fromSlot = Number(env.DUTY_FROM_SLOT || 0);
+  const dir = join(home, 'paid', 'duty'); mkdirSync(dir, { recursive: true });
+  const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
+  const UPDOWN = env.ARENA_PROTOCOL_VERSION === '2' ? UPDOWN_V2 : UPDOWN_TN4;
+  const inflight = new Set();
+  const censusAt = new Map();
+  let busy = false, lastSaid = '';
+  const donationSet = () => {
+    const keys = donationKeysForNetworkId(round.contract.networkId);
+    const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+      sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+      rotations: [], height: round.contract.censusHeight,
+      verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+    if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+    return idOfDonationSet(forced.recipients);
+  };
+  // ONE GRID FOR THE SLOT'S TARGET HOUR, the marker beside its series; published, saved, then posted to every seat
+  const post = async (slot) => {
+    const { startMs } = targetWindow(slot);
+    const committee = BigInt(startMs - DUTY_COMMITTEE_LEAD_MS);
+    const marker = dutyMarkerOutput(slot, item);
+    const common = { feeRate, maxFeeRate, committeeTimeMs: committee, extraOutputs: [marker], waitBeacon: false };
+    const got = game === 'nextblock'
+      // TICK TOCK (the run game): 90 s rounds, entries open 45 s into each (the late join), 40 an hour, the runner's own game and core
+      ? await round.openGrid({ fields: { donationSetId: donationSet(), federationId: fromHex(fed) }, stakeMsat },
+        { ...common, slots: 40, tables: 1, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(startMs + 45000) })
+      : game === 'rps'
+      ? await round.openGrid({ fields: { ...RPS_ROUND_FIELDS, donationSetId: donationSet(), federationId: fromHex(fed) }, stakeMsat },
+        { ...common, slots: Number(env.DUTY_RPS_SLOTS || 450), tables: Number(env.DUTY_RPS_TABLES || 2), windowMs: 8000n, entryAfterStartMs: 80000n,
+          firstCloseMs: BigInt(startMs + 80000) })
+      : await round.openGrid({ fields: { gameId: UPDOWN.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0,
+        donationSetId: donationSet(), federationId: fromHex(fed) }, stakeMsat,
+        stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
+        { ...common, slots: 3600000 / Number(UPDOWN.manifest.roundPeriodMs), tables: 1, windowMs: BigInt(UPDOWN.manifest.roundPeriodMs), entryAfterStartMs: 0n,
+          firstCloseMs: BigInt(startMs) });
+    if (got.dry) { say({ duty: 'grid dry', item, slot, accepted: got.accepted, reject: got.reject, rounds: got.rounds, bytes: got.bytes, feeSat: got.feeSat,
+      firstStart: got.firstStart, lastClose: got.lastClose, committeeTime: got.committeeTime }); return; }
+    if (!got.ok) throw new Error(got.why || 'the grid was not published');
+    writeFileSync(fileOf(slot), JSON.stringify({ item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines, posted: null }) + '\n');
+    say({ duty: 'published', item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series.map((x) => x.slice(0, 16)), rounds: got.rounds });
+    const posted = [];
+    for (const line of got.lines) posted.push(await round.postSeries(line));
+    writeFileSync(fileOf(slot), JSON.stringify({ item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines, posted }) + '\n');
+    say({ duty: 'posted', item, slot, seats: posted.map((p) => `${p.took}/${p.of}`), refused: posted.flatMap((p) => p.refused).slice(0, 3) });
+  };
+  const look = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const view = await round.dutyChain.view();
+      const headers = view.blocks.map((b) => b.header);
+      const tip = view.firstHeight + headers.length - 1;
+      const mtpAt = async (h) => { const m = medianTimePast(headers, view.firstHeight, h); return m === null ? -1 : m; };
+      const nowMs = Date.now(), slot = slotOf(nowMs);
+      const anchor = await anchorHeight(slot, { mtpAt, tip, low: view.firstHeight + 11 });
+      if (anchor === null) { if (lastSaid !== `wait ${slot}`) say({ duty: 'no anchor yet', item, slot }); lastSaid = `wait ${slot}`; return; }
+      if (!censusAt.has(anchor)) censusAt.set(anchor, round.dutyChain.censusKeysAt(anchor));
+      const order = dutyOrder({ networkId: round.contract.networkId, slot, nodeKeys: censusAt.get(anchor) });
+      const onDuty = order.length > 0 && local.has(toHex(order[0]));
+      // POSTED: a marker of this item in the chain's last 30 h of blocks or in the mempool - and what this keeper itself has in flight
+      const posted = new Set(inflight);
+      for (let i = slot - 30; i < fromSlot; i++) posted.add(i);
+      for (const b of view.blocks.slice(-200)) for (const raw of b.transactions || []) for (const m of dutyMarkersOf(raw)) if (m.tag === tag) posted.add(m.slot);
+      try { for (const txid of await chainCall('getrawmempool', [])) { const hex = await chainCall('getrawtransaction', [txid]); for (const m of dutyMarkersOf(fromHex(hex))) if (m.tag === tag) posted.add(m.slot); } } catch { /* the chain's say only */ }
+      const todo = slotsToPost({ nowMs, onDuty, posted });
+      const said = `${slot} ${toHex(order[0] || new Uint8Array(32)).slice(0, 8)} ${onDuty} ${todo.join(',')}`;
+      if (said !== lastSaid) say({ duty: onDuty ? 'on duty' : 'off duty', item, slot, anchor, dutyNode: toHex(order[0] || new Uint8Array(32)), census: order.length, todo });
+      lastSaid = said;
+      for (const i of (env.DUTY_ONLY_SLOT ? todo.filter((x) => x === Number(env.DUTY_ONLY_SLOT)) : todo)) {
+        if (dry) { say({ duty: 'dry: would post', item, slot: i, target: new Date(targetWindow(i).startMs).toISOString() }); continue; }
+        inflight.add(i);
+        try { await post(i); if (process.env.ARENA_GRID_DRY === '1') inflight.delete(i); } catch (e) { inflight.delete(i); say({ duty: 'not posted', item, slot: i, why: e.message }); }
+      }
+    } catch (e) { say({ duty: 'look failed', item, why: e.message }); } finally { busy = false; }
+  };
+  look(); setInterval(look, 30000);
+}
 // PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
 // waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
 // read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
