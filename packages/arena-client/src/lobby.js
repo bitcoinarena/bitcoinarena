@@ -102,6 +102,9 @@ export function dailyLobbySearch(daily) {
   if (!daily || typeof daily !== 'object' || Array.isArray(daily)) return null;
   if ('round' in daily) return null;
   const nodes = Array.isArray(daily.node) ? daily.node.map(String) : [];
+  // TWO NODES TO START FROM, NOT THE NETWORK (kanban #351, the owner 2026-10-13: "The client may not have a hard coded node list it must
+  // be found on the fly"): daily.json names where a page starts - two, because a chain is read from two independent sources
+  // (joinQuery) - and the page finds the rest in the census it checks
   if (nodes.length < 2 || typeof daily.bond !== 'string' || !/^[0-9a-f]{128}$/.test(String(daily.advert))) return null;
   const q = new URLSearchParams({ node: nodes.join(','), bond: daily.bond, advert: daily.advert });
   if (typeof daily.federation === 'string' && daily.federation) q.set('federation', daily.federation);
