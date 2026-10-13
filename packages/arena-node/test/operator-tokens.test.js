@@ -38,7 +38,7 @@ test('a token opens only its scopes; a wrong, malformed or revoked one opens not
   assert.equal(operatorUri({ endpoint: 'http://x:1/', token: 'ab'.repeat(32) }), `blwp-operator:http://x:1#${'ab'.repeat(32)}`);
 });
 
-test('on a running seat: the pairing token reads status; vote and config answer by name what is not built; the owner mints and revokes', async () => {
+test('on a running seat: the pairing token reads status and signs a vote; config answers by name what is not built; the owner mints and revokes', async () => {
   const seed = new Uint8Array(32).fill(7);
   const secret = ownerSecretFromSeed(seed);
   const ownerRec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
@@ -54,9 +54,21 @@ test('on a running seat: the pairing token reads status; vote and config answer 
     assert.equal(st.ok, true);
     assert.equal(typeof st.node, 'string');
     assert.equal(typeof st.roundsHeld, 'number');
-    const vote = await get('/operator/vote', token);
-    assert.equal(vote.status, 501);
-    assert.match((await vote.json()).why, /no ballot to vote in yet/);
+    // THE VOTE ACTION (#332 on #329): the node's bond key signs, the door answers the 76-byte payload and broadcasts nothing
+    const { decodeVote, voteMessage: vm, CHOICE: C } = await import('../../arena-protocol/src/ballot.js');
+    const pid = 'ab'.repeat(32);
+    const castVote = (body, tok = token) => fetch(base + '/operator/vote', { method: 'POST', headers: { authorization: `Bearer ${tok}` }, body: JSON.stringify(body) });
+    const v = await (await castVote({ proposalId: pid, choice: 'yes' })).json();
+    assert.equal(v.ok, true, v.why);
+    const dec = decodeVote(Uint8Array.from(Buffer.from(v.opReturn, 'hex')));
+    console.log('  VOTE:', JSON.stringify({ bytes: v.opReturn.length / 2, marker: Buffer.from(v.opReturn.slice(0, 6), 'hex').toString(), prefix: toHex(dec.idPrefix), choice: dec.choice }));
+    assert.equal(v.opReturn.length / 2, 76);
+    assert.equal(toHex(dec.idPrefix), pid.slice(0, 16));
+    assert.equal(dec.choice, C.YES);
+    assert.equal(schnorr.verify(dec.signature, vm(Uint8Array.from(Buffer.from(pid, 'hex')), C.YES), Uint8Array.from(Buffer.from(st.node, 'hex'))), true,
+      'signed by the node key the census counts');
+    assert.equal((await castVote({ proposalId: 'zz', choice: 'YES' })).status, 400);
+    assert.equal((await castVote({ proposalId: pid, choice: 'MAYBE' })).status, 400);
     assert.equal((await get('/operator/config', token)).status, 501);
     // the owner mints a read-only token and revokes it again
     const node = (await (await fetch(`${base}/owner`)).json()).node;
