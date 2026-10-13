@@ -58,6 +58,7 @@ import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './net
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex } from './absences.js';
+import { createLiquidations } from './liquidations.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -401,6 +402,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
   // ABSENCE ATTESTATIONS (§23A.4, kanban #322): taken at POST /absence, and what proves a guardian ABANDONED in the record
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
+  let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2719,6 +2721,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // EVERY NODE SERVES EVERY FEDERATION (kanban #348, RULED the owner 2026-10-13): another federation's port is joined with the
   // invite its signed record carries - the records this seat mirrors for every federation its census names
   if (stakeLocks && 'inviteOf' in stakeLocks) stakeLocks.inviteOf = (fid) => fedRecords.inviteOf(fid);
+  // A HALTED FEDERATION'S LIQUIDATION (§23A.5, kanban #323), mirrored at GET /liquidations, on the clocks of this seat's chain
+  liquidations = createLiquidations({ records: fedRecords, clocks: FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet,
+    verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
   // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
   roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
@@ -5443,6 +5448,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const drainPools = Object.fromEntries([...new Set(listed.map((f) => f.successor).filter(Boolean))]
           .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
         return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: listed, drainPools }));
+      }
+      if (req.method === 'GET' && url.pathname === '/liquidations') {
+        if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [] });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list() }));
+      }
+      if (req.method === 'POST' && url.pathname === '/liquidations/spent-set') {
+        if (!liquidations) return text(res, 503, 'this seat holds no federation records yet');
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a spent set is JSON: { spentSet, signature } in hex'); }
+        const r = liquidations.offer(said || {});
+        return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
       }
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
