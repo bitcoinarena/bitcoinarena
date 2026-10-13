@@ -60,6 +60,30 @@ export async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSW
   return { games, refused };
 }
 
+/**
+ * ONE TILE PER GAME, NOT PER VERSION (kanban #348, measured on the v2 page: each game showed twice - its 2026.0.1 manifest
+ * and its 2026.0.2 update, the second "No signed description."). Versions of one game share its developer key and name (an
+ * update is a new manifest under the same key, §5). Of each, the newest that has a live round; with none live, the newest.
+ * The others are kept on the tile as `versions` (newest first), so a link naming an older version's id still finds it.
+ */
+export function oneTilePerGame(games) {
+  const groups = new Map();
+  for (const g of games || []) {
+    const key = `${g.devKey}:${g.name}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(g);
+  }
+  const out = [];
+  for (const versions of groups.values()) {
+    versions.sort((a, b) => ((b.manifest && b.manifest.version) || 0) - ((a.manifest && a.manifest.version) || 0));
+    const shown = versions.find((g) => g.live && g.live.rounds > 0) || versions[0];
+    // `older`: the other versions, each with its own info - a description its developer signed for that version's id, which
+    // the tile shows while the shown version carries none that stands (checkedGameInfoOfTile)
+    out.push(Object.assign({}, shown, { versions: versions.map((g) => g.id), older: versions.filter((g) => g !== shown) }));
+  }
+  return out;
+}
+
 /** The lobby's rows of one game (each row carries its contract's game id as `game`). */
 export const rowsOfGame = (rows, gameIdHex) => (rows || []).filter((r) => String(r && r.game).toLowerCase() === String(gameIdHex).toLowerCase());
 
@@ -93,4 +117,16 @@ export async function checkedGameInfo(game, verifyEd25519) {
   let good = false;
   try { good = (await verifyEd25519(sig, digest, game.manifest.gameDevPubkey)) === true; } catch { good = false; }
   return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null } : null;
+}
+
+/**
+ * A TILE'S DESCRIPTION (kanban #348): its own version's, else the newest other version's that its developer signed - each
+ * checked against that version's own id; a tile groups only one developer key's versions (oneTilePerGame).
+ */
+export async function checkedGameInfoOfTile(tile, verifyEd25519) {
+  for (const g of [tile, ...((tile && tile.older) || [])]) {
+    const info = await checkedGameInfo(g, verifyEd25519);
+    if (info) return info;
+  }
+  return null;
 }
