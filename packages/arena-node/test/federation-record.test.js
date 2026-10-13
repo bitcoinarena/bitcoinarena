@@ -277,3 +277,24 @@ test('a guardian\'s own departure notice, once due, makes it DEPARTED from leave
   const said = await later.s.seats[1].mySignatureWithGone(toHex(FED), [toHex(later.s.nodes[3].guardianKey)], null, null, [], [departureHex(notice(later.s.nodes, 156010))]);
   assert.match(said.why, /does not stand here: leave_after 156010 is less than departure_notice/);
 });
+
+test('a guardian with a due notice who stopped before its leave_after is ABANDONED, one gone from leave_after DEPARTED (§23A.5, rehearsal 14, kanban #326)', async () => {
+  const { createAbsences } = await import('../src/absences.js');
+  const { signDeparture, signAbsence } = await import('../../arena-protocol/src/absence.js');
+  const NOTICE = 18; const ABANDON = 288; const LEAVE = 156020;
+  const run = async (lastSeen) => {
+    const held = createAbsences({ verify });
+    const s = seven({ absencesOf: (i) => (i === 0 ? held : createAbsences({ verify })), abandonBlocks: ABANDON, departureNotice: NOTICE });
+    const leaver = s.nodes[3];
+    assert.equal(held.offerDeparture(signDeparture({ federationId: FED, peerKey: leaver.guardianKey, leaveAfterHeight: LEAVE, postedAt: 156000, nodePubkey: leaver.pubkey }, (m) => schnorr.sign(m, leaver.secret))).kept, true);
+    for (const n of s.nodes.filter((x) => x !== leaver).slice(0, 5))
+      assert.equal(held.offer(signAbsence({ federationId: FED, peerKey: leaver.guardianKey, lastSeenHeight: lastSeen, height: lastSeen + ABANDON, attester: n.pubkey }, (m) => schnorr.sign(m, n.secret))).kept, true);
+    const got = await s.seats[0].gather(FED, inviteFederationId);
+    const v = verifyFederationRecord(fromHex(s.seats[0].list()[0].record), { census: s.census.entries, verify, inviteFederationId });
+    return { got, gone: v.record.gone };
+  };
+  const early = await run(LEAVE - 10);
+  assert.deepEqual([early.got.gone, early.got.signers, early.gone[0].kind, early.gone[0].sinceHeight], [1, 7, 2, LEAVE - 10], 'ABANDONED since it stopped');
+  const onTime = await run(LEAVE);
+  assert.deepEqual([onTime.got.gone, onTime.got.signers, onTime.gone[0].kind, onTime.gone[0].sinceHeight], [1, 7, 1, LEAVE], 'DEPARTED from leave_after');
+});

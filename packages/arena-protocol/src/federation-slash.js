@@ -213,3 +213,41 @@ export function settleClaims({ escrowMsat, claims = [], spentNonces = null, halt
     spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
     remainderSplitsAt: when.remainderSplitsAt };
 }
+
+const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
+
+/**
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
+ * the owner 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
+ * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
+ * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
+ */
+export function guardianSlashStands({ proof, departure = null }) {
+  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  if (departure && departure.ok) {
+    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
+    if (proof.sinceHeight >= departure.leaveAfterHeight)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
+    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
+  }
+  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
+}
+
+/**
+ * WHO A SLASHED GUARDIAN'S BOND PAYS once its federation is CLOSED with nothing lost (§23A.5, FEDERATION.md rehearsal 14):
+ * 75 % evenly to the census nodes active at the slash height LESS EVERY GUARDIAN OF THAT FEDERATION (they guarded the federation
+ * that lost one), 25 % to the donation set (splitNodesDevelopers). Amounts in sat, BigInt; the nodes' division's leftover
+ * satoshi go to the first node in key order, so the outputs sum to the amount. Answers { ok, nodes: [{ key, sats }], developers }.
+ */
+export function guardianSlashPayees({ amountSats, censusNodes, record }) {
+  if (typeof amountSats !== 'bigint' || amountSats <= 0n) return { ok: false, why: 'a slashed bond is a positive number of sat' };
+  const guardians = new Set((record && record.guardians || []).map((g) => hexKey(g.nodePubkey)));
+  const keys = [...new Set((censusNodes || []).map(hexKey))].filter((k) => k && !guardians.has(k)).sort();
+  if (!keys.length) return { ok: false, why: 'no census node outside the federation\'s guardians to pay' };
+  const { nodes, developers } = splitNodesDevelopers(amountSats);
+  const each = nodes / BigInt(keys.length);
+  const out = keys.map((key) => ({ key, sats: each }));
+  out[0].sats += nodes - each * BigInt(keys.length);
+  return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
+}
