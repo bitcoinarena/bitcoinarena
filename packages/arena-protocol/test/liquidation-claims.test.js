@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { settleClaims, REGTEST_CLOCKS } from '../src/federation-slash.js';
 
-const clocks = REGTEST_CLOCKS;             // halt 1000: window to 1010, late claims to 1100, remainder from 1100
+const clocks = REGTEST_CLOCKS;             // halt 1000: window 1010 to 1020 (opens with the liquidation), late claims to 1100, remainder from 1100
 const signed = (c) => !c.forged;
 const claim = (nonce, sat, height, extra = {}) => ({ nonce, amountMsat: BigInt(sat) * 1000n, height, ...extra });
 const base = { haltHeight: 1000, clocks, noteSigned: signed };
@@ -33,7 +33,7 @@ test('a short escrow pays the window pro rata and says the rate; nothing is left
 
 test('late notes are paid at face from what is left, in order of height, until it runs out', () => {
   const r = settleClaims({ ...base, escrowMsat: 200_000n, atHeight: 1050, spentNonces: [],
-    claims: [claim('aa', 100, 1001), claim('late2', 80, 1060), claim('late1', 50, 1020)] });
+    claims: [claim('aa', 100, 1011), claim('late2', 80, 1060), claim('late1', 50, 1030)] });
   assert.deepEqual(r.paid.map((p) => [p.nonce, p.msat, p.late]), [['aa', 100000n, false], ['late1', 50000n, true], ['late2', 50000n, true]]);
   assert.equal(r.remainderMsat, 0n);
 });

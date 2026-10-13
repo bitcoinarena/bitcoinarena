@@ -154,9 +154,14 @@ export function lifecycleBlocks(clocks) {
 export function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   if (!Number.isInteger(haltHeight) || haltHeight < 0)
     return { ok: false, why: 'a halt happens at a block height' };
+  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
+  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
+  // claim_blocks before (kanban #323, found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
+  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
   return {
     ok: true,
-    claimWindowCloses: haltHeight + clocks.claimBlocks,
+    claimWindowOpens: haltHeight + clocks.abandonBlocks,
+    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
     lateClaimsUntil: haltHeight + clocks.drainBlocks,
     remainderSplitsAt: haltHeight + clocks.drainBlocks,
   };
