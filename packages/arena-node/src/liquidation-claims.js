@@ -85,10 +85,12 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
  *      federation (`run` the stake-lock tool over that client), and claimed there;
  *   2. the table (`claims.plan`, over what that federation credited) is paid note by note: every note not paid yet, summed per
  *      payout key, locked to that key (the tool's `pay`) - so a late note is paid by a later pass from what is left, never twice;
- *   3. the remainder's 75 / 25 after drain_blocks is not paid here yet.
+ *   3. after drain_blocks, the remainder - what no note claimed - 75 % to the nodes and 25 % to the donation set, as
+ *      `remainderPayees(fid, msat)` names them ([{ key, msat }]: the census at that height less the slashed nodes and that
+ *      federation's guardians, evenly, and the donation set by share_bps - federation-slash.js guardianSlashPayees' rule).
  * `spendEscrow(toScript)` builds, signs and posts the escrow's spend (buildEscrowPegin + assemble + post) and answers { txid } or why.
  */
-export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, keep = () => {}, say = () => {} }) {
+export async function payOutLiquidation({ fid, v, claims, height, run, spendEscrow, remainderPayees = null, keep = () => {}, say = () => {} }) {
   const p0 = await claims.plan(fid);
   if (!p0.ok) return { why: p0.why };
   if ((await height()) <= p0.claimWindowCloses) return { why: `the claim window closes at ${p0.claimWindowCloses}` };
@@ -109,7 +111,19 @@ export async function payOutLiquidation({ fid, v, claims, height, run, spendEscr
   if (!p.ok) return { why: p.why };
   const done = new Set(v.paidNonces || []);
   const due = p.paidNotes.filter((n) => !done.has(n.nonce) && BigInt(n.msat) > 0n);
-  if (!due.length) return { paid: 0, notes: done.size };
+  if (!due.length) {
+    // THE REMAINDER, once: only after drain_blocks (settleClaims names a split only then), every note's payout made first
+    if (!p.split || v.remainderTxid || !remainderPayees) return { paid: 0, notes: done.size, ...(p.split && !remainderPayees ? { why: 'the remainder waits for its payees' } : {}) };
+    const rest = BigInt(p.remainderMsat);
+    const to = (await remainderPayees(fid, rest)).filter((x) => BigInt(x.msat) > 0n);
+    if (!to.length) return { why: 'no payee for the remainder' };
+    if (to.reduce((a, x) => a + BigInt(x.msat), 0n) > rest) return { why: 'the remainder\'s payees come to more than the remainder' };
+    const r = await run(['--mode', 'pay', '--payouts', to.map((x) => `${x.key}:${x.msat}`).join(',')]);
+    if (!r.txid) return { why: `no remainder transaction: ${r.error || JSON.stringify(r)}` };
+    Object.assign(v, { remainderTxid: r.txid, remainderMsat: String(rest), remainderPayees: to.length }); keep();
+    say({ federation: fid.slice(0, 16), remainder: String(rest), payees: to.length, txid: r.txid });
+    return { paid: 0, notes: done.size, remainder: String(rest) };
+  }
   const byKey = new Map();
   for (const n of due) byKey.set(n.payoutPk, (byKey.get(n.payoutPk) || 0n) + BigInt(n.msat));
   const paid = await run(['--mode', 'pay', '--payouts', [...byKey.entries()].map(([k, m]) => `${k}:${m}`).join(',')]);

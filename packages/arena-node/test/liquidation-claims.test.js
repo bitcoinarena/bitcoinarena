@@ -119,3 +119,24 @@ test('the table paid: nothing before the window closes; then the escrow into the
   const late = await pass();
   assert.deepEqual([late.paid, spent, v.payouts.at(-1).payoutPk, v.payouts.at(-1).msat], [1, 1, P2, '1024000'], 'the late note from what is left, the escrow spent once');
 });
+
+test('after drain_blocks the remainder is paid once to its payees, never before every note is', async () => {
+  const b = book(); b.at(1012);
+  await b.claims.offer({ federation: FED, ecash: 'e1', payoutPk: P1 });
+  const pays = []; const v = {};
+  const run = async (args) => {
+    if (args[1] === 'pegin-address') return { address: 'tb1qsafe' };
+    if (args[1] === 'pegin-claim') return { balance_before_msat: 0, balance_after_msat: 2_000_000 };
+    if (args[1] === 'pay') { pays.push(args[3]); return { txid: `t${pays.length}`, payouts: [] }; }
+    return {}; };
+  let h = 1021;
+  const remainderPayees = async (_fid, msat) => [{ key: 'aa'.repeat(32), msat: (msat * 75n) / 100n }, { key: 'dd'.repeat(32), msat: msat - (msat * 75n) / 100n }];
+  const pass = () => payOutLiquidation({ fid: FED, v, claims: b.claims, height: async () => h, run, spendEscrow: async () => ({ txid: 'x' }), remainderPayees });
+  await pass();
+  assert.equal(pays.length, 1, 'the notes first');
+  assert.deepEqual(await pass(), { paid: 0, notes: 2 }, 'no remainder before drain_blocks');
+  b.at(1100); h = 1100;
+  const r = await pass();
+  assert.deepEqual([r.remainder, pays.length, pays[1]], ['1232000', 2, `${'aa'.repeat(32)}:924000,${'dd'.repeat(32)}:308000`]);
+  await pass(); assert.equal(pays.length, 2, 'once');
+});
