@@ -42,6 +42,10 @@ const CARRIER_SATS = 3000n;
 // ids); each update carries both, everything else of the advertisement as it was
 const VERSIONS = env.ARENA_ADVERT_PROTOCOL_VERSIONS ? env.ARENA_ADVERT_PROTOCOL_VERSIONS.split(',').map(Number) : null;
 const ADD_GAMES = (env.ARENA_ADVERT_ADD_GAMES || '').split(',').filter((x) => /^[0-9a-f]{64}$/.test(x));
+// STEPPING OUT WITHOUT UNBONDING (§5A.3, kanban #302): ARENA_ADVERT_SERVING=false takes the named nodes out of every census from
+// the update's block on (true brings them back), their bonds untouched; ARENA_ADVERT_NODES="3,5" names which (all seven when unset)
+const SERVING = env.ARENA_ADVERT_SERVING === 'false' ? false : env.ARENA_ADVERT_SERVING === 'true' ? true : null;
+const ONLY = (env.ARENA_ADVERT_NODES || '').split(',').map(Number).filter((n) => n >= 1 && n <= 7);
 const gamesWith = (hosted) => [...new Map([...(hosted || []), ...ADD_GAMES.map(fromHex)].map((g) => [toHex(g), g])).values()]
   .sort((x, y) => (toHex(x) < toHex(y) ? -1 : 1));
 
@@ -54,6 +58,7 @@ const federationId = fromHex(readInvite(readFileSync(join(home, 'invite-code'), 
 
 const plans = [];
 for (let n = 1; n <= 7; n++) {
+  if (ONLY.length && !ONLY.includes(n)) continue;
   const store = join(home, `node-${n}.db`);
   const db = openStore(store);
   const { secret, pubkey } = nodeIdentity(db);
@@ -71,9 +76,11 @@ for (let n = 1; n <= 7; n++) {
     otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), advertises: now, updatedBy: bond.updatedBy || null, wants: want });
   const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
   const gamesDiffer = ADD_GAMES.length && gamesWith(bond.advert.hostedGames).length !== (bond.advert.hostedGames || []).length;
-  if (now.length === 1 && now[0] === want && !versionsDiffer && !gamesDiffer) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
+  const servingDiffers = SERVING !== null && (bond.advert.serving !== false) !== SERVING;
+  if (now.length === 1 && now[0] === want && !versionsDiffer && !gamesDiffer && !servingDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
   const advert = { ...bond.advert, guardianOf: [{ federationId, guardianKey: fromHex(guardianKey) }], timestamp: BigInt(Date.now()),
-    ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}) };
+    ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}),
+    ...(SERVING !== null ? { serving: SERVING } : {}) };
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
 }
 if (!plans.length) { say({ done: 'every bond already advertises its node\'s current guardian key; nothing posted' }); process.exit(0); }
