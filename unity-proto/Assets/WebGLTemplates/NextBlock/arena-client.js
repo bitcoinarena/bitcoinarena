@@ -22011,6 +22011,8 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
+        // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): a node left out for the version it speaks, as the page shows it
+        tooOld: true, speaks: versions,
         why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
           + `round runs ${protocolVersionName(contract.protocolVersion)}`,
       });
@@ -22188,7 +22190,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
         // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
         const own = (e.advert && e.advert.protocolVersions) || [];
         if (!own.includes(contract.protocolVersion)) {
-          updatedOut.push({ ...e, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
+          updatedOut.push({ ...e, tooOld: true, speaks: own, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
             + `round runs ${protocolVersionName(contract.protocolVersion)}` });
           continue;
         }
@@ -22196,8 +22198,13 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       }
       const roles = u.advert.roles || [];
       const versions = u.advert.protocolVersions || [];
-      if (!roles.length || !versions.includes(contract.protocolVersion)) {
-        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role or not this round\'s version' });
+      if (!roles.length) {
+        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
+        continue;
+      }
+      if (!versions.includes(contract.protocolVersion)) {
+        updatedOut.push({ ...e, tooOld: true, speaks: versions, why: `its newest advertisement update speaks `
+          + `${versions.map(protocolVersionName).join(', ') || 'no version'} and this round runs ${protocolVersionName(contract.protocolVersion)}` });
         continue;
       }
       // the update's games replace the bond's first advertisement's (kanban #204: a hosted-games change is an update)
@@ -22981,6 +22988,7 @@ const BOND_TERMS = Object.freeze({
 const CHAIN_KEPT_MS = 60000;
 const keptChains = new Map();     // network:censusHeight:committeeTime -> { at, chain, firstHeight }
 const keptCensus = new Map();     // round's census root -> evidence
+const keptTooOld = new Map();     // round's census root -> the nodes a seat left out for their protocol version (kanban #349)
 const keptChecked = new Map();    // round's census root -> the census this client checked (entries), for the series' other rounds
 
 const baseOf = (u) => String(u).replace(/\/+$/, '');
@@ -23016,6 +23024,8 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher }) {
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
       const j = await r.json();
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); continue; }
+      // the nodes this seat left out for their protocol version (kanban #349): shown, never counted
+      if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
       return { ok: true, entries: j.entries, from: u, refused };
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   }
@@ -23110,6 +23120,11 @@ async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {
     refused: got.seats.filter((s) => s.agrees === false).map((s) => `${s.node}: ${s.why}`), derived: got };
 }
 
+/**
+ * THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3, "the page shows node X: protocol too old"): as the seat that
+ * handed over the census named them ([{ node, speaks }]), or []. Shown beside the facts, never counted: the census root decides.
+ */
+const tooOldFor = (contract) => keptTooOld.get(toHex(contract.censusRoot)) || [];
 /** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
 const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
 /**
@@ -24136,6 +24151,7 @@ function lateJoinTick(c, nowMs = Date.now(), leadMs = LATE_JOIN_SESSION_MS) {
 
 
 
+
 /** How far a signer node's signed time may be from this page's clock and still count. */
 const LOBBY_SKEW_MS = 60000;
 
@@ -24523,14 +24539,17 @@ function approvalFacts(row, census = null) {
 }
 
 /** The lobby line's words for approvalFacts. */
-function approvalWords(f) {
-  if (!f || f.pending) return ' · selected nodes: pending (§5A.5)';
+function approvalWords(f, tooOld = []) {
+  // NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3): "node X: protocol too old"
+  const old = Array.isArray(tooOld) && tooOld.length
+    ? ` · left out, protocol too old: ${tooOld.map((x) => `${String(x.node).slice(0, 8)} (speaks ${(x.speaks || []).map(protocolVersionName).join(', ') || 'none'})`).join(', ')}` : '';
+  if (!f || f.pending) return ' · selected nodes: pending (§5A.5)' + old;
   const ops = !f.censusKnown ? 'operators not read yet' : `${f.operators.length} operator${f.operators.length === 1 ? '' : 's'}${f.operators.length ? ` (${f.operators.map((o) => o.slice(0, 8)).join(', ')})` : ''}`;
   return ` · ${ops} · in both committees: ${f.both} of ${f.of}` + (f.operatorsPlaying.length
-    ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing');
+    ? ` · a selected operator is playing: ${f.operatorsPlaying.map((o) => o.slice(0, 8)).join(', ')}` : ' · no selected operator is playing') + old;
 }
 
-function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null } = {}) {
+function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOld = null } = {}) {
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
@@ -24554,7 +24573,8 @@ function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null } = {}
     ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
     : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
   // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13, kanban #317): operators, overlap, an operator playing
-  const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census));
+  const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census),
+    typeof tooOld === 'function' ? (row.contract && row.contract.censusRoot ? tooOld(row.contract) : []) : tooOld || []);
   return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
@@ -26442,7 +26462,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          fetchGames: fetchGames, oneTilePerGame: oneTilePerGame, checkedGameInfoOfTile: checkedGameInfoOfTile, checkedGameInfo: checkedGameInfo, rowsOfGame: rowsOfGame, gameClientFile: gameClientFile,
          censusEndpoints: censusEndpoints, mergeNodes: mergeNodes,
          SIGNER_ANSWER_MS: SIGNER_ANSWER_MS,
-         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
+         lobbyOnePerKind: lobbyOnePerKind, phraseWalletEntries: phraseWalletEntries, forgetPhrase: forgetPhrase, clientCommittee: clientCommittee, clientSettlementSignerNodes: clientSettlementSignerNodes, checkedCensusFor: checkedCensusFor, tooOldFor: tooOldFor, newestCheckedCensus: newestCheckedCensus, federationStatus: federationStatus, approvalFacts: approvalFacts, approvalWords: approvalWords, depositFederation: depositFederation, custodySummary: custodySummary, custodySays: custodySays, entryWarnings: entryWarnings, warningsSay: warningsSay, federationStatuses: federationStatuses, moveSays: moveSays, migrateFromDraining: migrateFromDraining, migratePlayerWallet: migratePlayerWallet, swapQuote: swapQuote, swapForRound: swapForRound, swapPlayerWalletForRound: swapPlayerWalletForRound, ledgerFederations: ledgerFederations, federationSays: federationSays, loadSays: loadSays, loadRefusesDeposit: loadRefusesDeposit, pickFederation: pickFederation, moveOffer: moveOffer, FEDERATION_ALLOWS: FEDERATION_ALLOWS, federationIsKnown: federationIsKnown, knownFederation: knownFederation, guardianRowsOf: guardianRowsOf, federationConfirmed: federationConfirmed, confirmFederation: confirmFederation, forgetFederation: forgetFederation, confirmedFederations: confirmedFederations, inviteNamesFederation: inviteNamesFederation, lobbyKeepJoined: lobbyKeepJoined, lobbyRowsAt: lobbyRowsAt, lobbyKeepWhenUnanswered: lobbyKeepWhenUnanswered, lobbyStakeSats: lobbyStakeSats, SERIES_JOIN_LEAD_MS: SERIES_JOIN_LEAD_MS, FUNDED_JOIN_LEAD_MS: FUNDED_JOIN_LEAD_MS, JOIN_LEAD_MS: JOIN_LEAD_MS,
          isLateJoinRound: isLateJoinRound, lateJoinTick: lateJoinTick, runTicksForEntry: runTicksForEntry, entryOpenUntilMs: entryOpenUntilMs, lateJoinLastEntryMs: lateJoinLastEntryMs, LATE_JOIN_JOIN_MS: LATE_JOIN_JOIN_MS,
          nextRoundAfter: nextRoundAfter, nextRoundView: nextRoundView, joiningNextRoundIn: joiningNextRoundIn,
          EXIT_GAME: EXIT_GAME, RESULT_CARD_MS: RESULT_CARD_MS,

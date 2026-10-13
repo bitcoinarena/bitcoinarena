@@ -522,7 +522,11 @@ export class Roster {
       const reaffirm = e.reaffirmedBy && e.reaffirmedBy.txid ? proof(e.reaffirmedBy.txid) : null;
       entries.push({ ...bond, ...(update ? { update } : {}), ...(reaffirm ? { reaffirm } : {}) });
     }
-    return { ok: true, root: toHex(census.root), censusHeight: contract.censusHeight, entries };
+    // THE NODES LEFT OUT FOR THEIR PROTOCOL VERSION (kanban #349 scope 3): bonded, but speaking no version this round runs - the
+    // page names them ("protocol too old"); what decides the round is the root above, which they are not in
+    const tooOld = (census.excluded || []).filter((x) => x.tooOld && x.pubkey)
+      .map((x) => ({ node: toHex(x.pubkey), speaks: (x.speaks || []).map(Number) }));
+    return { ok: true, root: toHex(census.root), censusHeight: contract.censusHeight, entries, ...(tooOld.length ? { tooOld } : {}) };
   }
 
   /**

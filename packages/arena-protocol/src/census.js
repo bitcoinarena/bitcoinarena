@@ -1143,6 +1143,8 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
       excluded.push({
         ...e,
+        // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): a node left out for the version it speaks, as the page shows it
+        tooOld: true, speaks: versions,
         why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
           + `round runs ${protocolVersionName(contract.protocolVersion)}`,
       });
@@ -1320,7 +1322,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
         // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
         const own = (e.advert && e.advert.protocolVersions) || [];
         if (!own.includes(contract.protocolVersion)) {
-          updatedOut.push({ ...e, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
+          updatedOut.push({ ...e, tooOld: true, speaks: own, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
             + `round runs ${protocolVersionName(contract.protocolVersion)}` });
           continue;
         }
@@ -1328,8 +1330,13 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       }
       const roles = u.advert.roles || [];
       const versions = u.advert.protocolVersions || [];
-      if (!roles.length || !versions.includes(contract.protocolVersion)) {
-        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role or not this round\'s version' });
+      if (!roles.length) {
+        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
+        continue;
+      }
+      if (!versions.includes(contract.protocolVersion)) {
+        updatedOut.push({ ...e, tooOld: true, speaks: versions, why: `its newest advertisement update speaks `
+          + `${versions.map(protocolVersionName).join(', ') || 'no version'} and this round runs ${protocolVersionName(contract.protocolVersion)}` });
         continue;
       }
       // the update's games replace the bond's first advertisement's (kanban #204: a hosted-games change is an update)

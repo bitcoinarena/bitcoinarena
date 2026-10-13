@@ -110,4 +110,15 @@ test('a v2 census counts a node whose update announces version 2, and not one wh
   const notUpdated = deriveCensus(view, { contract: { ...contract, protocolVersion: 2 }, resolve, bond: BOND, verifyUpdate: () => true });
   assert.equal(notUpdated.entries.length, 0);
   assert.match(notUpdated.excluded.find((x) => whoIs(x.pubkey) === 'honest').why, /speaks 2026\.0\.1 and this round runs 2026\.0\.2/);
+  // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): the exclusion says so, with what the node speaks
+  const out = notUpdated.excluded.find((x) => whoIs(x.pubkey) === 'honest');
+  assert.equal(out.tooOld, true); assert.deepEqual(out.speaks, [1]);
+  // and an update that still speaks 1 only is too old the same way, through the update
+  const tx1 = advertUpdateTransaction({ ...honest.advert, protocolVersions: [1], timestamp: 1790000000001n },
+    { bondTxid: honest.txid, bondVout: honest.vout, signature: new Uint8Array(64).fill(1) });
+  const { header: h1 } = blockOf(hash256, [parseTransaction(tx1).txid], { previous: blockHashOf(last), time });
+  const still1 = deriveCensus({ blocks: [...blocks, { header: h1, transactions: [tx1] }], firstHeight: view.firstHeight }, { contract: v2, resolve, bond: BOND, verifyUpdate: () => true });
+  const out1 = still1.excluded.find((x) => whoIs(x.pubkey) === 'honest');
+  console.log('  TOO OLD:', JSON.stringify({ step: out1.step, tooOld: out1.tooOld, speaks: out1.speaks, why: out1.why }));
+  assert.equal(out1.tooOld, true); assert.equal(out1.step, 'update'); assert.match(out1.why, /update speaks 2026\.0\.1 and this round runs 2026\.0\.2/);
 });
