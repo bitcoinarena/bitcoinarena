@@ -5477,7 +5477,10 @@
             const rows = await (await fetch(node.replace(/\/+$/, '') + '/rounds?next=2', { cache: 'no-store' })).json();
             // A ROUND THE SEATS ARE ASSIGNED TO, and the next one if a contract does not read here (kanban #351: measured, the first
             // paying row listed was a dead grid's - no signer nodes, a contract this page cannot read - and nothing was checked)
-            for (const r of (rows.rounds || []).filter((x) => !x.free && x.phase === 'open' && Number(x.signerNodes) > 0).slice(0, 4)) {
+            // AND THE NEWEST CENSUS FIRST (kanban #348/#351): the round with the latest committee time - a v2 round's census names
+            // every node of both federations (14), an older v1 round's only federation A's 7 - so the nodes found are the network's
+            for (const r of (rows.rounds || []).filter((x) => !x.free && x.phase === 'open' && Number(x.signerNodes) > 0)
+              .sort((x, y) => Number(y.committeeTimeMs || 0) - Number(x.committeeTimeMs || 0)).slice(0, 4)) {
               try {
                 const got = await BLWPCLIENT.fetchRound(r.id, nodes);
                 if (got && got.contract && BLWPCLIENT.roundLocks(got.contract)) { prepRound(r.id, got.contract, nodes); return; }
