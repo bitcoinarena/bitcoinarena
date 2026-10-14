@@ -12,7 +12,7 @@
 // The federation is the page's own wasm lock client (donor.json wasmPkg), run in Node; each federation's wallet state is
 // kept in <dir>/wallet-<federation id 16>.json. The LND is the dev's own, through lncli. Invites: donor.json `invites`
 // (federation id -> invite), and the `testnet.federation` invite of every `invitesFrom` daily.json.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, chmodSync, renameSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -69,7 +69,7 @@ if (cmd === 'init') {
     recipientPkHex: k.recipientPkHex,
     seats: (flag('seats', 'http://127.0.0.1:31221,http://127.0.0.1:31231,http://127.0.0.1:31241,http://127.0.0.1:31251,http://127.0.0.1:31261,http://127.0.0.1:31271,http://127.0.0.1:31281')).split(','),
     invites: {},
-    invitesFrom: ['https://btc-logistics-core.pages.dev/daily.json'],
+    invitesFrom: ['https://testnet.bitcoin-arena.io/daily.json'],
     wasmPkg: flag('wasm', '/mnt/bitcoin/blwp-2of2-s/page-hold'),
     lnd: { lncli: '/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lncli', lnddir: flag('lnddir', '/mnt/bitcoin/lnd-testnet4-c'),
       rpcserver: flag('rpcserver', '127.0.0.1:11011'), network: 'testnet4' },
@@ -117,6 +117,8 @@ async function invites() {
       const d = await (await fetch(url, { cache: 'no-store' })).json();
       // the guardians' second route, as the page takes it (not the loopback donation route)
       Object.assign(routes, (d && d.testnet && d.testnet.alt) || {});
+      // the gateways the network names (kanban #357): a withdrawal tries these first
+      for (const g of [].concat((d && d.testnet && d.testnet.gateway) || [])) if (typeof g === 'string' && !namedGateways.includes(g)) namedGateways.push(g);
       for (const inv of [d && d.testnet && d.testnet.federation, d && d.federation].filter((x) => typeof x === 'string')) {
         try { out[String(LC.federationIdOf(inv)).toLowerCase()] = inv; } catch { /* not an invite */ }
       }
@@ -127,6 +129,7 @@ async function invites() {
   return out;
 }
 let routed = false;
+const namedGateways = [];
 // ONE CLIENT PER FEDERATION, KEPT ACROSS PASSES (kanban #230): joined on the first pass, used by every later one
 const clientFor = walletClients(async (invite, fed, secret, store) => (await lockClient()).join(invite, fed, secret, store));
 
@@ -137,7 +140,15 @@ async function pass() {
   say({ step: 'asked the seats', donations: got.total, federations: [...got.byFederation.keys()].map((f) => f.slice(0, 16)), unanswered: got.unanswered });
   const known = await invites();
   const LC = await lockClient();
-  for (const [fed, donations] of got.byFederation) {
+  // EVERY FEDERATION THIS DEV HOLDS A WALLET IN, NOT ONLY THOSE WITH NEW DONATIONS (kanban #357, measured 2026-10-14: once the seats had
+  // deleted the rows this client read, no pass reached the withdrawal again, and 38,563 msat sat in federation A)
+  const feds = new Map(got.byFederation);
+  for (const f of readdirSync(dir).filter((x) => /^wallet-[0-9a-f]{16}\.json$/.test(x)).map((x) => x.slice(7, 23))) {
+    const full = Object.keys(known).find((k) => k.startsWith(f));
+    if (full && !feds.has(full)) feds.set(full, []);
+  }
+  state.balances = state.balances || {};
+  for (const [fed, donations] of feds) {
     const invite = known[fed.toLowerCase()];
     if (!invite) { say({ step: 'federation', federation: fed.slice(0, 16), donations: donations.length, why: 'no invite to this federation is known: its funds stay there until one is' }); continue; }
     const client = await clientFor(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
@@ -152,13 +163,19 @@ async function pass() {
         redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n), alreadySpent: r.spent.length,
         failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`), receipted: r.receipted, seats: r.answers.map((a) => `${a.seat}: ${a.status || a.why} ${a.said || ''}`.trim()) });
     }
-    const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}` });
+    const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}`, gateways: [...(cfg.gateways || []), ...namedGateways] });
     if (w.withdrawn !== false || w.state) {
       state.withdrawals.push({ at: new Date().toISOString(), federation: fed, msat: String(w.withdrawableMsat), state: w.state, gateway: w.gateway, preimage: w.preimage || null });
       writeJson(statePath, state);
     }
-    say({ step: 'withdraw', federation: fed.slice(0, 16), ...w, balanceMsat: await client.balanceMsat() });
+    const balanceMsat = await client.balanceMsat();
+    // WHAT THE NODE'S DASHBOARD SHOWS (kanban #357): this dev's balance per federation, kept beside the record
+    state.balances[fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
+    writeJson(statePath, state);
+    say({ step: 'withdraw', federation: fed.slice(0, 16), ...w, balanceMsat });
   }
+  state.lastPass = { at: new Date().toISOString(), donations: got.total, unanswered: got.unanswered.length, seats: (cfg.seats || []).length };
+  writeJson(statePath, state);
 }
 
 if (cmd === 'status') {

@@ -86,3 +86,16 @@ test('walletClients: one join per federation across passes; a failed join is tri
   const b = await clientFor('inv', 'bad', 's', null);
   assert.equal(b.fed, 'bad', 'a failed join is not kept: the next pass joins again');
 });
+
+test('a withdrawal tries the gateways the network names first, and the next after a refund (kanban #357)', async () => {
+  const lnd = { invoice: async () => 'lnbc1' };
+  const asked = [];
+  let held = 19937n;
+  const client = { withdrawableMsat: async () => String(held),
+    withdraw: async (inv, gw) => { asked.push(gw || 'pick'); if (gw === 'https://live/') { held = 0n; return JSON.stringify({ state: 'Success', preimage: 'cd' }); } return JSON.stringify({ state: 'Refunded' }); } };
+  const w = await withdrawToLnd({ client, lnd, minMsat: 10000n, gateways: ['https://stale/', 'https://live/'] });
+  assert.deepEqual([w.withdrawn, w.state, asked], [true, 'Success', ['https://stale/', 'https://live/']]);
+  held = 19937n; asked.length = 0;
+  const none = await withdrawToLnd({ client: { ...client, withdraw: async (inv, gw) => { asked.push(gw || 'pick'); return JSON.stringify({ state: 'Refunded' }); } }, lnd, minMsat: 10000n, gateways: ['https://stale/'] });
+  assert.deepEqual([none.withdrawn, asked], [false, ['https://stale/', 'pick']], 'every named one, then the client\'s own pick');
+});

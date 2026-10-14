@@ -115,12 +115,22 @@ export function walletClients(join) {
   };
 }
 
-export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blwp donations' }) {
+export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blwp donations', gateways = [] }) {
   const can = BigInt(await client.withdrawableMsat());
   if (can < minMsat) return { withdrawn: false, withdrawableMsat: can, why: `${can} msat withdrawable, below the ${minMsat} msat minimum` };
-  const invoice = await lnd.invoice(can, memo);
-  const said = JSON.parse(await client.withdraw(invoice, null));
-  return { withdrawn: said.state === 'Success', withdrawableMsat: can, ...said };
+  // THE GATEWAYS THE NETWORK NAMES FIRST, THEN THE CLIENT'S OWN PICK (kanban #357, measured 2026-10-14: left to the lock client, dev b
+  // took a stale quick-tunnel gateway still registered in federation A - "Refunded" at 06:02Z and 14:39Z - while dev a, through the
+  // gateway daily.json names, was paid at once). A refunded attempt leaves the e-cash in the wallet, so the next gateway is tried.
+  const tried = [];
+  for (const gw of [...new Set((gateways || []).filter(Boolean)), null]) {
+    const invoice = await lnd.invoice(can, memo);
+    let said;
+    try { said = JSON.parse(await client.withdraw(invoice, gw || undefined)); } catch (e) { said = { state: 'Failed', why: e.message }; }
+    tried.push(`${gw || 'client pick'}: ${said.state}`);
+    if (said.state === 'Success') return { withdrawn: true, withdrawableMsat: can, ...said, tried };
+    if (BigInt(await client.withdrawableMsat()) < can) return { withdrawn: false, withdrawableMsat: can, ...said, tried, why: said.why || 'the e-cash left the wallet without a Success: not tried again' };
+  }
+  return { withdrawn: false, withdrawableMsat: can, state: 'Refunded', tried };
 }
 
 /**
