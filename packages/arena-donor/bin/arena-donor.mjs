@@ -22,7 +22,7 @@ import { pathToFileURL } from 'node:url';
 import { gameDevKey, signManifest } from '../src/manifest-sign.js';
 import { manifestStands, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
-import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients } from '../src/donor.js';
+import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
 const flag = (n, d) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : d; };
@@ -151,7 +151,7 @@ async function pass() {
   for (const [fed, donations] of feds) {
     const invite = known[fed.toLowerCase()];
     if (!invite) { say({ step: 'federation', federation: fed.slice(0, 16), donations: donations.length, why: 'no invite to this federation is known: its funds stay there until one is' }); continue; }
-    const client = await clientFor(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
+    let client = await clientFor(invite, fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
     if (donations.length) {
       // RECORDED FOR GOOD FIRST, THEN REDEEMED, THEN THE SEATS TOLD AND THEIR COPY DELETED (kanban #156): donations.jsonl in
       // this dir is the dev's permanent record - sender key, round id, amount, time, the USD and EUR rate and their provider.
@@ -163,12 +163,41 @@ async function pass() {
         redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n), alreadySpent: r.spent.length,
         failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`), receipted: r.receipted, seats: r.answers.map((a) => `${a.seat}: ${a.status || a.why} ${a.said || ''}`.trim()) });
     }
+    // UNCLAIMED E-CASH, RECOVERED ON ITS OWN (kanban #357): after the redeem, before the withdrawal - see claimUnclaimed
+    {
+      const f16 = fed.slice(0, 16), walletPath = join(dir, `wallet-${f16}.json`), recPath = join(dir, `wallet-${f16}.recovering.json`);
+      const secret = walletSecretFor(key.secretHex, fed);
+      const pendingMsatOf = async (c) => { try { return JSON.parse(await c.pendingOutputs()).reduce((t, x) => t + BigInt(x.amount_msat), 0n); } catch { return -1n; } };
+      let rec = null, polls = 0;
+      try {
+        const r = await claimUnclaimed({ federation: fed, state, pendingOutputs: () => client.pendingOutputs(),
+          balanceMsat: async () => { try { return await client.balanceMsat(); } catch { return 0; } },
+          backup: async (at) => { const p = join(dir, `wallet-${f16}.pre-recover-${at.replace(/[:.]/g, '-')}.json`); copyFileSync(walletPath, p); return p; },
+          recover: async () => { if (existsSync(recPath)) renameSync(recPath, `${recPath}.stale-${Date.now()}`); rec = await (await lockClient()).recover(invite, fed, secret, fileStore(recPath)); },
+          // the recovery finishes in the background: poll the recovered store, and every fourth try reopen it from its file
+          reopen: async () => {
+            if (++polls % 4 === 0) { try { await rec.close(); } catch { /* closed */ } rec = await (await lockClient()).join(invite, fed, secret, fileStore(recPath)); }
+            let b = 0n; try { b = BigInt(await rec.balanceMsat()); } catch { b = 0n; }
+            return { balanceMsat: b, pendingMsat: await pendingMsatOf(rec) };
+          },
+          swap: async () => {
+            const old = clientFor.forget(fed); if (old) { try { await (await old).close(); } catch { /* closed */ } }
+            try { await rec.close(); } catch { /* closed */ }
+            renameSync(recPath, walletPath);
+            client = await clientFor(invite, fed, secret, fileStore(walletPath));
+          },
+          keepFailed: async (at) => { try { await rec.close(); } catch { /* closed */ } if (existsSync(recPath)) renameSync(recPath, join(dir, `wallet-${f16}.recovering-failed-${at.replace(/[:.]/g, '-')}.json`)); },
+        });
+        writeJson(statePath, state);
+        if (r.step !== 'none') say({ step: `unclaimed: ${r.step}`, federation: f16, ...r });
+      } catch (e) { say({ step: 'unclaimed: check failed', federation: f16, why: e.message }); }
+    }
     const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}`, gateways: [...(cfg.gateways || []), ...namedGateways] });
     if (w.withdrawn !== false || w.state) {
       state.withdrawals.push({ at: new Date().toISOString(), federation: fed, msat: String(w.withdrawableMsat), state: w.state, gateway: w.gateway, preimage: w.preimage || null });
       writeJson(statePath, state);
     }
-    const balanceMsat = await client.balanceMsat();
+    let balanceMsat; try { balanceMsat = await client.balanceMsat(); } catch { balanceMsat = 0; }
     // WHAT THE NODE'S DASHBOARD SHOWS (kanban #357): this dev's balance per federation, kept beside the record
     state.balances[fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
     writeJson(statePath, state);

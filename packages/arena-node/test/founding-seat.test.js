@@ -61,3 +61,44 @@ test('the CLI setup names the guardian\'s own socket and password, and the leade
   assert.deepEqual(calls[1].slice(5), ['add-peer', 'code-y']);
   assert.deepEqual(calls[2].slice(5), ['start-dkg']);
 });
+
+test('whether the guardian waits in setup is asked of the setup API (kanban #320, rehearsal 20b: a setup-mode guardian has no admin status)', async () => {
+  const said = (answer) => cliSetup({ run: async (a) => { if (a.includes('status')) { if (answer instanceof Error) throw answer; return `"${answer}"\n`; } return '""'; }, apiPort: 32221, password: 'pw', guardianName: 'n' });
+  assert.equal(await said('AwaitingLocalParams').inSetup(), true);
+  assert.equal(await said('SharingConnectionCodes').inSetup(), true);
+  assert.equal(await said('ConsensusIsRunning').inSetup(), false, 'a running federation: not in setup');
+  assert.equal(await said(new Error('Method not found')).inSetup(), false, 'no answer: not taken for setup');
+});
+
+// THE GENESIS AND LOAD TRIGGERS, FROM THE HISTORY THE SEAT KEEPS AT EACH TICK (kanban #320)
+function triggerSeat({ recs, w }) {
+  const setup = { localParams: async () => 'code', addPeer: async () => {}, startDkg: async () => {}, invite: async () => null };
+  return createFoundingSeat({ records: () => recs(), entriesAt: async () => entries,
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => true, setup, nominal: 4, bondMinGuardian: 500000n, clocks, ownKey: keys[0].pub,
+    sign: (h) => schnorr.sign(h, keys[0].secret), verify });
+}
+
+test('genesis: no federation and six guardian-capable operators in the census - the first federation is drawn on the block after', async () => {
+  const w = { tip: 300 };
+  const seat = triggerSeat({ recs: () => [], w });
+  const first = await seat.tick();
+  assert.equal(first.ok, false); assert.match(first.why, /beacon after 300/);
+  w.tip = 301;
+  const r = await seat.tick();
+  assert.equal(r.ok, true, r.why); assert.deepEqual([r.trigger.kind, r.trigger.height], ['genesis', 300]);
+});
+
+test('load: every OPEN federation at or above 80 % of its cap for abandon_blocks triggers a new federation; one dip restarts the count', async () => {
+  const w = { tip: 400 };
+  let load = 0.85;
+  const seat = triggerSeat({ recs: () => [{ federation: 'aa'.repeat(32), status: 'OPEN', height: 390, load }, { federation: 'bb'.repeat(32), status: 'OPEN', height: 390, load: 0.9 }], w });
+  for (; w.tip < 405; w.tip++) assert.equal((await seat.tick()).ok, false);
+  load = 0.5; await seat.tick(); load = 0.85;                       // a dip at 405
+  for (w.tip = 406; w.tip < 416; w.tip++) assert.equal((await seat.tick()).ok, false, `no trigger at ${w.tip}: 10 blocks from 406 not yet complete`);
+  const at416 = await seat.tick();                                  // 416 - 406 = abandon_blocks: the trigger, its beacon still to come
+  assert.equal(at416.ok, false); assert.match(at416.why, /beacon after 416/);
+  w.tip = 417;
+  const r = await seat.tick();
+  assert.equal(r.ok, true, r.why); assert.deepEqual([r.trigger.kind, r.trigger.height], ['load', 416]);
+});

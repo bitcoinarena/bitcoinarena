@@ -2853,13 +2853,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const viewOf = () => { const r = newestRound(); if (!r) return null; const c = decodeRoundContract(new Uint8Array(r.contract)); return { rid: new Uint8Array(r.round_id), view: roster.chainFor({ contract: c, roundIdBytes: new Uint8Array(r.round_id) }) }; };
     const password = () => readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
     const runCli = (args) => new Promise((res, rej) => execFileCb(process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args, { timeout: 120000 }, (e, out) => (e ? rej(e) : res(String(out)))));
+    const foundingSetup = cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16) });
     foundingSeat = createFoundingSeat({
-      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height })),
+      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null })),
       entriesAt: async (h) => { const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null; },
       beaconAt: async (h) => { const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null; },
       tip: async () => Number(await chainTip()),
-      guardianInSetup: async () => { try { const st = await wsAdminStatus(guardian.apiPort, password()); return !(st && st.federation); } catch { return false; } },
-      setup: cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16) }),
+      guardianInSetup: async () => foundingSetup.inSetup(),
+      setup: foundingSetup,
       guardingOpen: () => new Set(),
       nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
       clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,

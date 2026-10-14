@@ -41,6 +41,9 @@ export function devClientSnapshot(dir, { recent = 12 } = {}) {
       withdrawals: withdrawals.map((w) => ({ at: w.at, federation: String(w.federation || ''), msat: String(w.msat || '0'), state: w.state || null, paid: !!w.preimage })),
       withdrawnMsat: String((state.withdrawals || []).filter((w) => w.preimage).reduce((t, w) => t + BigInt(w.msat || 0), 0n)),
       lastPass: state.lastPass || null,
+      // UNCLAIMED E-CASH AND ITS RECOVERY (kanban #357): what waits a pass to be recovered, and the last recovery
+      unclaimed: Object.entries(state.unclaimed || {}).map(([federation, u]) => ({ federation, msat: String(u.msat || '0'), outputs: (u.nonces || []).length, since: u.since || null })),
+      lastRecovery: (state.recoveries || []).length ? (({ at, federation, unclaimedMsat, recoveredMsat, ok, backup, why }) => ({ at, federation, unclaimedMsat, recoveredMsat, ok, backup: backup ? String(backup).split('/').pop() : null, why }))(state.recoveries[state.recoveries.length - 1]) : null,
     };
   } catch (e) { return { dir, error: e.message }; }
 }
