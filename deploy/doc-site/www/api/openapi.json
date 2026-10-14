@@ -2704,6 +2704,62 @@
     }
    }
   },
+  "/game-outcome": {
+   "post": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "[signed] Check a market-on-a-game outcome",
+    "description": "Checks a market on a game (protocol 2026.0.6): its outcome from its source round's signed result. Answered, not held.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\nAccess: the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7)\n\nReturns: 200 JSON {round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5125.",
+    "operationId": "post_game_outcome",
+    "parameters": [
+     {
+      "name": "round",
+      "in": "query",
+      "required": true,
+      "description": "The market round's id, 64 hex (32 bytes).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "description": "{openCents, closeCents, front?, sigs:[{key, signature}]}: the source round's RoundResult and the seats' signatures over its id.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}: the verified resolution, or VOID.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No round named, or not a JSON round result.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No such round, or its source round is not held here.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "Not a market on a game, no committee drawn, or the result does not stand.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/games": {
    "get": {
     "tags": [

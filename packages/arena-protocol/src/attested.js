@@ -19,7 +19,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
-import { isAttested, isTemplate, marketOfRound } from './manifest.js';
+import { isAttested, isTemplate, isGameMarket, marketOfRound } from './manifest.js';
 
 export const OUTCOME_SIGNATURE_BYTES = 64;
 
@@ -81,6 +81,10 @@ export function decodeAttestation(bytes) {
 // are not the question its attestors answered.
 export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null }) {
   if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
+  // A MARKET ON A GAME (kanban #362 feature 6) HAS NO ATTESTORS: its threshold is 0, so an attestation would stand with no
+  // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
+  if (isGameMarket(game))
+    return { ok: false, why: `game "${game.gameName}" is a market on a game: its outcome is its source round's signed result, and no attestation decides it` };
   if (isTemplate(game) && !(round && round.event))
     return { ok: false, why: `game "${game.gameName}" is a market template: an attestation is checked against its round's own outcomes, and no round naming them was given` };
   const manifest = marketOfRound(game, round);
