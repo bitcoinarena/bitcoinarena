@@ -173,7 +173,10 @@ try {
     // kanban #148 step 6: every seat refused a random one, "an entry names no world secret (32 zero bytes)")
     worldSecret: worldIsShared(c, sharedWorldOf(c.gameId)) ? new Uint8Array(32) : rand(32), vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
     feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
-    feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref };
+    feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref,
+    // THE OPERATOR THIS PLAYER DECLARES (§5A.13, kanban #309): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
+    // is conflicted in this round: it neither signs nor earns
+    ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}) };
   const eid = entryId(entry);
   // THE RUN: the world the round's randomness seeds, driven to the gate, under the round's core and run length
   const seed = await worldSeedFor({ entry, round: env.ROUND, nodes, contract: c });

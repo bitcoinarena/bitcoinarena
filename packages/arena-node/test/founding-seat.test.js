@@ -61,3 +61,11 @@ test('the CLI setup names the guardian\'s own socket and password, and the leade
   assert.deepEqual(calls[1].slice(5), ['add-peer', 'code-y']);
   assert.deepEqual(calls[2].slice(5), ['start-dkg']);
 });
+
+test('whether the guardian waits in setup is asked of the setup API (kanban #320, rehearsal 20b: a setup-mode guardian has no admin status)', async () => {
+  const said = (answer) => cliSetup({ run: async (a) => { if (a.includes('status')) { if (answer instanceof Error) throw answer; return `"${answer}"\n`; } return '""'; }, apiPort: 32221, password: 'pw', guardianName: 'n' });
+  assert.equal(await said('AwaitingLocalParams').inSetup(), true);
+  assert.equal(await said('SharingConnectionCodes').inSetup(), true);
+  assert.equal(await said('ConsensusIsRunning').inSetup(), false, 'a running federation: not in setup');
+  assert.equal(await said(new Error('Method not found')).inSetup(), false, 'no answer: not taken for setup');
+});
