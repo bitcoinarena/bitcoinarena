@@ -81,7 +81,11 @@
   .game:hover { transform: translateY(-4px); }
   .game.nb:hover { border-color: rgba(247,147,26,.6); } .game.rps:hover { border-color: rgba(255,90,180,.6); } .game.ud:hover { border-color: rgba(47,211,138,.6); }
   .game .pic { aspect-ratio: 8 / 5; background: #07090d; border-bottom: 1px solid var(--line); }
-  .game .pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .game .pic img, .game .pic picture { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .tncta { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-top: 26px; padding: 22px 26px; border-radius: 20px;
+    background: linear-gradient(135deg, rgba(247,147,26,.20), rgba(226,103,42,.08)); border: 1px solid rgba(247,147,26,.5); }
+  .tncta div { color: var(--soft); font-size: 17px; max-width: 60ch; } .tncta b { color: var(--text); }
+  @media (max-width: 560px) { .tncta { padding: 18px; } .tncta .btn { width: 100%; justify-content: center; } }
   .game .body { padding: 22px 22px 24px; display: flex; flex-direction: column; flex: 1; }
   .game .tag { align-self: flex-start; font: 700 11px/1 Inter; letter-spacing: .1em; text-transform: uppercase; padding: 6px 10px; border-radius: 999px; }
   .nb .tag { color: var(--btc); background: rgba(247,147,26,.12); border: 1px solid rgba(247,147,26,.4); }
@@ -217,10 +221,10 @@
 <section id="games"><div class="wrap">
   <div class="kicker reveal">Play now on testnet</div>
   <h2 class="reveal">Three ways to play.</h2>
-  <p class="intro reveal">A skill game, a head-to-head duel and a prediction market. All three are paid in sats through the same federations, and the same nodes check every result.</p>
+  <p class="intro reveal">Race the next block, outguess a rival, or call the price. Every game runs on Bitcoin testnet4 with free test sats: real nodes, real federations, real Lightning, nothing to lose.</p>
   <div class="games">
     <article class="game nb reveal">
-      <div class="pic"><img src="img/game-nextblock.svg" alt="A clock whose hour hand is a block, the mempool waiting beside it" width="800" height="500" loading="lazy"></div>
+      <div class="pic"><picture><source type="image/webp" srcset="img/nextblock-art-800.webp 800w, img/nextblock-art-1200.webp 1200w" sizes="(max-width: 980px) 100vw, 400px"><img src="img/nextblock-art-800.jpg" srcset="img/nextblock-art-800.jpg 800w, img/nextblock-art-1200.jpg 1200w" sizes="(max-width: 980px) 100vw, 400px" alt="Tick Tock, Next Block: armoured bitcoin trucks race between the bulls' mempool fortress and the bears' miner fortress, a 90-second clock above" width="1200" height="675" loading="lazy"></picture></div>
       <div class="body">
         <span class="tag">Skill game · rounds</span>
         <h3>Tick Tock, Next Block</h3>
@@ -246,6 +250,10 @@
         <div class="go"><a class="btn primary" href="https://testnet.bitcoin-arena.io/?game=btc-updown-15m">Play Up or Down</a></div>
       </div>
     </article>
+  </div>
+  <div class="tncta reveal">
+    <div><b>Free test sats, no sign-up.</b> Open the Arena, make a wallet in one tap and play all three today.</div>
+    <a class="btn primary" href="https://testnet.bitcoin-arena.io/"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Open testnet.bitcoin-arena.io</a>
   </div>
 </div></section>
 
