@@ -4631,20 +4631,25 @@ halted, left the player with no note and the federation with the inputs
 spent - measured in rehearsal 17: 100,000 sat accepted, not issued, lost.
 These outputs are claimable like notes:
 
-1. The guardians still seated publish, beside their spent set and signed the
-   same way, the **issued set**: every blinded message the consensus issued
-   (mintv2's own recovery items, which it already keeps), with its amount
-   tier, as of the same session.
-2. The client keeps, until each output is signed, the secrets of every
-   output it is waiting for (the note's spend key and its blinding factor -
-   both derive from its seed in mintv2, so a seed restored elsewhere finds
-   them too) and presents them as a **pending-output claim**.
-3. The arbitration set recomputes the blinded message from the presented
-   secrets; the claim is valid when that message is in the issued set at
-   that amount, the note's nonce is not in the spent set, and neither the
-   nonce nor the blinded message was claimed before. Valid pending-output
-   claims are paid at face exactly as notes are, in the same window and the
-   same pro rata, and late ones from what is left.
+1. The **issued set** is mintv2's own: every output the consensus accepted
+   is a recovery item `Output { denomination, nonce_hash, tweak }`, where
+   `nonce_hash` is the hash160 of the output's blinded message, served by
+   every guardian at the public `recovery_slice` endpoint (the one a seed
+   restore already reads). The guardians still seated publish their copy,
+   signed with their node keys beside the spent set; a seat may also read
+   it from any guardian that still answers.
+2. A pending output's secret derives from the seed and `(denomination,
+   tweak)` alone (mintv2 `output_secret`), so the client - or a seed
+   restored elsewhere - can name it, and presents it as a **pending-output
+   claim**: `(denomination, tweak, output secret)`.
+3. The arbitration set recomputes from the secret the note's nonce and the
+   blinded message (mintv2 `blinded_message`, through the fork's CLI); the
+   claim is valid when hash160 of that blinded message is an Output item of
+   the issued set at that denomination and tweak, the nonce is not in the
+   spent set, and neither was claimed before. Valid pending-output claims
+   are paid at face exactly as notes are, in the same window and the same
+   pro rata, and late ones from what is left. Handing over the secret sells
+   the output to the escrow as handing over a note does.
 4. Nothing new is trusted: the issued set is the same kind of copy as the
    spent set (newest session wins, a copy that disagrees is named), and an
    output nobody can unblind for is never paid.
