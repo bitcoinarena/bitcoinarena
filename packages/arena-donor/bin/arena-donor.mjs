@@ -117,6 +117,8 @@ async function invites() {
       const d = await (await fetch(url, { cache: 'no-store' })).json();
       // the guardians' second route, as the page takes it (not the loopback donation route)
       Object.assign(routes, (d && d.testnet && d.testnet.alt) || {});
+      // the gateways the network names (kanban #357): a withdrawal tries these first
+      for (const g of [].concat((d && d.testnet && d.testnet.gateway) || [])) if (typeof g === 'string' && !namedGateways.includes(g)) namedGateways.push(g);
       for (const inv of [d && d.testnet && d.testnet.federation, d && d.federation].filter((x) => typeof x === 'string')) {
         try { out[String(LC.federationIdOf(inv)).toLowerCase()] = inv; } catch { /* not an invite */ }
       }
@@ -127,6 +129,7 @@ async function invites() {
   return out;
 }
 let routed = false;
+const namedGateways = [];
 // ONE CLIENT PER FEDERATION, KEPT ACROSS PASSES (kanban #230): joined on the first pass, used by every later one
 const clientFor = walletClients(async (invite, fed, secret, store) => (await lockClient()).join(invite, fed, secret, store));
 
@@ -160,7 +163,7 @@ async function pass() {
         redeemed: r.redeemed.length, redeemedMsat: r.redeemed.reduce((t, d) => t + BigInt(d.amountMsat), 0n), alreadySpent: r.spent.length,
         failed: r.failed.map((d) => `${d.outpoint.slice(0, 12)}: ${d.why}`), receipted: r.receipted, seats: r.answers.map((a) => `${a.seat}: ${a.status || a.why} ${a.said || ''}`.trim()) });
     }
-    const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}` });
+    const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}`, gateways: [...(cfg.gateways || []), ...namedGateways] });
     if (w.withdrawn !== false || w.state) {
       state.withdrawals.push({ at: new Date().toISOString(), federation: fed, msat: String(w.withdrawableMsat), state: w.state, gateway: w.gateway, preimage: w.preimage || null });
       writeJson(statePath, state);
