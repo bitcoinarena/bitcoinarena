@@ -25,7 +25,7 @@
  * testnet4's alone, so another network neither reads nor adds them.
  */
 import { inviteForGuardians, readInvite } from '../src/invite.js';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { standUpRound, keepBackToBack, tableCounter } from './round-2of2.mjs';
@@ -272,6 +272,109 @@ if (env.PAID_DUTY === '1') {
     } catch (e) { say({ duty: 'look failed', item, why: e.message }); } finally { busy = false; }
   };
   look(); setInterval(look, 30000);
+}
+// ONE POSTING PER GAME PER DAY, AT THE LOWEST FEE (the owner 2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the
+// fees must be as low as possible"). PAID_DUTY_DAILY=1 runs one game (DUTY_GAME rps | updown | nextblock) for every federation in
+// DUTY_FEDERATIONS (hex, comma-separated) on every machine. Day d's duty node (duty.js: the census at the day's anchor in duty order;
+// the next one an hour later while the day is not posted) publishes ONE transaction: the next UTC day's rounds of this game in every
+// federation - RPS 2 tables of 8 s rounds each, Up/Down its 96 x 15 min, Tick Tock 960 x 90 s - plus the day's marker, at DUTY_FEE_RATE
+// (default 0.1 sat/vB, the network's relay floor). Committee time: the day's start less 6 h. The series lines are kept and posted to
+// every seat once the publication confirms (asked again each minute until every seat holds them).
+if (env.PAID_DUTY_DAILY === '1') {
+  const { daySlotOf, dayStartMs, targetDay, anchorHeight, dutyOrder, dutyMarkerOutput, dutyMarkersOf, itemTag, dayPostDue, DUTY_DAY_MS, DUTY_COMMITTEE_LEAD_MS }
+    = await import('../../arena-protocol/src/duty.js');
+  const { medianTimePast } = await import('../../arena-protocol/src/beacon.js');
+  const { parseTransaction } = await import('../../arena-protocol/src/tx.js');
+  const game = env.DUTY_GAME;
+  const feds = String(env.DUTY_FEDERATIONS || toHex(round.contract.federationId)).split(',').map((x) => x.trim().toLowerCase()).filter((x) => /^[0-9a-f]{64}$/.test(x));
+  if (!['rps', 'updown', 'nextblock'].includes(game) || !feds.length) throw new Error('PAID_DUTY_DAILY=1 needs DUTY_GAME rps|updown|nextblock and DUTY_FEDERATIONS');
+  const item = env.DUTY_ITEM || `${game}-day`;
+  const tag = toHex(itemTag(item));
+  const local = new Set((env.DUTY_LOCAL_KEYS ? env.DUTY_LOCAL_KEYS.split(',') : round.daemons.map((d) => toHex(d.round.pubkey))).map((k) => k.trim().toLowerCase()));
+  const feeRate = Number(env.DUTY_FEE_RATE || 0.1), maxFeeRate = Number(env.DUTY_MAX_FEE_RATE || 1);
+  const dry = env.DUTY_DRY === '1';
+  const fromDay = Number(env.DUTY_FROM_DAY || 0);              // the first day this duty posts for (days before it are covered)
+  const dir = join(home, 'paid', 'duty-day'); mkdirSync(dir, { recursive: true });
+  const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
+  const UPDOWN = env.ARENA_PROTOCOL_VERSION === '2' ? UPDOWN_V2 : UPDOWN_TN4;
+  const censusAt = new Map();
+  let busy = false, lastSaid = '';
+  const donationSet = () => {
+    const keys = donationKeysForNetworkId(round.contract.networkId);
+    const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+      sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+      rotations: [], height: round.contract.censusHeight,
+      verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+    if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+    return idOfDonationSet(forced.recipients);
+  };
+  const post = async (slot) => {
+    const { startMs, endMs } = targetDay(slot);
+    const committee = BigInt(startMs - DUTY_COMMITTEE_LEAD_MS);
+    const ds = donationSet();
+    const common = { feeRate, maxFeeRate, committeeTimeMs: committee, extraOutputs: [dutyMarkerOutput(slot, item)], waitBeacon: false };
+    const per = (extra) => feds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
+    const got = game === 'nextblock'
+      ? await round.openGrid({ ...CREATOR, fields: {}, tableFields: per({}), stakeMsat },
+        { ...common, slots: (endMs - startMs) / 90000, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(startMs + 45000) })
+      : game === 'rps'
+      ? await round.openGrid({ ...CREATOR, fields: { ...RPS_ROUND_FIELDS }, tableFields: [...per({}), ...per({})], stakeMsat },
+        { ...common, slots: (endMs - startMs) / 8000, windowMs: 8000n, entryAfterStartMs: 80000n, firstCloseMs: BigInt(startMs + 80000) })
+      : await round.openGrid({ ...CREATOR, fields: { gameId: UPDOWN.gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), minScore: 0 },
+        tableFields: per({}), stakeMsat,
+        stakeExpiryFor: (t) => { const n = marketExpiryBlocks(t, UPDOWN.manifest.marketTerms); if (!n.ok) throw new Error(n.why); return n.blocks; } },
+        { ...common, slots: (endMs - startMs) / Number(UPDOWN.manifest.roundPeriodMs), windowMs: BigInt(UPDOWN.manifest.roundPeriodMs), entryAfterStartMs: 0n,
+          firstCloseMs: BigInt(startMs) });
+    if (got.dry) { say({ dutyDay: 'grid dry', item, slot, accepted: got.accepted, reject: got.reject, rounds: got.rounds, bytes: got.bytes, feeSat: got.feeSat,
+      series: got.series.length, firstStart: got.firstStart, lastClose: got.lastClose, committeeTime: got.committeeTime }); return; }
+    if (!got.ok) throw new Error(got.why || 'the grid was not published');
+    writeFileSync(fileOf(slot), JSON.stringify({ item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series, lines: got.lines, posted: null }) + '\n');
+    say({ dutyDay: 'published', item, slot, target: new Date(startMs).toISOString(), txid: got.txid, series: got.series.map((x) => x.slice(0, 16)), rounds: got.rounds });
+  };
+  // THE SERIES TO THE SEATS once the publication confirms: every kept day of this item whose lines not every seat holds yet
+  const postKept = async (view) => {
+    const inChain = new Set();
+    for (const b of view.blocks.slice(-200)) for (const raw of b.transactions || []) { try { inChain.add(toHex(Uint8Array.from(parseTransaction(raw).txid).reverse())); } catch { /* not one */ } }   // display order, as sendrawtransaction names it
+    for (const f of readdirSync(dir).filter((x) => x.startsWith(`${item}-`) && x.endsWith('.json'))) {
+      let k; try { k = JSON.parse(readFileSync(join(dir, f), 'utf8')); } catch { continue; }
+      if (k.posted && k.posted.every((p) => p.took === p.of)) continue;
+      if (!inChain.has(k.txid)) continue;                     // posted to the seats once the publication is in the chain
+      const posted = [];
+      for (const line of k.lines) posted.push(await round.postSeries(line));
+      k.posted = posted.map((p) => ({ took: p.took, of: p.of }));
+      writeFileSync(join(dir, f), JSON.stringify(k) + '\n');
+      say({ dutyDay: 'posted', item, slot: k.slot, seats: posted.map((p) => `${p.took}/${p.of}`), refused: posted.flatMap((p) => p.refused).slice(0, 3) });
+    }
+  };
+  const look = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const view = await round.dutyChain.view();
+      await postKept(view);
+      const headers = view.blocks.map((b) => b.header);
+      const tip = view.firstHeight + headers.length - 1;
+      const mtpAt = async (h) => { const m = medianTimePast(headers, view.firstHeight, h); return m === null ? -1 : m; };
+      const nowMs = Date.now(), slot = daySlotOf(nowMs);
+      if (slot + 1 < fromDay) return;
+      const anchor = await anchorHeight(slot, { mtpAt, tip, low: view.firstHeight + 11, slotMs: DUTY_DAY_MS });
+      if (anchor === null) { if (lastSaid !== `wait ${slot}`) say({ dutyDay: 'no anchor yet', item, slot }); lastSaid = `wait ${slot}`; return; }
+      if (!censusAt.has(anchor)) censusAt.set(anchor, round.dutyChain.censusKeysAt(anchor));
+      const order = dutyOrder({ networkId: round.contract.networkId, slot, nodeKeys: censusAt.get(anchor) });
+      // DUTY_DRY_RANK0=1 with ARENA_GRID_DRY=1: build today's post as if this machine were first in order - a dry run, nothing published
+      const rank = env.DUTY_DRY_RANK0 === '1' && env.ARENA_GRID_DRY === '1' ? 0 : order.findIndex((k) => local.has(toHex(k)));
+      let posted = false;
+      for (const b of view.blocks.slice(-200)) for (const raw of b.transactions || []) for (const m of dutyMarkersOf(raw)) if (m.tag === tag && m.slot === slot) posted = true;
+      if (!posted) try { for (const txid of await chainCall('getrawmempool', [])) { const hex = await chainCall('getrawtransaction', [txid]); for (const m of dutyMarkersOf(fromHex(hex))) if (m.tag === tag && m.slot === slot) posted = true; } } catch { /* the chain's say only */ }
+      const due = dayPostDue({ nowMs, slot, rank, posted });
+      const said = `${slot} ${rank} ${posted} ${due}`;
+      if (said !== lastSaid) say({ dutyDay: due ? 'due' : posted ? 'posted' : 'not due', item, slot, target: new Date(targetDay(slot).startMs).toISOString(), anchor,
+        dutyNode: toHex(order[0] || new Uint8Array(32)).slice(0, 16), rank, census: order.length, federations: feds.map((f) => f.slice(0, 8)) });
+      lastSaid = said;
+      if (due) await post(slot);
+    } catch (e) { say({ dutyDay: 'look failed', item, why: e.message }); } finally { busy = false; }
+  };
+  look(); setInterval(look, 60000);
 }
 // TICK TOCK IN 90 s ROUNDS, NOW (the owner 2026-10-14 ~10:26Z, his phone on the Tick Tock lobby: "Sollte es nicht eine 90s Runde sein?").
 // The rounds open were the old grid keeper's - four rounds a grid, each taking entries for six hours - and the duty publisher's
