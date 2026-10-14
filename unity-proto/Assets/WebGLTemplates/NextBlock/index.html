@@ -369,6 +369,12 @@
     #arena-games .market .play { color: #56d364; }
     #arena-games .why { color: #f0b72f; font-size: 13px; white-space: pre-wrap; }
     #arena-games .more { margin-top: 8px; font-size: 14px; }
+    /* BACK TO THE HOMEPAGE (kanban #361, the owner 2026-10-14: "proper back button navigation between docs and main site and
+       Testnet site"): on the choice of games only - never over a running game - a quiet link above the brand, and the docs
+       and the homepage beside the platform link at the bottom */
+    #arena-games .home-back { display: inline-block; margin: 0 0 12px; padding: 4px 0; color: #8b949e; font: 600 13px/1.2 system-ui, sans-serif; text-decoration: none; }
+    #arena-games .home-back:hover { color: #f7931a; }
+    #arena-games .more-sep { color: #57606a; }
     #arena-games .more a, #arena-platform a { color: #f7931a; }
     /* THE COMPACT LAYOUT, THE DEFAULT (kanban #354, the owner 2026-10-14 ~09:30Z: "a more compact version of the main page with tiles
        and bigger images. Less text, just icons for the nodes and players and rounds. This is the new default and there is a
@@ -760,7 +766,7 @@
       <button id="blwp-backup-cta" type="button">Back up now</button>
     </div>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (kanban #208, the owner 2026-10-08 11:38): the platform page, beside the gear -->
-    <a id="arena-platform-go" href="platform/" title="Build a game or a market on Bitcoin Arena, or run a node and earn">Build &amp; earn</a>
+    <a id="arena-platform-go" href="https://docs.bitcoin-arena.io/#why-build" title="Build a game or a market on Bitcoin Arena, or run a node and earn">Build &amp; earn</a>
     <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -840,7 +846,7 @@
     <section class="settings-card" id="arena-set-platform">
       <h3>Build on Bitcoin Arena</h3>
       <div class="muted">Bitcoin Arena runs games and prediction markets for bitcoin. Build your own and earn half of every donation, or run a node and earn from every paid entry.</div>
-      <a class="primary" href="platform/">How it works &rarr;</a>
+      <a class="primary" href="https://docs.bitcoin-arena.io/#why-build">How it works &rarr;</a>
     </section>
     <section class="settings-card" id="blwp-set-logs">
       <h3>Client logs</h3>
@@ -1315,7 +1321,7 @@
   </script>
 
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
-  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
+  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div><div class="dots"><i></i><i></i><i></i></div></div>
     <script>
@@ -1334,7 +1340,7 @@
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
-    <div id="arena-platform"><a href="platform/">Build a game or a market on Bitcoin Arena, or run a node and earn &rarr;</a></div>
+    <div id="arena-platform"><a href="https://docs.bitcoin-arena.io/#why-build">Build a game or a market on Bitcoin Arena, or run a node and earn &rarr;</a></div>
     <div class="build-line" id="boot-build">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
     <div id="blwp-deposit"></div>
     <div id="err"></div>

@@ -10,7 +10,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#07090d; --panel:#0e131b; --line:#1d2633; --text:#e8edf3; --dim:#8d99a8; --btc:#f7931a; --gold:#ffd166; --bull:#2fd38a; --cyan:#4fd1ff; --bear:#ff5d5d; }
+  :root { --bg:#0f0a10; --panel:#1a1218; --line:#33232c; --text:#f6ece4; --dim:#a8968c; --btc:#f7931a; --gold:#ffd166; --bull:#2fd38a; --cyan:#4fd1ff; --bear:#ff5d5d; }
   * { box-sizing: border-box; }
   html { scroll-behavior: smooth; scroll-padding-top: 76px; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 400 16px/1.65 Inter, system-ui, sans-serif; }
@@ -20,22 +20,44 @@
   h2 { font-size: clamp(26px, 3.4vw, 36px); margin: 64px 0 14px; padding-top: 8px; border-top: 1px solid var(--line); }
   h3 { font-size: 21px; margin: 32px 0 8px; }
   h4 { font: 700 17px "Space Grotesk", Inter, sans-serif; margin: 22px 0 6px; color: var(--text); }
-  p, li { color: #cdd5de; } li { margin: 4px 0; }
+  p, li { color: #e0d2c8; } li { margin: 4px 0; }
   code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13.5px; }
-  :not(pre) > code { background: #121a24; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #ffe0b3; }
-  pre { background: #05070a; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; overflow-x: auto; line-height: 1.55; color: #d6dee7; }
-  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: rgba(7,9,13,.8); border-bottom: 1px solid var(--line); }
+  :not(pre) > code { background: #22171e; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; color: #ffe0b3; }
+  pre { background: #140d12; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; overflow-x: auto; line-height: 1.55; color: #eadbd0; }
+  nav.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: rgba(15,10,16,.85); border-bottom: 1px solid var(--line); }
   nav.top .in { display: flex; align-items: center; gap: 18px; height: 60px; width: min(1280px, calc(100% - 32px)); margin: 0 auto; }
   .brand { display: flex; align-items: center; gap: 10px; font: 700 18px "Space Grotesk"; color: var(--text); }
   .brand i { width: 28px; height: 28px; border-radius: 8px; background: conic-gradient(from 210deg, var(--btc), var(--gold), var(--btc)); display: grid; place-items: center; font-style: normal; color: #1a0f00; }
   .brand span { color: var(--dim); font-weight: 500; }
   nav.top .r { margin-left: auto; display: flex; gap: 16px; font-size: 14px; }
   .layout { width: min(1280px, calc(100% - 32px)); margin: 0 auto; display: grid; grid-template-columns: 240px 1fr; gap: 48px; }
-  aside { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 90px); overflow: auto; padding: 24px 0; font-size: 14.5px; }
+  aside { position: sticky; top: 76px; align-self: start; max-height: calc(100vh - 90px); overflow: auto; padding: 24px 8px 24px 0; font-size: 14.5px; }
+  aside a.on { color: var(--btc); }
+  /* THE CONTENTS CAN BE CLOSED AND BROUGHT BACK (kanban #361): a button in the bar; closed on a desktop, the page takes the
+     whole width (remembered per viewer); on a phone it is a drawer over the page */
+  .navbtn { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; padding: 0; }
+  .navbtn svg { width: 20px; height: 20px; }
+  body.nav-closed .layout { grid-template-columns: 1fr; } body.nav-closed aside { display: none; }
+  .navbtn[aria-expanded="true"] { border-color: rgba(247,147,26,.6); }
+  .scrim { display: none; }
+  .back { color: var(--text); }
+  /* SECTIONS AS ACCORDIONS: each h2 section folds; a link to anything inside opens it */
+  details.sec { border-top: 1px solid var(--line); margin: 0; }
+  details.sec > summary { list-style: none; display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 6px 0; }
+  details.sec > summary::-webkit-details-marker { display: none; }
+  details.sec > summary h2 { margin: 18px 0; padding: 0; border: 0; flex: 1; }
+  details.sec > summary::after { content: ""; flex: none; width: 12px; height: 12px; border-right: 2.5px solid var(--btc); border-bottom: 2.5px solid var(--btc); transform: rotate(45deg); margin: 0 10px 8px 0; transition: transform .2s; }
+  details.sec[open] > summary::after { transform: rotate(225deg); margin-bottom: -6px; }
+  details.sec > summary:hover h2 { color: var(--gold); }
+  details.sec > .sec-body { padding-bottom: 28px; }
+  .folds.bottom { justify-content: center; color: var(--dim); font-size: 14px; margin-top: 40px; }
+  .folds { display: flex; gap: 8px; justify-content: flex-end; margin: 26px 0 4px; }
+  .folds button { font: 600 13px Inter; color: var(--dim); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+  .folds button:hover { color: var(--text); border-color: var(--btc); }
   aside b { display: block; margin: 18px 0 6px; color: var(--dim); font: 600 12px Inter; letter-spacing: .12em; text-transform: uppercase; }
-  aside a { display: block; padding: 4px 0; color: #c3cdd8; }
+  aside a { display: block; padding: 4px 0; color: #d9cbc2; }
   main { padding: 40px 0 120px; min-width: 0; }
-  .lead { font-size: 19px; color: #c9d2dc; max-width: 70ch; }
+  .lead { font-size: 19px; color: #e3d5cb; max-width: 70ch; }
   .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 8px; }
   .pill { padding: 6px 12px; border-radius: 999px; font: 600 13px Inter; border: 1px solid rgba(247,147,26,.5); background: rgba(247,147,26,.12); color: #ffd9a6; }
   .note { border-left: 3px solid var(--gold); background: rgba(255,209,102,.06); padding: 12px 16px; border-radius: 0 10px 10px 0; margin: 18px 0; }
@@ -44,20 +66,20 @@
   .box h4 { margin: 0 0 6px; font: 700 16px "Space Grotesk"; color: var(--text); }
   .box p { margin: 0; font-size: 14.5px; }
   .flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; counter-reset: s; margin: 18px 0; }
-  .flow div { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14.5px; color: #cdd5de; }
+  .flow div { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14.5px; color: #e0d2c8; }
   .flow div::before { counter-increment: s; content: counter(s); display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--btc); color: #1a0f00; font: 700 13px Inter; margin-right: 8px; }
   ol.steps { padding-left: 0; list-style: none; counter-reset: st; }
   ol.steps > li { counter-increment: st; position: relative; padding-left: 44px; margin: 26px 0; }
-  ol.steps > li::before { content: counter(st); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 9px; background: #18212d; border: 1px solid var(--line); color: var(--gold); display: grid; place-items: center; font: 700 15px "Space Grotesk"; }
+  ol.steps > li::before { content: counter(st); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 9px; background: #2a1d25; border: 1px solid var(--line); color: var(--gold); display: grid; place-items: center; font: 700 15px "Space Grotesk"; }
   ol.steps > li > b { font: 700 18px "Space Grotesk"; color: var(--text); }
   .tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; margin: 14px 0 8px; }
   table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
-  th { text-align: left; background: #0b1017; color: var(--dim); font-weight: 600; padding: 10px 12px; position: sticky; top: 0; }
-  td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: top; color: #cdd5de; }
+  th { text-align: left; background: #160f15; color: var(--dim); font-weight: 600; padding: 10px 12px; position: sticky; top: 0; }
+  td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: top; color: #e0d2c8; }
   td.ep { white-space: nowrap; }
   .m { display: inline-block; min-width: 46px; text-align: center; padding: 1px 6px; border-radius: 6px; font: 700 11.5px "JetBrains Mono"; margin-right: 4px; }
   .m-get { background: rgba(47,211,138,.15); color: var(--bull); } .m-post { background: rgba(247,147,26,.15); color: var(--btc); }
-  .m-put { background: rgba(79,209,255,.15); color: var(--cyan); } .m-options, .m-ws, .m-upgrade { background: #18212d; color: var(--dim); }
+  .m-put { background: rgba(79,209,255,.15); color: var(--cyan); } .m-options, .m-ws, .m-upgrade { background: #2a1d25; color: var(--dim); }
   details { margin: 12px 0; } summary { cursor: pointer; color: var(--gold); font-weight: 600; }
   a.box.link { display: block; color: inherit; text-decoration: none; transition: border-color .15s; } a.box.link:hover { border-color: rgba(247,147,26,.6); }
   .playcard { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 22px 0 8px; padding: 18px 22px; border-radius: 16px; color: var(--text);
@@ -67,9 +89,13 @@
   .playcard i { flex: none; font-style: normal; padding: 11px 18px; border-radius: 12px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font-weight: 600; }
   nav.top .play { padding: 7px 13px; border-radius: 10px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font-weight: 600; }
   details > p, details > ul { margin: 8px 0 4px; }
-  main details:not(:has(.tbl)) { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { display: none; } }
-  @media (max-width: 560px) { nav.top .r a:not(.play) { display: none; } .playcard { flex-direction: column; align-items: flex-start; } td.ep { white-space: normal; } h2 { margin-top: 48px; }
+  main details:not(.sec):not(:has(.tbl)) { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; }
+    aside { display: block; position: fixed; z-index: 30; top: 0; left: 0; bottom: 0; width: min(300px, 84vw); max-height: none; padding: 20px 20px 40px; background: var(--panel); border-right: 1px solid var(--line); transform: translateX(-105%); transition: transform .22s; }
+    body.nav-closed aside { display: block; }
+    body.drawer aside { transform: none; box-shadow: 20px 0 60px rgba(0,0,0,.5); }
+    body.drawer .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.5); } }
+  @media (max-width: 560px) { nav.top .r a:not(.play):not(.back) { display: none; } nav.top .r { gap: 10px; font-size: 13px; } nav.top .in { gap: 10px; } .brand span { display: none; } .playcard { flex-direction: column; align-items: flex-start; } td.ep { white-space: normal; } h2 { margin-top: 48px; }
     .tbl.api { border: 0; overflow: visible; } .tbl.api thead { display: none; } .tbl.api table, .tbl.api tbody, .tbl.api tr, .tbl.api td { display: block; width: 100%; }
     .tbl.api tr { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 10px; padding: 4px 0; }
     .tbl.api td { border: 0; padding: 6px 14px; overflow-wrap: anywhere; } .tbl.api td.ep code { overflow-wrap: anywhere; }
@@ -78,12 +104,16 @@
 </head>
 <body>
 <nav class="top"><div class="in">
+  <button class="navbtn" id="navbtn" type="button" aria-controls="toc" aria-expanded="true" title="Contents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Contents</span></button>
   <a class="brand" href="#top"><i>₿</i>Bitcoin Arena <span>Docs</span></a>
-  <div class="r"><a href="https://bitcoin-arena.io/">Home</a><a href="#faq">FAQ</a><a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
+  <div class="r"><a class="back" href="https://bitcoin-arena.io/">← bitcoin-arena.io</a><a href="#faq">FAQ</a><a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
 </div></nav>
+<div class="scrim" id="scrim"></div>
 
 <div class="layout">
-<aside>
+<aside id="toc" aria-label="Contents">
+  <a class="back" href="https://bitcoin-arena.io/">← Back to bitcoin-arena.io</a>
+  <a href="https://testnet.bitcoin-arena.io/">Play on testnet →</a>
   <b>Play</b>
   <a href="#start">Start playing</a>
   <a href="#wallet">Your wallet</a>
@@ -92,6 +122,7 @@
   <a href="#games">The games</a>
   <a href="#nostr">Nostr</a>
   <a href="#testnet">Testnet notes</a>
+  <a href="#today">What works today</a>
   <a href="#faq">FAQ</a>
   <b>How it works</b>
   <a href="#how">How Bitcoin Arena works</a>
@@ -113,10 +144,12 @@
   <a href="#api-ops">For operators</a>
   <a href="#api-n2n">Between nodes</a>
   <b>Build</b>
+  <a href="#why-build">Build and earn</a>
   <a href="#game">Implement a game</a>
   <a href="#h2h">Implement a head-to-head game</a>
   <a href="#market">Implement a prediction market</a>
   <a href="#money">Where the money goes</a>
+  <a href="#incentives">The incentives</a>
 </aside>
 
 <main id="top">
@@ -136,7 +169,8 @@
     <a class="box link" href="#game"><h4>Build</h4><p>Write your own game or prediction market.</p></a>
   </div>
 
-  <h2 id="start">Start playing</h2>
+  <div class="folds"><button type="button" id="fold-open">Open all</button><button type="button" id="fold-close">Close all</button></div>
+  <details class="sec" open><summary><h2 id="start">Start playing</h2></summary><div class="sec-body">
   <p>Bitcoin Arena runs in your browser. There is nothing to install and no account to make.</p>
   <ol class="steps">
     <li><b>Open the testnet page</b>
@@ -159,7 +193,8 @@
   <h3 id="settings">Settings</h3>
   <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, and a link to the community on Armada.</p>
 
-  <h2 id="wallet">Your wallet</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="wallet">Your wallet</h2></summary><div class="sec-body">
   <p>Your sats are <b>e-cash</b> of a Fedimint federation, held by your browser. The wallet is the Fedimint client itself, compiled to WebAssembly, and its keys come from your 24 words (one wallet per seed and federation). No server keeps your balance.</p>
   <div class="grid">
     <div class="box"><h4>Deposit</h4><p>A Lightning invoice made through a federation <b>gateway</b>. The gateway puts in its own e-cash before it learns the preimage, so it cannot keep your payment. If one gateway does not answer within 10 s, the page asks the next. The smallest deposit is 5 sat, and 1 sat paid is 1 sat credited.</p></div>
@@ -203,7 +238,8 @@
   </tbody></table></div>
   <p>Winnings can also be sent straight to a Lightning address: a player names one with <code>POST /payout-address</code>, and the seats co-sign the send (<code>GET /winnings</code> shows its state).</p>
 
-  <h2 id="games">The games</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="games">The games</h2></summary><div class="sec-body">
   <p>Three games run on testnet4 today. All three are paid through both federations and checked by the same nodes.</p>
 
   <h3 id="nextblock">Tick Tock, Next Block</h3>
@@ -238,7 +274,8 @@
     <li><b>Void</b>: if the attestors contradict each other, or no outcome stands by the deadline, everything is refunded: every stake and every fee.</li>
   </ul>
 
-  <h2 id="nostr">Nostr</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="nostr">Nostr</h2></summary><div class="sec-body">
   <p>Bitcoin Arena is Nostr native: your Nostr key can be your wallet login, your node owner key and your community identity, and your Lightning wallet can connect over Nostr. Everything below is built and in use.</p>
   <div class="tbl"><table><thead><tr><th>What</th><th>How it works</th><th>NIPs</th></tr></thead><tbody>
     <tr><td><b>Login with Nostr</b> (players)</td><td>Sign in with an nsec, a browser extension, or a remote signer: a <code>bunker://</code> link, a NIP-05 name, or a <code>nostrconnect://</code> QR code for a phone signer such as Amber. You can also create a Nostr account in the page.</td><td>NIP-07, NIP-46</td></tr>
@@ -251,7 +288,8 @@
   </tbody></table></div>
   <div class="note">What is <b>not</b> on Nostr: node discovery, bonds, rounds, results and settlement live on Bitcoin and in the federations, where anyone can check them. With an extension or remote signer an owner cannot sign game manifests in the page; that needs the 24 words or an nsec.</div>
 
-  <h2 id="testnet">Testnet notes</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="testnet">Testnet notes</h2></summary><div class="sec-body">
   <p>Bitcoin Arena runs on <b>Bitcoin testnet4</b>. Test sats have no value. Mainnet is not live. What is different on testnet4:</p>
   <ul>
     <li><b>Load only warns.</b> A federation over its bond cover still takes deposits (mainnet refuses them).</li>
@@ -261,7 +299,20 @@
     <li><b>Operator grids.</b> Tick Tock runs on 6-hour periods, Rock Paper Scissors on grids opened on demand, Up or Down on its 15-minute grid. These grids come from the operators' scripts, not from the protocol.</li>
   </ul>
 
-  <h2 id="how">How Bitcoin Arena works</h2>
+  <h3 id="today">What works today, and what comes next</h3>
+  <p>Moved here from the old testnet <i>platform</i> page (kanban #361).</p>
+  <div class="tbl"><table><thead><tr><th>Works today</th><th>Not built yet</th></tr></thead><tbody>
+    <tr><td>Fourteen bonded testnet4 nodes in two federations (7 guardians each, 5 of 7), running paid test rounds</td><td>Mainnet: not live</td></tr>
+    <tr><td>Games and markets as signed manifests; nodes choose what they host</td><td>Publishing a manifest on the Bitcoin chain: today nodes load it from the game's module</td></tr>
+    <tr><td>The lobby lists the games, and each game loads its own client by hash</td><td>A tool for a new operator to post a testnet4 bond: today's bonds were posted by the project</td></tr>
+    <tr><td>The 5% fee and the donation split, computed by every node alike</td><td>Automatic slashing: offences are recorded today; taking a bond comes before mainnet</td></tr>
+    <tr><td>The dev client: donation key, collect, withdraw to Lightning, developer key, signing</td><td>A tool for an operator to withdraw node fees: the dashboard shows them</td></tr>
+    <tr><td>Installing and updating games from other seats in the owner area</td><td>A sandbox that isolates a core's process: today cores run in a worker</td></tr>
+  </tbody></table></div>
+  <p>The Bitcoin Arena source is not public yet.</p>
+
+  </div></details>
+  <details class="sec" open><summary><h2 id="how">How Bitcoin Arena works</h2></summary><div class="sec-body">
   <div class="flow">
     <div>A game or market is published by its developer: a signed record of its rules.</div>
     <div>Nodes choose which games they host and open <b>rounds</b> of them.</div>
@@ -340,7 +391,8 @@
     <li><b>Head-to-head</b> game: each player hides a move, all moves are revealed after entry close, and the game's rule decides between them (<a href="#h2h">Rock Paper Scissors</a>). A round is played only when all its players entered.</li>
   </ul>
 
-  <h2 id="node">What a node does</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="node">What a node does</h2></summary><div class="sec-body">
   <p>A node is a small Node.js server. Together the nodes are Bitcoin Arena; there is no other server. A node:</p>
   <ul>
     <li>lists the games it hosts and the rounds it holds;</li>
@@ -424,7 +476,8 @@ arena-donor game-key   # the Ed25519 game developer key
 arena-donor sign &lt;dir&gt; # sign a game's manifest</pre>
   <p>It asks every seat what it verified for its key (<code>GET /donations?key=</code>), redeems the payout contracts in each federation with the same WebAssembly client the page uses, run in Node, and withdraws to the developer's own Lightning node. It then tells the seats what it read (<code>POST /donations/read</code>, signed by the key). On testnet4 the donation key set names two dev clients (dev a and dev b), split 2:1, which run as services that collect every 5 minutes.</p>
 
-  <h2 id="api">The node API</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="api">The node API</h2></summary><div class="sec-body">
   <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are 181 in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
   <ul>
     <li>Round ids, entry ids and keys are hex strings in the query: <code>?round=&lt;64 hex&gt;</code>.</li>
@@ -634,7 +687,27 @@ arena-donor sign &lt;dir&gt; # sign a game's manifest</pre>
 </tbody></table></div>
   </details>
 
-  <h2 id="game">Implement a game</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="why-build">Build and earn</h2></summary><div class="sec-body">
+  <p>A game that pays real money usually needs a company: a server, a wallet to hold players' money, a way to stop cheaters and someone to pay out. Bitcoin Arena does all of that for every game on it, so a developer writes only the game.</p>
+  <div class="grid">
+    <div class="box"><h4>You never hold players' money</h4><p>Stakes are locked in a federation of independent nodes (Fedimint). No single node can take them, and neither can you.</p></div>
+    <div class="box"><h4>Cheating does not pay</h4><p>Your game's rules run as a deterministic core. Independent nodes replay every run from the player's inputs; a run that does not replay to the same score is not paid.</p></div>
+    <div class="box"><h4>Payouts are already built</h4><p>Pick a payout rule in your manifest: the rank curve for games, pari-mutuel for markets. Every node computes the same table to the millisatoshi.</p></div>
+    <div class="box"><h4>No server, no approval</h4><p>A game exists once its developer signs its manifest. Nobody has to approve it; each node chooses which games it hosts.</p></div>
+    <div class="box"><h4>Players arrive with a wallet</h4><p>One seed and one wallet work across every game, so a player of one game can stake on yours without a new sign-up.</p></div>
+    <div class="box"><h4>You earn on every paid entry</h4><p>Half of every player donation goes to the game's developer, on every node that hosts it, for as long as people play.</p></div>
+  </div>
+  <p>There are two kinds: <b>games</b>, whose runs the nodes replay, and <b>prediction markets</b>, whose outcome named attestors sign. Start here:</p>
+  <div class="grid">
+    <a class="box link" href="#game"><h4>Build a game</h4><p>Rules, client, donation key and a signed manifest.</p></a>
+    <a class="box link" href="#h2h"><h4>A head-to-head game</h4><p>Hidden moves, revealed together, like Rock Paper Scissors.</p></a>
+    <a class="box link" href="#market"><h4>Build a market</h4><p>Outcomes, attestors and a pari-mutuel payout.</p></a>
+    <a class="box link" href="#run"><h4>Run a node and earn</h4><p>A bond, a seat and 5% of every paid stake for the work.</p></a>
+  </div>
+
+  </div></details>
+  <details class="sec" open><summary><h2 id="game">Implement a game</h2></summary><div class="sec-body">
   <p>A game is four things: its <b>rules</b> (a small core every node can run and get the same result), its <b>client</b> (the web page the player sees), its <b>donation key</b> (where your share of the donations goes) and its <b>manifest</b> (your signed record of all of it). The example below is a whole game called <code>coin-count</code>: each tick the player presses a number, and the score is the sum.</p>
   <ol class="steps">
     <li><b>Write the rules as pure arithmetic</b>
@@ -700,7 +773,8 @@ export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
   </ol>
   <div class="note">Paid rounds of a replayed game need the game on the page's list of known games (with its cores and configs), because that list ships with the page. A newly signed game plays free rounds first.</div>
 
-  <h2 id="h2h">Implement a head-to-head game</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="h2h">Implement a head-to-head game</h2></summary><div class="sec-body">
   <p>In a replayed game every run is checked on its own, so one player's score can never depend on what another player did. A <b>head-to-head game</b> is for the games where it does: each player picks a move in secret, all moves are shown together, and the game's rule decides who won. The engine does the hiding, the showing, the checking and the money; your game only says what beats what. The example is the real <b>Rock Paper Scissors</b> (<code>packages/rock-paper-scissors</code>).</p>
   <div class="tbl"><table><thead><tr><th>Result type</th><th>The result comes from</th><th>Example</th></tr></thead><tbody>
     <tr><td><code>REPLAY</code> (1)</td><td>each player's own run, replayed by every node</td><td>Tick Tock, Next Block</td></tr>
@@ -773,7 +847,8 @@ A.result(roundId);     // the round as the nodes hold it: entries, each signed o
       <p>Open the link twice in two browser profiles (two players) and add <code>&amp;game=rock-paper-scissors</code>.</p></li>
   </ol>
 
-  <h2 id="market">Implement a prediction market</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="market">Implement a prediction market</h2></summary><div class="sec-body">
   <p>A market is a round where players pick one outcome and the right picks share the stakes of the wrong ones. It uses the same custody, nodes and settlement as a game, but there is no core and no run: the result is the outcome reported by the attestors you name.</p>
   <ol class="steps">
     <li><b>Choose the question, the outcomes and who reports the result</b>
@@ -829,7 +904,8 @@ for (const node of committeeNodes)
   <p>Trading uses signed limit orders. Prices are in whole cents (0.01 to 0.99), an order buys at least 5 shares, and a share pays 1 sat if its side wins. An Up buyer at 0.73 and a Down buyer at 0.27 together fund a share. The nodes clear each batch of orders at one price that every node computes the same way (<code>clearBatch</code> in <code>order-book.js</code>). The fee is charged on the part of an order that filled, when it fills; what has not filled can be cancelled at no cost.</p>
   <p>The example market <code>btc-close</code> (three outcomes, three attestors, 2 of 3) lives in <code>packages/arena-node/test/plugins/market/</code> with its own client, and <code>packages/arena-client/tools/market-live.sh</code> runs it on a private test chain end to end.</p>
 
-  <h2 id="money">Where the money goes</h2>
+  </div></details>
+  <details class="sec" open><summary><h2 id="money">Where the money goes</h2></summary><div class="sec-body">
   <p>Every paid entry is split the same way, fixed by the protocol. A 10,000 sat stake with the default donation:</p>
   <div class="tbl"><table><thead><tr><th>Part</th><th>Share</th><th>Goes to</th></tr></thead><tbody>
     <tr><td>In play</td><td>90%</td><td>the round: what is won or lost</td></tr>
@@ -838,7 +914,15 @@ for (const node of committeeNodes)
     <tr><td>Donation, half</td><td>2.5%</td><td>the protocol developers</td></tr>
   </tbody></table></div>
   <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. Free rounds pay neither. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
-  <h2 id="faq">FAQ</h2>
+  <h3 id="incentives">The incentives, in one line each</h3>
+  <ul>
+    <li><b>Game developers</b> earn half of every donation in every round of their game, paid by the federation to their own key. The more people play, the more they earn. They run no server.</li>
+    <li><b>Node operators</b> earn the 5% fee for the work their node does in each round, and choose which games to host.</li>
+    <li><b>Players</b> get results nobody can fake. They never hand their stake to a company, and keep one wallet for every game.</li>
+    <li><b>Protocol developers</b> earn the other half of the donations, which pays for keeping the engine safe.</li>
+  </ul>
+  </div></details>
+  <details class="sec" open><summary><h2 id="faq">FAQ</h2></summary><div class="sec-body">
   <details><summary>Where are my sats?</summary><p>As Fedimint e-cash in your browser's wallet, under your 24 words or your Nostr key, in one of the federations. No company holds them. While you play, your stake sits in a lock in the federation that only the round's result, or its expiry, can open.</p></details>
   <details><summary>I lost my 24 words. Can anyone recover my wallet?</summary><p>No. Without your words (or the Nostr key you logged in with) the wallet and every lock it would refund are gone. Back up your words in Settings.</p></details>
   <details><summary>How do I get testnet sats?</summary><p>The testnet page links a test Lightning wallet with a small faucet (1,000 sat at a time, rate-limited). Pay the Deposit invoice from it, or from any testnet4 Lightning wallet.</p></details>
@@ -855,7 +939,46 @@ for (const node of committeeNodes)
   <details><summary>Do I need Nostr?</summary><p>No. A wallet with 24 words works without it. Nostr lets you log in with a key you already have, bring your wallet to another device, and pay from your own wallet over Nostr Wallet Connect.</p></details>
   <details><summary>How do I claim my node?</summary><p>Open <code>/dashboard/owner</code> on it and enter the claim code from the node's log or from <code>&lt;db&gt;.owner-claim</code>.</p></details>
   <details><summary>Is this on mainnet?</summary><p>No. Bitcoin Arena runs on Bitcoin testnet4. Test sats have no value.</p></details>
+  </div></details>
+  <div class="folds bottom"><a href="#top">↑ Top</a> · <a href="https://bitcoin-arena.io/">← bitcoin-arena.io</a> · <a href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
 </main>
 </div>
+<script>
+// THE CONTENTS AND THE FOLDS (kanban #361). Everything is open without JavaScript; with it, the sections fold, the one a link
+// points at opens, and the contents remember whether they were closed (desktop) - storage may be refused, the page works anyway.
+(() => {
+  const body = document.body, btn = document.getElementById('navbtn'), toc = document.getElementById('toc');
+  const phone = () => matchMedia('(max-width: 900px)').matches;
+  let closed = false; try { closed = localStorage.getItem('docs-nav') === 'closed'; } catch (e) {}
+  const show = () => { const open = phone() ? body.classList.contains('drawer') : !body.classList.contains('nav-closed'); btn.setAttribute('aria-expanded', String(open)); };
+  if (closed) body.classList.add('nav-closed'); show();
+  btn.addEventListener('click', () => {
+    if (phone()) body.classList.toggle('drawer');
+    else { body.classList.toggle('nav-closed'); try { localStorage.setItem('docs-nav', body.classList.contains('nav-closed') ? 'closed' : 'open'); } catch (e) {} }
+    show();
+  });
+  document.getElementById('scrim').addEventListener('click', () => { body.classList.remove('drawer'); show(); });
+  addEventListener('resize', show);
+  const secs = [...document.querySelectorAll('details.sec')];
+  const openFor = (id) => { const el = id && document.getElementById(id); if (!el) return null; const d = el.closest('details.sec'); if (d) d.open = true; return el; };
+  const go = (id, smooth) => { const el = openFor(id); if (el) el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); };
+  const first = decodeURIComponent(location.hash.slice(1));
+  secs.forEach((d, i) => { d.open = i === 0; });
+  if (first) { openFor(first); requestAnimationFrame(() => go(first, false)); }
+  addEventListener('hashchange', () => go(decodeURIComponent(location.hash.slice(1)), true));
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href^="#"]'); if (!a) return;
+    const id = decodeURIComponent(a.getAttribute('href').slice(1));
+    if (id && id !== 'top') { openFor(id); if (location.hash === '#' + id) { e.preventDefault(); go(id, true); } }
+    if (phone() && toc.contains(a)) { body.classList.remove('drawer'); show(); }
+  });
+  document.getElementById('fold-open').onclick = () => secs.forEach((d) => { d.open = true; });
+  document.getElementById('fold-close').onclick = () => secs.forEach((d) => { d.open = false; });
+  // the contents mark the section being read
+  const links = new Map([...toc.querySelectorAll('a[href^="#"]')].map((a) => [a.getAttribute('href').slice(1), a]));
+  const io = new IntersectionObserver((es) => es.forEach((en) => { if (en.isIntersecting) { const a = links.get(en.target.id); if (a) { links.forEach((x) => x.classList.remove('on')); a.classList.add('on'); } } }), { rootMargin: '-80px 0px -70% 0px' });
+  document.querySelectorAll('main h2[id], main h3[id]').forEach((h) => io.observe(h));
+})();
+</script>
 </body>
 </html>

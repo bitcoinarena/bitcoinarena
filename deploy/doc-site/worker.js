@@ -37,6 +37,9 @@ const page = (wrong, next) => `<!doctype html><html lang="en"><head><meta charse
 export default { async fetch(request, env) {
 
   const url = new URL(request.url);
+  // THE DOCS LIVE AT docs.bitcoin-arena.io (kanban #361): the old name sends every path there, before the gate (the cookie is
+  // set for all of bitcoin-arena.io, so a logged-in reader arrives logged in)
+  if (url.hostname === 'doc.bitcoin-arena.io') return Response.redirect('https://docs.bitcoin-arena.io' + url.pathname + url.search + url.hash, 301);
   // robots.txt OUTSIDE THE GATE: a fetcher that asks it first and gets 401 may stop there (the page itself stays gated)
   if (url.pathname === '/robots.txt') return new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } });
   const password = env.SITE_PASSWORD;
