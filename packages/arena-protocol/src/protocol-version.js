@@ -12,6 +12,8 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 3, year: 2026, x: 0 }),
   // top-N prize splits: a replayed game's manifest may pay fixed shares over its top places (kanban #362)
   Object.freeze({ version: 4, year: 2026, x: 0 }),
+  // the median of signed readings: each seat signs the price it read, a price sample is the median of five (kanban #312)
+  Object.freeze({ version: 5, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

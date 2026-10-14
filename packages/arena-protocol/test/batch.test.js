@@ -118,13 +118,19 @@ test('the ceiling the encoder sets is the one the transport is built on', () => 
     loads: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1, 0, 5]),
     samples: Array.from({ length: MAX_BATCH_TICKS }, (_, i) => [i, 1]),
     tapes: [[0, ...Array.from({ length: 64 }, () => 1)]],
-    attests: [...Array.from({ length: MAX_ATTESTED_SAMPLES }, (_, k) => [k * 300, 0, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]),
-      [0, 1, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]],
+    // at their largest the attested prices are protocol 5's (kanban #312): nine signed readings each, their own prices with them
+    attests: [...Array.from({ length: MAX_ATTESTED_SAMPLES }, (_, k) => [k * 300, 2, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), 8297193, new Uint8Array(64).fill(i)])]),
+      [0, 3, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), Array.from({ length: 64 }, () => 8290000), new Uint8Array(64).fill(i)])]],
   };
   assert.equal(encodeInputBatch(b).length, MAX_INPUT_BATCH_BYTES);
+  // the same batch with kanban #311's attestations (kinds 0 and 1, nine signatures each) is 256 x 36 + 9 x 256 bytes shorter
+  const v4 = { ...b, attests: [...Array.from({ length: MAX_ATTESTED_SAMPLES }, (_, k) => [k * 300, 0, 8297193, Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]),
+    [0, 1, Array.from({ length: 64 }, () => 8290000), Array.from({ length: MAX_ATTEST_SIGS }, (_, i) => [b32(i), new Uint8Array(64).fill(i)])]] };
+  assert.equal(encodeInputBatch(v4).length, MAX_INPUT_BATCH_BYTES - 256 * 36 - 9 * 256);
   // + 2 + 65535 x 8 for the price samples and + 2 + 260 for the one live tape a batch may carry (2026-09-17);
-  // + 2 + 65535 x 8 for the rooms; + 2 + 256 x 875 + 1127 for the attested samples and tape, nine signatures each (kanban #311)
-  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * 875 + 1127);
+  // + 2 + 65535 x 8 for the rooms; + 2 + 256 x 875 + 1127 for the attested samples and tape, nine signatures each (kanban #311);
+  // protocol 5's readings carry their own cents (+4 each) and a tape reading its 64 prices (+256 each) (kanban #312)
+  assert.equal(MAX_INPUT_BATCH_BYTES, 2621509 + 2 + MAX_BATCH_TICKS * 8 + 2 + 260 + 2 + MAX_BATCH_TICKS * 8 + 2 + 256 * (875 + 36) + 1127 + 9 * 256);
 });
 
 test('the committee\'s signatures on a sample and the tape (kanban #311): a fourth optional tail; a batch without them keeps its bytes', () => {

@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -50,6 +50,15 @@ export const takesAnyFederation = (c) => !!c && Number.isInteger(c.protocolVersi
 // version (#349), so its rounds name 4 or later and the census seats only nodes whose advert lists such a version: a node
 // that cannot pay the split is never drawn for it.
 export const TOP_SPLIT_VERSION = 4;
+// THE MEDIAN OF SIGNED READINGS (2026.0.5, kanban #312, RULED the owner 2026-10-14 ~21:50Z: "Build A as protocol 5 ... each seat
+// signs the price it read, and the sample is the median of five signed readings. Nobody proposes a price, so nobody chooses
+// BULLS, BEARS, or FLAT. That signature change is protocol 5."). A price round of version 5 or later plays prices no seat
+// proposed: each committee seat signs ITS OWN reading of each moment (price-sample.js priceReadingId), and a sample is the
+// median of at least `threshold` of them (priceSampleStands5); its tape and its RoundResult are made the same way. A round
+// below 5 keeps the proposed-and-countersigned sample (priceAttestationStands) exactly as before. The round's own version
+// picks the scheme, never the seat's.
+export const PRICE_MEDIAN_VERSION = 5;
+export const mediansPrices = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= PRICE_MEDIAN_VERSION;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -454,6 +463,10 @@ export const TAG = {
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
   priceTape: 'ARENA/v1/PriceTape',
+  // protocol 5 (kanban #312): ONE seat's own reading of one moment, and of the 64 moments before the start - each signed by that
+  // seat alone; nobody signs anyone else's price
+  priceReading: 'ARENA/v1/PriceReading',
+  priceTapeReading: 'ARENA/v1/PriceTapeReading',
   // THE BALLOT (§27A.7.2-3, kanban #329): a proposal's body the proposer signs, its id, and what a bond key signs to vote
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
