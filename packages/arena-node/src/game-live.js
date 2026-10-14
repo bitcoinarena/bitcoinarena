@@ -24,7 +24,10 @@ export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => nul
       // A MARKET from its window's start (the owner 2026-10-11): it takes no order before it
       const w = windowOf(c);
       const open = w ? w.startMs : c.startTimeMs - SEATING_LEAD_MS > c.committeeTimeMs ? c.startTimeMs - SEATING_LEAD_MS : c.committeeTimeMs;
-      rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open, end: c.startTimeMs + run + 30000n });
+      // TO ITS LAST ENTRY'S RUN (the owner 2026-10-14 ~08:45Z: Tick Tock "shows no open round"): a round taking entries after its
+      // start - the late join, a Tick Tock round's six hours - is live until its entry close plus one run, not its start plus one
+      const lastRunEnd = c.entryCloseMs > c.startTimeMs ? c.entryCloseMs + run : c.startTimeMs + run;
+      rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open, end: lastRunEnd + 30000n });
     }
   };
   /** { [gameId hex]: { rounds, players } } - the rounds live now and the players entered in them. */
