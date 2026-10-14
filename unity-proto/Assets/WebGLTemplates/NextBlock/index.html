@@ -399,6 +399,35 @@
     #arena-games.compact .chip .word { display: none; }
     #arena-games.compact .chip.idle { color: #6e7681; }
     #arena-games.compact .chip:not(.idle) .ico { color: #3fb950; }
+    /* A CHIP OPENS ITS LIST (kanban #356, the owner 2026-10-14): the nodes with their dashboards, the players by name, the open rounds */
+    #arena-games .chip.opens { cursor: pointer; }
+    #arena-games .chip.opens:hover, #arena-games .chip.opens:focus-visible { border-color: #f7931a; outline: none; }
+    #arena-pop { position: fixed; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(0,0,0,.6); }
+    #arena-pop.show { display: flex; }
+    #arena-pop .card { width: min(560px, 100%); max-height: min(78vh, 720px); display: flex; flex-direction: column; background: #161b22; border: 1px solid #30363d;
+      border-radius: 16px; box-shadow: 0 16px 48px rgba(0,0,0,.5); color: #e6edf3; font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+    #arena-pop .top { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid #262c36; }
+    #arena-pop .top h3 { flex: 1; margin: 0; font-size: 17px; }
+    #arena-pop .top button { background: none; border: 1px solid #30363d; color: #e6edf3; border-radius: 8px; width: 34px; height: 34px; font-size: 18px; cursor: pointer; }
+    #arena-pop .body { overflow-y: auto; padding: 6px 16px 14px; }
+    #arena-pop .note { color: #8b949e; font-size: 13px; padding: 8px 0; }
+    #arena-pop .row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #21262d; }
+    #arena-pop .row:last-child { border-bottom: none; }
+    #arena-pop .row .main { flex: 1; min-width: 0; }
+    #arena-pop .row .t { font-weight: 600; overflow-wrap: anywhere; }
+    #arena-pop .row .s { color: #8b949e; font-size: 13px; overflow-wrap: anywhere; }
+    #arena-pop .row a { color: #f7931a; text-decoration: none; white-space: nowrap; font-size: 14px; }
+    #arena-pop .tag { font-size: 12px; padding: 2px 7px; border-radius: 999px; border: 1px solid #30363d; color: #8b949e; white-space: nowrap; }
+    #arena-pop .tag.live { color: #3fb950; border-color: rgba(63,185,80,.5); }
+    #arena-pop .roles { display: inline-flex; gap: 4px; flex: none; }
+    #arena-pop .role { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; border: 1px solid #262c36; color: #484f58; }
+    #arena-pop .role.on { color: #f7931a; border-color: rgba(247,147,26,.45); background: rgba(247,147,26,.08); }
+    #arena-pop .role svg, #arena-pop .who svg { width: 15px; height: 15px; }
+    #arena-pop .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: #8b949e; font-size: 13px; padding: 2px 0 6px; }
+    #arena-pop .legend span, #arena-pop .who span { display: inline-flex; align-items: center; gap: 4px; }
+    #arena-pop .legend svg { width: 14px; height: 14px; color: #f7931a; }
+    #arena-pop .who { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; color: #8b949e; font-size: 12px; font-variant-numeric: tabular-nums; }
+    #arena-pop .who svg { color: #f7931a; width: 13px; height: 13px; }
     /* THE PLATFORM PAGE'S LINK ON THE LOADING SCREEN (kanban #208, the owner 2026-10-08 11:38) */
     #arena-platform { margin-top: 10px; font: 13px/1.4 system-ui, sans-serif; text-align: center; padding: 0 16px; }
     #arena-client { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 36; background: #0d1014; }
@@ -1288,6 +1317,7 @@
   })();
   </script>
 
+  <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="platform/">Build your own game or market, or run a node &rarr;</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div><div class="dots"><i></i><i></i><i></i></div></div>
@@ -5243,6 +5273,148 @@
     // is shown. nextblock goes on to Unity; any other game's client - games/<name>/index.html - runs only if its bytes hash
     // to one of its manifest's clients[], in a frame of this same page's origin, so the wallet and the seed are the ones this
     // tab already holds. Answers the chosen game, or null when the nodes name none.
+    // A TILE'S CHIPS AS LISTS (kanban #356, the owner 2026-10-14: "When you click on the nodes count a popup opens with all connected
+    // nodes, and a link to their public dashboard. A click on the player reveals a list of the players along with their pre
+    // generated names or custom names. Open rounds lists the round, their length, the stake in sats, their start and end time").
+    // The nodes are the ones that answered the tile's GET /games. Players and rounds come from one seat's GET /rounds?ahead=900000
+    // - the listing the page already asks, so a seat answers it from the copy it keeps - cut to the tile's versions; the players
+    // are the names their records carry, each checked against its player key (checkedNames) before it is shown.
+    (function () {
+      const pop = document.getElementById('arena-pop');
+      if (!pop) return;
+      const title = pop.querySelector('h3'), body = pop.querySelector('.body');
+      const close = () => { pop.classList.remove('show'); };
+      pop.querySelector('.top button').addEventListener('click', close);
+      pop.addEventListener('click', (e) => { if (e.target === pop) close(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pop.classList.contains('show')) close(); });
+      const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; };
+      const row = (t, s, right) => { const r = el('div', 'row'); const m = el('div', 'main'); m.append(el('div', 't', t)); if (s) m.append(el('div', 's', s)); r.append(m); if (right) r.append(right); return r; };
+      const note = (t) => el('div', 'note', t);
+      const span = (ms) => { const sec = Math.max(0, Math.round(ms / 1000)); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+        return h ? h + ' h' + (m ? ' ' + m + ' min' : '') : m ? m + ' min' + (x ? ' ' + x + ' s' : '') : x + ' s'; };
+      const when = (ms) => { const d = new Date(ms), now = new Date();
+        const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        return d.toDateString() === now.toDateString() ? t : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + t; };
+      const sats = (msat) => { const n = Number(BigInt(String(msat || '0')) / 1000n); return n ? n.toLocaleString('en-US') + ' sat' : 'free'; };
+      const via = (u) => (window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(u) : u);
+      // THE THREE THINGS A NODE DOES (kanban #356, the owner 2026-10-14: "what they are configured, as verify, as settlement, as custody.
+      // Best as icons to keep it small"): verify - it checks the players' runs (the game/verify roles); settlement - it signs where
+      // the money goes; custody - it is a guardian of a federation that holds the stakes
+      const ROLE_ICONS = {
+        verify: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="m10.4 10.4 3.8 3.8M5 7.1l1.4 1.4L9.2 5.6"/></svg>',
+        settlement: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12M4.5 14h7M3 4.5h10M3 4.5 1.2 9a2 2 0 0 0 3.6 0zM13 4.5 11.2 9a2 2 0 0 0 3.6 0z"/></svg>',
+        custody: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="7" width="11" height="7.5" rx="1.6"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/><circle cx="8" cy="10.6" r="1.1" fill="currentColor"/></svg>' };
+      const ROLE_WORDS = { verify: 'verify', settlement: 'settlement', custody: 'custody' };
+      const icon = (k) => { const x = el('span'); x.innerHTML = ROLE_ICONS[k]; return x.firstChild; };
+      const legend = () => { const l = el('div', 'legend'); for (const k of ['verify', 'settlement', 'custody']) { const x = el('span'); x.append(icon(k), ROLE_WORDS[k]); l.append(x); } return l; };
+      // a node's route name (guardian-3, fed2-5): the last part of its address, the same in its advert's endpoint and the page's URL
+      const routeOf = (u) => { try { return new URL(String(u).replace(/^ws(s?):/, 'http$1:')).pathname.replace(/\/+$/, '').split('/').pop() || new URL(String(u).replace(/^ws(s?):/, 'http$1:')).host; } catch { return String(u); } };
+      // GET /roles of the first node that answers: every census node's roles and custody, by node key and by route
+      async function rolesOf(g) {
+        const j = await Promise.any((g.nodes || []).map(async (n) => {
+          const r = await fetch(via(String(n).replace(/\/+$/, '') + '/roles'), { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+          if (!r.ok) throw new Error(String(r.status));
+          return r.json();
+        })).catch(() => null);
+        const byRoute = new Map(), byKey = new Map();
+        for (const x of (j && j.nodes) || []) {
+          const roles = new Set(x.roles || []);
+          const feds = new Set([...(x.custody || []).map((c) => c.federation), ...(x.guardianOf || [])]);
+          const v = { key: x.node, verify: roles.has('verify') || roles.has('game'), settlement: roles.has('settlement'), custody: feds.size > 0, feds, route: routeOf(x.endpoint) };
+          byRoute.set(v.route, v); byKey.set(String(x.node).toLowerCase(), v);
+        }
+        return { known: !!j, byRoute, byKey };
+      }
+      // the tile's rounds, from the first of its nodes that answers
+      async function roundsOf(g) {
+        const ids = new Set((Array.isArray(g.versions) && g.versions.length ? g.versions : [g.id]).map((x) => String(x).toLowerCase()));
+        const j = await Promise.any((g.nodes || []).map(async (n) => {
+          const r = await fetch(via(String(n).replace(/\/+$/, '') + '/rounds?ahead=900000'), { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+          if (!r.ok) throw new Error(String(r.status));
+          return r.json();
+        }));
+        const now = Number(j.nowMs) || Date.now();
+        return (j.rounds || []).filter((x) => x.game && ids.has(String(x.game.id).toLowerCase()) && Date.parse(x.endTime) > now)
+          .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)).map((x) => Object.assign({ nowMs: now }, x));
+      }
+      window.ARENA_CHIP_LIST = async function (g, kind) {
+        body.textContent = '';
+        const name = g.title || g.name;
+        if (kind === 'nodes') {
+          const nodes = g.nodes || [];
+          title.textContent = nodes.length + ' node' + (nodes.length === 1 ? '' : 's') + ' \u00b7 ' + name;
+          body.append(note('The nodes that answered for this game. Each one runs its own public dashboard.'), legend());
+          pop.classList.add('show');
+          const roles = await rolesOf(g);
+          if (!roles.known) body.append(note('No node said which roles the nodes have just now.'));
+          nodes.forEach((n, i) => {
+            const base = String(n).replace(/\/+$/, ''); let u; try { u = new URL(base); } catch { u = null; }
+            const a = el('a', null, 'Dashboard \u2197'); a.href = base + '/dashboard'; a.target = '_blank'; a.rel = 'noopener';
+            const v = roles.byRoute.get(routeOf(base));
+            const r = row('Node ' + (i + 1), (u ? u.host + (u.pathname === '/' ? '' : u.pathname) : base) + (v ? ' \u00b7 ' + v.key.slice(0, 8) : ''), a);
+            if (v) {
+              const ic = el('span', 'roles');
+              for (const k of ['verify', 'settlement', 'custody']) {
+                const b = el('span', 'role' + (v[k] ? ' on' : '')); b.append(icon(k));
+                b.title = (v[k] ? '' : 'not ') + ROLE_WORDS[k] + (k === 'custody' && v.custody ? ': guardian of ' + [...v.feds].map((f) => f.slice(0, 8)).join(', ') : '');
+                ic.append(b);
+              }
+              r.insertBefore(ic, a);
+            }
+            body.append(r);
+          });
+          return;
+        }
+        title.textContent = (kind === 'players' ? 'Players' : 'Open rounds') + ' \u00b7 ' + name;
+        body.append(note('Asking the nodes \u2026'));
+        pop.classList.add('show');
+        let rounds, roles = null;
+        try { [rounds, roles] = await Promise.all([roundsOf(g), kind === 'rounds' ? rolesOf(g) : null]); } catch { body.textContent = ''; body.append(note('No node answered just now. Try again in a moment.')); return; }
+        // a node by its number in the node list (the one the nodes chip opens), else its key's first 4 bytes
+        const numberOf = new Map();
+        if (roles) (g.nodes || []).forEach((n, i) => { const v = roles.byRoute.get(routeOf(n)); if (v) numberOf.set(v.key.toLowerCase(), i + 1); });
+        const nodeName = (k) => numberOf.get(String(k).toLowerCase()) || String(k).slice(0, 8);
+        const assigned = (r) => {
+          const c = r.committee || {};
+          const w = el('div', 'who');
+          const put = (k, keys) => { if (!keys.length) return; const x = el('span'); x.title = ROLE_WORDS[k]; x.append(icon(k), keys.map(nodeName).sort((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : String(a) < String(b) ? -1 : 1)).join(' ')); w.append(x); };
+          put('verify', Array.isArray(c.game) ? c.game : []);
+          put('settlement', Array.isArray(c.settlement) ? c.settlement : []);
+          if (roles && r.federation) put('custody', [...roles.byKey.values()].filter((v) => v.feds.has(String(r.federation).toLowerCase())).map((v) => v.key));
+          return w.childNodes.length ? w : null;
+        };
+        body.textContent = '';
+        if (kind === 'rounds') {
+          const shown = rounds.slice(0, 100);
+          body.append(legend());
+          body.append(note(rounds.length ? rounds.length + ' round' + (rounds.length === 1 ? '' : 's') + ' running or starting in the next 15 min' + (rounds.length > shown.length ? ' (the first ' + shown.length + ' shown)' : '') + '. Times are yours.' : 'No round is running or starting in the next 15 min.'));
+          for (const r of shown) {
+            const start = Date.parse(r.startTime), end = Date.parse(r.endTime);
+            const live = start <= r.nowMs;
+            const players = Number(r.joined || 0);
+            const t = el('span', 'tag' + (live ? ' live' : ''), live ? 'running' : 'open');
+            const rr = row('Round ' + String(r.id).slice(0, 8) + ' \u00b7 ' + span(end - start) + ' \u00b7 ' + sats(r.stakeMsat),
+              when(start) + ' \u2192 ' + when(end) + (players ? ' \u00b7 ' + players + ' player' + (players === 1 ? '' : 's') : ''), t);
+            const who = assigned(r); if (who) rr.querySelector('.main').append(who);
+            body.append(rr);
+          }
+          return;
+        }
+        // PLAYERS: every name record a round holds, checked before it is drawn; a player who posted none is counted, not named
+        const verify = (sg, m, k) => { try { return !!(window.BLWP_CURVE && window.BLWP_CURVE.verify(sg, m, k)); } catch { return false; } };
+        let named = 0, unnamed = 0;
+        for (const r of rounds) {
+          const names = BLWPCLIENT.checkedNames ? BLWPCLIENT.checkedNames(r.names || [], String(r.id), verify) : [];
+          for (const x of names) {
+            named++;
+            body.append(row(x.name, 'round ' + String(r.id).slice(0, 8) + ' \u00b7 player ' + x.player.slice(0, 8), el('span', 'tag', x.chosen ? 'chosen name' : 'generated name')));
+          }
+          unnamed += Math.max(0, Number(r.joined || 0) - names.length);
+        }
+        if (unnamed) body.append(note(unnamed + ' more player' + (unnamed === 1 ? '' : 's') + ' joined without posting a name yet.'));
+        if (!named && !unnamed) body.append(note('Nobody has joined a round of this game that is running or starting in the next 15 min.'));
+      };
+    })();
     async function chooseTheGame(nodes) {
       if (!BLWPCLIENT.fetchGames) return null;
       let got;
@@ -5317,7 +5489,12 @@
                 rounds: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.4 5.2v5.6L11 8z" fill="currentColor"/>' };
               const chip = (n, word, kind, idle) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
                 const dot = document.createElement('i'); const ico = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ico.setAttribute('class', 'ico'); ico.setAttribute('viewBox', '0 0 16 16'); ico.setAttribute('aria-hidden', 'true'); ico.innerHTML = ICONS[kind];
-                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + word; c.append(dot, ico, document.createTextNode(String(n)), w); return c; };
+                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + word; c.append(dot, ico, document.createTextNode(String(n)), w);
+                // ITS LIST ON A TAP (kanban #356), not the game: the tile's own tap still picks the game
+                c.classList.add('opens'); c.setAttribute('role', 'button'); c.tabIndex = 0;
+                const open = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); };
+                c.addEventListener('click', open); c.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') open(e); });
+                return c; };
               const live = g.live || { rounds: 0, players: 0 };
               stats.append(chip(g.nodes.length, 'node' + (g.nodes.length === 1 ? '' : 's'), 'nodes', false),
                 chip(live.players, 'player' + (live.players === 1 ? '' : 's'), 'players', !live.players),
