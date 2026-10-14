@@ -2923,6 +2923,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return !kept.unlisted;
   };
+  const SCAN_KEEP_MS = 5000;
+  let scanKept = null; let scanBuilding = null;
+  const openScan = async (nowMs, yieldIfLong) => {
+    if (scanKept && scanKept.version === seriesVersion && Date.now() - scanKept.at < SCAN_KEEP_MS) return scanKept.list;
+    if (!scanBuilding) {
+      scanBuilding = (async () => {
+        const version = seriesVersion; const at = Date.now(); const list = [];
+        for (const roundId of openHeld()) {
+          await yieldIfLong();
+          const kept = heldOf(roundId);
+          if (kept.bad) continue;
+          if (!listable(kept)) continue;
+          const c = kept.c, endMs = kept.listedEnd;
+          if (nowMs >= endMs) continue;
+          // ONLY THE GAMES THIS NODE HOSTS (§0A.4, kanban #204): a round stored under a game it no longer hosts is not offered
+          if (!gameOfContract(c)) continue;
+          list.push({ held: { roundId }, c, endMs });
+        }
+        scanKept = { version, at, list };
+        return list;
+      })().finally(() => { scanBuilding = null; });
+    }
+    return scanBuilding;
+  };
   const announcedRounds = async (url) => {
     let sliceAt = performance.now();
     const yieldIfLong = async () => {
@@ -2953,18 +2977,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // of heap, ~20 MB for the ~2,950 rounds a testnet4 seat holds, and this listing kept a second copy of each. The
     // listing's own facts - its end, and whether it is announced at all - are kept on the same entry; the second depends
     // on the series this node holds, so it is read again once a series is added (seriesVersion).
-    for (const roundId of openHeld()) {
-      await yieldIfLong();
-      const held = { roundId };
-      const kept = heldOf(roundId);
-      if (kept.bad) continue;
-      if (!listable(kept)) continue;
-      const c = kept.c, endMs = kept.listedEnd;
-      if (nowMs >= endMs) continue;   // over: announced no longer
-      if (aheadMs !== null && c.startTimeMs > nowMs + aheadMs) continue;
-      // ONLY THE GAMES THIS NODE HOSTS (§0A.4, kanban #204): a round stored under a game it no longer hosts is not offered
-      if (!gameOfContract(c)) continue;
-      candidates.push({ held, c, endMs });
+    // ONE SCAN OF THE OPEN ROUNDS FOR EVERY QUERY, KEPT SCAN_KEEP_MS (kanban #353, measured 2026-10-14 05:5xZ on testnet4 seat
+    // 1: GET /rounds held the loop 8,217 s in 2,089 builds - ~4 s each, every other cost of the seat together under a fifth
+    // of it - for a page's four queries, `next=8` / `next=2` / `next=12` / `ahead=900000`, each built on its own and each
+    // walking all 4,595 open rounds the seat holds to list a handful). The scan is the same for every query: what it keeps
+    // (listable, of a hosted game, not ended at the scan) is shared, and each query cuts its own from it.
+    for (const x of await openScan(nowMs, yieldIfLong)) {
+      if (nowMs >= x.endMs) continue;   // over: announced no longer
+      if (aheadMs !== null && x.c.startTimeMs > nowMs + aheadMs) continue;
+      candidates.push(x);
     }
     if (perSeries !== null) {
       candidates.sort((x, y) => (x.c.startTimeMs < y.c.startTimeMs ? -1 : x.c.startTimeMs > y.c.startTimeMs ? 1 : 0));
