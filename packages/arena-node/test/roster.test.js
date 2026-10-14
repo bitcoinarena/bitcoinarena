@@ -721,6 +721,9 @@ test('the committee and the seed are kept per view, and a new header builds them
 // funding outputs, a height above the round's own `census_height`.
 test('the slash-owing door answers off the chain at a height above the round\'s own, and the census it reads there is not checked against the round\'s root', async () => {
   const { encodeSlashProof, joinSlashEvidence, slashProofId } = await import('../../arena-protocol/src/slash.js');
+  // a stand-in signed result: its bytes do not matter here, its type byte does - a stream of results is cut by it (kanban #312)
+  const { TYPE_RESULT } = await import('../../arena-protocol/src/constants.js');
+  const standIn = () => { const x = new Uint8Array(SIGNED_RESULT_BYTES); x[0] = TYPE_RESULT; return x; };
   const { SIGNED_RESULT_BYTES } = await import('../../arena-protocol/src/result.js');
   const { entryId: entryIdOf } = await import('../../arena-protocol/src/contracts.js');
 
@@ -766,7 +769,7 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
       transcriptHash: b32(0x71), signedResultId: b32(0x72),
       bondTxid: parseTransaction(bonds[0]).txid, bondVout: 0,
     };
-    const evidence = joinSlashEvidence(encodeSlashProof(proof), new Uint8Array(SIGNED_RESULT_BYTES));
+    const evidence = joinSlashEvidence(encodeSlashProof(proof), standIn());
     node.round.putSlashProof(rid, eid, accused, slashProofId(proof), evidence);
 
     // AND A SECOND PROOF, AGAINST A SECOND NODE, IN THE SAME RUN (ruling 3, 2026-09-22: "nothing
@@ -777,7 +780,7 @@ test('the slash-owing door answers off the chain at a height above the round\'s 
     const second = keyFor(0x12);
     const alsoProof = { ...proof, nodePubkey: second, bondTxid: parseTransaction(bonds[1]).txid };
     node.round.putSlashProof(rid, eid, second,
-      slashProofId(alsoProof), joinSlashEvidence(encodeSlashProof(alsoProof), new Uint8Array(SIGNED_RESULT_BYTES)));
+      slashProofId(alsoProof), joinSlashEvidence(encodeSlashProof(alsoProof), standIn()));
 
     // THE ROUND'S OWN CENSUS STILL CHECKS AGAINST ITS ROOT; the one at another height must not, which
     // is the bug this door found. Both read here, off the same node.

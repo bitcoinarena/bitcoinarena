@@ -24,7 +24,7 @@ import {
   TYPE_DKG_CONTRIBUTION, TYPE_SIGNED_DONATION_SET, TYPE_DONATION_SET_KEYS, TYPE_AUTHORITY_ROTATION,
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
-  TYPE_CONFIG_PROPOSAL,
+  TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
 } from './constants.js';
 
 /**
@@ -81,6 +81,17 @@ export const FRAMES = new Map([
   [TYPE_SEATING, { name: 'Seating', authority: true }],
   // A config proposal (§27A.7.2, kanban #329): tallied, it decides the configuration rounds run under.
   [TYPE_CONFIG_PROPOSAL, { name: 'ConfigProposal', authority: true }],
+  // A guardian's absence attestation and a departure notice (§23A.4-5, kanban #322): they make a guardian ABANDONED or DEPARTED.
+  [TYPE_ABSENCE_ATTESTATION, { name: 'AbsenceAttestation', authority: true }],
+  [TYPE_DEPARTURE_NOTICE, { name: 'DepartureNotice', authority: true }],
+  // A halted federation's spent-note set (§23A.5, kanban #323): it decides which notes the liquidation pays.
+  [TYPE_SPENT_SET, { name: 'SpentSet', authority: true }],
+  // A price round's verdict (§13 RoundResult, kanban #312): who won the war, bulls or bears, by the attested tape. It moves no money.
+  [TYPE_ROUND_RESULT, { name: 'RoundResult', authority: true }],
+  // A price round's player result with the front its run ended on (§13 front_*, kanban #312): the result, plus the price's lead.
+  [TYPE_RESULT_FRONT, { name: 'PlayerResultFront', authority: true }],
+  // A SEAT'S SIGNED OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven", kanban #323)
+  [TYPE_HALT_OBSERVATION, { name: 'HaltObservation', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],

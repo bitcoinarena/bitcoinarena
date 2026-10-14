@@ -139,6 +139,23 @@ export function depositFederation({ lobbyInvite, statuses = [], held = [], known
 }
 
 /**
+ * WHERE A STAKE IS LOCKED FOR A ROUND THAT TAKES ANY FEDERATION (2026.0.3 step 7, kanban #348; the owner 2026-10-13: "Es muss möglich
+ * sein für alle Spiele über alle Federation zu zahlen", "It should always take the federation with less funds so it's evened out").
+ * A lock spends notes of one federation, so only a federation whose wallet here covers the stake can hold it; among those the
+ * lowest-load OPEN, known one (pickFederation). `parts` [{ federation, msat }] the wallet per federation (the summed balance's
+ * parts); `statuses` federationStatuses' answers with invites. Answers { federation, invite, why } or { federation: null, why }.
+ */
+export function lockFederation({ stakeMsat, parts = [], statuses = [], known = () => true } = {}) {
+  const need = BigInt(stakeMsat || 0);
+  const covers = new Set((parts || []).filter((p) => p && p.federation && BigInt(p.msat ?? 0) >= need).map((p) => String(p.federation).toLowerCase()));
+  if (!covers.size) return { federation: null, why: `no federation's wallet here holds the ${need / 1000n} sat stake: deposit first (it goes to the lowest-load federation)` };
+  const pick = pickFederation((statuses || []).filter((f) => f && f.invite && covers.has(String(f.federation).toLowerCase())), { known });
+  if (!pick) return { federation: null, why: 'no federation that holds the stake here is OPEN and known' };
+  return { federation: String(pick.federation).toLowerCase(), invite: pick.invite,
+    why: `lock in federation ${String(pick.federation).slice(0, 16)}: it holds the stake here and has the lowest load of those that do (${typeof pick.load === 'number' ? pick.load.toFixed(2) : '-'})` };
+}
+
+/**
  * MOVE, OFFERED (§23A.3): a returning player stays in their federation; Move is offered when it is above 90 % load and
  * another OPEN federation is below 50 % - that one named. (DRAINING and CRITICAL are not offers: §23A.6 moves by itself.)
  */

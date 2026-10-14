@@ -211,7 +211,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
-  const rid = toHex(roundId(round));
+  const rid = toHex(round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
   // ONE FETCH PER DONATION SET, AND NO NODE HOLDS THE JOIN (kanban #353, measured 2026-10-14 04:26Z on testnet4): every round
   // of a network names the same set, yet each join asked all 14 seats again and waited for the slowest - 30 s, past an
   // 8 s RPS table. A set fetched and checked is kept by its id when the page asks for that (keepBySet; every check below still runs against each round); a node

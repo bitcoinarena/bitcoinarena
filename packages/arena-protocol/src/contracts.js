@@ -15,7 +15,7 @@ import { stakeExpiryFits } from './lock-expiry.js';
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
 import {
-  TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
+  TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, takesAnyFederation, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -218,8 +218,41 @@ export function encodeRoundContract(c) {
     w.bytes32(c.seriesId);
     w.u32(c.roundIndex);
   } else if (c.roundIndex !== undefined && c.roundIndex !== null) throw new Error('a round index without its series');
+  // THE RULES IT IS SETTLED UNDER (§6 equivocation_rule_hash ... bond_min per role, kanban #313's sibling #314; 2026.0.3): after their
+  // own marker, before the creator's key, only when named - 148 bytes: four rule hashes, disconnect_rule, claim_window_days, and the
+  // bond floor of each role (rules.js). Every tail length that can follow stays distinct, so a contract naming none keeps its id.
+  if (c.rules !== undefined && c.rules !== null) {
+    if (!(version >= CREATOR_VERSION)) throw new Error(`a round names its rules from protocol version ${CREATOR_VERSION} on`);
+    const r = c.rules;
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+      if (!(r[k] instanceof Uint8Array) || r[k].length !== 32) throw new Error(`a round names its ${k} rule by a 32-byte hash`);
+    if (!Number.isInteger(r.disconnect) || r.disconnect < 0 || r.disconnect > 255) throw new Error('disconnect_rule is a byte');
+    if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 0 || r.claimWindowDays > 0xffff) throw new Error('claim_window_days is 0 to 65535');
+    if (typeof r.bondMinGameVerifySats !== 'bigint' || typeof r.bondMinSettlementSats !== 'bigint') throw new Error('a round names each role\'s bond floor in BigInt sats');
+    w.u8(RULES_MARKER);
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) w.bytes32(r[k]);
+    w.u8(r.disconnect); w.u16(r.claimWindowDays); w.u64(r.bondMinGameVerifySats); w.u64(r.bondMinSettlementSats);
+  }
+  // THE CREATOR'S KEY (§6 `creator_pubkey`, kanban #313; 2026.0.3): the x-only key whose BIP-340 signature over the round id rides
+  // beside the contract (creator.js), as the id does. Last, after its own marker, and only when named: 33 bytes, so a tail of
+  // 33/37/69/73 bytes is never one of the 0/4/36/40 above, and every contract that names none keeps its bytes and its id.
+  if (c.creatorPubkey !== undefined && c.creatorPubkey !== null) {
+    if (!(c.creatorPubkey instanceof Uint8Array) || c.creatorPubkey.length !== 32 || c.creatorPubkey.every((b) => b === 0))
+      throw new Error('a round names its creator by a 32-byte x-only key');
+    if (!(version >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
+    w.u8(CREATOR_MARKER);
+    w.bytes32(c.creatorPubkey);
+  }
   return w.finish();
 }
+
+/** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
+export const RULES_MARKER = 0xc2;
+const RULES_BYTES = 148;
+/** The byte before a round's creator key (§6, kanban #313), last of the contract. */
+export const CREATOR_MARKER = 0xc1;
+/** The protocol version a round may name its creator from (2026.0.3). */
+export const CREATOR_VERSION = 3;
 
 /**
  * A CUSTODY BYTE THIS NETWORK HAS, OR THE RECORD DOES NOT PARSE (RULED, the owner 2026-09-22 22:59).
@@ -290,7 +323,19 @@ export function decodeRoundContract(bytes) {
   // The start deadline, present only when the round named one that is not the
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
-  const left = r.b.length - r.at;
+  let left = r.b.length - r.at;
+  // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
+  const base = [0, 4, 36, 40];
+  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? r.b.length - 33 : -1;
+  if (creatorAt >= 0) {
+    if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
+    left -= 33;
+  }
+  const rulesAt = base.some((b) => left === b + RULES_BYTES) ? r.at + left - RULES_BYTES : -1;
+  if (rulesAt >= 0) {
+    if (r.b[rulesAt] !== RULES_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
+    left -= RULES_BYTES;
+  }
   if (left !== 0 && left !== 4 && left !== 36 && left !== 40) throw new Error(`a round contract with ${left} trailing bytes`);
   if (left === 4 || left === 40) {
     const d = r.u32();
@@ -301,6 +346,20 @@ export function decodeRoundContract(bytes) {
   if (left === 36 || left === 40) {
     c.seriesId = r.bytes32();
     c.roundIndex = r.u32();
+  }
+  if (rulesAt >= 0) {
+    r.u8();
+    const rules = {};
+    for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing']) rules[k] = r.bytes32();
+    rules.disconnect = r.u8(); rules.claimWindowDays = r.u16(); rules.bondMinGameVerifySats = r.u64(); rules.bondMinSettlementSats = r.u64();
+    c.rules = rules;
+    if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its rules from protocol version ${CREATOR_VERSION} on`);
+  }
+  if (creatorAt >= 0) {
+    r.u8();
+    c.creatorPubkey = r.bytes32();
+    if (c.creatorPubkey.every((b) => b === 0)) throw new Error('a round names its creator by a 32-byte x-only key');
+    if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
@@ -316,12 +375,16 @@ export function decodeRoundContract(bytes) {
 export const roundId = (c) => {
   if (c && c.seriesId !== undefined && c.seriesId !== null) {
     encodeRoundContract(c);                                   // a contract that does not encode has no id
-    const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, c.roundIndex, false);
-    const body = new Uint8Array(36); body.set(c.seriesId, 0); body.set(i, 32);
-    return taggedHash(TAG.seriesRound, body);
+    return seriesRoundIdOf(c.seriesId, c.roundIndex);
   }
   return taggedHash(TAG.roundContract, encodeRoundContract(idBodyOf(c)));
 };
+/** Round i of a series' id, H(series_id || i), from the two alone (a seat looking at a series' earlier rounds, #304). */
+export function seriesRoundIdOf(seriesIdBytes, index) {
+  const i = new Uint8Array(4); new DataView(i.buffer).setUint32(0, index, false);
+  const body = new Uint8Array(36); body.set(seriesIdBytes, 0); body.set(i, 32);
+  return taggedHash(TAG.seriesRound, body);
+}
 /**
  * THE BYTES A ROUND'S ID HASHES (2026.0.2, kanban #348): a v2 contract's with `nodes` emptied - the seated nodes are the
  * draw's answer, written in by each seat after it, and never an input to the draw - and a v1 contract's whole, as before.
@@ -455,6 +518,23 @@ export function encodeEntryContract(e) {
     w.u8(COMMIT_MARKER);
     w.bytes32(e.commit);
   }
+  // THE FEDERATION ITS LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the entry
+  // names where its stake and fee locks are. WRITTEN ONLY WHEN THERE IS ONE, last, after its own marker: every other entry keeps
+  // exactly its bytes and its id.
+  if (e.federationId !== undefined && e.federationId !== null) {
+    if (!(e.federationId instanceof Uint8Array) || e.federationId.length !== 32 || e.federationId.every((b) => b === 0))
+      throw new Error('an entry names its federation in 32 bytes, not zero');
+    w.u8(FEDERATION_MARKER);
+    w.bytes32(e.federationId);
+  }
+  // THE OPERATOR THIS PLAYER IS (§7 `operator_id_declaration`, §5A.13, kanban #309): "none" or the operator's key. WRITTEN ONLY
+  // WHEN IT NAMES ONE, last, after its own marker: "none" is no bytes, so every other entry keeps exactly its bytes and its id.
+  if (e.operatorId !== undefined && e.operatorId !== null) {
+    if (!(e.operatorId instanceof Uint8Array) || e.operatorId.length !== 32 || e.operatorId.every((b) => b === 0))
+      throw new Error('an entry declares its operator in 32 bytes, not zero ("none" is no declaration)');
+    w.u8(OPERATOR_MARKER);
+    w.bytes32(e.operatorId);
+  }
   return w.finish();
 }
 
@@ -464,6 +544,10 @@ export const PICK_MARKER = 0xa7;
 export const COMMIT_MARKER = 0xa8;
 /** The byte before a market order's limit price and expiry (kanban #278), after its pick. */
 export const ORDER_MARKER = 0xa9;
+/** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
+export const FEDERATION_MARKER = 0xaa;
+/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), last of all. */
+export const OPERATOR_MARKER = 0xab;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
 export const STAKE_POINT_BYTES = 33;
@@ -498,20 +582,32 @@ export function decodeEntryContract(bytes) {
     feeLockOutpoint: readOutpoint(r),
     claimKeyAttestationRef: r.bytes32(),
   };
-  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER) {
+  // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER;
+  if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
   }
-  if (r.at < bytes.length) {
+  if (r.at < bytes.length && !tail(bytes[r.at])) {
     const marker = r.u8();
     if (marker === PICK_MARKER) e.pick = r.u8();
     else if (marker === COMMIT_MARKER) e.commit = r.bytes32();
     else throw new Error('these bytes carry something after the entry that is neither a pick nor a move commitment');
-    if (marker === PICK_MARKER && r.at < bytes.length) {
+    if (marker === PICK_MARKER && r.at < bytes.length && !tail(bytes[r.at])) {
       if (r.u8() !== ORDER_MARKER) throw new Error('these bytes carry something after the pick that is not an order');
       e.limitPrice = r.u32();
       e.orderExpiryMs = r.u64();
     }
+  }
+  if (r.at < bytes.length && bytes[r.at] === FEDERATION_MARKER) {
+    r.u8();
+    e.federationId = r.bytes32();
+    if (e.federationId.every((b) => b === 0)) throw new Error('an entry names its federation in 32 bytes, not zero');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== OPERATOR_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation nor its operator');
+    e.operatorId = r.bytes32();
+    if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
   }
   r.end();
   return e;
@@ -723,6 +819,8 @@ export function custodyFieldsAreValid(c, { manifest = null } = {}) {
 export function federationIsNamed(c) {
   if (!c) return { ok: false, why: 'no contract' };
   if (!(typeof c.stakeMsat === 'bigint' && c.stakeMsat > 0n)) return { ok: true };
+  // FROM 2026.0.3 A ZERO federation_id IS "ANY": each entry names the federation its lock is in (takesAnyFederation)
+  if (takesAnyFederation(c)) return { ok: true };
   if (!is32(c.federationId) || c.federationId.every((b) => b === 0))
     return {
       ok: false,
@@ -815,4 +913,22 @@ export function contractWarnings(c, gameWarnings = null) {
   if (c.minScore > 0 && c.minScore > 100 * SCORE_SCALE) out.push('minimum_score_is_a_danger_rule');
   if (typeof gameWarnings === 'function') out.push(...gameWarnings(c));
   return out;
+}
+
+/**
+ * THE FEDERATION AN ENTRY'S LOCKS ARE IN (2026.0.3, kanban #348): on a round that takes any federation (takesAnyFederation) the
+ * one the entry names - an entry naming none is refused; on any other round the round's own - an entry naming another is
+ * refused. Answers { ok, federationId } or { ok: false, why }. Which federations a seat takes is the seat's (OPEN, bonded).
+ */
+export function entryFederation(round, entry) {
+  if (!round || !entry) return { ok: false, why: 'no round or no entry' };
+  const named = entry.federationId instanceof Uint8Array && entry.federationId.length === 32 && !entry.federationId.every((b) => b === 0) ? entry.federationId : null;
+  if (takesAnyFederation(round)) {
+    if (!named) return { ok: false, why: 'that round takes a lock in any federation, and the entry names none: it says where its locks are (2026.0.3)' };
+    return { ok: true, federationId: named };
+  }
+  if (!is32(round.federationId) || round.federationId.every((b) => b === 0)) return { ok: false, why: 'that round names no federation, so its stake is not a lock' };
+  if (named && !named.every((b, i) => b === round.federationId[i]))
+    return { ok: false, why: 'that entry names another federation than its round\'s, which takes one federation only' };
+  return { ok: true, federationId: round.federationId };
 }

@@ -20,10 +20,11 @@
 // outcome from it, so they produce the same result id, and five identical
 // result ids is what section 13 asks for. The hash is the reason the ids
 // match, not a thing to sign beside them.
+import { frontOfRun } from '../../arena-protocol/src/round-result.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { verifyKept } from './verify-kept.js';
 import {
-  resultId, encodePlayerResult, decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES,
+  resultId, encodePlayerResult, decodePlayerResult, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf,
 } from '../../arena-protocol/src/result.js';
 import { transcriptHash } from '../../arena-protocol/src/transcript.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
@@ -41,7 +42,7 @@ const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
  * because a node that could be told what a run came to would not need to
  * replay it.
  */
-export function resultFrom({ answer, contract, entry, transcript, entryId, nodePubkey, stopped = false }) {
+export function resultFrom({ answer, contract, entry, transcript, entryId, nodePubkey, stopped = false, priceRound = false }) {
   if (!answer || !answer.ok) return { ok: false, why: answer ? answer.why : 'no replay to sign' };
   // A RUN STILL LIVE AT ITS LAST TICK came to nothing yet - unless the round
   // has closed on it (`stopped`, the close's own call): then §15 applies, as
@@ -95,6 +96,8 @@ export function resultFrom({ answer, contract, entry, transcript, entryId, nodeP
       ? transcript.hash : transcriptHash(transcript),
     simCoreHash: contract.simCoreHash,
     nodePubkey,
+    // A PRICE ROUND'S RESULT CARRIES THE FRONT ITS RUN ENDED ON (§13 front_*, kanban #312), read off the run's own attested samples
+    ...(priceRound ? frontOfRun(transcript.batches) : {}),
   };
   // The bytes come back with it: what is stored and served must be what was
   // signed, not a re-encoding that could differ.
@@ -156,7 +159,9 @@ export function verifiedFinal(records, { contract, signerNodes: joined }) {
 
   for (const rec of records || []) {
     const bytes = rec instanceof Uint8Array ? rec : rec && rec.bytes;
-    if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RESULT_BYTES) { forged++; continue; }
+    // a result's size is its type's (kanban #312: a price round's carries its front, 10 bytes more)
+    let size = -1; if (bytes instanceof Uint8Array) { try { size = signedResultBytesOf(bytes); } catch { size = -1; } }
+    if (!(bytes instanceof Uint8Array) || bytes.length !== size) { forged++; continue; }
 
     let result, signature;
     try {

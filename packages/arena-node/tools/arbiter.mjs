@@ -18,13 +18,22 @@
 //   ARENA_ARBITER_PORT=31290 ARENA_ARBITER_STATE=<file> node tools/arbiter.mjs [--once]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { ed25519 } from '@noble/curves/ed25519.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, buildSlash, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin } from '../src/arbiter.js';
+import { createLiquidationClaims, payOutLiquidation } from '../src/liquidation-claims.js';
+import { fedimintNoteValidator } from '../src/note-validate.js';
+import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
+import { clocksFor, liquidationRemainderPayees } from '../../arena-protocol/src/federation-slash.js';
+import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
+import { donationSetInForce } from '../../arena-protocol/src/authority.js';
+import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
+import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
 
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, cutSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -60,7 +69,7 @@ async function handle(seat, s) {
   const rid = fromHex(s.round), eid = fromHex(s.entry);
   const recs = await get(`${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
   let evidence = null;
-  for (let i = 0; i < recs.length; i += SLASH_EVIDENCE_BYTES) { const r = recs.subarray(i, i + SLASH_EVIDENCE_BYTES); if (toHex(splitSlashEvidence(r).proof.nodePubkey) === s.node) evidence = r; }
+  for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
   if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
   const bundle = await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
   const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));
@@ -117,7 +126,56 @@ async function loadGames() {
   return games;
 }
 
+// THE TABLE PAID (§23A.5 step 4, kanban #323): once a liquidating federation's claim window has closed, its escrow into the set's
+// client of a SAFE federation (ARENA_LIQ_PAY_DIR, through ARENA_STAKE_LOCK_BIN) and each note's payout locked to its key
+async function payLiquidations() {
+  if (!claims || !env.ARENA_LIQ_PAY_DIR || !env.ARENA_STAKE_LOCK_BIN) return;
+  const { execFile } = await import('node:child_process');
+  const run = (args) => new Promise((done) => execFile(env.ARENA_STAKE_LOCK_BIN, [...args, '--data-dir', env.ARENA_LIQ_PAY_DIR], { timeout: 900000, maxBuffer: 1 << 24 },
+    (err, out) => { const line = String(out || '').split('\n').find((l) => l.startsWith('{')); done(line ? JSON.parse(line) : { error: String((err && err.message) || 'no answer').slice(0, 200) }); }));
+  state.liquidations = state.liquidations || {};
+  for (const [fid, at] of liqEscrows) {
+    const v = state.liquidations[fid] = state.liquidations[fid] || {};
+    const [txid, vout] = at.split(':');
+    const spendEscrow = async (address) => {
+      const o = await rpc('gettxout', [txid, Number(vout), false]);
+      if (!o) return { why: 'the escrow output is spent or unknown' };
+      const toScript = fromHex((await rpc('validateaddress', [address])).scriptPubKey);
+      const spend = buildEscrowPegin({ escrow: { txid: fromHex(txid).reverse(), vout: Number(vout), value: BigInt(Math.round(Number(o.value) * 1e8)) }, set, toScript,
+        feeSats: BigInt(env.ARENA_ARBITER_FEE_SATS || 1000) });
+      if (!spend.ok) return { why: spend.why };
+      const signed = assemble({ slash: spend, signatures: set.members.slice(0, set.k).map((m) => ({ key: m.key, sig: memberSign(m, spend.sighash) })), set });
+      if (!signed.ok) return { why: signed.why };
+      return post(rpc, signed.hex);
+    };
+    // THE REMAINDER'S PAYEES at the tip: the census this set derives from its own chain (a seat's newest round as the template),
+    // less the slashed and the federation's guardians (its halt record), and the donation set in force (its keys)
+    const remainderPayees = async (fidHex, msat) => {
+      const l = await claims.liquidation(fidHex);
+      if (!l) throw new Error('no seat lists that liquidation');
+      const record = splitSignedRecord(fromHex(l.haltRecord)).record;
+      const list = await get(`${seats[0]}/rounds?next=1`);
+      const contract = decodeRoundContract(await get(`${seats[0]}/round?id=${list.rounds[0].id}`, 'bytes'));
+      const tip = Number(await rpc('getblockcount'));
+      const census = await censusAt(contract, tip);
+      if (!census.ok) throw new Error(`no census at ${tip}: ${census.why}`);
+      const keys = donationKeysForNetworkId(contract.networkId);
+      const forced = donationSetInForce({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery, sets: [TESTNET4_DONATION_SET_KEYS],
+        rotations: [], height: tip, verify: (sg, m, k) => { try { return ed25519.verify(sg, m, k); } catch { return false; } } });
+      if (!forced.ok) throw new Error(`no donation set in force: ${forced.why}`);
+      const got = liquidationRemainderPayees({ msat, censusNodes: census.entries.map((e) => e.pubkey), slashed: Object.values(state.handled).map((h) => h.node).filter(Boolean),
+        record, donation: forced.recipients });
+      if (!got.ok) throw new Error(got.why);
+      // a payout is a lock to a refund key (the tool's `pay`, as #307's): the 33-byte form of each x-only key
+      return got.payees.map((x) => ({ ...x, key: `02${x.key}` }));
+    };
+    let r; try { r = await payOutLiquidation({ fid, v, claims, height: async () => Number(await rpc('getblockcount')), run, spendEscrow, remainderPayees, keep, say }); } catch (e) { r = { why: e.message }; }
+    if (r.why) say({ liquidation: fid.slice(0, 16), waits: r.why });
+  }
+}
+
 async function pass() {
+  await payLiquidations().catch((e) => say({ liquidationsError: e.message }));
   for (const seat of seats) {
     let list; try { list = await get(`${seat}/slashes`); } catch (e) { say({ seat, refused: e.message }); continue; }
     for (const s of list.slashes || []) {
@@ -141,7 +199,44 @@ const posted = () => Object.entries(state.handled).filter(([, v]) => v.posted).m
 const open = new Set();
 const allow = ({ nodeKey }) => (open.has(toHex(nodeKey)) || Object.values(state.handled).some((v) => v.node === toHex(nodeKey))
   ? { ok: false, why: 'a slash proof against this node is open or was posted' } : { ok: true });
-const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts });
+// A HALTED FEDERATION'S CLAIMS (§23A.5, kanban #323): ARENA_LIQ_CLIENTS=<federation hex>=<fedimint-cli data dir>,... - a client of
+// each federation this set joined while it was OPEN, to check presented notes offline; ARENA_LIQ_ESCROWS=<federation hex>=<txid>:<vout>,...
+// - the escrow output its slashes paid; the claims kept in ARENA_LIQ_CLAIMS_FILE; the halt and the spent set read from the seats
+const pairs = (v) => new Map(String(v || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => x.split('=')).filter((x) => x.length === 2).map(([k, v2]) => [k.toLowerCase(), v2]));
+const liqClients = pairs(env.ARENA_LIQ_CLIENTS); const liqEscrows = pairs(env.ARENA_LIQ_ESCROWS);
+let claims = null;
+if (liqClients.size) {
+  const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
+  claims = createLiquidationClaims({
+    validate: fedimintNoteValidator({ cli: env.ARENA_FEDIMINT_CLI || 'fedimint-cli', dataDirFor: (fid) => liqClients.get(fid) || null, home: env.ARENA_FEDIMINT_HOME || env.HOME }),
+    liquidationOf: async (fid) => {
+      for (const s of seats) {
+        try {
+          const j = await (await fetch(`${s}/liquidations`, { signal: AbortSignal.timeout(15000) })).json();
+          const l = (j.liquidations || []).find((x) => x.federation === fid);
+          if (!l) continue;
+          const copy = l.spentSet && l.spentSet.copies && l.spentSet.copies[0];
+          return { ...l, spentNonces: copy ? spentNonceSet(decodeSpentSet(fromHex(copy.spentSet))) : null };
+        } catch { /* the next seat */ }
+      }
+      return null;
+    },
+    height: async () => Number(await rpc('getblockcount')),
+    escrowMsatOf: async (fid) => {
+      const at = liqEscrows.get(fid); if (!at) return 0n;
+      const [txid, vout] = at.split(':');
+      const o = await rpc('gettxout', [txid, Number(vout), false]);
+      return o ? BigInt(Math.round(Number(o.value) * 1e8)) * 1000n : 0n;
+    },
+    clocks: clocksFor(network === 'testnet4' ? 'testnet4' : network).clocks,
+    load: () => { try { return claimsFile ? JSON.parse(readFileSync(claimsFile, 'utf8')) : []; } catch { return []; } },
+    save: (rows) => { if (claimsFile) writeFileSync(claimsFile, JSON.stringify(rows) + '\n'); },
+  });
+}
+// the paid claims' locks, from the state each pass keeps (ARENA_LIQ_PAY_FEDERATION: the safe federation ARENA_LIQ_PAY_DIR is a client of)
+const liquidationPayouts = () => Object.entries(state.liquidations || {}).flatMap(([fid, v]) => (v.payouts || []).concat(v.remainderPayouts || [])
+  .map((p) => ({ federation: fid, into: String(env.ARENA_LIQ_PAY_FEDERATION || '').toLowerCase(), ...p })));
+const doors = await serveArbiter({ set, allow, port: Number(env.ARENA_ARBITER_PORT || 31290), posted: posted(), payouts, claims, liquidationPayouts });
 say({ up: doors.port, network, seats: seats.length, members: set.members.length, k: set.k });
 await pass();
 if (process.argv.includes('--once')) { await doors.close(); process.exit(0); }

@@ -33,6 +33,7 @@ import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
 import { FINAL, SUSPENDED, PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { resultFinality } from './finality.js';
+import { stateOf } from './settlement-state.js';
 import { pluginForRound } from './plugins.js';
 import { encodeCommitments, decodeCommitments, encodeShare, decodeShare } from './pool-wire.js';
 
@@ -161,8 +162,7 @@ export class Forfeit {
     // comes back now, on this signer node's own record, with no settlement to wait for
     const refund = attested ? this.#marketRefund(roundIdBytes, contract) : { ok: false };
     if (attested && !refund.ok) {
-      const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
-      if (!s || s.state !== 'ACCEPTED')
+      if (this.#settled(roundIdBytes) !== 'ACCEPTED')
         return refuse('an attested round\'s stake comes back only after its settlement is ACCEPTED at this signer node: no outcome final and settled yet, so the lock waits (or expires back)');
       const moves = this.round.lockSettlementMoves ? this.round.lockSettlementMoves(roundIdBytes) : null;
       if (!moves) return refuse('this signer node keeps no record of what its settlement moved');
@@ -189,6 +189,9 @@ export class Forfeit {
     return this.#signable(contract, lock);
   }
 
+  /** Where the round's settlement stands at this signer node - in one federation or, for a round that takes any, in all (round.js). */
+  #settled(roundIdBytes) { return stateOf(this.round, roundIdBytes); }
+
   /** The lock's contract id, rebuilt from this signer node's own record, under the round's claim key - what it signs. */
   async #signable(contract, lock) {
     const held = this.dkg.signerNodeFor(contract.nodes);
@@ -214,8 +217,7 @@ export class Forfeit {
    */
   nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result) {
     if (result.outcome === FORFEIT_OUTCOME) return { ok: false, why: 'a walk-away is never a refund' };
-    const s = this.round.lockSettlement ? this.round.lockSettlement(roundIdBytes) : null;
-    if (!s || s.state !== 'ACCEPTED') return { ok: false, why: 'the round\'s settlement is not ACCEPTED at this signer node' };
+    if (this.#settled(roundIdBytes) !== 'ACCEPTED') return { ok: false, why: 'the round\'s settlement is not ACCEPTED at this signer node' };
     const moves = this.round.lockSettlementMoves ? this.round.lockSettlementMoves(roundIdBytes) : null;
     if (!moves) return { ok: false, why: 'this signer node keeps no record of what its settlement moved' };
     if ((moves.claims || []).includes(String(lock.outpoint))) return { ok: false, why: 'its lock was claimed in the settlement' };

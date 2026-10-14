@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -37,6 +37,13 @@ export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2]);
  */
 export const DRAW_FREE_VERSION = 2;
 export const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= DRAW_FREE_VERSION;
+// EVERY GAME THROUGH EVERY FEDERATION (2026.0.3, kanban #348; the owner 2026-10-13 ~11:45Z: "Es muss möglich sein für alle Spiele über
+// alle Federation zu zahlen"): from version 3 a paying round need not name one federation - a zero federation_id takes a stake
+// lock in any federation its seats hold OPEN, each entry naming its own (contracts.js FEDERATION_MARKER) - and it settles one
+// balanced federation transaction per federation by one payout table.
+export const MULTI_FEDERATION_VERSION = 3;
+export const takesAnyFederation = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= MULTI_FEDERATION_VERSION
+  && c.federationId instanceof Uint8Array && c.federationId.length === 32 && c.federationId.every((b) => b === 0);
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -267,6 +274,20 @@ export const TYPE_PRESENT = 0x21;
 export const TYPE_SEATING = 0x22;
 // A CONFIG PROPOSAL (§27A.7.2, kanban #329): the full named configuration a ballot decides
 export const TYPE_CONFIG_PROPOSAL = 0x23;
+// A GUARDIAN'S ABSENCE ATTESTATION AND A DEPARTURE NOTICE (§23A.4 / §23A.5, kanban #322); 0x23 is the ballot's (#329)
+export const TYPE_ABSENCE_ATTESTATION = 0x24;
+export const TYPE_DEPARTURE_NOTICE = 0x25;
+// A GUARDIAN'S COPY OF A HALTED FEDERATION'S SPENT-NOTE SET (§23A.5 liquidation step 1, kanban #323); 0x23 is the
+// ballot's (#329), 0x24 and 0x25 absence and departure (#322)
+export const TYPE_SPENT_SET = 0x26;
+// WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): open and close of the attested tape and the front, signed by the
+// settlement committee
+export const TYPE_ROUND_RESULT = 0x27;
+// A PLAYER RESULT OF A PRICE ROUND, WITH ITS FRONT (§13 front_*, kanban #312): the result's own type, so a stream of results cuts by
+// each record's first byte - 168 bytes without the front, 178 with it
+export const TYPE_RESULT_FRONT = 0x28;
+// A SEAT'S OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven", kanban #323): no guardian past session S
+export const TYPE_HALT_OBSERVATION = 0x29;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -279,6 +300,18 @@ export const TAG = {
   roundContract: 'ARENA/v1/RoundContract',
   // round_id(i) = H(series_id || i) (multiplayer_p2p.md "Round i of a series is derived, never authored"; ALL-BUT-MIN-1727)
   seriesRound: 'ARENA/v1/SeriesRound',
+  // WHAT A ROUND'S CREATOR SIGNS (§6 creator_signature, kanban #313): the round's id, under this tag
+  roundCreator: 'ARENA/v1/RoundCreator',
+  // a series that names its creator: one signature over the series id for all its rounds (kanban #313)
+  seriesCreator: 'ARENA/v1/SeriesCreator',
+  // A RULE A CONTRACT NAMES (§6 *_rule_hash, kanban #314): the rule's text under this tag
+  contractRule: 'ARENA/v1/ContractRule',
+  // A GUARDIAN FOUNDING'S TICKET (§23A.2, kanban #320): the spec's own tag
+  guardianTicket: 'BLWP/v1/GUARDIAN',
+  // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352): a node's rank for a slot
+  duty: 'BLWP/v1/DUTY',
+  // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5, kanban #323)
+  haltObservation: 'ARENA/v1/HaltObservation',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
@@ -407,6 +440,10 @@ export const TAG = {
   // §5A.7 reserve seats (kanban #301)
   seatPresent: 'ARENA/v1/SeatPresent',
   seating: 'ARENA/v1/Seating',
+  // §23A.5 a guardian's signed copy of a halted federation's spent-note set (kanban #323)
+  spentSet: 'ARENA/v1/SpentSet',
+  // §13 who won a price round: BULLS / BEARS / FLAT by its attested open and close (kanban #312)
+  roundResult: 'ARENA/v1/RoundResult',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
   priceSample: 'ARENA/v1/PriceSample',
@@ -415,6 +452,10 @@ export const TAG = {
   configProposalBody: 'ARENA/v1/ConfigProposalBody',
   configProposal: 'ARENA/v1/ConfigProposal',
   vote: 'ARENA/v1/Vote',
+  // ABSENCE AND DEPARTURE (§23A.4-5, kanban #322): what a guardian signs, and an abandonment proof's id
+  absenceAttestation: 'ARENA/v1/AbsenceAttestation',
+  departureNotice: 'ARENA/v1/DepartureNotice',
+  abandonmentProof: 'ARENA/v1/AbandonmentProof',
 };
 
 /**
