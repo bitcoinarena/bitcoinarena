@@ -9,7 +9,7 @@
      all to Docs with an anchor to the relevant section"): each old section's #hash lands on the docs section that holds it now -->
 <meta http-equiv="refresh" content="0; url=https://docs.bitcoin-arena.io/#why-build">
 <script>
-  var MAP = { why: 'why-build', money: 'money', kinds: 'why-build', guide: 'game', market: 'market', node: 'run', today: 'today' };
+  var MAP = { why: 'why-build', money: 'money', kinds: 'why-build', guide: 'game', market: 'market', node: 'run', today: 'run' };   // #today left the docs (kanban #363)
   var to = MAP[location.hash.slice(1)] || 'why-build';
   location.replace('https://docs.bitcoin-arena.io/#' + to);
 </script>
