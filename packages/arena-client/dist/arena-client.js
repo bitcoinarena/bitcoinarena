@@ -23443,6 +23443,9 @@ const TEST_FEDERATION_ID = sha256(new TextEncoder().encode('ARENA/v1/TEST_FEDERA
 const KNOWN_GOOD_FEDERATIONS = Object.freeze({
   // Bitcoin Arena testnet4: seven guardians, one per seat, 5 of 7 (§23A.1, RULED the owner 2026-09-27); its record #321
   '337ae01ad1e9bb35b5628faad3457e62d69d036efe8a34bcfc20cb31b42bb75e': Object.freeze({ name: 'Arena testnet4', network: 'testnet4', nominal: 7, threshold: 5 }),
+  // Bitcoin Arena testnet4 B: the second federation, seven guardians on the test host, 5 of 7 (kanban #348, the owner 2026-10-13: "2
+  // federations", "always take the federation with less funds"); its record signed by all 7, measured on the live page 22:45Z
+  'b18947f085d40df3ce4bc8ac64df9c45256223e88fe7fdbdebf3eae13fb10b73': Object.freeze({ name: 'Arena testnet4 B', network: 'testnet4', nominal: 7, threshold: 5 }),
   // the regtest stand-in every test and vector uses (test-federation.js) - never one that holds money
   [toHex(TEST_FEDERATION_ID)]: Object.freeze({ name: 'regtest test federation', network: 'regtest', nominal: 4, threshold: 3 }),
 });
