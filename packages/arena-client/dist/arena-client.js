@@ -7723,6 +7723,9 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     name: 'rock-paper-scissors',
     // 2026.0.2 (kanban #348): manifest version 2, parent 1e9ab4b7, requires the round that names no draw
     requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (kanban #293, the owner 2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
     cores: Object.freeze({
       'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
     }),
@@ -7901,6 +7904,23 @@ function termsOfKnownGame(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   if (!game || !game.terms) return null;
   return { resolveAfterCloseMs: BigInt(game.terms.resolveAfterCloseMs), deadlineAfterResolveMs: BigInt(game.terms.deadlineAfterResolveMs) };
+}
+
+/**
+ * A TABLE'S ANCHOR (kanban #293, the owner 2026-10-13 pick (c): "A waiting player gets one committee and one key for that table, then
+ * 8-second rounds on that key until the table is empty"). For a round of a game whose known entry says `seatsPerTable` - a v2 round of
+ * a grid series, one series being one table - the round the table is drawn and seated by: its series' round 0. Every round of the
+ * table draws its committee on that round's id (beacon.js committeeSeedFromBeacon) and takes that round's seating certificate, so
+ * all of them name one committee and one claim key (the seats' DKG is per committee). null for every other round: it draws and seats
+ * itself, as before.
+ */
+function tableAnchorOf(contract) {
+  if (!contract || !(contract.seriesId instanceof Uint8Array) || !Number.isInteger(contract.roundIndex)) return null;
+  if (!(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= 2)) return null;
+  const known = KNOWN_GOOD_GAMES[toHex(contract.gameId)];
+  if (!known || known.seatsPerTable !== true) return null;
+  const body = new Uint8Array(36); body.set(contract.seriesId, 0);      // round 0's id: H(series_id || 0), as contracts.js roundId
+  return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
 }
 
 // ---- arena-protocol/src/fee.js
@@ -22820,6 +22840,7 @@ function beaconIsTheChains(contract, beacon, view) {
 
 
 
+
 const sameCC = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 const bytesOfCC = (v) => (v instanceof Uint8Array ? v : typeof v === 'string' ? fromHex(v) : null);
 const proofOf = (p) => (p ? { transaction: bytesOfCC(p.transaction), branch: (p.branch || []).map(bytesOfCC), position: p.position | 0 } : null);
@@ -22964,7 +22985,9 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
   if (!census.ok) return census;
   const beacon = beaconFromChain(contract, { headers, firstHeight });
   if (!beacon.ok) return { ok: false, why: `no beacon: ${beacon.why}` };
-  const seeded = committeeSeedFromBeacon(contract, { roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
+  // A TABLE'S ROUNDS DRAW ON THE TABLE'S FIRST ROUND (kanban #293 pick (c), known-game.js tableAnchorOf), as the seats do
+  const anchor = tableAnchorOf(contract);
+  const seeded = committeeSeedFromBeacon(contract, { roundId: anchor ? anchor.anchorId : roundId, randomness: beacon.hash, height: beacon.height, timeMs: beacon.timeMs });
   if (!seeded.ok) return { ok: false, why: seeded.why };
   const committees = {};
   // THE DRAW (§5A.7 reserve seats, kanban #301): more than the seats, in score order - a seating certificate is checked
@@ -22989,6 +23012,7 @@ function committeeFromChain({ contract, roundId, headers, firstHeight, evidence,
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
+
 
 
 
@@ -23088,18 +23112,22 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   // checked certificate's seated are the committee. `seating[role]`: { seated, from } checked; { missing } when a seat
   // speaks seating but none handed one that stands; null where no seat speaks seating at all (seats before #301).
   got.seating = {};
+  // A TABLE'S ROUND IS SEATED BY ITS TABLE'S FIRST ROUND (kanban #293 pick (c)): that round's certificate, asked and checked as its own
+  const anchor = tableAnchorOf(contract);
+  const seatId = anchor ? anchor.anchorId : roundId;
+  const seatHex = toHex(seatId);
   for (const role of roles) {
     let spoke = false; const refused = [];
     let found = null;
     for (const u of nodes) {
       try {
-        const r = await fetcher(`${baseOf(u)}/seating?round=${roundIdHex}&role=${role}`);
+        const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}`);
         const body = await r.text();
         if (r.status === 404 && /no seating certificate/.test(body)) { spoke = true; continue; }
         if (!r.ok) continue;
         spoke = true;
         const cert = JSON.parse(body).cert;
-        const v = verifySeating(fromHex(cert), { roundId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
+        const v = verifySeating(fromHex(cert), { roundId: seatId, role, drawn: got.drawn[role], slots: slotsForRole(contract, role), verify: curve.verify });
         if (v.ok) { found = { seated: v.seating.seated, from: u }; break; }
         refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
