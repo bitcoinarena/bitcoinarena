@@ -33,6 +33,7 @@ import { CORE_HASH } from './core-hash.mjs';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4 } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
 import { execFileSync } from 'node:child_process';
+import { buildRules } from '../../arena-protocol/src/rules.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { seriesCreatorMessage } from '../../arena-protocol/src/creator.js';
 
@@ -792,8 +793,11 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // 2026.0.2 - THE ROUND NAMES NO DRAW (kanban #348, RULED the owner 2026-10-13): ARENA_PROTOCOL_VERSION=2 writes a v2 contract
   // with no nodes; every seat draws its 7 from the census and the beacon and writes them in itself. A census of 14 nodes
   // (two federations) can then open a round at all.
-  const V2 = process.env.ARENA_PROTOCOL_VERSION === '2';
-  if (V2) { contract.protocolVersion = 2; contract.nodes = []; }
+  // AND 2026.0.3 (kanban #313 / #314 / #304): ARENA_PROTOCOL_VERSION=3 is a v2 round (no draw named) at version 3, which may name its
+  // creator and its rules; every node of testnet4 advertises 1,2,3 since 156545/156546
+  const VERSION = Number(process.env.ARENA_PROTOCOL_VERSION || 1);
+  const V2 = VERSION >= 2;
+  if (V2) { contract.protocolVersion = VERSION; contract.nodes = []; }
   // AND A COMMITTEE THE PROTOCOL HAS A THRESHOLD FOR, said here rather than
   // discovered half an hour later. `dkg.deal` asks `receiptsNeeded(nodes.length)`
   // and only 2 (2-of-2) and 7 (5-of-7) have an answer; for anything else it
@@ -1255,6 +1259,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     const root = censusRootFor(templates[0]);
     if (toHex(censusRootFor(seriesRound(templates[tables - 1], slots - 1))) !== toHex(root)) throw new Error('the grid first and last rounds derive different census roots');
     for (const t of templates) t.censusRoot = root;
+    // THE RULES IT IS SETTLED UNDER (§6, kanban #314): a v3 grid names this build's four rule hashes, the last-mark disconnect rule, a
+    // claim window of 1 day and each role's floor at the round's bond_min - unless `kind.rules` is false
+    for (const t of templates) if (Number(t.protocolVersion) >= 3 && kind.rules !== false && !t.rules)
+      t.rules = buildRules({ claimWindowDays: 1, bondMinGameVerifySats: BigInt(t.bondMinSats), bondMinSettlementSats: BigInt(t.bondMinSats) });
     // THE CREATOR (kanban #313): `kind.creatorSecret` names this publisher in every template (2026.0.3) and signs each series id
     if (kind.creatorSecret) for (const t of templates) t.creatorPubkey = schnorr.getPublicKey(kind.creatorSecret);
     const ids = templates.map((t) => seriesId(t));
