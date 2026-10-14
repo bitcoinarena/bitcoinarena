@@ -102,7 +102,7 @@ async function seriesFile() {
     assert.equal(now.length, 3);
     assert.match(child.out, /\[series\] [0-9a-f]{16}: taken from the series file without a restart/);
     for (let i = 0; i < 40 && !/the series file did not read/.test(other.err); i++) await new Promise((r) => setTimeout(r, 250));
-    assert.match(other.err, /\[series\] the series file did not read: a series line names count=x, not count=N, cut=N, period=N or grid - the series held stay/);
+    assert.match(other.err, /\[series\] the series file did not read: a series line names count=x, not count=N, cut=N, period=N, grid or creator=<signature> - the series held stay/);
     assert.equal((await get(port2, '/series')).body.series.length, 2, 'an unreadable file: the series held stay');
     // the launcher's proofs: absent at start, served once written, read again at every ask
     assert.equal((await get(port, '/headers')).status, 404);
@@ -129,7 +129,7 @@ async function refusals() {
   const [a] = templates(nodeKeyOf(store));
   const cases = [
     ['a line that is not a series', `${'ab'.repeat(40)}\n`, {}, /^ARENA_SERIES_FILE: a line is not a series: /],
-    ['count=x', line(a, 'count=x'), {}, /^ARENA_SERIES_FILE: a line is not a series: a series line names count=x, not count=N, cut=N, period=N or grid$/],
+    ['count=x', line(a, 'count=x'), {}, /^ARENA_SERIES_FILE: a line is not a series: a series line names count=x, not count=N, cut=N, period=N, grid or creator=<signature>$/],
     ['a donation network of mainnet', line(a), { ARENA_DONATION_NETWORK: 'mainnet' }, /^ARENA_DONATION_NETWORK is regtest or testnet4, not mainnet$/],
   ];
   for (const [name, text, env, why] of cases) {
