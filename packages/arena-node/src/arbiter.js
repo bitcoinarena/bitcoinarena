@@ -291,7 +291,8 @@ export async function serveArbiter({ set, allow, port = 0, host = '127.0.0.1', p
       if (req.method === 'GET') { const p = await claims.plan(url.searchParams.get('federation')); return answer(p.ok ? 200 : (p.status || 409), p); }
       if (req.method === 'POST') {
         let body; try { body = JSON.parse(await new Promise((r) => { let s = ''; req.on('data', (d) => { s += d; }); req.on('end', () => r(s)); })); } catch { return answer(400, { ok: false, why: 'a JSON body' }); }
-        const got = await claims.offer(body);
+        // a pending-output claim (§23A.5 "Notes still in issuance at the halt") names `pending`; a note claim `ecash`
+        const got = Array.isArray(body && body.pending) ? await claims.offerPending(body) : await claims.offer(body);
         return answer(got.ok ? 200 : (got.status || 409), got);
       }
     }
