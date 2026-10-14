@@ -53,7 +53,7 @@ const silent = ix(draw.seated[SILENT].node);
 const t0 = Date.now();
 for (let n = 0; n < 40; n++) {
   const tip = height();
-  for (let i = 0; i < N; i++) if (i !== silent) { try { await seats[i].step(tip); } catch (e) { out({ step: 'step failed', seat: i, tip, why: String(e.message).slice(0, 300) }); } }
+  for (let i = 0; i < N; i++) if (i !== silent) { try { await seats[i].advance(tip); } catch (e) { out({ step: 'step failed', seat: i, tip, why: String(e.message).slice(0, 300) }); } }
   const st = seats[(silent + 1) % N].state();
   out({ step: 'window', tip, seated: st.seated.map((x) => `${ix(x.node)}${x.code ? '+' : '-'}`), noShows: st.noShows.map(ix), windowFrom: st.windowFrom,
     started: seats.filter((s) => s.state().started).map((s) => ix(seats.indexOf(s) >= 0 ? toHex(keys[seats.indexOf(s)].pub) : '')) });
