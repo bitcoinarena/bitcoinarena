@@ -8710,11 +8710,19 @@ async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fe
   const id = toHex(round.id);
   const byKey = new Map();
   const refused = [];
-  for (const node of nodes || []) {
+  // EVERY NODE AT ONCE (kanban #353, measured 2026-10-14 03:26Z on testnet4): asked one after another, the 14 seats a v2 round
+  // draws from took 27 s here - a round whose key all 7 signer nodes had attested since 03:24Z - and a market order's 60 s
+  // expiry and an 8 s RPS table both ran out before the pick. Read together, kept in the nodes' order as before.
+  const answers = await Promise.all((nodes || []).map(async (node) => {
     try {
       const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id);
-      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
-      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (!r.ok) return { refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
+      return { bytes: new Uint8Array(await r.arrayBuffer()), node };
+    } catch (e) { return { refused: `${node}: ${e.message}` }; }
+  }));
+  for (const { refused: why, bytes, node } of answers) {
+    if (why) { refused.push(why); continue; }
+    try {
       if (bytes.length !== ATTESTATION_BYTES + 64) { refused.push(`${node}: answered ${bytes.length} bytes, not one signed claim key`); continue; }
       const a = decodeClaimKeyAttestation(bytes.subarray(0, ATTESTATION_BYTES));
       if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); continue; }
@@ -17200,30 +17208,45 @@ function donationRecipientsLine(set) {
  * every answer is awaited here before `authorityAt` sees a settled boolean.
  * `keys` overrides the network's donation keys (tests only).
  */
-async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys } = {}) {
+const DONATION_SETS_FETCHED = new Map();      // donation set id hex -> the answers that passed every check
+const DONATION_ANSWER_MS = 6000;
+const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(Object.assign(new Error(`no answer in ${ms} ms`), { late: true })), ms);
+  p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+});
+
+async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false } = {}) {
   if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
   const rid = toHex(roundId(round));
-  const answers = await Promise.all(nodes.map(async (node) => {
+  // ONE FETCH PER DONATION SET, AND NO NODE HOLDS THE JOIN (kanban #353, measured 2026-10-14 04:26Z on testnet4): every round
+  // of a network names the same set, yet each join asked all 14 seats again and waited for the slowest - 30 s, past an
+  // 8 s RPS table. A set fetched and checked is kept by its id when the page asks for that (keepBySet; every check below still runs against each round); a node
+  // that does not answer in ANSWER_MS is left out, as long as at least half the nodes answered and every answer agrees.
+  const setKey = toHex(round.donationSetId);
+  const kept = keepBySet ? DONATION_SETS_FETCHED.get(setKey) : null;
+  const answers = kept || (await Promise.all(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
     try {
-      const r = await fetcher(`${base}/donation-set?round=${rid}`);
+      const r = await donationWithinMs(fetcher(`${base}/donation-set?round=${rid}`), DONATION_ANSWER_MS);
       if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
       const bytes = new Uint8Array(await r.arrayBuffer());
       let rotations = [];
       try {
-        const rr = await fetcher(`${base}/donation-rotations?round=${rid}`);
+        const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
         if (rr.status === 200) rotations = (await rr.json()).rotations || [];
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
-    } catch (e) { return { node: base, why: e.message }; }
-  }));
+    } catch (e) { return { node: base, why: e.message, late: !!e.late }; }
+  }))).filter((a) => a.bytes || !a.late);
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
     return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+  if (!kept && answers.length * 2 < nodes.length)
+    return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   const served = toHex(answers[0].bytes);
   if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
   const bytes = answers[0].bytes;
@@ -17272,6 +17295,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   try { gameSet = decodeDonationSet(games[0].bytes); } catch (e) { return { ok: false, why: `that is no game donation set: ${e.message}` }; }
   if (toHex(donationSetId(gameSet)) !== wantGame)
     return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
+  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
   return { ok: true, set, gameSet, target: { network: set.recipients, game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
