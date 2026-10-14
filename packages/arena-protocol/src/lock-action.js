@@ -85,8 +85,9 @@ export function lockAction({
  * from the pool is their winnings on top. So the equality below is over SHARES and not over amounts: the table hands a
  * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
  */
-export function lockActions({ roundId, entries, minScore = 0 }) {
-  const table = computePayoutTable({ roundId, entries, minScore });
+// `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound; kanban #362), or null for the rank curve.
+export function lockActions({ roundId, entries, minScore = 0, payoutShares = null }) {
+  const table = computePayoutTable({ roundId, entries, minScore, payoutShares });
   const claims = new Set(table.settling);
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 

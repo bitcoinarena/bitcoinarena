@@ -20,7 +20,7 @@ import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 const TEMPLATE = testAttestedGame({ name: 'event-anything', outcomes: ['yes', 'no'], attestors: ['event a', 'event b', 'event c'], threshold: 2,
   marketTerms: { nodeFeeBps: 50, donationBps: 50, question: 'Anything that happens', resolveAfterCloseMs: 60000n, deadlineAfterResolveMs: 3600000n,
     sourceRule: 'two public reports of it, read by each attestor on its own' },
-  template: { category: 'world', maxOutcomes: 4, resolveWithinMs: 7n * 24n * 3600000n }, requiredProtocolVersion: 3 });
+  template: { category: 'world', maxOutcomes: 4, resolveWithinMs: 7n * 24n * 3600000n }, requiredProtocolVersion: 4 });
 const EVENT = (entryCloseMs) => ({ question: 'Which team wins the 2026 Arena cup final?', outcomes: ['red', 'blue', 'green', 'nobody'], resolveAtMs: entryCloseMs + 120000n });
 
 test('a seat opens a template\'s round only with its question and any other round only without; lists, serves and attests it by the round\'s own outcomes', async () => {
@@ -31,13 +31,13 @@ test('a seat opens a template\'s round only with its question and any other roun
   try {
     const base = `http://127.0.0.1:${d.port}`;
     const post = async (path, body) => { const r = await fetch(`${base}${path}`, { method: 'POST', body }); return { status: r.status, text: (await r.text()).trim() }; };
-    // A FREE v3 ROUND OF AN ATTESTED GAME, its end 15 min out: no core, no config, its question (or none)
+    // A FREE v4 ROUND OF AN ATTESTED GAME, its end 15 min out: no core, no config, its question (or none)
     const drafted = (gameId, event) => {
-      const c = { ...presentDay({ ...contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']), protocolVersion: 3, stakeMsat: 0n,
+      const c = { ...presentDay({ ...contractFor([d.round.pubkey, b32(0x33)], 3000n, ['wss://r.example']), protocolVersion: 4, stakeMsat: 0n,
         gameId, simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32) }, testNow() + 900000) };
       return event ? { ...c, event: event(c.entryCloseMs) } : c;
     };
-    const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`], protocolVersions: [1, 2, 3],
+    const bonded = (c) => ({ ...c, censusRoot: bondedChainFor(c.nodes, c, slot, { endpoints: [`ws://127.0.0.1:${d.port}`], protocolVersions: [1, 2, 3, 4],
       hostedGames: plugins.map((p) => p.gameId) }).censusRoot });
 
     // REFUSED BY NAME: a template's round with no question; a non-template market's round with one
