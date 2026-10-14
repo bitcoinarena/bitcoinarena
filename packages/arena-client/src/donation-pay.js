@@ -226,7 +226,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
       const bytes = new Uint8Array(await r.arrayBuffer());
       let rotations = [];
       try {
-        const rr = await fetcher(`${base}/donation-rotations?round=${rid}`);
+        const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
         if (rr.status === 200) rotations = (await rr.json()).rotations || [];
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
