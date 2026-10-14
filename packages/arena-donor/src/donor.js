@@ -105,7 +105,7 @@ export async function redeemAll({ client, donations, recipientPkHex, secretHex, 
  */
 export function walletClients(join) {
   const held = new Map();
-  return (invite, federationId, secret, store) => {
+  const get = (invite, federationId, secret, store) => {
     if (!held.has(federationId)) {
       const p = Promise.resolve().then(() => join(invite, federationId, secret, store));
       held.set(federationId, p);
@@ -113,6 +113,60 @@ export function walletClients(join) {
     }
     return held.get(federationId);
   };
+  /** Drops a federation's client (kanban #357: before its wallet file is replaced by a recovered one); answers it, or null. */
+  get.forget = (federationId) => { const p = held.get(federationId) || null; held.delete(federationId); return p; };
+  return get;
+}
+
+/**
+ * E-CASH ISSUED TO THE WALLET AND NEVER CLAIMED, RECOVERED ON ITS OWN (kanban #357, plan agreed by the owner 2026-10-14). Measured that day:
+ * 93,359 msat (dev a) and 34,596 msat (dev b) sat as outputs in issuance - refunds of failed withdrawals and change of redeems whose
+ * state machines guardian WebSocket failures and restarts had cut off - until a hand-run recovery. One call per pass and federation,
+ * after the redeem and before the withdrawal:
+ *
+ *   none     `pendingOutputs()` lists nothing: nothing is remembered.
+ *   noted    something unclaimed that the last pass did not see (or not all of it): its nonces are remembered in `state.unclaimed`,
+ *            nothing else is done - the live client may still be claiming a refund seconds old.
+ *   recover  every nonce the last pass noted is still unclaimed: the wallet file is copied (`backup`, a pre-recover copy that is never
+ *            deleted), Fedimint's own recovery runs into a new store (`recover`), which is reopened (`reopen` -> { balanceMsat,
+ *            pendingMsat }) until its balance is the old balance plus what was unclaimed and nothing is pending - never swapped on the
+ *            first open's 0 - and only then swapped in (`swap`). Otherwise the old wallet stays and the new store is kept (`keepFailed`).
+ * Every recovery is logged in `state.recoveries`.
+ */
+export async function claimUnclaimed({ federation, pendingOutputs, balanceMsat, state, nowIso = () => new Date().toISOString(),
+  backup, recover, reopen, swap, keepFailed, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), tries = 40, everyMs = 15000 }) {
+  const pending = JSON.parse(await pendingOutputs());
+  const nonces = pending.map((x) => String(x.nonce)).sort();
+  const msat = pending.reduce((t, x) => t + BigInt(x.amount_msat), 0n);
+  state.unclaimed = state.unclaimed || {};
+  state.recoveries = state.recoveries || [];
+  const was = state.unclaimed[federation];
+  if (!nonces.length) { delete state.unclaimed[federation]; return { step: 'none', unclaimedMsat: 0n }; }
+  const persisted = was && Array.isArray(was.nonces) && was.nonces.length && was.nonces.every((n) => nonces.includes(n));
+  if (!persisted) {
+    state.unclaimed[federation] = { nonces, msat: String(msat), since: nowIso() };
+    return { step: 'noted', unclaimedMsat: msat, outputs: nonces.length };
+  }
+  const before = BigInt(await balanceMsat());
+  const want = before + msat;
+  const at = nowIso();
+  const backupPath = await backup(at);
+  await recover();
+  let got = null;
+  for (let i = 0; i < tries; i++) {
+    got = await reopen();
+    if (BigInt(got.balanceMsat) >= want && BigInt(got.pendingMsat) === 0n) break;
+    got = { ...got, short: true };
+    if (i < tries - 1) await sleep(everyMs);
+  }
+  const ok = !!got && !got.short;
+  if (ok) await swap(); else await keepFailed(at);
+  const entry = { at, federation, unclaimedMsat: String(msat), outputs: nonces.length, balanceBeforeMsat: String(before),
+    recoveredMsat: got ? String(got.balanceMsat) : '0', pendingAfterMsat: got ? String(got.pendingMsat) : null, backup: backupPath, ok,
+    why: ok ? null : `the recovered store held ${got ? got.balanceMsat : '?'} msat with ${got ? got.pendingMsat : '?'} msat still pending, not ${want}: the old wallet stays` };
+  state.recoveries.push(entry);
+  if (ok) delete state.unclaimed[federation];
+  return { step: ok ? 'recovered' : 'recovery failed', ...entry };
 }
 
 export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blwp donations', gateways = [] }) {
