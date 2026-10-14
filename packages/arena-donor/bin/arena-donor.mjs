@@ -22,7 +22,8 @@ import { pathToFileURL } from 'node:url';
 import { gameDevKey, signManifest } from '../src/manifest-sign.js';
 import { manifestStands, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { verifyEd25519 } from '../../arena-node/src/ed25519.js';
-import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed } from '../src/donor.js';
+import { newKey, walletSecretFor, gatherDonations, settleRead, withdrawToLnd, routeWebSockets, readRecord, walletClients, claimUnclaimed,
+  payInvoice, lightningAddressInvoice, invoiceMsat } from '../src/donor.js';
 
 const [cmd, dir, ...rest] = process.argv.slice(2);
 const flag = (n, d) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : d; };
@@ -85,7 +86,7 @@ const key = readJson(join(dir, 'key.json'), null);
 if (!cfg || !key) { console.error(`${dir} holds no donor.json and key.json: run init first`); process.exit(2); }
 const statePath = join(dir, 'state.json');
 
-const lncli = (...a) => new Promise((ok, no) => execFile(cfg.lnd.lncli, [`--lnddir=${cfg.lnd.lnddir}`, `--rpcserver=${cfg.lnd.rpcserver}`, `--network=${cfg.lnd.network}`, ...a],
+const lncli = (...a) => new Promise((ok, no) => execFile(cfg.lnd && cfg.lnd.lncli, [`--lnddir=${cfg.lnd.lnddir}`, `--rpcserver=${cfg.lnd.rpcserver}`, `--network=${cfg.lnd.network}`, ...a],
   { timeout: 120000 }, (e, out, err) => (e ? no(new Error(String(err || e.message).trim())) : ok(JSON.parse(out)))));
 const lnd = { invoice: async (msat, memo) => (await lncli('addinvoice', '--amt_msat', String(msat), '--memo', memo, '--expiry', '3600')).payment_request };
 
@@ -131,7 +132,13 @@ async function invites() {
 let routed = false;
 const namedGateways = [];
 // ONE CLIENT PER FEDERATION, KEPT ACROSS PASSES (kanban #230): joined on the first pass, used by every later one
-const clientFor = walletClients(async (invite, fed, secret, store) => (await lockClient()).join(invite, fed, secret, store));
+// AN IMPORTED KEY RECOVERS, IT NEVER JOINS FRESH (kanban #358): a dev key set up on a node from the owner page may have held e-cash
+// elsewhere; a fresh join would reuse its note indices. Fedimint's recovery reads them back from the federation into this wallet.
+const clientFor = walletClients(async (invite, fed, secret, store) => {
+  const LC = await lockClient();
+  if (cfg.imported && !existsSync(join(dir, `wallet-${fed.slice(0, 16)}.json`))) { say({ step: 'recover', federation: fed.slice(0, 16), why: 'an imported key: its wallet is read back from the federation' }); return LC.recover(invite, fed, secret, store); }
+  return LC.join(invite, fed, secret, store);
+});
 
 async function pass() {
   const state = readJson(statePath, { done: [], withdrawals: [] });
@@ -192,6 +199,13 @@ async function pass() {
         if (r.step !== 'none') say({ step: `unclaimed: ${r.step}`, federation: f16, ...r });
       } catch (e) { say({ step: 'unclaimed: check failed', federation: f16, why: e.message }); }
     }
+    // NO LND, NO AUTOMATIC WITHDRAWAL (kanban #358): a client set up from the owner page keeps its e-cash until the owner withdraws it
+    if (!cfg.lnd || cfg.autoWithdraw === false) {
+      let balanceMsat; try { balanceMsat = await client.balanceMsat(); } catch { balanceMsat = 0; }
+      state.balances[fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
+      writeJson(statePath, state);
+      continue;
+    }
     const w = await withdrawToLnd({ client, lnd, minMsat: BigInt(cfg.minWithdrawMsat || 10000), memo: `blwp donations ${cfg.label}`, gateways: [...(cfg.gateways || []), ...namedGateways] });
     if (w.withdrawn !== false || w.state) {
       state.withdrawals.push({ at: new Date().toISOString(), federation: fed, msat: String(w.withdrawableMsat), state: w.state, gateway: w.gateway, preimage: w.preimage || null });
@@ -207,6 +221,56 @@ async function pass() {
   writeJson(statePath, state);
 }
 
+/**
+ * THE OWNER'S WITHDRAWAL (kanban #358): the node leaves { id, invoice | lnAddress, msat?, federation? } in withdraw-request.json; it is
+ * taken once (renamed), paid from one federation's wallet - the one named, else the one holding most - and answered in
+ * state.requests (the newest 20), which the owner page reads.
+ */
+async function serveRequest() {
+  const reqPath = join(dir, 'withdraw-request.json');
+  if (!existsSync(reqPath)) return;
+  const q = readJson(reqPath, null);
+  renameSync(reqPath, join(dir, `withdraw-request.${Date.now()}.taken.json`));
+  const state = readJson(statePath, { done: [], withdrawals: [] });
+  state.requests = state.requests || [];
+  const answer = (o) => {
+    const row = { id: String((q && q.id) || ''), at: new Date().toISOString(), ...o };
+    state.requests = [...state.requests.filter((r) => r.id !== row.id), row].slice(-20);
+    writeJson(statePath, state);
+    say({ step: 'owner withdrawal', ...row });
+  };
+  answer({ state: 'Paying' });
+  try {
+    const known = await invites();
+    const feds = readdirSync(dir).filter((x) => /^wallet-[0-9a-f]{16}\.json$/.test(x)).map((x) => x.slice(7, 23))
+      .map((f) => Object.keys(known).find((k) => k.startsWith(f))).filter(Boolean);
+    let best = null;
+    for (const fed of feds) {
+      if (q.federation && !fed.startsWith(String(q.federation).toLowerCase())) continue;
+      const client = await clientFor(known[fed], fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
+      let can; try { can = BigInt(await client.withdrawableMsat()); } catch { can = 0n; }
+      if (!best || can > best.can) best = { fed, client, can };
+    }
+    if (!best) return answer({ state: 'Refused', why: q.federation ? `this client holds no wallet in federation ${q.federation}` : 'this client holds no wallet yet' });
+    let invoice = q.invoice;
+    if (!invoice) {
+      const msat = q.msat ? BigInt(q.msat) : best.can - (best.can % 1000n);
+      if (msat <= 0n) return answer({ state: 'Refused', federation: best.fed, why: 'nothing to withdraw' });
+      invoice = await lightningAddressInvoice(q.lnAddress, msat);
+    }
+    const w = await payInvoice({ client: best.client, invoice, gateways: [...(cfg.gateways || []), ...namedGateways] });
+    if (w.paid || (w.state && w.state !== 'Refused')) {
+      state.withdrawals.push({ at: new Date().toISOString(), federation: best.fed, msat: String(w.msat), state: w.state, gateway: w.gateway, preimage: w.preimage || null,
+        to: q.lnAddress || `invoice ${String(invoice).slice(0, 24)}…`, byOwner: true });
+    }
+    let balanceMsat; try { balanceMsat = await best.client.balanceMsat(); } catch { balanceMsat = 0; }
+    state.balances = state.balances || {};
+    state.balances[best.fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
+    answer({ state: w.state, paid: !!w.paid, federation: best.fed, msat: w.msat !== undefined ? String(w.msat) : String(invoiceMsat(invoice)),
+      preimage: w.preimage || null, to: q.lnAddress || null, tried: w.tried || [], why: w.why || null });
+  } catch (e) { answer({ state: 'Failed', why: e.message }); }
+}
+
 if (cmd === 'status') {
   const got = await gatherDonations({ recipientPkHex: cfg.recipientPkHex, seats: cfg.seats });
   const state = readJson(statePath, { done: [], withdrawals: [] });
@@ -219,7 +283,12 @@ if (cmd === 'once') { await pass(); process.exit(0); }
 if (cmd === 'loop') {
   for (;;) {
     try { await pass(); } catch (e) { say({ step: 'pass failed', why: e.message }); }
-    await new Promise((r) => setTimeout(r, (cfg.intervalSec || 300) * 1000));
+    // the owner's withdrawal is taken within 5 s, between passes too (kanban #358)
+    const until = Date.now() + (cfg.intervalSec || 300) * 1000;
+    while (Date.now() < until) {
+      try { await serveRequest(); } catch (e) { say({ step: 'owner withdrawal failed', why: e.message }); }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
   }
 }
 console.error(`no command ${cmd}`); process.exit(2);

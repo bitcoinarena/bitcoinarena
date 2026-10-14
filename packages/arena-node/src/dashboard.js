@@ -27,7 +27,7 @@ const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
 // `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js, kanban #280) - its score shown with the round
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null, devClient = null } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null, devClient = null, devClients = null } = {}) {
   const db = round.db;
   const me = hex(round.pubkey);
   const first = db.prepare('SELECT MIN(opened_ms) AS t FROM rounds').get();
@@ -155,6 +155,7 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
     } : null,
     // A DEV CLIENT BESIDE THIS NODE (kanban #357, dev-client.js): what the donation recipient's client received, holds and withdrew
     devClient: devClient || null,
+    devClients: devClients || null,
   };
 }
 
@@ -207,11 +208,14 @@ el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month'
  +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard()+devCard()+gamesCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
-// THE DEV CLIENT CARD (kanban #357): only on a node whose operator runs a donation recipient's client beside it
-function devCard(){const V=D.devClient;if(!V)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="devclient"><h3>Dev client'+(V.label?' · '+esc(V.label):'')+'</h3>';
+// THE DEV CLIENT CARDS (kanban #357, #358): the client beside the node (ARENA_DEV_CLIENT_DIR) and every one its owner set up on the
+// owner page, each with what it was given for the protocol developers and for each game
+function devCard(){return (D.devClient?oneDevCard(D.devClient):'')+(D.devClients||[]).map(oneDevCard).join('')}
+function splitRows(S){if(!S)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';return r('For the protocol developers',sat(S.protocolMsat))+(S.games||[]).map(g=>r('For '+esc(g.title||g.game),sat(g.msat)+' · '+g.donations+' donation'+(g.donations===1?'':'s'))).join('')+(S.unknownMsat&&S.unknownMsat!=='0'?r('Rounds this node no longer holds',sat(S.unknownMsat)):'')}
+function oneDevCard(V){if(!V)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="devclient"><h3>Dev client'+(V.label?' · '+esc(V.label):'')+'</h3>';
  if(V.error)return s+r('Not read',esc(V.error))+'</div>';
- s+=r('Recipient key',esc(V.recipientPk.slice(0,16))+'…')+r('Donations received',V.donations+' · '+sat(V.receivedMsat))+V.byFederation.map(f=>r('In '+esc(f.federation.slice(0,12)),f.donations+' · '+sat(f.msat)+(f.balanceMsat!==null?' · holds '+sat(f.balanceMsat):''))).join('')
-  +r('Withdrawn to its LND',sat(V.withdrawnMsat))+(V.withdrawals.length?r('Last withdrawal',esc(V.withdrawals[0].state||'?')+' · '+sat(V.withdrawals[0].msat)+' · '+esc(String(V.withdrawals[0].at||'').slice(0,16))):'')
+ s+=r('Recipient key',esc(V.recipientPk.slice(0,16))+'…')+r('Donations received',V.donations+' · '+sat(V.receivedMsat))+splitRows(V.split)+V.byFederation.map(f=>r('In '+esc(f.federation.slice(0,12)),f.donations+' · '+sat(f.msat)+(f.balanceMsat!==null?' · holds '+sat(f.balanceMsat):''))).join('')
+  +r('Withdrawn over Lightning',sat(V.withdrawnMsat))+(V.withdrawals.length?r('Last withdrawal',esc(V.withdrawals[0].state||'?')+' · '+sat(V.withdrawals[0].msat)+' · '+esc(String(V.withdrawals[0].at||'').slice(0,16))):'')
   +r('Unclaimed in issuance',(V.unclaimed||[]).length?(V.unclaimed||[]).map(u=>sat(u.msat)+' · '+u.outputs+' outputs since '+esc(String(u.since||'').slice(11,16))).join(', '):'0 sat')
   +(V.lastRecovery?r('Last recovery',esc(String(V.lastRecovery.at).slice(0,16).replace('T',' '))+' · '+(V.lastRecovery.ok?'ok, +'+sat(V.lastRecovery.unclaimedMsat):'failed: '+esc(V.lastRecovery.why||''))):'')
   +(V.lastPass?r('Last pass',esc(String(V.lastPass.at).slice(0,16).replace('T',' '))+' · asked '+V.lastPass.seats+' nodes'+(V.lastPass.unanswered?' ('+V.lastPass.unanswered+' unanswered)':'')):'');

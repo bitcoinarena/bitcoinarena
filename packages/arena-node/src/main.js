@@ -182,6 +182,26 @@ options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-ser
 // WHAT THIS NODE HOSTS (the owner 2026-10-03 22:50): node 1 gateway A + LND 1, node 2 gateway B + LND 2 - read for its /dashboard
 // A DEV CLIENT BESIDE THIS NODE (kanban #357): its directory, read for the dashboard (never its key)
 if (process.env.ARENA_DEV_CLIENT_DIR) options.devClientDir = process.env.ARENA_DEV_CLIENT_DIR;
+// THE DEV CLIENTS THE OWNER SETS UP ON THE OWNER PAGE (kanban #358): run by this node, one directory each beside its database. A new
+// client takes the seats, invites and gateways this node knows - from the client beside it when there is one, else from ARENA_DEV_SEATS
+// and ARENA_DEV_INVITES_FROM - and the page's lock client from ARENA_DEV_WASM_PKG; without that the owner page says it runs none.
+if (process.env.ARENA_DEV_WASM_PKG) {
+  const beside = (() => { try { return JSON.parse(readFileSync(`${process.env.ARENA_DEV_CLIENT_DIR}/donor.json`, 'utf8')); } catch { return {}; } })();
+  const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+  const { createDevClients } = await import('./dev-clients.js');
+  const { newKey, keyFromSecret } = await import('../../arena-donor/src/donor.js');
+  options.devClients = createDevClients({
+    root: process.env.ARENA_DEV_CLIENTS_ROOT || `${path}.dev-clients`,
+    donorBin: new URL('../../arena-donor/bin/arena-donor.mjs', import.meta.url).pathname,
+    defaults: { wasmPkg: process.env.ARENA_DEV_WASM_PKG,
+      seats: list(process.env.ARENA_DEV_SEATS).length ? list(process.env.ARENA_DEV_SEATS) : (beside.seats || []),
+      invitesFrom: list(process.env.ARENA_DEV_INVITES_FROM).length ? list(process.env.ARENA_DEV_INVITES_FROM) : (beside.invitesFrom || []),
+      invites: beside.invites || {}, gateways: beside.gateways || [] },
+    keys: { newKey, keyFromSecret }, log: (l) => console.log(l),
+  });
+  options.devClients.startAll();
+  for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => { try { options.devClients.stopAll(); } catch { /* stopping */ } });
+}
 { const hc = hostsFromEnv(); if (hc) { options.hosts = hostsReader(hc).start(); console.log(`hosts: ${hc.lnd ? 'LND ' + hc.lnd.rest : 'no LND'}, ${hc.gateway ? 'gateway ' + hc.gateway.name + ' ' + hc.gateway.base : 'no gateway'}`); } }
 if (process.env.ARENA_PEERS) options.peers = process.env.ARENA_PEERS.split(',').map((s) => s.trim()).filter(Boolean);
 if (process.env.ARENA_ATTACH_PROOF_DIR) {

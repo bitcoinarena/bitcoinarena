@@ -25,6 +25,7 @@ import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/t
 import { stateOf } from './settlement-state.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { devClientSnapshot } from './dev-client.js';
+import { attributeDonations } from './dev-clients.js';
 import { nodeStanding } from './node-standing.js';
 import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
 import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
@@ -302,6 +303,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // reading goes into /dashboard.json (figures only, never the gateway's password or the LND's macaroon).
   hosts = null,
   devClientDir = null,                         // kanban #357: a dev client's directory, shown on the dashboard (dev-client.js)
+  devClients = null,                           // kanban #358: the dev clients the owner set up on the owner page (dev-clients.js)
   // THIS NODE'S OWN GUARDIAN (§23A.2, RULED 2026-09-26 22:54): `{ apiPort, endpoint }` when the node started one
   // (guardian.js). Its websocket is carried on this server at /guardian, so the guardian's endpoint is the node's own
   // public address; null for a node that is not a guardian.
@@ -583,6 +585,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const operatorTokens = operatorFiles ? createOperatorTokens({ store: operatorFiles.store, log: (l) => console.log(l) }) : null;
   if (operatorTokens) { const t = operatorTokens.first(operatorFiles.endpoint); if (t && operatorFiles.writePairing) operatorFiles.writePairing(t.uri); }
+  // A DEV KEY'S DONATIONS, BY WHOM THEY WERE FOR (kanban #358): its share in the newest protocol set this seat holds, and per round the
+  // round's game (from the contract this seat keeps) and its share in that game's set - attributeDonations splits each donation p : g
+  const devAttribute = (rows, pk) => {
+    const key = String(pk || '').toLowerCase();
+    const kh = (k) => (k instanceof Uint8Array ? toHex(k) : String(k)).toLowerCase();
+    const newest = new Map();
+    for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
+    let protocolBps = 0;
+    for (const s of newest.values()) for (const r of s.recipients) if (kh(r.recipientPk) === key) protocolBps = Math.max(protocolBps, Number(r.shareBps || 0));
+    const seen = new Map();
+    const gameOf = (rid) => {
+      if (seen.has(rid)) return seen.get(rid);
+      let out = null;
+      try {
+        const row = /^[0-9a-f]{64}$/.test(rid) ? round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex')) : null;
+        if (row) {
+          const c = decodeRoundContract(new Uint8Array(row.contract));
+          const g = c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
+          if (g) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); out = { name: g.name, title: g.title || g.name, bps: r ? Number(r.shareBps || 0) : 0 }; }
+        }
+      } catch { out = null; }
+      seen.set(rid, out);
+      return out;
+    };
+    return attributeDonations(rows, { protocolBps, gameOf });
+  };
+  const devSplitOfDir = (dir) => {
+    try {
+      const cfg = JSON.parse(readFileSync(joinPath(dir, 'donor.json'), 'utf8'));
+      const rows = existsSync(joinPath(dir, 'donations.jsonl')) ? readFileSync(joinPath(dir, 'donations.jsonl'), 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean) : [];
+      return devAttribute(rows, cfg.recipientPkHex);
+    } catch { return null; }
+  };
   const owner = ownerFiles ? createOwner({ store: ownerFiles.store, node: toHex(round.pubkey), log: (l) => console.log(l),
     verify: (sig, msg, key) => schnorr.verify(sig, msg, key) }) : null;
   if (roundClock) round.now = roundClock;
@@ -3495,6 +3530,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             draining: [...drainingFeds.entries()].map(([federationId, d]) => ({ federationId, successor: d.successor, sinceMs: d.sinceMs })),
             installed: [...networksHeld.values()].map((h) => ({ network: h.report.networkId, id: h.report.id, ...four(h.report, h.pkg.invite) })) });
         }
+        // THE OWNER'S DEV CLIENTS (kanban #358, dev-clients.js): each one's stats from its own record - what it was given, split
+        // into the protocol developers' part and each game's part - its wallets, and what the owner's withdrawals answered
+        if (req.method === 'GET' && url.pathname === '/owner/dev') {
+          return answer(200, { managed: !!devClients, clients: devClients ? devClients.list({ attribute: devAttribute }) : [],
+            beside: devClientDir ? { ...devClientSnapshot(devClientDir), split: devSplitOfDir(devClientDir) } : null });
+        }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
           const newest = new Map();
           for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
@@ -3599,6 +3640,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return answer(200, { ok: true, psig: toHex(psig) });
           } catch (e) { return answer(422, { ok: false, why: e.message }); }
         }
+        // SET UP, WITHDRAW, REMOVE (kanban #358): signed by the owner like every owner door
+        if (url.pathname === '/owner/dev/setup' || url.pathname === '/owner/dev/withdraw' || url.pathname === '/owner/dev/remove') {
+          const action = url.pathname.slice('/owner/'.length);
+          const a = owner.authorize(body, action);
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!devClients) return answer(501, { ok: false, why: 'this node runs no dev clients (start it with ARENA_DEV_WASM_PKG)' });
+          const args = body.args || {};
+          const r = action === 'dev/setup' ? devClients.setup({ label: args.label, secretHex: args.secretHex, minWithdrawMsat: args.minWithdrawMsat })
+            : action === 'dev/withdraw' ? devClients.withdraw({ slug: args.slug, invoice: args.invoice, lnAddress: args.lnAddress, msat: args.msat, federation: args.federation })
+              : devClients.remove({ slug: args.slug });
+          if (r.ok) dashboardKept = null;
+          return answer(r.ok ? 200 : (r.status || 400), r);
+        }
         if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/login') {
@@ -3611,7 +3665,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), games: hosted, matchFor: (rid) => matchOf(round, hosted, rid) })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, games: hosted, matchFor: (rid) => matchOf(round, hosted, rid) })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }

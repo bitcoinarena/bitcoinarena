@@ -191,6 +191,63 @@ export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blw
   return { withdrawn: false, withdrawableMsat: can, state: 'Refunded', tried };
 }
 
+// A WITHDRAWAL THE NODE'S OWNER ASKED FOR (kanban #358, the owner 2026-10-14: "there's a withdrawal feature that withdraws it to
+// lightning"): the owner gives an invoice or a Lightning address on the owner page; the node leaves the request in this client's
+// directory (withdraw-request.json) and the client pays it from one federation's wallet, through the gateways the network names.
+
+const MULT = { m: 100000000n, u: 100000n, n: 100n };
+/** A BOLT11 invoice's amount in msat, from its human-readable part; null when it names none (a zero-amount invoice). */
+export function invoiceMsat(invoice) {
+  const m = /^ln(?:bcrt|tbs|tb|bc|sb)(\d+)?([munp])?1[02-9ac-hj-np-z]+$/.exec(String(invoice || '').trim().toLowerCase());
+  if (!m) throw new Error('that is not a Lightning invoice (lnbc…/lntb…)');
+  if (!m[1]) return null;
+  const n = BigInt(m[1]);
+  if (!m[2]) return n * 100000000000n;
+  if (m[2] === 'p') { if (n % 10n) throw new Error('an invoice amount below one msat'); return n / 10n; }
+  return n * MULT[m[2]];
+}
+
+/** The invoice a Lightning address (LNURL-pay, LUD-16) makes for `msat`: name@domain -> /.well-known/lnurlp/name -> its callback. */
+export async function lightningAddressInvoice(address, msat, { fetcher = fetch } = {}) {
+  const m = /^([a-z0-9._+-]+)@((?:[a-z0-9-]+\.)+[a-z]{2,}|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/i.exec(String(address || '').trim());
+  if (!m) throw new Error('a Lightning address is name@domain');
+  const base = /^(localhost|127\.)/.test(m[2]) ? `http://${m[2]}` : `https://${m[2]}`;
+  const meta = await (await fetcher(`${base}/.well-known/lnurlp/${m[1].toLowerCase()}`)).json();
+  if (meta && meta.status === 'ERROR') throw new Error(`${address}: ${meta.reason || 'refused'}`);
+  if (!meta || meta.tag !== 'payRequest' || typeof meta.callback !== 'string') throw new Error(`${address} answers no Lightning pay request`);
+  const want = BigInt(msat);
+  if (want < BigInt(meta.minSendable) || want > BigInt(meta.maxSendable)) throw new Error(`${address} takes ${meta.minSendable} to ${meta.maxSendable} msat, not ${want}`);
+  const u = new URL(meta.callback);
+  u.searchParams.set('amount', String(want));
+  const r = await (await fetcher(u.toString())).json();
+  if (!r || r.status === 'ERROR' || typeof r.pr !== 'string') throw new Error(`${address}: ${(r && r.reason) || 'no invoice'}`);
+  if (invoiceMsat(r.pr) !== want) throw new Error(`${address} made an invoice for ${invoiceMsat(r.pr)} msat, not ${want}`);
+  return r.pr;
+}
+
+/**
+ * PAY ONE INVOICE FROM THIS WALLET: the gateways the network names first, then the client's own pick, as withdrawToLnd. The invoice
+ * names its amount and that must be withdrawable. A refunded attempt leaves the e-cash in the wallet, so the next gateway is tried
+ * with the same invoice; e-cash that left without a Success is never tried again.
+ */
+export async function payInvoice({ client, invoice, gateways = [] }) {
+  const msat = invoiceMsat(invoice);
+  if (msat === null) return { paid: false, state: 'Refused', why: 'an invoice without an amount: ask for one that names it' };
+  let can;
+  try { can = BigInt(await client.withdrawableMsat()); } catch (e) { if (/too low/i.test(String(e && e.message))) can = 0n; else throw e; }
+  if (msat > can) return { paid: false, state: 'Refused', msat, withdrawableMsat: can, why: `the invoice asks ${msat} msat; this wallet can send ${can} msat after fees` };
+  const tried = [];
+  for (const gw of [...new Set((gateways || []).filter(Boolean)), null]) {
+    let said;
+    try { said = JSON.parse(await client.withdraw(invoice, gw || undefined)); } catch (e) { said = { state: 'Failed', why: e.message }; }
+    tried.push(`${gw || 'client pick'}: ${said.state}`);
+    if (said.state === 'Success') return { paid: true, msat, withdrawableMsat: can, ...said, tried };
+    let left; try { left = BigInt(await client.withdrawableMsat()); } catch { left = 0n; }
+    if (left < can) return { paid: false, msat, withdrawableMsat: can, ...said, tried, why: said.why || 'the e-cash left the wallet without a Success: not tried again' };
+  }
+  return { paid: false, msat, withdrawableMsat: can, state: 'Refunded', tried, why: 'every gateway refunded it' };
+}
+
 /**
  * THE GUARDIANS' SECOND ROUTE, AS THE PAGE TAKES IT (index.html RoutedWebSocket): daily.json's testnet.alt maps a host, or a
  * host and its first path segment, to a Cloudflare tunnel; a socket to such an address goes there instead. Measured
