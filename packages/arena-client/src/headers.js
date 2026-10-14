@@ -108,6 +108,8 @@ export function httpProvider(where, { tag, ...rest } = {}) {
 }
 
 const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
+/** How deep a split at the tip may run and still be a split, not a fork: twice the six blocks a beacon is taken under. */
+export const TIP_SPLIT_BLOCKS = 12;
 
 /**
  * Ask several providers and answer only if they can be weighed against each
@@ -213,6 +215,14 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
   for (const a of good) if (a.work > best.work) best = a;
   const inBest = new Set(best.hashes);
 
+  // A SPLIT AT THE TIP IS NOT A FORK TO REFUSE (the owner's testnet4, measured 2026-10-14 ~10:00Z: the test host's bitcoind and the
+  // the test host's stood at one height and one chainwork on two branches six blocks long - testnet4's minimum-difficulty blocks tie
+  // often - and every committee this client built from all 14 seats' headers was refused, "providers 0 and 1 do not agree").
+  // A provider whose chain leaves the most-work one only in its last TIP_SPLIT_BLOCKS blocks still agrees on everything below,
+  // and the chain answered stops at the last block every provider shares: a round's census and beacon are taken at least six
+  // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
+  const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
+  let cut = best.hashes.length;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
     // fork here, and that branch is gone rather than left unreachable: every
@@ -220,19 +230,24 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
     // at least that block, and no test or mutant could ever reach it again. A
     // provider whose range does not reach the anchor is refused earlier, by
     // name, which is the same fact said in the right place.
-    const stray = a.hashes.find((h) => !inBest.has(h));
-    if (stray) {
+    const i = a.hashes.findIndex((h) => !inBest.has(h));
+    if (i < 0) continue;
+    const stray = a.hashes[i];
+    const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
+    if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
       return {
         ok: false,
         why: `providers ${best.at} and ${a.at} do not agree on the chain: `
           + `${stray} is not in the one with the most work`,
       };
     }
+    cut = Math.min(cut, shared + 1);
   }
 
   return {
     ok: true,
-    headers: best.headers,
+    ...(cut < best.hashes.length ? { split: best.hashes.length - cut } : {}),
+    headers: best.headers.slice(0, cut),
     work: best.work,
     from: best.at,
     agreed: good.length,
