@@ -15,6 +15,12 @@
 //   THE TAPE. The 64 prices before the start are one PriceTape, led by the round's seat 0 at the start: its readings on the
 //         grid before the start; a seat signs it when every reading it holds for those moments is within tolerance and it
 //         holds at least half of them.
+//   THE ENDS. A round's result is made from two samples only: sample 0 (its open) and the last sample at or before its last tick
+//         (its close, closeSampleK). Every seat that keeps one of them also writes it to its database, so a restart keeps it; a
+//         seat that lacks one at the end asks the committee for it (GET /price-samples?ks=) and keeps it once it stands
+//         (measured on testnet4 2026-10-14, kanban #312: the samples lived in memory only, every seat of a 6 h Tick Tock round
+//         had restarted during it, and each held a different first sample - 2151, 2175, 2190 ... - so no two would have signed
+//         the same open).
 // What a client does with them (the batch carries each attested sample at its tick; a run with none is SIM) is slice 2.
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -32,6 +38,13 @@ const refuse = (why, status = 409) => ({ ok: false, status, why });
 const grid = (ms) => Math.floor(ms / EVERY) * EVERY;
 /** Sample k is applied at round time k x 5 s and reads the price one period before: round time (k - 1) x 5 s. */
 export const readingMoment = (startMs, k) => startMs + (k - 1) * EVERY;
+/** The round's closing sample: the last k whose tick is at or before `endTick`, its last tick. */
+export function closeSampleK(endTick) {
+  let k = Math.max(0, Math.floor(Number(msForTicks(BigInt(endTick)).ms) / EVERY));
+  while (k > 0 && sampleTick(k) > endTick) k--;
+  while (sampleTick(k + 1) <= endTick) k++;
+  return k;
+}
 
 /** BTC/USD in whole cents from Coinbase's spot price - the default feed. */
 export async function coinbaseCents(fetcher = fetch) {
@@ -55,6 +68,28 @@ export class PriceFeed {
     this.samples = new Map();    // round hex -> Map(k -> { tick, priceCents, sigs })
     this.tapes = new Map();      // round hex -> { tick, prices, sigs }
     this.signed = new Map();     // `${round}:${k}` -> price this seat signed (one price per sample)
+    // the rounds' ENDS (sample 0 and the closing sample), kept across restarts in the seat's database
+    this.ends = null;
+    try {
+      round.db.exec('CREATE TABLE IF NOT EXISTS price_ends (round TEXT NOT NULL, k INTEGER NOT NULL, tick INTEGER NOT NULL, cents INTEGER NOT NULL, sigs TEXT NOT NULL, PRIMARY KEY (round, k))');
+      this.ends = {
+        put: round.db.prepare('INSERT OR REPLACE INTO price_ends (round, k, tick, cents, sigs) VALUES (?, ?, ?, ?, ?)'),
+        get: round.db.prepare('SELECT k, tick, cents, sigs FROM price_ends WHERE round = ? AND k = ?'),
+      };
+    } catch { this.ends = null; }   // a stand-in store without SQL: the ends live in memory only
+  }
+
+  /** Sample k of a round as held: in memory, else from the database. */
+  #held(roundHex, k) {
+    const m = this.samples.get(roundHex);
+    if (m && m.has(k)) return m.get(k);
+    if (!this.ends) return null;
+    let r = null; try { r = this.ends.get.get(roundHex, k); } catch { r = null; }
+    if (!r) return null;
+    const x = { k: Number(r.k), tick: Number(r.tick), priceCents: Number(r.cents), sigs: JSON.parse(r.sigs) };
+    if (!this.samples.has(roundHex)) this.samples.set(roundHex, new Map());
+    this.samples.get(roundHex).set(k, x);
+    return x;
   }
 
   /** This seat's own reading for the grid moment `ms` (or the one beside it), or null. */
@@ -142,31 +177,54 @@ export class PriceFeed {
     if (!s.ok) return refuse(`that sample does not stand: ${s.why}`);
     if (!this.samples.has(body.round)) this.samples.set(body.round, new Map());
     this.samples.get(body.round).set(k, { k, tick: sample.tick, priceCents: body.priceCents, sigs: body.sigs });
+    if (this.ends && (k === 0 || k === closeSampleK(Number(c.contract.blockTicks)))) {
+      try { this.ends.put.run(body.round, k, sample.tick, body.priceCents, JSON.stringify(body.sigs)); } catch { /* kept in memory */ }
+    }
     return { ok: true };
+  }
+
+  /** The ends this seat lacks, from the committee's seats: each kept only once it stands (hold). */
+  async #fetchEnds(roundIdBytes, ks) {
+    const rh = toHex(roundIdBytes);
+    for (const base of this.peersFor(roundIdBytes)) {
+      const missing = ks.filter((k) => !this.#held(rh, k));
+      if (!missing.length) return;
+      try {
+        const r = await this.fetcher(`${String(base).replace(/\/+$/, '')}/price-samples?round=${rh}&ks=${missing.join(',')}`, { signal: AbortSignal.timeout(10000) });
+        if (!r.ok) continue;
+        const j = await r.json();
+        for (const x of (j && j.samples) || []) if (missing.includes(Number(x.k))) this.hold({ round: rh, kind: 'sample', k: Number(x.k), priceCents: x.priceCents, sigs: x.sigs });
+      } catch { /* the next seat */ }
+    }
   }
 
   /**
    * GET /round-result?round=: WHO WON THE ROUND (§13 RoundResult, kanban #312) - once its run has ended, the result this seat
-   * makes from the attested samples it holds (open the first, close the last at or before the round's last tick), signed with
-   * its node key. A client takes it when the committee's threshold signed the same result (round-result.js roundResultStands).
+   * makes from the round's two ends: sample 0 is the open, the closing sample (closeSampleK) the close. A seat that lacks one
+   * asks the committee for it; without both it signs nothing, so no seat signs an open or close of its own choosing. Signed with
+   * its node key; a client takes it when the committee's threshold signed the same result (round-result.js roundResultStands).
    */
-  result(roundHex) {
+  async result(roundHex) {
     const rid = typeof roundHex === 'string' && /^[0-9a-f]{64}$/.test(roundHex) ? fromHex(roundHex) : null;
     if (!rid) return refuse('GET /round-result?round=<id, 64 hex>', 400);
     const c = this.#contract(rid); if (!c.ok) return c;
     const endTick = Number(c.contract.blockTicks);
     const endMs = Number(c.contract.startTimeMs) + Number(msForTicks(BigInt(endTick)).ms);
     if (this.now() < endMs) return refuse(`the round runs until ${new Date(endMs).toISOString()}: its result is made at its end`);
-    const m = this.samples.get(roundHex);
-    const got = roundResultFrom({ roundId: rid, samples: m ? [...m.values()] : [], endTick });
+    const kClose = closeSampleK(endTick);
+    if (!this.#held(roundHex, 0) || !this.#held(roundHex, kClose)) await this.#fetchEnds(rid, [0, kClose]);
+    const open = this.#held(roundHex, 0), close = this.#held(roundHex, kClose);
+    if (!open || !close) return refuse(`no attested ${!open ? 'opening sample (k 0)' : `closing sample (k ${kClose})`} of the round is held here or by its committee`);
+    const got = roundResultFrom({ roundId: rid, samples: [open, close], endTick });
     if (!got.ok) return refuse(got.why);
     const x = got.result;
     return { ok: true, round: roundHex, openCents: x.openCents, closeCents: x.closeCents, front: frontName(x.front), samples: got.samples,
       openTick: got.openTick, closeTick: got.closeTick, committee: c.committee.map(toHex), needed: c.needed, ...this.#sign(roundResultId(x)) };
   }
 
-  /** GET /price-samples?round=&since=<tick>: the attested samples this seat holds for a round, and its tape. */
-  list(roundHex, sinceTick = 0) {
+  /** GET /price-samples?round=&since=<tick>: the attested samples this seat holds for a round, and its tape; `ks` only those samples. */
+  list(roundHex, sinceTick = 0, ks = null) {
+    if (Array.isArray(ks)) return { round: roundHex, samples: ks.map((k) => this.#held(roundHex, k)).filter(Boolean), tape: null };
     const m = this.samples.get(roundHex);
     return { round: roundHex, samples: m ? [...m.values()].filter((x) => x.tick >= sinceTick).sort((a, b) => a.tick - b.tick) : [],
       tape: this.tapes.get(roundHex) || null };
