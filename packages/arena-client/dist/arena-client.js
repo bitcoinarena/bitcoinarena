@@ -6208,6 +6208,8 @@ function httpProvider(where, { tag, ...rest } = {}) {
 }
 
 const tips = (headers) => headers.map((h) => toHex(blockHashOf(h)));
+/** How deep a split at the tip may run and still be a split, not a fork: twice the six blocks a beacon is taken under. */
+const TIP_SPLIT_BLOCKS = 12;
 
 /**
  * Ask several providers and answer only if they can be weighed against each
@@ -6313,6 +6315,14 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
   for (const a of good) if (a.work > best.work) best = a;
   const inBest = new Set(best.hashes);
 
+  // A SPLIT AT THE TIP IS NOT A FORK TO REFUSE (the owner's testnet4, measured 2026-10-14 ~10:00Z: the test host's bitcoind and the
+  // the test host's stood at one height and one chainwork on two branches six blocks long - testnet4's minimum-difficulty blocks tie
+  // often - and every committee this client built from all 14 seats' headers was refused, "providers 0 and 1 do not agree").
+  // A provider whose chain leaves the most-work one only in its last TIP_SPLIT_BLOCKS blocks still agrees on everything below,
+  // and the chain answered stops at the last block every provider shares: a round's census and beacon are taken at least six
+  // blocks deep, so nothing a client decides sits in the split. A provider that leaves it deeper is a fork, refused as before.
+  const bestAt = new Map(best.hashes.map((h, i) => [h, i]));
+  let cut = best.hashes.length;
   for (const a of good) {
     // ANSWERS ABOUT DIFFERENT PARTS OF THE CHAIN used to be told apart from a
     // fork here, and that branch is gone rather than left unreachable: every
@@ -6320,19 +6330,24 @@ async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask, ancho
     // at least that block, and no test or mutant could ever reach it again. A
     // provider whose range does not reach the anchor is refused earlier, by
     // name, which is the same fact said in the right place.
-    const stray = a.hashes.find((h) => !inBest.has(h));
-    if (stray) {
+    const i = a.hashes.findIndex((h) => !inBest.has(h));
+    if (i < 0) continue;
+    const stray = a.hashes[i];
+    const shared = i > 0 ? bestAt.get(a.hashes[i - 1]) : undefined;
+    if (a.hashes.length - i > TIP_SPLIT_BLOCKS || shared === undefined) {
       return {
         ok: false,
         why: `providers ${best.at} and ${a.at} do not agree on the chain: `
           + `${stray} is not in the one with the most work`,
       };
     }
+    cut = Math.min(cut, shared + 1);
   }
 
   return {
     ok: true,
-    headers: best.headers,
+    ...(cut < best.hashes.length ? { split: best.hashes.length - cut } : {}),
+    headers: best.headers.slice(0, cut),
     work: best.work,
     from: best.at,
     agreed: good.length,
@@ -21100,6 +21115,7 @@ function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, d
 
 
 
+
 // THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
 // hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
 // founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
@@ -21175,7 +21191,68 @@ function encodeGenesisParameters(p) {
   // and no series names its own start.
   if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
   w.u64(p.genesisSeriesStartMs);
+  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (kanban #297 / #298, RULED the owner 2026-10-14 ~13:20Z: "Fix it but no new series
+  // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
+  // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
+  // stay as they were and no series moves to a new network.
+  if (p.federationMin !== undefined) {
+    if (!Number.isInteger(p.federationMin) || p.federationMin < 1 || p.federationMin > p.federationNominal)
+      throw new Error('federation_min is 1..federation_nominal');
+    if (typeof p.bondMinGuardianSats !== 'bigint' || p.bondMinGuardianSats <= 0n) throw new Error('genesis names a guardian\'s bond floor in sats');
+    const sched = p.governanceSchedule;
+    if (!sched || !['design', 'money', 'upgrade'].every((k) => sched[k] && ['review', 'voting', 'cooldown'].every((x) => Number.isInteger(sched[k][x]) && sched[k][x] >= 0)))
+      throw new Error('genesis names the governance schedule: review, voting and cooldown blocks for design, money and upgrade');
+    w.u16(p.federationMin);
+    w.u64(p.bondMinGuardianSats);
+    for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
+    w.u8(p.committeesBind ? 1 : 0);
+  }
   return w.finish();
+}
+
+/**
+ * MAINNET'S GENESIS (§27A.6, the "Three networks" table; kanban #297 / #298), built from the parts only a launch can name: the
+ * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
+ * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
+ * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
+ * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
+ * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
+ */
+function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats } = {}) {
+  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
+  if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
+  if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
+  if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
+  if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
+  if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
+  const genesis = {
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs,
+    federationNominal: 10, federationMin: 7, bondMinGuardianSats,
+    abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+    gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
+    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320,
+    arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
+    bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
+    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
+    governanceSchedule: { design: { review: 1008, voting: 1440, cooldown: 2016 }, money: { review: 1008, voting: 1440, cooldown: 2016 },
+      upgrade: { review: 2016, voting: 2016, cooldown: 4320 } },
+  };
+  return { genesis, networkId: computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) };
+}
+
+/**
+ * EVERY CONTRACT BOUND TO ITS GENESIS'S COMMITTEES (§5A.7 / §27A.6, kanban #297): where the genesis says its committees bind, a
+ * Round Contract names exactly its slots per role, and the threshold of those slots (threshold.js) is the genesis's. A genesis that
+ * does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its own slot count.
+ */
+function committeesStand(contract, genesis) {
+  if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
+  const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
+  if (g !== genesis.gameVerifySlots || st !== genesis.settlementSlots)
+    return { ok: false, why: `this network's genesis binds committees of ${genesis.gameVerifySlots} and ${genesis.settlementSlots} slots; the contract names ${g} and ${st}` };
+  if (receiptsNeeded(g) !== genesis.gameVerifyThreshold || receiptsNeeded(st) !== genesis.settlementThreshold)
+    return { ok: false, why: 'the threshold of those slots is not the genesis threshold' };
+  return { ok: true, bound: true };
 }
 
 /**
