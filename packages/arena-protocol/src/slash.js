@@ -38,6 +38,7 @@ import { entryId } from './contracts.js';
 import { feeOwed, feeTableId } from './fee.js';
 import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
 import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.js';
+import { payoutRuleForRound } from './manifest.js';
 import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
 
@@ -460,9 +461,14 @@ export function slashHoldsOnRerun({
  * breaks - paid against staked - and a table whose inputs cannot be computed
  * at all is not evidence that the signer was dishonest about them. That is
  * refused as unusable rather than counted as an offence.
+ *
+ * AND F IS THE GAME'S OWN RULE (kanban #362): §18A's curve, or the top split the round's game's manifest names. The rule is
+ * read off `manifest`, which must be the game the contract names (game_id = H(manifest), and the contract is in the round
+ * id the proof names) - so an accuser can no more pick the rule than the score floor. A round from TOP_SPLIT_VERSION on,
+ * handed no manifest, is refused rather than recomputed at the curve: a split game's honest table is not F of the curve.
  */
 export function slashHoldsOnTable({
-  proof, signedTable, advert, committee, entries, contract,
+  proof, signedTable, advert, committee, entries, contract, manifest = null,
 }) {
   if (!Array.isArray(committee) || !committee.length)
     return { slashed: false, why: 'no committee, so nobody was serving this round' };
@@ -483,6 +489,8 @@ export function slashHoldsOnTable({
   if (!contract || !Number.isInteger(contract.minScore) || contract.minScore < 0)
     return { slashed: false, why: 'no round contract to read the score floor from' };
   const minScore = contract.minScore;
+  const rule = payoutRuleForRound(contract, manifest);
+  if (!rule.ok) return { slashed: false, why: `F's payout rule cannot be read: ${rule.why}` };
   if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))
     return {
       slashed: false,
@@ -523,7 +531,7 @@ export function slashHoldsOnTable({
 
   let honest;
   try {
-    honest = computePayoutTable({ roundId: claimed.roundId, entries, minScore });
+    honest = computePayoutTable({ roundId: claimed.roundId, entries, minScore, payoutShares: rule.payoutShares });
   } catch (e) {
     return { slashed: false, why: `F cannot be computed from those inputs: ${e.message}` };
   }
