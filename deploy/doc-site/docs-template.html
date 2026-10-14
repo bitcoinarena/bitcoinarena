@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bitcoin Arena Docs</title>
-<meta name="description" content="Bitcoin Arena developer documentation: how the decentralized, non-custodial engine works, the node API, and how to build a game or a prediction market.">
+<meta name="theme-color" content="#07090d">
+<meta name="description" content="Bitcoin Arena documentation: how to play on testnet4, the wallet and the federations, the games and markets, Nostr, running a node, the node API, and how to build a game or a prediction market.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -58,24 +59,53 @@
   .m-get { background: rgba(47,211,138,.15); color: var(--bull); } .m-post { background: rgba(247,147,26,.15); color: var(--btc); }
   .m-put { background: rgba(79,209,255,.15); color: var(--cyan); } .m-options, .m-ws, .m-upgrade { background: #18212d; color: var(--dim); }
   details { margin: 12px 0; } summary { cursor: pointer; color: var(--gold); font-weight: 600; }
+  a.box.link { display: block; color: inherit; text-decoration: none; transition: border-color .15s; } a.box.link:hover { border-color: rgba(247,147,26,.6); }
+  .playcard { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 22px 0 8px; padding: 18px 22px; border-radius: 16px; color: var(--text);
+    background: linear-gradient(135deg, rgba(247,147,26,.22), rgba(247,147,26,.06)); border: 1px solid rgba(247,147,26,.55); }
+  .playcard:hover { text-decoration: none; border-color: var(--btc); }
+  .playcard span { color: #d5dde6; font-size: 15px; } .playcard b { font: 700 19px "Space Grotesk"; color: var(--text); }
+  .playcard i { flex: none; font-style: normal; padding: 11px 18px; border-radius: 12px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font-weight: 600; }
+  nav.top .play { padding: 7px 13px; border-radius: 10px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font-weight: 600; }
+  details > p, details > ul { margin: 8px 0 4px; }
+  main details:not(:has(.tbl)) { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { display: none; } }
+  @media (max-width: 560px) { nav.top .r a:not(.play) { display: none; } .playcard { flex-direction: column; align-items: flex-start; } td.ep { white-space: normal; } h2 { margin-top: 48px; }
+    .tbl.api { border: 0; overflow: visible; } .tbl.api thead { display: none; } .tbl.api table, .tbl.api tbody, .tbl.api tr, .tbl.api td { display: block; width: 100%; }
+    .tbl.api tr { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 10px; padding: 4px 0; }
+    .tbl.api td { border: 0; padding: 6px 14px; overflow-wrap: anywhere; } .tbl.api td.ep code { overflow-wrap: anywhere; }
+    .tbl.api td[data-l]::before { content: attr(data-l); display: block; color: var(--dim); font: 600 11px Inter; letter-spacing: .08em; text-transform: uppercase; } }
 </style>
 </head>
 <body>
 <nav class="top"><div class="in">
   <a class="brand" href="#top"><i>₿</i>Bitcoin Arena <span>Docs</span></a>
-  <div class="r"><a href="https://bitcoin-arena.io/">Home</a><a href="https://arena.btc-logistics-core.pages.dev/">Play</a></div>
+  <div class="r"><a href="https://bitcoin-arena.io/">Home</a><a href="#faq">FAQ</a><a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
 </div></nav>
 
 <div class="layout">
 <aside>
-  <b>Start</b>
+  <b>Play</b>
+  <a href="#start">Start playing</a>
+  <a href="#wallet">Your wallet</a>
+  <a href="#federations">Federations</a>
+  <a href="#locks">Stake locks and settlement</a>
+  <a href="#games">The games</a>
+  <a href="#nostr">Nostr</a>
+  <a href="#testnet">Testnet notes</a>
+  <a href="#faq">FAQ</a>
+  <b>How it works</b>
   <a href="#how">How Bitcoin Arena works</a>
   <a href="#cheat">When a node cheats</a>
   <a href="#words">The words used here</a>
   <b>Nodes</b>
   <a href="#node">What a node does</a>
+  <a href="#seats">Seats and committees</a>
+  <a href="#bond">Bond and advertisement</a>
+  <a href="#census">The census</a>
   <a href="#run">Run a node</a>
+  <a href="#dashboard">The dashboard</a>
+  <a href="#owner">The owner area</a>
+  <a href="#donor">Dev clients and donations</a>
   <b>Node API</b>
   <a href="#api">How to call a node</a>
   <a href="#api-dev">For game and market builders</a>
@@ -90,10 +120,146 @@
 </aside>
 
 <main id="top">
-  <h1>Bitcoin Arena developer docs</h1>
-  <div class="pills"><span class="pill">Decentralized</span><span class="pill">Non-custodial</span><span class="pill">Settles in Bitcoin</span></div>
-  <p class="lead">Bitcoin Arena is an engine for games and prediction markets played for bitcoin. It has no central server and no company holding money: a federation of independent nodes takes the stakes, decides every result and pays the winners. This page explains how that works, every request a node answers, and how to build your own game or market on it.</p>
+  <h1>Bitcoin Arena docs</h1>
+  <div class="pills"><span class="pill">Decentralized</span><span class="pill">Non-custodial</span><span class="pill">Settles in Bitcoin</span><span class="pill">Nostr native</span></div>
+  <p class="lead">Bitcoin Arena is an engine for games and prediction markets played for bitcoin. It has no central server and no company holding money: a federation of independent nodes takes the stakes, decides every result and pays the winners. This page explains how to play, where your sats are, how that works, how to run a node, every request a node answers, and how to build your own game or market on it.</p>
   <div class="note">Bitcoin Arena runs on Bitcoin <b>testnet4</b> and on private test chains today. Everything here uses test coins. Mainnet is not live.</div>
+
+  <a class="playcard" href="https://testnet.bitcoin-arena.io/"><span><b>Play on testnet</b><br>All three games are live on Bitcoin testnet4 with test sats: testnet.bitcoin-arena.io</span><i>Play →</i></a>
+
+  <div class="grid">
+    <a class="box link" href="#start"><h4>Play</h4><p>Open the page, make a wallet, deposit test sats and join a round.</p></a>
+    <a class="box link" href="#wallet"><h4>Wallet and federations</h4><p>Where your sats are, how stakes are locked and how you get paid.</p></a>
+    <a class="box link" href="#games"><h4>The games</h4><p>Tick Tock, Next Block · Rock Paper Scissors · Bitcoin Up or Down.</p></a>
+    <a class="box link" href="#node"><h4>Run a node</h4><p>Seats, bonds, the census, the dashboard and the owner area.</p></a>
+    <a class="box link" href="#api"><h4>Node API</h4><p>Every request a node answers, generated from its source.</p></a>
+    <a class="box link" href="#game"><h4>Build</h4><p>Write your own game or prediction market.</p></a>
+  </div>
+
+  <h2 id="start">Start playing</h2>
+  <p>Bitcoin Arena runs in your browser. There is nothing to install and no account to make.</p>
+  <ol class="steps">
+    <li><b>Open the testnet page</b>
+      <p>Go to <a href="https://testnet.bitcoin-arena.io/">testnet.bitcoin-arena.io</a>. Each game also has its own link: <a href="https://testnet.bitcoin-arena.io/?game=nextblock"><code>?game=nextblock</code></a>, <a href="https://testnet.bitcoin-arena.io/?game=rock-paper-scissors"><code>?game=rock-paper-scissors</code></a> and <a href="https://testnet.bitcoin-arena.io/?game=btc-updown"><code>?game=btc-updown</code></a>. The page finds the nodes, reads their rounds and shows them in the lobby.</p></li>
+    <li><b>Make your wallet</b>
+      <p>On your first visit the page asks how you want your wallet:</p>
+      <ul>
+        <li><b>Create a new wallet.</b> It is ready at once. Back up its 24 words later in Settings.</li>
+        <li><b>Restore a wallet</b> from its 24 words (or a 64-hex seed).</li>
+        <li><b>Login with Nostr</b>: a browser extension (NIP-07, for example Alby or nos2x), a phone signer (NIP-46, for example Amber, by QR code), a <code>bunker://</code> link, or an nsec. You can also create a new Nostr account there. See <a href="#nostr">Nostr</a>.</li>
+      </ul>
+      <div class="note"><b>Keep your 24 words or your Nostr key safe.</b> They are the only way back into your wallet. Nobody, not even the nodes, can recover it for you.</div></li>
+    <li><b>Play free, or deposit test sats</b>
+      <p>Free rounds need no wallet and no Lightning, and take no fee. For paid rounds, open <b>Deposit</b>, pick an amount and pay the Lightning invoice from any Lightning wallet: scan the QR code, copy it, or pay it from a wallet you connected with Nostr Wallet Connect. On testnet the page links to a test Lightning wallet with a small faucet, run by the project.</p></li>
+    <li><b>Join a round</b>
+      <p>The lobby lists the open rounds: free rows (“free · no wallet, no Lightning”) and paid rows with their stake, their federation and its load. It also shows how many nodes agree on each round. Joining a paid round locks your stake in the federation. Play starts only when the nodes have verified the lock.</p></li>
+    <li><b>Get paid</b>
+      <p>When the round is settled, winnings and refunds go back into your wallet on their own; they show as <i>pending</i> until they are redeemed. <b>Withdraw</b> any time: paste an invoice from your own Lightning wallet, or let a connected NWC wallet make one.</p></li>
+  </ol>
+  <h3 id="settings">Settings</h3>
+  <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, a field for your <b>operator key</b> if you run nodes (a node of yours never signs or earns in a round you play), and a link to the community on Armada.</p>
+
+  <h2 id="wallet">Your wallet</h2>
+  <p>Your sats are <b>e-cash</b> of a Fedimint federation, held by your browser. The wallet is the Fedimint client itself, compiled to WebAssembly, and its keys come from your 24 words (one wallet per seed and federation). No server keeps your balance.</p>
+  <div class="grid">
+    <div class="box"><h4>Deposit</h4><p>A Lightning invoice made through a federation <b>gateway</b>. The gateway puts in its own e-cash before it learns the preimage, so it cannot keep your payment. If one gateway does not answer within 10 s, the page asks the next. The smallest deposit is 5 sat, and 1 sat paid is 1 sat credited.</p></div>
+    <div class="box"><h4>Withdraw</h4><p>Paste a Lightning invoice; it sets the amount. The federation pays it through a gateway, which is paid only against the preimage. With several federations, a withdrawal comes from the one that holds the most.</p></div>
+    <div class="box"><h4>Balance</h4><p><b>Confirmed</b> and <b>pending</b>. The balance lives in the lobby, never inside a game.</p></div>
+    <div class="box"><h4>Move</h4><p>Moves your e-cash from one federation to another, for example when yours is heavily loaded.</p></div>
+  </div>
+
+  <h3 id="federations">Federations</h3>
+  <p>A <b>federation</b> holds the stakes. It is a stock Fedimint federation (mint v2, Lightning v2) whose <b>guardians</b> are bonded Arena nodes. On testnet4 there are two, each with 7 guardians that need 5 of 7 to sign:</p>
+  <div class="tbl"><table><thead><tr><th>Federation</th><th>Guardians</th><th>Threshold</th></tr></thead><tbody>
+    <tr><td>Arena testnet4 (A)</td><td>7, one on each of 7 nodes</td><td>5 of 7</td></tr>
+    <tr><td>Arena testnet4 B</td><td>7, one on each of 7 more nodes</td><td>5 of 7</td></tr>
+  </tbody></table></div>
+  <p>Together their 14 nodes form the testnet4 census. Every game can be paid through either federation. A deposit goes to the open federation with the lower <b>load</b>. A federation that is not on the page's known list is shown with its guardians, and the page asks you to confirm it before it is used.</p>
+  <h4>Load</h4>
+  <p>A federation's <b>load</b> is the bitcoin it holds divided by what its guardians' bonds cover. On mainnet the page refuses deposits into a federation at a load of 1 or more. <b>On testnet4 it only warns</b> (“Load N: this federation holds X sat, more than the Y sat its guardians' bonds cover”) and refuses nothing. The deposit screen shows each federation's funds and free capacity: green below 70 %, yellow from 70 %, red from 90 %. When yours is above 90 % and another is below 50 %, the page offers to move.</p>
+  <h4>Federation status</h4>
+  <div class="tbl"><table><thead><tr><th>Status</th><th>What you can do</th></tr></thead><tbody>
+    <tr><td>OPEN</td><td>everything</td></tr>
+    <tr><td>DRAINING</td><td>no deposits; play, withdraw and move still work</td></tr>
+    <tr><td>CRITICAL</td><td>withdraw and move only</td></tr>
+    <tr><td>HALTED</td><td>everything is frozen</td></tr>
+    <tr><td>CLOSED</td><td>its successor holds everything</td></tr>
+  </tbody></table></div>
+  <p>The page hides what a status does not allow, and moves e-cash out of a DRAINING or CRITICAL federation on its own.</p>
+
+  <h3 id="locks">Stake locks and settlement</h3>
+  <p>A paid entry does not send your sats to anyone. One federation transaction turns your e-cash into a <b>stake lock</b> (and a <b>fee lock</b> beside it). A lock is a Lightning v2 contract inside the federation with exactly three ways out:</p>
+  <ul>
+    <li><b>Claim</b>: the round's settlement key takes it, in the round's one settlement transaction, when you lost.</li>
+    <li><b>Forfeit</b>: the committee hands it back to you (paid only to your refund key), with a payout contract for your winnings when you won.</li>
+    <li><b>Refund after expiry</b>: if nobody acts, the lock runs out and your own client takes it back with your key.</li>
+  </ul>
+  <p>The nodes check every field of the lock with the federation before your entry counts (<code>POST /lock</code>, <code>POST /fee-lock</code>). After the round, the committee signs one settlement transaction together (FROST, 5 of 7), which each node has rebuilt itself. There is no pool wallet.</p>
+  <div class="tbl"><table><thead><tr><th>Result</th><th>What happens to your stake</th></tr></thead><tbody>
+    <tr><td>Win or qualify</td><td>The lock comes back to you, plus a payout contract. Your client redeems both into the wallet.</td></tr>
+    <tr><td>Lose (or forfeit)</td><td>The lock is claimed in the settlement transaction.</td></tr>
+    <tr><td>Void (round did not happen, or a market was disputed)</td><td>Every lock is handed back at once.</td></tr>
+    <tr><td>Nobody settles</td><td>The lock expires and your client refunds it with your own key.</td></tr>
+  </tbody></table></div>
+  <p>Winnings can also be sent straight to a Lightning address: a player names one with <code>POST /payout-address</code>, and the seats co-sign the send (<code>GET /winnings</code> shows its state).</p>
+
+  <h2 id="games">The games</h2>
+  <p>Three games run on testnet4 today. All three are paid through both federations and checked by the same nodes.</p>
+
+  <h3 id="nextblock">Tick Tock, Next Block</h3>
+  <p><i>Code name <code>nextblock</code> · a replayed skill game · <a href="https://testnet.bitcoin-arena.io/?game=nextblock">play it</a></i></p>
+  <p>Drive a truck through the next Bitcoin block. Every player of a round gets the same block and the same seed; the best run of the round wins the pot.</p>
+  <ul>
+    <li><b>Play</b>: load mempool transactions onto your truck, cross the bitcoin price war front (the closer you drive to it, the more points you score) and deliver to the miners' drop-off before time runs out.</li>
+    <li><b>Checked by replay</b>: your inputs go to every node of the round as you play. Each node replays them with the game's deterministic core and signs the score it gets. The battlefield's BTC price is a sample the committee signs every 5 seconds.</li>
+    <li><b>Payout</b>: a rank curve. The top quarter of the players who qualified share the losers' stakes, with weights 0.75<sup>rank−1</sup>; qualifiers below them get their stake back.</li>
+    <li><b>Rounds</b>: free and paid rows. A late joiner can still enter while entries are open, but the run ends with the round. On testnet4 the paid rounds run on a grid of 6-hour periods.</li>
+  </ul>
+
+  <h3 id="rps">Rock Paper Scissors</h3>
+  <p><i>Code name <code>rock-paper-scissors</code> · head to head · <a href="https://testnet.bitcoin-arena.io/?game=rock-paper-scissors">play it</a></i></p>
+  <p>Rock Paper Scissors for bitcoin. Both players commit a hidden move, then reveal it; the winner takes the pot, a draw returns both stakes.</p>
+  <ul>
+    <li><b>Commit and reveal</b>: your pick is sealed as a hash of the round, your key, your move and a secret salt. After the entry close you reveal it (<code>POST /reveal</code>); the nodes collect each other's reveals and sign the result.</li>
+    <li><b>8-second rounds</b>: rounds close every 8 seconds, back to back, with several tables per slot. A third player gets a second table.</li>
+    <li><b>Results</b>: a win pays your stake plus your opponent's; a draw returns both stakes; a player who does not reveal forfeits; a round without two players is void and refunded.</li>
+    <li><b>Tables on demand</b>: when the page finds no open table it asks the nodes for one (<code>POST /h2h-want</code>), and the operator publishes a new grid of rounds in one Bitcoin transaction. On testnet this takes a while, so open tables are usually already there.</li>
+  </ul>
+
+  <h3 id="updown">Bitcoin Up or Down</h3>
+  <p><i>Code name <code>btc-updown-15m</code> · a prediction market · <a href="https://testnet.bitcoin-arena.io/?game=btc-updown">play it</a></i></p>
+  <p>Will the bitcoin price be higher at the end of the 15-minute window? Pick Up or Down; the attestors sign the price and the winning side shares the pot.</p>
+  <ul>
+    <li><b>A market every 15 minutes</b>, 96 a day.</li>
+    <li><b>The rule</b>: the price to beat is the 60-second time-weighted average price before the window starts; the end price is the same average before it ends. Up wins if the end price is at or above the price to beat (a tie is Up).</li>
+    <li><b>Who decides</b>: three independent <b>attestors</b>, each reading several exchanges and taking the median. 2 of the 3 must sign the same outcome, which anyone then posts to the nodes (<code>POST /outcome</code>). The nodes check it; they do not set the price.</li>
+    <li><b>Trading</b>: signed limit orders in whole cents (0.01 to 0.99), at least 5 shares; a share pays 1 sat if its side wins. The nodes clear orders in batches every half second, at one price every node computes the same way.</li>
+    <li><b>Fee</b>: 1 % (0.5 % nodes, 0.5 % donation), due only on what fills. An order that has not filled can be cancelled at no cost (<code>POST /cancel</code>).</li>
+    <li><b>Void</b>: if the attestors contradict each other, or no outcome stands by the deadline, everything is refunded: every stake and every fee.</li>
+  </ul>
+
+  <h2 id="nostr">Nostr</h2>
+  <p>Bitcoin Arena is Nostr native: your Nostr key can be your wallet login, your node owner key and your community identity, and your Lightning wallet can connect over Nostr. Everything below is built and in use.</p>
+  <div class="tbl"><table><thead><tr><th>What</th><th>How it works</th><th>NIPs</th></tr></thead><tbody>
+    <tr><td><b>Login with Nostr</b> (players)</td><td>Sign in with an nsec, a browser extension, or a remote signer: a <code>bunker://</code> link, a NIP-05 name, or a <code>nostrconnect://</code> QR code for a phone signer such as Amber. You can also create a Nostr account in the page.</td><td>NIP-07, NIP-46</td></tr>
+    <tr><td><b>Your wallet from your key</b></td><td>The wallet's seed is stored as one app-data event (kind 30078, <code>d = bitcoin-arena/seed</code>), encrypted to your own key. Log in on another device and the wallet comes back. With an nsec the seed is derived from the key itself. An existing seed event is never overwritten.</td><td>NIP-78, NIP-44</td></tr>
+    <tr><td><b>Profile</b></td><td>The page reads your name and picture, and a new account publishes its chosen name.</td><td>kind 0</td></tr>
+    <tr><td><b>Nostr Wallet Connect</b></td><td>Paste a <code>nostr+walletconnect://</code> link once. The page shows the wallet's balance, pays deposit invoices and stakes from it, and withdraws winnings into it by asking the wallet for an invoice.</td><td>NIP-47</td></tr>
+    <tr><td><b>Node owners</b></td><td>The owner key of a node is a Nostr key (BIP-340, x-only secp256k1). In the owner area you sign in with an extension, a remote signer or an nsec. With an extension or remote signer, every owner request is a signed HTTP-auth event (kind 27235) that names the node, the action and a hash of its arguments; the node checks the id, the signature, a ±120 s window and that it was not used before.</td><td>NIP-98, NIP-07, NIP-46</td></tr>
+    <tr><td><b>The Arena relay</b></td><td><code>wss://relay.bitcoin-arena.io</code> keeps only profiles, relay lists and encrypted seeds, and passes on remote-signing, auth and wallet-connect messages. Every other kind is refused, and every id and signature is checked. The page also uses relay.damus.io, nos.lol and relay.primal.net.</td><td>NIP-01, 11, 42, 46, 47, 65, 78</td></tr>
+    <tr><td><b>Community</b></td><td>The Bitcoin Arena community is on Armada, a Nostr chat app; Settings links to it. Join with the same key.</td><td></td></tr>
+  </tbody></table></div>
+  <div class="note">What is <b>not</b> on Nostr: node discovery, bonds, rounds, results and settlement live on Bitcoin and in the federations, where anyone can check them. With an extension or remote signer an owner cannot sign game manifests in the page; that needs the 24 words or an nsec.</div>
+
+  <h2 id="testnet">Testnet notes</h2>
+  <p>Bitcoin Arena runs on <b>Bitcoin testnet4</b>. Test sats have no value. Mainnet is not live. What is different on testnet4:</p>
+  <ul>
+    <li><b>Load only warns.</b> A federation over its bond cover still takes deposits (mainnet refuses them).</li>
+    <li><b>No bond is taken.</b> Objections, re-runs, void and refund work; a slash is only worked out and recorded (<code>/slash-owing</code>).</li>
+    <li><b>Shorter clocks.</b> A bond matures after 144 blocks (mainnet 4,320, about 30 days), and the federation's notice and drain periods are counted in far fewer blocks.</li>
+    <li><b>Project-run services.</b> The Lightning gateways, the faucet wallet, the attestors and the donation recipients are run by the project for testing.</li>
+    <li><b>Operator grids.</b> Tick Tock runs on 6-hour periods, Rock Paper Scissors on grids opened on demand, Up or Down on its 15-minute grid. These grids come from the operators' scripts, not from the protocol.</li>
+  </ul>
 
   <h2 id="how">How Bitcoin Arena works</h2>
   <div class="flow">
@@ -186,25 +352,77 @@
   <p>A node is checked by the others in everything it signs. See <a href="#cheat">When a node cheats</a>.</p>
   <p>For that work the nodes of a round share the round's <b>node fee</b> (5% of every paid stake today). It is split three ways: the nodes that replay the runs, the nodes that sign the payouts, and the guardians that hold the money. A node operator gets a share of the fees of every round their node serves.</p>
 
-  <h3 id="run">Run a node</h3>
-  <p>You need a computer that is always on with a public HTTPS address (a tunnel works), Node.js 24, the Bitcoin Arena source, and a Bitcoin node (<code>bitcoind</code>) of the same network, testnet4 today, so your node reads the chain itself. For the guardian role you also need <code>fedimintd</code> and a seat in the federation.</p>
-<pre># start a node on port 8080 with its database in round.db
-node packages/arena-node/src/main.js 8080 round.db
+  <h3 id="seats">Seats and committees</h3>
+  <p>Every round has a <b>committee</b>: 7 seated nodes, drawn for that round, of which 5 must sign the same result and the same payout. The draw is weighted by bond and seeded by a Bitcoin block: <code>committee_seed = H(census roots ‖ round id ‖ hash of the beacon block)</code>, where the beacon block is the first block after the round's committee time. The page computes the committee itself and checks every signature against it. Game and verification seats are drawn only from nodes that host the game.</p>
+  <p>Up to 9 nodes are drawn, at most 7 are seated, and a round opens only if at least 5 sign that they are present before its start. A node that does not show up is replaced by a reserve. Read the draw of any round from a node: <code>GET /committee</code>, <code>GET /roles</code>.</p>
 
-# the same, with the first game (Tick Tock, Next Block) hosted
-node packages/nextblock/bin/node.mjs 8080 round.db</pre>
-  <p>The node is configured by environment variables. The ones that matter first:</p>
+  <h3 id="bond">Bond and advertisement</h3>
+  <p>A node gets a seat by posting a <b>bond</b> on Bitcoin: a Taproot output with three ways to spend it.</p>
+  <ul>
+    <li><b>Key path</b>: the node and the arbitration set together (MuSig2), for a cooperative spend.</li>
+    <li><b>Path A</b>: the node alone, after the bond's <b>maturity height</b> (template 2 writes it into the bond: confirmation + 4,320 blocks on mainnet, + 144 on testnet4).</li>
+    <li><b>Path B</b>: k of m arbitration keys, only with a proof of cheating (the slash path; see <a href="#cheat">When a node cheats</a>).</li>
+  </ul>
+  <p>Maturity is not an expiry: a mature, unspent bond still counts. The node's signed <b>advertisement</b> travels in the witness of the bond's funding transaction, and the bond output commits to its hash. It names the node's roles (<code>game_verify</code>, <code>settlement</code>, <code>guardian_capable</code>, each opt-in), its operator, its endpoint, its payout key, the federations it is a guardian of, the games it hosts and the protocol versions it speaks. Every bond also pays a little to one shared marker address, so a light client (the homepage's <a href="https://bitcoin-arena.io/games">live games</a> list, for one) finds every node on Bitcoin and checks each proof and signature itself. Changing roles or games is an advertisement update, not a new bond.</p>
+
+  <h3 id="census">The census</h3>
+  <p>The <b>census</b> is the set of bonds that are confirmed and old enough, read from the chain. Every node computes it the same way; the committees are drawn from it. Ask a node for a round's census with <code>GET /census</code> (the evidence a client needs to draw the committee itself), for the stake ceiling that census supports with <code>GET /census-health</code>, and for the bond-weighted medians of what its nodes declare with <code>GET /census-median</code>. Anyone can object to a round's census (<code>POST /census-objection</code>); if the objection holds, the round takes no new entries there. A spent bond leaves the census, and with it every future committee.</p>
+
+  <h3 id="run">Run a node</h3>
+  <p>You need a computer that is always on with a public HTTPS address (a tunnel works), Node.js 24, the Bitcoin Arena source, and a Bitcoin node (<code>bitcoind</code>) on the same network, testnet4 today, so your node reads the chain itself. For the guardian role you also need <code>fedimintd</code> and a seat in a federation. On testnet4, about 50,000 test sats is the practical floor for a bond.</p>
+<pre># start a node on port 31221 with its database in node.db
+node packages/arena-node/src/main.js 31221 node.db
+
+# the same, hosting Tick Tock, Next Block (sets ARENA_GAMES to nextblock when it is not set)
+node packages/nextblock/bin/node.mjs 31221 node.db</pre>
+  <p>The node listens on <code>127.0.0.1</code> unless you set <code>ARENA_BIND</code>; put a reverse proxy or a tunnel in front of it. <b>Back up <code>node.db</code></b>: it holds the node's key. The node is configured by environment variables:</p>
   <div class="tbl"><table><thead><tr><th>Setting</th><th>What it does</th></tr></thead><tbody>
-    <tr><td><code>ARENA_BIND</code></td><td>The address to listen on (default <code>127.0.0.1</code>; put a reverse proxy or tunnel in front).</td></tr>
-    <tr><td><code>ARENA_GAMES</code></td><td>The games this node hosts: a comma-separated list of modules that each export <code>GAME</code>. With none, the node hosts no game.</td></tr>
+    <tr><td><code>ARENA_BIND</code></td><td>The address to listen on (default <code>127.0.0.1</code>).</td></tr>
     <tr><td><code>ARENA_BITCOIND_URL</code>, <code>ARENA_BITCOIND_COOKIE</code></td><td>Your <code>bitcoind</code>'s RPC address and cookie (set both). The network follows this node.</td></tr>
-    <tr><td><code>ARENA_DONATION_NETWORK</code></td><td><code>testnet4</code> or <code>regtest</code>: which donation recipients the node uses.</td></tr>
-    <tr><td><code>ARENA_SERIES_FILE</code></td><td>The published round series this node writes rounds for.</td></tr>
-    <tr><td><code>ARENA_STAKE_LOCK_BIN</code>, <code>ARENA_FEDERATION_CLIENT_DIR</code></td><td>The federation client the node uses to check and settle stake locks.</td></tr>
+    <tr><td><code>ARENA_GAMES</code></td><td>The games this node hosts: a comma-separated list of modules that each export <code>GAME</code>. Games installed from the owner area live in <code>&lt;db&gt;.plugins</code> (<code>ARENA_PLUGINS_DIR</code>).</td></tr>
+    <tr><td><code>ARENA_SERIES_FILE</code>, <code>ARENA_GRID_SERIES_FILE</code></td><td>The published round series (and grids) this node writes rounds for.</td></tr>
     <tr><td><code>ARENA_PEERS</code></td><td>The other nodes this node talks to directly.</td></tr>
-    <tr><td><code>ARENA_LND_*</code>, <code>ARENA_LNCLI</code></td><td>The Lightning node for deposits and payouts, when this node runs one.</td></tr>
+    <tr><td><code>ARENA_STAKE_LOCK_BIN</code>, <code>ARENA_FEDERATION_CLIENT_DIR</code>, <code>ARENA_FEDERATION_INVITE</code></td><td>The federation client the node uses to check and settle stake locks, and the federation it joins.</td></tr>
+    <tr><td><code>ARENA_DONATION_NETWORK</code></td><td><code>testnet4</code> or <code>regtest</code>: which donation recipients the node uses.</td></tr>
+    <tr><td><code>ARENA_PRICE_FEED=1</code></td><td>Sign the BTC price samples Tick Tock's battlefield uses.</td></tr>
+    <tr><td><code>ARENA_LND_DIR</code>, <code>ARENA_LND_RPC</code>, <code>ARENA_LND_NETWORK</code>, <code>ARENA_LND_GATEWAYS</code>, <code>ARENA_LNCLI</code></td><td>The Lightning node and gateways for deposits and payouts, when this node runs them.</td></tr>
+    <tr><td><code>ARENA_TLS</code>, <code>ARENA_TLS_CERT</code>, <code>ARENA_TLS_KEY</code></td><td>Serve HTTPS directly instead of behind a proxy.</td></tr>
+    <tr><td><code>ARENA_DEV_CLIENT_DIR</code></td><td>A dev client's directory, shown on the dashboard's dev-client card.</td></tr>
   </tbody></table></div>
-  <p>Open <code>/dashboard</code> on your node to see its rounds, its committee seats and its share of the fees per day, month and game.</p>
+  <div class="note"><b>Not built yet:</b> a tool for a new operator to post a testnet4 bond (the project posted today's bonds), a tool to withdraw node fees, publishing manifests on chain, and automatic slashing. Game cores run in a worker sandbox, not yet in a separate process.</div>
+
+  <h3 id="dashboard">The dashboard</h3>
+  <p>Open <code>/dashboard</code> on any node (<code>/dashboard.json</code> is the same as data). It shows what the node earned today, this month and this year (counted as earned once a settlement is accepted, otherwise as owed), a 30-day chart of its fees by role, the rounds it checked with each player's outcome and a replay link, its settlements and federations, the Lightning hosts and gateways it runs, and a dev-client card. Everything comes from the node's own store. The testnet page links the dashboards of its nodes.</p>
+
+  <h3 id="owner">The owner area</h3>
+  <p>Open <code>/dashboard/owner</code> on your node (the dashboard links it as “Owner area”). There are no passwords and no cookies: every request you make is signed with your owner key, valid for 2 minutes and only once.</p>
+  <ol class="steps">
+    <li><b>Sign in</b>
+      <p>Create 24 words, restore them, or log in with Nostr (extension, remote signer or nsec). The owner key is a Nostr key; see <a href="#nostr">Nostr</a>.</p></li>
+    <li><b>Claim your node</b>
+      <p>A node without an owner prints a claim code (<code>XXXX-XXXX-XXXX</code>) in its log and writes it to <code>&lt;db&gt;.owner-claim</code>. Enter it once; from then on only your key can act for the node (<code>POST /owner/claim</code>).</p></li>
+    <li><b>Run it</b>
+      <ul>
+        <li><b>This node</b>: its key, whether it is a guardian, the games it hosts.</li>
+        <li><b>Standing</b>: its seats in recent censuses, and its bond's margin over the floor (<code>/owner/standing</code>, <code>/owner/seatings</code>).</li>
+        <li><b>Leave or stay</b>: leaving stops new rounds; the node serves out the rounds it holds, and a guardian posts a departure notice to every seat. Leaving is never a slash (<code>/owner/leave</code>, <code>/owner/stay</code>).</li>
+        <li><b>Donations</b>: what the seat verified for the protocol and game donation sets (<code>/owner/donations</code>).</li>
+        <li><b>Games from other seats</b>: install, update or remove a game from another seat's address. It is checked in your browser, checked again by the seat, tried in a sandbox, and goes live without a restart. Auto-update and the source seat are settings (<code>/owner/plugins/*</code>, <code>/owner/settings</code>).</li>
+        <li><b>Networks</b>: the chain, donation sets, series and federation invite a node runs with; install, update or remove (<code>/owner/network/*</code>).</li>
+        <li><b>Sign a game or market</b>: your developer key comes from the same 24 words, so you can sign a manifest right there.</li>
+      </ul></li>
+  </ol>
+  <p>Through the API only: the node's half of a cooperative bond spend with the arbitration set (<code>/owner/musig/nonce</code>, <code>/owner/musig/partial</code>), and operator tokens (<code>/owner/operator/mint|list|revoke</code>) for <code>/operator/status</code> and <code>/operator/vote</code>, which hands back a vote payload that you broadcast yourself. The node never moves money for a vote.</p>
+
+  <h3 id="donor">Dev clients and donations</h3>
+  <p>Donations are paid in the round's settlement as payout contracts to the developers' keys. A developer collects them with the <b>dev client</b>, <code>packages/arena-donor</code>:</p>
+<pre>arena-donor init       # make the developer's keys
+arena-donor once       # collect once
+arena-donor loop       # collect every few minutes
+arena-donor status     # what is waiting
+arena-donor game-key   # the Ed25519 game developer key
+arena-donor sign &lt;dir&gt; # sign a game's manifest</pre>
+  <p>It asks every seat what it verified for its key (<code>GET /donations?key=</code>), redeems the payout contracts in each federation with the same WebAssembly client the page uses, run in Node, and withdraws to the developer's own Lightning node. It then tells the seats what it read (<code>POST /donations/read</code>, signed by the key). On testnet4 the donation key set names two dev clients (dev a and dev b), split 2:1, which run as services that collect every 5 minutes.</p>
 
   <h2 id="api">The node API</h2>
   <p>Every node answers the same HTTP requests at its own address, for example <code>https://your-node.example/games</code>. There are {{NALL}} in all. Requests are open to any page (CORS is open); the few that change something are protected by a signature, listed under <em>Access</em>.</p>
@@ -435,6 +653,24 @@ for (const node of committeeNodes)
     <tr><td>Donation, half</td><td>2.5%</td><td>the protocol developers</td></tr>
   </tbody></table></div>
   <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. Free rounds pay neither. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
+  <h2 id="faq">FAQ</h2>
+  <details><summary>Where are my sats?</summary><p>As Fedimint e-cash in your browser's wallet, under your 24 words or your Nostr key, in one of the federations. No company holds them. While you play, your stake sits in a lock in the federation that only the round's result, or its expiry, can open.</p></details>
+  <details><summary>I lost my 24 words. Can anyone recover my wallet?</summary><p>No. Without your words (or the Nostr key you logged in with) the wallet and every lock it would refund are gone. Back up your words in Settings.</p></details>
+  <details><summary>How do I get testnet sats?</summary><p>The testnet page links a test Lightning wallet with a small faucet (1,000 sat at a time, rate-limited). Pay the Deposit invoice from it, or from any testnet4 Lightning wallet.</p></details>
+  <details><summary>What is the smallest deposit?</summary><p>5 sat. 1 sat paid is 1 sat credited.</p></details>
+  <details><summary>Why does my federation show a load above 1?</summary><p>It holds more bitcoin than its guardians' bonds cover. On testnet4 that is a warning only. On mainnet the page would refuse deposits into it and point you to another federation.</p></details>
+  <details><summary>Federation A or B?</summary><p>You do not have to choose: a deposit goes to the open federation with the lower load, and every game can be paid through either. A federation the page does not know is shown with its guardians and must be confirmed by you first.</p></details>
+  <details><summary>What do free rounds cost?</summary><p>Nothing. No wallet, no Lightning, no fee and no donation.</p></details>
+  <details><summary>What is taken from a paid stake?</summary><p>A 5 % node fee and your donation, 0 to 5 % (5 % by default), split between the game's developer and the protocol developers. Up or Down charges 1 % instead, only on what fills. See <a href="#money">Where the money goes</a>.</p></details>
+  <details><summary>What if a node cheats?</summary><p>One node cannot decide anything: 5 of the round's 7 seats must sign the same result, every run is replayed, and anyone can object for 10 minutes. If the committee cannot agree, the entry is void and your stake comes back. See <a href="#cheat">When a node cheats</a>.</p></details>
+  <details><summary>What if nobody settles my round?</summary><p>Your lock expires and your own client takes it back with your key. Nobody has to act for you.</p></details>
+  <details><summary>Can I join a round that has started?</summary><p>Yes, while entries are open. The run still ends with the round, so you have less time.</p></details>
+  <details><summary>Rock Paper Scissors: what if my opponent does not reveal?</summary><p>They forfeit and you win. If nobody joins your table, the round is void and your stake is refunded.</p></details>
+  <details><summary>Who decides Bitcoin Up or Down?</summary><p>Three named attestors; 2 of 3 must sign the same outcome. A tie is Up. If they disagree, or no outcome stands by the deadline, every stake and fee is refunded.</p></details>
+  <details><summary>Do I need Nostr?</summary><p>No. A wallet with 24 words works without it. Nostr lets you log in with a key you already have, bring your wallet to another device, and pay from your own wallet over Nostr Wallet Connect.</p></details>
+  <details><summary>I run nodes. Can I play too?</summary><p>Yes. Enter your operator key in Settings: your nodes then never sign or earn in a round you play.</p></details>
+  <details><summary>How do I claim my node?</summary><p>Open <code>/dashboard/owner</code> on it and enter the claim code from the node's log or from <code>&lt;db&gt;.owner-claim</code>.</p></details>
+  <details><summary>Is this on mainnet?</summary><p>No. Bitcoin Arena runs on Bitcoin testnet4. Test sats have no value.</p></details>
 </main>
 </div>
 </body>
