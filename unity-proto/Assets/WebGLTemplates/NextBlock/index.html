@@ -2356,7 +2356,10 @@
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
       // refused here by name rather than played on the wrong one
       {
-        const core = window.BLWP_USE_CORE && !pickFor(named.roundIdHex) && !hiddenFor(named.roundIdHex) ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
+        // (kanban #353, measured 2026-10-14 04:12-04:40Z: an RPS tap moved to the next table was refused "that round runs core
+        // d6560987..., and this page carries no such core" - a game played in its own client runs no Tick Tock core here)
+        const ownClient = !!(window.ARENA_GAME_CHOSEN && window.ARENA_GAME_CHOSEN.name !== 'nextblock');
+        const core = window.BLWP_USE_CORE && !ownClient && !pickFor(named.roundIdHex) && !hiddenFor(named.roundIdHex) ? window.BLWP_USE_CORE(BLWPCLIENT.roundCoreHex(named.round)) : { ok: true };
         // (a market's pick and a head-to-head move play no run on any core here: kanban #206, #233)
         if (!core.ok) {
           window.BLWP_JOIN_REFUSED = core.why;
