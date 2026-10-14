@@ -3163,7 +3163,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         names: namesHeld(held.roundId),
         // WHAT A PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): the engine's and the game's own (its plugin's
         // roundWarnings) - advisory and not signed; a page computes the engine's itself and takes only codes it can name
-        warnings: free ? [] : warningsOf(c, rid),
+        warnings: free ? [] : warningsOf(c, held.roundId),
         needed, signerNodes: c.nodes.length,
         // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
         // joined here, and the two counts. `watching` is not signed.
