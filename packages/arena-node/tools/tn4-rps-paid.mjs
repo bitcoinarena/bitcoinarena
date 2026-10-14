@@ -56,7 +56,7 @@ import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { drivenTape, say as sayTo, bedFrom, GENESIS_HASH } from '../test/window-fixture.js';
 import { NEXTBLOCK_CORES } from '../../nextblock/plugin/truck-cores.js';
 const env = process.env;
-for (const k of ['PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCLI', 'PAYER_DIR', 'PAYER_RPC'])
+for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCLI', 'PAYER_DIR', 'PAYER_RPC'])
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
@@ -68,9 +68,11 @@ const evenPlayer = () => { let k; do { k = secp256k1.utils.randomSecretKey(); } 
 
 import { hiddenMove, moveCommitment, revealMove } from '../../arena-client/src/head-to-head.js';
 import { RPS_GAME_ID } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
-const nodes = env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
+import { GAME_ID_V2 as RPS_GAME_ID_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scissors-v2.js';
+// NODES (kanban #353): the seats by URL - a v2 round draws its signer nodes from all 14, seven of them on the test host
+const nodes = env.NODES ? env.NODES.split(',').map((u) => u.trim().replace(/\/+$/, '')) : env.PORTS.split(',').map((p) => `http://127.0.0.1:${p.trim()}`);
 const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
-const GAME = toHex(RPS_GAME_ID);
+const GAME = toHex(env.RPS_V2 ? RPS_GAME_ID_V2 : RPS_GAME_ID);   // RPS_V2=1 (kanban #353): the v2 tables a v2 grid seats from 14
 
 async function paidEntry(c, rid, roundHex, move, who) {
   const STAKE = BigInt(c.stakeMsat);
@@ -175,6 +177,15 @@ try {
     const rows = list.filter((r) => r.game && r.game.id === GAME && Number(r.entryCloseMs) - now > ahead).sort((a, b) => Number(a.entryCloseMs) - Number(b.entryCloseMs) || (a.id < b.id ? -1 : 1));
     if (!rows.length) throw new Error(`no RPS round held whose entry closes more than ${ahead / 1000} s ahead`);
     roundHex = rows[0].id;
+    // FEDERATION=<hex prefix> (kanban #353): only a table of the federation this payer's wallet pays into - both grids list together
+    if (env.FEDERATION) {
+      roundHex = null;
+      for (const r of rows.slice(0, 40)) {
+        const k = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${r.id}`)).arrayBuffer()));
+        if (toHex(k.federationId).startsWith(String(env.FEDERATION).toLowerCase())) { roundHex = r.id; break; }
+      }
+      if (!roundHex) throw new Error(`no RPS round of federation ${env.FEDERATION} among the next 40`);
+    }
   }
   const c = decodeRoundContract(new Uint8Array(await (await fetch(`${nodes[0]}/round?id=${roundHex}`)).arrayBuffer()));
   const rid = roundId(c);
