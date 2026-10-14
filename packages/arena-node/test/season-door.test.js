@@ -142,3 +142,98 @@ test('seasonRounds: no amount for an entry until it is FINAL and settled; the pa
     [[toHex(P5), null, null, null]],
   ]);
 });
+
+test('GET /season-rounds: this seat\'s rounds of a season, every msat a decimal string; by name, by id, by a list of ids', async () => {
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, ...opts });
+  try {
+    const { P2, P4, P5 } = seed(d.round, Date.now());
+    const ask = async (q) => fetch(`http://127.0.0.1:${d.port}/season-rounds${q}`);
+    const r = await ask('?game=nextblock');
+    assert.equal(r.status, 200);
+    assert.match(r.headers.get('cache-control'), /max-age=30/);
+    assert.equal(r.headers.get('access-control-allow-origin'), '*');
+    const j = await r.json();
+    assert.equal(j.node, toHex(d.round.pubkey));
+    assert.deepEqual(j.game, { ids: [toHex(NEXTBLOCK_GAME_ID)] });
+    assert.equal(j.days, 7);
+    assert.equal(j.rounds.length, 3, 'the settled round, the free one, the unsettled one: not the old one, not another game\'s');
+    const flat = j.rounds.flatMap((x) => x.entries.map((e) => [e.player, e.stakeMsat, e.payoutMsat]));
+    assert.ok(j.rounds.every((x) => typeof x.startMs === 'string' && /^[0-9]+$/.test(x.startMs) && x.void === false));
+    assert.deepEqual(flat.find((x) => x[0] === toHex(P2)), [toHex(P2), String(STAKE), '0']);
+    assert.deepEqual(flat.find((x) => x[0] === toHex(P4)), [toHex(P4), '0', null], 'no FINAL result: no amount, null not 0');
+    assert.deepEqual(flat.find((x) => x[0] === toHex(P5)), [toHex(P5), String(STAKE), null]);
+    // the id, and the list of ids a network season asks with, are the same rounds; a list is not taken as a name on /season
+    assert.deepEqual((await (await ask(`?game=${toHex(NEXTBLOCK_GAME_ID)}`)).json()).rounds, j.rounds);
+    const two = await (await ask(`?game=${toHex(NEXTBLOCK_GAME_ID)},${toHex(b32(0x77))}&days=7`)).json();
+    assert.equal(two.rounds.length, 4, 'the other game\'s round too, asked by its id');
+    assert.equal((await fetch(`http://127.0.0.1:${d.port}/season?game=${toHex(NEXTBLOCK_GAME_ID)},${toHex(b32(0x77))}`)).status, 404);
+    assert.equal((await ask('')).status, 400);
+    assert.equal((await ask('?game=nosuchgame')).status, 404);
+    assert.equal((await ask('?game=nextblock&days=91')).status, 400);
+  } finally { await d.close(); }
+});
+
+test('GET /season?scope=network: the other seats\' rounds merged, a round counted only when 3 seats agree on it byte for byte', async () => {
+  // SEVEN OTHER SEATS, answered by a fetcher the test holds: A, B and C hold this seat's rounds and one more it does not
+  // (B with round 1's amounts altered - one dissent against three); C and D a forged round, which F (answering under this
+  // seat's own key) and G (under A's key, at a second address) hand in too - two seats' word, not four; E never answers.
+  const key = (n) => toHex(schnorr.getPublicKey(b32(n)));
+  const base = (x) => `http://127.0.0.1:9/seat-${x}`;
+  const peers = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(base);
+  const X = toHex(b32(0x5a)), F = toHex(b32(0x5f));
+  const answers = new Map();
+  const asked = [];
+  const seasonFetch = async (u) => {
+    asked.push(u);
+    const at = peers.find((p) => u.startsWith(`${p}/`));
+    const a = answers.get(at);
+    if (!a) throw new Error('no answer');
+    return new Response(JSON.stringify(a), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, peers, seasonFetch, ...opts });
+  try {
+    const now = Date.now();
+    seed(d.round, now);
+    const game = toHex(NEXTBLOCK_GAME_ID);
+    const mine = await (await fetch(`http://127.0.0.1:${d.port}/season-rounds?game=nextblock`)).json();
+    const local = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock`)).json();
+    const extra = { roundId: 'ee'.repeat(32), gameId: game, startMs: String(now - HOUR), void: false,
+      entries: [{ player: X, name: 'bob', stakeMsat: '0', payoutMsat: '0', outcome: 'DELIVERED', score: 42 }] };
+    const forged = { roundId: 'ff'.repeat(32), gameId: game, startMs: String(now - HOUR), void: false,
+      entries: [{ player: F, name: 'mallory', stakeMsat: '1000', payoutMsat: '1000000000', outcome: 'DELIVERED', score: 9999 }] };
+    const altered = mine.rounds.map((r) => (r.entries.some((e) => e.payoutMsat !== null && e.payoutMsat !== '0')
+      ? { ...r, entries: r.entries.map((e) => ({ ...e, payoutMsat: e.payoutMsat === null ? null : String(BigInt(e.payoutMsat) + 1n) })) } : r));
+    assert.notDeepEqual(altered, mine.rounds, 'B\'s copy of round 1 differs');
+    const of = (n, rounds) => ({ node: key(n), rounds });
+    answers.set(base('a'), of(0xa1, [...mine.rounds, extra]));
+    answers.set(base('b'), of(0xa2, [extra, ...altered]));
+    answers.set(base('c'), of(0xa3, [forged, ...mine.rounds, extra]));
+    answers.set(base('d'), of(0xa4, [forged]));
+    answers.set(base('f'), { node: toHex(d.round.pubkey), rounds: [forged] });
+    answers.set(base('g'), of(0xa1, [forged]));
+
+    const r = await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=network`);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('access-control-allow-origin'), '*');
+    const j = await r.json();
+    assert.equal(j.scope, 'network');
+    assert.equal(j.agree, 3);
+    assert.deepEqual(j.seats, { asked: 7, answered: 4 }, 'E silent, F this seat itself, G A\'s second address');
+    assert.ok(asked.every((u) => u.endsWith(`/season-rounds?game=${game}&days=7`)), 'every seat asked for the same ids and days');
+    assert.equal(j.rounds, local.rounds + 1, 'this seat\'s two rounds, round 1 over B\'s dissent, and the one only A, B and C hold');
+    const unranked = (rows) => rows.map(({ rank, ...x }) => x);
+    assert.deepEqual(j.rows.map((x) => x.rank), [1, 2, 3]);
+    assert.deepEqual(unranked(j.rows.filter((x) => x.player !== X)), unranked(local.rows), 'this seat\'s rows, unchanged but for their places');
+    assert.deepEqual(j.rows.filter((x) => x.player === X).map((x) => [x.name, x.rounds, x.wins, x.netMsat, x.bestScore]), [['bob', 1, 1, '0', 42]]);
+    assert.ok(!j.rows.some((x) => x.player === F), 'a round two seats hand in is no row, however many addresses they answer at');
+    assert.ok(j.leftOut > local.leftOut, 'the forged round is left out, and counted');
+    assert.equal(j.unchecked.length, local.unchecked.length + 1);
+    // kept 30 s: a second ask asks no seat again
+    const n = asked.length;
+    assert.deepEqual(await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=network`)).json(), j);
+    assert.equal(asked.length, n);
+    // without the scope, the seat's own board as ever; an unknown scope refused by name
+    assert.deepEqual(await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock`)).json(), local);
+    assert.equal((await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=galaxy`)).status, 400);
+  } finally { await d.close(); }
+});

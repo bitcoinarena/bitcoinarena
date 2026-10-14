@@ -206,3 +206,123 @@ export function season(rounds, { games, fromMs, toMs } = {}) {
   excluded.sort((a, b) => (ek(a) < ek(b) ? -1 : ek(a) > ek(b) ? 1 : 0));
   return { ok: true, fromMs: Number(from), toMs: Number(to), rows, rounds: counted, excluded, unchecked: SEASON_UNCHECKED };
 }
+
+// A NETWORK-WIDE SEASON (kanban #362 feature 1, scope=network). A round is held only by the seats of its committee - 7 of
+// the 14 testnet4 seats - so one seat's own season misses about half the rounds. The network season asks every seat it
+// knows for its rounds of that season (GET /season-rounds) and adds them up. That makes it a board built partly from
+// OTHER seats' word, which this seat did not verify: it holds neither their results nor their settlements. So a round
+// from the network counts on agreement alone, and on enough of it that no single seat - nor two - can forge a row.
+
+/**
+ * HOW MANY DISTINCT SEATS MUST HAND IN BYTE-IDENTICAL ACCOUNTS OF A ROUND before a network season counts it: 3.
+ *
+ * WHY 3. An honest round is FINAL only once its committee's threshold of seats (5 of 7) signed the same run and held each
+ * other's FINAL signatures, and its settlement is ACCEPTED only once that many signed it - so a real round, settled, sits
+ * in at least 5 seats' stores with the same results and the same amounts, and 3 identical accounts of it are always
+ * reachable even with two of those seats down or lagging. A FORGED round - one no committee ran, or a real one with a row
+ * made up - is in no honest seat's store: to put it on the board takes 3 seats colluding, each handing in the same lie.
+ * One seat cannot, and two cannot; and the board stays presentation, not authority, whatever it shows.
+ */
+export const SEASON_NETWORK_AGREE = 3;
+
+/** WHAT A NETWORK SEASON CANNOT CHECK, beside SEASON_UNCHECKED: the other seats' stores. */
+export const SEASON_NETWORK_UNCHECKED = [
+  `the other seats' accounts (this seat holds neither their FINAL results nor their settlements: a round from the network `
+  + `counts when ${SEASON_NETWORK_AGREE} seats hand in byte-identical accounts of it - SEASON_NETWORK_AGREE - and only then)`,
+];
+
+/** One round as season() reads it, in its one order (readRound's): what an agreed account hands on to season(). */
+const normalised = (r) => ({ roundId: r.id, gameId: r.game, startMs: r.startMs, void: r.void,
+  entries: r.entries.map((e) => ({ ...e })) });
+
+/**
+ * THE ROUNDS SEVERAL SEATS HANDED IN, MERGED BY AGREEMENT. `accountsBySeat`: a Map (or a plain object) of a seat's label -
+ * one label per seat, never two for one seat: the caller's to see to - to the rounds that seat handed in, in season()'s
+ * shape. `agree`: the seats needed (SEASON_NETWORK_AGREE).
+ *
+ * Each seat's account of a round is read as season() reads it (readRound: the entries in one order, its `canon` the bytes
+ * compared), and per round:
+ *   - A SEAT COUNTS ONCE. The same account handed in twice by one seat is one seat's word, not two; a seat that handed in
+ *     two DIFFERENT accounts of one round contradicts itself, and backs neither.
+ *   - THE ACCOUNT HELD BY THE MOST SEATS COUNTS, when it is held by `agree` or more and no other account by as many. A
+ *     seat that disagrees with it does not take the round off the board: a seat whose settlement is not ACCEPTED yet hands
+ *     in the same round with no amounts - an honest, passing disagreement - and if one dissenting seat could strike a
+ *     round, any one seat could empty the board of every round it holds. It would take as many seats as back the round,
+ *     at `agree` at least, to dispute it.
+ *   - TWO ACCOUNTS HELD BY EQUALLY MANY SEATS, the most: the seats disagree on that round, and it is left out - the
+ *     season does not choose between them, as season() does not between two accounts handed to it.
+ *   - NO ACCOUNT HELD BY `agree` SEATS: left out, named "held by fewer than" when they all said the same, "the seats
+ *     disagree" when they did not.
+ *
+ * Returns `{ ok, agree, rounds, excluded }`: `rounds` the agreed accounts, in round-id order, each normalised (its
+ * entries in one order) so that the input's order decides nothing; `excluded` `{ round, seat?, why }`, in one order too.
+ * season() then runs on `rounds`.
+ */
+export function mergeSeasonAccounts(accountsBySeat, { agree = SEASON_NETWORK_AGREE } = {}) {
+  if (!Number.isSafeInteger(agree) || agree < 1) return { ok: false, why: 'agreement takes a whole number of seats, 1 or more' };
+  const pairs = accountsBySeat instanceof Map ? [...accountsBySeat] : accountsBySeat && typeof accountsBySeat === 'object'
+    ? Object.entries(accountsBySeat) : null;
+  if (!pairs) return { ok: false, why: 'no seats\' rounds to merge' };
+  const excluded = [];
+  // round id -> seat -> { canons: Set, first: the read round of each canon }
+  const held = new Map();
+  const reads = new Map();                       // canon -> the read round
+  for (const [label, rounds] of pairs) {
+    const seat = String(label);
+    for (const raw of Array.isArray(rounds) ? rounds : []) {
+      const r = readRound(raw);
+      if (r.why) { excluded.push({ round: r.id || null, seat, why: r.why }); continue; }
+      const per = held.get(r.id) || new Map();
+      const had = per.get(seat) || new Set();
+      had.add(r.canon);
+      per.set(seat, had);
+      held.set(r.id, per);
+      if (!reads.has(r.canon)) reads.set(r.canon, r);
+    }
+  }
+
+  const agreed = [];
+  for (const id of [...held.keys()].sort()) {
+    const tally = new Map();                     // canon -> seats backing it
+    for (const [seat, canons] of held.get(id)) {
+      if (canons.size > 1) { excluded.push({ round: id, seat, why: 'that seat handed in two different accounts of that round: it backs neither' }); continue; }
+      const [c] = canons;
+      tally.set(c, (tally.get(c) || 0) + 1);
+    }
+    const counts = [...tally.values()].sort((a, b) => b - a);
+    const most = counts[0] || 0;
+    if (most >= agree && counts[1] !== most) {
+      const [canon] = [...tally].find(([, n]) => n === most);
+      agreed.push(normalised(reads.get(canon)));
+    } else if (most >= agree) {
+      excluded.push({ round: id, why: `the seats disagree on that round: two accounts of it are each held by ${most} seats` });
+    } else if (tally.size > 1) {
+      excluded.push({ round: id, why: `the seats disagree on that round, and no account of it is held by ${agree} seats` });
+    } else {
+      excluded.push({ round: id, why: `that round is held by fewer than ${agree} seats with one account of it` });
+    }
+  }
+  const ek = (x) => `${x.round || ''}|${x.seat || ''}|${x.why}`;
+  excluded.sort((a, b) => (ek(a) < ek(b) ? -1 : ek(a) > ek(b) ? 1 : 0));
+  return { ok: true, agree, rounds: agreed, excluded };
+}
+
+/**
+ * A SEASON'S ROUNDS ON THE WIRE (GET /season-rounds): every msat and the start time as a decimal string - JSON has no
+ * BigInt, and a number would be a float past 2^53 - and back. A value that is not a decimal string is handed on as it
+ * came, for readRound to refuse by name: nothing is mended on the way in.
+ */
+export function seasonRoundsToJson(rounds) {
+  const s = (v) => (v === null || v === undefined ? null : String(v));
+  return (rounds || []).map((r) => ({ roundId: r.roundId, gameId: r.gameId, startMs: s(r.startMs), void: !!r.void,
+    entries: (r.entries || []).map((e) => ({ player: e.player, name: e.name ?? null, stakeMsat: s(e.stakeMsat),
+      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null })) }));
+}
+
+export function seasonRoundsFromJson(list) {
+  const big = (v) => (typeof v === 'string' && /^[0-9]{1,30}$/.test(v) ? BigInt(v) : v);
+  if (!Array.isArray(list)) return [];
+  return list.map((r) => (!r || typeof r !== 'object' ? r : { roundId: r.roundId, gameId: r.gameId, startMs: big(r.startMs), void: r.void === true,
+    entries: Array.isArray(r.entries) ? r.entries.map((e) => (!e || typeof e !== 'object' ? e : { player: e.player, name: e.name ?? null,
+      stakeMsat: big(e.stakeMsat), payoutMsat: big(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null })) : r.entries }));
+}

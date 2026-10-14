@@ -2565,12 +2565,12 @@
  {
   "method": "GET",
   "path": "/season",
-  "params": "query game (hosted game name or 64-hex game id), days (1..90, default 7)",
+  "params": "query game (hosted game name or 64-hex game id), days (1..90, default 7), scope (network: every seat's rounds, merged by agreement)",
   "auth": "none",
-  "returns": "200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); 400/404/500",
-  "purpose": "One game's per-player board over its FINAL rounds in a window (presentation, not authority).",
+  "returns": "200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); with scope=network also {scope, agree, seats {asked, answered}}; 400/404/500",
+  "purpose": "One game's per-player board over its FINAL rounds in a window (presentation, not authority): this node's own rounds, or with scope=network every seat's, a round counted only when 3 seats hand in byte-identical accounts of it.",
   "audience": "player/page",
-  "line": 4315,
+  "line": 4412,
   "summary": "Season board of a game",
   "query": [
    {
@@ -2586,6 +2586,13 @@
     "type": "integer",
     "description": "Window in whole days, 1 to 90; default 7.",
     "example": 7
+   },
+   {
+    "name": "scope",
+    "required": false,
+    "type": "string",
+    "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own; a round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
+    "example": "network"
    }
   ],
   "body": null,
@@ -2593,12 +2600,12 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{node, game:{name, ids}, days, from, to, fromMs, toMs, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s)."
+    "description": "{node, game:{name, ids}, days, from, to, fromMs, toMs, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s). With scope=network also scope: 'network', agree: 3, seats: {asked, answered}; leftOut includes the rounds without agreement."
    },
    {
     "status": "400",
     "contentType": "text/plain",
-    "description": "No game named, or days out of range."
+    "description": "No game named, days out of range, or a scope other than network."
    },
    {
     "status": "404",
@@ -2609,6 +2616,55 @@
     "status": "500",
     "contentType": "text/plain",
     "description": "Season could not be built."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/season-rounds",
+  "params": "query game (hosted game name, 64-hex game id, or a comma list of up to 16 game ids), days (1..90, default 7)",
+  "auth": "none",
+  "returns": "200 JSON {node, game {ids}, days, fromMs, toMs, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here (cache 30 s); 400/404",
+  "purpose": "The rounds this node's own season is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network season to merge.",
+  "audience": "player/page",
+  "line": 4440,
+  "summary": "Season rounds held by this node",
+  "query": [
+   {
+    "name": "game",
+    "required": true,
+    "type": "string",
+    "description": "A hosted game's name, one game id in hex, or a comma list of game ids in hex (how a network season asks).",
+    "example": "nextblock"
+   },
+   {
+    "name": "days",
+    "required": false,
+    "type": "integer",
+    "description": "Window in whole days, 1 to 90; default 7.",
+    "example": 7
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, game:{ids}, days, fromMs, toMs, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score}]}]} (cache 30 s)."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No game named, or days out of range."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No hosted game by that name."
    }
   ],
   "headers": [],
