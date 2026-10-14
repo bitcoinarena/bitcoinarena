@@ -3292,6 +3292,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // WHAT JOINING ASKS OF THE PLAYER: nothing, or a federation stake lock. There is no third
         // answer - "a Lightning payment" was the withdrawn Lightning custody's hold invoice, which does not exist (§23.6).
         free, wallet: free ? 'none' : 'federation-lock',
+        // ITS FEDERATION (kanban #356: the lobby shows a round's custody nodes - the guardians of this federation); not signed
+        federation: c.federationId instanceof Uint8Array && c.federationId.some((b) => b) ? toHex(c.federationId) : null,
         assignedHere, joined: players.joined, playing: players.playing, watching: watchers,
         // AND WHAT ITS JOINED PLAYERS CHOSE TO BE CALLED - each record its
         // player's own signature (lobby-name.js), not this signer node's word.
@@ -3652,6 +3654,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const got = await proposals.add(body);
         res.writeHead(got.status, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
+      }
+      // WHAT EACH NODE OF THE CENSUS IS (kanban #356, the owner 2026-10-14: "on each node we see what they are configured, as verify,
+      // as settlement, as custody"): its advertised roles, whether it is guardian-capable and serving, and the federations whose
+      // held record seats it as a guardian (custody) - one ask for the lobby's node list, out of the census this seat reads
+      if (req.method === 'GET' && url.pathname === '/roles') {
+        const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false, why: 'this seat reads no census' };
+        if (!now.ok) return text(res, 503, now.why);
+        const custody = new Map();
+        for (const f of (fedRecords.list() || [])) {
+          const held = fedRecords.recordOf(f.federation);
+          if (!held || held.status === 'CLOSED') continue;
+          for (const g of (held.record && held.record.guardians) || []) {
+            const k = toHex(g.nodePubkey);
+            if (!custody.has(k)) custody.set(k, []);
+            custody.get(k).push({ federation: f.federation, status: held.status });
+          }
+        }
+        const nodes = now.entries.filter((e) => e && e.pubkey && e.advert).map((e) => ({ node: toHex(e.pubkey), endpoint: String(e.advert.endpoint || ''),
+          roles: [...(e.advert.roles || [])], guardianCapable: !!e.advert.guardianCapable, serving: e.advert.serving !== false,
+          custody: custody.get(toHex(e.pubkey)) || [],
+          // the federations its advertisement says it guards - before any record is held (a seat right after its start)
+          guardianOf: ((e.advert.guardianOf) || []).map((g) => toHex(g.federationId)) }));
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), censusHeight: now.height, nodes }));
       }
       if (req.method === 'GET' && url.pathname === '/census') {
         const got = roster.censusEvidenceFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
