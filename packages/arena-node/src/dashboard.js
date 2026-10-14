@@ -212,6 +212,8 @@ function devCard(){const V=D.devClient;if(!V)return '';const r=(k,v)=>'<div clas
  if(V.error)return s+r('Not read',esc(V.error))+'</div>';
  s+=r('Recipient key',esc(V.recipientPk.slice(0,16))+'…')+r('Donations received',V.donations+' · '+sat(V.receivedMsat))+V.byFederation.map(f=>r('In '+esc(f.federation.slice(0,12)),f.donations+' · '+sat(f.msat)+(f.balanceMsat!==null?' · holds '+sat(f.balanceMsat):''))).join('')
   +r('Withdrawn to its LND',sat(V.withdrawnMsat))+(V.withdrawals.length?r('Last withdrawal',esc(V.withdrawals[0].state||'?')+' · '+sat(V.withdrawals[0].msat)+' · '+esc(String(V.withdrawals[0].at||'').slice(0,16))):'')
+  +r('Unclaimed in issuance',(V.unclaimed||[]).length?(V.unclaimed||[]).map(u=>sat(u.msat)+' · '+u.outputs+' outputs since '+esc(String(u.since||'').slice(11,16))).join(', '):'0 sat')
+  +(V.lastRecovery?r('Last recovery',esc(String(V.lastRecovery.at).slice(0,16).replace('T',' '))+' · '+(V.lastRecovery.ok?'ok, +'+sat(V.lastRecovery.unclaimedMsat):'failed: '+esc(V.lastRecovery.why||''))):'')
   +(V.lastPass?r('Last pass',esc(String(V.lastPass.at).slice(0,16).replace('T',' '))+' · asked '+V.lastPass.seats+' nodes'+(V.lastPass.unanswered?' ('+V.lastPass.unanswered+' unanswered)':'')):'');
  if(V.recent.length)s+='<table><tr><th>Round</th><th>Federation</th><th class="n">Donation</th><th>When</th></tr>'+V.recent.map(x=>'<tr><td>'+esc(x.round.slice(0,12))+'</td><td>'+esc(x.federation.slice(0,8))+'</td><td class="n">'+sat(x.amountMsat)+'</td><td>'+t(x.atMs)+'</td></tr>').join('')+'</table>';
  return s+'</div>'}
