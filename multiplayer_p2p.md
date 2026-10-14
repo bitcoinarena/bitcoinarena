@@ -4589,6 +4589,66 @@ observe at every guardian's endpoint and which the seats attest - together
 with the attestations of however many guardians are still seated. The
 arbitration residual of §5A.3B is the same in both forms.
 
+**How a halt is proven, and what it slashes (RULED HERE, Claude, decided
+on the owner's delegation 2026-10-14: "Decide the liquidation ruling
+yourself"; measured first in FEDERATION.md rehearsal 17, where neither a
+HALTED record nor the second abandonment proof could reach `2f + 1`
+signatures with two of four guardians gone).** A halt is the one state a
+federation cannot sign for itself, so it is not a federation record:
+
+1. **The seats attest it.** Every census seat reads, at every guardian
+   endpoint of a federation whose newest verified record is OPEN, DRAINING
+   or CRITICAL, the guardian's session count. A seat that sees no guardian
+   advance past session `S` signs a halt observation `(federation_id, S,
+   first_height, height, answering[])` - the height it first saw `S` as the
+   last session, the height now, and the peer keys that still answer their
+   endpoint. A **halt proof** is such observations from a majority of the
+   census's active seats, and never fewer than five, all naming the same `S`,
+   each spanning at least `abandon_blocks`. The halt height is the latest
+   `first_height` among them (no seat is believed to have seen it earlier
+   than the others). It is verifiable by anyone from the census (the seats'
+   bonded keys) - no guardian signature is needed, and a federation whose
+   guardians all left can still be proven halted.
+2. **It is refuted by progress.** A verified federation record, or any
+   guardian's signed absence attestation, naming a session after `S` voids
+   the halt proof: a federation that is merely slow is not liquidated. A
+   recovery after the proof (`2f + 1` guardians back) is the existing rule
+   - the escrow then takes the frozen reserve.
+3. **Who it slashes.** Every guardian of the newest verified record that is
+   not in the `answering[]` of a majority of the observations is
+   ABANDONED by the halt proof itself, together with the attestations of
+   however many guardians are still seated (zero is enough). A guardian
+   that answered through the halt is not slashed: it stayed; the federation
+   left it. This replaces, for a halt, §23A.4's `2f + 1`.
+4. **Seats derive HALTED.** A seat holding a halt proof lists the federation
+   HALTED at `GET /liquidations` and counts the liquidation clocks from the
+   halt height; no HALTED record is signed by anyone.
+
+**Notes still in issuance at the halt (RULED HERE, same delegation).** A
+receive or a reissue whose transaction the consensus accepted, but whose
+blind signatures the client had not yet collected when the federation
+halted, left the player with no note and the federation with the inputs
+spent - measured in rehearsal 17: 100,000 sat accepted, not issued, lost.
+These outputs are claimable like notes:
+
+1. The guardians still seated publish, beside their spent set and signed the
+   same way, the **issued set**: every blinded message the consensus issued
+   (mintv2's own recovery items, which it already keeps), with its amount
+   tier, as of the same session.
+2. The client keeps, until each output is signed, the secrets of every
+   output it is waiting for (the note's spend key and its blinding factor -
+   both derive from its seed in mintv2, so a seed restored elsewhere finds
+   them too) and presents them as a **pending-output claim**.
+3. The arbitration set recomputes the blinded message from the presented
+   secrets; the claim is valid when that message is in the issued set at
+   that amount, the note's nonce is not in the spent set, and neither the
+   nonce nor the blinded message was claimed before. Valid pending-output
+   claims are paid at face exactly as notes are, in the same window and the
+   same pro rata, and late ones from what is left.
+4. Nothing new is trusted: the issued set is the same kind of copy as the
+   spent set (newest session wins, a copy that disagrees is named), and an
+   output nobody can unblind for is never paid.
+
 **Why the witnesses are excluded (RULED HERE).** The abandonment proof is
 signed by `2f + 1` guardians of the very federation (§23A.4). If they were
 paid from the bond, the people who attest an absence would earn from
