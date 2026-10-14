@@ -96,8 +96,12 @@ export function settlementNonce(roundId) {
 // `donationSet`: THE ROUND'S DONATION SET (§22A), as this signer node holds it signed - where a walk-away's claimed lock
 // sends its 25% (`remainderSettlement`). An entry marked `atTheDoor` is one this signer node's own store holds FORFEIT at
 // the door (§15): no first mark, or a first mark past the line.
+//
+// `payoutShares`: THE ROUND'S GAME'S TOP SPLIT (kanban #362; manifest.js payoutRuleForRound), or null for §18A's curve. The
+// table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
+// else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null }) {
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
@@ -108,7 +112,7 @@ export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, fe
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
   // claimed here either - but its fee locks still are: the fee is owed.
   let h;
-  try { h = lockActions({ roundId, entries, minScore }); } catch (e) {
+  try { h = lockActions({ roundId, entries, minScore, payoutShares }); } catch (e) {
     if (!feePart.claims.length) return refuse(e.message);
     return finish({ roundId, claims: [], payouts: [], unpaid: [], forfeits: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, stakeWhy: e.message }, feePart);
   }

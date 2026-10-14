@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -44,6 +44,12 @@ export const namesNoDraw = (c) => !!c && Number.isInteger(c.protocolVersion) && 
 export const MULTI_FEDERATION_VERSION = 3;
 export const takesAnyFederation = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= MULTI_FEDERATION_VERSION
   && c.federationId instanceof Uint8Array && c.federationId.length === 32 && c.federationId.every((b) => b === 0);
+// TOP-N PRIZE SPLITS (2026.0.4, kanban #362 feature 3): from version 4 a replayed game's manifest may pay its rounds by fixed
+// shares of the pot over its top places (manifest.js PAYOUT_RULE.TOP_SPLIT, payout.js computePayoutTable) instead of §18A's rank
+// curve. Nothing of a round's bytes changes with it - the rule is the manifest's - and a TOP_SPLIT manifest REQUIRES this
+// version (#349), so its rounds name 4 or later and the census seats only nodes whose advert lists such a version: a node
+// that cannot pay the split is never drawn for it.
+export const TOP_SPLIT_VERSION = 4;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**

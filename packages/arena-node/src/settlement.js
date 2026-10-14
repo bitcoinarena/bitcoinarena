@@ -27,7 +27,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract, decodeEntryContract, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
-import { pluginForRound } from './plugins.js';
+import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { marketVoided } from '../../arena-protocol/src/attested.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
@@ -839,6 +839,10 @@ export class LockSettlement {
 
     const on = this.entriesOnRecord(roundIdBytes, contract);
     if (!on.ok) return on;
+    // THE GAME'S PAYOUT RULE (kanban #362): §18A's curve or its manifest's top split - the table every seat settles by
+    const rule = payoutRuleOfRound(contract, this.round.plugins);
+    if (!rule.ok) return refuse(`no lock is claimed: ${rule.why}`);
+    const payoutShares = rule.payoutShares;
     const locks = new Map();
     const lockEntry = new Map();
     for (const e of on.entries) {
@@ -864,7 +868,7 @@ export class LockSettlement {
       const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
       const fed = await this.#federationsOf(roundIdBytes, contract, on.entries.map((e) => ({ entryId: e.entryId, pubkey: e.pubkey })), locks, feeLocks);
       if (!fed.ok) return fed;
-      const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, feeLocks,
+      const got = federationPlans({ roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, feeLocks,
         signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, donationSet: ds && ds.ok ? ds.set : null }, fed);
       if (!got.ok) return refuse(`no lock is claimed: ${got.why}`);
       return { ok: true, anyFed: true, plan: got.plan, split: got.split, base: { plan: got.plan, entryOf: lockEntry }, contract, claimPk, held, locks, lockEntry };
@@ -877,7 +881,7 @@ export class LockSettlement {
     const addressed = new Set();
     for (const e of on.entries) if (this.round.payoutAddress && this.round.payoutAddress(e.entryId)) addressed.add(toHex(e.pubkey));
     const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
-    const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, locks, fees,
+    const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, fees,
       feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed,
       donationSet: ds && ds.ok ? ds.set : null };
     let plan = lockSettlement(args);
