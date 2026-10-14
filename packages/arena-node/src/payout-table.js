@@ -46,10 +46,11 @@ export function splitSignedTable(bytes) {
  *
  * `entries` carry the core's outcome word, the score and the stake - the same
  * three §20 calls Membership and FinalResults - and the floor comes off the
- * contract rather than a literal.
+ * contract rather than a literal, and the payout rule off the round's game (plugins.js payoutRuleOfRound; kanban #362):
+ * `payoutShares` its top split, or null for §18A's curve.
  */
-export function tableFor({ roundId, entries, minScore }) {
-  const computed = computePayoutTable({ roundId, entries, minScore });
+export function tableFor({ roundId, entries, minScore, payoutShares = null }) {
+  const computed = computePayoutTable({ roundId, entries, minScore, payoutShares });
   const table = computed.table;
   const id = payoutTableId({ roundId, table });
   return { table, tableId: id, bytes: encodePayoutTable({ roundId, table }), computed };

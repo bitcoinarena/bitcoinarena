@@ -10,6 +10,7 @@
 // signs, settles or moves money.
 import { stateOf } from './settlement-state.js';
 import { computePayoutTable, netStakeMsat, VOID, FORFEIT, ENTRY_VOID } from '../../arena-protocol/src/payout.js';
+import { payoutRuleOfRound } from './plugins.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { OBJECTION_WINDOW_MS, FINAL_TOLERANCE_MS } from '../../arena-protocol/src/window.js';
@@ -88,8 +89,12 @@ export function standingOf(round, roundIdBytes, entryIdBytes, contract) {
         why: `the round's settlement ${settled.txid} is ACCEPTED by the federation and pays this entry's share: nothing is pending` };
   }
   if (standsOn) {
+    // by the game's own payout rule (kanban #362), as the settlement pays: a split game's line is its split's row
+    const rule = payoutRuleOfRound(contract, round.plugins);
+    if (!rule.ok) return { ...base, state: mine.state, outcome: mine.outcome, pendingMsat: null, kind: null,
+      provisional: entries.length < counted, signedSoFar: entries.length, entries: counted, why: rule.why };
     kind = 'payout';
-    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore });
+    const { table } = computePayoutTable({ roundId: roundIdBytes, entries, minScore: contract.minScore, payoutShares: rule.payoutShares });
     const row = table.find((t) => toHex(t.pubkey) === toHex(mine.pubkey));
     pendingMsat = row ? String(row.amountMsat) : '0';
   }
