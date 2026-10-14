@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
-  <title>{{{ PRODUCT_NAME }}}</title>
+  <title>Bitcoin Arena</title>
   <!-- THE GAME'S NAME AND MARK (kanban #228): Tick Tock, Next Block - its icon in every size a browser, a phone's home
        screen and a link preview ask for; the files are the game's client assets (nextblock's manifest lists them) -->
   <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
@@ -11,14 +11,19 @@
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="manifest" href="site.webmanifest">
   <meta name="theme-color" content="#0d1014">
-  <meta name="description" content="Tick Tock, Next Block - on Bitcoin Arena">
-  <meta property="og:title" content="Tick Tock, Next Block">
-  <meta property="og:description" content="on Bitcoin Arena">
+  <!-- THE LINK PREVIEW IS BITCOIN ARENA'S (the owner 2026-10-14 ~09:25Z: "Die Social previews nennen tick tock next block nicht Bitcoin arena"):
+       the root is the arena - its games and markets - not one game; the image is brand/arena-og.png (arena-client) -->
+  <meta name="description" content="Bitcoin Arena - games and prediction markets for bitcoin, run by independent nodes.">
+  <meta property="og:site_name" content="Bitcoin Arena">
+  <meta property="og:title" content="Bitcoin Arena">
+  <meta property="og:description" content="Play for sats. Settle on Bitcoin. Tick Tock, Rock Paper Scissors, Up or Down - run by independent nodes.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="nextblock-og.png">
+  <meta property="og:image" content="https://testnet.bitcoin-arena.io/arena-og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Bitcoin Arena">
+  <meta name="twitter:image" content="https://testnet.bitcoin-arena.io/arena-og.png">
   <script id="arena-storage-move">
     // THE ONE-TIME MOVE OF THE BROWSER'S KEYS FROM blwp.* TO arena.* (kanban #207), before any other script reads
     // them: the seed, the kept phrases, the vault and the wallet stores were all kept under blwp.*, and every reader
