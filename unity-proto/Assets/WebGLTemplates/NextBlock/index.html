@@ -5645,11 +5645,16 @@
         // costs. WITH THE TESTNET LOBBY the free row is this lobby's and the paying row the testnet's: both, always.
         // A SIDE WHOSE NODES DID NOT ANSWER THIS PAINT KEEPS ITS LAST ROWS (the owner 2026-10-01 15:25: "Do not drop free to show
         // testnet4. Do not drop testnet4 to show free"; measured under load: paid alone, both, free alone, paint by paint).
+        // A PAID ROUND OF A FEDERATION THIS PAGE CANNOT PAY INTO IS NOT OFFERED (kanban #353, measured 2026-10-14 04:15Z): the
+        // RPS client took federation B's tables beside A's, and every tap there was refused ("That invite names another
+        // federation than the round's b18947f0") - a B deposit has no gateway liquidity yet. Shown again once the page knows it.
+        const paysHere = (r) => { const f = r.contract && r.contract.federationId instanceof Uint8Array ? BLWPCLIENT.toHex(r.contract.federationId) : null;
+          return !f || !/[1-9a-f]/.test(f) || !!BLWPCLIENT.knownFederation(f); };
         const kept = window.BLWP_LOBBY_KEPT = window.BLWP_LOBBY_KEPT || { mine: [], theirs: [] };
         const mine = kept.mine = BLWPCLIENT.lobbyKeepWhenUnanswered(kept.mine,
           { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows }, now);
         const theirs = kept.theirs = got2 ? BLWPCLIENT.lobbyKeepWhenUnanswered(kept.theirs,
-          { ...got2, rows: got2.rows.filter((r) => !r.free) }, now) : [];
+          { ...got2, rows: got2.rows.filter((r) => !r.free && paysHere(r)) }, now) : [];
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
