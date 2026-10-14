@@ -273,6 +273,40 @@ if (env.PAID_DUTY === '1') {
   };
   look(); setInterval(look, 30000);
 }
+// TICK TOCK IN 90 s ROUNDS, NOW (the owner 2026-10-14 ~10:26Z, his phone on the Tick Tock lobby: "Sollte es nicht eine 90s Runde sein?").
+// The rounds open were the old grid keeper's - four rounds a grid, each taking entries for six hours - and the duty publisher's
+// 90 s grids (40 an hour) start only where those end (DUTY_FROM_SLOT, 10-16 03:00Z). PAID_NB90_GRID=1 publishes ONE grid in the
+// duty's own Tick Tock shape - 90 s rounds, entry closing 45 s into each (the late join), the runner's game and core - from the
+// first start a grid published now can have to NB90_UNTIL (ms or ISO), in NB90_FEDERATION (hex, default the runner's own), posts
+// it to every seat and exits. Timing as the on-demand RPS grid: committee 45 min past the tip's median, the first start at least
+// 45 min after the committee and NB90_LEAD_MS (default 2 h) from now.
+if (env.PAID_NB90_GRID === '1') {
+  const until = Number.isFinite(Number(env.NB90_UNTIL)) ? Number(env.NB90_UNTIL) : Date.parse(env.NB90_UNTIL || '');
+  if (!Number.isFinite(until)) throw new Error('PAID_NB90_GRID=1 needs NB90_UNTIL (ms or ISO)');
+  const fed = String(env.NB90_FEDERATION || toHex(round.contract.federationId)).toLowerCase();
+  const mtp = Number((await chainCall('getblockchaininfo', [])).mediantime) * 1000;
+  const committee = mtp + Number(env.NB90_COMMITTEE_LEAD_MS || 45 * 60000) + 500;
+  const firstStart = Math.ceil(Math.max(Date.now() + Number(env.NB90_LEAD_MS || 2 * 3600000), committee + 45 * 60000 + 1000) / 90000) * 90000;
+  // AT MOST ONE DAY: a grid series runs at most 24 h (series.js gridIsValid) - the duty takes over where it ends
+  const slots = Math.min(Math.floor((until - firstStart) / 90000), 960);
+  if (slots < 1) throw new Error(`no 90 s round fits between ${new Date(firstStart).toISOString()} and ${new Date(until).toISOString()}`);
+  const keys = donationKeysForNetworkId(round.contract.networkId);
+  const forced = donationSetInForce({ networkId: round.contract.networkId, authority: keys.authority, recovery: keys.recovery,
+    sets: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+    rotations: [], height: round.contract.censusHeight,
+    verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
+  if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
+  say({ nb90: 'asked', federation: fed.slice(0, 16), committeeTime: new Date(committee).toISOString(), firstStart: new Date(firstStart).toISOString(),
+    until: new Date(until).toISOString(), slots });
+  const got = await round.openGrid({ ...CREATOR, fields: { donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fed) }, stakeMsat },
+    { slots, tables: 1, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(firstStart + 45000), committeeTimeMs: BigInt(committee),
+      feeRate: Number(env.NB90_FEE_RATE || 1), maxFeeRate: Number(env.NB90_MAX_FEE_RATE || 4),
+      onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `nb90-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ nb90: 'published', ...p }); },
+      onPosted: (p) => say({ nb90: 'posted', ...p }) });
+  say({ nb90: got.ok ? 'up' : 'not up', ok: got.ok, why: got.why, txid: got.txid, publishedAt: got.publishedAt, beacon: got.beacon, rounds: got.rounds,
+    firstStart: got.firstStart, lastClose: got.lastClose, posted: got.posted });
+  process.exit(got.ok ? 0 : 1);
+}
 // PAID ROCK PAPER SCISSORS ON DEMAND (kanban #293, the owner 2026-10-11, path B - "a grid published on demand: when a table
 // waits, one transaction carries the next 30 min of rounds, about an hour ahead"). Every 30 s the seats' GET /h2h-want is
 // read; when a page asked within the last 3 min and no published grid runs more than RPS_GRID_AHEAD_MS ahead, the next
