@@ -20,7 +20,6 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
-import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { missedInARow, seatingWarning } from './seatings.js';
@@ -1321,22 +1320,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     schedulePrices();
   }
-  // WHO IS CONFLICTED IN A ROUND (§5A.13, kanban #309): the committee nodes whose advertised operator plays it - a player's own
-  // key or the operator its entry declares (operator-conflict.js); `self` this node's operator when it is one of them, and
-  // whether the settlement committee still holds its threshold without them
-  const conflictsFor = (rid) => {
-    const game = roster.committeeFor(rid, 'game');
-    const settle = roster.committeeFor(rid, 'settlement');
-    const nodes = [...(game.ok ? game.committee : []), ...(settle.ok ? settle.committee : [])];
-    let entries = [];
-    try { entries = round.entriesOf(rid).map((x) => x.entry); } catch { entries = []; }
-    const conflicted = conflictedNodes({ nodes, entries });
-    const committee = settle.ok ? settle.committee.map((e) => e.pubkey) : [];
-    let threshold;
-    try { threshold = committeeThreshold(committee.length); } catch { threshold = undefined; }
-    return { conflicted, self: conflicted.get(toHex(round.pubkey)) || null,
-      serving: servingAfterConflicts({ committee, conflicted, ...(threshold ? { threshold } : {}) }) };
-  };
+  // NOBODY IS CONFLICTED IN A ROUND (§5A.13, RULED the owner 2026-10-14 ~20:01Z, kanban #360): a player declares no operator, so no
+  // committee node is left out of signing, settling or the fee share by one, and no round is voided for it. An entry an older page
+  // made may still carry an operator; it decodes and is ignored.
+  const conflictsFor = () => ({ conflicted: new Map(), self: null, serving: { voids: false } });
   // THE SERIES PUBLISHER'S FEE BACK (§5A.5, kanban #304): a series round naming its creator (#313) whose series' publication fee
   // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0, or the first
   // round of the series with entries (publisher-payout.js publisherRoundIndex); every other round pays nothing of it
@@ -1377,7 +1364,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // AND THE GUARDIAN POOL (§22A v4.6.4): the census nodes guarding the round's federation; none - the two-pool table
       let guardian = [];
       try { const g = roster.guardiansFor(rid); if (g.ok) guardian = g.guardians; } catch { guardian = []; }
-      // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13): named for feeSettlement, which leaves it out of `eligible`
+      // CONFLICTED NODES: none since the 2026-10-14 ruling (§5A.13, kanban #360) - the list stays for older readers, always empty
       // AND THE SERIES PUBLISHER'S FEE BACK, in the round that pays it (§5A.5, kanban #304)
       const publisher = publisherFor(rid, contract);
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
