@@ -5377,7 +5377,7 @@
         const assigned = (r) => {
           const c = r.committee || {};
           const w = el('div', 'who');
-          const put = (k, keys) => { if (!keys.length) return; const x = el('span'); x.title = ROLE_WORDS[k]; x.append(icon(k), keys.map(nodeName).sort((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : String(a) < String(b) ? -1 : 1)).join(' ')); w.append(x); };
+          const put = (k, keys) => { if (!keys.length) return; const x = el('span'); x.title = ROLE_WORDS[k]; x.append(icon(k), keys.map(nodeName).sort((a, b) => (typeof a === 'number' ? (typeof b === 'number' ? a - b : -1) : typeof b === 'number' ? 1 : String(a) < String(b) ? -1 : 1)).join(' ')); w.append(x); };
           put('verify', Array.isArray(c.game) ? c.game : []);
           put('settlement', Array.isArray(c.settlement) ? c.settlement : []);
           if (roles && r.federation) put('custody', [...roles.byKey.values()].filter((v) => v.feds.has(String(r.federation).toLowerCase())).map((v) => v.key));
