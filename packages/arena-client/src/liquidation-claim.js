@@ -21,25 +21,47 @@ export async function presentNotes({ liquidations, held, walletFor, payoutPk, he
     const fid = String(l.federation || '').toLowerCase();
     if (!mine.has(fid) || !l.claims) continue;
     if (Number.isInteger(height) && (height < l.liquidatesAt || height > l.lateClaimsUntil)) { out.push({ federation: fid, ok: false, why: height < l.liquidatesAt ? `claims open at ${l.liquidatesAt}` : 'the claims closed' }); continue; }
+    // THE NOTES (a wallet with none, or one that could not hand them over, still presents its pending outputs below)
     let ecash = storage.getItem(pendingClaimKey(fid));
     if (!ecash) {
-      let sent;
-      try { sent = JSON.parse(await (await walletFor(fid)).sendAllEcash()); } catch (e) { out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); continue; }
-      if (!sent || !sent.ecash) { out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' }); continue; }
-      ecash = sent.ecash;
-      storage.setItem(pendingClaimKey(fid), ecash);   // kept before it leaves the page
+      let sent = null;
+      try { sent = JSON.parse(await (await walletFor(fid)).sendAllEcash()); } catch (e) { out.push({ federation: fid, ok: false, why: `the wallet could not hand over its notes: ${e.message}` }); }
+      if (sent && !sent.ecash) out.push({ federation: fid, ok: true, nothing: true, why: 'this wallet holds no note of that federation' });
+      if (sent && sent.ecash) { ecash = sent.ecash; storage.setItem(pendingClaimKey(fid), ecash); }   // kept before it leaves the page
     }
+    if (ecash) {
+      try {
+        const r = await fetcher(String(l.claims).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '') + '/liquidation-claims',
+          { method: 'POST', body: JSON.stringify({ federation: fid, ecash, payoutPk }), signal: AbortSignal.timeout(30000) });
+        const j = await r.json().catch(() => ({}));
+        const taken = r.ok || (Array.isArray(j.refused) && j.refused.length && j.refused.every((x) => /claimed before|spent set/.test(x.why)));
+        if (taken) storage.removeItem(pendingClaimKey(fid));
+        out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !taken });
+      } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true }); }
+    }
+    // AND THE OUTPUTS STILL IN ISSUANCE AT THE HALT (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): what was
+    // issued to this seed and never signed - the lock client's pendingOutputs, read from one answering guardian - presented by
+    // their issuance requests. Kept like the e-cash until the arbitration set took them; claimed before counts as taken.
     try {
-      const r = await fetcher(String(l.claims).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '') + '/liquidation-claims',
-        { method: 'POST', body: JSON.stringify({ federation: fid, ecash, payoutPk }), signal: AbortSignal.timeout(30000) });
-      const j = await r.json().catch(() => ({}));
-      const taken = r.ok || (Array.isArray(j.refused) && j.refused.length && j.refused.every((x) => /claimed before|spent set/.test(x.why)));
-      if (taken) storage.removeItem(pendingClaimKey(fid));
-      out.push({ federation: fid, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], inWindow: j.inWindow, why: j.why || null, kept: !taken });
-    } catch (e) { out.push({ federation: fid, ok: false, why: e.message, kept: true }); }
+      const w = await walletFor(fid);
+      let reqs = JSON.parse(storage.getItem(pendingRequestsKey(fid)) || 'null');
+      if (!reqs && w && typeof w.pendingOutputs === 'function') {
+        reqs = (JSON.parse(await w.pendingOutputs()) || []).map((x) => x.request).filter(Boolean);
+        if (reqs.length) storage.setItem(pendingRequestsKey(fid), JSON.stringify(reqs));
+      }
+      if (Array.isArray(reqs) && reqs.length) {
+        const r = await fetcher(String(l.claims).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '') + '/liquidation-claims',
+          { method: 'POST', body: JSON.stringify({ federation: fid, pending: reqs, payoutPk }), signal: AbortSignal.timeout(60000) });
+        const j = await r.json().catch(() => ({}));
+        const taken = r.ok || (Array.isArray(j.refused) && j.refused.length && j.refused.every((x) => /claimed before|spent set|not in the issued set/.test(x.why)));
+        if (taken) storage.removeItem(pendingRequestsKey(fid));
+        out.push({ federation: fid, pending: true, ok: !!r.ok, accepted: j.accepted || [], refused: j.refused || [], why: j.why || null, kept: !taken });
+      }
+    } catch (e) { out.push({ federation: fid, pending: true, ok: false, why: e.message }); }
   }
   return out;
 }
+export const pendingRequestsKey = (fid) => `blwp-liquidation-pending-${String(fid).toLowerCase()}`;
 
 // THE KEY A CLAIM IS PAID TO: one per federation, from the player's seed alone (the derivation of a round's player key over a
 // round id of its own, H(tag || federation id)), so a seed restored on another device collects what the first presented.

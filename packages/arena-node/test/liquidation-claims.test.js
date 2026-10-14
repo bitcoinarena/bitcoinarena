@@ -173,3 +173,27 @@ test('the claim key comes from the seed per federation; the payouts naming it ar
   try { const j = await (await fetch(`http://127.0.0.1:${doors.port}/liquidation-payouts?federation=${FED}`)).json(); assert.equal(j.payouts.length, 2); }
   finally { await doors.close(); }
 });
+
+test('the client presents its outputs still in issuance too: once, kept until taken, and "claimed before" counts as taken (kanban #323)', async () => {
+  const { presentNotes, pendingRequestsKey } = await import('../../arena-client/src/liquidation-claim.js');
+  const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) };
+  let asked = 0; const posts = [];
+  const walletFor = async () => ({ sendAllEcash: async () => JSON.stringify({ msat: 0, ecash: null }),
+    pendingOutputs: async () => { asked++; return JSON.stringify([{ nonce: '02aa', amount_msat: 8192, request: 'r1' }, { nonce: '03bb', amount_msat: 4096, request: 'r2' }]); } });
+  let mode = 'down';
+  const fetcher = async (url, o) => { const b = JSON.parse(o.body); posts.push(b); if (mode === 'down') throw new Error('fetch failed');
+    return mode === 'ok' ? { ok: true, json: async () => ({ accepted: b.pending.map((r) => ({ request: r })) }) }
+      : { ok: false, json: async () => ({ refused: b.pending.map(() => ({ why: 'that output was claimed before' })) }) }; };
+  const liq = [{ ...LIQ, claims: 'https://arb.example/' }];
+  const run = () => presentNotes({ liquidations: liq, held: [FED], walletFor, payoutPk: '02' + '11'.repeat(32), height: LIQ.liquidatesAt, storage, fetcher });
+  const first = (await run()).find((x) => x.pending);
+  assert.equal(first.ok, false); assert.deepEqual(JSON.parse(store.get(pendingRequestsKey(FED))), ['r1', 'r2'], 'kept before it left the page');
+  mode = 'ok';
+  const second = (await run()).find((x) => x.pending);
+  assert.equal(second.ok, true); assert.equal(store.has(pendingRequestsKey(FED)), false, 'taken: forgotten');
+  assert.equal(asked, 1, 'the kept requests were presented again, not read again');
+  assert.deepEqual(posts.filter((p) => p.pending).map((p) => p.pending), [['r1', 'r2'], ['r1', 'r2']]);
+  mode = 'refused';
+  const third = (await run()).find((x) => x.pending);
+  assert.equal(third.kept, false, 'claimed before: nothing left to keep');
+});

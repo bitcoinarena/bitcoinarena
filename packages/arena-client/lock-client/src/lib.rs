@@ -792,6 +792,18 @@ impl LockClient {
         .to_string())
     }
 
+    /// THE OUTPUTS STILL IN ISSUANCE (kanban #323, spec 23A.5 "Notes still in issuance at the halt"): everything issued to this
+    /// wallet's seed that it neither holds as a note nor has spent - read from one answering guardian, so it works while the
+    /// federation is halted. Answers [{"nonce", "amount_msat", "request"}]; `request` is what a pending-output claim presents.
+    #[wasm_bindgen(js_name = pendingOutputs)]
+    pub async fn pending_outputs(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        let pending = mint.blwp_pending_outputs().await.map_err(js)?;
+        Ok(serde_json::Value::Array(pending.into_iter().map(|(nonce, amount, request)| serde_json::json!({
+            "nonce": nonce.to_string(), "amount_msat": amount.msats, "request": request,
+        })).collect()).to_string())
+    }
+
     /// E-CASH IN: reissued into this wallet; answers once the federation has reissued it - {"state": "Success" |
     /// "Rejected" (already spent) | "AlreadyReceived"}.
     #[wasm_bindgen(js_name = receiveEcash)]

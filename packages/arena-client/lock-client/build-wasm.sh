@@ -71,6 +71,9 @@ if [ -n "${ARENA_NOTE_YIELDS:-}${ARENA_NOTE_BATCH:-}" ]; then echo "ARENA_NOTE_Y
 patch -p1 < $HERE/fedimint-mintv2-note-batch2.patch; grep -q "static COMBINED" modules/fedimint-mintv2-client/src/api.rs
 if [ -n "${ARENA_AWAIT_PARALLEL:-}" ]; then patch -p1 < $HERE/fedimint-client-await-parallel.patch; grep -q "drop(tx_submitted)" fedimint-client-module/src/transaction/sm.rs; fi
 grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs | wc -l | tr -d ' ' | grep -qx 2
+# PENDING OUTPUTS (kanban #323, spec 23A.5 "Notes still in issuance at the halt"): the wallet names what was issued to its seed
+# and never signed, for a liquidation's pending-output claim - mintv2's own recovery scan, as a method
+grep -q "fn blwp_pending_outputs" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-pending-outputs.rs >> modules/fedimint-mintv2-client/src/lib.rs
 ln -sfn $HERE blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || perl -0pi -e 's/^members = \[/members = [\n  "blwp-lock-client",/m' Cargo.toml
 export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown=$B/wasi-sdk/bin/llvm-ar
