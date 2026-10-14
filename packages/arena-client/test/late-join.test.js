@@ -246,3 +246,16 @@ test('a transcript that does not begin at the entry\'s join tick is refused on r
   // the stub, because `resume` goes on to recover receipts and a stub that
   // answered those would be a second node rather than a lying one.
 });
+
+test('a series round taking entries for hours is no late join: offered until its own entry close (the owner 2026-10-14: Tick Tock "join until 0:00")', async () => {
+  const { isLateJoinRound, entryOpenUntilMs, lateJoinTick, LATE_JOIN_WINDOW_MS } = await import('../src/late-join.js');
+  assert.equal(LATE_JOIN_WINDOW_MS, (await import('../../arena-protocol/src/series.js')).LATE_JOIN_MS, 'the page\'s late-join window is the series\'');
+  const start = 1791949075500n;
+  const sixHours = { seriesId: new Uint8Array(32).fill(3), startTimeMs: start, entryCloseMs: start + 6n * 3600000n };
+  assert.equal(isLateJoinRound(sixHours), false);
+  assert.equal(entryOpenUntilMs(sixHours), Number(start + 6n * 3600000n), 'offered until its entry close, as the seats take it');
+  assert.equal(lateJoinTick(sixHours, Number(start) + 3600000).joinTick, 0);
+  const ninety = { seriesId: new Uint8Array(32).fill(3), startTimeMs: start, entryCloseMs: start + 45000n };
+  assert.equal(isLateJoinRound(ninety), true, 'a 45 s window is the late join');
+  assert.equal(entryOpenUntilMs(ninety), Number(start) + 37000 - 5000);
+});

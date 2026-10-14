@@ -24159,9 +24159,17 @@ const LATE_JOIN_SESSION_MS = 3000;
 // THE TIME A JOIN TAKES from PLAY (or from a deposit landing) to its entry at a seat: the lock and the post.
 const LATE_JOIN_JOIN_MS = 5000;
 
-/** A round of a series whose entry closes after its start: a late-join round. */
+/**
+ * A LATE-JOIN ROUND, AS THE SEATS TELL IT (round.js): a series round whose entry closes exactly LATE_JOIN_MS (45 s) after its
+ * start. Any other window is the round's own (the owner 2026-10-14 ~09:15Z, Tick Tock's lobby: "join until 0:00" and PLAY never
+ * enabled): testnet4's Tick Tock grid rounds take entries for six hours after their start, the seats take an entry until that
+ * close, and the page - calling every series round closing after its start a late join - cut them at start + 32 s.
+ */
+// series.js's LATE_JOIN_MS (45 s), kept here: importing series.js would bundle publication.js beside contracts.js, and both
+// declare is32 at the top level (the bundle refuses it). late-join.test.js holds the two equal.
+const LATE_JOIN_WINDOW_MS = 45000n;
 const isLateJoinRound = (c) => !!c && c.seriesId instanceof Uint8Array
-  && c.entryCloseMs !== undefined && c.startTimeMs !== undefined && BigInt(c.entryCloseMs) > BigInt(c.startTimeMs);
+  && c.entryCloseMs !== undefined && c.startTimeMs !== undefined && BigInt(c.entryCloseMs) - BigInt(c.startTimeMs) === LATE_JOIN_WINDOW_MS;
 
 /** The seats' last instant for a new entry: start + 37 s for a late-join round (refused at and after it). */
 const lateJoinLastEntryMs = (c) => Number(BigInt(c.startTimeMs) + LATE_JOIN_LAST_ENTRY_MS);
