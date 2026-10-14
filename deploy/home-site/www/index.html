@@ -60,13 +60,14 @@
 
   /* STRIP */
   .strip { border-block: 1px solid var(--line); background: linear-gradient(90deg, rgba(247,147,26,.10), rgba(226,103,42,.04) 50%, rgba(185,140,255,.08)); }
-  .strip .wrap { display: grid; grid-template-columns: repeat(4, 1fr); }
+  .strip .wrap { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
   .strip div { padding: 24px 8px; text-align: center; }
   .strip strong { display: block; font: 700 clamp(19px, 2.2vw, 26px)/1.15 "Space Grotesk"; color: var(--text); }
   .strip strong i { font-style: normal; color: var(--btc); margin-right: 6px; }
   .strip .nostr strong i { color: var(--nostr); }
+  .strip .ln strong i { color: #ffd23f; }
   .strip span { font-size: 14px; color: var(--dim); }
-  @media (max-width: 720px) { .strip .wrap { grid-template-columns: 1fr; } .strip div { padding: 14px 4px; text-align: left; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; } .strip div + div { border-top: 1px solid var(--line); } .strip strong { font-size: 19px; } }
+  @media (max-width: 720px) { .strip .wrap { grid-template-columns: 1fr; } .strip div { padding: 14px 4px; text-align: left; display: block; } .strip div span { display: block; margin-top: 4px; } .strip div + div { border-top: 1px solid var(--line); } .strip strong { font-size: 19px; } }
 
   section { padding: 96px 0; }
   @media (max-width: 720px) { section { padding: 60px 0; } }
@@ -209,6 +210,7 @@
   <div><strong><i>◆</i>Decentralized</strong><span>No central server or company.</span></div>
   <div><strong><i>◆</i>Non-custodial</strong><span>Your sats stay in your control.</span></div>
   <div><strong><i>◆</i>Verified by nodes</strong><span>Independent nodes verify every result.</span></div>
+  <div class="ln"><strong><i>⚡</i>Lightning</strong><span>Deposit and withdraw in seconds.</span></div>
   <div class="nostr"><strong><i>◆</i>Nostr native</strong><span>Your Nostr key is your login.</span></div>
 </div></div>
 

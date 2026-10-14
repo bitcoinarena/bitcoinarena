@@ -91,9 +91,10 @@
   details > p, details > ul { margin: 8px 0 4px; }
   main details:not(.sec):not(:has(.tbl)) { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; }
-    aside { display: block; position: fixed; z-index: 30; top: 0; left: 0; bottom: 0; width: min(300px, 84vw); max-height: none; padding: 20px 20px 40px; background: var(--panel); border-right: 1px solid var(--line); transform: translateX(-105%); transition: transform .22s; }
+    aside { display: block; position: fixed; z-index: 30; top: 0; left: 0; bottom: 0; width: min(300px, 84vw); height: 100dvh; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; padding: 20px 20px calc(96px + env(safe-area-inset-bottom)); background: var(--panel); border-right: 1px solid var(--line); transform: translateX(-105%); transition: transform .22s; }
     body.nav-closed aside { display: block; }
     body.drawer aside { transform: none; box-shadow: 20px 0 60px rgba(0,0,0,.5); }
+    body.drawer { overflow: hidden; }   /* the page behind stays put: a swipe scrolls the contents (kanban #361, the owner's phone 22:34) */
     body.drawer .scrim { display: block; position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.5); } }
   @media (max-width: 560px) { nav.top .r a:not(.play):not(.back) { display: none; } nav.top .r { gap: 10px; font-size: 13px; } nav.top .in { gap: 10px; } .brand span { display: none; } .playcard { flex-direction: column; align-items: flex-start; } td.ep { white-space: normal; } h2 { margin-top: 48px; }
     .tbl.api { border: 0; overflow: visible; } .tbl.api thead { display: none; } .tbl.api table, .tbl.api tbody, .tbl.api tr, .tbl.api td { display: block; width: 100%; }
@@ -105,14 +106,13 @@
 <body>
 <nav class="top"><div class="in">
   <button class="navbtn" id="navbtn" type="button" aria-controls="toc" aria-expanded="true" title="Contents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Contents</span></button>
-  <a class="brand" href="#top"><i>₿</i>Bitcoin Arena <span>Docs</span></a>
-  <div class="r"><a class="back" href="https://bitcoin-arena.io/">← bitcoin-arena.io</a><a href="#faq">FAQ</a><a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
+  <a class="brand" href="https://bitcoin-arena.io/" title="bitcoin-arena.io"><i>₿</i>Bitcoin Arena <span>Docs</span></a>
+  <div class="r"><a href="#faq">FAQ</a><a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet</a></div>
 </div></nav>
 <div class="scrim" id="scrim"></div>
 
 <div class="layout">
 <aside id="toc" aria-label="Contents">
-  <a class="back" href="https://bitcoin-arena.io/">← Back to bitcoin-arena.io</a>
   <a href="https://testnet.bitcoin-arena.io/">Play on testnet →</a>
   <b>Play</b>
   <a href="#start">Start playing</a>
