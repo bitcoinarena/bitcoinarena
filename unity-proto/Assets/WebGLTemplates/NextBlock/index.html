@@ -2206,7 +2206,7 @@
         signerNodes: sn.signerNodes, nodes, curve: window.BLWP_CURVE,
       }, {}));
       // AND ITS DONATION SET (0.43 s of the funded join measured on 0.0.2474), the same read the join makes
-      const donation = BLWPCLIENT.fetchDonationSet({ round, nodes, verifyEd25519: pageEd25519Verify });
+      const donation = BLWPCLIENT.fetchDonationSet({ round, nodes, verifyEd25519: pageEd25519Verify, keepBySet: true });
       const p = { signer, claim, donation };
       donation.then((d) => { if (!d || !d.ok) delete p.donation; }, () => { delete p.donation; });
       ROUND_PREP.set(roundIdHex, p);
@@ -2494,7 +2494,7 @@
       let donationTarget = null, donationAnswer = null;
       if (pays) {
         const ds = await joinStep('fetchDonationSet', () => (ROUND_PREP.get(named.roundIdHex) && ROUND_PREP.get(named.roundIdHex).donation)
-          || BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify }));
+          || BLWPCLIENT.fetchDonationSet({ round: named.round, nodes: named.nodes, verifyEd25519: pageEd25519Verify, keepBySet: true }));
         if (ds.ok) { donationSet = ds.set; donationTarget = ds.target || null; donationAnswer = ds; }
         // A ROUND ITS SIGNER NODES REFUSE FOR ITS DONATION SET IS REFUSED HERE, BEFORE ANY LOCK (kanban #191, measured live
         // 2026-10-06 05:31Z: round 49a50535 named serial 2 where serial 3 was in force; this step said "no donation" and the
@@ -5652,7 +5652,7 @@
           return !f || !/[1-9a-f]/.test(f) || !!BLWPCLIENT.knownFederation(f); };
         const kept = window.BLWP_LOBBY_KEPT = window.BLWP_LOBBY_KEPT || { mine: [], theirs: [] };
         const mine = kept.mine = BLWPCLIENT.lobbyKeepWhenUnanswered(kept.mine,
-          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows }, now);
+          { ...got, rows: testnet ? got.rows.filter((r) => r.free) : got.rows.filter((r) => r.free || paysHere(r)) }, now);
         const theirs = kept.theirs = got2 ? BLWPCLIENT.lobbyKeepWhenUnanswered(kept.theirs,
           { ...got2, rows: got2.rows.filter((r) => !r.free && paysHere(r)) }, now) : [];
         for (const r of mine) rowSearch.set(r.id, search);
