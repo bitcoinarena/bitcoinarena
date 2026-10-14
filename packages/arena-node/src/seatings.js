@@ -2,14 +2,17 @@
 // absence itself - it earns no fee share (§22A) and yields its seat to the reserve (§5A.7) - but it wastes the reserve, so the
 // reference node warns its operator when it has missed three seatings in a row and offers the serving = false update."
 //
-// A seating is missed when this node was drawn for a round and the round's certified seating seats somebody else in its place.
-// Counted over the rounds this seat holds whose seating stands, newest first, until the first it sat.
+// A seating is missed when this node was drawn for a round, did not say PRESENT, and the round's certified seating seats somebody else
+// in its place. Counted over the rounds this seat holds whose seating stands, newest first, until the first it sat or was present for.
+// A RESERVE THAT WAS PRESENT HAS MISSED NOTHING (measured on testnet4 2026-10-14 14:0xZ: test host node 5 signed PRESENT for every
+// round - "9 present of 9 drawn" - and sat as one of the two reserves of its grid's draw; counted as missed, it was told 28 times in
+// a row to step out of the census).
 
-/** How many seatings in a row, newest first, this node was drawn for and not seated. `rows` [{ atMs, drawn, seated }]. */
+/** How many seatings in a row, newest first, this node was drawn for, not present at and not seated. `rows` [{ atMs, drawn, seated, present }]. */
 export function missedInARow(rows) {
   let n = 0;
   for (const r of [...rows].filter((x) => x && x.drawn).sort((a, b) => b.atMs - a.atMs)) {
-    if (r.seated) break;
+    if (r.seated || r.present) break;
     n++;
   }
   return n;
