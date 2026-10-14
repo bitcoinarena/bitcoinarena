@@ -660,7 +660,12 @@ choose to host. With a template the manifest says who decides and on what
 terms, and **anyone opens a new question by publishing one round of it**.
 
 **The template, in the manifest.** An `ATTESTED` manifest may name, after its
-own marker byte `0x03` (behind the market terms, before the required version):
+own marker byte `0x04` (behind the market terms, before the required version;
+`0x03` is a top split's payout shares, kanban #362 feature 3). The manifest's
+trailing fields, each after its own marker and in this order: an attested
+game's market terms `0x01` and template `0x04`, a head-to-head game's table, a
+top split's shares `0x03` (never two result types' fields in one manifest),
+then the required version `0x02`, last:
 
 ```text
 template {
@@ -674,10 +679,12 @@ Everything a market's trust and money are made of stays the manifest's: its
 attestor keys and threshold, its fees, its attestors' deadline and its source
 rule - its market terms (§0A.7b.3), **which a template must name**. Its terms'
 `resolve_after_close_ms` is then the **earliest** a round may resolve after its
-entry close. A template **requires protocol version 2026.0.3 or later** (#349):
-its rounds carry their question in a contract tail that version reads, and a
-node too old to read the field cannot read the manifest at all, so it cannot
-host the template. A template runs on no grid (`round_period` 0). Its own
+entry close. A template **requires protocol version 2026.0.4 or later** (#349),
+as a top split does: its rounds carry their question in a contract tail the
+builds of that version read, the census seats a round's nodes only among those
+whose advert lists its version - so a seat without the code is never seated
+for a template's round - and a node too old to read the field cannot read the
+manifest at all, so it cannot host the template. A template runs on no grid (`round_period` 0). Its own
 `outcomes[]` label the template itself (its shape, e.g. YES / NO); a round
 names its own. The field is optional: **every manifest without it keeps its
 bytes and its game id** (asserted against every signed manifest in the repo:
@@ -699,7 +706,7 @@ It is in the hashed bytes, so the question, the labels **and their order** -
 the index the attestors sign - are the round's id. It is read from the end by
 its closing marker and size; a contract without it keeps its bytes and its
 round id (asserted for all 24 layouts of versions 1-3 with and without
-deadline, series, rules and creator). It is read from version 2026.0.3 on and
+deadline, series, rules and creator). It is read from version 2026.0.4 on and
 never on a round of a series (a series round's id `H(series_id || i)` would not
 hash its question).
 

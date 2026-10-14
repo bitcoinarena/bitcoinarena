@@ -8,6 +8,8 @@
 //   24133  NIP-46 remote signing (a bunker or Amber talking to the page): ephemeral, passed on, never kept
 //   22242  NIP-42 auth: ephemeral
 //   13194, 23194, 23195  NIP-47 wallet connect: a wallet's info (kept, replaceable), requests and answers (ephemeral)
+//   30762  a node's signed round result (kanban #362 feature 2, nostr-results.js): public, parameterized replaceable - newest per
+//          node and `d` (arena:result:<round id>) - checked like every other kind
 // Every event's id is recomputed and its signature checked (BIP-340) before anything is kept or passed on.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -15,7 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer } from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195]);   // + NIP-47 (wallet connect)
+export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762]);   // + NIP-47 (wallet connect), + round results (#362)
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
@@ -62,7 +64,7 @@ export function matches(f, e) {
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
 export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memory:', kinds = RELAY_KINDS, name = 'Bitcoin Arena relay',
-  description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78) and remote signing (NIP-46). Nothing else is kept.' } = {}) {
+  description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47) and the nodes\' signed round results (kind 30762). Nothing else is kept.' } = {}) {
   const db = new DatabaseSync(dbPath || ':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);`);

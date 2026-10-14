@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, verify as edVerify, createPublicKey } from 'node:crypto';
 import {
   encodeManifest, decodeManifest, encodeManifestBody, manifestBodyId, gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT,
-  TEMPLATE_MARKER, REQUIRED_VERSION_MARKER, marketTemplateFits, isTemplate, roundFitsManifest, eventFitsTemplate, marketOfRound,
+  TEMPLATE_MARKER, REQUIRED_VERSION_MARKER, PAYOUT_SHARES_MARKER, manifestStands, marketTemplateFits, isTemplate, roundFitsManifest, eventFitsTemplate, marketOfRound,
 } from '../src/manifest.js';
 import { encodeRoundContract, decodeRoundContract, roundId, EVENT_MARKER, contractEventFits } from '../src/contracts.js';
 import { attestationStands, attestationBodyId, attestationTimely, marketVoided, marketTimes, roundTermsOf } from '../src/attested.js';
@@ -109,12 +109,12 @@ const BODY = {
   marketTerms: TERMS,
 };
 const signed = (b) => ({ ...b, signature: new Uint8Array(sign(null, Buffer.from(manifestBodyId(b)), DEV.key)) });
-const TPL = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 3 });
+const TPL = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 4 });
 
 test('a template rides in its manifest after its own marker: read back whole, after the market terms and before the required version', () => {
   const back = decodeManifest(encodeManifest(TPL));
   assert.deepEqual(back.template, TEMPLATE);
-  assert.equal(back.requiredProtocolVersion, 3);
+  assert.equal(back.requiredProtocolVersion, 4);
   assert.deepEqual(encodeManifest(back), encodeManifest(TPL));
   assert.equal(isTemplate(back), true);
   // THE BYTES: the market without the template, then the template's marker and fields, then the required version's
@@ -123,13 +123,14 @@ test('a template rides in its manifest after its own marker: read back whole, af
   assert.deepEqual(body.subarray(0, plain.length), plain, 'the template is written after everything an attested market already writes');
   assert.equal(body[plain.length], TEMPLATE_MARKER);
   assert.equal(body[body.length - 3], REQUIRED_VERSION_MARKER);
-  assert.equal(TEMPLATE_MARKER, 0x03);
-  assert.notDeepEqual(gameIdOf(TPL), gameIdOf(signed({ ...BODY, requiredProtocolVersion: 3 })));
+  assert.equal(TEMPLATE_MARKER, 0x04);
+  assert.notEqual(TEMPLATE_MARKER, PAYOUT_SHARES_MARKER, 'the template\'s marker is not the top split\'s');
+  assert.notDeepEqual(gameIdOf(TPL), gameIdOf(signed({ ...BODY, requiredProtocolVersion: 4 })));
   console.log(`  template manifest ${toHex(gameIdOf(TPL)).slice(0, 16)}: ${body.length} body bytes, marker 0x${TEMPLATE_MARKER.toString(16).padStart(2, '0')} at ${plain.length}`);
 });
 
 test('a template\'s rules, each refused by name', () => {
-  const m = { ...BODY, requiredProtocolVersion: 3 };
+  const m = { ...BODY, requiredProtocolVersion: 4 };
   assert.equal(marketTemplateFits(TEMPLATE, m).ok, true);
   const refusals = {
     'no category': [{ ...TEMPLATE, category: '' }, m, /names its category in 1 to 32 characters/],
@@ -140,8 +141,9 @@ test('a template\'s rules, each refused by name', () => {
     'resolves within 31 days': [{ ...TEMPLATE, resolveWithinMs: 31n * 24n * 3600000n }, m, /resolve within 1 ms to 30 days/],
     'latest before earliest': [{ ...TEMPLATE, resolveWithinMs: 59999n }, m, /latest resolution \(59999 ms after entry close\) is before its earliest \(60000 ms\)/],
     'no market terms': [TEMPLATE, { ...m, marketTerms: undefined }, /names its market terms/],
-    'no required version': [TEMPLATE, { ...m, requiredProtocolVersion: undefined }, /requires protocol version 2026\.0\.3 or later/],
-    'requires 2026.0.2': [TEMPLATE, { ...m, requiredProtocolVersion: 2 }, /requires protocol version 2026\.0\.3 or later/],
+    'no required version': [TEMPLATE, { ...m, requiredProtocolVersion: undefined }, /requires protocol version 2026\.0\.4 or later/],
+    'requires 2026.0.2': [TEMPLATE, { ...m, requiredProtocolVersion: 2 }, /requires protocol version 2026\.0\.4 or later/],
+    'requires 2026.0.3': [TEMPLATE, { ...m, requiredProtocolVersion: 3 }, /requires protocol version 2026\.0\.4 or later/],
     'on a 15 min grid': [TEMPLATE, { ...m, roundPeriodMs: 900000n }, /runs on no grid/],
   };
   const said = {};
@@ -153,7 +155,11 @@ test('a template\'s rules, each refused by name', () => {
   }
   // ONLY AN ATTESTED GAME IS A TEMPLATE
   assert.throws(() => encodeManifestBody({ ...BODY, resultType: RESULT_TYPE.REPLAY, cores: [{ hash: b32(1), configs: [b32(2)] }], runTicksMax: 10,
-    payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4, minScore: 1, template: TEMPLATE, requiredProtocolVersion: 3 }), /only an attested game is a market template/);
+    payoutRule: PAYOUT_RULE.RANK_CURVE, rankNumerator: 3, rankDenominator: 4, minScore: 1, template: TEMPLATE, requiredProtocolVersion: 4 }), /only an attested game is a market template/);
+  // A TEMPLATE UNDER A VERSION THIS BUILD DOES NOT SPEAK IS NOT A GAME IT HOSTS (manifestStands), as a top split
+  const v9 = signed({ ...BODY, template: TEMPLATE, requiredProtocolVersion: 9 });
+  assert.match(manifestStands(v9, { verify: verifyEd }).why, /is a market template under protocol version \?\.\?\.9, which this build does not speak/);
+  assert.equal(manifestStands(TPL, { verify: verifyEd }).ok, true);
   console.log('  refusals:', JSON.stringify(said, null, 1));
 });
 
@@ -161,7 +167,7 @@ test('a template\'s rules, each refused by name', () => {
 
 const EVENT = { question: 'Who wins the final on 2026-10-18: Ajax, PSV, Feyenoord or a draw after extra time? ⚽ Ünïcödé', outcomes: ['Ajax', 'PSV', 'Feyenoord', 'draw'],
   resolveAtMs: BASE.entryCloseMs + 3600000n };
-const ROUND = { ...BASE, protocolVersion: 3, gameId: gameIdOf(TPL), simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), event: EVENT };
+const ROUND = { ...BASE, protocolVersion: 4, gameId: gameIdOf(TPL), simCoreHash: new Uint8Array(32), configHash: new Uint8Array(32), event: EVENT };
 
 test('a round asks its own question in a tail of its own, last of all: read back whole with every tail before it; none named keeps the id', () => {
   const plain = { ...ROUND }; delete plain.event;
@@ -207,7 +213,7 @@ test('a round\'s question, each refusal by name: its size, its labels, its time,
     assert.throws(() => encodeRoundContract({ ...ROUND, event: ev }), why, name);
     said[name] = contractEventFits(ev).why;
   }
-  assert.throws(() => encodeRoundContract({ ...ROUND, protocolVersion: 2 }), /asks its own question from protocol version 3 on/);
+  assert.throws(() => encodeRoundContract({ ...ROUND, protocolVersion: 3 }), /asks its own question from protocol version 4 on/);
   assert.throws(() => encodeRoundContract({ ...ROUND, seriesId: b32(0x5e), roundIndex: 1 }), /no round of a series/);
   // BYTES FROM ANYWHERE: a closing marker or length that does not hold is no question, and the tail is then refused as trailing bytes
   const eb = encodeRoundContract(ROUND);
@@ -215,8 +221,8 @@ test('a round\'s question, each refusal by name: its size, its labels, its time,
   assert.throws(() => decodeRoundContract(bent), /trailing bytes/);
   const longer = eb.slice(); longer[longer.length - 2] += 1;
   assert.throws(() => decodeRoundContract(longer), /trailing bytes/);
-  const v2 = encodeRoundContract({ ...ROUND, protocolVersion: 3 }); v2[2] = 2;   // the same bytes claiming 2026.0.2
-  assert.throws(() => decodeRoundContract(v2), /from protocol version 3 on/);
+  const v3 = encodeRoundContract(ROUND); v3[2] = 3;   // the same bytes claiming 2026.0.3
+  assert.throws(() => decodeRoundContract(v3), /from protocol version 4 on/);
   console.log('  refusals:', JSON.stringify(said, null, 1));
 });
 
@@ -235,8 +241,8 @@ test('a template round is accepted; a template round with no question, or a non-
   assert.equal(roundFitsManifest(plainUd, updown).ok, true, 'the same round without a question fits Up/Down as before');
   const nb = decodeManifest(fromHex(NEXTBLOCK_MANIFEST_HEX));
   assert.match(roundFitsManifest({ ...ROUND, gameId: gameIdOf(nb) }, nb).why, /game "nextblock" is not a market template/);
-  // A TEMPLATE REQUIRES 2026.0.3: a round at version 2 cannot carry a question, and without one it is refused by the version
-  assert.match(roundFitsManifest({ ...plain, protocolVersion: 2 }, TPL, gid).why, /requires protocol version 2026\.0\.3/);
+  // A TEMPLATE REQUIRES 2026.0.4: a round at version 3 cannot carry a question, and without one it is refused by the version
+  assert.match(roundFitsManifest({ ...plain, protocolVersion: 3 }, TPL, gid).why, /requires protocol version 2026\.0\.4/);
 });
 
 test('the template bounds its rounds: no more outcomes than its maxOutcomes, a resolution time inside its window', () => {

@@ -295,6 +295,12 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     third down halts, back up resumes, nothing lost; one guardian gone
     starts a succession to seven that every wallet follows on its own; a
     phone opens every one of the seven `wss://` endpoints
+    MEASURED on testnet4 federation B (kanban #326, 2026-10-14): two down (g6, g7 SIGSTOP) - consensus kept advancing
+    (1013-1017, 16:15-16:27Z) and a PAID round completed on five: deposit 305,000 msat through gw-b, stake and fee
+    locks, play, PROVISIONALLY_FINAL at 7/7 signer nodes, settlement ACCEPTED in B (txid 3bb90d97, 21:13Z) while
+    the two were still paused; a third down halted the sessions at 1017 for 10 min and all seven resumed together
+    (1018-1020); after the paid run both rejoined at once (1106-1108 on all seven). OPEN: the succession to seven on
+    testnet (measured on regtest only, item 13) and the phone opening every guardian endpoint.
 17. **liquidation on regtest:** a 4-guardian federation (3 of 4) with notes
     in three wallets at 90% of its cap; two guardians abandon, attested and
     slashed into the escrow; the federation halts for `abandon_blocks`; the

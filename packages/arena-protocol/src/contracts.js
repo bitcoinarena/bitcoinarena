@@ -273,13 +273,14 @@ export function encodeRoundContract(c) {
 
 /**
  * A ROUND'S OWN QUESTION (kanban #362 feature 5): the byte before it and after it, its limits, and the version it is read
- * from - 2026.0.3, the version whose contract tail it extends (a template requires it: manifest.js TEMPLATE_MIN_PROTOCOL_VERSION).
+ * from - 2026.0.4, the first version whose builds read it (a template requires it: manifest.js TEMPLATE_MIN_PROTOCOL_VERSION, so
+ * only seats that read it are seated for its rounds).
  * A question of 1 to 280 UTF-8 bytes (a tweet), 2 to 16 outcome labels of 1 to 64 UTF-8 bytes each, each named once, and
  * a resolution time in ms. How many outcomes a round may name and when it may resolve is its template's (manifest.js
  * eventFitsTemplate).
  */
 export const EVENT_MARKER = 0xc3;
-export const EVENT_VERSION = 3;
+export const EVENT_VERSION = 4;
 export const EVENT_QUESTION_MAX_BYTES = 280;
 export const EVENT_LABEL_MAX_BYTES = 64;
 export const EVENT_OUTCOMES_MAX = 16;

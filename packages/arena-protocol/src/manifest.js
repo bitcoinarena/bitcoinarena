@@ -8,11 +8,21 @@
 //       payout_rule, payout_params (the rank curve's numerator and denominator), min_score,
 //       clients[], game_donation_set,
 //       [ATTESTED only] outcomes[], attestors[], attest_threshold,
+//         [optional, marker 0x01] market terms: node_fee_bps, donation_bps, question, resolve_after_close,
+//           deadline_after_resolve, source_rule (kanban #235),
+//         [optional, marker 0x04] template: category, max_outcomes, resolve_within (kanban #362 feature 5: each ROUND
+//           asks its own question - contracts.js `event`),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
-//       [ATTESTED, optional] market terms: node_fee_bps, donation_bps, question, resolve_after_close, deadline_after_resolve,
-//         source_rule (kanban #235),
+//       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (kanban #362 feature 3),
+//       [optional, marker 0x02] required_protocol_version (kanban #349),
 //       signature by game_dev_pubkey
 //     }
+//
+// THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
+// terms and template, a head-to-head game's table, a top split's shares - never two of these in one manifest), then the
+// required version, which any manifest may name, last. Each is optional or bound to its rule, so a manifest that names none
+// keeps its bytes and its game id; a reader takes each only where its marker stands, and its four markers 0x01-0x04 are
+// distinct, so no field can be read as another. A node too old to know one cannot read the manifest (trailing bytes).
 //     game_id = H(GameManifest)
 //
 // The developer signs the BODY's id (TAG.gameManifestBody), not the bytes that carry the signature - an object whose
@@ -29,9 +39,10 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
 import { EVENT_VERSION } from './contracts.js';
+import { payoutSharesFit } from './payout.js';
 
 /**
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
@@ -40,9 +51,12 @@ import { EVENT_VERSION } from './contracts.js';
 export const RESULT_TYPE = Object.freeze({ REPLAY: 1, ATTESTED: 2, HEAD_TO_HEAD: 3 });
 /**
  * The engine's payout rules a manifest may pick (§0A.5): §18A's rank curve for a replayed run; pari-mutuel for an attested
- * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks).
+ * outcome (the owner 2026-10-07, #206: no counterparty - the losing picks' net stakes pay the winning picks); and, for a
+ * replayed run, a TOP-N PRIZE SPLIT (kanban #362 feature 3: "tournament-style games need fixed splits; the rank curve is
+ * one shape only") - fixed shares of the pot over the top places, named in the manifest's `payoutShares` (payout.js
+ * payoutSharesFit, computePayoutTable).
  */
-export const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1, PARI_MUTUEL: 2 });
+export const PAYOUT_RULE = Object.freeze({ RANK_CURVE: 1, PARI_MUTUEL: 2, TOP_SPLIT: 3 });
 /** An attested game names 2 to 16 outcomes and 1 to 16 attestors. */
 export const OUTCOMES_MAX = 16;
 export const ATTESTORS_MAX = 16;
@@ -77,12 +91,14 @@ export const REQUIRED_VERSION_MARKER = 0x02;
  * `outcomes` label the template itself (its shape, e.g. YES / NO); a round names its own (contracts.js `event`).
  *
  * After its own marker, behind the market terms and before the required version: optional, so every manifest without it
- * keeps its bytes and its game id. A template REQUIRES protocol version 3 or later (#349): its rounds carry their question
- * in a contract tail a node of 2026.0.3 reads (contracts.js EVENT_MARKER), and a node too old to know the field cannot read
- * the manifest at all (trailing bytes), so it cannot host the template. A template runs on no grid (round_period 0): each
- * round names its own times.
+ * keeps its bytes and its game id. Its marker is 0x04 (0x03 is a top split's shares, feature 3). A template REQUIRES
+ * protocol version 2026.0.4 or later (#349), as a top split does: its rounds carry their question in a contract tail the
+ * builds of 2026.0.4 read (contracts.js EVENT_MARKER, EVENT_VERSION), the census seats for a round only nodes whose advert
+ * lists its version, so a seat without the code is never seated for a template's round - and a node too old to know the
+ * field cannot read the manifest at all (trailing bytes), so it cannot host the template. A template runs on no grid
+ * (round_period 0): each round names its own times.
  */
-export const TEMPLATE_MARKER = 0x03;
+export const TEMPLATE_MARKER = 0x04;
 export const TEMPLATE_MIN_PROTOCOL_VERSION = EVENT_VERSION;
 export const TEMPLATE_CATEGORY_MAX = 32;
 export function marketTemplateFits(t, m) {
@@ -105,6 +121,16 @@ export function marketTemplateFits(t, m) {
 /** Is this manifest an event-market template (kanban #362 feature 5): an attested game whose rounds ask their own question? */
 export const isTemplate = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.template;
 
+
+/**
+ * A TOP SPLIT'S SHARES (kanban #362 feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
+ * marker, right after the game's donation set and before the required version - so every manifest that pays by the curve
+ * or pari-mutuel keeps its bytes and its game id. Then a u16 count and each share as a u16 of basis points, places in
+ * order (1st first). A TOP_SPLIT manifest must require protocol version TOP_SPLIT_VERSION or later (#349): a node that
+ * cannot compute the split does not speak that version, is never seated for the game's rounds, and - too old to know
+ * payout rule 3 - cannot even read the manifest to host it.
+ */
+export const PAYOUT_SHARES_MARKER = 0x03;
 export const MARKET_FEE_BPS_MAX = 500;
 export const MARKET_DONATION_BPS_MAX = 500;
 export const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -203,7 +229,10 @@ export function encodeManifestBody(m) {
       if (!Array.isArray(c.configs) || c.configs.length < 1 || !c.configs.every(manIs32)) throw new Error(`core ${toHex(c.hash).slice(0, 16)} names no 32-byte config`);
     }
     if (!Number.isInteger(m.runTicksMax) || m.runTicksMax < 1 || m.runTicksMax > 65535) throw new Error('run_ticks_max is 1 to 65535 ticks (a contract\'s blockTicks is a u16)');
-    if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) throw new Error(`a replayed game pays by the rank curve; payout rule ${m.payoutRule} is not one of the engine's for it (§0A.5)`);
+    if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE && m.payoutRule !== PAYOUT_RULE.TOP_SPLIT)
+      throw new Error(`a replayed game pays by the rank curve or a top split; payout rule ${m.payoutRule} is not one of the engine's for it (§0A.5)`);
+    // A TOP SPLIT (kanban #362) STILL NAMES A CURVE: the round contract carries numerator and denominator and a round must
+    // match its game's (roundFitsManifest), so the fields keep their rule - the table ignores them under a split
     if (!Number.isInteger(m.rankNumerator) || !Number.isInteger(m.rankDenominator) || m.rankDenominator < 1
         || m.rankNumerator < 1 || m.rankNumerator >= m.rankDenominator || m.rankDenominator > 255)
       throw new Error('the rank curve is a numerator below its denominator, both 1 to 255');
@@ -217,6 +246,15 @@ export function encodeManifestBody(m) {
   if (m.requiredProtocolVersion !== undefined && m.requiredProtocolVersion !== null
       && (!Number.isInteger(m.requiredProtocolVersion) || m.requiredProtocolVersion < 1 || m.requiredProtocolVersion > 65535))
     throw new Error('a required protocol version is 1 to 65535');
+  // A TOP SPLIT'S SHARES, ITS VERSION, AND NOTHING OF EITHER ON ANY OTHER RULE (kanban #362)
+  if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT) {
+    const fit = payoutSharesFit(m.payoutShares);
+    if (!fit.ok) throw new Error(fit.why);
+    if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= TOP_SPLIT_VERSION))
+      throw new Error(`a game paid by a top split requires protocol version ${protocolVersionName(TOP_SPLIT_VERSION)} or later (#349), so no node that cannot pay it is seated for it`);
+  } else if (m.payoutShares !== undefined && m.payoutShares !== null) {
+    throw new Error('only a game paid by a top split (payout rule TOP_SPLIT) names payout shares');
+  }
 
   const w = new Writer();
   w.u8(TYPE_GAME_MANIFEST);
@@ -259,6 +297,8 @@ export function encodeManifestBody(m) {
     w.u8(m.moveCount);
     w.u64(m.revealWindowMs);
   }
+  // A TOP SPLIT'S SHARES (kanban #362), after their marker and only under that rule: no manifest before it moves
+  if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT) { w.u8(PAYOUT_SHARES_MARKER); w.vec(m.payoutShares, (x, ww) => ww.u16(x)); }
   // THE REQUIRED PROTOCOL VERSION, LAST AND ONLY WHEN NAMED: no manifest before it moves
   if (m.requiredProtocolVersion) { w.u8(REQUIRED_VERSION_MARKER); w.u16(m.requiredProtocolVersion); }
   return w.finish();
@@ -302,6 +342,12 @@ function readBody(r) {
     body.players = r.u8();
     body.moveCount = r.u8();
     body.revealWindowMs = r.u64();
+  }
+  // a top split's shares (kanban #362): its payout rule says they follow, so their marker is required, not looked for
+  if (body.resultType === RESULT_TYPE.REPLAY && body.payoutRule === PAYOUT_RULE.TOP_SPLIT) {
+    if (!(r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.u8() === PAYOUT_SHARES_MARKER))
+      throw new Error('a game paid by a top split carries its shares after their marker');
+    body.payoutShares = r.vec((rr) => rr.u16());
   }
   if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === REQUIRED_VERSION_MARKER) {
     r.u8();
@@ -351,6 +397,13 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
   let signed = false;
   try { signed = verify(m.signature, digest, m.gameDevPubkey) === true; } catch { signed = false; }
   if (!signed) return { ok: false, why: `${name}: its signature is not its developer key ${toHex(m.gameDevPubkey).slice(0, 16)}'s` };
+  // A TOP SPLIT THIS BUILD CANNOT PAY IS NOT A GAME IT HOSTS (kanban #362, #349): the version the game requires is one this
+  // build speaks, or none of its rounds could be read here, let alone settled by the split
+  if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT && !speaksVersion(m.requiredProtocolVersion))
+    return { ok: false, why: `${name}: it pays by a top split under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
+  // AND A TEMPLATE WHOSE ROUNDS THIS BUILD CANNOT READ (kanban #362 feature 5): likewise
+  if (isTemplate(m) && !speaksVersion(m.requiredProtocolVersion))
+    return { ok: false, why: `${name}: it is a market template under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
   if (m.version === 1) {
     if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
     return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
@@ -406,7 +459,8 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   }
   if (!Number.isInteger(contract.blockTicks) || contract.blockTicks < 1 || contract.blockTicks > m.runTicksMax)
     return { ok: false, why: `that round's run is ${contract.blockTicks} ticks; ${name} runs at most ${m.runTicksMax}` };
-  if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE) return { ok: false, why: `${name} picks payout rule ${m.payoutRule}, which is not the engine's` };
+  if (m.payoutRule !== PAYOUT_RULE.RANK_CURVE && m.payoutRule !== PAYOUT_RULE.TOP_SPLIT)
+    return { ok: false, why: `${name} picks payout rule ${m.payoutRule}, which is not the engine's` };
   if (contract.rankNumerator !== m.rankNumerator || contract.rankDenominator !== m.rankDenominator)
     return { ok: false, why: `that round's rank curve is ${contract.rankNumerator}/${contract.rankDenominator}; ${name} pays ${m.rankNumerator}/${m.rankDenominator}` };
   if (!Number.isInteger(contract.minScore) || contract.minScore < m.minScore)
@@ -477,4 +531,32 @@ export function seriesPeriodFits(m, periodMs = ROUND_PERIOD_MS) {
   }
   if (m.roundPeriodMs === 0n || m.roundPeriodMs === BigInt(periodMs)) return { ok: true, periodMs: BigInt(periodMs) };
   return { ok: false, why: `game "${m.gameName}" runs every ${m.roundPeriodMs} ms, and this network's series run every ${periodMs} ms` };
+}
+
+/**
+ * THE TOP SPLIT A GAME PAYS BY (kanban #362), as `computePayoutTable`'s `payoutShares`: a copy of its manifest's shares, or
+ * null for every other rule (§18A's curve - the table's default).
+ */
+export const payoutSharesOf = (m) => (m && m.payoutRule === PAYOUT_RULE.TOP_SPLIT && Array.isArray(m.payoutShares) ? [...m.payoutShares] : null);
+
+/**
+ * THE PAYOUT RULE A ROUND'S TABLE IS COMPUTED BY, from the manifest of the game it names (kanban #362): one answer for the
+ * node's settlement, its standing line, its signed table and a slash proof's recomputation of F, so a TOP_SPLIT round's
+ * table is the same everywhere. `manifest`: the game's, as the caller holds it (a node: its hosted plugin) - it must be
+ * the game the round names, by id, or nothing is computed. With none: a round from TOP_SPLIT_VERSION on may be a split
+ * game's, so nothing says which rule F is - refused rather than guessed at the curve; an older round cannot be one
+ * (roundFitsManifest), so it is the curve, as it always was. Answers { ok, payoutShares } or { ok: false, why }.
+ */
+export function payoutRuleForRound(contract, manifest = null) {
+  if (manifest) {
+    if (!contract || !manIs32(contract.gameId)) return { ok: false, why: 'that round names no 32-byte game, so no manifest can be its game\'s' };
+    let id;
+    try { id = gameIdOf(manifest); } catch (e) { return { ok: false, why: `that game's manifest does not encode: ${e.message}` }; }
+    if (!manSame(id, contract.gameId))
+      return { ok: false, why: `that round plays game ${toHex(contract.gameId).slice(0, 16)}, and the manifest handed in is ${toHex(id).slice(0, 16)}` };
+    return { ok: true, payoutShares: payoutSharesOf(manifest) };
+  }
+  if (contract && Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= TOP_SPLIT_VERSION)
+    return { ok: false, why: `a round of protocol version ${protocolVersionName(contract.protocolVersion)} may pay by its game's top split, and no manifest of game ${manIs32(contract.gameId) ? toHex(contract.gameId).slice(0, 16) : '(none)'} is held to say` };
+  return { ok: true, payoutShares: null };
 }
