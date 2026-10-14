@@ -31,6 +31,8 @@ test('each holder lists the round with ISO start and end and the drawn committee
       assert.deepEqual(row.committee.settlement, await committeeAt(d, w.rid, 'settlement'));
       assert.deepEqual(row.committee.game, await committeeAt(d, w.rid, 'game'));
       const union = new Set([...row.committee.game, ...row.committee.settlement]);
+      // §5A.9 overlap_count, published (kanban #308): the seats in both committees
+      assert.equal(row.committee.overlapCount, row.committee.game.filter((k) => row.committee.settlement.includes(k)).length);
       assert.deepEqual([...union].sort(), w.c.nodes.map(toHex).sort(), 'the drawn committees are the round\'s own nodes');
       rows.push(row);
     }
