@@ -1415,6 +1415,9 @@
         heard: true, feed: false, held: {}, misses: 0 };
       function hex2u8(h) { return Uint8Array.from(String(h).match(/../g).map(function (x) { return parseInt(x, 16); })); }
       function sigsOf(list) { return (list || []).map(function (s) { return [hex2u8(s.key), hex2u8(s.signature)]; }); }
+      // PROTOCOL 5 (kanban #312): a sample is the median of the seats' own signed readings - each [key, its cents (or its 64
+      // prices), signature] goes into the transcript beside the median, and every seat recomputes it
+      function readingsOf(list) { return list ? list.map(function (s) { return [hex2u8(s.key), s.prices ? s.prices.slice() : s.priceCents, hex2u8(s.signature)]; }) : undefined; }
       function netClient() {
         try { var m = window.unityInstance && window.unityInstance.Module; var n = m && m.blwpNet; return n && n.inWorld && n.client ? n.client : null; } catch (e) { return null; }
       }
@@ -1423,13 +1426,13 @@
         var t = c.offered | 0;
         if (!P.tapeDone && P.tape && t === 0) {
           tape.call(core, st, P.tape.prices.map(BLWPCLIENT.centsToTapeUnits));
-          c.submitAttestedTape({ tick: 0, prices: P.tape.prices, sigs: sigsOf(P.tape.sigs) });
+          c.submitAttestedTape({ tick: 0, prices: P.tape.prices, sigs: sigsOf(P.tape.sigs), readings: readingsOf(P.tape.readings) });
           P.tapeDone = true; P.applied.push(['tape', 0]);
         }
         var s = P.samples.get(t);
         if (s && !s.applied) {
           sample.call(core, st, BLWPCLIENT.centsToTapeUnits(s.priceCents));
-          c.submitAttestedSample({ tick: t, priceCents: s.priceCents, sigs: sigsOf(s.sigs) });
+          c.submitAttestedSample({ tick: t, priceCents: s.priceCents, sigs: sigsOf(s.sigs), readings: readingsOf(s.readings) });
           s.applied = true; P.applied.push([t, s.priceCents]);
         }
       }
@@ -1463,7 +1466,7 @@
             if (!r.ok) continue;
             var j = await r.json();
             heard(j.feed === true);
-            (j.samples || []).forEach(function (x) { if (!P.samples.has(x.tick)) P.samples.set(x.tick, { priceCents: x.priceCents, sigs: x.sigs }); });
+            (j.samples || []).forEach(function (x) { if (!P.samples.has(x.tick)) P.samples.set(x.tick, { priceCents: x.priceCents, sigs: x.sigs, readings: x.readings }); });
             if (j.tape && !P.tape) P.tape = j.tape;
             if (!P.active && (P.samples.size || P.tape)) { P.active = true; console.log('[arena] the committee\'s price is on: this run plays the attested samples only'); }
             return;

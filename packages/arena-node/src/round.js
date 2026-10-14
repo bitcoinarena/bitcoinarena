@@ -28,7 +28,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices } from '../../arena-protocol/src/constants.js';
 import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
@@ -666,8 +666,9 @@ export class Round {
     const requirePrices = !!(this.pricesRequired && this.pricesRequired(round.contract));
     if ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length)))) {
       const c = decodeRoundContract(new Uint8Array(round.contract));
+      // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings (kanban #312)
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.nodes.length); } catch { return c.nodes.length; } })(),
-        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices });
+        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices, median: mediansPrices(c) });
       if (!prices.ok) throw new Error(prices.why);
     }
 

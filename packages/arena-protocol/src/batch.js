@@ -54,6 +54,11 @@ export const TAPE_PRICES = 64;
  * over priceSampleId / priceTapeId. A fourth optional tail after the rooms, written only when there is one: every batch
  * before it keeps its bytes and its id. One attested sample a tick (a batch held through a stall can cover several 5 s
  * samples) up to MAX_ATTESTED_SAMPLES, one tape, each with at most MAX_ATTEST_SIGS.
+ *
+ * PROTOCOL 5 (kanban #312: each seat signs its own reading, the price is their median - price-sample.js): kind 2 a sample
+ * `[tick, 2, cents, [[key32, cents, sig64], ...]]` and kind 3 the tape `[tick, 3, prices, [[key32, prices, sig64], ...]]` -
+ * the median and the seats' signed readings it is the median of, at most MAX_ATTEST_SIGS of them. Kinds 0 and 1 keep their
+ * bytes; one sample a tick and one tape a batch count both kinds.
  */
 export const MAX_ATTEST_SIGS = 9;
 export const MAX_ATTESTED_SAMPLES = 256;
@@ -103,9 +108,9 @@ export function encodeInputBatch(b) {
   const rooms = loads.filter((l) => l.length > 3 && l[3] !== undefined && l[3] !== null).map((l) => [l[0], l[3] | 0]);
   if (new Set(rooms.map((r) => r[0])).size !== rooms.length) throw new Error('a batch carries one room a load tick');
   const attests = [...(b.attests || [])].sort((x, y) => x[1] - y[1] || x[0] - y[0]);
-  const sampleTicks = attests.filter((a) => a[1] === 0).map((a) => a[0]);
-  if (new Set(sampleTicks).size !== sampleTicks.length || sampleTicks.length > MAX_ATTESTED_SAMPLES || attests.filter((a) => a[1] === 1).length > 1
-    || attests.some((a) => a[1] !== 0 && a[1] !== 1))
+  const sampleTicks = attests.filter((a) => a[1] === 0 || a[1] === 2).map((a) => a[0]);
+  if (new Set(sampleTicks).size !== sampleTicks.length || sampleTicks.length > MAX_ATTESTED_SAMPLES || attests.filter((a) => a[1] === 1 || a[1] === 3).length > 1
+    || attests.some((a) => a[1] !== 0 && a[1] !== 1 && a[1] !== 2 && a[1] !== 3))
     throw new Error(`a batch carries one attested sample a tick (at most ${MAX_ATTESTED_SAMPLES}) and at most one attested tape`);
   if (samples.length || tapes.length || rooms.length || attests.length) w.vec(samples, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
   if (tapes.length || rooms.length || attests.length) w.vec(tapes, (l, ww) => {
@@ -115,11 +120,14 @@ export function encodeInputBatch(b) {
   if (rooms.length || attests.length) w.vec(rooms, (l, ww) => { ww.u32(l[0]); ww.i32(l[1]); });
   if (attests.length) w.vec(attests, (a, ww) => {
     const [tick, kind, cents, sigs] = a;
+    const tapeOf = (ps) => { if (!Array.isArray(ps) || ps.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); return ps; };
     ww.u32(tick); ww.u8(kind);
-    if (kind === 0) ww.i32(cents);
-    else { if (!Array.isArray(cents) || cents.length !== TAPE_PRICES) throw new Error(`an attested tape carries ${TAPE_PRICES} prices`); for (const c of cents) ww.i32(c); }
+    if (kind === 0 || kind === 2) ww.i32(cents);
+    else for (const c of tapeOf(cents)) ww.i32(c);
     if (!Array.isArray(sigs) || sigs.length > MAX_ATTEST_SIGS) throw new Error(`an attestation carries at most ${MAX_ATTEST_SIGS} signatures`);
-    ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); w3.bytes(sg[1], 64); });
+    if (kind < 2) ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); w3.bytes(sg[1], 64); });
+    // protocol 5: each reading its key, its own price(s) and its signature
+    else ww.vec(sigs, (sg, w3) => { w3.bytes32(sg[0]); if (kind === 2) w3.i32(sg[1]); else for (const c of tapeOf(sg[1])) w3.i32(c); w3.bytes(sg[2], 64); });
   });
   return w.finish();
 }
@@ -151,8 +159,10 @@ export function decodeInputBatch(bytes) {
     var rooms = r.at < bytes.length ? r.vec((rr) => [rr.u32(), rr.i32()]) : [];
     b.attests = r.at < bytes.length ? r.vec((rr) => {
       const tick = rr.u32(); const kind = rr.u8();
-      const cents = kind === 0 ? rr.i32() : kind === 1 ? Array.from({ length: TAPE_PRICES }, () => rr.i32()) : (() => { throw new Error('kind'); })();
-      const sigs = rr.vec((r3) => [r3.bytes32(), r3.bytes(64)]);
+      const tape = () => Array.from({ length: TAPE_PRICES }, () => rr.i32());
+      const cents = kind === 0 || kind === 2 ? rr.i32() : kind === 1 || kind === 3 ? tape() : (() => { throw new Error('kind'); })();
+      const sigs = kind < 2 ? rr.vec((r3) => [r3.bytes32(), r3.bytes(64)])
+        : rr.vec((r3) => { const key = r3.bytes32(); const own = kind === 2 ? r3.i32() : Array.from({ length: TAPE_PRICES }, () => r3.i32()); return [key, own, r3.bytes(64)]; });
       if (sigs.length > MAX_ATTEST_SIGS) throw new Error('sigs');
       return [tick, kind, cents, sigs];
     }) : [];
@@ -201,8 +211,10 @@ export const MAX_INPUT_BATCH_BYTES =
   + 2 + MAX_BATCH_TICKS * 12 + 2 + MAX_BATCH_TICKS * 8 + 2 + (4 + 4 * TAPE_PRICES)
   // the rooms (a load's bed fill, 2026-10-04), one a load at most
   + 2 + MAX_BATCH_TICKS * 8
-  // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each
-  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 96) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * 96);
+  // the attested sample and tape (§11): tick, kind, price(s), and up to MAX_ATTEST_SIGS (key, signature) each - at their
+  // largest the protocol-5 kinds 2 and 3 (kanban #312), whose readings also carry each seat's own price(s): 100 bytes a sample
+  // reading (key, cents, signature), 352 a tape reading (key, 64 prices, signature)
+  + 2 + MAX_ATTESTED_SAMPLES * (4 + 1 + 4 + 2 + MAX_ATTEST_SIGS * 100) + (4 + 1 + 4 * TAPE_PRICES + 2 + MAX_ATTEST_SIGS * (32 + 4 * TAPE_PRICES + 64));
 
 /** The absolute tick numbers a batch covers, in order. */
 export const batchTicks = (b) =>

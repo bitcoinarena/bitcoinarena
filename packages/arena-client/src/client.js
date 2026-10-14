@@ -1969,18 +1969,20 @@ export class Client {
    * ([key, sig]). It must be applied at exactly that tick - the run is at it now (`offered`) - and goes into the transcript
    * in the tape's unit beside its attestation, which every seat checks. Refused at any other tick, or once the run ended.
    */
-  submitAttestedSample({ tick, priceCents, sigs }) {
+  submitAttestedSample({ tick, priceCents, sigs, readings }) {
     if (this.ended || !this.where || tick !== this.offered) return false;
     this.samples.push([tick, centsToTapeUnits(priceCents)]);
-    this.attests.push([tick, 0, priceCents, sigs]);
+    // PROTOCOL 5 (kanban #312): the median and the seats' own signed readings it is the median of ([key, cents, sig]), kind 2
+    this.attests.push(readings ? [tick, 2, priceCents, readings] : [tick, 0, priceCents, sigs]);
     return true;
   }
 
   /** THE COMMITTEE'S TAPE: the 64 signed prices before the start, in cents, with their signatures - at tick `tick`. */
-  submitAttestedTape({ tick, prices, sigs }) {
+  submitAttestedTape({ tick, prices, sigs, readings }) {
     if (this.ended || !this.where || tick !== this.offered || !prices || prices.length !== 64) return false;
     this.tapes.push([tick, ...prices.map(centsToTapeUnits)]);
-    this.attests.push([tick, 1, prices.slice(), sigs]);
+    // protocol 5: the per-position medians and the seats' own signed tapes ([key, prices, sig]), kind 3
+    this.attests.push(readings ? [tick, 3, prices.slice(), readings] : [tick, 1, prices.slice(), sigs]);
     return true;
   }
 
@@ -2120,7 +2122,7 @@ export class Client {
     const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
     // the committee's word on the samples and the tape this batch carries, and on nothing else (§11, kanban #311)
-    const attests = this.attests.filter(([at, kind]) => (kind === 0 ? samples : tapes).some((x) => x[0] === at));
+    const attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
     this.attests = this.attests.filter((a) => !attests.includes(a));
 
     this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {

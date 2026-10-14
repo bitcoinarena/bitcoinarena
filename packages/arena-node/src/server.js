@@ -5144,9 +5144,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
       }
-      if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested')) {
+      // POST /price-reading (protocol 5, kanban #312): a committee seat's own signed reading - every seat posts its own, nobody
+      // proposes a price, and a sample is the median of the readings (price-feed.js)
+      if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested' || url.pathname === '/price-reading')) {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
-        const got = url.pathname === '/price-sign' ? prices.sign(body) : prices.hold(body);
+        const got = url.pathname === '/price-sign' ? prices.sign(body) : url.pathname === '/price-reading' ? prices.reading(body) : prices.hold(body);
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
