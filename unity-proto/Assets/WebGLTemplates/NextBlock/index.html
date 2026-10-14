@@ -5322,6 +5322,11 @@
         if (document.documentElement.classList.contains('arena-root')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name; const i = document.getElementById('site-icons'); if (i) i.textContent = ''; }
       }
       window.ARENA_GAME_ID = game.id;
+      // EVERY VERSION'S ROUNDS FOR THE UNITY GAME (the owner 2026-10-14 ~08:45Z: "next block ... shows no open round"): the tile shows
+      // one version of a game - the newest when none is being played - and the lobby listed that version's rounds alone. Tick
+      // Tock's open rounds named its first manifest (495516ae) while the tile showed the second (c693585b): six open rounds, none
+      // listed. Unity plays any version's round (the round's own contract names its core), so its lobby lists all of them.
+      window.ARENA_GAME_IDS = game.name === 'nextblock' && Array.isArray(game.versions) && game.versions.length ? game.versions : [game.id];
       // A TABLE WAITS (kanban #293, the owner 2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
       // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
       // transaction, the first about an hour later. window.ARENA_H2H_WANT keeps the last ask for a probe.
@@ -5840,8 +5845,10 @@
         const now = Date.now();
         // THE CHOSEN GAME'S ROWS ONLY (kanban #208)
         if (window.ARENA_GAME_ID) {
-          got = Object.assign({}, got, { rows: BLWPCLIENT.rowsOfGame(got.rows, window.ARENA_GAME_ID) });
-          if (got2) got2 = Object.assign({}, got2, { rows: BLWPCLIENT.rowsOfGame(got2.rows, window.ARENA_GAME_ID) });
+          const ids = new Set((window.ARENA_GAME_IDS || [window.ARENA_GAME_ID]).map((x) => String(x).toLowerCase()));
+          const ofGame = (rows) => (rows || []).filter((r) => ids.has(String(r && r.game).toLowerCase()));
+          got = Object.assign({}, got, { rows: ofGame(got.rows) });
+          if (got2) got2 = Object.assign({}, got2, { rows: ofGame(got2.rows) });
         }
         // ONE FREE ROUND AND ONE PAYING ROUND, never two of either (the owner 2026-09-15 16:08), and what the paying one
         // costs. WITH THE TESTNET LOBBY the free row is this lobby's and the paying row the testnet's: both, always.
