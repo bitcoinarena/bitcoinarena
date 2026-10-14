@@ -1225,6 +1225,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     committeeTimeMs, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {}, extraOutputs = [], waitBeacon = true } = {}) {
     if (!onChain || onChain.minable) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
     if (firstCloseMs === undefined || committeeTimeMs === undefined) throw new Error('a grid names its first close and its committee time');
+    if (Array.isArray(kind.tableFields) && kind.tableFields.length) tables = kind.tableFields.length;
     const committee = BigInt(committeeTimeMs), first = BigInt(firstCloseMs);
     if (first - BigInt(entryAfterStartMs) - committee < MIN_ENTRY_WINDOW_MS) throw new Error('the grid starts before its committee time plus the minimum entry window');
     censusView = await viewToTip();
@@ -1235,7 +1236,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
         ...(kind.stakeMsat !== undefined ? { stakeMsat: BigInt(kind.stakeMsat) } : {}),
         ...(kind.custody ? { custody: kind.custody } : {}),
         committeeTimeMs: committee - BigInt(k), startTimeMs: start, entryCloseMs: first, blockTicks: runTicksAt(start),
-        ...(kind.fields || {}) };
+        ...(kind.fields || {}),
+        // A TABLE'S OWN FIELDS (the owner 2026-10-14: "Each game may only have one round posting per day"): one transaction carries every
+        // federation's tables of a game, each table naming its federation here
+        ...((kind.tableFields || [])[k] || {}) };
       // a lock span sized from the round's times (kanban #236) is the LAST round's, so it holds for every round of the table
       if (typeof kind.stakeExpiryFor === 'function') {
         const lastStart = start + BigInt(slots - 1) * BigInt(windowMs);
