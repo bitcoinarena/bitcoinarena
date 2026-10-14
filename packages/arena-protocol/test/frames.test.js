@@ -60,7 +60,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // spent-note set (kanban #323, §23A.5): it decides which notes a halted federation's liquidation pays.
   // 39 since the round result (kanban #312, §13): it decides who won a price round's war - bulls or bears - and moves no money.
   // 40 since the player result with its front (kanban #312, §13): the result of a price round's run, and the lead it ended on.
-  assert.equal(FRAMES.size, 40, 'a type was added without saying what it decides');
+  // 41 since a seat's halt observation (kanban #323, §23A.5 "How a halt is proven"): which federation the liquidation takes.
+  assert.equal(FRAMES.size, 41, 'a type was added without saying what it decides');
 });
 
 /**
