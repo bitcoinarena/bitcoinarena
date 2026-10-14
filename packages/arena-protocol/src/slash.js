@@ -26,7 +26,7 @@
 // slashing height MINUS the round's own seats, and 25% to the developers
 // members, as fixed by the Round Contract" - needs a contract field that does
 // not exist yet, and adding one moves every round id. It is named and left.
-import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId, runOf } from './rerun.js';
+import { SIGNED_RERUN_BYTES, splitSignedRerun, decodeRerunResult, rerunResultId, runOf, signedRerunBytesOf } from './rerun.js';
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import {
@@ -36,7 +36,7 @@ import {
 } from './constants.js';
 import { entryId } from './contracts.js';
 import { feeOwed, feeTableId } from './fee.js';
-import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES } from './result.js';
+import { decodePlayerResult, resultId, splitSignedResult, SIGNED_RESULT_BYTES, signedResultBytesOf } from './result.js';
 import { computePayoutTable, payoutTableId, decodePayoutTable } from './payout.js';
 import { lockAction, lockActionByte, lockActionOf, EXPIRE } from './lock-action.js';
 import { outcomeByte, outcomeOf } from './result.js';
@@ -206,6 +206,20 @@ export const slashProofId = (p) => taggedHash(TAG.slashProof, encodeSlashProof(p
 /** 1 type + 2 version + six 32-byte fields + a 4-byte vout. */
 export const SLASH_PROOF_BYTES = 199;
 export const SLASH_EVIDENCE_BYTES = SLASH_PROOF_BYTES + SIGNED_RESULT_BYTES;
+/** The size of the published proof starting at `at`: the proof and the signed result its type byte sizes (#312: a price round's is 10 longer). */
+export const slashEvidenceBytesOf = (bytes, at = 0) => SLASH_PROOF_BYTES + signedResultBytesOf(bytes, at + SLASH_PROOF_BYTES);
+/** And a re-run proof's: the proof and the signed re-run result. */
+export const rerunSlashEvidenceBytesOf = (bytes, at = 0) => SLASH_PROOF_BYTES + signedRerunBytesOf(bytes, at + SLASH_PROOF_BYTES);
+/** Cut a stream of published proofs (results or re-runs, each by its own type byte); a record that does not fit ends the stream. */
+export function cutSlashEvidence(body) {
+  const out = [];
+  for (let at = 0; at < body.length;) {
+    let n; try { n = slashEvidenceBytesOf(body, at); } catch { try { n = rerunSlashEvidenceBytesOf(body, at); } catch { break; } }
+    if (at + n > body.length) break;
+    out.push(body.subarray(at, at + n)); at += n;
+  }
+  return out;
+}
 
 /**
  * A PROOF AS IT IS PUBLISHED (5A.3B step 1, "anyone publishes a fraud
@@ -215,16 +229,17 @@ export const SLASH_EVIDENCE_BYTES = SLASH_PROOF_BYTES + SIGNED_RESULT_BYTES;
  */
 export function joinSlashEvidence(proofBytes, signedResult) {
   if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
-  if (signedResult.length !== SIGNED_RESULT_BYTES) throw new Error(`a signed result is ${SIGNED_RESULT_BYTES} bytes, got ${signedResult.length}`);
-  const out = new Uint8Array(SLASH_EVIDENCE_BYTES);
+  let n = -1; try { n = signedResultBytesOf(signedResult); } catch { n = -1; }
+  if (signedResult.length !== n) throw new Error(`a signed result is ${n > 0 ? n : SIGNED_RESULT_BYTES} bytes, got ${signedResult.length}`);
+  const out = new Uint8Array(SLASH_PROOF_BYTES + n);
   out.set(proofBytes, 0);
   out.set(signedResult, SLASH_PROOF_BYTES);
   return out;
 }
 
 export function splitSlashEvidence(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== SLASH_EVIDENCE_BYTES)
-    throw new Error(`a published slash proof is ${SLASH_EVIDENCE_BYTES} bytes`);
+  let n = -1; if (bytes instanceof Uint8Array) { try { n = slashEvidenceBytesOf(bytes); } catch { n = -1; } }
+  if (n < 0 || bytes.length !== n) throw new Error(`a published slash proof is ${n > 0 ? n : SLASH_EVIDENCE_BYTES} bytes`);
   const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
   return { proof: decodeSlashProof(proofBytes), proofBytes, signedResult: bytes.subarray(SLASH_PROOF_BYTES) };
 }
@@ -239,16 +254,17 @@ export const RERUN_SLASH_EVIDENCE_BYTES = SLASH_PROOF_BYTES + SIGNED_RERUN_BYTES
 
 export function joinRerunSlashEvidence(proofBytes, signedRerun) {
   if (proofBytes.length !== SLASH_PROOF_BYTES) throw new Error(`a slash proof is ${SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
-  if (signedRerun.length !== SIGNED_RERUN_BYTES) throw new Error(`a signed re-run result is ${SIGNED_RERUN_BYTES} bytes, got ${signedRerun.length}`);
-  const out = new Uint8Array(RERUN_SLASH_EVIDENCE_BYTES);
+  let n = -1; try { n = signedRerunBytesOf(signedRerun); } catch { n = -1; }
+  if (signedRerun.length !== n) throw new Error(`a signed re-run result is ${n > 0 ? n : SIGNED_RERUN_BYTES} bytes, got ${signedRerun.length}`);
+  const out = new Uint8Array(SLASH_PROOF_BYTES + n);
   out.set(proofBytes, 0);
   out.set(signedRerun, SLASH_PROOF_BYTES);
   return out;
 }
 
 export function splitRerunSlashEvidence(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== RERUN_SLASH_EVIDENCE_BYTES)
-    throw new Error(`a published re-run slash proof is ${RERUN_SLASH_EVIDENCE_BYTES} bytes`);
+  let n = -1; if (bytes instanceof Uint8Array) { try { n = rerunSlashEvidenceBytesOf(bytes); } catch { n = -1; } }
+  if (n < 0 || bytes.length !== n) throw new Error(`a published re-run slash proof is ${n > 0 ? n : RERUN_SLASH_EVIDENCE_BYTES} bytes`);
   const proofBytes = bytes.subarray(0, SLASH_PROOF_BYTES);
   return { proof: decodeSlashProof(proofBytes), proofBytes, signedRerun: bytes.subarray(SLASH_PROOF_BYTES) };
 }

@@ -77,7 +77,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -153,7 +153,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lo
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
@@ -4581,8 +4581,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         const held = round.results(rid, eid);
-        const out = new Uint8Array(held.length * SIGNED_RESULT_BYTES);
-        held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RESULT_BYTES));
+        // each record at its own size, end to end (kanban #312: a price round's result carries its front)
+        const out = Buffer.concat(held.map((r) => Buffer.from(r.bytes)));
         // AND §13C'S NO-QUORUM OUTCOME, when this signer node decided one (M3.3-34):
         // VOID has no signed result to serve, so it is said here.
         const nq = eid.length === 32 ? round.noQuorum(new Uint8Array(eid)) : null;
@@ -5517,8 +5517,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return { ...r, bytes: joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), round.identity.secret)) };
           } catch { return r; }
         });
-        const out = new Uint8Array(held.length * SIGNED_RERUN_BYTES);
-        held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RERUN_BYTES));
+        const out = Buffer.concat(held.map((r) => Buffer.from(r.bytes)));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-reruns': String(held.length), ...CORS });
         return res.end(Buffer.from(out));
       }
@@ -5719,8 +5718,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         const held = round.slashProofs(rid, eid);
-        const out = new Uint8Array(held.length * SLASH_EVIDENCE_BYTES);
-        held.forEach((p, i) => out.set(p.bytes, i * SLASH_EVIDENCE_BYTES));
+        const out = Buffer.concat(held.map((p) => Buffer.from(p.bytes)));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-slash-proofs': String(held.length), ...CORS });
         return res.end(Buffer.from(out));
       }
@@ -5732,7 +5730,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
         // A PROOF AGAINST A RE-RUN SIGNER (slice C2c) travels with the signed re-run it names, at its own size.
-        if (bytes.length === RERUN_SLASH_EVIDENCE_BYTES) {
+        if (bytes.length > SLASH_PROOF_BYTES && bytes[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) {
           let rr;
           try { rr = splitRerunSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
           if (toHex(slashProofId(rr.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');

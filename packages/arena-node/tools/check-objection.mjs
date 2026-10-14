@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { SIGNED_RESULT_BYTES } from '../../arena-protocol/src/result.js';
+import { cutSignedResults } from '../../arena-protocol/src/result.js';
 import { coreOfGame, hostedPlugins } from '../src/plugins.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { verifiedFinal } from '../src/verdict.js';
@@ -30,7 +30,7 @@ export async function checkObjectionAt({ base, roundId, entryId, bundle, fetcher
   const entry = decodeEntryContract((await get(`/entry?id=${hex(eid)}`)).bytes);
   const resultsBytes = (await get(`/results?round=${hex(rid)}&entry=${hex(eid)}`)).bytes;
   const records = [];
-  for (let at = 0; at + SIGNED_RESULT_BYTES <= resultsBytes.length; at += SIGNED_RESULT_BYTES) records.push(resultsBytes.slice(at, at + SIGNED_RESULT_BYTES));
+  for (const rec of cutSignedResults(resultsBytes)) records.push(rec.slice());
   // THE COMMITTEE THE ROUND NAMES, and the run it signed at its threshold - counted here, each signature verified
   const committee = contract.nodes;
   const seen = verifiedFinal(records, { contract, signerNodes: committee });

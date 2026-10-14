@@ -41,14 +41,14 @@ import {
 } from '../../arena-protocol/src/posting.js';
 import {
   encodeRerunResult, rerunResultId, joinSignedRerun, splitSignedRerun, decodeRerunResult, rerunIsAgreed,
-  SIGNED_RERUN_BYTES, runOf,
+  SIGNED_RERUN_BYTES, runOf, cutSignedReruns,
 } from '../../arena-protocol/src/rerun.js';
 import { encodeSlashProof, slashProofId, slashHolds, joinSlashEvidence, slashHoldsOnRerun, joinRerunSlashEvidence } from '../../arena-protocol/src/slash.js';
 import {
-  joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES,
+  joinSignedResult, splitSignedResult, decodePlayerResult, resultId, SIGNED_RESULT_BYTES, cutSignedResults,
   encodePlayerResult,
 } from '../../arena-protocol/src/result.js';
-import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { matchProofId } from '../../arena-protocol/src/match.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -1082,9 +1082,12 @@ export class Verifier {
   }
 
   #sign({ roundIdBytes, entryId, entry, contract, answer, transcript, stopped = false }) {
+    // A ROUND PLAYED AGAINST THE PRICE FEED (§11) signs the front its run ended on (§13 front_*, kanban #312)
+    let priceRound = false;
+    try { priceRound = !!(this.round.pricesRequired && this.round.pricesRequired(encodeRoundContract(contract))); } catch { priceRound = false; }
     const built = resultFrom({
       answer, contract, entry, transcript, entryId,
-      nodePubkey: this.round.pubkey, stopped,
+      nodePubkey: this.round.pubkey, stopped, priceRound,
     });
     if (!built.ok) return { entryId, stored: false, why: built.why };
     // PLAYER-NODE SEPARATION (§5A.13): "A selected node may not sign anything for a round in which its operator has an Entry
@@ -1262,9 +1265,9 @@ export class Verifier {
       // signature under the key it names. This is the continuation after that peer answered, and it is timed because a
       // stall named only "a promise" is a stall nobody can act on (the owner 2026-09-17 19:15).
       timed(`close gather records ${hex(entryIdBytes).slice(0, 8)}`, () => {
-        for (let at = 0; at + SIGNED_RESULT_BYTES <= body.length; at += SIGNED_RESULT_BYTES) {
+        // record by record, each its type's size (kanban #312)
+        for (const record of cutSignedResults(body)) {
           fetched++;
-          const record = body.subarray(at, at + SIGNED_RESULT_BYTES);
           if (this.#keepPeerResult(roundIdBytes, entryIdBytes, record, playerPubkey)) kept++;
         }
       }, { over: 20 });
@@ -1529,8 +1532,8 @@ export class Verifier {
         if (!answer.ok) continue;
         body = new Uint8Array(await answer.arrayBuffer());
       } catch { continue; }
-      for (let at = 0; at + SIGNED_RERUN_BYTES <= body.length; at += SIGNED_RERUN_BYTES)
-        this.#keepPeerRerun(roundIdBytes, body.slice(at, at + SIGNED_RERUN_BYTES), found.entry.playerPubkey, signerNodes, entryIdBytes);
+      for (const rec of cutSignedReruns(body))
+        this.#keepPeerRerun(roundIdBytes, rec.slice(), found.entry.playerPubkey, signerNodes, entryIdBytes);
     }
 
     const count = rerunIsAgreed({

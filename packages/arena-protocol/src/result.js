@@ -31,7 +31,8 @@
 // signed.
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_RESULT, TAG } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_RESULT, TYPE_RESULT_FRONT, TAG } from './constants.js';
+import { frontOf } from './round-result.js';
 import { DELIVERED, FAILED, FORFEIT, VOID } from './payout.js';
 
 /** The four fates a round can end in, and the byte each is written as. */
@@ -66,9 +67,14 @@ export const outcomeOf = (byte) => {
  */
 export const RESULTS_FOR_FINAL = 5;
 
+/** front_mode (§13): LIVE - the run played attested prices; SIM - it did not. */
+export const FRONT_MODE = Object.freeze({ LIVE: 1, SIM: 2 });
+
 export function encodePlayerResult(r) {
+  // A PRICE ROUND'S RESULT CARRIES ITS FRONT (§13 front_*, kanban #312) under its own type; every other result keeps its 168 bytes and id
+  const front = r.front !== undefined && r.front !== null;
   const w = new Writer();
-  w.u8(TYPE_RESULT);
+  w.u8(front ? TYPE_RESULT_FRONT : TYPE_RESULT);
   w.u16(PROTOCOL_VERSION);
   w.bytes32(r.roundId);
   w.bytes32(r.playerPubkey);
@@ -77,13 +83,20 @@ export function encodePlayerResult(r) {
   w.bytes32(r.transcriptHash);
   w.bytes32(r.simCoreHash);
   w.bytes32(r.nodePubkey);
+  if (front) {
+    // the lead at the tick the run ended: BULLS / BEARS / FLAT of the close against the open, as round-result.js says it
+    if (r.frontMode !== FRONT_MODE.LIVE && r.frontMode !== FRONT_MODE.SIM) throw new Error('a front is LIVE or SIM');
+    if (r.frontMode === FRONT_MODE.LIVE && r.front !== frontOf(r.frontOpenCents, r.frontCloseCents))
+      throw new Error('a front must follow from its open and close');
+    w.u8(r.front); w.i32(r.frontOpenCents); w.i32(r.frontCloseCents); w.u8(r.frontMode);
+  }
   return w.finish();
 }
 
 export function decodePlayerResult(bytes) {
   const rd = new Reader(bytes);
   const type = rd.u8();
-  if (type !== TYPE_RESULT) throw new Error('not a player result: type ' + type);
+  if (type !== TYPE_RESULT && type !== TYPE_RESULT_FRONT) throw new Error('not a player result: type ' + type);
   const version = rd.u16();
   if (!speaksVersion(version)) throw new Error('unknown protocol version');
   const out = {
@@ -95,6 +108,7 @@ export function decodePlayerResult(bytes) {
     simCoreHash: rd.bytes32(),
     nodePubkey: rd.bytes32(),
   };
+  if (type === TYPE_RESULT_FRONT) Object.assign(out, { front: rd.u8(), frontOpenCents: rd.i32(), frontCloseCents: rd.i32(), frontMode: rd.u8() });
   if (rd.at !== bytes.length) throw new Error('trailing bytes after the result');
   if (out.outcome === undefined) throw new Error('that is not one of the four outcomes');
   return out;
@@ -112,6 +126,26 @@ export const RESULT_SIGNATURE_BYTES = 64;
  */
 export const RESULT_BYTES = 168;
 export const SIGNED_RESULT_BYTES = RESULT_BYTES + RESULT_SIGNATURE_BYTES;
+/** A price round's result: + front (1) + open cents (4) + close cents (4) + mode (1). */
+export const RESULT_FRONT_BYTES = RESULT_BYTES + 10;
+/** THE SIZE OF THE RESULT STARTING AT `at`, by its type byte (kanban #312): a stream of results cuts record by record. */
+export function resultBytesOf(bytes, at = 0) {
+  const t = bytes[at];
+  if (t === TYPE_RESULT) return RESULT_BYTES;
+  if (t === TYPE_RESULT_FRONT) return RESULT_FRONT_BYTES;
+  throw new Error(`no player result at ${at}: type ${t}`);
+}
+export const signedResultBytesOf = (bytes, at = 0) => resultBytesOf(bytes, at) + RESULT_SIGNATURE_BYTES;
+/** Cut a stream of signed results; a record that does not fit ends the stream. */
+export function cutSignedResults(body) {
+  const out = [];
+  for (let at = 0; at < body.length;) {
+    let n; try { n = signedResultBytesOf(body, at); } catch { break; }
+    if (at + n > body.length) break;
+    out.push(body.subarray(at, at + n)); at += n;
+  }
+  return out;
+}
 
 export function joinSignedResult(bytes, signature) {
   if (signature.length !== RESULT_SIGNATURE_BYTES)

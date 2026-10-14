@@ -283,6 +283,9 @@ export const TYPE_SPENT_SET = 0x26;
 // WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): open and close of the attested tape and the front, signed by the
 // settlement committee
 export const TYPE_ROUND_RESULT = 0x27;
+// A PLAYER RESULT OF A PRICE ROUND, WITH ITS FRONT (§13 front_*, kanban #312): the result's own type, so a stream of results cuts by
+// each record's first byte - 168 bytes without the front, 178 with it
+export const TYPE_RESULT_FRONT = 0x28;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
