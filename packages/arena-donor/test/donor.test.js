@@ -99,3 +99,10 @@ test('a withdrawal tries the gateways the network names first, and the next afte
   const none = await withdrawToLnd({ client: { ...client, withdraw: async (inv, gw) => { asked.push(gw || 'pick'); return JSON.stringify({ state: 'Refunded' }); } }, lnd, minMsat: 10000n, gateways: ['https://stale/'] });
   assert.deepEqual([none.withdrawn, asked], [false, ['https://stale/', 'pick']], 'every named one, then the client\'s own pick');
 });
+
+test('an empty wallet is nothing to withdraw, not a failed pass (kanban #357, 2026-10-14 15:02Z)', async () => {
+  const lnd = { invoice: async () => { throw new Error('no invoice is made for nothing'); } };
+  const w = await withdrawToLnd({ client: { withdrawableMsat: async () => { throw new Error('Balance is too low to send any amount after fees'); } }, lnd, minMsat: 10000n });
+  assert.deepEqual([w.withdrawn, w.withdrawableMsat], [false, 0n]);
+  await assert.rejects(withdrawToLnd({ client: { withdrawableMsat: async () => { throw new Error('socket closed'); } }, lnd }), /socket closed/, 'any other error still stops the pass');
+});

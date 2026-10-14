@@ -116,7 +116,10 @@ export function walletClients(join) {
 }
 
 export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blwp donations', gateways = [] }) {
-  const can = BigInt(await client.withdrawableMsat());
+  // AN EMPTY WALLET IS NOTHING TO WITHDRAW, NOT A FAILED PASS (kanban #357, measured 2026-10-14 15:02Z: after both withdrawals the lock
+  // client answered "Balance is too low to send any amount after fees", every pass failed there, and its record stopped)
+  let can;
+  try { can = BigInt(await client.withdrawableMsat()); } catch (e) { if (/too low/i.test(String(e && e.message))) can = 0n; else throw e; }
   if (can < minMsat) return { withdrawn: false, withdrawableMsat: can, why: `${can} msat withdrawable, below the ${minMsat} msat minimum` };
   // THE GATEWAYS THE NETWORK NAMES FIRST, THEN THE CLIENT'S OWN PICK (kanban #357, measured 2026-10-14: left to the lock client, dev b
   // took a stale quick-tunnel gateway still registered in federation A - "Refunded" at 06:02Z and 14:39Z - while dev a, through the
@@ -128,7 +131,8 @@ export async function withdrawToLnd({ client, lnd, minMsat = 10000n, memo = 'blw
     try { said = JSON.parse(await client.withdraw(invoice, gw || undefined)); } catch (e) { said = { state: 'Failed', why: e.message }; }
     tried.push(`${gw || 'client pick'}: ${said.state}`);
     if (said.state === 'Success') return { withdrawn: true, withdrawableMsat: can, ...said, tried };
-    if (BigInt(await client.withdrawableMsat()) < can) return { withdrawn: false, withdrawableMsat: can, ...said, tried, why: said.why || 'the e-cash left the wallet without a Success: not tried again' };
+    let left; try { left = BigInt(await client.withdrawableMsat()); } catch { left = 0n; }
+    if (left < can) return { withdrawn: false, withdrawableMsat: can, ...said, tried, why: said.why || 'the e-cash left the wallet without a Success: not tried again' };
   }
   return { withdrawn: false, withdrawableMsat: can, state: 'Refunded', tried };
 }
