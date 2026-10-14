@@ -329,6 +329,8 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       }
       return out;
     },
+    // WHETHER THIS NODE'S OWN PRESENT IS HELD FOR A ROUND'S SEATING (kanban #302): a reserve that was present has not missed it
+    presentHere: (rid, role = 'settlement') => !!db.prepare('SELECT 1 FROM seat_presents WHERE round_id = ? AND role = ? AND node = ?').get(seatOf(rid), role, me),
     takePresent, presentsOf, mySignature, certOf: (rid, role) => certOf(seatOf(rid), role), keepCert, equivocationOf, takePresents, batchOf,
   };
 }
