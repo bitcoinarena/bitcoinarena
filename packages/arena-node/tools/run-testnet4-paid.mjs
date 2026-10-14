@@ -175,8 +175,9 @@ if (env.PAID_KEEP !== '0') round.keepOpen({ leadMs: 4 * 3600 * 1000, onOpen: (id
 }
 // THE PUBLISHER NAMES ITSELF (§6 creator_pubkey, kanban #313; 2026.0.3): with ARENA_PROTOCOL_VERSION=3 and ARENA_CREATOR_KEY_FILE (a
 // 32-byte secret, hex) every grid this runner publishes names that key as its creator and signs each series id - the key the series
-// publisher's fee is paid back to (#304). A v1/v2 round cannot name one (contracts.js CREATOR_VERSION).
-const CREATOR = env.ARENA_PROTOCOL_VERSION === '3' && env.ARENA_CREATOR_KEY_FILE
+// publisher's fee is paid back to (#304). A v1/v2 round cannot name one (contracts.js CREATOR_VERSION); every later version can
+// (kanban #312: the Tick Tock duty runner moves to version 5 and keeps naming its creator).
+const CREATOR = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 3 && env.ARENA_CREATOR_KEY_FILE
   ? { creatorSecret: Uint8Array.from(Buffer.from(readFileSync(env.ARENA_CREATOR_KEY_FILE, 'utf8').trim(), 'hex')) } : {};
 // THE DUTY TO POST THE NEXT 24 H (kanban #352, the owner 2026-10-13 ~18:35Z; arena-protocol/src/duty.js, spec §5A.5): PAID_DUTY=1 runs ONE
 // plan item - DUTY_GAME (rps | updown) in DUTY_FEDERATION (federation id hex), named DUTY_ITEM - on every machine of the network. Every
