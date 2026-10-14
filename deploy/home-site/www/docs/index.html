@@ -157,7 +157,7 @@
       <p>When the round is settled, winnings and refunds go back into your wallet on their own; they show as <i>pending</i> until they are redeemed. <b>Withdraw</b> any time: paste an invoice from your own Lightning wallet, or let a connected NWC wallet make one.</p></li>
   </ol>
   <h3 id="settings">Settings</h3>
-  <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, a field for your <b>operator key</b> if you also run nodes (your nodes then sit out the rounds you play, so you never judge your own game; see the <a href="#faq">FAQ</a>), and a link to the community on Armada.</p>
+  <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, and a link to the community on Armada.</p>
 
   <h2 id="wallet">Your wallet</h2>
   <p>Your sats are <b>e-cash</b> of a Fedimint federation, held by your browser. The wallet is the Fedimint client itself, compiled to WebAssembly, and its keys come from your 24 words (one wallet per seed and federation). No server keeps your balance.</p>
@@ -853,7 +853,6 @@ for (const node of committeeNodes)
   <details><summary>Rock Paper Scissors: what if my opponent does not reveal?</summary><p>They forfeit and you win. If nobody joins your table, the round is void and your stake is refunded.</p></details>
   <details><summary>Who decides Bitcoin Up or Down?</summary><p>Three named attestors; 2 of 3 must sign the same outcome. A tie is Up. If they disagree, or no outcome stands by the deadline, every stake and fee is refunded.</p></details>
   <details><summary>Do I need Nostr?</summary><p>No. A wallet with 24 words works without it. Nostr lets you log in with a key you already have, bring your wallet to another device, and pay from your own wallet over Nostr Wallet Connect.</p></details>
-  <details><summary>I run nodes. Can I play too?</summary><p>Yes. Nobody may judge their own game, so your nodes step aside in the rounds you play. Put your operator key (the key your nodes are registered under) into Settings once. Every round you join then names it, and if one of your nodes is drawn into that round's committee, it sits that round out: it does not sign the result and earns no fee from it. The other committee nodes check and settle your round as usual, and your nodes keep serving every other round.</p></details>
   <details><summary>How do I claim my node?</summary><p>Open <code>/dashboard/owner</code> on it and enter the claim code from the node's log or from <code>&lt;db&gt;.owner-claim</code>.</p></details>
   <details><summary>Is this on mainnet?</summary><p>No. Bitcoin Arena runs on Bitcoin testnet4. Test sats have no value.</p></details>
 </main>

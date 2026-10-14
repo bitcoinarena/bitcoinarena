@@ -152,10 +152,9 @@
 > | 4 | Stake commitment was allowed before the settlement committee was known — impossible, since the preimage shares are encrypted *to* that committee | Hard ordering: publish → future randomness → committees selected and verified → VSS shares → hold invoice → stake committed → play. A new `committee_time` sits between publication and `start_time` so pre-start entry still works (§5A.5, §9, §23.1) |
 >
 > Also corrected: `operator_id` is described as a **self-declaration**, not
-> identity proof — it prevents declared conflicts and creates a slashing hook,
-> but an anonymous attacker can simply not declare. Economic Sybil resistance
+> identity proof, and a player declares no operator at all (§5A.13). Economic Sybil resistance
 > comes from bonds and sortition, and self-dealing is caught by the threshold
-> and the objection window, not by the declaration (§5A.13).
+> and the objection window (§5A.13).
 
 This protocol keeps the simplified architecture of the earlier drafts — one open-source node
 package, deterministic local simulation, quorum verification, P2P pool
@@ -1196,7 +1195,7 @@ and independent reproducibility by everyone.
 ```text
 NodeAdvertisement {
   node_pubkey
-  operator_id                  // SELF-DECLARED, not proof of identity (§5A.13)
+  operator_id                  // SELF-DECLARED, not proof of identity; siblings for seating (§5A.13)
   supported_protocol_versions
   roles_supported              // game_verify | settlement | both | none - opt-in (below)
   endpoint, region, capacity_class
@@ -1402,7 +1401,6 @@ a transaction is §5A.3B.
 | Signing a result contradicted by replay of the canonical transcript | Transcript + receipts + replay |
 | Signing a payout table that does not equal `F(contract, membership, results)` | The table and its inputs |
 | Settlement action without the required 5-of-7 result and payout signatures | The settlement record |
-| Signing for a round in which the operator played (§5A.13) | Entry Contract + node signature |
 | Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
 | Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
 
@@ -1435,7 +1433,6 @@ minus the round's own seats (the witnesses) and 25% to the donation set of
   |---|---|
   | Two results for one (round, player) | that `playerPubkey` |
   | A result contradicted by replay | that `playerPubkey` |
-  | Signing for a round the operator played | every financially activated entry of the round (§22A fee base) except the operator's own, which §5A.13 voids |
   | A payout table that is not `F(contract, membership, results)` | every financially activated entry |
   | Settlement action without the required signatures | every financially activated entry |
   | A fee share claimed without the availability rule | every financially activated entry - they paid the fee |
@@ -2485,52 +2482,17 @@ creator decides who earns.
 
 ## 5A.13 Player–node separation
 
-> **A selected node may not sign anything for a round in which its operator
-> has an Entry Contract.**
+> **A player declares no operator.** (RULED the owner 2026-10-14 ~20:01Z: "Remove the do you run arena nodes section and also
+> remove it from the specs".) The Entry Contract carries no operator declaration, the client asks for none, and no node is
+> made conflicted, unpaid or slashable by one.
 
-Concretely:
+Self-dealing - an operator whose nodes are seated in a round he plays - is stopped by the two mechanisms that never depended on
+a declaration: an attacker must control 5 of 7 selected slots, which §5A.6 prices in bonded capital, and a fabricated result is
+overturnable by anyone through deterministic replay inside the objection window (§13A). Economic Sybil resistance comes from
+**bonds and sortition**.
 
-- Every advertisement declares an `operator_id` (a pubkey). Nodes sharing a
-  declared operator are siblings for all conflict rules.
-- If a selected node's `operator_id` also signed an Entry Contract in that
-  round, the node is **conflicted**: its result signatures, payout-table
-  signatures and settlement participation are invalid, and it earns no fee
-  share. Signing anyway is a slashable offence with a one-artifact proof.
-- If conflicts reduce a committee below its threshold, the round's affected
-  entries are `ENTRY_VOID` (refund) rather than settled by a compromised
-  committee.
-- The client MUST show, before commitment, whether any selected node's
-  operator is playing.
-
-> **Why:** An earlier draft separated game/verify from settlement but never separated
-> player from node. Combined with the grinding attack this was the complete
-> exploit; even without grinding, an operator with a moderate share of the
-> census could sign himself wins in the rounds he happened to be selected
-> for. Nothing in an earlier draft forbade it.
-
-### What `operator_id` is, and what it is not
-
-`operator_id` is a **self-declaration**. It is not a proof of identity, and
-nothing in a pseudonymous protocol can make it one: an attacker who runs
-nodes and plays simply declares nothing, or declares unrelated ids, and the
-rule does not fire.
-
-So this rule is **defence in depth, not a Sybil control**. What it actually
-achieves:
-
-- honest operators cannot accidentally serve their own rounds;
-- a declared conflict is machine-checkable before entry and shown to the
-  player;
-- if a hidden link is ever established — reused payout keys, reused
-  endpoints, self-admission, a leaked correlation — the false declaration is
-  itself a slashable offence with a one-artifact proof.
-
-**Where anonymous self-dealing is actually stopped:** by the two mechanisms
-that do not depend on identity at all. An attacker must control 5 of 7
-selected slots, which §5A.6 prices in bonded capital, and a fabricated
-result is overturnable by anyone through deterministic replay inside the
-objection window (§13A). Economic Sybil resistance comes from **bonds and
-sortition**; `operator_id` only removes the easy, declared case.
+The advertisement's `operator_id` stays: nodes sharing a declared operator are siblings for the census and seating rules
+(one seat per operator, §5A.6, §23A).
 
 ---
 
@@ -2616,7 +2578,6 @@ committee either.
 PlayerEntryContract {
   round_id
   player_pubkey
-  operator_id_declaration          // "none" or the operator this player is
 
   stake
   join_time
@@ -3605,8 +3566,7 @@ player wallet balance (§24A.1)
        a withheld receipt leaves no artifact and is not
 
 The first two require five bonded operators to collude and forfeit five
-bonds, in a round whose committee they could not choose (§5A.5) and in which
-they may not be playing (§5A.13). The federation lines - guardians, halt,
+bonds, in a round whose committee they could not choose (§5A.5). The federation lines - guardians, halt,
 and the player wallet's standing balance - are the federation's own
 trust statement, stated without cosmetics: they are why the guardians MUST
 be independent bonded census operators, why a round names its federation,
@@ -3669,8 +3629,7 @@ is not a federation fee.
 **Availability qualification.** A selected node earns its share only if it
 performed the contract-defined minimum service: for game/verify, the
 required receipts plus replay and signing; for settlement, participation in
-the settlement protocol during the settlement window. A conflicted node
-(§5A.13) never qualifies. Unearned shares are redistributed pro rata among
+the settlement protocol during the settlement window. Unearned shares are redistributed pro rata among
 the other eligible nodes in the same role pool, keeping the total at 5%.
 
 **Remainders.** Calculate in millisatoshis, floor each base share, and
@@ -5787,13 +5746,6 @@ evidence about mainnet:
   disjoint subsets surface. With one possible subset there are no disjoint
   subsets and nothing to detect. The equivocation machinery can be tested
   for correctness, not for effectiveness.
-- **Player-node separation bites immediately - for the honest.** §5A.13
-  voids entries when declared conflicts drop a committee below threshold,
-  and with two slots one playing operator does it. Note what this is: a
-  check on a **self-declaration** (§5A.13), not detection. Nobody can tell
-  that an operator is playing if they simply declare nothing, on any
-  network. What regtest will show constantly is the honest case firing,
-  which is correct behaviour and not a bug to configure away.
 - **The chain is yours.** Whoever runs regtest mines every block, so the
   census, the confirmation depths and the maturity locks are whatever that
   person decides. Everything resting on chain state is trivially forgeable
@@ -6429,7 +6381,7 @@ simplification was trying to avoid. Bond-weighted stateless sortition
 14. No privileged developer admin key.
 15. **Committee seed from randomness published after the round_id** (§5A.5).
 16. **Mandatory bonds with objective slashing** (§5A.3).
-17. **No node may sign for a round its operator plays in** (§5A.13).
+17. **Self-dealing is priced and overturnable, not declared:** 5 of 7 bonded slots (§5A.6) and replay inside `W` (§13A); a player declares no operator (§5A.13).
 18. **Refund-by-default custody: doing nothing returns the stake** (§23).
 19. **An objection window in which anyone can overturn a result by replay** (§13A).
 20. **Explicit equivocation and no-quorum rules** (§13B, §13C).
@@ -6555,7 +6507,7 @@ committee nor outcome).
 |---|---|---|---|
 | Committee grinding via chosen `round_id` | Offline hashing | **Total theft**, undetectable | Impossible without predicting the beacon (§5A.5) |
 | Free Sybil into the census | Register many nodes | 24–30% of rounds controllable at zero cost | Bond per identity; √-weighted selection makes splitting pointless (§5A.3, §5A.6) |
-| Player runs the nodes of their own round | Operate nodes | Self-signed wins | Conflicted nodes cannot sign and are slashable (§5A.13) |
+| Player runs the nodes of their own round | Operate nodes | Self-signed wins | 5 of 7 bonded slots needed (§5A.6); anyone overturns a false result by replay (§13A); no declaration is asked (§5A.13) |
 | Colluding quorum signs a false loss | 5 bonded operators | Unappealable | Anyone can overturn it by replay within `W`; signers slashed (§13A) |
 | Colluding quorum **inflates a score** rather than faking a win | 5 bonded operators | Not considered | Same objection path: the canonical transcript replays to one score only; a table that does not equal `F(...)` is slashable (§13A, §20) |
 | Player runs multiple forks and submits the winner | Modified client | Undefined handling | Automatic forfeit on proven equivocation; receipt gossip surfaces it (§13B, §10) |
@@ -6575,7 +6527,7 @@ committee nor outcome).
 | **Identity mining for a low ticket** | Grind `node_pubkey` | Favourable sort/ticket position | Tickets and ordering derive from the bond **outpoint**, which cannot be chosen after funding (§5A.4, §5A.6) |
 | **Entry before the committee exists** | — | Shares encrypted to an unknown set; stake at risk under a committee the player never saw | Structurally impossible: entry opens at `committee_time`, and the Entry Contract cannot be built earlier (§9, §23.1) |
 | **Arbitration slashes without cause** | k-of-m arbitration keys | Bond theft from an honest node | Slash must commit to a retrievable proof; unilateral recovery at `bond_maturity`; arbitration is disjoint from committees and cannot reach stakes (§5A.3B) |
-| **Undeclared operator playing his own round** | Anonymous operator | Self-signed win | `operator_id` does **not** stop this; the 5-of-7 capital requirement (§5A.6) and the replay objection (§13A) do (§5A.13) |
+| **Operator playing his own round** | Anonymous operator | Self-signed win | The 5-of-7 capital requirement (§5A.6) and the replay objection (§13A) stop it; a player declares no operator (§5A.13) |
 | DDoS after a loss is final | Network attack | Already handled | Unchanged: `FINAL` results survive (§14) |
 | **Round grinding by mass publication** — publish many contracts, promote the one whose committee is yours | Any creator with census share | Free: timestamp receipts cost nothing and any five nodes could backdate them | `publication_txid`: the contract's hash in a block before the beacon block; every candidate costs a transaction, ordering is objective (§5A.5, P1) |
 | **Self-dealing quorum never publishes its transcript** — nothing to replay, objection impossible | Player running 5 game/verify slots | Result `FINAL` on five signatures | `FINAL` only after ≥5 settlement seats retrieved and posted the transcript to `publication_relays[]`; `W` counts from posting (§13A, P2) |
