@@ -329,6 +329,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     /** The kept record of a federation ({ record, status, height }) and, while it is HALTED, the halt it counts from. */
     /** THE ACTIVE SEATS OF THIS SEAT'S CENSUS, by node key (halts.js, kanban #323): who may observe a halt. */
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
+    /** THE CENSUS THIS SEAT READS, its entries and height (kanban #356: GET /roles), or why none. */
+    censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height } : null; },
     haltOf: (fidHex) => halted.get(String(fidHex).toLowerCase()) || null,
     haltedFederations: () => [...halted.keys()],

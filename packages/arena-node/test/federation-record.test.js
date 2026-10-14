@@ -63,6 +63,9 @@ test('seven guardians sign one record: OPEN with all seated, DRAINING with one l
   assert.equal(v.ok, true, v.why);
   assert.equal(v.record.exposureCapSats, 3n * 50000n, '(f+1) x the smallest seated bond');
   assert.equal(open.s.seats[0].draining(toHex(FED)), null);
+  // THE CENSUS THE SEAT READS (kanban #356, GET /roles): its height and every entry, with the advert that names its roles
+  const now = open.s.seats[0].censusNow();
+  assert.deepEqual([now.ok, now.entries.length, now.entries.every((e) => e.pubkey && e.advert)], [true, open.s.census.entries.length, true], now.why);
   const one = await run([3]);
   assert.deepEqual([one.got.status, one.got.gone], ['DRAINING', 1]);
   assert.equal(one.s.seats[0].draining(toHex(FED)), 'DRAINING', 'no new round names it');
@@ -99,6 +102,10 @@ test('the seat\'s doors: GET /federations lists what it holds, GET /federation-r
     const none = await fetch(`${S}/federation-record?federation=${toHex(FED)}`);
     assert.equal(none.status, 404);
     assert.match((await none.json()).why, /holds no round/);
+    // GET /roles (kanban #356): a seat that reads no census yet says why, never an empty list
+    const roles = await fetch(`${S}/roles`);
+    assert.equal(roles.status, 503);
+    assert.match(await roles.text(), /holds no round|no census/);
   } finally { await seat.close(); }
 });
 
