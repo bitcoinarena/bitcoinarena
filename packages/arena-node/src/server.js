@@ -64,6 +64,8 @@ import { PriceFeed } from './price-feed.js';
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
+import { season, seasonWindow } from '../../arena-protocol/src/season.js';
+import { seasonRounds } from './season-read.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
@@ -419,6 +421,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
+  // GET /season's boards, kept per query (kanban #362): { at, json }, 32 at most
+  const seasonKept = new Map();
+  const SEASON_KEEP_MS = 30000;
   // THE NODE'S OPEN MUSIG2 SESSIONS (kanban #307): session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
@@ -4221,6 +4226,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players, match }));
+      }
+
+      // A SEASON: ONE GAME'S BOARD ACROSS ITS ROUNDS (kanban #362 feature 1). ?game= a hosted game's name (every version
+      // this node hosts under it) or one game id in hex, ?days= 1 to 90 (a week if none). Built from this node's own store
+      // (season-read.js: FINAL results, amounts the ACCEPTED settlements paid) by protocol season.js, which computes no
+      // payout - presentation, not authority. Public and read-only; kept SEASON_KEEP_MS (30 s) per query, as a lobby's
+      // listing is: a page polls it, and every ask would otherwise verify the window's results again.
+      if (req.method === 'GET' && url.pathname === '/season') {
+        const want = String(url.searchParams.get('game') || '').trim().toLowerCase();
+        if (!want) return text(res, 400, 'a season is asked for by a game: ?game=<name or id hex>');
+        const ids = /^[0-9a-f]{64}$/.test(want) ? [want]
+          : [...hosted.values()].filter((p) => String(p.name || '').toLowerCase() === want).map((p) => toHex(p.gameId)).sort();
+        if (!ids.length) return text(res, 404, 'this node hosts no game by that name');
+        const asked = url.searchParams.has('days') ? url.searchParams.get('days') : undefined;
+        const w = seasonWindow({ nowMs: Date.now(), days: asked });
+        if (!w.ok) return text(res, 400, w.why);
+        const q = `${ids.join(',')}|${w.days}`;
+        let kept = seasonKept.get(q);
+        if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
+          const games = new Set(ids);
+          const read = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+          const s = season(read, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
+          if (!s.ok) return text(res, 500, `that season could not be built: ${s.why}`);
+          const hostedAs = ids.map((id) => hosted.get(id)).find(Boolean);
+          kept = { at: Date.now(), json: JSON.stringify({
+            node: toHex(round.pubkey), game: { name: hostedAs ? hostedAs.name : null, ids }, days: w.days,
+            from: new Date(s.fromMs).toISOString(), to: new Date(s.toMs).toISOString(), fromMs: s.fromMs, toMs: s.toMs,
+            // THE NAME AS THE ROUND RESULT SHOWS IT: the player's own from its latest round, else the one made from its key
+            rows: s.rows.map((r) => ({ rank: r.rank, player: r.player, name: r.name || displayNameFromKey(fromHex(r.player)),
+              rounds: r.rounds, wins: r.wins, netMsat: String(r.netMsat), stakedMsat: String(r.stakedMsat), paidMsat: String(r.paidMsat),
+              bestScore: r.bestScore, lastPlayed: new Date(r.lastPlayedMs).toISOString() })),
+            rounds: s.rounds, leftOut: s.excluded.length, unchecked: s.unchecked }) };
+          seasonKept.set(q, kept);
+          if (seasonKept.size > 32) seasonKept.delete(seasonKept.keys().next().value);
+        }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
+        return res.end(kept.json);
       }
 
       // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
