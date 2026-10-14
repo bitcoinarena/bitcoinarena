@@ -59,3 +59,23 @@ export function fedimintNoteValidator({ cli, dataDirFor, home = process.env.HOME
     return { ok: true, amountMsat, notes: notes.map((n) => ({ nonce: n.nonce, amountMsat: n.amountMsat })) };
   };
 }
+
+/**
+ * A PENDING OUTPUT, CHECKED OFFLINE (§23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): the fork's
+ *   fedimint-cli --data-dir <that client> module mintv2 check-pending <issuance request hex>
+ * recomputes the note nonce, the hash160 of the blinded message (the issued set's nonce_hash) and the amount. Answers what
+ * liquidation-claims.js `checkPending` takes: { ok, nonce, nonceHash, amountMsat } or why not.
+ */
+export function fedimintPendingChecker({ cli, dataDirFor, home = process.env.HOME, run = (bin, args) => new Promise((done) =>
+  execFile(bin, args, { timeout: 60000, env: { ...process.env, HOME: home } }, (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') }))) }) {
+  return async (federationHex, requestHex) => {
+    if (!/^[0-9a-f]+$/i.test(String(requestHex))) return { ok: false, why: 'an issuance request is hex' };
+    const dir = dataDirFor(federationHex);
+    if (!dir) return { ok: false, why: 'the arbitration set holds no client of that federation to check it with' };
+    const r = await run(cli, ['--data-dir', dir, 'module', 'mintv2', 'check-pending', String(requestHex)]);
+    if (!r.ok) return { ok: false, why: (r.err || r.out).trim().split('\n').pop().slice(0, 200) };
+    let j; try { j = JSON.parse(r.out); } catch { return { ok: false, why: 'the check did not read' }; }
+    if (!/^0[23][0-9a-f]{64}$/.test(String(j.nonce)) || !/^[0-9a-f]{40}$/.test(String(j.nonce_hash))) return { ok: false, why: 'the check named no nonce' };
+    return { ok: true, nonce: String(j.nonce), nonceHash: String(j.nonce_hash), amountMsat: BigInt(j.amount_msat) };
+  };
+}

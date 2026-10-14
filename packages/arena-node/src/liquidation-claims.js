@@ -17,11 +17,14 @@ import { settleClaims } from '../../arena-protocol/src/federation-slash.js';
 
 const isHex = (s, n) => typeof s === 'string' && new RegExp(`^[0-9a-f]{${n}}$`).test(s);
 
-export function createLiquidationClaims({ validate, liquidationOf, height, escrowMsatOf, clocks, load = () => [], save = () => {} }) {
+// PENDING OUTPUTS (spec §23A.5 "Notes still in issuance at the halt", RULED 2026-10-14): `checkPending(federationHex, requestHex)`
+// recomputes an issuance request's note nonce, the hash160 of its blinded message and its amount (the fork's `mintv2 check-pending`)
+// and answers { ok, nonce, nonceHash, amountMsat } or why not; `liquidationOf(fid).issuedHashes` is the issued set's nonce hashes.
+export function createLiquidationClaims({ validate, liquidationOf, height, escrowMsatOf, clocks, checkPending = null, load = () => [], save = () => {} }) {
   const claims = new Map();                  // federation hex -> Map(nonce hex -> { nonce, amountMsat, height, payoutPk })
   for (const c of load() || []) {
     if (!claims.has(c.federation)) claims.set(c.federation, new Map());
-    claims.get(c.federation).set(c.nonce, { nonce: c.nonce, amountMsat: BigInt(c.amountMsat), height: c.height, payoutPk: c.payoutPk });
+    claims.get(c.federation).set(c.nonce, { nonce: c.nonce, amountMsat: BigInt(c.amountMsat), height: c.height, payoutPk: c.payoutPk, ...(c.messageHash ? { messageHash: c.messageHash } : {}) });
   }
   const persist = () => save([...claims.entries()].flatMap(([federation, m]) => [...m.values()].map((c) => ({ federation, ...c, amountMsat: String(c.amountMsat) }))));
 
@@ -54,6 +57,43 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       ...(accepted.length ? {} : { why: 'none of those notes can be claimed' }) };
   }
 
+  /**
+   * POST /liquidation-claims { federation, pending: [issuance request hex], payoutPk }: outputs the consensus issued but whose notes
+   * were never signed (§23A.5). Each is valid when its blinded message is in the issued set, its nonce not in the spent set, and
+   * neither its nonce nor its message claimed before; taken like a note, at face.
+   */
+  async function offerPending(body) {
+    const fid = String(body && body.federation || '').toLowerCase();
+    const payoutPk = String(body && body.payoutPk || '').toLowerCase();
+    if (!isHex(fid, 64)) return { ok: false, status: 400, why: 'a claim names its federation (64 hex)' };
+    if (!isHex(payoutPk, 66) || !/^0[23]/.test(payoutPk)) return { ok: false, status: 400, why: 'a claim names the key it is paid to: a refund key, 33 bytes compressed (66 hex)' };
+    if (!Array.isArray(body.pending) || !body.pending.length) return { ok: false, status: 400, why: 'a pending-output claim presents its issuance requests' };
+    if (typeof checkPending !== 'function') return { ok: false, status: 501, why: 'this arbitration service checks no pending outputs' };
+    const liq = await liquidationOf(fid);
+    if (!liq) return { ok: false, status: 409, why: 'that federation is not being liquidated: no seat holds it HALTED' };
+    const at = await height();
+    if (at < liq.liquidatesAt) return { ok: false, status: 409, why: `the claim window opens at ${liq.liquidatesAt}; the tip is ${at}` };
+    if (at > liq.lateClaimsUntil) return { ok: false, status: 409, why: `claims closed at ${liq.lateClaimsUntil}` };
+    const issued = new Set((liq.issuedHashes || []).map((h) => String(h).toLowerCase()));
+    if (!issued.size) return { ok: false, status: 409, why: 'no issued set is published for that federation yet' };
+    const spent = new Set((liq.spentNonces || []).map((n) => String(n).toLowerCase()));
+    const mine = claims.get(fid) || new Map(); claims.set(fid, mine);
+    const accepted = []; const refused = [];
+    for (const req of body.pending) {
+      const c = await checkPending(fid, String(req));
+      if (!c || !c.ok) { refused.push({ request: String(req).slice(0, 16), why: c && c.why ? c.why : 'not an issuance request' }); continue; }
+      const nonce = String(c.nonce).toLowerCase(); const mh = String(c.nonceHash).toLowerCase();
+      if (!issued.has(mh)) { refused.push({ nonce, why: 'that output is not in the issued set' }); continue; }
+      if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
+      if (mine.has(nonce) || [...mine.values()].some((x) => x.messageHash === mh)) { refused.push({ nonce, why: 'that output was claimed before' }); continue; }
+      mine.set(nonce, { nonce, amountMsat: BigInt(c.amountMsat), height: at, payoutPk, messageHash: mh });
+      accepted.push({ nonce, amountMsat: String(c.amountMsat), pending: true });
+    }
+    if (accepted.length) persist();
+    return { ok: accepted.length > 0, status: accepted.length ? 200 : 409, accepted, refused, height: at, inWindow: at <= liq.claimWindowCloses,
+      ...(accepted.length ? {} : { why: 'none of those outputs can be claimed' }) };
+  }
+
   /** GET /liquidation-claims?federation=: who is paid what from the escrow, at the tip, by settleClaims' order. */
   async function plan(fidHex, { escrowMsat: given = null } = {}) {
     const fid = String(fidHex || '').toLowerCase();
@@ -75,7 +115,7 @@ export function createLiquidationClaims({ validate, liquidationOf, height, escro
       refused: got.refused, remainderMsat: String(got.remainderMsat), split: got.split ? { nodes: String(got.split.nodes), developers: String(got.split.developers) } : null,
       remainderSplitsAt: got.remainderSplitsAt };
   }
-  return { offer, plan, liquidation: liquidationOf };
+  return { offer, offerPending, plan, liquidation: liquidationOf };
 }
 
 /**

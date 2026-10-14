@@ -27,7 +27,7 @@ import { decodeSpentSet, newestSpentSet, spentNonceSet } from '../../arena-proto
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { produceSpentSet } from '../src/spent-set-producer.js';
 import { createLiquidationClaims } from '../src/liquidation-claims.js';
-import { fedimintNoteValidator } from '../src/note-validate.js';
+import { fedimintNoteValidator, fedimintPendingChecker } from '../src/note-validate.js';
 
 const P = process.env.P, B = process.env.BITCOIN_CLI, ARGS = (process.env.BTC_ARGS || '').split(' ').filter(Boolean);
 if (!P || !B) throw new Error('P=<the run dir> BITCOIN_CLI=<bitcoin-cli> BTC_ARGS=<its -datadir/-rpc args>');
@@ -162,9 +162,19 @@ if (step === 'bonds') {
   const when = liquidationSchedule({ haltHeight: state.haltHeight, clocks });
   const escrowSats = state.escrows.reduce((a, e) => a + BigInt(e.sats), 0n);
   const payKey = (w) => toHex(Uint8Array.from([2, ...taggedHash('ARENA/v1/Rehearsal17Payout', new TextEncoder().encode(w))]));
-  const book = (spentNonces) => createLiquidationClaims({ validate, height: async () => height(), escrowMsatOf: async () => escrowSats * 1000n, clocks,
+  // THE ISSUED SET (§23A.5 "Notes still in issuance at the halt"): every Output recovery item's nonce_hash, as g0 served them
+  const issuedHashes = [];
+  try {
+    const walk = (x, inOutput) => { if (Array.isArray(x)) { for (const y of x) walk(y, inOutput); return; } if (!x || typeof x !== 'object') return;
+      for (const [k, v] of Object.entries(x)) { if (k === 'nonce_hash' && inOutput && typeof v === 'string') issuedHashes.push(v.toLowerCase()); else walk(v, inOutput || k === 'Output' || k === 'output'); } };
+    walk(JSON.parse(readFileSync(join(dir, 'issued.json'), 'utf8')), false);
+  } catch (e) { out({ step: 'issued set unread', why: e.message }); }
+  let pending = [];
+  try { pending = (JSON.parse(readFileSync(join(dir, 'p2-pending.json'), 'utf8')).pending || []).map((x) => x.request); } catch (e) { out({ step: 'p2 pending unread', why: e.message }); }
+  const checkPending = fedimintPendingChecker({ cli: process.env.FEDIMINT_CLI, dataDirFor: () => join(P, 'client'), home: process.env.FEDIMINT_HOME });
+  const book = (spentNonces) => createLiquidationClaims({ validate, checkPending, height: async () => height(), escrowMsatOf: async () => escrowSats * 1000n, clocks,
     liquidationOf: async (f) => (f === state.federation ? { haltHeight: state.haltHeight, liquidatesAt: when.claimWindowOpens, claimWindowCloses: when.claimWindowCloses,
-      lateClaimsUntil: when.lateClaimsUntil, spentNonces } : null) });
+      lateClaimsUntil: when.lateClaimsUntil, spentNonces, issuedHashes } : null) });
   const present = async (claims, label) => {
     const rows = [];
     for (const w of [...wallets, 'p3-spent']) {
@@ -188,6 +198,17 @@ if (step === 'bonds') {
   const withSet = book(state.spent); const noSet = book(null);
   await present(withSet, 'with the spent set');
   await present(noSet, 'no spent set published');
+  // p2'S OUTPUTS STILL IN ISSUANCE AT THE HALT, claimed by their secrets - then once more, to be refused as claimed before
+  out({ step: 'issued set and p2 pending outputs', issued: issuedHashes.length, pending: pending.length });
+  for (const [label, b] of [['with the spent set', withSet], ['no spent set published', noSet]]) {
+    if (!pending.length) break;
+    const t = Date.now();
+    const r = await b.offerPending({ federation: state.federation, pending, payoutPk: payKey('p2') });
+    const again = await b.offerPending({ federation: state.federation, pending, payoutPk: payKey('p2') });
+    out({ step: `${label}: p2's pending outputs claimed`, status: r.status, accepted: (r.accepted || []).length,
+      acceptedMsat: (r.accepted || []).reduce((a, x) => a + BigInt(x.amountMsat), 0n), refused: (r.refused || []).map((x) => x.why), ms: Date.now() - t,
+      again: { status: again.status, refused: [...new Set((again.refused || []).map((x) => x.why))] } });
+  }
   const both = BigInt(state.capMsat) - 6000n * 1000n;   // had both bonds been slashed: 2 x bond - 2 x fee
   table(await withSet.plan(state.federation), 'with the spent set: the table, from the escrow the slashes made');
   table(await withSet.plan(state.federation, { escrowMsat: both }), 'with the spent set: the table, had both bonds been slashed');

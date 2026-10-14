@@ -5538,11 +5538,23 @@
         const list = () => (testnet ? testnet.named : named).nodes;
         try {
           const kept = JSON.parse(localStorage.getItem(NODES_KEY) || '[]');
-          if (Array.isArray(kept) && kept.length && BLWPCLIENT.mergeNodes) { const m = BLWPCLIENT.mergeNodes(list(), kept); list().splice(0, list().length, ...m); }
+          if (Array.isArray(kept) && kept.length && BLWPCLIENT.mergeNodes) { const m = BLWPCLIENT.mergeNodes(list(), kept.map((u) => (window.ARENA_VIA_ALT ? window.ARENA_VIA_ALT(u) : u))); list().splice(0, list().length, ...m); }
         } catch { /* storage blocked: the census adds them again */ }
+        // ONE SEAT, ONE ADDRESS (kanban #353, the owner 2026-10-14: "Why does it show 28 nodes, we only want 7 on each machine"): the
+        // seats advertise their Funnel address (seat.example.com/...) and daily.json names the same seats at their named
+        // tunnel (tn4.bitcoin-arena.io/...), so the merge kept both - 28 for 14. A found or kept address is taken through
+        // daily.json's alt routes first (the longest host/path key wins), and the same seat is the same string.
+        const viaAlt = (u) => {
+          let x; try { x = new URL(String(u)); } catch { return u; }
+          const routes = window.BLWP_ALT_ROUTES || {};
+          const path = x.pathname.replace(/\/+$/, '');
+          const hit = Object.keys(routes).filter((k) => k === x.host || (x.host + path).startsWith(k + '/') || (x.host + path) === k).sort((p, q) => q.length - p.length)[0];
+          return hit ? (x.protocol + '//' + routes[hit] + path) : String(u).replace(/\/+$/, '');
+        };
+        window.ARENA_VIA_ALT = viaAlt;
         window.ARENA_LEARN_NODES = (entries) => {
           if (!BLWPCLIENT.censusEndpoints || !BLWPCLIENT.mergeNodes) return;
-          const found = BLWPCLIENT.censusEndpoints(entries);
+          const found = BLWPCLIENT.censusEndpoints(entries).map(viaAlt);
           if (!found.length) return;
           const before = list().length;
           const m = BLWPCLIENT.mergeNodes(list(), found); list().splice(0, list().length, ...m);
