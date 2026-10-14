@@ -2468,6 +2468,21 @@
       const thisJoin = window.BLWP_JOIN || null;   // the lobby's join this call makes (null for a round link)
       const named = await BLWPCLIENT.joinFromQuery(location.search);
       if (!named) return;
+      // A ROUND OF ANOTHER FEDERATION IS JOINED WITH THAT FEDERATION'S INVITE (kanban #353, measured 2026-10-14 19:06Z on testnet4):
+      // the lobby names one invite (federation A's), and an Up or Down order on federation B's round was refused before anything
+      // was staked - "That invite names another federation than the round's b18947f0" - in both tabs, whose wallets held their
+      // 1,000 sat in B. The invite of the round's own federation comes from the records this page verified (ARENA_FED_LOADS);
+      // without one the lobby's stays, and the gate below refuses by name as before.
+      {
+        const fid = named.round && named.round.federationId ? Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('') : null;
+        if (fid && named.federation && !BLWPCLIENT.inviteNamesFederation(named.federation, fid)) {
+          const st = window.ARENA_FED_LOADS && typeof window.ARENA_FED_LOADS.get === 'function' ? window.ARENA_FED_LOADS.get(fid) : null;
+          if (st && st.invite && BLWPCLIENT.inviteNamesFederation(st.invite, fid)) {
+            named.federation = st.invite;
+            console.log('[arena] join: the round is in federation ' + fid.slice(0, 16) + ', joined with its own invite');
+          }
+        }
+      }
 
       window.BLWP_ROUND = named.round;
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
@@ -5594,6 +5609,20 @@
       console.log('[arena] game ' + game.name + ' (' + game.id.slice(0, 16) + ')');
       return game;
     }
+    // THE PLAYER'S FEDERATION FIRST (kanban #353, measured 2026-10-14 18:58Z on testnet4): a market listed in both federations
+    // closes in both at the same moment, and a game client takes the first of equal rows - the Up or Down client took federation
+    // A's round although this page had put the wallet's 1,000 sat into B (the lowest load, as ruled), so Up or Down was never
+    // played in B. The rows a game is handed put the federation holding most of the wallet's sats first, else the one a deposit
+    // goes to; the order among the rest is kept.
+    function moneyFirst(rows) {
+      const parts = (window.BLWP_WALLET_BALANCE && window.BLWP_WALLET_BALANCE.parts) || [];
+      const most = parts.filter((p) => Number(p.sats) > 0).sort((x, y) => Number(y.sats) - Number(x.sats))[0];
+      const dep = window.ARENA_DEPOSIT_FEDERATION && window.ARENA_DEPOSIT_FEDERATION.federation;
+      const want = String((most && most.federation) || dep || '').toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(want)) return rows;
+      const fedOf = (r) => { const c = r.contract || (r.raw && r.raw.contract); return c && c.federationId instanceof Uint8Array ? BLWPCLIENT.toHex(c.federationId) : null; };
+      return rows.map((r, i) => [r, i]).sort((x, y) => ((fedOf(x[0]) === want ? 0 : 1) - (fedOf(y[0]) === want ? 0 : 1)) || (x[1] - y[1])).map((x) => x[0]);
+    }
     // ANOTHER GAME'S OWN CLIENT, BY ITS MANIFEST'S HASH (kanban #208): fetched, hashed, run from its checked bytes only
     async function loadTheGameClient(game) {
       const digest = (b) => crypto.subtle.digest('SHA-256', b);
@@ -5606,11 +5635,11 @@
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
           outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length },
         clientHash: file.hash,
-        rows: () => (window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+        rows: () => moneyFirst(window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),
         // EVERY LISTED ROUND OF THIS GAME (kanban #279): rows() is the lobby's one per kind (the free one with the most entry
         // left); a game of short rounds - Rock Paper Scissors' 15 s - picks its own among all of them, e.g. the soonest to close
-        allRows: () => (window.BLWP_LOBBY_ROWS || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
+        allRows: () => moneyFirst(window.BLWP_LOBBY_ROWS || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.entryCloseMs !== undefined && r.entryCloseMs !== null ? Number(r.entryCloseMs) : null,
           startTimeMs: r.contract ? Number(r.contract.startTimeMs) : null })),
         identity: () => window.BLWP_IDENTITY || null,
