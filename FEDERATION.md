@@ -327,6 +327,13 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     3 signature shares, 2 guardians answer): p1 handed over 299,999,744 and
     holds 0 - an in-flight payment is lost at a halt (in the first run the
     same step finished before it and p1 handed over 400,000,000).
+    **Both findings RULED (Claude, on the owner's delegation 2026-10-14):**
+    multiplayer_p2p.md §23A.5 "How a halt is proven" (the seats attest a
+    halt - no session past `S` for `abandon_blocks`, a census majority and
+    at least five; no HALTED record; a guardian that answered through the
+    halt is not slashed) and "Notes still in issuance at the halt" (the
+    seated guardians publish the issued set; the client presents a pending
+    output's secrets; paid at face like a note).
 
 ---
 
