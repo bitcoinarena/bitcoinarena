@@ -73,6 +73,7 @@ import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex } from './absences.js';
 import { createLiquidations } from './liquidations.js';
+import { createHalts, wsSessionCount } from './halts.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
@@ -418,6 +419,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // ABSENCE ATTESTATIONS (§23A.4, kanban #322): taken at POST /absence, and what proves a guardian ABANDONED in the record
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
+  let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2799,14 +2801,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // invite its signed record carries - the records this seat mirrors for every federation its census names
   if (stakeLocks && 'inviteOf' in stakeLocks) stakeLocks.inviteOf = (fid) => fedRecords.inviteOf(fid);
   // A HALTED FEDERATION'S LIQUIDATION (§23A.5, kanban #323), mirrored at GET /liquidations, on the clocks of this seat's chain
-  liquidations = createLiquidations({ records: fedRecords, clocks: FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet,
-    verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } }, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null });
+  // A HALT PROVEN BY THE SEATS (§23A.5 "How a halt is proven", RULED 2026-10-14, kanban #323): this seat observes every guardian of every
+  // federation it holds a record of, signs once the last session has not moved for abandon_blocks, and keeps its peers' observations
+  const fedClocks = FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet;
+  const schnorrVerify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
+  halts = typeof chainTip === 'function' ? createHalts({ records: fedRecords, censusSeats: () => fedRecords.censusKeys(), clocks: fedClocks, verify: schnorrVerify,
+    sign: (h) => schnorr.sign(h, round.identity.secret), ownKey: round.pubkey, height: async () => Number(await chainTip()),
+    ask: (endpoint) => wsSessionCount(endpoint),
+    // to every seat of the census (networkSeats: the advertisements' endpoints and the peers given), as the games are read
+    post: async (o) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
+      signal: AbortSignal.timeout(15000) }).catch(() => null))); },
+    say: (o) => console.log(`[halt] ${JSON.stringify(o)}`) }) : null;
+  if (halts) {
+    const ht = setInterval(() => { halts.observe().catch((e) => console.log(`[halt] observe: ${e.message}`)); }, Number(process.env.ARENA_HALT_OBSERVE_MS || 600000));
+    if (ht.unref) ht.unref();
+  }
+  liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
   // A SEATED GUARDIAN'S OWN COPY OF A HALTED FEDERATION'S SPENT SET (§23A.5 step 1, kanban #323): every 10 min, for each federation held
   // HALTED whose record names this node a guardian, its guardian is asked (the fork's admin endpoint) and the signed copy is offered here
   // and posted to the peers. Only with a fedimint-cli client of that federation named (ARENA_SPENT_SET_CLIENT_DIR).
   if (guardian && guardian.dataDir && process.env.ARENA_SPENT_SET_CLIENT_DIR) {
     const publishOwnSpentSets = async () => {
-      for (const fid of fedRecords.haltedFederations()) {
+      for (const fid of new Set([...fedRecords.haltedFederations(), ...(halts ? halts.haltedFederations() : [])])) {
         const held = fedRecords.recordOf(fid);
         if (!held || !(held.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) continue;
         const got = await produceSpentSet({ guardianDir: guardian.dataDir, clientDir: process.env.ARENA_SPENT_SET_CLIENT_DIR,
@@ -5748,6 +5764,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const drainPools = Object.fromEntries([...new Set(listed.map((f) => f.successor).filter(Boolean))]
           .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
         return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: listed, drainPools }));
+      }
+      // A SEAT'S HALT OBSERVATIONS (§23A.5 "How a halt is proven", kanban #323): a peer's signed one taken, and those held served
+      if (req.method === 'POST' && url.pathname === '/halt-observations') {
+        if (!halts) return text(res, 503, 'this seat reads no chain, so it keeps no halt observations');
+        let said; try { said = JSON.parse(String(await read(req))); } catch { return text(res, 400, 'a halt observation is { observation, signature } as hex'); }
+        const r = halts.take(said);
+        return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/halt-observations') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'name a federation: ?federation=<64 hex>');
+        const p = halts ? halts.proofOf(fid) : null;
+        return json(res, 200, { node: toHex(round.pubkey), federation: fid, observations: halts ? halts.list(fid) : [], seen: halts ? halts.seen(fid) : null,
+          proof: p ? { session: p.session, haltHeight: p.haltHeight, observers: p.observers, abandoned: p.abandoned.map(toHex), answered: p.answered.map(toHex) } : null });
       }
       if (req.method === 'GET' && url.pathname === '/liquidations') {
         if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [] });

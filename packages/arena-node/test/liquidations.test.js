@@ -30,7 +30,7 @@ test('a halted federation is listed with its halt, its clocks and the newest spe
 });
 
 test('a copy for a federation that is not HALTED here, by a stranger, or forged is refused by name', () => {
-  assert.match(createLiquidations({ records: recordsAt('OPEN', null), clocks: TESTNET_CLOCKS, verify }).offer(said(guardians[0], 1, [1])).why, /OPEN here, not HALTED/);
+  assert.match(createLiquidations({ records: recordsAt('OPEN', null), clocks: TESTNET_CLOCKS, verify }).offer(said(guardians[0], 1, [1])).why, /OPEN here, and no halt proof stands/);
   const l = createLiquidations({ records: recordsAt('HALTED', 880), clocks: TESTNET_CLOCKS, verify });
   const stranger = { secret: new Uint8Array(32).fill(0x99) }; stranger.nodePubkey = schnorr.getPublicKey(stranger.secret);
   assert.match(l.offer(said(stranger, 1, [1])).why, /not a guardian/);
