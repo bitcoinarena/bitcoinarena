@@ -1,5 +1,5 @@
-// PLAYER-NODE SEPARATION AT THE SEAT (§5A.13, kanban #309): a signer node whose operator plays the round takes no part in its
-// settlement, and a committee its conflicted nodes leave under 5 of 7 settles nothing (ENTRY_VOID: each lock returns at expiry).
+// NO PLAYER-NODE CONFLICT GATE AT THE SEAT (§5A.13, RULED the owner 2026-10-14, kanban #360): a player declares no operator, so a
+// signer node is never kept out of a settlement, and no round is voided, by what a conflict lookup would say.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as curve from '../src/curve.js';
@@ -31,17 +31,14 @@ const seat = (conflictsFor) => {
   return new LockSettlement(round, { curve, conflictsFor, port: { settle: async () => ({}), fees: async () => ({ ppm: 0n, baseMsat: 0n }) },
     dkg: { signerNodeFor: () => ({ ok: true, pool: { groupPublicKey: new Uint8Array(33).fill(2) } }) } });
 };
-const conflicts = (bad, selfOp = null) => () => ({ self: selfOp,
-  serving: servingAfterConflicts({ committee: COMMITTEE, conflicted: new Set(bad.map((i) => toHex(COMMITTEE[i]))) }) });
 
-test('a conflicted signer node plans no settlement; 3 conflicted of 7 void the round; 2 of 7 settle on', async () => {
-  const self = await seat(conflicts([0], 'ee'.repeat(32))).planOf(RID);
-  assert.equal(self.ok, false); assert.match(self.why, /this signer node is conflicted, its operator eeeeeeee.*no part in the settlement/);
-  const three = await seat(conflicts([0, 1, 2])).planOf(RID);
-  assert.equal(three.ok, false); assert.match(three.why, /4 serve, under the threshold of 5: the round's entries are ENTRY_VOID/);
-  const two = await seat(conflicts([0, 1])).planOf(RID);
-  assert.doesNotMatch(String(two.why), /conflicted|ENTRY_VOID/, 'past the gate: what refuses it now is the round\'s own business');
-  const none = await seat(null).planOf(RID);
-  assert.doesNotMatch(String(none.why), /conflicted|ENTRY_VOID/);
-  console.log('  self:', self.why, '\n  three:', three.why, '\n  two:', two.why);
+test('a seat settles whatever a conflict lookup says: no conflicted refusal, no ENTRY_VOID', async () => {
+  let asked = 0;
+  const said = (bad, selfOp = null) => () => { asked++; return { self: selfOp,
+    serving: servingAfterConflicts({ committee: COMMITTEE, conflicted: new Set(bad.map((i) => toHex(COMMITTEE[i]))) }) }; };
+  for (const c of [said([0], 'ee'.repeat(32)), said([0, 1, 2]), said([0, 1]), null]) {
+    const plan = await seat(c).planOf(RID);
+    assert.doesNotMatch(String(plan.why), /conflicted|ENTRY_VOID/);
+  }
+  assert.equal(asked, 0, 'the lookup is not consulted at all');
 });

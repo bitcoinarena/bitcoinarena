@@ -951,6 +951,13 @@ export function operatorKeyOf(advert) {
  * nothing has taken nothing from anybody, and this returns no slash for it.
  */
 export function slashHoldsOnConflict({ proof, entry, signedByNode, advert, committee }) {
+  // WITHDRAWN (§5A.13, RULED the owner 2026-10-14 ~20:01Z, kanban #360): a player declares no operator, and signing in a round one's
+  // operator played is no offence; self-dealing is priced by 5 of 7 bonded slots (§5A.6) and overturnable by replay (§13A)
+  void proof; void entry; void signedByNode; void advert; void committee;
+  return { slashed: false, why: 'withdrawn: a player declares no operator, so signing in a round the operator played is no offence (§5A.13, ruled 2026-10-14)' };
+}
+// The rule as it stood before the ruling, kept for reading old proofs only.
+export function slashHoldsOnConflictBefore20261014({ proof, entry, signedByNode, advert, committee }) {
   if (!Array.isArray(committee) || !committee.length)
     return { slashed: false, why: 'no committee, so nobody was serving this round' };
   if (!committee.some((k) => hex(k) === hex(proof.nodePubkey)))

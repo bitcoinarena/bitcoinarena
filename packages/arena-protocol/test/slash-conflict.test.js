@@ -21,7 +21,7 @@ import { encodePayoutTable, payoutTableId } from '../src/payout.js';
 // (M3.3 item 20) - so a fixture carries the RULE rather than a number.
 import { entryFeeMsat } from '../src/fee.js';
 import {
-  encodeSettlementRecord, settlementRecordId, slashHoldsOnConflict, operatorKeyOf,
+  encodeSettlementRecord, settlementRecordId, slashHoldsOnConflictBefore20261014, slashHoldsOnConflict, operatorKeyOf,
   slashCommitment, OPERATOR_PLAYED,
 } from '../src/slash.js';
 
@@ -50,7 +50,7 @@ const proofFor = (id, over = {}) => ({
   transcriptHash: entryId(entry), signedResultId: id,
   bondTxid: BOND, bondVout: 3, ...over,
 });
-const ask = (over = {}) => slashHoldsOnConflict({
+const ask = (over = {}) => slashHoldsOnConflictBefore20261014({
   proof: proofFor(resultId(result)), entry, signedByNode: signedResult,
   advert, committee, ...over,
 });
@@ -109,7 +109,7 @@ test('a declaration that names no key conflicts with nobody', () => {
 
 test('all three of 5A.13\'s signatures are the offence, not just results', () => {
   const table = encodePayoutTable({ roundId: ROUND, table: [{ pubkey: b32(0xa1), amountMsat: 5n }] });
-  const onTable = slashHoldsOnConflict({
+  const onTable = slashHoldsOnConflictBefore20261014({
     proof: proofFor(payoutTableId({ roundId: ROUND, table: [{ pubkey: b32(0xa1), amountMsat: 5n }] })),
     entry, signedByNode: table, advert, committee,
   });
@@ -120,7 +120,7 @@ test('all three of 5A.13\'s signatures are the offence, not just results', () =>
     roundId: ROUND, entryId: b32(0x0e), nodePubkey: NODE, action: 'CLAIM',
     outcome: 'FAILED', qualifies: false, state: 'FINAL', shares: 5, signatures: 5,
   };
-  const onRecord = slashHoldsOnConflict({
+  const onRecord = slashHoldsOnConflictBefore20261014({
     proof: proofFor(settlementRecordId(record)), entry,
     signedByNode: encodeSettlementRecord(record), advert, committee,
   });
@@ -135,7 +135,7 @@ test('the entry has to be this round\'s, and the object this round\'s too', () =
 
   const other = { ...result, roundId: b32(0x09) };
   const otherSigned = joinSignedResult(encodePlayerResult(other), new Uint8Array(64).fill(7));
-  const no = slashHoldsOnConflict({
+  const no = slashHoldsOnConflictBefore20261014({
     proof: proofFor(resultId(other)), entry, signedByNode: otherSigned, advert, committee,
   });
   assert.equal(no.slashed, false);
@@ -143,7 +143,7 @@ test('the entry has to be this round\'s, and the object this round\'s too', () =
 });
 
 test('the object attached has to be the one the proof names, and the node\'s own', () => {
-  const mismatched = slashHoldsOnConflict({
+  const mismatched = slashHoldsOnConflictBefore20261014({
     proof: proofFor(b32(0x7e)), entry, signedByNode: signedResult, advert, committee,
   });
   assert.equal(mismatched.slashed, false);
@@ -151,7 +151,7 @@ test('the object attached has to be the one the proof names, and the node\'s own
 
   const theirs = { ...result, nodePubkey: b32(0x22) };
   const theirSigned = joinSignedResult(encodePlayerResult(theirs), new Uint8Array(64).fill(7));
-  const borrowed = slashHoldsOnConflict({
+  const borrowed = slashHoldsOnConflictBefore20261014({
     proof: proofFor(resultId(theirs)), entry, signedByNode: theirSigned, advert, committee,
   });
   assert.equal(borrowed.slashed, false);
@@ -198,4 +198,12 @@ test('no entry at all is not an accusation', () => {
     assert.equal(no.slashed, false);
     assert.match(no.why, /no entry contract/);
   }
+});
+
+test('since the 2026-10-14 ruling the offence is withdrawn: no proof slashes (§5A.13, kanban #360)', () => {
+  const then = ask();
+  assert.equal(then.slashed, true, 'the same proof slashed under the old rule');
+  const now = slashHoldsOnConflict({ proof: {}, entry: {}, signedByNode: {}, advert: {}, committee: [] });
+  assert.equal(now.slashed, false);
+  assert.match(now.why, /withdrawn: a player declares no operator/);
 });
