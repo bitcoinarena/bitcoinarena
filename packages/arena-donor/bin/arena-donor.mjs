@@ -168,7 +168,7 @@ async function pass() {
       state.withdrawals.push({ at: new Date().toISOString(), federation: fed, msat: String(w.withdrawableMsat), state: w.state, gateway: w.gateway, preimage: w.preimage || null });
       writeJson(statePath, state);
     }
-    const balanceMsat = await client.balanceMsat();
+    let balanceMsat; try { balanceMsat = await client.balanceMsat(); } catch { balanceMsat = 0; }
     // WHAT THE NODE'S DASHBOARD SHOWS (kanban #357): this dev's balance per federation, kept beside the record
     state.balances[fed] = { msat: String(balanceMsat), at: new Date().toISOString() };
     writeJson(statePath, state);
