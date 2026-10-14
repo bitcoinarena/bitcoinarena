@@ -73,6 +73,7 @@ import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex } from './absences.js';
 import { createLiquidations } from './liquidations.js';
+import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
 import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
@@ -2800,6 +2801,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A HALTED FEDERATION'S LIQUIDATION (§23A.5, kanban #323), mirrored at GET /liquidations, on the clocks of this seat's chain
   liquidations = createLiquidations({ records: fedRecords, clocks: FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet,
     verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } }, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null });
+  // A SEATED GUARDIAN'S OWN COPY OF A HALTED FEDERATION'S SPENT SET (§23A.5 step 1, kanban #323): every 10 min, for each federation held
+  // HALTED whose record names this node a guardian, its guardian is asked (the fork's admin endpoint) and the signed copy is offered here
+  // and posted to the peers. Only with a fedimint-cli client of that federation named (ARENA_SPENT_SET_CLIENT_DIR).
+  if (guardian && guardian.dataDir && process.env.ARENA_SPENT_SET_CLIENT_DIR) {
+    const publishOwnSpentSets = async () => {
+      for (const fid of fedRecords.haltedFederations()) {
+        const held = fedRecords.recordOf(fid);
+        if (!held || !(held.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) continue;
+        const got = await produceSpentSet({ guardianDir: guardian.dataDir, clientDir: process.env.ARENA_SPENT_SET_CLIENT_DIR,
+          cli: process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', federationId: fid, nodeSecret: round.identity.secret });
+        if (!got.ok) { console.log(`[liquidation] ${fid.slice(0, 16)}: no spent set from this guardian - ${got.why}`); continue; }
+        const here = liquidations.offer(got.copy);
+        const there = await publishSpentSet(got.copy, peers || []);
+        console.log(`[liquidation] ${fid.slice(0, 16)}: spent set of session ${got.session} (${got.nonces} nonces) kept here: ${here.ok}, posted to ${there.filter((x) => x.ok).length} of ${there.length} peers`);
+      }
+    };
+    const t = setInterval(() => { publishOwnSpentSets().catch((e) => console.log(`[liquidation] spent sets: ${e.message}`)); }, 600000);
+    if (t.unref) t.unref();
+  }
   // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
   roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
