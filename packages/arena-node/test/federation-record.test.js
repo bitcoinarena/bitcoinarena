@@ -152,7 +152,10 @@ test('seats holding rounds at different census heights sign one record: the newe
   const reads = (i, rid) => rid[0] === 100 % 251 || (own[i] !== undefined && rid[0] === own[i] % 251);
   const asked = [];
   const seats = nodes.map((n, i) => federationRecords({
-    round: { pubkey: n.pubkey, identity: { secret: n.secret }, db: { prepare: () => ({ all: (after) => rowsOf(i).filter((r) => r.rowid > after) }) } },
+    round: { pubkey: n.pubkey, identity: { secret: n.secret }, db: { prepare: (sql) => ({
+      // the seat reads its rounds newest first since kanban #355: max(rowid), then rowid < ? DESC LIMIT ?, then rowid > ? for new ones
+      get: () => ({ m: rowsOf(i).length ? Math.max(...rowsOf(i).map((r) => r.rowid)) : null }),
+      all: (a, limit) => (/DESC/.test(sql) ? rowsOf(i).filter((r) => r.rowid < a).sort((x, y) => y.rowid - x.rowid).slice(0, limit) : rowsOf(i).filter((r) => r.rowid > a)) }) } },
     roster: { censusFor: (rid) => (reads(i, rid) ? census : { ok: false, why: 'this node has no chain view for that round, so it cannot say who is bonded' }) },
     inviteFor: () => INVITE, networkId: NET,
     fetcher: async (url) => {
