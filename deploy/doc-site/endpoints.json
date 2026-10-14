@@ -2726,6 +2726,103 @@
   "pathParams": []
  },
  {
+  "method": "GET",
+  "path": "/badges",
+  "params": "query player (64 hex identity key)",
+  "auth": "none",
+  "returns": "200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400",
+  "purpose": "The NIP-58 badges this node awarded to one player identity (kind-8 award events, each with the round ids or the board week that earned it) and their kind-30009 definitions, exactly as signed, so a client checks ids and signatures itself. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).",
+  "audience": "player/page",
+  "line": 4507,
+  "summary": "A player's badges (NIP-58)",
+  "query": [
+   {
+    "name": "player",
+    "required": true,
+    "type": "string",
+    "description": "The player's identity key, 64 hex (an x-only Nostr key). A bare round key holds no badge."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The awards (oldest first) and the definitions they name."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a 64-hex player key."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/badge-definitions",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {node, on, version, definitions[{event, publishedMs}]}",
+  "purpose": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, season top 3.",
+  "audience": "player/page",
+  "line": 4503,
+  "summary": "Badge definitions (NIP-58)",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The definitions, in catalogue order."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/badge-image/{file}",
+  "openapiPath": "/badge-image/{file}",
+  "params": "path file (<d>.svg)",
+  "auth": "none",
+  "returns": "200 image/svg+xml; 404",
+  "purpose": "A badge's image, as its definition's image tag names it under the node's public base.",
+  "audience": "player/page",
+  "line": 4517,
+  "summary": "A badge's image",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "image/svg+xml",
+    "description": "The badge's SVG."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such badge image."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": [
+   {
+    "name": "file",
+    "required": true,
+    "type": "string",
+    "description": "The badge's d and .svg, e.g. arena-first-win.svg."
+   }
+  ]
+ },
+ {
   "method": "POST",
   "path": "/series",
   "params": "body: series line (text, a grid series)",

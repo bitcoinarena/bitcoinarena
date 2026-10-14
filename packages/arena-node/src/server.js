@@ -23,6 +23,8 @@ import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
+import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
+import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { devClientSnapshot } from './dev-client.js';
 import { attributeDonations } from './dev-clients.js';
@@ -67,7 +69,7 @@ import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { season, seasonWindow, mergeSeasonAccounts, seasonRoundsToJson, seasonRoundsFromJson, SEASON_NETWORK_AGREE,
   SEASON_NETWORK_UNCHECKED } from '../../arena-protocol/src/season.js';
-import { seasonRounds } from './season-read.js';
+import { seasonRounds, seasonRoundOf } from './season-read.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
@@ -427,7 +429,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // RESULTS ON NOSTR (kanban #362 feature 2, nostr-results.js): the relays each round's signed result is published to, once its
   // settlement is ACCEPTED here - ARENA_NOSTR_PUBLISH, a comma list of wss URLs; none (the default) publishes nothing, and
   // /nostr-results still serves the event. At most ARENA_NOSTR_PUBLISH_PER_MIN events a minute (30).
-  nostrPublish = publishRelays(), nostrPerMinute = Number(process.env.ARENA_NOSTR_PUBLISH_PER_MIN) || 30, nostrTickMs = 20000 } = {}) {
+  nostrPublish = publishRelays(), nostrPerMinute = Number(process.env.ARENA_NOSTR_PUBLISH_PER_MIN) || 30, nostrTickMs = 20000,
+  // BADGES ON NOSTR (kanban #362, PLATFORM-RESEARCH item 13; nostr-badges.js): ARENA_NOSTR_BADGES=1 awards NIP-58 badges from
+  // this seat's settled rounds and closed weekly boards (off by default: none awarded, the doors say so), published with the
+  // results to ARENA_NOSTR_PUBLISH. Their images are named under ARENA_BADGE_IMAGE_BASE, else the first stable public address.
+  nostrBadgesOn = badgesOn(), badgeImageBase = imageBaseOf(process.env.ARENA_BADGE_IMAGE_BASE) || replayPublic[0] || null,
+  nostrBadgesTickMs = 60000 } = {}) {
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
@@ -2493,6 +2500,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   nostr.start();
   if (nostrPublish.length) console.log(`[nostr] publishing each settled round's result to ${nostrPublish.join(', ')} as ${toHex(round.pubkey).slice(0, 16)} (kind 30762)`);
 
+  // BADGES ON NOSTR (kanban #362, docs/PLATFORM-RESEARCH.md item 13; nostr-badges.js, protocol badges.js). A round is read for
+  // its badges as the season board reads it (season-read.js seasonRoundOf: FINAL results, the settlement's amounts, each entry
+  // under its identity with its round key beside it), once its settlement is ACCEPTED here - the moment its Nostr result is
+  // built; the weekly board badge reads this seat's own season of each game it hosts (a name with all its versions' ids).
+  const badgeRoundOf = (ridHex) => {
+    const rid = fromHex(ridHex);
+    const held = round.get(Buffer.from(rid));
+    if (!held) return { ok: false, status: 404, why: 'this node holds no such round' };
+    const c = decodeRoundContract(new Uint8Array(held.contract));
+    const game = gameOfContract(c);
+    if (!game) return { ok: false, status: 404, why: 'that round is of a game this node does not host' };
+    const r = seasonRoundOf(round, rid, c, { isMarket: (x) => !!attestedOf(x) });
+    return r ? { ok: true, game: { name: game.name, id: game.id }, round: r } : { ok: false, status: 404, why: 'a free market has no result to award from' };
+  };
+  const hostedGames = () => {
+    const by = new Map();
+    for (const p of hosted.values()) by.set(String(p.name), [...(by.get(String(p.name)) || []), toHex(p.gameId)]);
+    return [...by.keys()].sort().map((name) => ({ name, ids: [...new Set(by.get(name))].sort() }));
+  };
+  const badges = nostrBadges({ db: round.db, secret: round.identity.secret, on: nostrBadgesOn, relays: nostrPublish, roundOf: badgeRoundOf,
+    settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', games: hostedGames, imageBase: badgeImageBase,
+    seasonOf: (g, w) => seasonRounds(round, { games: new Set(g.ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) }),
+    perMinute: nostrPerMinute, tickMs: nostrBadgesTickMs });
+  badges.start();
+  if (nostrBadgesOn) console.log(`[badges] awarding NIP-58 badges as ${toHex(round.pubkey).slice(0, 16)}${nostrPublish.length ? `, published to ${nostrPublish.join(', ')}` : ', not published (no ARENA_NOSTR_PUBLISH)'}`);
+
   // WINNINGS ARE ALWAYS SENT, WITH NO PAGE OPEN: every round holding a winning that is not PAID is visited on the same
   // clock - a send retried, an expired one re-sent through the next live gateway (winnings-send.js). Only the round's
   // proposer acts; the others answer it.
@@ -4462,6 +4495,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/json', 'x-nostr-published': got.row && got.row.publishedMs ? new Date(got.row.publishedMs).toISOString() : 'no', ...CORS });
         return res.end(JSON.stringify(got.event));
+      }
+
+      // BADGES (kanban #362, PLATFORM-RESEARCH item 13; nostr-badges.js): the NIP-58 events this seat signed - each catalogue
+      // badge's definition (kind 30009), and the awards (kind 8) it issued to one identity, each with what earned it - the exact
+      // events it publishes, so a client checks their ids and signatures itself. `on`: whether this seat awards badges at all
+      // (ARENA_NOSTR_BADGES); off, /badges answers no awards. publishedMs: when an event reached every relay named, else null.
+      if (req.method === 'GET' && url.pathname === '/badge-definitions') {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), on: badges.on, version: badges.version, definitions: badges.definitions() }));
+      }
+      if (req.method === 'GET' && url.pathname === '/badges') {
+        const player = String(url.searchParams.get('player') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(player)) return text(res, 400, 'badges are asked for by a player: ?player=<identity key, 64 hex>');
+        const awards = badges.awardsOf(player);
+        const ds = new Set(awards.map((a) => a.d));
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), player, on: badges.on, awards,
+          definitions: badges.definitions().filter((x) => ds.has(x.event.tags[0][1])) }));
+      }
+      // A BADGE'S IMAGE, as its definition names it (the catalogue's path under the seat's public base): plain SVG, no script
+      if (req.method === 'GET' && url.pathname.startsWith('/badge-image/')) {
+        const b = BADGES.find((x) => x.image === url.pathname);
+        if (!b) return text(res, 404, 'no such badge image');
+        res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'public, max-age=86400',
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'", ...CORS });
+        return res.end(badgeImage(b));
       }
 
       // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
@@ -6951,6 +7010,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(winningsTimer);
         clearInterval(lateTimer);
         nostr.stop();
+        badges.stop();
         settlements.stop();
         if (endTimer) clearInterval(endTimer);
         if (doorTimer) clearInterval(doorTimer);

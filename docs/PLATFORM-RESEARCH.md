@@ -58,6 +58,16 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    `POST /game-outcome`; holding the outcome for settlement is left (multiplayer_p2p.md §0A.7d).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
 6. Then 8-16 by demand.
+   **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
+   versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
+   (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through
+   `season()`, so a badge agrees with the season board. A seat reads each round once its settlement is ACCEPTED (the
+   moment its Nostr result is built) and each closed week once, and signs NIP-58 events with its node key: a Badge
+   Definition (kind 30009) per badge and a Badge Award (kind 8, `a` = `30009:<seat>:<d>`, `p` = the player's identity,
+   `evidence` = the round ids) once per badge, player and game (or week), kept across restarts. Only an identity key (an
+   x-only Nostr key) is awarded, never a bare round key. `GET /badges?player=`, `GET /badge-definitions`; published with
+   the results to ARENA_NOSTR_PUBLISH; the Arena relay takes kinds 30009 and 8. Not yet: a network-wide board badge
+   (mergeSeasonAccounts), badges shown in the page.
 
 Rules for every feature: additive, versioned where it changes bytes (§#349 required versions), no change to any existing
 game or market id, tests first, measured live before it is called done.
