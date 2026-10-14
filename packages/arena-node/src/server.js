@@ -71,7 +71,8 @@ import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
-import { createAbsences, readAbsenceHex, readDepartureHex } from './absences.js';
+import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex } from './absences.js';
+import { createAbsenceProducer, guardianConfigOf, wsAdminStatus } from './absence-producer.js';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
@@ -2817,6 +2818,39 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (ht.unref) ht.unref();
   }
   liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
+  // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which
+  // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
+  // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
+  if (guardian && guardian.dataDir && guardian.apiPort && typeof chainTip === 'function') {
+    const producers = new Map();               // federation hex -> absence-producer.js
+    const stateFile = `${String(guardian.dataDir).replace(/\.guardian$/, '')}.absences.json`;
+    let state = {}; try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
+    const attest = async () => {
+      const fid = (fedRecords.list() || []).map((x) => x.federation).find((f) => {
+        const held = fedRecords.recordOf(f);
+        return held && held.status !== 'CLOSED' && (held.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(round.pubkey));
+      });
+      if (!fid) return;
+      if (!producers.has(fid)) {
+        const cfg = guardianConfigOf(guardian.dataDir, (f) => readFileSync(f, 'utf8'));
+        const password = readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
+        producers.set(fid, createAbsenceProducer({ federationId: fid, ...cfg, attester: round.pubkey,
+          status: () => wsAdminStatus(guardian.apiPort, password), height: async () => Number(await chainTip()),
+          sign: (h) => schnorr.sign(h, round.identity.secret), load: () => state[fid],
+          save: (v) => { state[fid] = v; try { writeFileSync(stateFile, JSON.stringify(state)); } catch { /* kept in memory */ } } }));
+      }
+      const r = await producers.get(fid).pass();
+      if (!r.ok) { console.log(`[absence] ${fid.slice(0, 16)}: ${r.why}`); return; }
+      for (const a of r.signed) {
+        absences.offer(a);
+        const hex = absenceHex(a);
+        await Promise.all(networkSeats().map((u) => fetch(`${u}/absence`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) }).catch(() => null)));
+      }
+      if (r.absent.length) console.log(`[absence] ${fid.slice(0, 16)} session ${r.session} at ${r.height}: not seen ${JSON.stringify(r.absent)}, signed ${r.signed.length}`);
+    };
+    const at = setInterval(() => { attest().catch((e) => console.log(`[absence] attest: ${e.message}`)); }, Number(process.env.ARENA_ABSENCE_ATTEST_MS || 600000));
+    if (at.unref) at.unref();
+  }
   // A SEATED GUARDIAN'S OWN COPY OF A HALTED FEDERATION'S SPENT SET (§23A.5 step 1, kanban #323): every 10 min, for each federation held
   // HALTED whose record names this node a guardian, its guardian is asked (the fork's admin endpoint) and the signed copy is offered here
   // and posted to the peers. Only with a fedimint-cli client of that federation named (ARENA_SPENT_SET_CLIENT_DIR).
