@@ -73,6 +73,8 @@ import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex } from './absences.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
+import { createFoundingSeat, cliSetup } from './founding-seat.js';
+import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
@@ -421,7 +423,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
   let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
-  let ownGuardianSeat = () => null;            // { federation, peerKey } of the record naming this node a guardian, once records are held
+  let ownGuardianSeat = () => null;
+  let foundingSeat = null;                     // founding-seat.js (kanban #320), with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2828,6 +2831,32 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return null;
   };
+  // A FOUNDING BY SORTITION (§23A.2, kanban #320), with ARENA_FOUNDING=1: every 10 min the seat reads a trigger off the records it
+  // holds (founding-seat.js), the beacon and the census at trigger_height from its chain view, and - while its own guardian waits in
+  // Fedimint's setup - takes part through the guardian's own setup API (fedimint-cli, ARENA_FEDIMINT_CLI). GET/POST /founding.
+  if (process.env.ARENA_FOUNDING === '1' && guardian && guardian.apiPort && guardian.dataDir && typeof chainTip === 'function') {
+    const netName = String(chain || '').replace(/^bitcoin-/, '');
+    const g = (() => { try { return genesisFor(netName === 'test' ? 'testnet4' : netName); } catch { return null; } })();
+    const newestRound = () => { const r = round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); return r || null; };
+    const viewOf = () => { const r = newestRound(); if (!r) return null; const c = decodeRoundContract(new Uint8Array(r.contract)); return { rid: new Uint8Array(r.round_id), view: roster.chainFor({ contract: c, roundIdBytes: new Uint8Array(r.round_id) }) }; };
+    const password = () => readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
+    const runCli = (args) => new Promise((res, rej) => execFileCb(process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args, { timeout: 120000 }, (e, out) => (e ? rej(e) : res(String(out)))));
+    foundingSeat = createFoundingSeat({
+      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height })),
+      entriesAt: async (h) => { const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null; },
+      beaconAt: async (h) => { const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null; },
+      tip: async () => Number(await chainTip()),
+      guardianInSetup: async () => { try { const st = await wsAdminStatus(guardian.apiPort, password()); return !(st && st.federation); } catch { return false; } },
+      setup: cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16) }),
+      guardingOpen: () => new Set(),
+      nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
+      clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
+      post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
+      peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
+      say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
+    const ft = setInterval(() => { foundingSeat.tick().catch((e) => console.log(`[founding] tick: ${e.message}`)); }, Number(process.env.ARENA_FOUNDING_MS || 600000));
+    if (ft.unref) ft.unref();
+  }
   // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which
   // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
   // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
@@ -5768,6 +5797,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // RESERVE SEATS (§5A.7, kanban #301): PRESENT in and out, this node's seating signature, the certificate, a proof of
       // equivocation
       const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+      // A FOUNDING (§23A.2, kanban #320): a seated node's signed setup code, and this seat's view of the founding
+      if (req.method === 'POST' && url.pathname === '/founding') {
+        if (!foundingSeat) return text(res, 404, 'this seat runs no founding (ARENA_FOUNDING)');
+        let m; try { m = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a setup code as JSON { id, node, code, signature }'); }
+        const r = foundingSeat.take(m);
+        return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/founding') {
+        return json(res, 200, { node: toHex(round.pubkey), ...(foundingSeat ? foundingSeat.state() || { none: true } : { off: true }) });
+      }
       if (req.method === 'POST' && url.pathname === '/absence') {
         let a; try { a = readAbsenceHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `an absence attestation, its encoding and signature in hex: ${e.message}`); }
         const r = absences.offer(a);
