@@ -39,7 +39,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
-import { H2H_REVEAL_MIN_MS } from '../../arena-protocol/src/manifest.js';
+import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf } from '../../arena-protocol/src/attested.js';
 import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
@@ -448,7 +448,8 @@ export class Round {
       // into a replayed round backs none - its result is its run
       const picked = contract.pick !== undefined && contract.pick !== null;
       if (game.ok && game.attested) {
-        const outcomes = game.plugin.manifest.outcomes;
+        // A ROUND OF A TEMPLATE (kanban #362 feature 5) is picked among ITS OWN outcomes (contracts.js `event`), not the template's
+        const outcomes = marketOfRound(game.plugin.manifest, asks).outcomes;
         if (!picked) throw new Error(`an entry into a round of attested game "${game.plugin.manifest.gameName}" backs one of its outcomes: it carries no pick`);
         if (contract.pick >= outcomes.length)
           throw new Error(`that entry picks outcome ${contract.pick}, out of range: game "${game.plugin.manifest.gameName}" has ${outcomes.length} outcomes (0 to ${outcomes.length - 1})`);

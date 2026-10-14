@@ -21,7 +21,7 @@
 // commitment list: the same nonce over two lists is two signatures over two
 // messages, which publishes the share. A second asker with the same list gets
 // the same share back; with another list, nothing.
-import { decodeAttestation, outcomeFinality, marketVoided } from '../../arena-protocol/src/attested.js';
+import { decodeAttestation, outcomeFinality, marketVoided, roundTermsOf } from '../../arena-protocol/src/attested.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -259,7 +259,8 @@ export class Forfeit {
     const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
       .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
     const nowMs = this.round.now ? this.round.now() : Date.now();
-    const voided = marketVoided(held, { entryCloseMs: contract.entryCloseMs, terms: f.plugin.manifest.marketTerms || null, nowMs });
+    // a template's round is VOID by its own resolution time's deadline (kanban #362 feature 5: roundTermsOf)
+    const voided = marketVoided(held, { entryCloseMs: contract.entryCloseMs, terms: roundTermsOf(f.plugin.manifest, contract), nowMs });
     if (voided.voided) return { ok: true, why: voided.why };
     const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs });
     if (fin.final && !this.round.entriesOf(roundIdBytes).some(({ entry }) => entry.pick === fin.outcome))

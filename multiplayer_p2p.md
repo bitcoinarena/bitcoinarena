@@ -266,6 +266,8 @@ GameManifest {
   game_donation_set               // recipients and shares, as §22A's donation set
   outcomes[], attestors[],        // ATTESTED only (§0A.7a): the outcomes a round may end in, the
     attest_threshold              //   attestor keys, and how many of them must sign (k of n)
+  template                        // ATTESTED, optional (§0A.7c): category, max_outcomes, resolve_within -
+                                  //   each round then asks its own question
   signature                       // by game_dev_pubkey over all of the above
 }
 game_id = H(GameManifest)
@@ -649,6 +651,75 @@ above. 8 filled orders settled with 16 locks claimed, 80,000 msat paid out of
 max 344 ms, so 0.5 s holds (with the 100 ms grace). A batch that must first
 void or certify an earlier one took up to 532 ms; the book is then one batch
 late.
+
+## 0A.7c Event-market templates *(AS BUILT 2026-10-14, kanban #362 feature 5; docs/PLATFORM-RESEARCH.md)*
+
+**Why.** A market's question lived in its signed manifest, so every new
+question ("Will X happen by Y?") needed a newly signed manifest that nodes
+choose to host. With a template the manifest says who decides and on what
+terms, and **anyone opens a new question by publishing one round of it**.
+
+**The template, in the manifest.** An `ATTESTED` manifest may name, after its
+own marker byte `0x03` (behind the market terms, before the required version):
+
+```text
+template {
+  category                        // 1 to 32 characters: what kind of question its rounds ask
+  max_outcomes                    // 2 to 16: the most outcome labels a round may name
+  resolve_within_ms               // the latest a round may resolve after its entry close (at most 30 days)
+}
+```
+
+Everything a market's trust and money are made of stays the manifest's: its
+attestor keys and threshold, its fees, its attestors' deadline and its source
+rule - its market terms (§0A.7b.3), **which a template must name**. Its terms'
+`resolve_after_close_ms` is then the **earliest** a round may resolve after its
+entry close. A template **requires protocol version 2026.0.3 or later** (#349):
+its rounds carry their question in a contract tail that version reads, and a
+node too old to read the field cannot read the manifest at all, so it cannot
+host the template. A template runs on no grid (`round_period` 0). Its own
+`outcomes[]` label the template itself (its shape, e.g. YES / NO); a round
+names its own. The field is optional: **every manifest without it keeps its
+bytes and its game id** (asserted against every signed manifest in the repo:
+Up/Down 672415c8 / f5f3f187, RPS 1e9ab4b7 / a75f54fd, nextblock 495516ae /
+c693585b, hello-world 32ee1aa4).
+
+**The question, in the round.** A Round Contract may carry, **last of all**,
+its own question:
+
+```text
+event {                           // marker 0xc3, its fields, then its own size (u16) and 0xc3 again
+  question                        // 1 to 280 bytes of UTF-8
+  outcomes[]                      // 2 to 16 labels, each 1 to 64 bytes of UTF-8, each named once
+  resolve_at_ms                   // when its outcome is decided
+}
+```
+
+It is in the hashed bytes, so the question, the labels **and their order** -
+the index the attestors sign - are the round's id. It is read from the end by
+its closing marker and size; a contract without it keeps its bytes and its
+round id (asserted for all 24 layouts of versions 1-3 with and without
+deadline, series, rules and creator). It is read from version 2026.0.3 on and
+never on a round of a series (a series round's id `H(series_id || i)` would not
+hash its question).
+
+**Which rounds carry it** (`roundFitsManifest`, at `POST /round`): a round of a
+template **must**, and a round of any other game **must not** - each refused
+by name (409). A template's round names no more outcomes than its
+`max_outcomes`, and resolves from `entry_close + resolve_after_close_ms` to
+`entry_close + resolve_within_ms`.
+
+**The outcome is the round's.** The attestors sign an index into **this
+round's** `outcomes[]` (an attestation is already per round): a seat checks the
+range against the round's labels, the signatures against the template's
+attestor set and threshold, the observation against the round's
+`resolve_at_ms`; the round is VOID at its own `resolve_at_ms +
+deadline_after_resolve_ms`, and its locks are sized to last to that
+(lock-expiry.js). A pick is in the round's range. `GET /rounds` lists the
+round with its `event`, `GET /round` names the question beside the contract's
+bytes (`x-question`, `x-outcomes`, `x-resolve-at-ms`), `GET /outcome` answers
+the round's question and labels; the page's lobby shows the question from the
+contract it checked, not a node's word.
 
 ## 0A.8 The money: 10% of the gross stake
 
