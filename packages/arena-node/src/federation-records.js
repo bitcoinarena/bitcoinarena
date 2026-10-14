@@ -60,17 +60,33 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   }
 
   // ROUNDS BY CENSUS HEIGHT, each read once (kanban #321, measured on testnet4 2026-10-12: a seat holds thousands of rounds,
-  // and reading them all at every ask held the loop 3-6 s per GET /federation-record)
+  // and reading them all at every ask held the loop 3-6 s per GET /federation-record) - AND NEWEST FIRST, only as far as a basis
+  // is found (kanban #355, measured 2026-10-14: the first GET /federation-record after a start read and decoded all 86,607 stored
+  // rounds, 66 MB of contracts, holding the seat's loop 4.9-9.7 s; the census it wants is a recent round's, among the newest rows)
   const byHeight = new Map();                // census height -> [{ rid, contract }]
-  let lastRow = 0;
-  const indexRounds = () => {
-    for (const r of round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
-      lastRow = r.rowid;
-      let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
-      if (!byHeight.has(c.censusHeight)) byHeight.set(c.censusHeight, []);
-      const at = byHeight.get(c.censusHeight);
-      if (at.length < 4) at.push({ rid: new Uint8Array(r.round_id), contract: c });
+  const CHUNK = 500, MAX_CHUNKS = 4;
+  let highRow = null, lowRow = null, exhausted = false;
+  const keepRow = (r) => {
+    let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { return; }
+    if (!byHeight.has(c.censusHeight)) byHeight.set(c.censusHeight, []);
+    const at = byHeight.get(c.censusHeight);
+    if (at.length < 4) at.push({ rid: new Uint8Array(r.round_id), contract: c });
+  };
+  /** The rows stored since the last read (none on the first: that starts at the top and reads down, `older`). */
+  const newer = () => {
+    if (highRow === null) {
+      const top = round.db.prepare('SELECT max(rowid) AS m FROM rounds').get();
+      highRow = top && top.m !== null ? Number(top.m) : 0; lowRow = highRow + 1;
+      return;
     }
+    for (const r of round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(highRow)) { highRow = r.rowid; keepRow(r); }
+  };
+  /** The next CHUNK rows below the lowest read so far, newest first. */
+  const older = () => {
+    if (exhausted) return;
+    const rows = round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid < ? ORDER BY rowid DESC LIMIT ?').all(lowRow, CHUNK);
+    for (const r of rows) { lowRow = r.rowid; keepRow(r); }
+    if (rows.length < CHUNK) exhausted = true;
   };
   /**
    * THE CENSUS A RECORD IS BUILT FROM, and its height. Without `atHeight`: the newest held round whose census this seat can
@@ -87,17 +103,29 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const census = roster.censusFor(best.rid);
       return census.ok ? { ok: true, census, height: best.contract.censusHeight, networkId: best.contract.networkId } : census;
     }
-    indexRounds();
-    const heights = atHeight !== null ? [atHeight] : [...byHeight.keys()].sort((a, b) => b - a);
-    let why = null;
-    for (const h of heights.slice(0, 64)) {
-      for (const x of byHeight.get(h) || []) {
-        const census = roster.censusFor(x.rid);
-        // A CENSUS THAT HOLDS NO NODE IS NO BASIS (kanban #348, the owner's playtest 2026-10-13 07:42: "No federation info"): the
-        // first v2 grids carried an empty census (fixed in e8f039d8), and as the highest census height they hid every record
-        if (census.ok && (census.entries || []).length) return { ok: true, census, height: h, networkId: x.contract.networkId };
-        why = census.ok ? `the census at height ${h} holds no node` : census.why;
+    newer();
+    if (!byHeight.size) older();
+    const tried = new Set();
+    let why = null, chunks = 0;
+    for (;;) {
+      const heights = atHeight !== null ? (byHeight.has(atHeight) ? [atHeight] : []) : [...byHeight.keys()].sort((a, b) => b - a).slice(0, 64);
+      for (const h of heights) {
+        if (tried.has(h)) continue;
+        tried.add(h);
+        for (const x of byHeight.get(h) || []) {
+          const census = roster.censusFor(x.rid);
+          // A CENSUS THAT HOLDS NO NODE IS NO BASIS (kanban #348, the owner's playtest 2026-10-13 07:42: "No federation info"): the
+          // first v2 grids carried an empty census (fixed in e8f039d8), and as the highest census height they hid every record
+          if (census.ok && (census.entries || []).length) return { ok: true, census, height: h, networkId: x.contract.networkId };
+          why = census.ok ? `the census at height ${h} holds no node` : census.why;
+          // A SEAT STILL READING ITS CHAIN (measured 2026-10-14 12:32Z, the first call 37 s after a start: every census answered
+          // "still reading", and reading older rows for one held the loop 4.6 s to a 404) - older rows cannot help: said at once
+          if (!census.ok && /still reading its chain view/.test(String(census.why))) return { ok: false, why: census.why };
+        }
       }
+      // older rows only while nothing read so far gives a basis - at most MAX_CHUNKS a call, and not past 64 heights tried
+      if (exhausted || chunks >= MAX_CHUNKS || (atHeight === null && tried.size >= 64)) break;
+      older(); chunks++;
     }
     if (atHeight !== null) return { ok: false, why: why ? `census height ${atHeight}: ${why}` : `this seat holds no round with census height ${atHeight}` };
     return { ok: false, why: why || 'this seat holds no round, so it reads no census' };
