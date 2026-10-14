@@ -33,7 +33,7 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 import { bondSetFor } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
-import { splitSlashEvidence, SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { splitSlashEvidence, cutSlashEvidence } from '../../arena-protocol/src/slash.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { beaconFromChain, committeeSeedFromBeacon } from '../../arena-protocol/src/beacon.js';
 import { selectCommittee } from '../../arena-protocol/src/sortition.js';
@@ -69,7 +69,7 @@ async function handle(seat, s) {
   const rid = fromHex(s.round), eid = fromHex(s.entry);
   const recs = await get(`${seat}/slash-proofs?round=${s.round}&entry=${s.entry}`, 'bytes');
   let evidence = null;
-  for (let i = 0; i < recs.length; i += SLASH_EVIDENCE_BYTES) { const r = recs.subarray(i, i + SLASH_EVIDENCE_BYTES); if (toHex(splitSlashEvidence(r).proof.nodePubkey) === s.node) evidence = r; }
+  for (const r of cutSlashEvidence(recs)) { let sp; try { sp = splitSlashEvidence(r); } catch { continue; } if (toHex(sp.proof.nodePubkey) === s.node) evidence = r; }
   if (!evidence) return { done: false, why: 'the seat lists that proof and does not hand it over' };
   const bundle = await get(`${seat}/objection-bundle?round=${s.round}&entry=${s.entry}`, 'bytes');
   const contract = decodeRoundContract(await get(`${seat}/round?id=${s.round}`, 'bytes'));

@@ -60,3 +60,18 @@ export function roundResultStands({ result, sigs, committee, threshold, verify }
   let id; try { id = roundResultId(result); } catch (e) { return { ok: false, signed: [], why: e.message }; }
   return priceAttestationStands({ id, sigs, committee, threshold, verify });
 }
+
+/**
+ * THE FRONT A RUN ENDED ON (§13 PlayerResult front_*, kanban #312): "the lead at the tick the run ended (BULLS LEADING), signed with
+ * the run so that the tape the run was played against is part of the result". From the run's own batches: the attested samples it
+ * played (`attests` [tick, kind 0, cents, sigs], checked by the seat as they arrived) - open the first, close the last. A run that
+ * played no attested price is SIM: FLAT, no prices. Answers { front, frontOpenCents, frontCloseCents, frontMode } (1 LIVE, 2 SIM).
+ */
+export function frontOfRun(batches) {
+  const samples = [];
+  for (const b of batches || []) for (const a of b.attests || []) if (a && a[1] === 0 && Number.isInteger(a[2]) && a[2] > 0) samples.push({ tick: a[0], cents: a[2] });
+  if (!samples.length) return { front: FRONT.FLAT, frontOpenCents: 0, frontCloseCents: 0, frontMode: 2 };
+  samples.sort((x, y) => x.tick - y.tick);
+  const open = samples[0].cents, close = samples[samples.length - 1].cents;
+  return { front: frontOf(open, close), frontOpenCents: open, frontCloseCents: close, frontMode: 1 };
+}
