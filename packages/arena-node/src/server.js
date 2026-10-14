@@ -144,7 +144,7 @@ import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.j
 import { isHeadToHead } from '../../arena-protocol/src/manifest.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
-import { genesisFor } from '../../arena-protocol/src/genesis.js';
+import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
 import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
@@ -423,6 +423,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
   let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
+  // THIS SEAT'S NETWORK'S GENESIS (kanban #297), read once: null where this build names none
+  let seatGenesisKept;
+  const seatGenesis = () => { if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
   let ownGuardianSeat = () => null;
   let foundingSeat = null;                     // founding-seat.js (kanban #320), with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
@@ -3713,6 +3716,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE RULES IT NAMES, THIS BUILD'S OR REFUSED (§6, kanban #314; rules.js): a round settled under rules this seat does not run is
         // not selectable here - refused by name, nothing of it stored
         { const ru = rulesStand(contract); if (!ru.ok) return text(res, 409, ru.why); }
+        // THE COMMITTEES ITS GENESIS BINDS (§5A.7 / §27A.6, kanban #297): from mainnet's genesis on; a test network's leaves the contract its own
+        { const cs = committeesStand(contract, seatGenesis()); if (!cs.ok) return text(res, 409, cs.why); }
         { const bm = bondMinStands(contract, roundIdOf(contract)); if (!bm.ok) return text(res, 409, bm.why); }
         // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
         // round is refused by the same game rather than as a round nobody heard of

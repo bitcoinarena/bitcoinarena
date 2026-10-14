@@ -7,6 +7,7 @@ import { Writer } from './encode.js';
 import { taggedHash } from './hash.js';
 import { TESTNET_CLOCKS, REGTEST_CLOCKS } from './federation-slash.js';
 import { bondMarker } from './constants.js';
+import { receiptsNeeded } from './threshold.js';
 import {
   ARBITRATION_KEYS_REGTEST, ARBITRATION_KEYS_TESTNET4,
   AUTHORITY_PUBKEY_REGTEST, RECOVERY_PUBKEY_REGTEST,
@@ -87,7 +88,68 @@ export function encodeGenesisParameters(p) {
   // and no series names its own start.
   if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
   w.u64(p.genesisSeriesStartMs);
+  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (kanban #297 / #298, RULED the owner 2026-10-14 ~13:20Z: "Fix it but no new series
+  // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
+  // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
+  // stay as they were and no series moves to a new network.
+  if (p.federationMin !== undefined) {
+    if (!Number.isInteger(p.federationMin) || p.federationMin < 1 || p.federationMin > p.federationNominal)
+      throw new Error('federation_min is 1..federation_nominal');
+    if (typeof p.bondMinGuardianSats !== 'bigint' || p.bondMinGuardianSats <= 0n) throw new Error('genesis names a guardian\'s bond floor in sats');
+    const sched = p.governanceSchedule;
+    if (!sched || !['design', 'money', 'upgrade'].every((k) => sched[k] && ['review', 'voting', 'cooldown'].every((x) => Number.isInteger(sched[k][x]) && sched[k][x] >= 0)))
+      throw new Error('genesis names the governance schedule: review, voting and cooldown blocks for design, money and upgrade');
+    w.u16(p.federationMin);
+    w.u64(p.bondMinGuardianSats);
+    for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
+    w.u8(p.committeesBind ? 1 : 0);
+  }
   return w.finish();
+}
+
+/**
+ * MAINNET'S GENESIS (§27A.6, the "Three networks" table; kanban #297 / #298), built from the parts only a launch can name: the
+ * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
+ * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
+ * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
+ * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
+ * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
+ */
+export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats } = {}) {
+  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
+  if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
+  if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
+  if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
+  if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
+  if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
+  const genesis = {
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs,
+    federationNominal: 10, federationMin: 7, bondMinGuardianSats,
+    abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+    gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
+    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320,
+    arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
+    bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
+    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
+    governanceSchedule: { design: { review: 1008, voting: 1440, cooldown: 2016 }, money: { review: 1008, voting: 1440, cooldown: 2016 },
+      upgrade: { review: 2016, voting: 2016, cooldown: 4320 } },
+  };
+  return { genesis, networkId: computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) };
+}
+
+/**
+ * EVERY CONTRACT BOUND TO ITS GENESIS'S COMMITTEES (§5A.7 / §27A.6, kanban #297): where the genesis says its committees bind, a
+ * Round Contract names exactly its slots per role, and the threshold of those slots (threshold.js) is the genesis's. A genesis that
+ * does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its own slot count.
+ */
+export function committeesStand(contract, genesis) {
+  if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
+  const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
+  if (g !== genesis.gameVerifySlots || st !== genesis.settlementSlots)
+    return { ok: false, why: `this network's genesis binds committees of ${genesis.gameVerifySlots} and ${genesis.settlementSlots} slots; the contract names ${g} and ${st}` };
+  if (receiptsNeeded(g) !== genesis.gameVerifyThreshold || receiptsNeeded(st) !== genesis.settlementThreshold)
+    return { ok: false, why: 'the threshold of those slots is not the genesis threshold' };
+  return { ok: true, bound: true };
 }
 
 /**
@@ -157,7 +219,7 @@ export function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
 }
 
 /** 2 slots → 2-of-2 (this build). 7 slots → 5-of-7. One rule: threshold.js. */
-export { receiptsNeeded } from './threshold.js';
+export { receiptsNeeded };
 
 export function genesisFor(network) {
   if (network === 'regtest')
