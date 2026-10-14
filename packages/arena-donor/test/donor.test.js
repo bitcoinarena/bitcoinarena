@@ -99,3 +99,58 @@ test('a withdrawal tries the gateways the network names first, and the next afte
   const none = await withdrawToLnd({ client: { ...client, withdraw: async (inv, gw) => { asked.push(gw || 'pick'); return JSON.stringify({ state: 'Refunded' }); } }, lnd, minMsat: 10000n, gateways: ['https://stale/'] });
   assert.deepEqual([none.withdrawn, asked], [false, ['https://stale/', 'pick']], 'every named one, then the client\'s own pick');
 });
+
+test('an empty wallet is nothing to withdraw, not a failed pass (kanban #357, 2026-10-14 15:02Z)', async () => {
+  const lnd = { invoice: async () => { throw new Error('no invoice is made for nothing'); } };
+  const w = await withdrawToLnd({ client: { withdrawableMsat: async () => { throw new Error('Balance is too low to send any amount after fees'); } }, lnd, minMsat: 10000n });
+  assert.deepEqual([w.withdrawn, w.withdrawableMsat], [false, 0n]);
+  await assert.rejects(withdrawToLnd({ client: { withdrawableMsat: async () => { throw new Error('socket closed'); } }, lnd }), /socket closed/, 'any other error still stops the pass');
+});
+
+// UNCLAIMED E-CASH RECOVERED ON ITS OWN (kanban #357, plan agreed by the owner 2026-10-14)
+test('unclaimed e-cash: noted on the pass that first sees it, recovered only if the same outputs are still unclaimed a pass later', async () => {
+  const { claimUnclaimed } = await import('../src/donor.js');
+  const state = {};
+  let pending = [{ nonce: 'n1', amount_msat: 4096 }, { nonce: 'n2', amount_msat: 904 }];
+  const calls = [];
+  const io = { balanceMsat: async () => 0, backup: async () => { calls.push('backup'); return 'b'; }, recover: async () => calls.push('recover'),
+    reopen: async () => ({ balanceMsat: 5000n, pendingMsat: 0n }), swap: async () => calls.push('swap'), keepFailed: async () => calls.push('keep'), sleep: async () => {} };
+  const first = await claimUnclaimed({ federation: 'A', state, pendingOutputs: async () => JSON.stringify(pending), ...io });
+  assert.deepEqual([first.step, String(first.unclaimedMsat), calls], ['noted', '5000', []], 'the first pass only notes it');
+  assert.deepEqual(state.unclaimed.A.nonces, ['n1', 'n2']);
+  // the live client claimed n1 meanwhile and a new n3 appeared: not every noted one persisted - noted again, nothing recovered
+  pending = [{ nonce: 'n2', amount_msat: 904 }, { nonce: 'n3', amount_msat: 8 }];
+  const second = await claimUnclaimed({ federation: 'A', state, pendingOutputs: async () => JSON.stringify(pending), ...io });
+  assert.deepEqual([second.step, calls], ['noted', []]);
+  // claimed meanwhile: nothing remembered
+  const none = await claimUnclaimed({ federation: 'A', state, pendingOutputs: async () => '[]', ...io });
+  assert.deepEqual([none.step, state.unclaimed.A], ['none', undefined]);
+});
+
+test('unclaimed e-cash still there a pass later: backup, recovery, reopened past the first 0 until the balance is old + unclaimed, then swapped', async () => {
+  const { claimUnclaimed } = await import('../src/donor.js');
+  const pending = JSON.stringify([{ nonce: 'n1', amount_msat: 4096 }, { nonce: 'n2', amount_msat: 904 }]);
+  const state = { unclaimed: { A: { nonces: ['n1', 'n2'], msat: '5000', since: 't0' } } };
+  const calls = []; const opens = [{ balanceMsat: 0n, pendingMsat: 0n }, { balanceMsat: 6000n, pendingMsat: 0n }];
+  const r = await claimUnclaimed({ federation: 'A', state, pendingOutputs: async () => pending, balanceMsat: async () => 1000, nowIso: () => '2026-10-14T16:00:00.000Z',
+    backup: async (at) => { calls.push('backup'); return `wallet-A.pre-recover-${at}.json`; }, recover: async () => calls.push('recover'),
+    reopen: async () => { calls.push('reopen'); return opens.shift(); }, swap: async () => calls.push('swap'), keepFailed: async () => calls.push('keep'), sleep: async () => {} });
+  assert.deepEqual(calls, ['backup', 'recover', 'reopen', 'reopen', 'swap'], 'never swapped on the first open\'s 0');
+  assert.deepEqual([r.step, r.ok, r.unclaimedMsat, r.recoveredMsat, r.backup], ['recovered', true, '5000', '6000', 'wallet-A.pre-recover-2026-10-14T16:00:00.000Z.json']);
+  assert.equal(state.unclaimed.A, undefined); assert.equal(state.recoveries.length, 1);
+});
+
+test('a recovered store that never reaches old + unclaimed, or keeps outputs pending, is not swapped: the old wallet stays, the store is kept', async () => {
+  const { claimUnclaimed } = await import('../src/donor.js');
+  const pending = JSON.stringify([{ nonce: 'n1', amount_msat: 5000 }]);
+  for (const open of [{ balanceMsat: 4000n, pendingMsat: 0n }, { balanceMsat: 9000n, pendingMsat: 32n }]) {
+    const state = { unclaimed: { A: { nonces: ['n1'], msat: '5000' } } };
+    const calls = [];
+    const r = await claimUnclaimed({ federation: 'A', state, pendingOutputs: async () => pending, balanceMsat: async () => 1000, tries: 3,
+      backup: async () => 'b', recover: async () => calls.push('recover'), reopen: async () => { calls.push('reopen'); return open; },
+      swap: async () => calls.push('swap'), keepFailed: async () => calls.push('keep'), sleep: async () => {} });
+    assert.deepEqual(calls, ['recover', 'reopen', 'reopen', 'reopen', 'keep']);
+    assert.deepEqual([r.step, r.ok], ['recovery failed', false]); assert.match(r.why, /the old wallet stays/);
+    assert.deepEqual(state.unclaimed.A.nonces, ['n1'], 'still noted: the next pass tries again');
+  }
+});
