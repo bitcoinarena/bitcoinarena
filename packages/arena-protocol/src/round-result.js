@@ -9,7 +9,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_ROUND_RESULT, TAG } from './constants.js';
-import { priceAttestationStands } from './price-sample.js';
+import { priceAttestationStands, priceSampleStands5 } from './price-sample.js';
 
 export const FRONT = Object.freeze({ BULLS: 1, BEARS: 2, FLAT: 3 });
 const NAMES = Object.freeze({ 1: 'BULLS', 2: 'BEARS', 3: 'FLAT' });
@@ -55,6 +55,23 @@ export function roundResultFrom({ roundId, samples, endTick }) {
     openTick: inRound[0].tick, closeTick: inRound[inRound.length - 1].tick, samples: inRound.length };
 }
 
+/**
+ * PROTOCOL 5 (kanban #312): THE RESULT FROM THE TWO ENDS' SIGNED READINGS - `open` and `close` are { tick, readings } (sample 0
+ * and the closing sample), each end's price the median priceSampleStands5 computes from the committee's own readings; then the
+ * result as roundResultFrom makes it. Nobody's stated open or close is taken. Answers { ok, result, ... } or why not.
+ */
+export function roundResultFromReadings({ roundId, open, close, endTick, committee, threshold, verify }) {
+  const ends = [];
+  for (const [name, e] of [['opening', open], ['closing', close]]) {
+    if (!e || !Number.isInteger(e.tick)) return { ok: false, why: `no ${name} sample` };
+    const s = priceSampleStands5({ roundId, tick: e.tick, readings: e.readings, committee, threshold, verify });
+    if (!s.ok) return { ok: false, why: `the ${name} sample does not stand: ${s.why}` };
+    ends.push({ tick: e.tick, priceCents: s.priceCents, count: s.count });
+  }
+  const got = roundResultFrom({ roundId, samples: ends, endTick });
+  return got.ok ? { ...got, readings: { open: ends[0].count, close: ends[1].count } } : got;
+}
+
 /** A result stands when `threshold` distinct keys of the settlement `committee` signed its id (as an attested price does). */
 export function roundResultStands({ result, sigs, committee, threshold, verify }) {
   let id; try { id = roundResultId(result); } catch (e) { return { ok: false, signed: [], why: e.message }; }
@@ -66,10 +83,11 @@ export function roundResultStands({ result, sigs, committee, threshold, verify }
  * the run so that the tape the run was played against is part of the result". From the run's own batches: the attested samples it
  * played (`attests` [tick, kind 0, cents, sigs], checked by the seat as they arrived) - open the first, close the last. A run that
  * played no attested price is SIM: FLAT, no prices. Answers { front, frontOpenCents, frontCloseCents, frontMode } (1 LIVE, 2 SIM).
+ * A protocol-5 run's samples are kind 2, their cents the median of the readings the seat checked (kanban #312).
  */
 export function frontOfRun(batches) {
   const samples = [];
-  for (const b of batches || []) for (const a of b.attests || []) if (a && a[1] === 0 && Number.isInteger(a[2]) && a[2] > 0) samples.push({ tick: a[0], cents: a[2] });
+  for (const b of batches || []) for (const a of b.attests || []) if (a && (a[1] === 0 || a[1] === 2) && Number.isInteger(a[2]) && a[2] > 0) samples.push({ tick: a[0], cents: a[2] });
   if (!samples.length) return { front: FRONT.FLAT, frontOpenCents: 0, frontCloseCents: 0, frontMode: 2 };
   samples.sort((x, y) => x.tick - y.tick);
   const open = samples[0].cents, close = samples[samples.length - 1].cents;

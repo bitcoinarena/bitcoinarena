@@ -147,6 +147,11 @@ test('a seat running the committee\'s feed (kanban #311 slice 3) says so at /pri
     try {
       const r = await fetch(`http://127.0.0.1:${node.port}/price-samples?round=${Buffer.from(rid).toString('hex')}`);
       assert.equal((await r.json()).feed, on);
+      if (on) {
+        // the protocol-5 door (kanban #312) is there, and a round below protocol 5 takes no reading at it
+        const p = await fetch(`http://127.0.0.1:${node.port}/price-reading`, { method: 'POST', body: JSON.stringify({ round: Buffer.from(rid).toString('hex'), kind: 'sample', k: 1, priceCents: 8297193, key: '00'.repeat(32), signature: '00'.repeat(64) }) });
+        assert.equal(p.status, 409); assert.match(await p.text(), /proposed samples: a signed reading is a protocol 5 price/);
+      }
       await drive(client, 300);
       assert.equal(client.submitSample(20000000), true);
       await drive(client, 150);

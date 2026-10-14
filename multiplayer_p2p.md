@@ -2815,6 +2815,59 @@ and its result carries `front_mode = SIM` - the same fallback the client
 already shows for every feed - and nodes replay it the same way. The player
 never chooses the price; he can only replay it or not play.
 
+**Protocol 5: the median of signed readings** *(RULED, the owner 2026-10-14
+~21:50Z, kanban #312: "Build A as protocol 5 ... each seat signs the price it
+read, and the sample is the median of five signed readings. Nobody proposes a
+price, so nobody chooses BULLS, BEARS, or FLAT. That signature change is
+protocol 5.")*. Measured before it: rounds `6b51be20` / `a45f2ae5` were signed
+FLAT by 7 seats with both ends at $81,766.45 while the run traded
+$81,713-81,838 - one seat proposed each sample and the others signed it within
+a tolerance of their own reading, so the proposer chose the front. For a round
+whose own contract names protocol version **5 (2026.0.5)** or later:
+
+```text
+PriceReading     { round_id, tick, price_cents }          // ONE seat's own price of one moment, signed by that seat alone
+PriceTapeReading { round_id, tick, price_cents[64] }      // one seat's own 64 readings before start_time, signed once
+PriceSample(5)   { tick, readings[>= 5 of distinct committee keys] }   price = median(readings)
+PriceTape(5)     { tick, tapes[>= 5 of distinct committee keys] }      price[i] = median(tapes[*][i])
+```
+
+- Each committee seat reads the feed itself (the exchange ticker, a price at
+  most 5 s old, else no reading) and signs **only its own** reading of each
+  moment, with its node key (BIP-340, tag `ARENA/v1/PriceReading`, body
+  `round_id || u32 tick || i32 cents`). Nobody signs anyone else's price; no
+  seat proposes one, and no leader carries price authority.
+- Every seat posts its reading to the round's other seats (`POST
+  /price-reading`) and keeps every reading that verifies under a key of the
+  round's committee. A key that signs two different readings of one moment
+  counts for neither. A sample **stands** with at least `threshold` (5 of 7)
+  readings by distinct committee keys; its price is their **median**: sorted
+  ascending, an odd count the middle reading, an even count the **lower
+  middle** - always a price some seat actually read, never an average. A
+  sample carrying more than `threshold` readings uses all of them. Anyone
+  checks it by verifying every signature, the keys and the count, and
+  recomputing the median; a stated price is never trusted. A forged reading,
+  a second reading by one key or a key outside the committee refuses it.
+- With at most two of seven seats lying, the median of five or more readings
+  has two honest readings at or above it and two at or below it: no outlier
+  moves it beyond the honest seats' range. *What is left:* whoever assembles a
+  sample from more than five readings could leave some out; the median of any
+  five of seven is still one of the middle three, all honest. Seats serve a
+  sample once all seven readings are in (or 2.5 s after its moment), and a
+  seat's RoundResult takes every reading of the committee it holds or can
+  fetch, so the seats agree on one set.
+- **The tape** before `start_time`: each seat signs its own 64 readings once
+  (tag `ARENA/v1/PriceTapeReading`) - one signature a seat instead of 64, a
+  batch carries 7 x 352 bytes instead of 7 x 64 x 100 - and each position's
+  price is the median of that position over at least five such tapes. A seat
+  that missed a moment signs no tape; it never fills a gap with an older price.
+- In an `InputBatch` a protocol-5 sample is attestation kind 2 `[tick, 2,
+  median, [key, cents, signature] x n]` and the tape kind 3 `[tick, 3,
+  medians[64], [key, prices[64], signature] x n]`. A round of protocol 5
+  refuses a proposed-and-countersigned price (kinds 0 and 1); a round below 5
+  refuses readings and keeps the attested sample above **unchanged**, byte for
+  byte. The scheme is chosen by the round's version, never the seat's.
+
 ---
 
 # 12. Randomness
@@ -2878,6 +2931,16 @@ RoundResult {
   node_pubkey, signature           // 5-of-7 of the settlement committee
 }
 ```
+
+**From protocol 5** *(RULED, the owner 2026-10-14 ~21:50Z, kanban #312)*
+`open_cents` and `close_cents` are the **medians** of the committee's signed
+readings of sample 0 and of the round's closing sample (the last at or before
+its last tick), each standing with at least five readings (§11). A seat keeps
+both ends' readings across a restart; at the end one that holds fewer than
+the whole committee's asks the other seats for theirs and takes every reading
+that verifies, then signs. The object, its bytes and its signature are as
+above; only where its two prices come from changes. A round below protocol 5
+keeps the first and last attested sample.
 
 It is what every client shows as **THE BULLS WIN** / **THE BEARS WIN**, the
 same for every player in the round, whenever they drove. A node that
