@@ -73,13 +73,23 @@ test('decoded notes: each nonce is its spend key\'s compressed public key, in ei
   const a = notesOfDecoded({ federation_id_prefix: 'abcd', notes: { '1024': [{ signature: 'aa', spend_key: k1 }], '2048': [{ signature: 'bb', spend_key: k2 }] } });
   assert.deepEqual(a.map((n) => [n.nonce, n.amountMsat]), [[pub(k1), 1024n], [pub(k2), 2048n]]);
   assert.deepEqual(notesOfDecoded({ notes: [[4096, [{ spend_key: k1 }]]] }).map((n) => n.amountMsat), [4096n]);
+  // a federation on the old mint module: mintv2 is not there, the stock check and decode are read
   const runs = [];
   const v = fedimintNoteValidator({ cli: 'fedimint-cli', dataDirFor: () => '/c', run: async (bin, args) => { runs.push(args.slice(2, 5).join(' '));
+    if (args.includes('mintv2')) return { ok: false, out: '', err: '{"error":"No module with this kind found"}' };
     return args.includes('validate') ? { ok: true, out: '{"amount_msat":3072}' } : { ok: true, out: JSON.stringify({ notes: { '1024': [{ spend_key: k1 }], '2048': [{ spend_key: k2 }] } }) }; } });
   const got = await v(FED, 'fedimint1xyz');
-  assert.deepEqual([got.ok, got.amountMsat, got.notes.length, runs], [true, 3072n, 2, ['module mint validate', 'dev decode notes']]);
+  assert.deepEqual([got.ok, got.amountMsat, got.notes.length, runs], [true, 3072n, 2, ['module mintv2 validate', 'module mint validate', 'dev decode notes']]);
   const bad = fedimintNoteValidator({ cli: 'x', dataDirFor: () => '/c', run: async () => ({ ok: false, err: 'Error: Note 0 has an invalid federation signature' }) });
   assert.match((await bad(FED, 'e')).why, /invalid federation signature/);
+  // MINTV2 (our federations): the fork's validate names every note, its nonce and whether it carries the signature
+  const said = (o) => fedimintNoteValidator({ cli: 'x', dataDirFor: () => '/c', run: async () => ({ ok: true, out: JSON.stringify(o) }) });
+  const n1 = { nonce: pub(k1), amount_msat: 1024, valid: true }, n2 = { nonce: pub(k2), amount_msat: 2048, valid: true };
+  const good = await said({ federation_id: FED, ours: true, amount_msat: 3072, valid: true, notes: [n1, n2] })(FED, 'e');
+  assert.deepEqual([good.ok, good.amountMsat, good.notes.map((n) => [n.nonce, n.amountMsat])], [true, 3072n, [[pub(k1), 1024n], [pub(k2), 2048n]]]);
+  assert.match((await said({ federation_id: 'ff', ours: false, amount_msat: 3072, valid: false, notes: [n1, n2] })(FED, 'e')).why, /another federation/);
+  assert.match((await said({ federation_id: FED, ours: true, amount_msat: 3072, valid: false, notes: [n1, { ...n2, valid: false }] })(FED, 'e')).why, /1 of 2 notes do not carry/);
+  assert.match((await said({ federation_id: FED, ours: true, amount_msat: 4096, valid: true, notes: [n1, n2] })(FED, 'e')).why, /come to 3072 msat/);
 });
 
 test('the client presents its whole wallet once, keeps the e-cash until it is taken, and presents the same string again after a failure', async () => {
