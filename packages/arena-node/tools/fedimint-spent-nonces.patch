@@ -49,23 +49,83 @@ index 48da60c0bb4..a7fb9aa14c9 100644
                  NOTE_SPENT_ENDPOINT,
                  ApiVersion::new(0, 1),
 diff --git a/modules/fedimint-mintv2-client/src/cli.rs b/modules/fedimint-mintv2-client/src/cli.rs
-index 897477d287d..42b3ead8205 100644
+index 897477d287d..a637bb82cb0 100644
 --- a/modules/fedimint-mintv2-client/src/cli.rs
 +++ b/modules/fedimint-mintv2-client/src/cli.rs
-@@ -22,6 +22,9 @@ enum Opts {
+@@ -22,6 +22,16 @@ enum Opts {
      },
      /// Receive the `ECash` by reissuing the notes and return the amount.
      Receive { ecash: String },
 +    /// BLWP (kanban #323, liquidation step 3): check every note of the `ECash` offline against this federation's mint keys
 +    /// and name each note's nonce - nothing is sent and nothing reissued, so it answers while the federation is halted.
 +    Validate { ecash: String },
++    /// BLWP (kanban #323, spec 23A.5 "Notes still in issuance at the halt"): every output the consensus issued to this
++    /// wallet's seed (the recovery items of ONE answering guardian, scanned as mintv2's recovery scans them) that is neither
++    /// held as a note nor spent - each as its consensus-encoded issuance request, the pending-output claim's secret.
++    PendingOutputs,
++    /// BLWP (kanban #323): an issuance request as `pending-outputs` prints it -> its note nonce, the hash160 of its blinded
++    /// message (the recovery item's nonce_hash) and its amount. Offline: the arbitration set's check of a pending-output claim.
++    CheckPending { request: String },
  }
  
  pub(crate) async fn handle_cli_command(
-@@ -52,6 +55,32 @@ pub(crate) async fn handle_cli_command(
+@@ -52,6 +62,85 @@ pub(crate) async fn handle_cli_command(
  
              Ok(json(state))
          }
++        Opts::PendingOutputs => {
++            use fedimint_core::db::IDatabaseTransactionOpsCoreTyped;
++            use fedimint_core::encoding::Encodable;
++            use futures::StreamExt;
++            use crate::api::MintV2ModuleApi as _;
++            let api = mint.client_ctx.module_api();
++            let mut items = None;
++            let mut said = Vec::new();
++            for peer in mint.client_ctx.global_api().all_peers().iter().copied() {
++                match api.fetch_recovery_slice(peer, std::time::Duration::from_secs(20), 0, u64::MAX >> 1).await {
++                    Ok(v) => { items = Some((peer, v)); break; }
++                    Err(e) => said.push(format!("{peer}: {e}")),
++                }
++            }
++            let (peer, items) = items.ok_or_else(|| anyhow::anyhow!("no guardian served its recovery items: {}", said.join("; ")))?;
++            let filter = crate::issuance::tweak_filter(&mint.root_secret);
++            let mut requests: std::collections::BTreeMap<bitcoin_hashes::hash160::Hash, crate::issuance::NoteIssuanceRequest> = std::collections::BTreeMap::new();
++            for item in items.iter().cloned() {
++                match item {
++                    fedimint_mintv2_common::RecoveryItem::Output { denomination, nonce_hash, tweak } => {
++                        if !crate::issuance::check_tweak(tweak, filter) { continue; }
++                        let secret = crate::issuance::output_secret(denomination, tweak, &mint.root_secret);
++                        if !crate::issuance::check_nonce(&secret, nonce_hash) { continue; }
++                        let h = crate::issuance::nonce(&secret).consensus_hash::<bitcoin_hashes::hash160::Hash>();
++                        requests.insert(h, crate::issuance::NoteIssuanceRequest::new(denomination, tweak, &mint.root_secret));
++                    }
++                    fedimint_mintv2_common::RecoveryItem::Input { nonce_hash } => { requests.remove(&nonce_hash); }
++                }
++            }
++            let held: std::collections::BTreeSet<bitcoin_hashes::hash160::Hash> = {
++                let mut dbtx = mint.client_ctx.module_db().begin_transaction_nc().await;
++                dbtx.find_by_prefix(&crate::client_db::SpendableNotePrefix).await
++                    .map(|(k, ())| k.0.keypair.public_key().consensus_hash::<bitcoin_hashes::hash160::Hash>())
++                    .collect::<std::collections::BTreeSet<_>>().await
++            };
++            let pending: Vec<Value> = requests.iter().filter(|(h, _)| !held.contains(*h)).map(|(_, r)| serde_json::json!({
++                "nonce": r.keypair.public_key().to_string(),
++                "amount_msat": r.denomination.amount().msats,
++                "request": fedimint_core::encoding::Encodable::consensus_encode_to_hex(r),
++            })).collect();
++            Ok(serde_json::json!({ "peer": peer.to_usize(), "items": items.len(), "issued_to_this_seed": requests.len(), "held": held.len(), "pending": pending }))
++        }
++        Opts::CheckPending { request } => {
++            use fedimint_core::encoding::{Decodable, Encodable};
++            let r = crate::issuance::NoteIssuanceRequest::consensus_decode_hex(&request, &fedimint_core::module::registry::ModuleDecoderRegistry::default())?;
++            Ok(serde_json::json!({
++                "nonce": r.keypair.public_key().to_string(),
++                "nonce_hash": r.blinded_message().consensus_hash::<bitcoin_hashes::hash160::Hash>().to_string(),
++                "denomination": r.denomination.0,
++                "tweak": fedimint_core::hex::ToHex::encode_hex::<String>(&r.tweak),
++                "amount_msat": r.denomination.amount().msats,
++            }))
++        }
 +        Opts::Validate { ecash } => {
 +            let ecash: crate::ECash = base32::decode_prefixed(FEDIMINT_PREFIX, &ecash)?;
 +            let ours = ecash.mint() == Some(mint.federation_id);
