@@ -286,6 +286,8 @@ export const TYPE_ROUND_RESULT = 0x27;
 // A PLAYER RESULT OF A PRICE ROUND, WITH ITS FRONT (§13 front_*, kanban #312): the result's own type, so a stream of results cuts by
 // each record's first byte - 168 bytes without the front, 178 with it
 export const TYPE_RESULT_FRONT = 0x28;
+// A SEAT'S OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven", kanban #323): no guardian past session S
+export const TYPE_HALT_OBSERVATION = 0x29;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -308,6 +310,8 @@ export const TAG = {
   guardianTicket: 'BLWP/v1/GUARDIAN',
   // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352): a node's rank for a slot
   duty: 'BLWP/v1/DUTY',
+  // A SEAT'S SIGNED OBSERVATION OF A HALT (§23A.5, kanban #323)
+  haltObservation: 'ARENA/v1/HaltObservation',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
