@@ -43,3 +43,16 @@ test('a round is live from start - 120 s to its end, with the players entered in
   const later = gameLive(r, { nowMs: () => now });
   assert.deepEqual(later()[toHex(NEXTBLOCK_GAME_ID)], { rounds: 2, players: 1 });
 });
+
+test('a round taking entries for hours after its start is live until its entry close plus one run (the owner 2026-10-14: Tick Tock "shows no open round")', () => {
+  let now = 100000000;
+  const r = new Round(openStore(), () => now, { plugins: HOSTED });
+  const sixHours = 6 * 3600000;
+  // started 3 h ago, entries open 6 h from its start - as testnet4's Tick Tock rounds
+  r.open({ ...contract(), committeeTimeMs: 500n, startTimeMs: BigInt(now - 3 * 3600000), entryCloseMs: BigInt(now - 3 * 3600000 + sixHours) });
+  const live = gameLive(r, { nowMs: () => now });
+  assert.equal(live()[toHex(NEXTBLOCK_GAME_ID)].rounds, 1, 'open for entries: live');
+  now += 3 * 3600000 + Math.ceil(Number(BLOCK_TICKS) * 1000 / 60) + 31000;   // past the entry close, its run and the 30 s grace
+  const later = gameLive(r, { nowMs: () => now });
+  assert.equal((later()[toHex(NEXTBLOCK_GAME_ID)] || { rounds: 0 }).rounds, 0, 'closed and run: not live');
+});
