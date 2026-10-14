@@ -22,6 +22,7 @@ import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
+import { nostrResults, publishRelays } from './nostr-results.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { devClientSnapshot } from './dev-client.js';
 import { attributeDonations } from './dev-clients.js';
@@ -195,7 +196,7 @@ const CORS = {
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
     + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, x-no-quorum, '
-    + 'x-foreign-receipts',
+    + 'x-foreign-receipts, x-nostr-published',
 };
 
 const bytes = (res, code, body) => {
@@ -415,7 +416,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // so a link on it dies; "the button must copy the stable Funnel name ... https://seat.example.com/blwp-a or
   // /blwp-b, the path the page is published under"): the https bases of the nodes that hold these rounds, comma-separated
   // in ARENA_REPLAY_PUBLIC. /replay/nodes answers them first, as `stable`; the page copies from them when there are any.
-  replayPublic = (process.env.ARENA_REPLAY_PUBLIC || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https:\/\//.test(u)) } = {}) {
+  replayPublic = (process.env.ARENA_REPLAY_PUBLIC || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter((u) => /^https:\/\//.test(u)),
+  // RESULTS ON NOSTR (kanban #362 feature 2, nostr-results.js): the relays each round's signed result is published to, once its
+  // settlement is ACCEPTED here - ARENA_NOSTR_PUBLISH, a comma list of wss URLs; none (the default) publishes nothing, and
+  // /nostr-results still serves the event. At most ARENA_NOSTR_PUBLISH_PER_MIN events a minute (30).
+  nostrPublish = publishRelays(), nostrPerMinute = Number(process.env.ARENA_NOSTR_PUBLISH_PER_MIN) || 30, nostrTickMs = 20000 } = {}) {
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
@@ -2321,6 +2326,72 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }, 6 * 3600 * 1000);
   donationBackfillClock.unref();
 
+  // A ROUND'S PUBLIC RESULT, FOR ITS NOSTR EVENT (kanban #362 feature 2): only once this node holds its settlement ACCEPTED, and
+  // only what is public already - /api/round-result's names, outcomes and scores, /lock-settlement's txids, and what the
+  // settlement paid each winner (lockSettlementShares: its share of the losers' pool; its own stake comes back beside it). The
+  // outcome of each entry is the one most of its signer nodes signed, or this node's no-quorum outcome; a market entry's is
+  // WON or LOST by its pick against the attested outcome. Ranks as the protocol's board ranks (leaderboard.js): score
+  // descending, then the player key; a refund (VOID, ENTRY_VOID), an entry with no outcome and a market pick have no rank.
+  const nostrResultOf = (ridHex) => {
+    const rid = Buffer.from(ridHex, 'hex');
+    const held = round.get(rid);
+    if (!held) return { ok: false, status: 404, why: 'this node holds no such round' };
+    const c = decodeRoundContract(new Uint8Array(held.contract));
+    const game = gameOfContract(c);
+    if (!game) return { ok: false, status: 404, why: 'that round is of a game this node does not host, so it says no result for it' };
+    if (stateOf(round, new Uint8Array(rid)) !== 'ACCEPTED')
+      return { ok: false, status: 409, why: 'that round\'s settlement is not ACCEPTED at this node yet: its result is published once it is' };
+    const zero = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
+    const roundFed = zero(c.federationId) ? null : toHex(c.federationId);
+    const feds = round.fedLockSettlementsOf(rid);
+    const one = feds.length ? null : round.lockSettlement(new Uint8Array(rid));
+    const settled = feds.length ? feds.map((f) => ({ federation: f.federation, txid: f.txid, madeMs: f.madeMs }))
+      : one ? [{ federation: roundFed, txid: one.txid, madeMs: one.madeMs }] : [];
+    if (!settled.length) return { ok: false, status: 409, why: 'that round holds no settlement row' };
+    const names = new Map();
+    for (const n of round.lobbyNames(rid)) {
+      try { const r = decodeLobbyName(n.record); names.set(toHex(r.playerPubkey), r.name || displayNameFromKey(r.identityPubkey)); } catch { /* not a record */ }
+    }
+    const paid = new Map();
+    for (const sh of round.lockSettlementShares(rid) || []) { const k = toHex(sh.pubkey); paid.set(k, (paid.get(k) || 0n) + BigInt(sh.msat)); }
+    const market = attestedOf(c);
+    const att = market ? outcomeOf(rid, c) : null;
+    const decided = att && att.state === 'ATTESTED' ? { index: att.outcome, label: att.label } : null;
+    const entries = round.entriesOf(rid).map(({ entryId, entry }) => {
+      const player = toHex(entry.playerPubkey);
+      const row = { entry: toHex(entryId), player, name: names.get(player) || displayNameFromKey(entry.playerPubkey),
+        federation: entry.federationId instanceof Uint8Array && !zero(entry.federationId) ? toHex(entry.federationId) : roundFed,
+        outcome: null, score: null, pick: null, rank: null, payoutMsat: String(paid.get(player) || 0n) };
+      if (market) {
+        row.pick = entry.pick === undefined || entry.pick === null ? null : Number(entry.pick);
+        row.outcome = decided && row.pick !== null ? (row.pick === decided.index ? 'WON' : 'LOST') : null;
+        return row;
+      }
+      const tally = new Map();
+      for (const r of round.results(rid, entryId)) {
+        try {
+          const x = decodePlayerResult(splitSignedResult(r.bytes).body);
+          const k = `${x.outcome}:${x.score}`;
+          tally.set(k, { outcome: x.outcome, score: x.score, n: ((tally.get(k) || {}).n || 0) + 1 });
+        } catch { /* not a result */ }
+      }
+      const best = [...tally.values()].sort((a, b) => b.n - a.n || (a.outcome < b.outcome ? -1 : a.outcome > b.outcome ? 1 : a.score - b.score))[0];
+      if (best) { row.outcome = best.outcome; row.score = Number(best.score); }
+      else { const nq = round.noQuorum(new Uint8Array(entryId)); if (nq) row.outcome = nq.outcome; }
+      return row;
+    });
+    const ranked = entries.filter((e) => !market && e.outcome && e.outcome !== 'VOID' && e.outcome !== 'ENTRY_VOID' && e.score !== null)
+      .sort((a, b) => b.score - a.score || (a.player < b.player ? -1 : a.player > b.player ? 1 : 0));
+    ranked.forEach((e, i) => { e.rank = i + 1; });
+    return { ok: true, result: { game: { name: game.name, id: game.id }, round: ridHex, federation: roundFed, stakeMsat: String(c.stakeMsat),
+      finalMs: Math.max(...settled.map((x) => Number(x.madeMs))), settlement: settled.map(({ federation, txid }) => ({ federation, txid })),
+      outcome: decided, entries } };
+  };
+  const nostr = nostrResults({ db: round.db, secret: round.identity.secret, resultOf: nostrResultOf, relays: nostrPublish,
+    settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', perMinute: nostrPerMinute, tickMs: nostrTickMs });
+  nostr.start();
+  if (nostrPublish.length) console.log(`[nostr] publishing each settled round's result to ${nostrPublish.join(', ')} as ${toHex(round.pubkey).slice(0, 16)} (kind 30762)`);
+
   // WINNINGS ARE ALWAYS SENT, WITH NO PAGE OPEN: every round holding a winning that is not PAID is visited on the same
   // clock - a send retried, an expired one re-sent through the next live gateway (winnings-send.js). Only the round's
   // proposer acts; the others answer it.
@@ -4221,6 +4292,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ id: rid.toString('hex'), state: held.state, free: c.stakeMsat === 0n, players, match }));
+      }
+
+      // A ROUND'S RESULT AS A SIGNED NOSTR EVENT (kanban #362 feature 2): the exact event this node published - or would publish,
+      // with ARENA_NOSTR_PUBLISH unset - for a round whose settlement it holds ACCEPTED, so a client checks its id (NIP-01) and
+      // its signature against the node's key itself. x-nostr-published: when it reached every relay named, or 'no'.
+      if (req.method === 'GET' && url.pathname === '/nostr-results') {
+        const got = nostr.eventFor(String(url.searchParams.get('round') || ''));
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', 'x-nostr-published': got.row && got.row.publishedMs ? new Date(got.row.publishedMs).toISOString() : 'no', ...CORS });
+        return res.end(JSON.stringify(got.event));
       }
 
       // THE SERIES THIS NODE WRITES, and how far ahead it has written them (NODE72-1131).
@@ -6681,6 +6762,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         clearInterval(networkGamesTimer);
         clearInterval(winningsTimer);
         clearInterval(lateTimer);
+        nostr.stop();
         settlements.stop();
         if (endTimer) clearInterval(endTimer);
         if (doorTimer) clearInterval(doorTimer);
