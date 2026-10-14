@@ -841,6 +841,9 @@ const TYPE_SPENT_SET = 0x26;
 // WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): open and close of the attested tape and the front, signed by the
 // settlement committee
 const TYPE_ROUND_RESULT = 0x27;
+// A PLAYER RESULT OF A PRICE ROUND, WITH ITS FRONT (§13 front_*, kanban #312): the result's own type, so a stream of results cuts by
+// each record's first byte - 168 bytes without the front, 178 with it
+const TYPE_RESULT_FRONT = 0x28;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -8898,11 +8901,19 @@ async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fe
   const id = toHex(round.id);
   const byKey = new Map();
   const refused = [];
-  for (const node of nodes || []) {
+  // EVERY NODE AT ONCE (kanban #353, measured 2026-10-14 03:26Z on testnet4): asked one after another, the 14 seats a v2 round
+  // draws from took 27 s here - a round whose key all 7 signer nodes had attested since 03:24Z - and a market order's 60 s
+  // expiry and an 8 s RPS table both ran out before the pick. Read together, kept in the nodes' order as before.
+  const answers = await Promise.all((nodes || []).map(async (node) => {
     try {
       const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id);
-      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
-      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (!r.ok) return { refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
+      return { bytes: new Uint8Array(await r.arrayBuffer()), node };
+    } catch (e) { return { refused: `${node}: ${e.message}` }; }
+  }));
+  for (const { refused: why, bytes, node } of answers) {
+    if (why) { refused.push(why); continue; }
+    try {
       if (bytes.length !== ATTESTATION_BYTES + 64) { refused.push(`${node}: answered ${bytes.length} bytes, not one signed claim key`); continue; }
       const a = decodeClaimKeyAttestation(bytes.subarray(0, ATTESTATION_BYTES));
       if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); continue; }
@@ -17470,30 +17481,45 @@ function donationRecipientsLine(set) {
  * every answer is awaited here before `authorityAt` sees a settled boolean.
  * `keys` overrides the network's donation keys (tests only).
  */
-async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys } = {}) {
+const DONATION_SETS_FETCHED = new Map();      // donation set id hex -> the answers that passed every check
+const DONATION_ANSWER_MS = 6000;
+const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(Object.assign(new Error(`no answer in ${ms} ms`), { late: true })), ms);
+  p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+});
+
+async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false } = {}) {
   if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
   const rid = toHex(round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
-  const answers = await Promise.all(nodes.map(async (node) => {
+  // ONE FETCH PER DONATION SET, AND NO NODE HOLDS THE JOIN (kanban #353, measured 2026-10-14 04:26Z on testnet4): every round
+  // of a network names the same set, yet each join asked all 14 seats again and waited for the slowest - 30 s, past an
+  // 8 s RPS table. A set fetched and checked is kept by its id when the page asks for that (keepBySet; every check below still runs against each round); a node
+  // that does not answer in ANSWER_MS is left out, as long as at least half the nodes answered and every answer agrees.
+  const setKey = toHex(round.donationSetId);
+  const kept = keepBySet ? DONATION_SETS_FETCHED.get(setKey) : null;
+  const answers = kept || (await Promise.all(nodes.map(async (node) => {
     const base = String(node).replace(/\/+$/, '');
     try {
-      const r = await fetcher(`${base}/donation-set?round=${rid}`);
+      const r = await donationWithinMs(fetcher(`${base}/donation-set?round=${rid}`), DONATION_ANSWER_MS);
       if (r.status !== 200) return { node: base, why: `${r.status} ${(await r.text()).trim().slice(0, 100)}` };
       const bytes = new Uint8Array(await r.arrayBuffer());
       let rotations = [];
       try {
-        const rr = await fetcher(`${base}/donation-rotations?round=${rid}`);
+        const rr = await donationWithinMs(fetcher(`${base}/donation-rotations?round=${rid}`), DONATION_ANSWER_MS);   // bounded too: a set read, then a hung rotations read, held a join 38 s+ (04:11Z)
         if (rr.status === 200) rotations = (await rr.json()).rotations || [];
       } catch { rotations = []; }
       return { node: base, bytes, rotations };
-    } catch (e) { return { node: base, why: e.message }; }
-  }));
+    } catch (e) { return { node: base, why: e.message, late: !!e.late }; }
+  }))).filter((a) => a.bytes || !a.late);
   const missing = answers.filter((a) => !a.bytes);
   if (missing.length)
     return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+  if (!kept && answers.length * 2 < nodes.length)
+    return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   const served = toHex(answers[0].bytes);
   if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
   const bytes = answers[0].bytes;
@@ -17542,6 +17568,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   try { gameSet = decodeDonationSet(games[0].bytes); } catch (e) { return { ok: false, why: `that is no game donation set: ${e.message}` }; }
   if (toHex(donationSetId(gameSet)) !== wantGame)
     return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
+  if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
   return { ok: true, set, gameSet, target: { network: set.recipients, game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
@@ -24384,6 +24411,21 @@ function roundResultFrom({ roundId, samples, endTick }) {
 function roundResultStands({ result, sigs, committee, threshold, verify }) {
   let id; try { id = roundResultId(result); } catch (e) { return { ok: false, signed: [], why: e.message }; }
   return priceAttestationStands({ id, sigs, committee, threshold, verify });
+}
+
+/**
+ * THE FRONT A RUN ENDED ON (§13 PlayerResult front_*, kanban #312): "the lead at the tick the run ended (BULLS LEADING), signed with
+ * the run so that the tape the run was played against is part of the result". From the run's own batches: the attested samples it
+ * played (`attests` [tick, kind 0, cents, sigs], checked by the seat as they arrived) - open the first, close the last. A run that
+ * played no attested price is SIM: FLAT, no prices. Answers { front, frontOpenCents, frontCloseCents, frontMode } (1 LIVE, 2 SIM).
+ */
+function frontOfRun(batches) {
+  const samples = [];
+  for (const b of batches || []) for (const a of b.attests || []) if (a && a[1] === 0 && Number.isInteger(a[2]) && a[2] > 0) samples.push({ tick: a[0], cents: a[2] });
+  if (!samples.length) return { front: FRONT.FLAT, frontOpenCents: 0, frontCloseCents: 0, frontMode: 2 };
+  samples.sort((x, y) => x.tick - y.tick);
+  const open = samples[0].cents, close = samples[samples.length - 1].cents;
+  return { front: frontOf(open, close), frontOpenCents: open, frontCloseCents: close, frontMode: 1 };
 }
 
 // ---- arena-client/src/round-verdict.js

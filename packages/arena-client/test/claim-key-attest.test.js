@@ -176,3 +176,18 @@ test('a round whose stake goes into a lock gets no entry without an attested key
       /^Error: this round takes a stake and names no federation, so it is not a round of this network \(§23\.6\)$/);
   } finally { await f.close(); }
 });
+
+test('the claim key is asked of every node at once: ten nodes of 200 ms each answer in well under the 2 s one after another took (kanban #353)', async () => {
+  const nodes = Array.from({ length: 10 }, (_, i) => `https://seat-${i}.example`);
+  let open = 0, most = 0;
+  const fetcher = async () => { open++; most = Math.max(most, open); await new Promise((r) => setTimeout(r, 200)); open--;
+    return { ok: false, status: 409, text: async () => 'this signer node holds no claim key for that round yet' }; };
+  const t = Date.now();
+  const got = await attestedClaimKey({ round: { id: new Uint8Array(32).fill(7) }, signerNodes: [], nodes, curve: { verify: () => true }, fetcher });
+  const took = Date.now() - t;
+  assert.equal(got.ok, false);
+  assert.equal(got.refused.length, 10, 'every node named once, in the nodes\' order');
+  assert.ok(got.refused[0].startsWith('https://seat-0.example') && got.refused[9].startsWith('https://seat-9.example'));
+  assert.equal(most, 10, `all ten asked together, ${most} at most at once`);
+  assert.ok(took < 1200, `ten 200 ms nodes took ${took} ms`);
+});

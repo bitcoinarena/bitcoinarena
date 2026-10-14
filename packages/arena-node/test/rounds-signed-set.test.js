@@ -83,6 +83,9 @@ test('rows are signed when a listing asks, once a window: nothing unasked, next=
     assert.equal(after.body.nowMs, full.body.nowMs);
     // A NEW WINDOW, 45 s on: the lobby's ask is signed for the new time, and only its rows
     clock = NOW + 45000;
+    // and the real seconds with it: a small listing is kept 5 s of real time (server.js /rounds), and on a quick machine the
+    // asks above take less than that (measured on the test host 2026-10-13 22:50Z: the kept next=1 came back, red every run)
+    await new Promise((r) => setTimeout(r, 5100));
     const later = await ask('?next=1');
     assert.equal(BigInt(later.body.nowMs), BigInt(next.body.nowMs) + 45000n, 'the new window does not carry the new time');
     assert.equal(s.listingSignatures(), rows + 1 + later.body.rounds.length, 'a new window signed more than it was asked');
