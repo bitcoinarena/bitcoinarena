@@ -26395,6 +26395,12 @@ async function fetchGames({ nodes, fetcher = fetch, answerMs = GAMES_ANSWER_MS }
           live: { rounds: 0, players: 0 } });
       }
       const got = byId.get(id);
+      // ONE NODE, COUNTED ONCE (the owner 2026-10-14 07:42Z, a phone off the tailnet: "28 nodes" for 14): a seat reached at two
+      // addresses (its Funnel name and its named tunnel) answers both with the same node key; it hosts the game once
+      const key = body && /^[0-9a-f]{64}$/i.test(String(body.node)) ? String(body.node).toLowerCase() : node;
+      if (!got.nodeKeys) Object.defineProperty(got, 'nodeKeys', { value: new Set(), enumerable: false });
+      if (got.nodeKeys.has(key)) continue;
+      got.nodeKeys.add(key);
       got.nodes.push(node);
       if (!got.info && g.info && typeof g.info === 'object') got.info = g.info;
       if (g.live && typeof g.live === 'object') {
