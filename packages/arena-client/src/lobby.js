@@ -242,6 +242,8 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
       game: contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '',
       market: contract.gameId instanceof Uint8Array ? marketOf(contract.gameId) : null,
+      // A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): from the contract checked above, never a node's word
+      event: contract.event || null,
       marketLike: contract.simCoreHash instanceof Uint8Array && contract.simCoreHash.every((b) => b === 0),
     });
   }
@@ -445,7 +447,10 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
-    const what = m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
+    // a round of a template (kanban #362 feature 5) is shown by its own question and labels
+    const ev = row.event;
+    const what = ev ? `${ev.question}${m ? ` (${m.name})` : ''} · ${ev.outcomes.length} outcomes: ${ev.outcomes.join(' / ')}${m ? '' : ' · a market this page does not know (second confirmation)'}`
+      : m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
     const money = row.free ? 'free' : `stake ${String(row.stakeMsat / 1000n)} sat`;
     const when = row.phase === 'pending' ? `entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}` : `pick closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
     return `${what} · ${money} · ${when}`;

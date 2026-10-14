@@ -32,6 +32,7 @@ import { entryFeeBpsOf, feeBpsOf, donationBpsOf } from '../../arena-protocol/src
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
+import { marketOfRound } from '../../arena-protocol/src/manifest.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const verifyEd = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
@@ -57,7 +58,8 @@ export class OrderBook {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.plugins);
     if (!found.ok || !found.attested) return refuse('that round is not a market this node hosts');
-    if ((found.plugin.manifest.outcomes || []).length !== 2) return refuse('the order book trades a two-outcome market (Up / Down)');
+    // a round of a template counts its own outcomes (kanban #362 feature 5)
+    if ((marketOfRound(found.plugin.manifest, contract).outcomes || []).length !== 2) return refuse('the order book trades a two-outcome market (Up / Down)');
     const m = found.plugin.manifest;
     return { ok: true, contract, manifest: m, feeBps: entryFeeBpsOf(m), nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) || 0,
       needed: receiptsNeeded(contract.nodes.length), seats: contract.nodes.map(toHex) };

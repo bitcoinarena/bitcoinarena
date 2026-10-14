@@ -32,14 +32,26 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
   const pinned = marketOf(round.gameId);
   // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
   // AND ITS TERMS (kanban #236): resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
-  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) };
+  if (pinned) return marketAsRoundAsks({ ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) }, round);
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
-  return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
+  return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
-    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null };
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null }, round);
+}
+
+/**
+ * A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): its labels, its question and its resolution time
+ * are the round's signed contract's (`event`), the attestors, threshold and fees the template's - so the pick sheet, the
+ * attestation check and the lock span read the round's. Any other round: the market as it is.
+ */
+function marketAsRoundAsks(market, round) {
+  if (!market || !round || !round.event) return market;
+  const ev = round.event;
+  return { ...market, outcomes: [...ev.outcomes], question: ev.question, resolveAtMs: ev.resolveAtMs,
+    terms: market.terms ? { ...market.terms, resolveAfterCloseMs: ev.resolveAtMs - round.entryCloseMs } : market.terms };
 }
 
 /**

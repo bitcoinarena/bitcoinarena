@@ -1591,6 +1591,7 @@ function stakeExpiryFits(contract, { manifest = null } = {}) {
 
 
 
+
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
@@ -1817,7 +1818,95 @@ function encodeRoundContract(c) {
     w.u8(CREATOR_MARKER);
     w.bytes32(c.creatorPubkey);
   }
-  return w.finish();
+  // THE ROUND'S OWN QUESTION (kanban #362 feature 5): on a round of an event-market template (manifest.js `template`) the
+  // question, its 2 to 16 outcome labels and its resolution time - the market's terms a round, not its manifest, names, so
+  // anyone opens a question by publishing one round of the template. LAST OF ALL, after its own marker, and only when named,
+  // so every contract without it keeps its bytes and its id. Its length is variable, so it also ENDS with its own length
+  // and marker (contractEventTail reads it from the end); whether a template's round must carry it and a non-template's must
+  // not is the manifest's to say (manifest.js roundFitsManifest), which a seat asks of every round it opens.
+  if (c.event !== undefined && c.event !== null) {
+    if (!(version >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.seriesId !== undefined && c.seriesId !== null) throw new Error('a round that asks its own question is no round of a series: a series round\'s id H(series_id || i) does not hash its question');
+    const f = contractEventFits(c.event);
+    if (!f.ok) throw new Error(f.why);
+    const start = w.len;
+    w.u8(EVENT_MARKER);
+    w.str(c.event.question);
+    w.vec(c.event.outcomes, (o, ww) => ww.str(o));
+    w.u64(c.event.resolveAtMs);
+    w.u16(w.len - start + 3);
+    w.u8(EVENT_MARKER);
+    return w.finish();
+  }
+  // A CONTRACT THAT ASKS NO QUESTION NEVER READS AS ONE: its last bytes (a creator key is any 32) could end like a question's
+  // tail by chance, and its decoding would then be another round than the one written - refused here, never misread there
+  const out = w.finish();
+  if (out[out.length - 1] === EVENT_MARKER && contractEventTail(out, out.length - contractTailStart(out))) throw new Error('these contract bytes would read back as a round that asks its own question: name another creator key');
+  return out;
+}
+
+/**
+ * A ROUND'S OWN QUESTION (kanban #362 feature 5): the byte before it and after it, its limits, and the version it is read
+ * from - 2026.0.3, the version whose contract tail it extends (a template requires it: manifest.js TEMPLATE_MIN_PROTOCOL_VERSION).
+ * A question of 1 to 280 UTF-8 bytes (a tweet), 2 to 16 outcome labels of 1 to 64 UTF-8 bytes each, each named once, and
+ * a resolution time in ms. How many outcomes a round may name and when it may resolve is its template's (manifest.js
+ * eventFitsTemplate).
+ */
+const EVENT_MARKER = 0xc3;
+const EVENT_VERSION = 3;
+const EVENT_QUESTION_MAX_BYTES = 280;
+const EVENT_LABEL_MAX_BYTES = 64;
+const EVENT_OUTCOMES_MAX = 16;
+// marker, the question (2 + 1), the outcome count (2), two labels (2 + 1 each), the time (8), the length (2), the marker
+const EVENT_MIN_BYTES = 1 + 3 + 2 + 6 + 8 + 2 + 1;
+function contractEventFits(ev) {
+  if (!ev || typeof ev !== 'object') return { ok: false, why: 'a round\'s question is an object { question, outcomes, resolveAtMs }' };
+  const bytesOf = (x) => { try { return utf8Encode(x).length; } catch { return -1; } };
+  if (typeof ev.question !== 'string' || bytesOf(ev.question) < 1 || bytesOf(ev.question) > EVENT_QUESTION_MAX_BYTES)
+    return { ok: false, why: `a round asks its question in 1 to ${EVENT_QUESTION_MAX_BYTES} bytes of UTF-8` };
+  if (!Array.isArray(ev.outcomes) || ev.outcomes.length < 2 || ev.outcomes.length > EVENT_OUTCOMES_MAX)
+    return { ok: false, why: `a round's question names 2 to ${EVENT_OUTCOMES_MAX} outcomes` };
+  for (const o of ev.outcomes)
+    if (typeof o !== 'string' || bytesOf(o) < 1 || bytesOf(o) > EVENT_LABEL_MAX_BYTES)
+      return { ok: false, why: `a round's outcome is labelled in 1 to ${EVENT_LABEL_MAX_BYTES} bytes of UTF-8` };
+  if (new Set(ev.outcomes).size !== ev.outcomes.length) return { ok: false, why: 'a round names each of its outcomes once' };
+  if (typeof ev.resolveAtMs !== 'bigint' || ev.resolveAtMs < 0n || ev.resolveAtMs > 0xffffffffffffffffn)
+    return { ok: false, why: 'a round names its resolution time as BigInt ms' };
+  return { ok: true };
+}
+// Where a contract's trailing fields begin: after its node list (its last field read the same way by every version).
+function contractTailStart(bytes) {
+  const r = new Reader(bytes);
+  r.u8(); r.u16();
+  for (let i = 0; i < 4; i++) r.bytes32();                               // network, game, config, core
+  r.u64(); r.u64(); r.u64(); r.u8(); r.bytes32(); r.u32(); r.u32(); r.u8(); r.bytes32(); r.u32(); r.u32(); r.bytes32(); r.u64();
+  r.str(); r.vec((rr) => rr.str()); r.u8(); r.u8(); r.u64(); r.u64(); r.u16();
+  for (let i = 0; i < 6; i++) r.u32();
+  r.u8(); r.u8(); r.vec((rr) => rr.bytes32());
+  return r.at;
+}
+// The tail lengths a contract may end with before its question: the deadline (4), the series (36), both (40), the rules (148)
+// and the creator key (33) - 16 lengths, each unique, which decodeRoundContract reads apart.
+const contractTailFits = (n) => [0, 4, 36, 40].some((b) => n === b || n === b + RULES_BYTES || n === b + 33 || n === b + RULES_BYTES + 33);
+/**
+ * THE QUESTION AT THE END OF A CONTRACT'S `left` TRAILING BYTES, or null: its closing marker last, its length before that
+ * pointing at its opening marker, its body read whole, and what stands before it one of the tails a contract without a
+ * question may end with. Anything else is no question - and the decoder then reads the tail as before (and refuses what does
+ * not fit). Never throws.
+ */
+function contractEventTail(bytes, left) {
+  const end = bytes.length;
+  if (left < EVENT_MIN_BYTES || bytes[end - 1] !== EVENT_MARKER) return null;
+  const size = (bytes[end - 3] << 8) | bytes[end - 2];
+  if (size < EVENT_MIN_BYTES || size > left || bytes[end - size] !== EVENT_MARKER) return null;
+  if (!contractTailFits(left - size)) return null;
+  try {
+    const r = new Reader(bytes.subarray(end - size + 1, end - 3));
+    const ev = { question: r.str(), outcomes: r.vec((rr) => rr.str()), resolveAtMs: r.u64() };
+    r.end();
+    if (!contractEventFits(ev).ok) return null;
+    return { event: ev, size };
+  } catch { return null; }
 }
 
 /** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
@@ -1898,9 +1987,13 @@ function decodeRoundContract(bytes) {
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
   let left = r.b.length - r.at;
+  // THE ROUND'S OWN QUESTION, last of all when named (kanban #362 feature 5): read from the end by its closing marker and length
+  const asked = contractEventTail(r.b, left);
+  const tailEnd = asked ? r.b.length - asked.size : r.b.length;
+  if (asked) left -= asked.size;
   // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
   const base = [0, 4, 36, 40];
-  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? r.b.length - 33 : -1;
+  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? tailEnd - 33 : -1;
   if (creatorAt >= 0) {
     if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
     left -= 33;
@@ -1934,6 +2027,12 @@ function decodeRoundContract(bytes) {
     c.creatorPubkey = r.bytes32();
     if (c.creatorPubkey.every((b) => b === 0)) throw new Error('a round names its creator by a 32-byte x-only key');
     if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
+  }
+  if (asked) {
+    r.bytes(asked.size);                                      // read whole by contractEventTail
+    c.event = asked.event;
+    if (!(c.protocolVersion >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.seriesId !== undefined) throw new Error('a round that asks its own question is no round of a series');
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.
@@ -25388,6 +25487,8 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
       game: contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '',
       market: contract.gameId instanceof Uint8Array ? marketOf(contract.gameId) : null,
+      // A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): from the contract checked above, never a node's word
+      event: contract.event || null,
       marketLike: contract.simCoreHash instanceof Uint8Array && contract.simCoreHash.every((b) => b === 0),
     });
   }
@@ -25591,7 +25692,10 @@ function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOl
   // A MARKET'S ROW (§0A.7a): its name, its outcomes, its entry close - the pick sheet says the rest
   if (row.market || row.marketLike) {
     const m = row.market;
-    const what = m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
+    // a round of a template (kanban #362 feature 5) is shown by its own question and labels
+    const ev = row.event;
+    const what = ev ? `${ev.question}${m ? ` (${m.name})` : ''} · ${ev.outcomes.length} outcomes: ${ev.outcomes.join(' / ')}${m ? '' : ' · a market this page does not know (second confirmation)'}`
+      : m ? `${m.name} · ${m.outcomes.length} outcomes: ${m.outcomes.join(' / ')}` : 'a market this page does not know (second confirmation)';
     const money = row.free ? 'free' : `stake ${String(row.stakeMsat / 1000n)} sat`;
     const when = row.phase === 'pending' ? `entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}` : `pick closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
     return `${what} · ${money} · ${when}`;
@@ -25986,6 +26090,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 
 
 
+
 /**
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
  * event - a prediction market), with no core and no run.
@@ -26018,6 +26123,46 @@ const MARKET_TERMS_MARKER = 0x01;
  * all (trailing bytes), so it cannot host the game either.
  */
 const REQUIRED_VERSION_MARKER = 0x02;
+/**
+ * AN EVENT-MARKET TEMPLATE (kanban #362 feature 5, docs/PLATFORM-RESEARCH.md: "a manifest is a template (attestors, terms,
+ * category); each round carries its own question, outcome labels and resolve time"): without it every new question - "Will X
+ * happen by Y?" - needed a newly signed manifest and a game hosted by nodes; with it anyone opens a question by publishing
+ * ONE ROUND of the template. The manifest keeps what the market's trust and money are made of - its attestor set and
+ * threshold, its fees, its attestors' deadline and source rule (its market terms, which a template must name) - and adds a
+ * category (what kind of question its rounds ask), the most outcomes a round may name (2 to 16) and the latest a round may
+ * resolve, `resolveWithinMs` after its entry close. Its market terms' `resolveAfterCloseMs` is then the EARLIEST a round
+ * may resolve after its entry close, and its question names the template (e.g. "Sports results"). The manifest's own
+ * `outcomes` label the template itself (its shape, e.g. YES / NO); a round names its own (contracts.js `event`).
+ *
+ * After its own marker, behind the market terms and before the required version: optional, so every manifest without it
+ * keeps its bytes and its game id. A template REQUIRES protocol version 3 or later (#349): its rounds carry their question
+ * in a contract tail a node of 2026.0.3 reads (contracts.js EVENT_MARKER), and a node too old to know the field cannot read
+ * the manifest at all (trailing bytes), so it cannot host the template. A template runs on no grid (round_period 0): each
+ * round names its own times.
+ */
+const TEMPLATE_MARKER = 0x03;
+const TEMPLATE_MIN_PROTOCOL_VERSION = EVENT_VERSION;
+const TEMPLATE_CATEGORY_MAX = 32;
+function marketTemplateFits(t, m) {
+  if (!t || typeof t !== 'object') return { ok: false, why: 'a market template is an object' };
+  if (typeof t.category !== 'string' || t.category.length < 1 || t.category.length > TEMPLATE_CATEGORY_MAX)
+    return { ok: false, why: `a market template names its category in 1 to ${TEMPLATE_CATEGORY_MAX} characters` };
+  if (!Number.isInteger(t.maxOutcomes) || t.maxOutcomes < 2 || t.maxOutcomes > OUTCOMES_MAX)
+    return { ok: false, why: `a market template lets its rounds name at most 2 to ${OUTCOMES_MAX} outcomes` };
+  if (typeof t.resolveWithinMs !== 'bigint' || t.resolveWithinMs < 1n || t.resolveWithinMs > MARKET_RESOLVE_MAX_MS)
+    return { ok: false, why: 'a market template\'s rounds resolve within 1 ms to 30 days after their entry close' };
+  // ITS TRUST AND MONEY ARE THE MANIFEST'S: fees, the attestors' deadline and the source rule are its market terms
+  if (!m || !m.marketTerms) return { ok: false, why: 'a market template names its market terms: its fees, its attestors\' deadline and its source rule' };
+  if (t.resolveWithinMs < m.marketTerms.resolveAfterCloseMs)
+    return { ok: false, why: `a market template's latest resolution (${t.resolveWithinMs} ms after entry close) is before its earliest (${m.marketTerms.resolveAfterCloseMs} ms)` };
+  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= TEMPLATE_MIN_PROTOCOL_VERSION))
+    return { ok: false, why: `a market template requires protocol version ${protocolVersionName(TEMPLATE_MIN_PROTOCOL_VERSION)} or later (#349): its rounds carry their own question` };
+  if (m.roundPeriodMs !== 0n) return { ok: false, why: 'a market template runs on no grid (round_period 0): each round names its own times' };
+  return { ok: true };
+}
+/** Is this manifest an event-market template (kanban #362 feature 5): an attested game whose rounds ask their own question? */
+const isTemplate = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.template;
+
 const MARKET_FEE_BPS_MAX = 500;
 const MARKET_DONATION_BPS_MAX = 500;
 const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -26092,6 +26237,7 @@ function encodeManifestBody(m) {
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
+    if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
   } else if (isHeadToHead(m)) {
     // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
     if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
@@ -26122,6 +26268,7 @@ function encodeManifestBody(m) {
     if (!Number.isInteger(m.minScore) || m.minScore < 0) throw new Error('min_score is a whole number of score units');
   }
   if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
+  if (!isAttested(m) && m.template !== undefined && m.template !== null) throw new Error('only an attested game is a market template: its rounds ask a question its attestors answer');
   if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
   if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
   if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
@@ -26157,6 +26304,11 @@ function encodeManifestBody(m) {
       const t = m.marketTerms;
       w.u8(MARKET_TERMS_MARKER); w.u16(t.nodeFeeBps); w.u16(t.donationBps); w.str(t.question);
       w.u64(t.resolveAfterCloseMs); w.u64(t.deadlineAfterResolveMs); w.str(t.sourceRule);
+    }
+    // ITS TEMPLATE (kanban #362 feature 5), after its own marker and only when it is one: every attested manifest before keeps its bytes
+    if (m.template) {
+      const t = m.template;
+      w.u8(TEMPLATE_MARKER); w.str(t.category); w.u8(t.maxOutcomes); w.u64(t.resolveWithinMs);
     }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
@@ -26198,6 +26350,10 @@ function readBody(r) {
       r.u8();
       body.marketTerms = { nodeFeeBps: r.u16(), donationBps: r.u16(), question: r.str(),
         resolveAfterCloseMs: r.u64(), deadlineAfterResolveMs: r.u64(), sourceRule: r.str() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === TEMPLATE_MARKER) {
+      r.u8();
+      body.template = { category: r.str(), maxOutcomes: r.u8(), resolveWithinMs: r.u64() };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -26278,10 +26434,19 @@ function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
   if (m.requiredProtocolVersion && !(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= m.requiredProtocolVersion))
     return { ok: false, why: `${name} requires protocol version ${protocolVersionName(m.requiredProtocolVersion)}; that round runs ${Number.isInteger(contract.protocolVersion) ? protocolVersionName(contract.protocolVersion) : 'none'}` };
+  // A ROUND ASKS ITS OWN QUESTION ONLY UNDER A TEMPLATE (kanban #362 feature 5): every other game's question - and its outcomes,
+  // and when it resolves - is its manifest's, and a round naming its own there would show players a market nobody signed
+  const asks = contract.event !== undefined && contract.event !== null;
+  if (asks && !isTemplate(m)) return { ok: false, why: `${name} is not a market template: its question is its manifest's, and a round of it carries none of its own` };
   // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
   if (isAttested(m)) {
     if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))
       return { ok: false, why: `${name} is attested: its rounds name no core and no config (32 zero bytes each) - nothing of them is replayed` };
+    if (isTemplate(m)) {
+      const fits = eventFitsTemplate(contract, m);
+      if (!fits.ok) return fits;
+      return { ok: true, attested: true, template: true };
+    }
     return { ok: true, attested: true };
   }
   if (!manIs32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };
@@ -26310,6 +26475,49 @@ function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
     if (!period.ok) return period;
   }
   return { ok: true };
+}
+
+/**
+ * DOES THIS ROUND'S QUESTION FIT ITS TEMPLATE (kanban #362 feature 5)? A round of a template MUST carry its own question
+ * (contracts.js `event`, whose shape the contract's encoding already holds: a question of 1 to 280 UTF-8 bytes, 2 to 16
+ * unique labels of 1 to 64 bytes); here, what only the template can say: no more outcomes than its `maxOutcomes`, and a
+ * resolution time from its market terms' `resolveAfterCloseMs` to its `resolveWithinMs` after the round's entry close - a
+ * question resolved before its last pick would be a pick to be copied, one resolved past the template's limit would hold the
+ * stakes longer than the template promised. And no series: a round of a series has the id H(series_id || i) (contracts.js
+ * roundId), which would not hash its question - so the question would not be the round's.
+ */
+function eventFitsTemplate(contract, m) {
+  const name = `template "${m.gameName}"`;
+  const ev = contract && contract.event;
+  if (!ev) return { ok: false, why: `${name} is a market template: each round of it asks its own question, outcomes and resolution time, and this one names none` };
+  if (contract.seriesId !== undefined && contract.seriesId !== null)
+    return { ok: false, why: `${name}: a round that asks its own question is published on its own, never as a round of a series (a series round's id does not hash its question)` };
+  if (!Array.isArray(ev.outcomes) || ev.outcomes.length < 2 || ev.outcomes.length > m.template.maxOutcomes)
+    return { ok: false, why: `that round names ${Array.isArray(ev.outcomes) ? ev.outcomes.length : 'no'} outcomes; ${name} lets a round name 2 to ${m.template.maxOutcomes}` };
+  if (typeof ev.resolveAtMs !== 'bigint' || typeof contract.entryCloseMs !== 'bigint')
+    return { ok: false, why: 'that round names no resolution time or no entry close' };
+  const earliest = contract.entryCloseMs + m.marketTerms.resolveAfterCloseMs;
+  const latest = contract.entryCloseMs + m.template.resolveWithinMs;
+  if (ev.resolveAtMs < earliest)
+    return { ok: false, why: `that round resolves at ${ev.resolveAtMs}, before ${name}'s earliest ${earliest} (${m.marketTerms.resolveAfterCloseMs} ms after its entry close)` };
+  if (ev.resolveAtMs > latest)
+    return { ok: false, why: `that round resolves at ${ev.resolveAtMs}, past ${name}'s latest ${latest} (${m.template.resolveWithinMs} ms after its entry close)` };
+  return { ok: true };
+}
+
+/**
+ * THE MARKET A ROUND PLAYS (kanban #362 feature 5): a round of a template reads its outcomes, its question and its resolution
+ * time from its own contract (`event`), everything else - attestors, threshold, fees, deadline, source rule - from the
+ * template; any other round reads the manifest as before (the manifest itself is answered). What is answered is a VIEW for
+ * the market's checks (attestationStands, marketTimes, marketVoided, stakeExpiryFits, the pick's range, the lobby's labels):
+ * it is never hashed or encoded - the game's id is its manifest's (gameIdOf(m)), not this.
+ */
+function marketOfRound(m, contract) {
+  if (!isTemplate(m) || !contract || !contract.event) return m;
+  const ev = contract.event;
+  return { ...m, outcomes: [...ev.outcomes],
+    marketTerms: { ...m.marketTerms, question: ev.question, resolveAfterCloseMs: ev.resolveAtMs - contract.entryCloseMs },
+    event: ev };
 }
 
 /**
@@ -26405,8 +26613,16 @@ function decodeAttestation(bytes) {
  * reason: another round's, an outcome out of range, a key the manifest does not name, a signature that does not verify,
  * too few signatures. Answers, never throws.
  */
-function attestationStands(a, { manifest, roundIdBytes, verify }) {
-  if (!isAttested(manifest)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
+//
+// A ROUND OF A TEMPLATE (kanban #362 feature 5) names its own outcomes (contracts.js `event`): its attestors sign an index into
+// THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
+// marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
+// are not the question its attestors answered.
+function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null }) {
+  if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
+  if (isTemplate(game) && !(round && round.event))
+    return { ok: false, why: `game "${game.gameName}" is a market template: an attestation is checked against its round's own outcomes, and no round naming them was given` };
+  const manifest = marketOfRound(game, round);
   let digest;
   try { digest = attestationBodyId(a); } catch (e) { return { ok: false, why: `that attestation does not encode: ${e.message}` }; }
   if (!attIs32(roundIdBytes) || !attSame(a.roundId, roundIdBytes))
@@ -26525,12 +26741,23 @@ function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
 
 /**
  * A MARKET ROUND'S TIMES (kanban #235): its resolution time - `resolveAfterCloseMs` after its entry close - and the deadline
- * its attestors have, `deadlineAfterResolveMs` after that.
+ * its attestors have, `deadlineAfterResolveMs` after that. A round of a template (kanban #362 feature 5) names its own
+ * resolution time: its terms are `roundTermsOf(manifest, contract)`, whose `resolveAfterCloseMs` is the round's.
  */
 function marketTimes({ entryCloseMs, terms }) {
   const resolveAtMs = BigInt(entryCloseMs) + BigInt(terms.resolveAfterCloseMs);
   return { resolveAtMs, deadlineMs: resolveAtMs + BigInt(terms.deadlineAfterResolveMs) };
 }
+
+/**
+ * THE MARKET TERMS A ROUND IS HELD TO (kanban #235; #362 feature 5): its manifest's, with a template round's own question and
+ * resolution time in them (manifest.js marketOfRound); null for a market that names none. What attestationTimely, marketVoided
+ * and the lock span (lock-expiry.js) take as `terms`.
+ */
+const roundTermsOf = (manifest, contract) => {
+  const m = marketOfRound(manifest, contract);
+  return (m && m.marketTerms) || null;
+};
 
 /**
  * REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market round with no standing outcome at its deadline, or whose
@@ -26902,14 +27129,26 @@ function marketForRound(round, { manifestBytes = null } = {}) {
   const pinned = marketOf(round.gameId);
   // ITS FEE (kanban #235): a market's own, from its manifest, or the market default 0.5 % + 0.5 %
   // AND ITS TERMS (kanban #236): resolution delay and void deadline - what its rounds' lock span is checked by (lock-expiry.js)
-  if (pinned) return { ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) };
+  if (pinned) return marketAsRoundAsks({ ...pinned, needsConfirm: false, fee: feeOfKnownGame(round.gameId), terms: termsOfKnownGame(round.gameId) }, round);
   if (!manifestBytes) return null;
   let m;
   try { m = decodeManifest(manifestBytes instanceof Uint8Array ? manifestBytes : fromHex(String(manifestBytes))); } catch { return null; }
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
-  return { gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
+  return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
-    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null };
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null }, round);
+}
+
+/**
+ * A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): its labels, its question and its resolution time
+ * are the round's signed contract's (`event`), the attestors, threshold and fees the template's - so the pick sheet, the
+ * attestation check and the lock span read the round's. Any other round: the market as it is.
+ */
+function marketAsRoundAsks(market, round) {
+  if (!market || !round || !round.event) return market;
+  const ev = round.event;
+  return { ...market, outcomes: [...ev.outcomes], question: ev.question, resolveAtMs: ev.resolveAtMs,
+    terms: market.terms ? { ...market.terms, resolveAfterCloseMs: ev.resolveAtMs - round.entryCloseMs } : market.terms };
 }
 
 /**

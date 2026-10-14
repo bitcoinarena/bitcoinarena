@@ -142,12 +142,12 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
-import { isHeadToHead } from '../../arena-protocol/src/manifest.js';
+import { isHeadToHead, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
-import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable, roundTermsOf } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync, appendFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -195,7 +195,7 @@ const CORS = {
   'access-control-expose-headers':
     'x-state, x-ticks, x-transcript-hash, x-checkpoints, x-receipts, '
     + 'x-marks, x-dropped, x-through-tick, x-equivocations, x-ticks-at, x-no-quorum, '
-    + 'x-foreign-receipts',
+    + 'x-foreign-receipts, x-question, x-outcomes, x-resolve-at-ms',
 };
 
 const bytes = (res, code, body) => {
@@ -490,10 +490,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const held = rows.map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
     // FINAL 600 s AFTER THE FIRST STANDING ATTESTATION, on this seat's clock (§0A.7a slice 2)
     const standing = outcomeFinality(held, { windowMs: c.objectionWindowMs, nowMs: round.now() });
-    const out = { state: standing.state, outcomes: plugin.manifest.outcomes, attestThreshold: plugin.manifest.attestThreshold,
-      attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs) };
+    // A ROUND OF A TEMPLATE (kanban #362 feature 5) answers ITS OWN question and labels (contracts.js `event`); any other market
+    // its manifest's, as before
+    const market = marketOfRound(plugin.manifest, c);
+    const out = { state: standing.state, outcomes: market.outcomes, attestThreshold: plugin.manifest.attestThreshold,
+      attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs),
+      ...(c.event ? { question: c.event.question, resolveAtMs: String(c.event.resolveAtMs) } : {}) };
     if (standing.state === 'ATTESTED') {
-      Object.assign(out, { outcome: standing.outcome, label: plugin.manifest.outcomes[standing.outcome],
+      Object.assign(out, { outcome: standing.outcome, label: market.outcomes[standing.outcome],
         observedAtMs: String(held[0].observedAtMs), final: standing.final, finalAtMs: String(standing.finalAtMs),
         // the attestation's own bytes: a page checks its signatures against the manifest it pinned, not this seat's word
         attestation: toHex(new Uint8Array(rows[0].bytes)) });
@@ -3312,6 +3316,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         ...(marketWindow ? { windowStartMs: String(marketWindow.startMs) } : {}),
         // THE ROUND'S GAME (kanban #204): its id and the name this node hosts it under
         game: gameOfContract(c),
+        // A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): its question, labels and resolution time, from
+        // the signed contract this row names (contracts.js `event`) - a lobby shows the question, not the template's name alone
+        ...(c.event ? { event: { question: c.event.question, outcomes: [...c.event.outcomes], resolveAtMs: String(c.event.resolveAtMs) } } : {}),
         // AN ATTESTED ROUND'S OUTCOME (§0A.7a, kanban #206): OPEN, ATTESTED with its label, or DISPUTED; null for a replayed game
         outcome: outcomeOf(held.roundId, c),
         startTime: iso(c.startTimeMs), endTime: iso(endMs), committee: set.committees.get(id) || (() => { const k = committeeOf(held.roundId); set.committees.set(id, k); return k; })(),
@@ -3800,7 +3807,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // #236: its locks last its whole life) - the relays, before anything of it exists on this signer node. A free round
         // is the check below; no other custody parses (§23.6).
         if (contract.stakeMsat > 0n) {
-          const custodyOk = custodyFieldsAreValid(contract, { manifest: roundManifest });
+          // a template's round holds its locks to ITS OWN resolution time (kanban #362 feature 5: marketOfRound)
+          const custodyOk = custodyFieldsAreValid(contract, { manifest: marketOfRound(roundManifest, contract) });
           if (!custodyOk.ok) return text(res, 409, custodyOk.why);
         }
         // AND A SIGNER NODE THAT REACHES NO FEDERATION OPENS NO PAYING ROUND (RULED the owner 2026-09-25). Measured before: on a
@@ -4242,7 +4250,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/round') {
         const row = round.get(Buffer.from(url.searchParams.get('id') || '', 'hex'));
         if (!row) return text(res, 404, 'no such round');
-        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-state': String(row.state), ...CORS });
+        // A ROUND THAT ASKS ITS OWN QUESTION (kanban #362 feature 5) names it beside its bytes too - URI-encoded, the labels as a
+        // JSON list - for a reader that shows it before decoding; the contract's own bytes are what binds
+        let asked = null;
+        try { const c = decodeRoundContract(new Uint8Array(row.contract)); if (c.event) asked = c.event; } catch { asked = null; }
+        res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-state': String(row.state),
+          ...(asked ? { 'x-question': encodeURIComponent(asked.question), 'x-outcomes': encodeURIComponent(JSON.stringify(asked.outcomes)),
+            'x-resolve-at-ms': String(asked.resolveAtMs) } : {}),
+          ...CORS });
         return res.end(Buffer.from(row.contract));
       }
 
@@ -4854,11 +4869,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const c = decodeRoundContract(new Uint8Array(row.contract));
         const plugin = attestedOf(c);
         if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
-        const stands = attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 });
+        // A TEMPLATE'S ROUND (kanban #362 feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
+        const stands = attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519, round: c });
         if (!stands.ok) return text(res, 409, stands.why);
         // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
         // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one (kanban #235)
-        const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: plugin.manifest.marketTerms || null });
+        const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
         if (!timely.ok) return text(res, 409, timely.why);
         const fresh = round.putOutcomeAttestation({ bodyId: attestationBodyId(a), roundId: a.roundId, outcome: a.outcome, observedAtMs: a.observedAtMs,
           bytes: raw, receivedMs: round.now() });

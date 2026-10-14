@@ -54,7 +54,8 @@ export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDeno
  * and the attestors' keys, so a test can sign outcomes as they would.
  */
 export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'attestor b', 'attestor c'], threshold = 2, dev = name,
-  donationSet = testDonationSet(dev), version = 1, parentManifestId = NO_PARENT, clients = [], marketTerms = null, roundPeriodMs = 0n }) {
+  donationSet = testDonationSet(dev), version = 1, parentManifestId = NO_PARENT, clients = [], marketTerms = null, roundPeriodMs = 0n,
+  template = null, requiredProtocolVersion = null }) {
   const devKey = testDevKey(dev);
   // in key order, as the manifest lists them
   const keys = attestors.map((w) => testDevKey(`attestor: ${w}`)).sort((x, y) => Buffer.compare(Buffer.from(x.pubkey), Buffer.from(y.pubkey)));
@@ -64,6 +65,9 @@ export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'a
     clients: [...clients].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))), gameDonationSetId: donationSetId(donationSet),
     outcomes, attestors: keys.map((k) => k.pubkey), attestThreshold: threshold,
     ...(marketTerms ? { marketTerms } : {}),
+    // AN EVENT-MARKET TEMPLATE (kanban #362 feature 5): its rounds ask their own question; it requires a protocol version (#349)
+    ...(template ? { template } : {}),
+    ...(requiredProtocolVersion ? { requiredProtocolVersion } : {}),
   };
   const manifest = signManifest(body, devKey);
   return { registration: Object.freeze({ name, manifest, gameId: gameIdOf(manifest), cores: new Map(), donationSet }), attestors: keys };

@@ -11,6 +11,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash } from './hash.js';
 import { stakeExpiryFits } from './lock-expiry.js';
+import { utf8Encode } from './utf8.js';
 // THE RUN LENGTH IS THE CORE'S. `genesis.js` already reads it from the same
 // place and writes it into the config hash a contract's network_id commits to;
 // restating the number here would be the second clock letter 21 forbade.
@@ -243,7 +244,95 @@ export function encodeRoundContract(c) {
     w.u8(CREATOR_MARKER);
     w.bytes32(c.creatorPubkey);
   }
-  return w.finish();
+  // THE ROUND'S OWN QUESTION (kanban #362 feature 5): on a round of an event-market template (manifest.js `template`) the
+  // question, its 2 to 16 outcome labels and its resolution time - the market's terms a round, not its manifest, names, so
+  // anyone opens a question by publishing one round of the template. LAST OF ALL, after its own marker, and only when named,
+  // so every contract without it keeps its bytes and its id. Its length is variable, so it also ENDS with its own length
+  // and marker (contractEventTail reads it from the end); whether a template's round must carry it and a non-template's must
+  // not is the manifest's to say (manifest.js roundFitsManifest), which a seat asks of every round it opens.
+  if (c.event !== undefined && c.event !== null) {
+    if (!(version >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.seriesId !== undefined && c.seriesId !== null) throw new Error('a round that asks its own question is no round of a series: a series round\'s id H(series_id || i) does not hash its question');
+    const f = contractEventFits(c.event);
+    if (!f.ok) throw new Error(f.why);
+    const start = w.len;
+    w.u8(EVENT_MARKER);
+    w.str(c.event.question);
+    w.vec(c.event.outcomes, (o, ww) => ww.str(o));
+    w.u64(c.event.resolveAtMs);
+    w.u16(w.len - start + 3);
+    w.u8(EVENT_MARKER);
+    return w.finish();
+  }
+  // A CONTRACT THAT ASKS NO QUESTION NEVER READS AS ONE: its last bytes (a creator key is any 32) could end like a question's
+  // tail by chance, and its decoding would then be another round than the one written - refused here, never misread there
+  const out = w.finish();
+  if (out[out.length - 1] === EVENT_MARKER && contractEventTail(out, out.length - contractTailStart(out))) throw new Error('these contract bytes would read back as a round that asks its own question: name another creator key');
+  return out;
+}
+
+/**
+ * A ROUND'S OWN QUESTION (kanban #362 feature 5): the byte before it and after it, its limits, and the version it is read
+ * from - 2026.0.3, the version whose contract tail it extends (a template requires it: manifest.js TEMPLATE_MIN_PROTOCOL_VERSION).
+ * A question of 1 to 280 UTF-8 bytes (a tweet), 2 to 16 outcome labels of 1 to 64 UTF-8 bytes each, each named once, and
+ * a resolution time in ms. How many outcomes a round may name and when it may resolve is its template's (manifest.js
+ * eventFitsTemplate).
+ */
+export const EVENT_MARKER = 0xc3;
+export const EVENT_VERSION = 3;
+export const EVENT_QUESTION_MAX_BYTES = 280;
+export const EVENT_LABEL_MAX_BYTES = 64;
+export const EVENT_OUTCOMES_MAX = 16;
+// marker, the question (2 + 1), the outcome count (2), two labels (2 + 1 each), the time (8), the length (2), the marker
+const EVENT_MIN_BYTES = 1 + 3 + 2 + 6 + 8 + 2 + 1;
+export function contractEventFits(ev) {
+  if (!ev || typeof ev !== 'object') return { ok: false, why: 'a round\'s question is an object { question, outcomes, resolveAtMs }' };
+  const bytesOf = (x) => { try { return utf8Encode(x).length; } catch { return -1; } };
+  if (typeof ev.question !== 'string' || bytesOf(ev.question) < 1 || bytesOf(ev.question) > EVENT_QUESTION_MAX_BYTES)
+    return { ok: false, why: `a round asks its question in 1 to ${EVENT_QUESTION_MAX_BYTES} bytes of UTF-8` };
+  if (!Array.isArray(ev.outcomes) || ev.outcomes.length < 2 || ev.outcomes.length > EVENT_OUTCOMES_MAX)
+    return { ok: false, why: `a round's question names 2 to ${EVENT_OUTCOMES_MAX} outcomes` };
+  for (const o of ev.outcomes)
+    if (typeof o !== 'string' || bytesOf(o) < 1 || bytesOf(o) > EVENT_LABEL_MAX_BYTES)
+      return { ok: false, why: `a round's outcome is labelled in 1 to ${EVENT_LABEL_MAX_BYTES} bytes of UTF-8` };
+  if (new Set(ev.outcomes).size !== ev.outcomes.length) return { ok: false, why: 'a round names each of its outcomes once' };
+  if (typeof ev.resolveAtMs !== 'bigint' || ev.resolveAtMs < 0n || ev.resolveAtMs > 0xffffffffffffffffn)
+    return { ok: false, why: 'a round names its resolution time as BigInt ms' };
+  return { ok: true };
+}
+// Where a contract's trailing fields begin: after its node list (its last field read the same way by every version).
+function contractTailStart(bytes) {
+  const r = new Reader(bytes);
+  r.u8(); r.u16();
+  for (let i = 0; i < 4; i++) r.bytes32();                               // network, game, config, core
+  r.u64(); r.u64(); r.u64(); r.u8(); r.bytes32(); r.u32(); r.u32(); r.u8(); r.bytes32(); r.u32(); r.u32(); r.bytes32(); r.u64();
+  r.str(); r.vec((rr) => rr.str()); r.u8(); r.u8(); r.u64(); r.u64(); r.u16();
+  for (let i = 0; i < 6; i++) r.u32();
+  r.u8(); r.u8(); r.vec((rr) => rr.bytes32());
+  return r.at;
+}
+// The tail lengths a contract may end with before its question: the deadline (4), the series (36), both (40), the rules (148)
+// and the creator key (33) - 16 lengths, each unique, which decodeRoundContract reads apart.
+const contractTailFits = (n) => [0, 4, 36, 40].some((b) => n === b || n === b + RULES_BYTES || n === b + 33 || n === b + RULES_BYTES + 33);
+/**
+ * THE QUESTION AT THE END OF A CONTRACT'S `left` TRAILING BYTES, or null: its closing marker last, its length before that
+ * pointing at its opening marker, its body read whole, and what stands before it one of the tails a contract without a
+ * question may end with. Anything else is no question - and the decoder then reads the tail as before (and refuses what does
+ * not fit). Never throws.
+ */
+export function contractEventTail(bytes, left) {
+  const end = bytes.length;
+  if (left < EVENT_MIN_BYTES || bytes[end - 1] !== EVENT_MARKER) return null;
+  const size = (bytes[end - 3] << 8) | bytes[end - 2];
+  if (size < EVENT_MIN_BYTES || size > left || bytes[end - size] !== EVENT_MARKER) return null;
+  if (!contractTailFits(left - size)) return null;
+  try {
+    const r = new Reader(bytes.subarray(end - size + 1, end - 3));
+    const ev = { question: r.str(), outcomes: r.vec((rr) => rr.str()), resolveAtMs: r.u64() };
+    r.end();
+    if (!contractEventFits(ev).ok) return null;
+    return { event: ev, size };
+  } catch { return null; }
 }
 
 /** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
@@ -324,9 +413,13 @@ export function decodeRoundContract(bytes) {
   // default. Written as the default it would be a second encoding of one round. And after it the series and the
   // index, only on a round of a series: 4 bytes left is the deadline, 36 the series, 40 both.
   let left = r.b.length - r.at;
+  // THE ROUND'S OWN QUESTION, last of all when named (kanban #362 feature 5): read from the end by its closing marker and length
+  const asked = contractEventTail(r.b, left);
+  const tailEnd = asked ? r.b.length - asked.size : r.b.length;
+  if (asked) left -= asked.size;
   // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
   const base = [0, 4, 36, 40];
-  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? r.b.length - 33 : -1;
+  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? tailEnd - 33 : -1;
   if (creatorAt >= 0) {
     if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
     left -= 33;
@@ -360,6 +453,12 @@ export function decodeRoundContract(bytes) {
     c.creatorPubkey = r.bytes32();
     if (c.creatorPubkey.every((b) => b === 0)) throw new Error('a round names its creator by a 32-byte x-only key');
     if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
+  }
+  if (asked) {
+    r.bytes(asked.size);                                      // read whole by contractEventTail
+    c.event = asked.event;
+    if (!(c.protocolVersion >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.seriesId !== undefined) throw new Error('a round that asks its own question is no round of a series');
   }
   r.end();
   // AND BYTES FROM ANYWHERE ARE HELD TO THE SAME (M3 W7): a paying FEDERATION round naming none is refused.

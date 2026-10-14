@@ -19,7 +19,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
-import { isAttested } from './manifest.js';
+import { isAttested, isTemplate, marketOfRound } from './manifest.js';
 
 export const OUTCOME_SIGNATURE_BYTES = 64;
 
@@ -74,8 +74,16 @@ export function decodeAttestation(bytes) {
  * reason: another round's, an outcome out of range, a key the manifest does not name, a signature that does not verify,
  * too few signatures. Answers, never throws.
  */
-export function attestationStands(a, { manifest, roundIdBytes, verify }) {
-  if (!isAttested(manifest)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
+//
+// A ROUND OF A TEMPLATE (kanban #362 feature 5) names its own outcomes (contracts.js `event`): its attestors sign an index into
+// THOSE, so `round` - the round's contract - is handed in, and the range and the label are the round's (manifest.js
+// marketOfRound). A template's attestation with no round to read its outcomes from is refused: the template's own labels
+// are not the question its attestors answered.
+export function attestationStands(a, { manifest: game, roundIdBytes, verify, round = null }) {
+  if (!isAttested(game)) return { ok: false, why: 'that round\'s game is not attested: its result is a replayed run, not an attestation' };
+  if (isTemplate(game) && !(round && round.event))
+    return { ok: false, why: `game "${game.gameName}" is a market template: an attestation is checked against its round's own outcomes, and no round naming them was given` };
+  const manifest = marketOfRound(game, round);
   let digest;
   try { digest = attestationBodyId(a); } catch (e) { return { ok: false, why: `that attestation does not encode: ${e.message}` }; }
   if (!attIs32(roundIdBytes) || !attSame(a.roundId, roundIdBytes))
@@ -194,12 +202,23 @@ export function attestationTimely(a, { entryCloseMs, nowMs, terms = null }) {
 
 /**
  * A MARKET ROUND'S TIMES (kanban #235): its resolution time - `resolveAfterCloseMs` after its entry close - and the deadline
- * its attestors have, `deadlineAfterResolveMs` after that.
+ * its attestors have, `deadlineAfterResolveMs` after that. A round of a template (kanban #362 feature 5) names its own
+ * resolution time: its terms are `roundTermsOf(manifest, contract)`, whose `resolveAfterCloseMs` is the round's.
  */
 export function marketTimes({ entryCloseMs, terms }) {
   const resolveAtMs = BigInt(entryCloseMs) + BigInt(terms.resolveAfterCloseMs);
   return { resolveAtMs, deadlineMs: resolveAtMs + BigInt(terms.deadlineAfterResolveMs) };
 }
+
+/**
+ * THE MARKET TERMS A ROUND IS HELD TO (kanban #235; #362 feature 5): its manifest's, with a template round's own question and
+ * resolution time in them (manifest.js marketOfRound); null for a market that names none. What attestationTimely, marketVoided
+ * and the lock span (lock-expiry.js) take as `terms`.
+ */
+export const roundTermsOf = (manifest, contract) => {
+  const m = marketOfRound(manifest, contract);
+  return (m && m.marketTerms) || null;
+};
 
 /**
  * REFUND AT THE DEADLINE (kanban #235, the owner 2026-10-09): a market round with no standing outcome at its deadline, or whose

@@ -31,6 +31,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
+import { EVENT_VERSION } from './contracts.js';
 
 /**
  * What a game's result is (§0A.7, §0A.7a; kanban #206): a replayed run, or an outcome its attestors sign (a price, an
@@ -64,6 +65,46 @@ export const MARKET_TERMS_MARKER = 0x01;
  * all (trailing bytes), so it cannot host the game either.
  */
 export const REQUIRED_VERSION_MARKER = 0x02;
+/**
+ * AN EVENT-MARKET TEMPLATE (kanban #362 feature 5, docs/PLATFORM-RESEARCH.md: "a manifest is a template (attestors, terms,
+ * category); each round carries its own question, outcome labels and resolve time"): without it every new question - "Will X
+ * happen by Y?" - needed a newly signed manifest and a game hosted by nodes; with it anyone opens a question by publishing
+ * ONE ROUND of the template. The manifest keeps what the market's trust and money are made of - its attestor set and
+ * threshold, its fees, its attestors' deadline and source rule (its market terms, which a template must name) - and adds a
+ * category (what kind of question its rounds ask), the most outcomes a round may name (2 to 16) and the latest a round may
+ * resolve, `resolveWithinMs` after its entry close. Its market terms' `resolveAfterCloseMs` is then the EARLIEST a round
+ * may resolve after its entry close, and its question names the template (e.g. "Sports results"). The manifest's own
+ * `outcomes` label the template itself (its shape, e.g. YES / NO); a round names its own (contracts.js `event`).
+ *
+ * After its own marker, behind the market terms and before the required version: optional, so every manifest without it
+ * keeps its bytes and its game id. A template REQUIRES protocol version 3 or later (#349): its rounds carry their question
+ * in a contract tail a node of 2026.0.3 reads (contracts.js EVENT_MARKER), and a node too old to know the field cannot read
+ * the manifest at all (trailing bytes), so it cannot host the template. A template runs on no grid (round_period 0): each
+ * round names its own times.
+ */
+export const TEMPLATE_MARKER = 0x03;
+export const TEMPLATE_MIN_PROTOCOL_VERSION = EVENT_VERSION;
+export const TEMPLATE_CATEGORY_MAX = 32;
+export function marketTemplateFits(t, m) {
+  if (!t || typeof t !== 'object') return { ok: false, why: 'a market template is an object' };
+  if (typeof t.category !== 'string' || t.category.length < 1 || t.category.length > TEMPLATE_CATEGORY_MAX)
+    return { ok: false, why: `a market template names its category in 1 to ${TEMPLATE_CATEGORY_MAX} characters` };
+  if (!Number.isInteger(t.maxOutcomes) || t.maxOutcomes < 2 || t.maxOutcomes > OUTCOMES_MAX)
+    return { ok: false, why: `a market template lets its rounds name at most 2 to ${OUTCOMES_MAX} outcomes` };
+  if (typeof t.resolveWithinMs !== 'bigint' || t.resolveWithinMs < 1n || t.resolveWithinMs > MARKET_RESOLVE_MAX_MS)
+    return { ok: false, why: 'a market template\'s rounds resolve within 1 ms to 30 days after their entry close' };
+  // ITS TRUST AND MONEY ARE THE MANIFEST'S: fees, the attestors' deadline and the source rule are its market terms
+  if (!m || !m.marketTerms) return { ok: false, why: 'a market template names its market terms: its fees, its attestors\' deadline and its source rule' };
+  if (t.resolveWithinMs < m.marketTerms.resolveAfterCloseMs)
+    return { ok: false, why: `a market template's latest resolution (${t.resolveWithinMs} ms after entry close) is before its earliest (${m.marketTerms.resolveAfterCloseMs} ms)` };
+  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= TEMPLATE_MIN_PROTOCOL_VERSION))
+    return { ok: false, why: `a market template requires protocol version ${protocolVersionName(TEMPLATE_MIN_PROTOCOL_VERSION)} or later (#349): its rounds carry their own question` };
+  if (m.roundPeriodMs !== 0n) return { ok: false, why: 'a market template runs on no grid (round_period 0): each round names its own times' };
+  return { ok: true };
+}
+/** Is this manifest an event-market template (kanban #362 feature 5): an attested game whose rounds ask their own question? */
+export const isTemplate = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.template;
+
 export const MARKET_FEE_BPS_MAX = 500;
 export const MARKET_DONATION_BPS_MAX = 500;
 export const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -138,6 +179,7 @@ export function encodeManifestBody(m) {
     if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
       throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
+    if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
   } else if (isHeadToHead(m)) {
     // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
     if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
@@ -168,6 +210,7 @@ export function encodeManifestBody(m) {
     if (!Number.isInteger(m.minScore) || m.minScore < 0) throw new Error('min_score is a whole number of score units');
   }
   if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
+  if (!isAttested(m) && m.template !== undefined && m.template !== null) throw new Error('only an attested game is a market template: its rounds ask a question its attestors answer');
   if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
   if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
   if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
@@ -203,6 +246,11 @@ export function encodeManifestBody(m) {
       const t = m.marketTerms;
       w.u8(MARKET_TERMS_MARKER); w.u16(t.nodeFeeBps); w.u16(t.donationBps); w.str(t.question);
       w.u64(t.resolveAfterCloseMs); w.u64(t.deadlineAfterResolveMs); w.str(t.sourceRule);
+    }
+    // ITS TEMPLATE (kanban #362 feature 5), after its own marker and only when it is one: every attested manifest before keeps its bytes
+    if (m.template) {
+      const t = m.template;
+      w.u8(TEMPLATE_MARKER); w.str(t.category); w.u8(t.maxOutcomes); w.u64(t.resolveWithinMs);
     }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
@@ -244,6 +292,10 @@ function readBody(r) {
       r.u8();
       body.marketTerms = { nodeFeeBps: r.u16(), donationBps: r.u16(), question: r.str(),
         resolveAfterCloseMs: r.u64(), deadlineAfterResolveMs: r.u64(), sourceRule: r.str() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === TEMPLATE_MARKER) {
+      r.u8();
+      body.template = { category: r.str(), maxOutcomes: r.u8(), resolveWithinMs: r.u64() };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -324,10 +376,19 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   if (!manSame(contract.gameId, gameId)) return { ok: false, why: `that round names game ${toHex(contract.gameId).slice(0, 16)}, not ${name} ${toHex(gameId).slice(0, 16)}` };
   if (m.requiredProtocolVersion && !(Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= m.requiredProtocolVersion))
     return { ok: false, why: `${name} requires protocol version ${protocolVersionName(m.requiredProtocolVersion)}; that round runs ${Number.isInteger(contract.protocolVersion) ? protocolVersionName(contract.protocolVersion) : 'none'}` };
+  // A ROUND ASKS ITS OWN QUESTION ONLY UNDER A TEMPLATE (kanban #362 feature 5): every other game's question - and its outcomes,
+  // and when it resolves - is its manifest's, and a round naming its own there would show players a market nobody signed
+  const asks = contract.event !== undefined && contract.event !== null;
+  if (asks && !isTemplate(m)) return { ok: false, why: `${name} is not a market template: its question is its manifest's, and a round of it carries none of its own` };
   // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
   if (isAttested(m)) {
     if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))
       return { ok: false, why: `${name} is attested: its rounds name no core and no config (32 zero bytes each) - nothing of them is replayed` };
+    if (isTemplate(m)) {
+      const fits = eventFitsTemplate(contract, m);
+      if (!fits.ok) return fits;
+      return { ok: true, attested: true, template: true };
+    }
     return { ok: true, attested: true };
   }
   if (!manIs32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };
@@ -356,6 +417,49 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
     if (!period.ok) return period;
   }
   return { ok: true };
+}
+
+/**
+ * DOES THIS ROUND'S QUESTION FIT ITS TEMPLATE (kanban #362 feature 5)? A round of a template MUST carry its own question
+ * (contracts.js `event`, whose shape the contract's encoding already holds: a question of 1 to 280 UTF-8 bytes, 2 to 16
+ * unique labels of 1 to 64 bytes); here, what only the template can say: no more outcomes than its `maxOutcomes`, and a
+ * resolution time from its market terms' `resolveAfterCloseMs` to its `resolveWithinMs` after the round's entry close - a
+ * question resolved before its last pick would be a pick to be copied, one resolved past the template's limit would hold the
+ * stakes longer than the template promised. And no series: a round of a series has the id H(series_id || i) (contracts.js
+ * roundId), which would not hash its question - so the question would not be the round's.
+ */
+export function eventFitsTemplate(contract, m) {
+  const name = `template "${m.gameName}"`;
+  const ev = contract && contract.event;
+  if (!ev) return { ok: false, why: `${name} is a market template: each round of it asks its own question, outcomes and resolution time, and this one names none` };
+  if (contract.seriesId !== undefined && contract.seriesId !== null)
+    return { ok: false, why: `${name}: a round that asks its own question is published on its own, never as a round of a series (a series round's id does not hash its question)` };
+  if (!Array.isArray(ev.outcomes) || ev.outcomes.length < 2 || ev.outcomes.length > m.template.maxOutcomes)
+    return { ok: false, why: `that round names ${Array.isArray(ev.outcomes) ? ev.outcomes.length : 'no'} outcomes; ${name} lets a round name 2 to ${m.template.maxOutcomes}` };
+  if (typeof ev.resolveAtMs !== 'bigint' || typeof contract.entryCloseMs !== 'bigint')
+    return { ok: false, why: 'that round names no resolution time or no entry close' };
+  const earliest = contract.entryCloseMs + m.marketTerms.resolveAfterCloseMs;
+  const latest = contract.entryCloseMs + m.template.resolveWithinMs;
+  if (ev.resolveAtMs < earliest)
+    return { ok: false, why: `that round resolves at ${ev.resolveAtMs}, before ${name}'s earliest ${earliest} (${m.marketTerms.resolveAfterCloseMs} ms after its entry close)` };
+  if (ev.resolveAtMs > latest)
+    return { ok: false, why: `that round resolves at ${ev.resolveAtMs}, past ${name}'s latest ${latest} (${m.template.resolveWithinMs} ms after its entry close)` };
+  return { ok: true };
+}
+
+/**
+ * THE MARKET A ROUND PLAYS (kanban #362 feature 5): a round of a template reads its outcomes, its question and its resolution
+ * time from its own contract (`event`), everything else - attestors, threshold, fees, deadline, source rule - from the
+ * template; any other round reads the manifest as before (the manifest itself is answered). What is answered is a VIEW for
+ * the market's checks (attestationStands, marketTimes, marketVoided, stakeExpiryFits, the pick's range, the lobby's labels):
+ * it is never hashed or encoded - the game's id is its manifest's (gameIdOf(m)), not this.
+ */
+export function marketOfRound(m, contract) {
+  if (!isTemplate(m) || !contract || !contract.event) return m;
+  const ev = contract.event;
+  return { ...m, outcomes: [...ev.outcomes],
+    marketTerms: { ...m.marketTerms, question: ev.question, resolveAfterCloseMs: ev.resolveAtMs - contract.entryCloseMs },
+    event: ev };
 }
 
 /**
