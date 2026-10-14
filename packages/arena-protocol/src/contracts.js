@@ -17,6 +17,7 @@ import { utf8Encode } from './utf8.js';
 // restating the number here would be the second clock letter 21 forbade.
 import {
   TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, takesAnyFederation, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
+  GAME_MARKET_VERSION,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -244,6 +245,23 @@ export function encodeRoundContract(c) {
     w.u8(CREATOR_MARKER);
     w.bytes32(c.creatorPubkey);
   }
+  // THE ROUND A MARKET ON A GAME IS ON (kanban #362 feature 6; 2026.0.6): on a round of a game market (manifest.js `gameSource`)
+  // the id of the one round of the source game whose signed result decides it. After the creator's key and before a question,
+  // only when named, and only from version 6: so every contract below 6, and every one that names none, keeps its bytes and its
+  // id. 34 bytes - its marker, the id, its marker again - so with it a contract's tail is one of the 16 lengths above plus 34,
+  // none of which is one of those 16 (the decoder tells them apart by length alone, and only on a version-6 contract). Not on a
+  // round of a series (its id H(series_id || i) would not hash the source, so the source would not be the round's), and not
+  // beside a question: a market on a game asks its manifest's question, a round asking its own is a template's.
+  if (c.sourceRoundId !== undefined && c.sourceRoundId !== null) {
+    if (!(version >= GAME_MARKET_VERSION)) throw new Error(`a round names a source round from protocol version ${GAME_MARKET_VERSION} on`);
+    if (!(c.sourceRoundId instanceof Uint8Array) || c.sourceRoundId.length !== 32 || c.sourceRoundId.every((b) => b === 0))
+      throw new Error('a market on a game names its source round by a 32-byte round id');
+    if (c.seriesId !== undefined && c.seriesId !== null) throw new Error('a market on a game is no round of a series: a series round\'s id H(series_id || i) does not hash its source round');
+    if (c.event !== undefined && c.event !== null) throw new Error('a market on a game asks its manifest\'s question: a round that names a source round asks none of its own');
+    w.u8(SOURCE_ROUND_MARKER);
+    w.bytes32(c.sourceRoundId);
+    w.u8(SOURCE_ROUND_MARKER);
+  }
   // THE ROUND'S OWN QUESTION (kanban #362 feature 5): on a round of an event-market template (manifest.js `template`) the
   // question, its 2 to 16 outcome labels and its resolution time - the market's terms a round, not its manifest, names, so
   // anyone opens a question by publishing one round of the template. LAST OF ALL, after its own marker, and only when named,
@@ -336,6 +354,12 @@ export function contractEventTail(bytes, left) {
   } catch { return null; }
 }
 
+/**
+ * THE BYTE AROUND A MARKET ROUND'S SOURCE ROUND (kanban #362 feature 6): marker, 32-byte round id, marker - 34 bytes, after the
+ * creator's key. Read from protocol version 2026.0.6 (constants.js GAME_MARKET_VERSION) on, and only there.
+ */
+export const SOURCE_ROUND_MARKER = 0xc4;
+const SOURCE_ROUND_BYTES = 34;
 /** The byte before a round's named rules (§6, kanban #314), before the creator's key; their tail is 148 bytes. */
 export const RULES_MARKER = 0xc2;
 const RULES_BYTES = 148;
@@ -418,9 +442,16 @@ export function decodeRoundContract(bytes) {
   const asked = contractEventTail(r.b, left);
   const tailEnd = asked ? r.b.length - asked.size : r.b.length;
   if (asked) left -= asked.size;
+  // THE SOURCE ROUND OF A MARKET ON A GAME (kanban #362 feature 6), before the question: 34 bytes between two markers, looked for
+  // ONLY on a contract of version 6 or later - a contract below 6 is read exactly as before - and only when what stands before
+  // it is one of the tails a contract may end with (no tail of those 16 lengths is another one plus 34)
+  const sourceAt = c.protocolVersion >= GAME_MARKET_VERSION && left >= SOURCE_ROUND_BYTES && contractTailFits(left - SOURCE_ROUND_BYTES)
+    && r.b[tailEnd - 1] === SOURCE_ROUND_MARKER && r.b[tailEnd - SOURCE_ROUND_BYTES] === SOURCE_ROUND_MARKER ? tailEnd - SOURCE_ROUND_BYTES : -1;
+  if (sourceAt >= 0) left -= SOURCE_ROUND_BYTES;
+  const beforeSource = sourceAt >= 0 ? sourceAt : tailEnd;
   // THE CREATOR'S KEY, last when named (kanban #313): 33 more bytes, its marker first; and before it the rules (kanban #314), 148
   const base = [0, 4, 36, 40];
-  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? tailEnd - 33 : -1;
+  const creatorAt = base.some((b) => left === b + 33 || left === b + RULES_BYTES + 33) ? beforeSource - 33 : -1;
   if (creatorAt >= 0) {
     if (r.b[creatorAt] !== CREATOR_MARKER) throw new Error(`a round contract with ${left} trailing bytes`);
     left -= 33;
@@ -454,6 +485,13 @@ export function decodeRoundContract(bytes) {
     c.creatorPubkey = r.bytes32();
     if (c.creatorPubkey.every((b) => b === 0)) throw new Error('a round names its creator by a 32-byte x-only key');
     if (!(c.protocolVersion >= CREATOR_VERSION)) throw new Error(`a round names its creator from protocol version ${CREATOR_VERSION} on`);
+  }
+  if (sourceAt >= 0) {
+    r.u8();
+    c.sourceRoundId = r.bytes32();
+    r.u8();
+    if (c.sourceRoundId.every((b) => b === 0)) throw new Error('a market on a game names its source round by a 32-byte round id');
+    if (c.seriesId !== undefined) throw new Error('a market on a game is no round of a series');
   }
   if (asked) {
     r.bytes(asked.size);                                      // read whole by contractEventTail

@@ -268,6 +268,8 @@ GameManifest {
     attest_threshold              //   attestor keys, and how many of them must sign (k of n)
   template                        // ATTESTED, optional (§0A.7c): category, max_outcomes, resolve_within -
                                   //   each round then asks its own question
+  game_source                     // ATTESTED, optional (§0A.7d): source_game_id, source_kind, mapping[] -
+                                  //   each round names its source round, whose signed result decides it
   signature                       // by game_dev_pubkey over all of the above
 }
 game_id = H(GameManifest)
@@ -727,6 +729,104 @@ round with its `event`, `GET /round` names the question beside the contract's
 bytes (`x-question`, `x-outcomes`, `x-resolve-at-ms`), `GET /outcome` answers
 the round's question and labels; the page's lobby shows the question from the
 contract it checked, not a node's word.
+
+## 0A.7d Markets on games *(AS BUILT 2026-10-15, kanban #362 feature 6, protocol 2026.0.6; docs/PLATFORM-RESEARCH.md item 6)*
+
+**Why.** Every game round already ends in a result its own committee signs.
+A market whose outcome **is** that signed result needs no oracle and no
+attestor: spectators back BULLS or BEARS of a Tick Tock round, and the
+round's 5-of-7 RoundResult (§13) settles them.
+
+**The source, in the manifest.** An `ATTESTED` manifest may name, after its
+own marker byte `0x05` (behind the market terms, never beside a template,
+before the required version `0x02`):
+
+```text
+game_source {
+  source_game_id                  // 32 bytes: the manifest id of the game whose rounds it is a market on
+  source_kind                     // 1 = ROUND_RESULT: a price round's §13 RoundResult (the only kind)
+  mapping[]                       // one byte per value of that result, in order BULLS, BEARS, FLAT:
+                                  //   an index into the manifest's outcomes[], or 0xff = refund
+}
+```
+
+Such a manifest names **no attestors and a threshold of 0** (the fields are
+written empty): no attestation decides it, and `POST /outcome` refuses one
+for it by name (an empty attestation would otherwise meet a threshold of 0).
+It must name market terms (fees, question, `resolve_after_close_ms`,
+`deadline_after_resolve_ms`), runs on no grid (`round_period` 0), and
+**requires protocol version 2026.0.6 or later** (#349). Every outcome must be
+some value's (no pick that can never win). Tick Tock's natural market:
+`outcomes [BULLS, BEARS]`, `mapping [0, 1, 0xff]` - FLAT refunds; a three-way
+market maps FLAT to a third outcome instead.
+
+**The source round, in the round.** A Round Contract of version 6 or later
+may carry, after the creator's key and before a question:
+
+```text
+source_round {                    // marker 0xc4, then the id, then 0xc4 again: 34 bytes
+  source_round_id                 // the id of the one round of the source game this round is a market on
+}
+```
+
+It is in the hashed bytes, so the source is the market round's id. With it a
+contract's tail is one of the 16 lengths a contract may end with plus 34, and
+no tail of those 16 lengths is another plus 34, so the decoder tells them
+apart by length - and looks for it **only on a version-6 contract**: a
+contract below 6 is read exactly as before (all 48 layouts of versions 4 and
+5 with deadline, series, rules, creator and question keep their bytes and
+round ids; versions 1-3 as pinned in §0A.7c). Never on a round of a series,
+never beside a question. A round of a market on a game **must** name its
+source, a round of any other game **must not** (`roundFitsManifest`, 409 by
+name at `POST /round`).
+
+**Timing.** The market's entries close **no later than its source round
+starts** - before the source's first price sample exists - and its source
+round **ends no later than** the market's resolution time (entry close +
+`resolve_after_close_ms`). A market round whose entries close after its source
+starts, whose source is a round of another game, or whose source ends late is
+refused by name (`gameMarketFitsSource`) and can never come to fit: it is
+VOID. A source round of a series (Tick Tock's are) has the id
+`H(series_id || i)`, which does not hash its times, so its contract is taken
+only as its series derives it (`seriesRoundCheck`, or a seat's own stored copy,
+which it keeps only after that check).
+
+**What "signed result" means.** For `ROUND_RESULT`: the RoundResult
+`{ round_id, open_cents, close_cents, front }` of the source round (§13), its
+id (`ARENA/v1/RoundResult`) signed with BIP-340 node keys by at least the
+source round's own threshold - `receiptsNeeded(settlement_slots)`, 5 of 7 - of
+distinct keys of the source round's **settlement committee as the verifier
+draws it** from the census and the beacon (a seat: its roster; a page: the
+committee it derived), never the source contract's `nodes`, which a round id
+does not hash from version 2. It is exactly the check a page makes to show THE
+BULLS WIN for the source round itself. A key outside the committee, a second
+signature by one key, or a signature over another result counts nothing.
+
+**Resolution.** `gameMarketResolution` answers the market's outcome (the
+mapping of the result's front), a **refund** (a value mapped to `0xff`), VOID
+(the source does not fit), or no standing result yet. The market is **VOID -
+every stake back, its fee too, as §0A.7b's refund at the deadline** - on a
+refund, on a source that does not fit, and when no signed result of its source
+stands by entry close + `resolve_after_close_ms` + `deadline_after_resolve_ms`
+(a source round that was itself VOID, or never ran, signs no result).
+
+**Not a source kind: head-to-head (RPS).** A head-to-head round signs no
+round-level result: each entry's PlayerResult (§13) names one player key and
+WIN/DRAW/LOSS as DELIVERED/FAILED and a score, and the round's players are
+known only when its entries close - after a market on it must have closed. A
+market could name no seat whose result it pays before it is too late to pick.
+That kind needs a signed per-table winner first.
+
+**At a seat (as built).** `POST /game-outcome?round=<market round id>` takes
+`{ openCents, closeCents, front?, sigs: [{ key, signature }] }` - what each
+source seat answers at `GET /round-result` - and answers the verified
+resolution, checked against the source round the seat holds and the
+committee its roster draws (arena-node `game-market.js`). It holds and settles
+nothing yet: writing the resolution as the round's outcome for the attested
+settlement, an early VOID on a refund, fetching a source round the seat does
+not hold, and the page's market lines are what is left. **Dormant until seats
+advertise 6**: a version-6 round draws a committee only from nodes whose
+advert lists 6.
 
 ## 0A.8 The money: 10% of the gross stake
 
