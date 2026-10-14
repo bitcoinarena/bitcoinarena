@@ -306,6 +306,8 @@ export const TAG = {
   contractRule: 'ARENA/v1/ContractRule',
   // A GUARDIAN FOUNDING'S TICKET (§23A.2, kanban #320): the spec's own tag
   guardianTicket: 'BLWP/v1/GUARDIAN',
+  // WHO IS ON DUTY TO POST THE ROUNDS 24 H AHEAD (kanban #352): a node's rank for a slot
+  duty: 'BLWP/v1/DUTY',
   entryContract: 'ARENA/v1/EntryContract',
   advert: 'ARENA/v1/Advert',
   censusLeaf: 'ARENA/v1/CensusLeaf',
