@@ -32,7 +32,12 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 const EVERY = PRICE_SAMPLE_EVERY_MS;
 export const SIGN_SLACK_MS = 15000;
-export const DEFAULT_TOLERANCE = 0.005;
+// THE TOLERANCE, 0.05 % (kanban #312, RULED the owner 2026-10-14 ~21:50Z, interim D): at 0.5 % a seat signed any proposed price
+// within about +-$408 of its own reading - more than BTC moves in a run - so the seat that proposed a sample chose BULLS, BEARS
+// or FLAT (measured on rounds 6b51be20 / a45f2ae5: both ends the 15:36 close, $81,766.45, while the run traded $81,713-81,838).
+// 0.05 % (about +-$41) narrows that choice until protocol 5 signs each seat's own reading and takes the median; a sample whose
+// seats are further apart than this stays unsigned rather than signed at a price somebody chose.
+export const DEFAULT_TOLERANCE = 0.0005;
 const verify = (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } };
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const grid = (ms) => Math.floor(ms / EVERY) * EVERY;
@@ -46,7 +51,28 @@ export function closeSampleK(endTick) {
   return k;
 }
 
-/** BTC/USD in whole cents from Coinbase's spot price - the default feed. */
+/**
+ * BTC/USD FROM COINBASE'S EXCHANGE TICKER, WITH ITS TIME (kanban #312 interim B): the last trade's price and when it traded -
+ * real time, where the consumer spot price (below) is cached and trailed the exchange by 5-20 s (measured 2026-10-14 21:41Z).
+ * Answers { cents, atMs }.
+ */
+export async function exchangeTickerCents(fetcher = fetch) {
+  const r = await fetcher('https://api.exchange.coinbase.com/products/BTC-USD/ticker', { signal: AbortSignal.timeout(4000) });
+  if (!r.ok) throw new Error(`the ticker answered ${r.status}`);
+  const j = await r.json();
+  const cents = Math.round(Number(j && j.price) * 100);
+  const atMs = Date.parse(j && j.time);
+  if (!Number.isInteger(cents) || cents <= 0) throw new Error('the ticker answered no price');
+  if (!Number.isFinite(atMs)) throw new Error('the ticker answered no trade time');
+  return { cents, atMs };
+}
+
+/** The default reading: the exchange ticker; the spot price only when the ticker does not answer (its age unknown: now). */
+export async function coinbaseReading(fetcher = fetch) {
+  try { return await exchangeTickerCents(fetcher); } catch { return { cents: await coinbaseCents(fetcher), atMs: Date.now() }; }
+}
+
+/** BTC/USD in whole cents from Coinbase's spot price - the fallback feed. */
 export async function coinbaseCents(fetcher = fetch) {
   const r = await fetcher('https://api.coinbase.com/v2/prices/BTC-USD/spot', { signal: AbortSignal.timeout(4000) });
   if (!r.ok) throw new Error(`the feed answered ${r.status}`);
@@ -61,7 +87,7 @@ export class PriceFeed {
    * `round`: the seat's Round (db, identity, get, openRounds). `priceRound(contract)`: whether that round plays against
    * the feed. `readPrice()`: cents, the seat's own read. `peersFor(roundIdBytes)`: the other seats' base URLs.
    */
-  constructor(round, { priceRound = () => false, readPrice = () => coinbaseCents(), peersFor = () => [], fetcher = (u, o) => fetch(u, o),
+  constructor(round, { priceRound = () => false, readPrice = () => coinbaseReading(), peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     now = () => Date.now(), tolerance = DEFAULT_TOLERANCE } = {}) {
     Object.assign(this, { round, priceRound, readPrice, peersFor, fetcher, now, tolerance });
     this.readings = new Map();   // grid ms -> cents, this seat's own
@@ -92,19 +118,34 @@ export class PriceFeed {
     return x;
   }
 
-  /** This seat's own reading for the grid moment `ms` (or the one beside it), or null. */
+  /**
+   * This seat's own reading for the moment `ms`, or null. NEVER OLDER THAN ONE PERIOD (kanban #312 interim C): only a reading
+   * whose price was current within EVERY (5 s) of `ms` counts - the nearest such - so no stale price is vouched for; a seat
+   * without one signs nothing for that moment.
+   */
   ownAt(ms) {
     const g = grid(ms);
-    for (const at of [g, g - EVERY, g + EVERY]) if (this.readings.has(at)) return this.readings.get(at);
-    return null;
+    let best = null;
+    for (const at of [g, g - EVERY, g + EVERY]) {
+      const r = this.readings.get(at);
+      if (!r) continue;
+      const d = Math.abs(r.atMs - ms);
+      if (d <= EVERY && (!best || d < best.d)) best = { d, cents: r.cents };
+    }
+    return best ? best.cents : null;
   }
 
   async read() {
-    const at = grid(this.now());
-    if (this.readings.has(at)) return this.readings.get(at);
-    let c = null;
-    try { c = await this.readPrice(); } catch { c = null; }
-    if (Number.isInteger(c) && c > 0) this.readings.set(at, c);
+    const now = this.now();
+    const at = grid(now);
+    if (this.readings.has(at)) return this.readings.get(at).cents;
+    let got = null;
+    try { got = await this.readPrice(); } catch { got = null; }
+    // a reader may answer cents (read now) or { cents, atMs } (the price's own time, the exchange ticker's last trade)
+    const r = Number.isInteger(got) ? { cents: got, atMs: now } : got && Number.isInteger(got.cents) ? { cents: got.cents, atMs: Number(got.atMs) } : null;
+    // a price already older than one period when it is read is no reading (kanban #312 interim C)
+    const c = r && r.cents > 0 && Number.isFinite(r.atMs) && now - r.atMs <= EVERY ? r.cents : null;
+    if (c !== null) this.readings.set(at, { cents: c, atMs: Math.min(r.atMs, now) });
     for (const k of [...this.readings.keys()].sort((a, b) => a - b).slice(0, Math.max(0, this.readings.size - 128))) this.readings.delete(k);
     return c;
   }
@@ -266,9 +307,9 @@ export class PriceFeed {
     const start = Number(c.contract.startTimeMs);
     const prices = [];
     for (let i = 0; i < PRICE_TAPE_LENGTH; i++) prices.push(this.ownAt(start - (PRICE_TAPE_LENGTH - i) * EVERY));
-    // a moment this seat did not read takes the nearest reading before it (or after, at the very first)
-    for (let i = 0; i < prices.length; i++) if (prices[i] === null) prices[i] = prices.slice(0, i).reverse().find((x) => x !== null) ?? prices.slice(i).find((x) => x !== null) ?? null;
-    if (prices.some((p) => p === null)) return refuse('this seat holds no readings before the start');
+    // A MOMENT THIS SEAT DID NOT READ STAYS UNREAD (kanban #312 interim C): it is not filled with an older price - the tape goes
+    // out only when this seat read every moment; the other seats vouch for the moments they read (sign: at least half)
+    if (prices.some((p) => p === null)) return refuse('this seat did not read every moment before the start, and fills none with an older price');
     const own = this.sign({ round: rh, kind: 'tape', prices }); if (!own.ok) return own;
     const sigs = [{ key: own.key, signature: own.signature }, ...await this.#ask(roundIdBytes, { round: rh, kind: 'tape', prices })];
     const held = this.hold({ round: rh, kind: 'tape', prices, sigs });
