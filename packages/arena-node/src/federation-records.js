@@ -299,6 +299,8 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     /** THE INVITE A FEDERATION'S SIGNED RECORD CARRIES (kanban #348): how this node joins a federation it did not found. */
     inviteOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k && k.record && k.record.invite ? String(k.record.invite) : null; },
     /** The kept record of a federation ({ record, status, height }) and, while it is HALTED, the halt it counts from. */
+    /** THE ACTIVE SEATS OF THIS SEAT'S CENSUS, by node key (halts.js, kanban #323): who may observe a halt. */
+    censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height } : null; },
     haltOf: (fidHex) => halted.get(String(fidHex).toLowerCase()) || null,
     haltedFederations: () => [...halted.keys()],
