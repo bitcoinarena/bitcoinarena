@@ -8690,11 +8690,19 @@ async function attestedClaimKey({ round, signerNodes, nodes, curve, fetcher = fe
   const id = toHex(round.id);
   const byKey = new Map();
   const refused = [];
-  for (const node of nodes || []) {
+  // EVERY NODE AT ONCE (kanban #353, measured 2026-10-14 03:26Z on testnet4): asked one after another, the 14 seats a v2 round
+  // draws from took 27 s here - a round whose key all 7 signer nodes had attested since 03:24Z - and a market order's 60 s
+  // expiry and an 8 s RPS table both ran out before the pick. Read together, kept in the nodes' order as before.
+  const answers = await Promise.all((nodes || []).map(async (node) => {
     try {
       const r = await readWithOneRetry(fetcher, node.replace(/\/+$/, '') + '/claim-key?round=' + id);
-      if (!r.ok) { refused.push(`${node}: answered ${r.status} ${(await r.text()).trim()}`); continue; }
-      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (!r.ok) return { refused: `${node}: answered ${r.status} ${(await r.text()).trim()}` };
+      return { bytes: new Uint8Array(await r.arrayBuffer()), node };
+    } catch (e) { return { refused: `${node}: ${e.message}` }; }
+  }));
+  for (const { refused: why, bytes, node } of answers) {
+    if (why) { refused.push(why); continue; }
+    try {
       if (bytes.length !== ATTESTATION_BYTES + 64) { refused.push(`${node}: answered ${bytes.length} bytes, not one signed claim key`); continue; }
       const a = decodeClaimKeyAttestation(bytes.subarray(0, ATTESTATION_BYTES));
       if (toHex(a.roundId) !== id) { refused.push(`${node}: attested a claim key for another round`); continue; }
