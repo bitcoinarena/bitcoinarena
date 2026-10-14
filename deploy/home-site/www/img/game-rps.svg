@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 500" preserveAspectRatio="xMidYMid slice">
+<title>Rock Paper Scissors: two sealed picks face to face, eight seconds on the clock</title>
+<defs>
+<radialGradient id="glow" cx="50%" cy="48%" r="65%"><stop offset="0" stop-color="#ff5ab4" stop-opacity=".30"/><stop offset=".5" stop-color="#ff5ab4" stop-opacity=".06"/><stop offset="1" stop-color="#ff5ab4" stop-opacity="0"/></radialGradient>
+<linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#101723"/><stop offset="1" stop-color="#07090d"/></linearGradient>
+<linearGradient id="face" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b2433"/><stop offset="1" stop-color="#0e131b"/></linearGradient>
+<pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#8d99a8" fill-opacity=".14"/></pattern>
+</defs>
+<rect width="800" height="500" fill="url(#bg)"/><rect width="800" height="500" fill="url(#dots)"/><rect width="800" height="500" fill="url(#glow)"/>
+<rect width="800" height="500" fill="#4fd1ff" fill-opacity=".03"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#ffd166" stroke-width="10" stroke-linecap="round" transform="rotate(2.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#ffd166" stroke-width="10" stroke-linecap="round" transform="rotate(47.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#ffd166" stroke-width="10" stroke-linecap="round" transform="rotate(92.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#ffd166" stroke-width="10" stroke-linecap="round" transform="rotate(137.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#ffd166" stroke-width="10" stroke-linecap="round" transform="rotate(182.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#2a3544" stroke-width="10" stroke-linecap="round" transform="rotate(227.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#2a3544" stroke-width="10" stroke-linecap="round" transform="rotate(272.5 400 250)"/>
+<path d="M400 154A96 96 0 0 1 461.7 176.5" fill="none" stroke="#2a3544" stroke-width="10" stroke-linecap="round" transform="rotate(317.5 400 250)"/>
+<circle cx="400" cy="250" r="70" fill="#f7931a"/><circle cx="400" cy="250" r="70" fill="none" stroke="#ffe2a8" stroke-opacity=".6" stroke-width="3"/>
+<text x="400" y="267" text-anchor="middle" font-family="Space Grotesk,Inter,system-ui,sans-serif" font-size="50" font-weight="700" fill="#1a0f00">8s</text>
+<g transform="translate(176 250) rotate(-8)"><rect x="-78" y="-104" width="156" height="208" rx="22" fill="url(#face)" stroke="#ff5ab4" stroke-width="4"/><rect x="-62" y="-88" width="124" height="176" rx="14" fill="#ff5ab4" fill-opacity=".07"/><g transform="translate(0 -10)"><rect x="-44" y="-30" width="88" height="60" rx="27" fill="#e8edf3"/><path d="M-22 -28v22M0 -30v24M22 -28v22" stroke="#0e131b" stroke-width="6" stroke-linecap="round"/><rect x="-50" y="2" width="28" height="22" rx="11" fill="#e8edf3" stroke="#0e131b" stroke-width="5"/></g><text y="78" text-anchor="middle" font-family="Space Grotesk,Inter,system-ui,sans-serif" font-size="17" font-weight="700" letter-spacing="2" fill="#ff8fcb">YOUR PICK</text></g>
+<g transform="translate(624 250) rotate(8)"><rect x="-78" y="-104" width="156" height="208" rx="22" fill="url(#face)" stroke="#4fd1ff" stroke-width="4"/><rect x="-62" y="-88" width="124" height="176" rx="14" fill="#4fd1ff" fill-opacity=".07"/><g transform="translate(0 6)"><path d="M-22 -14v-14a22 22 0 0 1 44 0v14" fill="none" stroke="#e8edf3" stroke-width="9"/><rect x="-34" y="-16" width="68" height="54" rx="10" fill="#e8edf3"/><circle cy="6" r="7" fill="#0e131b"/><rect x="-3" y="8" width="6" height="16" rx="3" fill="#0e131b"/></g><text y="78" text-anchor="middle" font-family="Space Grotesk,Inter,system-ui,sans-serif" font-size="17" font-weight="700" letter-spacing="2" fill="#8fe3ff">SEALED</text></g>
+<g transform="translate(400 58) rotate(-10)" opacity=".9"><path d="M-23 -29h31l15 15v43h-46z" fill="#e8edf3"/><path d="M8 -29v15h15" fill="#b9c4cf"/><path d="M-15 -7h28M-15 3h28M-15 13h20" stroke="#8d99a8" stroke-width="4" stroke-linecap="round"/></g>
+<g transform="translate(400 448) rotate(12)" opacity=".9"><path d="M-3 3L26 -29M3 3L-26 -29" stroke="#e8edf3" stroke-width="8" stroke-linecap="round"/><circle cx="-13" cy="20" r="12" fill="none" stroke="#f7931a" stroke-width="7"/><circle cx="13" cy="20" r="12" fill="none" stroke="#f7931a" stroke-width="7"/></g>
+<path d="M262 250H300M500 250H538" stroke="#2a3544" stroke-width="4" stroke-dasharray="6 8" stroke-linecap="round"/>
+</svg>
