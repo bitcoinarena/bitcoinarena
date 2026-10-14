@@ -17,9 +17,25 @@
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
-import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid } from '../../arena-protocol/src/series.js';
+import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
+import { conflictedNodes, servingAfterConflicts } from '../../arena-protocol/src/operator-conflict.js';
+import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
+import { stateOf } from './settlement-state.js';
+import { missedInARow, seatingWarning } from './seatings.js';
+import { nodeStanding } from './node-standing.js';
+import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
+import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
+import { blockHashOf } from '../../arena-protocol/src/chain.js';
+import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
+import { rulesStand } from '../../arena-protocol/src/rules.js';
+import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
+import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
+import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
+import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
+import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify } from 'node:crypto';
@@ -31,7 +47,7 @@ import { relayPost, relayMarks } from './relay.js';
 import { CHOICE, voteMessage, encodeVote, SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { createProposals } from './proposals.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
-import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf } from '../../arena-protocol/src/contracts.js';
+import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
@@ -55,10 +71,18 @@ import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
+import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex } from './absences.js';
+import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
+import { createFoundingSeat, cliSetup } from './founding-seat.js';
+import { execFile as execFileCb } from 'node:child_process';
+import { createLiquidations } from './liquidations.js';
+import { createHalts, wsSessionCount } from './halts.js';
+import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
+import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation-slash.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -134,7 +158,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lo
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-import { splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
+import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
@@ -395,6 +419,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE NODE'S OPEN MUSIG2 SESSIONS (kanban #307): session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
+  // ABSENCE ATTESTATIONS (§23A.4, kanban #322): taken at POST /absence, and what proves a guardian ABANDONED in the record
+  const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
+  let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
+  let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
+  let ownGuardianSeat = () => null;
+  let foundingSeat = null;                     // founding-seat.js (kanban #320), with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -413,7 +443,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // and, once ATTESTED, the pari-mutuel table the settlement seats pay from (built here from the entries' picks and the
   // outcome, no game code). null for a round of a replayed game, or of a game this node does not host.
   const attestedOf = (c) => { const f = pluginForRound(c, hosted); return f.ok && f.attested ? f.plugin : null; };
-  const warningsOf = (c) => { const f = pluginForRound(c, hosted); try { return contractWarnings(c, f.ok ? f.plugin.roundWarnings : null); } catch { return []; } };
+  // A CENSUS OBJECTED (§5A.4, kanban #299): rounds whose census block this seat found, on its own chain, to be another block than an
+  // explorer outside the network names - after a client's objection, checked here; such a round takes no new entry and lists it
+  const censusObjections = new Map();          // round hex -> { explorer, why, atMs }
+  // THE BOND_MIN A 2026.0.3 ROUND MAY NAME (§27A.2-3, kanban #305): at least the floor in force at its census height - the bond-weighted
+  // median of the declared bond_min, a rise counted only once it has held notice_period (bondMinInForce). The median is read at the census
+  // height and at six points across the notice before it (a dip between two of them is not seen, so this errs strict), each kept per
+  // height. A round naming a higher bond_min is stricter, and taken. Rounds of protocol 1 and 2 are not asked: their floor is their own.
+  const medianAtHeight = new Map();            // height -> bigint | null
+  const bondMinFloorFor = (contract, rid) => {
+    if (!(contract.protocolVersion >= 3)) return null;
+    const notice = NOTICE_BLOCKS[networkOf(contract.networkId)] || NOTICE_BLOCKS.mainnet;
+    const H = Number(contract.censusHeight), step = Math.max(1, Math.floor(notice / 6));
+    const heights = []; for (let h = H - notice; h < H; h += step) heights.push(h); heights.push(H);
+    const history = [];
+    for (const h of heights) {
+      if (!medianAtHeight.has(h)) {
+        let c; try { c = roster.censusFor(rid, h, { asRoundsOwn: false, posted: contract }); } catch { c = { ok: false }; }
+        if (!c.ok) continue;                     // not readable now: asked again next time
+        medianAtHeight.set(h, bondWeightedMedian(c.entries || [], 'bondMinSats'));
+        if (medianAtHeight.size > 4096) medianAtHeight.delete(medianAtHeight.keys().next().value);
+      }
+      const m = medianAtHeight.get(h);
+      if (typeof m === 'bigint') history.push({ height: h, median: m });
+    }
+    return history.length ? { ...bondMinInForce(history, H, notice), points: history.length } : null;
+  };
+  const bondMinStands = (contract, rid) => {
+    const f = bondMinFloorFor(contract, rid);
+    if (!f || f.inForce === null) return { ok: true };
+    return BigInt(contract.bondMinSats) >= f.inForce ? { ok: true, floor: f }
+      : { ok: false, why: `that round names bond_min ${contract.bondMinSats} sat, under the ${f.inForce} sat in force at its census height ${contract.censusHeight} (the census's bond-weighted median, a rise counted after notice_period; §27A.2-3)` };
+  };
+  const warningsOf = (c, rid = null) => { const f = pluginForRound(c, hosted); let w = []; try { w = contractWarnings(c, f.ok ? f.plugin.roundWarnings : null); } catch { w = []; }
+    return rid && censusObjections.has(toHex(rid)) ? [...w, 'census_objected'] : w; };
   const outcomeOf = (rid, c, { table = false } = {}) => {
     const plugin = attestedOf(c);
     if (!plugin) return null;
@@ -454,7 +517,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       sweeping = true;
       try {
       const ids = round.db.prepare('SELECT DISTINCT round_id FROM outcome_attestations').all().map((r) => new Uint8Array(r.round_id));
-      const waiting = ids.filter((rid) => { const k = round.lockSettlement(rid); return !(k && k.state === 'ACCEPTED'); });
+      const waiting = ids.filter((rid) => stateOf(round, rid) !== 'ACCEPTED');
       if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
       for (const rid of waiting) {
         const got = await settlements.settle(rid).catch((e) => ({ ok: false, why: e.message }));
@@ -1218,7 +1281,40 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     };
     schedulePrices();
   }
+  // WHO IS CONFLICTED IN A ROUND (§5A.13, kanban #309): the committee nodes whose advertised operator plays it - a player's own
+  // key or the operator its entry declares (operator-conflict.js); `self` this node's operator when it is one of them, and
+  // whether the settlement committee still holds its threshold without them
+  const conflictsFor = (rid) => {
+    const game = roster.committeeFor(rid, 'game');
+    const settle = roster.committeeFor(rid, 'settlement');
+    const nodes = [...(game.ok ? game.committee : []), ...(settle.ok ? settle.committee : [])];
+    let entries = [];
+    try { entries = round.entriesOf(rid).map((x) => x.entry); } catch { entries = []; }
+    const conflicted = conflictedNodes({ nodes, entries });
+    const committee = settle.ok ? settle.committee.map((e) => e.pubkey) : [];
+    let threshold;
+    try { threshold = committeeThreshold(committee.length); } catch { threshold = undefined; }
+    return { conflicted, self: conflicted.get(toHex(round.pubkey)) || null,
+      serving: servingAfterConflicts({ committee, conflicted, ...(threshold ? { threshold } : {}) }) };
+  };
+  // THE SERIES PUBLISHER'S FEE BACK (§5A.5, kanban #304): a series round naming its creator (#313) whose series' publication fee
+  // this seat holds proven (POST /series-publication) pays min(fee, 10,000 sat) to the creator's key - in round 0, or the first
+  // round of the series with entries (publisher-payout.js publisherRoundIndex); every other round pays nothing of it
+  const publisherFor = (rid, contract) => {
+    if (!(contract.seriesId instanceof Uint8Array) || !(contract.creatorPubkey instanceof Uint8Array)) return null;
+    const kept = round.seriesPublication(contract.seriesId);
+    if (!kept) return null;
+    const counts = new Map();
+    for (let j = 0; j <= contract.roundIndex; j++) {
+      const n = j === contract.roundIndex ? Math.max(1, round.entriesOf(rid).length) : round.entriesOf(seriesRoundIdOf(contract.seriesId, j)).length;
+      counts.set(j, n);
+      if (n > 0) break;                                     // the first with entries is found: later ones never pay it
+    }
+    if (publisherRoundIndex(counts) !== contract.roundIndex) return null;
+    return { payoutPk: refundKeyOf(contract.creatorPubkey), msat: publisherPayoutMsat(kept.feeSats) };
+  };
   const settlements = new LockSettlement(round, {
+    conflictsFor,
     dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
@@ -1241,8 +1337,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // AND THE GUARDIAN POOL (§22A v4.6.4): the census nodes guarding the round's federation; none - the two-pool table
       let guardian = [];
       try { const g = roster.guardiansFor(rid); if (g.ok) guardian = g.guardians; } catch { guardian = []; }
+      // A CONFLICTED NODE EARNS NO FEE SHARE (§5A.13): named for feeSettlement, which leaves it out of `eligible`
+      // AND THE SERIES PUBLISHER'S FEE BACK, in the round that pays it (§5A.5, kanban #304)
+      const publisher = publisherFor(rid, contract);
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
-        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian };
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian,
+        conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}) };
     },
   });
 
@@ -1306,6 +1406,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
   const verifier = new Verifier(round, {
     plugins: hosted,
+    conflictsFor,
     advertsFor: advertsFor || ((rid) => {
       const census = roster.censusFor(rid);
       return census.ok ? new Map(census.entries.map((e) => [toHex(e.pubkey), e.advert])) : null;
@@ -1529,6 +1630,23 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
     return contract && contract.federationId instanceof Uint8Array ? stakeLocks.forFederation(toHex(contract.federationId)) : null;
   }
+  // THE PORT OF ONE FEDERATION, BY ITS ID (2026.0.3, kanban #348): a round that takes any federation has none of its own -
+  // each entry's locks are in the federation the entry names (entryFederation)
+  async function portOfFederation(fid) {
+    if (!stakeLocks) return null;
+    if (typeof stakeLocks.forFederation !== 'function') return stakeLocks;
+    return fid instanceof Uint8Array ? stakeLocks.forFederation(toHex(fid)) : null;
+  }
+  /** The port of a stored entry's federation (its round's, or the one it names on a round that takes any), or null. */
+  async function portOfEntryBytes(stored) {
+    try {
+      const e = decodeEntryContract(stored);
+      const row = round.get(e.roundId);
+      if (!row) return null;
+      const fed = entryFederation(decodeRoundContract(new Uint8Array(row.contract)), e);
+      return fed.ok ? portOfFederation(fed.federationId) : null;
+    } catch { return null; }
+  }
   async function portOfRid(rid) {
     const row = round.get(rid instanceof Uint8Array ? rid : new Uint8Array(rid));
     if (!row) return null;
@@ -1536,11 +1654,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   }
   const portRefusal = (contract) => `this signer node cannot reach federation ${toHex(contract.federationId).slice(0, 16)} yet`
     + `${stakeLocks && typeof stakeLocks.whyNot === 'function' && stakeLocks.whyNot(toHex(contract.federationId)) ? `: ${stakeLocks.whyNot(toHex(contract.federationId))}` : ''}`;
-  async function guardiansBonded(rid, contract) {
+  async function guardiansBonded(rid, contract, fid = contract.federationId) {
     if (!stakeLocks || typeof stakeLocks.guardians !== 'function')
       return { ok: false, why: REACHES_NO_FEDERATION };
-    const fport = await portOfRound(contract);
-    if (!fport) return { ok: false, why: portRefusal(contract) };
+    const fport = await portOfFederation(fid);
+    if (!fport) return { ok: false, why: portRefusal({ federationId: fid }) };
     // THE POSTED CONTRACT, stored or not: POST /round asks this before round.open (RULED 2026-09-25).
     // PICK B (old-series.js): series 3cfbe516's guardians are counted where their advertisements name them (154300).
     const oldSeries = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId);
@@ -1559,10 +1677,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let g;
     try { g = await fport.guardians(); }
     catch (e) { return { ok: false, why: `this signer node could not read its federation's guardians: ${e.message}` }; }
-    if (!g || toHex(g.federationId) !== toHex(contract.federationId))
+    if (!g || toHex(g.federationId) !== toHex(fid))
       return { ok: false, why: `this signer node reaches federation ${g ? toHex(g.federationId).slice(0, 16) : 'none'} and that round names `
-        + `${toHex(contract.federationId).slice(0, 16)}, so it cannot count that federation's guardians` };
-    const bonded = federationIsBonded({ federationId: contract.federationId, guardianKeys: g.keys, threshold: g.threshold,
+        + `${toHex(fid).slice(0, 16)}, so it cannot count that federation's guardians` };
+    const bonded = federationIsBonded({ federationId: fid, guardianKeys: g.keys, threshold: g.threshold,
       census: census.entries, bondMinSats: contract.bondMinSats });
     return bonded.ok ? bonded : { ok: false, why: `this signer node assigns no round on an unbonded federation (§23.6): ${bonded.why}` };
   }
@@ -2564,6 +2682,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!lead.ok) return { ok: false, code: 409, why: lead.why };
     const sid = seriesId(t), id = toHex(sid);
     if (writers.some((w) => toHex(w.id) === id)) return { ok: true, series: id, rounds: t.seriesCount, held: true };
+    // A SERIES THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID (kanban #313): the line's creator=<signature>
+    { const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
+      if (!cr.ok) return { ok: false, code: 403, why: `series ${id.slice(0, 16)}: ${cr.why}` }; }
+    // AND A 2026.0.3 SERIES' BOND_MIN, ONCE FOR ALL ITS ROUNDS (kanban #305): they share its template's census height and floor
+    { const r0 = seriesRound(t, 0); const bm = bondMinStands(r0, roundIdOf(r0)); if (!bm.ok) return { ok: false, code: 409, why: `series ${id.slice(0, 16)}: ${bm.why}` }; }
     if (refuseSeries(t)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} is not written here: its game is not hosted, or its donation set or federation is refused` };
     if (persist && !funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: sid }, node: fundingView }))
       return { ok: false, code: 402, why: `this node stores nothing for a series nobody has funded (series ${id.slice(0, 16)})` };
@@ -2674,12 +2797,116 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return r;
   };
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+    absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
+    departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
     successorOf: (fidHex) => { const d = drainingFeds.get(fidHex); return d && d.successor ? String(d.successor) : null; },
     closedOf: (fidHex) => { const d = drainingFeds.get(fidHex); return !!d && Number(round.now()) - Number(d.sinceMs) >= DRAIN_MS && !openRoundNames(fidHex); } });
   // EVERY NODE SERVES EVERY FEDERATION (kanban #348, RULED the owner 2026-10-13): another federation's port is joined with the
   // invite its signed record carries - the records this seat mirrors for every federation its census names
   if (stakeLocks && 'inviteOf' in stakeLocks) stakeLocks.inviteOf = (fid) => fedRecords.inviteOf(fid);
+  // A HALTED FEDERATION'S LIQUIDATION (§23A.5, kanban #323), mirrored at GET /liquidations, on the clocks of this seat's chain
+  // A HALT PROVEN BY THE SEATS (§23A.5 "How a halt is proven", RULED 2026-10-14, kanban #323): this seat observes every guardian of every
+  // federation it holds a record of, signs once the last session has not moved for abandon_blocks, and keeps its peers' observations
+  const fedClocks = FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet;
+  const schnorrVerify = (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } };
+  halts = typeof chainTip === 'function' ? createHalts({ records: fedRecords, censusSeats: () => fedRecords.censusKeys(), clocks: fedClocks, verify: schnorrVerify,
+    sign: (h) => schnorr.sign(h, round.identity.secret), ownKey: round.pubkey, height: async () => Number(await chainTip()),
+    ask: (endpoint) => wsSessionCount(endpoint),
+    // to every seat of the census (networkSeats: the advertisements' endpoints and the peers given), as the games are read
+    post: async (o) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/halt-observations`, { method: 'POST', body: JSON.stringify(o),
+      signal: AbortSignal.timeout(15000) }).catch(() => null))); },
+    say: (o) => console.log(`[halt] ${JSON.stringify(o)}`) }) : null;
+  if (halts) {
+    const ht = setInterval(() => { halts.observe().catch((e) => console.log(`[halt] observe: ${e.message}`)); }, Number(process.env.ARENA_HALT_OBSERVE_MS || 600000));
+    if (ht.unref) ht.unref();
+  }
+  liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
+  // THE FEDERATION THIS NODE IS A GUARDIAN OF: the held record (not CLOSED) that names its node key, and its peer key there
+  ownGuardianSeat = () => {
+    for (const f of (fedRecords.list() || []).map((x) => x.federation)) {
+      const held = fedRecords.recordOf(f);
+      const g = held && held.status !== 'CLOSED' ? (held.record.guardians || []).find((x) => toHex(x.nodePubkey) === toHex(round.pubkey)) : null;
+      if (g) return { federation: f, peerKey: g.peerKey };
+    }
+    return null;
+  };
+  // A FOUNDING BY SORTITION (§23A.2, kanban #320), with ARENA_FOUNDING=1: every 10 min the seat reads a trigger off the records it
+  // holds (founding-seat.js), the beacon and the census at trigger_height from its chain view, and - while its own guardian waits in
+  // Fedimint's setup - takes part through the guardian's own setup API (fedimint-cli, ARENA_FEDIMINT_CLI). GET/POST /founding.
+  if (process.env.ARENA_FOUNDING === '1' && guardian && guardian.apiPort && guardian.dataDir && typeof chainTip === 'function') {
+    const netName = String(chain || '').replace(/^bitcoin-/, '');
+    const g = (() => { try { return genesisFor(netName === 'test' ? 'testnet4' : netName); } catch { return null; } })();
+    const newestRound = () => { const r = round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); return r || null; };
+    const viewOf = () => { const r = newestRound(); if (!r) return null; const c = decodeRoundContract(new Uint8Array(r.contract)); return { rid: new Uint8Array(r.round_id), view: roster.chainFor({ contract: c, roundIdBytes: new Uint8Array(r.round_id) }) }; };
+    const password = () => readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
+    const runCli = (args) => new Promise((res, rej) => execFileCb(process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args, { timeout: 120000 }, (e, out) => (e ? rej(e) : res(String(out)))));
+    foundingSeat = createFoundingSeat({
+      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height })),
+      entriesAt: async (h) => { const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null; },
+      beaconAt: async (h) => { const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null; },
+      tip: async () => Number(await chainTip()),
+      guardianInSetup: async () => { try { const st = await wsAdminStatus(guardian.apiPort, password()); return !(st && st.federation); } catch { return false; } },
+      setup: cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16) }),
+      guardingOpen: () => new Set(),
+      nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
+      clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
+      post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
+      peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
+      say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
+    const ft = setInterval(() => { foundingSeat.tick().catch((e) => console.log(`[founding] tick: ${e.message}`)); }, Number(process.env.ARENA_FOUNDING_MS || 600000));
+    if (ft.unref) ft.unref();
+  }
+  // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which
+  // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
+  // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
+  if (guardian && guardian.dataDir && guardian.apiPort && typeof chainTip === 'function') {
+    const producers = new Map();               // federation hex -> absence-producer.js
+    const stateFile = `${String(guardian.dataDir).replace(/\.guardian$/, '')}.absences.json`;
+    let state = {}; try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
+    const attest = async () => {
+      const own = ownGuardianSeat();
+      if (!own) return;
+      const fid = own.federation;
+      if (!producers.has(fid)) {
+        const cfg = guardianConfigOf(guardian.dataDir, (f) => readFileSync(f, 'utf8'));
+        const password = readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
+        producers.set(fid, createAbsenceProducer({ federationId: fid, ...cfg, attester: round.pubkey,
+          status: () => wsAdminStatus(guardian.apiPort, password), height: async () => Number(await chainTip()),
+          sign: (h) => schnorr.sign(h, round.identity.secret), load: () => state[fid],
+          save: (v) => { state[fid] = v; try { writeFileSync(stateFile, JSON.stringify(state)); } catch { /* kept in memory */ } } }));
+      }
+      const r = await producers.get(fid).pass();
+      if (!r.ok) { console.log(`[absence] ${fid.slice(0, 16)}: ${r.why}`); return; }
+      for (const a of r.signed) {
+        absences.offer(a);
+        const hex = absenceHex(a);
+        await Promise.all(networkSeats().map((u) => fetch(`${u}/absence`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) }).catch(() => null)));
+      }
+      if (r.absent.length) console.log(`[absence] ${fid.slice(0, 16)} session ${r.session} at ${r.height}: not seen ${JSON.stringify(r.absent)}, signed ${r.signed.length}`);
+    };
+    const at = setInterval(() => { attest().catch((e) => console.log(`[absence] attest: ${e.message}`)); }, Number(process.env.ARENA_ABSENCE_ATTEST_MS || 600000));
+    if (at.unref) at.unref();
+  }
+  // A SEATED GUARDIAN'S OWN COPY OF A HALTED FEDERATION'S SPENT SET (§23A.5 step 1, kanban #323): every 10 min, for each federation held
+  // HALTED whose record names this node a guardian, its guardian is asked (the fork's admin endpoint) and the signed copy is offered here
+  // and posted to the peers. Only with a fedimint-cli client of that federation named (ARENA_SPENT_SET_CLIENT_DIR).
+  if (guardian && guardian.dataDir && process.env.ARENA_SPENT_SET_CLIENT_DIR) {
+    const publishOwnSpentSets = async () => {
+      for (const fid of new Set([...fedRecords.haltedFederations(), ...(halts ? halts.haltedFederations() : [])])) {
+        const held = fedRecords.recordOf(fid);
+        if (!held || !(held.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) continue;
+        const got = await produceSpentSet({ guardianDir: guardian.dataDir, clientDir: process.env.ARENA_SPENT_SET_CLIENT_DIR,
+          cli: process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', federationId: fid, nodeSecret: round.identity.secret });
+        if (!got.ok) { console.log(`[liquidation] ${fid.slice(0, 16)}: no spent set from this guardian - ${got.why}`); continue; }
+        const here = liquidations.offer(got.copy);
+        const there = await publishSpentSet(got.copy, peers || []);
+        console.log(`[liquidation] ${fid.slice(0, 16)}: spent set of session ${got.session} (${got.nonces} nonces) kept here: ${here.ok}, posted to ${there.filter((x) => x.ok).length} of ${there.length} peers`);
+      }
+    };
+    const t = setInterval(() => { publishOwnSpentSets().catch((e) => console.log(`[liquidation] spent sets: ${e.message}`)); }, 600000);
+    if (t.unref) t.unref();
+  }
   // the drain is paid (§23A.6 step 5, kanban #325): a round naming a successor shares its guardian pool with the draining predecessor's
   roster.predecessorGuardians = (fidHex) => fedRecords.predecessorGuardians(fidHex);
   const inviteFedId = (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; };
@@ -3064,7 +3291,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         names: namesHeld(held.roundId),
         // WHAT A PLAYER IS WARNED OF BEFORE ENTRY (§18A.7 / §22A, kanban #316): the engine's and the game's own (its plugin's
         // roundWarnings) - advisory and not signed; a page computes the engine's itself and takes only codes it can name
-        warnings: free ? [] : warningsOf(c),
+        warnings: free ? [] : warningsOf(c, held.roundId),
         needed, signerNodes: c.nodes.length,
         // THIS SIGNER NODE'S SIGNED WORD (lobby-listing.js): round, node, time, phase,
         // joined here, and the two counts. `watching` is not signed.
@@ -3172,9 +3399,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
             const rid = new Uint8Array(r.round_id);
             let endMs; try { endMs = Number(roundEndMs(c)); } catch { endMs = Number(c.entryCloseMs); }
-            const k = round.lockSettlement(rid);
             rounds.push({ id: toHex(rid), endMs, objectionWindowMs: Number(c.objectionWindowMs), assigned: round.signerNodes(rid).length > 0,
-              paying: c.stakeMsat > 0n, entries: round.entriesOf(rid).length, settlementAccepted: !!(k && k.state === 'ACCEPTED') });
+              paying: c.stakeMsat > 0n, entries: round.entriesOf(rid).length, settlementAccepted: stateOf(round, rid) === 'ACCEPTED' });
           }
           let custody = null;
           if (guardian && stakeLocks && typeof stakeLocks.guardians === 'function') {
@@ -3182,6 +3408,50 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             catch (e) { custody = { guardian: true, keys: [], threshold: Infinity, why: e.message }; }
           }
           return answer(200, leaveStatus({ rounds, nowMs, leavingAtMs: owner.leavingAtMs(), custody }));
+        }
+        // THE SEATINGS THIS NODE MISSED (§5A.3, kanban #302): over the newest rounds held whose seating stands, drawn and not seated,
+        // in a row - and from three on, the warning with the serving = false update offered
+        if (req.method === 'GET' && url.pathname === '/owner/seatings') {
+          const me = toHex(round.pubkey);
+          const rows = [];
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            if (Number(c.committeeTimeMs) > Date.now()) continue;
+            let s; try { s = roster.committeeFor(new Uint8Array(r.round_id), 'settlement'); } catch { continue; }
+            if (!s || !s.ok || !s.seated) continue;
+            rows.push({ round: toHex(new Uint8Array(r.round_id)), atMs: Number(c.committeeTimeMs), drawn: (s.drawn || []).some((e) => toHex(e.pubkey) === me),
+              seated: s.committee.some((e) => toHex(e.pubkey) === me) });
+          }
+          const missed = missedInARow(rows);
+          return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
+        }
+        // THIS NODE'S STANDING (§5A.10B, kanban #310): own weight, brackets served, headroom - from the censuses of the newest rounds
+        // held, and the warnings an operator needs before the floor passes the bond
+        if (req.method === 'GET' && url.pathname === '/owner/standing') {
+          const me = toHex(round.pubkey);
+          const rows = [];
+          for (const r of round.db.prepare('SELECT round_id, contract FROM rounds ORDER BY opened_ms DESC LIMIT 60').all()) {
+            let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
+            let census; try { census = roster.censusFor(new Uint8Array(r.round_id)); } catch { continue; }
+            if (!census || !census.ok) continue;
+            const pick = (e) => ({ pubkey: toHex(e.pubkey), bondSats: e.bondSats });
+            rows.push({ atMs: Number(c.committeeTimeMs), bondMinSats: c.bondMinSats, entries: (census.entries || []).map(pick),
+              excluded: (census.excluded || []).filter((e) => e.pubkey && e.bondSats !== undefined).map(pick),
+              censusHeight: Number(c.censusHeight), full: census.entries || [], network: networkOf(c.networkId) });
+          }
+          rows.sort((a, b) => b.atMs - a.atMs);
+          const standing = nodeStanding({ me, rounds: rows });
+          // BOND_MIN WITH NOTICE (§27A.3, kanban #300): the bond-weighted medians of the censuses this seat holds, one per census height;
+          // the floor in force at the newest, a rise pending and its date, and - for this node, when the rise passes its bond - the
+          // escalation (T-30d, T-14d, T-3d, T+0)
+          const history = medianHistory(rows.map((r) => ({ censusHeight: r.censusHeight, entries: r.full })), bondWeightedMedian);
+          const newest = history.length ? history[history.length - 1].height : null;
+          const notice = NOTICE_BLOCKS[(rows[0] && rows[0].network) || 'mainnet'] || NOTICE_BLOCKS.mainnet;
+          const floor = newest === null ? { inForce: null, pending: null } : bondMinInForce(history, newest, notice);
+          const warn = newest === null ? null : bondMinWarning({ pending: floor.pending, ownBondSats: standing.ownBondSats === null ? null : BigInt(standing.ownBondSats), nowHeight: newest });
+          return answer(200, { ...standing, bondMin: { inForce: floor.inForce === null ? null : String(floor.inForce), noticeBlocks: notice, censuses: history.length,
+            pending: floor.pending ? { value: String(floor.pending.value), crossedAt: floor.pending.crossedAt, effectiveAt: floor.pending.effectiveAt } : null },
+            warnings: [...standing.warnings, ...(warn ? [{ kind: `bond_min rise (${warn.step})`, urgent: warn.urgent, says: warn.says }] : [])] });
         }
         // THE STORE'S VIEW OF THIS SEAT (step 5): what it hosts and what is installed, waiting for its next start
         if (req.method === 'GET' && url.pathname === '/owner/plugins') {
@@ -3231,7 +3501,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           catch (e) { return answer(400, { ok: false, why: e.message }); }
         }
         // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
-        if (url.pathname === '/owner/leave') { const r = owner.leave(body); return answer(r.ok ? 200 : r.status, r); }
+        if (url.pathname === '/owner/leave') {
+          const r = owner.leave(body);
+          if (!r.ok) return answer(r.status, r);
+          // A GUARDIAN LEAVES BY NOTICE (§23A.5, RULED the owner 2026-09-21 "Leaving is legitimate"; kanban #322): its node signs
+          // (federation_id, peer, leave_after = now + departure_notice, posted_at) once, keeps it and posts it to every seat - from
+          // leave_after on the record has it DEPARTED, its bond untouched. A notice once posted stands; staying does not take it back.
+          const own = guardian && typeof chainTip === 'function' ? ownGuardianSeat() : null;
+          if (own && !r.already) {
+            try {
+              const tip = Number(await chainTip());
+              const d = ownDeparture({ own, tip, departureNotice: fedClocks.departureNotice, nodePubkey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret) });
+              absences.offerDeparture(d);
+              const hex = departureHex(d);
+              const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) })
+                .then((x) => x.ok).catch(() => false)));
+              r.departure = { federation: own.federation, leaveAfterHeight: d.leaveAfterHeight, postedAt: tip, notice: hex, postedTo: posted.filter(Boolean).length, of: posted.length };
+              console.log(`[owner] departure notice for ${own.federation.slice(0, 16)}: leave after ${d.leaveAfterHeight}, posted to ${r.departure.postedTo} of ${posted.length} seats`);
+            } catch (e) { r.departure = { why: e.message }; }
+          }
+          return answer(200, r);
+        }
         // INSTALL, UPDATE, REMOVE (kanban #276 step 5, the owner 2026-10-10: like an App Store, from the browser, no restart): each
         // signed by the owner; a game is fetched from another seat, checked (plugin-check.js + the trial run) and activated at once
         if (url.pathname === '/owner/plugins/install' || url.pathname === '/owner/plugins/update') {
@@ -3374,6 +3664,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
         catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
+        // A ROUND THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID (§6, kanban #313), as `?creator=<hex>`:
+        // checked before anything else is asked, kept beside the round. A round this seat already holds is not asked again.
+        if (contract.creatorPubkey) {
+          const rid = roundIdOf(contract);
+          const said = String(url.searchParams.get('creator') || '');
+          const sig = /^[0-9a-f]{128}$/i.test(said) ? fromHex(said.toLowerCase()) : null;
+          const st = creatorSignatureStands(contract, sig, { verify: (s, m, k) => schnorr.verify(s, m, k) });
+          if (!st.ok && !(round.get(rid) && round.creatorSignature(rid))) return text(res, 403, st.why);
+          if (st.ok) round.putCreatorSignature(rid, sig);
+        }
+        // THE RULES IT NAMES, THIS BUILD'S OR REFUSED (§6, kanban #314; rules.js): a round settled under rules this seat does not run is
+        // not selectable here - refused by name, nothing of it stored
+        { const ru = rulesStand(contract); if (!ru.ok) return text(res, 409, ru.why); }
+        { const bm = bondMinStands(contract, roundIdOf(contract)); if (!bm.ok) return text(res, 409, bm.why); }
         // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
         // round is refused by the same game rather than as a round nobody heard of
         { const refused = unhostedRefusal(contract); if (refused) return text(res, 409, refused); }
@@ -3433,8 +3737,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // commits through each gateway is where it is shown. A node with no lock port takes no stake in a
         // FEDERATION round at all, and is not the one this asks.
         // THE ROUND'S OWN FEDERATION'S PORT (kanban #348): every node serves every federation in its census
-        const fport = contract.stakeMsat > 0n && stakeLocks ? await portOfRound(contract) : null;
-        if (contract.stakeMsat > 0n && stakeLocks && !fport) return text(res, 409, portRefusal(contract));
+        // A ROUND THAT TAKES ANY FEDERATION (2026.0.3) has none to ask here: each entry's federation is asked at /entry
+        const anyFed = takesAnyFederation(contract);
+        const fport = contract.stakeMsat > 0n && stakeLocks && !anyFed ? await portOfRound(contract) : null;
+        if (contract.stakeMsat > 0n && stakeLocks && !anyFed && !fport) return text(res, 409, portRefusal(contract));
         if (contract.stakeMsat > 0n && fport) {
           if (typeof fport.gateways !== 'function')
             return text(res, 409, 'this signer node\'s lock port cannot list the federation\'s gateways, so it cannot count '
@@ -3467,7 +3773,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND ITS FEDERATION IS BONDED (§23.6, P3; RULED the owner 2026-09-25): asked here, before round.open, with
         // guardiansBonded's own refusal - measured before: under threshold and none bonded were 409 with the round already
         // stored and listed, because this was asked after round.open. A paying round reaching here has a chain view (above).
-        if (chainFor && contract.stakeMsat > 0n) {
+        if (chainFor && contract.stakeMsat > 0n && !anyFed) {
           const bonded = await guardiansBonded(roundIdOf(contract), contract);
           if (!bonded.ok) return text(res, 409, bonded.why);
         }
@@ -3796,7 +4102,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // qualifier gets its stake back and its payout, less the node fee and its donation; a loser or a walk-away loses
         // the stake; when the settlement paid nobody, every stake but a walk-away's comes back (forfeit.js nobodyWonReturn),
         // so only the fee and the donation are gone. Until this node's settlement is ACCEPTED it is pending.
-        const settled = round.lockSettlement ? round.lockSettlement(rid) : null;
+        const settled = stateOf(round, rid) ? { state: stateOf(round, rid) } : null;
         const shares = settled && settled.state === 'ACCEPTED' && round.lockSettlementShares ? round.lockSettlementShares(rid) : null;
         const nobodyWon = !!(shares && !shares.length);
         const players = round.entriesOf(rid).map(({ entryId, entry }) => {
@@ -3917,6 +4223,28 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(Buffer.from(held.bytes));
       }
 
+      // A CLIENT'S CENSUS OBJECTION (§5A.4, kanban #299): { round, explorer } - checked by this seat on its own chain against that
+      // explorer: its block at the round's census height must be the explorer's. Upheld, the round takes no new entry here and its row
+      // says census_objected; not upheld, refused by name. Nothing a client says is taken on its word.
+      if (req.method === 'POST' && url.pathname === '/census-objection') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a census objection is JSON { round, explorer }'); }
+        const rh = String(j.round || '').toLowerCase(), explorer = String(j.explorer || '');
+        if (!/^[0-9a-f]{64}$/.test(rh) || !/^(https:\/\/[^\s]+|http:\/\/127\.0\.0\.1(:\d+)?(\/[^\s]*)?)$/.test(explorer)) return text(res, 400, 'a census objection names its round (64 hex) and an https explorer');
+        const rid = fromHex(rh); const row = round.get(rid);
+        if (!row) return text(res, 404, 'this seat holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        let view; try { view = await chainFor({ contract: c, roundIdBytes: rid }); } catch (e) { return text(res, 503, `this seat cannot read its chain: ${e.message}`); }
+        const h = Number(c.censusHeight), at = view && view.blocks ? view.blocks[h - view.firstHeight] : null;
+        if (!at) return text(res, 409, `this seat's chain view does not reach the census height ${h}`);
+        const said = await explorerAgrees({ base: explorer, points: [{ height: h, hash: blockHashOf(at.header) }] });
+        if (said.unreachable) return text(res, 409, `not upheld: ${said.why}`);
+        if (!said.mismatch) return text(res, 409, `not upheld: ${said.why} as this seat's chain`);
+        if (censusObjections.size >= 512 && !censusObjections.has(rh)) censusObjections.delete(censusObjections.keys().next().value);
+        censusObjections.set(rh, { explorer, why: said.why, atMs: Date.now() });
+        console.log(`[census] round ${rh.slice(0, 16)}: objection upheld - ${said.why}`);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ upheld: true, round: rh, why: said.why }));
+      }
       if (req.method === 'POST' && url.pathname === '/entry') {
         const contract = decodeEntryContract(await read(req));
         // AN ENTRY INTO A ROUND OF A GAME THIS NODE DOES NOT HOST (kanban #204): that round was never stored, and the node
@@ -3924,6 +4252,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const game = refusedGameOf.get(toHex(contract.roundId));
           if (game) return text(res, 409, `entry refused: this node does not host game ${game.slice(0, 16)} (§0A.4), the game that round plays`); }
         { const why = offerRefusalOfRound(contract.roundId); if (why) return text(res, 409, `entry refused: ${why}`); }
+        { const ob = censusObjections.get(toHex(contract.roundId));
+          if (ob) return text(res, 409, `entry refused: that round's census is objected - ${ob.why} (§5A.4)`); }
         // RESERVE SEATS (§5A.7, kanban #301): a round takes entries only once both roles are seated by a certificate this
         // node holds - and never after two seatings (equivocation: the round is void)
         if (seating) {
@@ -3942,12 +4272,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lockRow = round.get(contract.roundId);
         if (lockRow && contract.stakeMsat > 0n) {
           const rc = decodeRoundContract(new Uint8Array(lockRow.contract));
+          // THE STAKE CEILING FROM CENSUS HEALTH (§5A.10, kanban #306): enforced off the test networks (as ruling A of the load rule) -
+          // a test network shows it at GET /census-health and refuses nothing
+          if (!isTestNetwork(rc.networkId)) {
+            const census = roster.censusFor(contract.roundId);
+            const h = census && census.ok ? stakeWithinCeiling({ entries: census.entries, stakeSats: rc.stakeMsat / 1000n }) : { ok: false, why: 'this seat reads no census for that round' };
+            if (!h.ok) return text(res, 409, `entry refused: ${h.why} (§5A.10)`);
+          }
           // Every paying round is a FEDERATION round naming its federation: the custody field has one value
           // and a paying round with a zero federation id does not encode (§23.6). No custody test is left here.
           {
             let gate;
-            const fport = await portOfRound(rc);
-            if (!fport) return text(res, 409, portRefusal(rc));
+            // THE ENTRY'S FEDERATION (2026.0.3, kanban #348): on a round that takes any, the one the entry names - asked here
+            // what /round asks of a round's own: reachable, not draining, two live gateways, no base fee, guardians bonded
+            const efed = entryFederation(rc, contract);
+            if (!efed.ok) return text(res, 409, efed.why);
+            const fport = await portOfFederation(efed.federationId);
+            if (!fport) return text(res, 409, portRefusal({ federationId: efed.federationId }));
+            if (takesAnyFederation(rc)) {
+              const dr = drainingRefusal({ ...rc, federationId: efed.federationId });
+              if (dr) return text(res, 409, `this node takes no entry with a lock in that federation: ${dr}`);
+              if (typeof fport.gateways === 'function') {
+                let seen;
+                try { seen = await doorGateways(fport, toHex(efed.federationId)); }
+                catch (e) { return text(res, 409, `this signer node could not list that federation's gateways: ${e.message}`); }
+                const n = federationGatewayCount(seen.gateways);
+                if (n.distinctLive < 2) return text(res, 409, `that entry's federation has ${n.distinctLive} distinct live gateway(s): a paying entry needs at least two (§23.6)`);
+              }
+              if (chainFor) {
+                const bonded = await guardiansBonded(contract.roundId, rc, efed.federationId);
+                if (!bonded.ok) return text(res, 409, bonded.why);
+              }
+            }
             try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsOf(g.plugin.manifest) : undefined }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
@@ -3957,7 +4313,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // such a federation; this is the same refusal on the node, so no entry is taken either.
             // An unknown rule is not a base fee, and is not refused here.
             let noBase = { ok: true };
-            try { noBase = federationTakesNoBaseFee({ fees: typeof fport.fees === 'function' ? await doorFees(fport, toHex(rc.federationId)) : null }); }
+            try { noBase = federationTakesNoBaseFee({ fees: typeof fport.fees === 'function' ? await doorFees(fport, toHex(efed.federationId)) : null }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule: ${e.message}`); }
             if (!noBase.ok) return text(res, 409, `this node takes no entry in that round: ${noBase.why}`);
             const namesNone = contract.feeLockOutpoint.txid.every((x) => x === 0) || contract.feePreimage.every((x) => x === 0);
@@ -4373,8 +4729,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         const held = round.results(rid, eid);
-        const out = new Uint8Array(held.length * SIGNED_RESULT_BYTES);
-        held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RESULT_BYTES));
+        // each record at its own size, end to end (kanban #312: a price round's result carries its front)
+        const out = Buffer.concat(held.map((r) => Buffer.from(r.bytes)));
         // AND §13C'S NO-QUORUM OUTCOME, when this signer node decided one (M3.3-34):
         // VOID has no signed result to serve, so it is said here.
         const nq = eid.length === 32 ? round.noQuorum(new Uint8Array(eid)) : null;
@@ -4557,6 +4913,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const row = round.get(Buffer.from(rh, 'hex'));
         return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0), feed: !!(row && feedFor(row.contract)) }));
       }
+      // WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): this seat's signed result, once the round has ended
+      if (req.method === 'GET' && url.pathname === '/round-result') {
+        const got = prices.result(String(url.searchParams.get('round') || '').toLowerCase());
+        if (!got.ok) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify(got));
+      }
       if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested')) {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
         const got = url.pathname === '/price-sign' ? prices.sign(body) : prices.hold(body);
@@ -4712,7 +5075,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
           if (ds.ok) donationRecipients = ds.target; }
         let got;
-        try { got = await verifyStakeLock({ round, port: (await portOfRid(decodeEntryContract(stored).roundId)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
+        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         // AN ORDER (comment 1127): tradable here once both its locks are verified
@@ -4735,7 +5098,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         { const why = offerRefusalOfRound(decodeEntryContract(stored).roundId); if (why) return text(res, 409, `lock refused: ${why}`); }
         const claimPk = claimKeyOf(decodeEntryContract(stored).roundId);
         let got;
-        try { got = await verifyFeeLock({ round, port: (await portOfRid(decodeEntryContract(stored).roundId)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
+        try { got = await verifyFeeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         if (decodeEntryContract(stored).limitPrice !== undefined) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -4760,15 +5123,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const rc = decodeRoundContract(new Uint8Array(row.contract));
         const refusedWhy = offerRefusal(rc);
         if (!refusedWhy) return text(res, 409, 'this signer node offers that round: a stake in it is entered and settled with the round, never returned as refused');
-        if (rc.stakeMsat === 0n || rc.federationId.every((b) => b === 0)) return text(res, 409, 'that round takes no stake lock');
+        if (rc.stakeMsat === 0n || (rc.federationId.every((b) => b === 0) && !takesAnyFederation(rc))) return text(res, 409, 'that round takes no stake lock');
         if (!stakeLocks) return text(res, 409, 'this signer node reaches no federation, so it cannot read the lock');
-        let fields, outpoint;
+        let fields, outpoint, lockFed = null;
         try {
           const body = JSON.parse(Buffer.from(await read(req)).toString('utf8'));
           fields = lockFieldsFromJson(body.fields);
           const [txid, outIdx] = String(body.outpoint || '').split(':');
           if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(outIdx || '')) throw new Error('an outpoint is txid:index');
           outpoint = { txid: new Uint8Array(Buffer.from(txid, 'hex')), outIdx: BigInt(outIdx) };
+          // ON A ROUND THAT TAKES ANY FEDERATION the body names the federation the lock is in (2026.0.3)
+          if (takesAnyFederation(rc)) {
+            if (!/^[0-9a-f]{64}$/.test(String(body.federation || ''))) throw new Error('that round takes any federation: name the one the lock is in (federation, 64 hex)');
+            lockFed = new Uint8Array(Buffer.from(body.federation, 'hex'));
+          }
         } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
         if (round.stakeLockAt(outpoint) || (round.feeLockAt && round.feeLockAt(outpoint)))
           return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
@@ -4795,7 +5163,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const player = toHex(held.handout.playerPubkey);
         if (round.entriesOf(rid).some(({ entry }) => toHex(entry.playerPubkey) === player))
           return text(res, 409, 'that player entered the round at this signer node: the stake is settled with the round');
-        const lport = (await portOfRid(rid)) || stakeLocks;
+        const lport = (lockFed ? await portOfFederation(lockFed) : await portOfRid(rid)) || stakeLocks;
         const [st, id] = await Promise.all([lport.status(outpoint), lport.contractId(fields)]);
         if (!st || !st.stored) return text(res, 409, 'the federation holds no lock at that outpoint: spent, or never made');
         if (String(id) !== String(st.stored.contractId)) return text(res, 409, 'the lock at that outpoint is not the contract handed over: its id is another');
@@ -4861,8 +5229,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const lateHex = url.searchParams.get('entry');
         const entry = lateHex ? new Uint8Array(Buffer.from(lateHex, 'hex')) : null;
         if (entry && entry.length !== 32) return text(res, 400, 'a late settlement is asked for by a 32-byte entry id');
+        // ONE FEDERATION'S SETTLEMENT of a round that takes any federation (2026.0.3) is asked for by that federation's id
+        const federation = url.searchParams.get('federation');
+        if (federation !== null && !/^[0-9a-f]{64}$/.test(federation)) return text(res, 400, 'a federation\'s settlement is asked for by its 64-hex id');
         if (url.pathname === '/settle-commit') {
-          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry });
+          const got = await settlements.commit(r8, { txid: url.searchParams.get('txid'), entry, federation });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeCommitments([got.commitment])));
@@ -4870,14 +5241,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (url.pathname === '/settle-share') {
           let list;
           try { list = decodeCommitments(new Uint8Array(await read(req))); } catch (e) { return text(res, 400, e.message); }
-          const got = await settlements.share(r8, list, { entry });
+          const got = await settlements.share(r8, list, { entry, federation });
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
           return res.end(Buffer.from(encodeShare(got.share)));
         }
         const signature = new Uint8Array(await read(req));
         if (signature.length !== 64) return text(res, 400, 'a settlement signature is 64 bytes');
-        const got = await settlements.take(r8, signature, { entry });
+        const got = await settlements.take(r8, signature, { entry, federation });
         return got.ok ? text(res, 201, 'settlement signature kept') : text(res, got.status || 409, got.why);
       }
 
@@ -5057,9 +5428,89 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
 
       // AND IN PUBLIC: where the round's settlement of its losers' locks stands.
+      // THE SELF-BINDING SCALARS IN FORCE FOR A ROUND (§27A.2, kanban #305): the bond-weighted median of what its census's nodes declare
+      if (req.method === 'GET' && url.pathname === '/census-median') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a census median is asked for by a round id');
+        if (!round.get(new Uint8Array(rid))) return text(res, 404, 'this signer node holds no such round');
+        const census = roster.censusFor(new Uint8Array(rid));
+        if (!census || !census.ok) return text(res, 409, `no census read for that round: ${census ? census.why : 'none'}`);
+        const m = (f) => { const v = bondWeightedMedian(census.entries, f); return v === null ? null : String(v); };
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ bondMinSats: m('bondMinSats'), proposalDepositSats: m('proposalDepositSats'),
+          declaring: census.entries.filter((e) => e.advert && e.advert.declares).length, of: census.entries.length }));
+      }
+
+      // THE REPLAY BUDGET (§34, kanban #303): this seat's measured replay speed - the median of its newest replays - and the players a
+      // round of T_run can hold inside the 600 s result window at it; no measurement, no number ("do not hard-code ... 20x realtime")
+      if (req.method === 'GET' && url.pathname === '/replay-budget') {
+        const speedX = verifier.pool && typeof verifier.pool.measuredSpeed === 'function' ? verifier.pool.measuredSpeed() : null;
+        const runMs = Number(url.searchParams.get('runMs') || 82000);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ speedX, samples: verifier.pool && verifier.pool.samples ? verifier.pool.samples.length : 0, runMs,
+          maxPlayersPerRound: speedX ? maxPlayersPerRound({ speedX, runMs }) : null,
+          retention: 'transcripts are kept: this seat prunes none, so they outlast the objection and claim windows' }));
+      }
+
+      // WHAT A ROUND'S CENSUS SUPPORTS (§5A.10, kanban #306): its stake against the ceiling its census's health derives - nodes and
+      // bonded capital per role; enforced off the test networks, shown on them
+      if (req.method === 'GET' && url.pathname === '/census-health') {
+        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'census health is asked for by a round id');
+        const row = round.get(new Uint8Array(rid));
+        if (!row) return text(res, 404, 'this signer node holds no such round');
+        const c = decodeRoundContract(new Uint8Array(row.contract));
+        const census = roster.censusFor(new Uint8Array(rid));
+        if (!census || !census.ok) return text(res, 409, `no census read for that round: ${census ? census.why : 'none'}`);
+        const h = stakeWithinCeiling({ entries: census.entries, stakeSats: c.stakeMsat / 1000n });
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ ok: h.ok, stakeSats: String(c.stakeMsat / 1000n), ceilingSats: String(h.ceilingSats), why: h.why,
+          enforced: !isTestNetwork(c.networkId) }));
+      }
+
+      // A SERIES' PUBLICATION, PROVEN (§5A.5, kanban #304): { series, tx, parents } hex. The tx must be the series' first confirmed
+      // publication on this seat's chain (findSeriesPublication), and its parents must prove its fee (publisher-payout.js). Anyone
+      // may post it - every byte proves itself; kept once.
+      if (req.method === 'POST' && url.pathname === '/series-publication') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a series publication is JSON { series, tx, parents }'); }
+        if (!/^[0-9a-f]{64}$/i.test(String(j.series || '')) || !/^[0-9a-f]+$/i.test(String(j.tx || '')) || !Array.isArray(j.parents))
+          return text(res, 400, 'a series publication names its series id, the publication and its parents in hex');
+        const sid = fromHex(String(j.series).toLowerCase());
+        const t = series.find((x) => toHex(seriesId(x)) === toHex(sid));
+        if (!t) return text(res, 404, 'this seat holds no such series');
+        const first = seriesRound(t, 0);
+        let view; try { view = await chainFor({ contract: first, roundIdBytes: roundIdOf(first) }); } catch (e) { return text(res, 503, `this seat cannot read its chain: ${e.message}`); }
+        const pub = findSeriesPublication(view, sid);
+        if (!pub) return text(res, 409, 'this seat\'s chain holds no confirmed publication of that series yet');
+        const tx = fromHex(String(j.tx).toLowerCase());
+        if (toHex(parseTransaction(tx).txid) !== toHex(pub.tx.txid)) return text(res, 409, 'that is not the series\' first confirmed publication');
+        const fee = publicationFee(tx, j.parents.map((h) => fromHex(String(h).toLowerCase())));
+        if (!fee.ok) return text(res, 422, fee.why);
+        round.putSeriesPublication(sid, { txid: toHex(pub.tx.txid), feeSats: fee.feeSats });
+        const kept = round.seriesPublication(sid);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ txid: kept.txid, feeSats: String(kept.feeSats), payoutSats: String(publisherPayoutMsat(kept.feeSats) / 1000n) }));
+      }
+
+      // A ROUND'S CREATOR SIGNATURE (§6, kanban #313): what rides beside a contract that names its creator, hex - 404 with none
+      if (req.method === 'GET' && url.pathname === '/round-creator') {
+        const rid = Buffer.from(url.searchParams.get('id') || '', 'hex');
+        if (rid.length !== 32) return text(res, 400, 'a creator signature is asked for by a round id');
+        const sig = round.creatorSignature(new Uint8Array(rid));
+        if (!sig) return text(res, 404, 'this signer node holds no creator signature for that round');
+        return text(res, 200, toHex(sig));
+      }
+
       if (req.method === 'GET' && url.pathname === '/lock-settlement') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'a settlement is asked for by a round id');
+        // A ROUND THAT TAKES ANY FEDERATION (2026.0.3): one settlement per federation, each its own row
+        const feds = settlements.fedSummary ? await settlements.fedSummary(new Uint8Array(rid), { moved: true }) : [];
+        if (feds.length) {
+          const all = feds.every((f) => f.state === 'ACCEPTED');
+          res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify({ state: all ? 'ACCEPTED' : feds.some((f) => f.state === 'REFUSED') ? 'REFUSED' : 'SUBMITTING', federations: feds }));
+        }
         const kept = round.lockSettlement(new Uint8Array(rid));
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(kept
@@ -5219,8 +5670,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return { ...r, bytes: joinSignedRerun(encodeRerunResult(x), schnorr.sign(rerunResultId(x), round.identity.secret)) };
           } catch { return r; }
         });
-        const out = new Uint8Array(held.length * SIGNED_RERUN_BYTES);
-        held.forEach((r, i) => out.set(r.bytes, i * SIGNED_RERUN_BYTES));
+        const out = Buffer.concat(held.map((r) => Buffer.from(r.bytes)));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-reruns': String(held.length), ...CORS });
         return res.end(Buffer.from(out));
       }
@@ -5335,7 +5785,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // `reserve` (kanban #324): the reserve the gathering seat read; this seat signs it only on its own same reading
         const rv = url.searchParams.get('reserve');
         if (rv !== null && !/^[0-9]{1,16}$/.test(rv)) return text(res, 400, 'a reserve, whole satoshi');
-        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv) : await fedRecords.mySignature(fid, atHeight, rv);
+        // `absent` (kanban #322): the absence attestations that prove a named peer ABANDONED, each encoding + signature in hex
+        const absentHex = String(url.searchParams.get('absent') || '').split(',').filter(Boolean);
+        const departedHex = String(url.searchParams.get('departed') || '').split(',').filter(Boolean);
+        const r = goneHex.length ? await fedRecords.mySignatureWithGone(fid, goneHex, atHeight, rv, absentHex, departedHex) : await fedRecords.mySignature(fid, atHeight, rv);
         res.writeHead(r.ok ? 200 : 404, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r));
       }
@@ -5344,6 +5797,30 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // RESERVE SEATS (§5A.7, kanban #301): PRESENT in and out, this node's seating signature, the certificate, a proof of
       // equivocation
       const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+      // A FOUNDING (§23A.2, kanban #320): a seated node's signed setup code, and this seat's view of the founding
+      if (req.method === 'POST' && url.pathname === '/founding') {
+        if (!foundingSeat) return text(res, 404, 'this seat runs no founding (ARENA_FOUNDING)');
+        let m; try { m = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a setup code as JSON { id, node, code, signature }'); }
+        const r = foundingSeat.take(m);
+        return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/founding') {
+        return json(res, 200, { node: toHex(round.pubkey), ...(foundingSeat ? foundingSeat.state() || { none: true } : { off: true }) });
+      }
+      if (req.method === 'POST' && url.pathname === '/absence') {
+        let a; try { a = readAbsenceHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `an absence attestation, its encoding and signature in hex: ${e.message}`); }
+        const r = absences.offer(a);
+        return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/absences') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        return json(res, 200, { node: toHex(round.pubkey), absences: absences.list(/^[0-9a-f]{64}$/.test(fid) ? fid : null), departures: absences.listDepartures(/^[0-9a-f]{64}$/.test(fid) ? fid : null) });
+      }
+      if (req.method === 'POST' && url.pathname === '/departure') {
+        let d; try { d = readDepartureHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a departure notice, its encoding and signature in hex: ${e.message}`); }
+        const r = absences.offerDeparture(d);
+        return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
+      }
       // A CERTIFICATE HANDED OVER (§5A.7: "a node that sees two certificates for one round publishes both"): kept if it
       // stands against this node's draw; one that differs from the one held is the proof of equivocation
       if (seating && req.method === 'POST' && url.pathname === '/seating') {
@@ -5389,12 +5866,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           .map((succ) => [succ, fedRecords.predecessorGuardians(succ).map((k) => toHex(k))]));
         return res.end(JSON.stringify({ node: toHex(round.pubkey), federations: listed, drainPools }));
       }
+      // A SEAT'S HALT OBSERVATIONS (§23A.5 "How a halt is proven", kanban #323): a peer's signed one taken, and those held served
+      if (req.method === 'POST' && url.pathname === '/halt-observations') {
+        if (!halts) return text(res, 503, 'this seat reads no chain, so it keeps no halt observations');
+        let said; try { said = JSON.parse(String(await read(req))); } catch { return text(res, 400, 'a halt observation is { observation, signature } as hex'); }
+        const r = halts.take(said);
+        return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
+      }
+      if (req.method === 'GET' && url.pathname === '/halt-observations') {
+        const fid = String(url.searchParams.get('federation') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(fid)) return text(res, 400, 'name a federation: ?federation=<64 hex>');
+        const p = halts ? halts.proofOf(fid) : null;
+        return json(res, 200, { node: toHex(round.pubkey), federation: fid, observations: halts ? halts.list(fid) : [], seen: halts ? halts.seen(fid) : null,
+          proof: p ? { session: p.session, haltHeight: p.haltHeight, observers: p.observers, abandoned: p.abandoned.map(toHex), answered: p.answered.map(toHex) } : null });
+      }
+      if (req.method === 'GET' && url.pathname === '/liquidations') {
+        if (!liquidations) return json(res, 200, { node: toHex(round.pubkey), liquidations: [] });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), liquidations: liquidations.list() }));
+      }
+      if (req.method === 'POST' && url.pathname === '/liquidations/spent-set') {
+        if (!liquidations) return text(res, 503, 'this seat holds no federation records yet');
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a spent set is JSON: { spentSet, signature } in hex'); }
+        const r = liquidations.offer(said || {});
+        return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
+      }
       if (req.method === 'GET' && url.pathname === '/slash-proofs') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
         const held = round.slashProofs(rid, eid);
-        const out = new Uint8Array(held.length * SLASH_EVIDENCE_BYTES);
-        held.forEach((p, i) => out.set(p.bytes, i * SLASH_EVIDENCE_BYTES));
+        const out = Buffer.concat(held.map((p) => Buffer.from(p.bytes)));
         res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-slash-proofs': String(held.length), ...CORS });
         return res.end(Buffer.from(out));
       }
@@ -5406,7 +5907,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (slashed && req.method === 'PUT') {
         const bytes = await read(req);
         // A PROOF AGAINST A RE-RUN SIGNER (slice C2c) travels with the signed re-run it names, at its own size.
-        if (bytes.length === RERUN_SLASH_EVIDENCE_BYTES) {
+        if (bytes.length > SLASH_PROOF_BYTES && bytes[SLASH_PROOF_BYTES] === TYPE_RERUN_RESULT) {
           let rr;
           try { rr = splitRerunSlashEvidence(new Uint8Array(bytes)); } catch (e) { return text(res, 400, e.message); }
           if (toHex(slashProofId(rr.proof)) !== slashed[1]) return text(res, 409, 'that is not the proof that id names');

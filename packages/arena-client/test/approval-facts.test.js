@@ -27,6 +27,7 @@ test('the facts: identities with their operators, the overlap, an operator playi
 });
 
 test('the paying row\'s lobby line says them; a free row does not', () => {
-  assert.match(lobbyLine(row(), 0, { census: () => census }), /· 2 operators \(aaaaaaaa, bbbbbbbb\) · in both committees: 7 of 7 · no selected operator is playing$/);
+  // and, since kanban #306, the stake ceiling the page computes from that census, last
+  assert.match(lobbyLine(row(), 0, { census: () => census }), /· 2 operators \(aaaaaaaa, bbbbbbbb\) · in both committees: 7 of 7 · no selected operator is playing · stake ceiling: [^·]+$/);
   assert.doesNotMatch(lobbyLine(row({ free: true }), 0, { census: () => census }), /operator/);
 });

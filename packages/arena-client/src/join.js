@@ -20,6 +20,7 @@
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
 import { decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
+import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { httpProvider } from './headers.js';
@@ -310,7 +311,20 @@ export const stakeOf = (round) => (round && round.orderStakeMsat !== undefined &
  * non-zero federation_id (§6, §23.6).
  */
 export const roundLocks = (round) => roundPays(round)
-  && round.federationId instanceof Uint8Array && round.federationId.some((b) => b !== 0);
+  && round.federationId instanceof Uint8Array && (round.federationId.some((b) => b !== 0) || takesAnyFederation(round));
+
+/**
+ * A ROUND THAT TAKES ANY FEDERATION, RESOLVED TO THE ONE THIS PLAYER LOCKS IN (2026.0.3 step 7, kanban #348): the same round - its
+ * id kept, since the id is its contract's and the contract names no federation - with `federationId` the chosen one, so the
+ * wallet, the lock and the entry below need nothing else; `anyFederation` tells entryFor to name it on the entry. Any other
+ * round is answered as it is.
+ */
+export function inFederation(round, federationId) {
+  if (!round || !takesAnyFederation(round)) return round;
+  const fid = typeof federationId === 'string' ? fromHex(federationId) : federationId;
+  if (!(fid instanceof Uint8Array) || fid.length !== 32 || fid.every((b) => b === 0)) throw new Error('a round that takes any federation is locked in a named one');
+  return { ...round, id: round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round), federationId: fid, anyFederation: true };
+}
 
 /** 1 type + 2 version + 32 round + 33 claim key + 32 signer node, then a 64-byte signature. */
 const ATTESTATION_BYTES = 100;
@@ -830,7 +844,7 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0 } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -926,6 +940,10 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
     ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
       ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
+    // THE FEDERATION ITS LOCKS ARE IN, on a round that takes any (inFederation; contracts.js FEDERATION_MARKER)
+    ...(round.anyFederation ? { federationId: round.federationId } : {}),
+    // THE OPERATOR THIS PLAYER IS (§7 operator_id_declaration, kanban #309): only when the player declared one (a player who runs nodes)
+    ...(operatorId instanceof Uint8Array && operatorId.length === 32 && operatorId.some((b) => b !== 0) ? { operatorId } : {}),
     // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry

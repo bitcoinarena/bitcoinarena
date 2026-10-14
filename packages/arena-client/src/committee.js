@@ -16,6 +16,7 @@ import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTES
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { agreedChain, httpProvider } from './headers.js';
+import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
 
@@ -43,8 +44,8 @@ const originOf = (u) => { try { const x = new URL(u); const head = x.pathname.sp
 /** The height of the network's anchor block: testnet4's compiled-in one, else Bitcoin's genesis. */
 export const anchorHeightFor = (networkId) => (networkId instanceof Uint8Array && toHex(networkId) === toHex(NETWORK_ID_TESTNET4) ? TESTNET4_ANCHOR_HEIGHT : 0);
 
-async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt }) {
-  const key = `${toHex(contract.networkId)}:${contract.censusHeight}:${contract.committeeTimeMs}`;
+async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer = null }) {
+  const key = `${toHex(contract.networkId)}:${contract.censusHeight}:${contract.committeeTimeMs}:${explorer || ''}`;
   const had = keptChains.get(key);
   if (had && nowMs - had.at < CHAIN_KEPT_MS) return had;
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
@@ -53,7 +54,19 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt }) {
   if (!chain.ok) return { ok: false, why: `no agreed headers: ${chain.why}` };
   const at = chain.headers.findIndex((h) => toHex(blockHashOf(h)) === toHex(anchor));
   if (at < 0) return { ok: false, why: 'the agreed headers do not hold the anchor' };
-  const got = { ok: true, at: nowMs, chain, firstHeight: (anchorAt ? anchorAt.height : anchorHeightFor(contract.networkId)) - at };
+  const firstHeight = (anchorAt ? anchorAt.height : anchorHeightFor(contract.networkId)) - at;
+  // A PARTY OUTSIDE THE NETWORK (§5A.4, kanban #299): with an explorer named, the agreed chain's block at the CENSUS HEIGHT must be the
+  // explorer's - another block refuses the round by name. The TIP is asked too and only said: testnet4 reorganises 11-14 blocks deep,
+  // so a tip that differs can be either side's lag. An explorer that cannot be asked is said, never taken as agreement.
+  let explorerSaid = null;
+  if (explorer) {
+    const at = (height) => (height >= firstHeight && height < firstHeight + chain.headers.length ? [{ height, hash: blockHashOf(chain.headers[height - firstHeight]) }] : []);
+    const census = await explorerAgrees({ base: explorer, points: at(Number(contract.censusHeight)), fetcher });
+    if (census.mismatch) return { ok: false, why: `the census does not stand outside the network: ${census.why}`, explorer: { census } };
+    const tip = await explorerAgrees({ base: explorer, points: at(firstHeight + chain.headers.length - 1), fetcher });
+    explorerSaid = { census, tip };
+  }
+  const got = { ok: true, at: nowMs, chain, firstHeight, explorer: explorerSaid };
   keptChains.set(key, got);
   return got;
 }
@@ -83,7 +96,7 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher }) {
  */
 // `anchorAt` ({ hash, height }) is for a test's own chain only: a page never passes it, and takes the network's compiled-in one.
 export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = fetch, least = 2, compare = true, nowMs = Date.now(),
-  roles = ['game', 'settlement'], anchorAt = null } = {}) {
+  roles = ['game', 'settlement'], anchorAt = null, explorer = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'no node to ask for the chain and the census' };
   if (!curve || typeof curve.bondTweakPoint !== 'function' || typeof curve.bondCombine !== 'function' || typeof curve.verify !== 'function')
     return { ok: false, why: 'this page brings no curve to rebuild the bonds with' };
@@ -92,8 +105,18 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const g = BOND_TERMS[network];
   if (!g) return { ok: false, why: `this client carries no bond terms for ${network}` };
   const t0 = Date.now();
-  const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
-  if (!chain.ok) return chain;
+  const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
+  if (!chain.ok) {
+    // A CENSUS THAT DOES NOT STAND OUTSIDE THE NETWORK IS OBJECTED (§5A.4, kanban #299): handed to every seat, each checks it on its
+    // own chain against the same explorer; upheld, the round takes no new entry there - so other clients refuse it too
+    if (chain.explorer && chain.explorer.census && chain.explorer.census.mismatch && explorer) {
+      chain.objected = await Promise.all(nodes.map(async (u) => {
+        try { const r = await fetcher(`${baseOf(u)}/census-objection`, { method: 'POST', body: JSON.stringify({ round: roundIdHex, explorer }) }); return { node: u, upheld: r.ok }; }
+        catch { return { node: u, upheld: false }; }
+      }));
+    }
+    return chain;
+  }
   if (!evidence.ok) return evidence;
   const t1 = Date.now();
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
@@ -145,7 +168,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       } catch (e) { seats.push({ node: u, agrees: null, why: e.message }); }
     }));
   }
-  return { ...got, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
+  return { ...got, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
     seats, ms: { chainAndCensus: t1 - t0, total: Date.now() - t0 } };
 }
 

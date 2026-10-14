@@ -10,6 +10,7 @@ import { contractWarnings } from '../../arena-protocol/src/contracts.js';
 export const WARNING_SAYS = Object.freeze({
   flat_rank_curve: 'Its payout curve is nearly flat (r >= 0.95): the last paying rank is paid almost as much as the first, so playing it safe pays.',
   minimum_score_is_a_danger_rule: 'Its minimum score is above 100 points: a run that scores less is paid nothing.',
+  census_objected: 'Its census was objected: the block it names at its census height is not the block an explorer outside the network names there. Its seats take no new entry (§5A.4).',
   exposure_ignored: 'Its score ignores exposure (not exposure-multiplicative): the safe route pays as well as the risky one.',
   time_factor_degenerate: 'Its time factor does nothing (its floor is not below its ceiling): time does not count in the score.',
 });

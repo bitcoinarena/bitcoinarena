@@ -853,6 +853,35 @@ export function openStore(path = ':memory:') {
       made_ms      INTEGER NOT NULL
     );
 
+    -- A SERIES' PUBLICATION FEE, PROVEN (§5A.5, kanban #304; publisher-payout.js): the first confirmed publication's txid and the
+    -- fee its parents prove - paid back to the series' creator in the first of its rounds with entries.
+    CREATE TABLE IF NOT EXISTS series_publications (
+      series_id BLOB PRIMARY KEY,
+      txid      TEXT NOT NULL,
+      fee_sats  TEXT NOT NULL
+    );
+
+    -- A ROUND'S CREATOR SIGNATURE (§6, kanban #313): the BIP-340 signature by the key the contract names over its id, kept
+    -- beside the round as the id is (a signature is never inside the bytes it signs), and served at GET /round-creator.
+    CREATE TABLE IF NOT EXISTS round_creators (
+      round_id  BLOB PRIMARY KEY,
+      signature BLOB NOT NULL
+    );
+
+    -- A ROUND THAT TAKES ANY FEDERATION (2026.0.3, kanban #348) SETTLES ONE TRANSACTION PER FEDERATION (federation-settlement.js):
+    -- one row per (round, federation), with the same intent and state as a round's own settlement row.
+    CREATE TABLE IF NOT EXISTS fed_lock_settlements (
+      round_id      BLOB NOT NULL,
+      federation_id TEXT NOT NULL,
+      txid          TEXT NOT NULL,
+      message       BLOB NOT NULL,
+      signature     BLOB NOT NULL,
+      state         TEXT NOT NULL,
+      why           TEXT NOT NULL,
+      made_ms       INTEGER NOT NULL,
+      PRIMARY KEY (round_id, federation_id)
+    );
+
     -- WHAT THE SIGNED SETTLEMENT MOVES (W6): its claimed outpoints and how many
     -- payout contracts it makes, kept with its intent - so a signer node restarted inside
     -- it asks the federation without rebuilding the bytes it signed.

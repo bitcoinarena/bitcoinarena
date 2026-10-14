@@ -2002,6 +2002,29 @@ ignored. Nothing is chosen, so there is nothing to grind: the old argument
 candidate". If no publication confirms in time - before `series_start(k)` on
 mainnet, below the beacon block on testnet4 - series `k` does not exist and its 24 h of rounds are a gap - no stake was taken in it.
 
+**One node on duty posts the next 24 h, and a missed slot falls to the next (RULED, the owner 2026-10-13 ~18:35Z, kanban #352).**
+"Wir müssen jeden Tag verlässlich follow up rounds für alle Spiele und Networks posten, jeden Tag für die nächsten 24h. Das macht
+immer eine bestimmte deterministische node die gerade Dienst hat ... diese node postet die Runden die in 24h starten. Wichtig ist dass
+keine gap entsteht. Wenn die Node ihren Slot verpasst, macht die nächste Node, verantwortlich für die nächste Runde das, und die Runde
+danach wenn die zweite Node wieder ihren Slot verpasst hat. Bis es gepostet ist. Nur eine node postet die runde." This replaces "every
+node publishes" for the rounds of every game and every network (each federation):
+
+```text
+slot            one UTC hour; slot i posts the rounds of hour i + 24, [(i+24) h, (i+25) h), one grid per game and network
+                (an "item"); consecutive slots cover consecutive hours - no gap, no overlap
+on duty         the census at the slot's anchor - the first block whose median time past is beyond the slot's start less 3 h,
+                the same for everybody once it exists - ranked by H('BLWP/v1/DUTY' || network_id || slot || node_pubkey);
+                the first is on duty. Anyone computes it.
+posted          a slot of an item is posted when a transaction carries OP_RETURN "ARN" 'D' slot item_tag (12 bytes) beside the
+                grid's series publications, seen in the chain or the mempool
+missed          the CURRENT slot's duty node posts its own slot and, from 5 min into its slot, every slot of the last 20 not posted
+                yet, oldest first. So a missed slot falls to the next slot's node, and to the one after if that one misses too,
+                until it is posted - and at any moment only one node (the current slot's) posts. A missed slot keeps > 4 h of lead.
+committee time  each grid's first start less 6 h: its publication confirms long before, and its beacon is 6 deep before it
+                starts (measured 2026-10-13: testnet4 made one block per ~20 min while a miner's timestamps ran 1 h 44 min ahead;
+                a grid whose committee came 45 min after its publication waited ~2 h for a 6-deep beacon)
+```
+
 **Who pays the fee.** The publisher pays it from its own wallet and is
 reimbursed from the node fee (§22A, 5% in Bitcoin Arena) of the series' round 0 - or, if round
 0 has no entries, the first round of the series that settles with any. The
@@ -4565,6 +4588,71 @@ itself - no new consensus session for `abandon_blocks`, which anyone can
 observe at every guardian's endpoint and which the seats attest - together
 with the attestations of however many guardians are still seated. The
 arbitration residual of §5A.3B is the same in both forms.
+
+**How a halt is proven, and what it slashes (RULED HERE, Claude, decided
+on the owner's delegation 2026-10-14: "Decide the liquidation ruling
+yourself"; measured first in FEDERATION.md rehearsal 17, where neither a
+HALTED record nor the second abandonment proof could reach `2f + 1`
+signatures with two of four guardians gone).** A halt is the one state a
+federation cannot sign for itself, so it is not a federation record:
+
+1. **The seats attest it.** Every census seat reads, at every guardian
+   endpoint of a federation whose newest verified record is OPEN, DRAINING
+   or CRITICAL, the guardian's session count. A seat that sees no guardian
+   advance past session `S` signs a halt observation `(federation_id, S,
+   first_height, height, answering[])` - the height it first saw `S` as the
+   last session, the height now, and the peer keys that still answer their
+   endpoint. A **halt proof** is such observations from a majority of the
+   census's active seats, and never fewer than five, all naming the same `S`,
+   each spanning at least `abandon_blocks`. The halt height is the latest
+   `first_height` among them (no seat is believed to have seen it earlier
+   than the others). It is verifiable by anyone from the census (the seats'
+   bonded keys) - no guardian signature is needed, and a federation whose
+   guardians all left can still be proven halted.
+2. **It is refuted by progress.** A verified federation record, or any
+   guardian's signed absence attestation, naming a session after `S` voids
+   the halt proof: a federation that is merely slow is not liquidated. A
+   recovery after the proof (`2f + 1` guardians back) is the existing rule
+   - the escrow then takes the frozen reserve.
+3. **Who it slashes.** Every guardian of the newest verified record that is
+   not in the `answering[]` of a majority of the observations is
+   ABANDONED by the halt proof itself, together with the attestations of
+   however many guardians are still seated (zero is enough). A guardian
+   that answered through the halt is not slashed: it stayed; the federation
+   left it. This replaces, for a halt, §23A.4's `2f + 1`.
+4. **Seats derive HALTED.** A seat holding a halt proof lists the federation
+   HALTED at `GET /liquidations` and counts the liquidation clocks from the
+   halt height; no HALTED record is signed by anyone.
+
+**Notes still in issuance at the halt (RULED HERE, same delegation).** A
+receive or a reissue whose transaction the consensus accepted, but whose
+blind signatures the client had not yet collected when the federation
+halted, left the player with no note and the federation with the inputs
+spent - measured in rehearsal 17: 100,000 sat accepted, not issued, lost.
+These outputs are claimable like notes:
+
+1. The **issued set** is mintv2's own: every output the consensus accepted
+   is a recovery item `Output { denomination, nonce_hash, tweak }`, where
+   `nonce_hash` is the hash160 of the output's blinded message, served by
+   every guardian at the public `recovery_slice` endpoint (the one a seed
+   restore already reads). The guardians still seated publish their copy,
+   signed with their node keys beside the spent set; a seat may also read
+   it from any guardian that still answers.
+2. A pending output's secret derives from the seed and `(denomination,
+   tweak)` alone (mintv2 `output_secret`), so the client - or a seed
+   restored elsewhere - can name it, and presents it as a **pending-output
+   claim**: `(denomination, tweak, output secret)`.
+3. The arbitration set recomputes from the secret the note's nonce and the
+   blinded message (mintv2 `blinded_message`, through the fork's CLI); the
+   claim is valid when hash160 of that blinded message is an Output item of
+   the issued set at that denomination and tweak, the nonce is not in the
+   spent set, and neither was claimed before. Valid pending-output claims
+   are paid at face exactly as notes are, in the same window and the same
+   pro rata, and late ones from what is left. Handing over the secret sells
+   the output to the escrow as handing over a note does.
+4. Nothing new is trusted: the issued set is the same kind of copy as the
+   spent set (newest session wins, a copy that disagrees is named), and an
+   output nobody can unblind for is never paid.
 
 **Why the witnesses are excluded (RULED HERE).** The abandonment proof is
 signed by `2f + 1` guardians of the very federation (§23A.4). If they were
