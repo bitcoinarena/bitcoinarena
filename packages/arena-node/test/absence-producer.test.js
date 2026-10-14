@@ -88,3 +88,20 @@ test('the guardian config maps peer ids to the federation\'s broadcast keys', ()
   assert.equal(toHex(c.peerKeyOf(3)), toHex(peer(3)));
   assert.equal(c.peerKeyOf(5), null);
 });
+
+test('a leaving guardian\'s own departure notice stands and makes it DEPARTED from leave_after', async () => {
+  const { departureStands } = await import('../../arena-protocol/src/absence.js');
+  const { createAbsences, readDepartureHex, departureHex } = await import('../src/absences.js');
+  const { ownDeparture } = await import('../src/absence-producer.js');
+  const d = ownDeparture({ own: { federation: fid, peerKey: peer(2) }, tip: 156520, departureNotice: 1008, nodePubkey: nodes[2].pub, sign: (h) => schnorr.sign(h, nodes[2].secret) });
+  assert.equal(d.leaveAfterHeight, 156520 + 1008);
+  const carried = readDepartureHex(departureHex(d));
+  assert.equal(departureStands(carried, { record, departureNotice: 1008, verify }).ok, true);
+  const seat = createAbsences({ verify });
+  assert.equal(seat.offerDeparture(carried).ok, true);
+  assert.equal(seat.departureFor(record, peer(2), 1008, 157527).ok, false, 'not before leave_after');
+  assert.equal(seat.departureFor(record, peer(2), 1008, 157528).ok, true);
+  // another guardian's node key cannot leave for it
+  const forged = ownDeparture({ own: { federation: fid, peerKey: peer(2) }, tip: 156520, departureNotice: 1008, nodePubkey: nodes[1].pub, sign: (h) => schnorr.sign(h, nodes[1].secret) });
+  assert.match(departureStands(forged, { record, departureNotice: 1008, verify }).why, /another node key/);
+});

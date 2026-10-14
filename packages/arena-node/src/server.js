@@ -71,8 +71,8 @@ import { checkUpdate } from './plugin-check.js';
 import { checkNetworkPackage, checkNetworkUpdate, networkPackageOf } from './network-check.js';
 import { readInvite } from './invite.js';
 import { federationRecords } from './federation-records.js';
-import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex } from './absences.js';
-import { createAbsenceProducer, guardianConfigOf, wsAdminStatus } from './absence-producer.js';
+import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex } from './absences.js';
+import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
 import { produceSpentSet, publishSpentSet } from './spent-set-producer.js';
@@ -421,6 +421,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
   let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
+  let ownGuardianSeat = () => null;            // { federation, peerKey } of the record naming this node a guardian, once records are held
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
   const REFUSED_GAME_ROUNDS = 50000;
@@ -2818,6 +2819,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (ht.unref) ht.unref();
   }
   liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts });
+  // THE FEDERATION THIS NODE IS A GUARDIAN OF: the held record (not CLOSED) that names its node key, and its peer key there
+  ownGuardianSeat = () => {
+    for (const f of (fedRecords.list() || []).map((x) => x.federation)) {
+      const held = fedRecords.recordOf(f);
+      const g = held && held.status !== 'CLOSED' ? (held.record.guardians || []).find((x) => toHex(x.nodePubkey) === toHex(round.pubkey)) : null;
+      if (g) return { federation: f, peerKey: g.peerKey };
+    }
+    return null;
+  };
   // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which
   // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
   // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
@@ -2826,11 +2836,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const stateFile = `${String(guardian.dataDir).replace(/\.guardian$/, '')}.absences.json`;
     let state = {}; try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
     const attest = async () => {
-      const fid = (fedRecords.list() || []).map((x) => x.federation).find((f) => {
-        const held = fedRecords.recordOf(f);
-        return held && held.status !== 'CLOSED' && (held.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(round.pubkey));
-      });
-      if (!fid) return;
+      const own = ownGuardianSeat();
+      if (!own) return;
+      const fid = own.federation;
       if (!producers.has(fid)) {
         const cfg = guardianConfigOf(guardian.dataDir, (f) => readFileSync(f, 'utf8'));
         const password = readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
@@ -3464,7 +3472,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           catch (e) { return answer(400, { ok: false, why: e.message }); }
         }
         // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
-        if (url.pathname === '/owner/leave') { const r = owner.leave(body); return answer(r.ok ? 200 : r.status, r); }
+        if (url.pathname === '/owner/leave') {
+          const r = owner.leave(body);
+          if (!r.ok) return answer(r.status, r);
+          // A GUARDIAN LEAVES BY NOTICE (§23A.5, RULED the owner 2026-09-21 "Leaving is legitimate"; kanban #322): its node signs
+          // (federation_id, peer, leave_after = now + departure_notice, posted_at) once, keeps it and posts it to every seat - from
+          // leave_after on the record has it DEPARTED, its bond untouched. A notice once posted stands; staying does not take it back.
+          const own = guardian && typeof chainTip === 'function' ? ownGuardianSeat() : null;
+          if (own && !r.already) {
+            try {
+              const tip = Number(await chainTip());
+              const d = ownDeparture({ own, tip, departureNotice: fedClocks.departureNotice, nodePubkey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret) });
+              absences.offerDeparture(d);
+              const hex = departureHex(d);
+              const posted = await Promise.all(networkSeats().map((u) => fetch(`${u}/departure`, { method: 'POST', body: hex, signal: AbortSignal.timeout(15000) })
+                .then((x) => x.ok).catch(() => false)));
+              r.departure = { federation: own.federation, leaveAfterHeight: d.leaveAfterHeight, postedAt: tip, notice: hex, postedTo: posted.filter(Boolean).length, of: posted.length };
+              console.log(`[owner] departure notice for ${own.federation.slice(0, 16)}: leave after ${d.leaveAfterHeight}, posted to ${r.departure.postedTo} of ${posted.length} seats`);
+            } catch (e) { r.departure = { why: e.message }; }
+          }
+          return answer(200, r);
+        }
         // INSTALL, UPDATE, REMOVE (kanban #276 step 5, the owner 2026-10-10: like an App Store, from the browser, no restart): each
         // signed by the owner; a game is fetched from another seat, checked (plugin-check.js + the trial run) and activated at once
         if (url.pathname === '/owner/plugins/install' || url.pathname === '/owner/plugins/update') {
