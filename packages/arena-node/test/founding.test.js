@@ -29,7 +29,7 @@ function network({ offline = new Set() } = {}) {
       ownKey: keys[i].pub, sign: (h) => schnorr.sign(h, keys[i].secret), verify, setup: fake(i),
       post: async (m) => { for (const s of seats) s.take(m); } }));
   }
-  const round = async (tip) => { for (let i = 0; i < seats.length; i++) if (!offline.has(i)) await seats[i].step(tip); };
+  const round = async (tip) => { for (let i = 0; i < seats.length; i++) if (!offline.has(i)) await seats[i].advance(tip); };
   return { seats, log, round };
 }
 const idx = (hex) => keys.findIndex((k) => toHex(k.pub) === hex);

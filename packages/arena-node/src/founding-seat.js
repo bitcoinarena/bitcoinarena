@@ -55,7 +55,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     if (fetchJson) for (const root of peers()) {
       try { const s = await fetchJson(`${root}/founding`); if (s && s.id === current.founding.id) current.founding.takeAll(s.codes); } catch { /* the next tick */ }
     }
-    const st = await current.founding.step(h);
+    const st = await current.founding.advance(h);
     return { ok: true, trigger: current.trigger, state: st };
   }
   return { tick, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
