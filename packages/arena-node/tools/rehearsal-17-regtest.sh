@@ -80,11 +80,25 @@ echo "{\"step\":\"p3 handed $SPEND_MSAT msat to p1, reissued\",\"reissue\":$(pri
 # ---- 4. g3 ABANDONS (slashed), THEN g2: HALTED ----
 gstop 3
 r17 abandon 3 0,1,2 || exit 1
+# ---- 4b. A RECEIVE STILL IN ISSUANCE AT THE HALT (spec §23A.5 "Notes still in issuance at the halt"): p2 hands itself notes and
+# g2 stops PEND_DELAY s after the receive went in - the transaction accepted on three, its new notes short of a third share
+PEND=$(cl p2 module mintv2 send ${PEND_MSAT:-50000000} 2>$P/p2-pend.err | js 'o=>typeof o==="string"?o:""')
+[ -n "$PEND" ] && [ "$PEND" != '?' ] || { echo '{"step":"p2 self-send FAILED"}'; exit 1; }
+( cl p2 module mintv2 receive "$PEND" > $P/p2-pend-receive.out 2>&1 & )
+sleep ${PEND_DELAY:-1}
 gstop 2
 r17 abandon 2 0,1 || exit 1
+sleep 5
+echo "{\"step\":\"p2's receive at the halt\",\"said\":$(head -c 300 $P/p2-pend-receive.out | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(s)))')}"
 
 # ---- 5. THE SEATED GUARDIANS' SPENT SET ----
 r17 spentset 0,1 || exit 1
+
+# ---- 5b. THE ISSUED SET (one answering guardian's recovery items) AND p2'S PENDING OUTPUTS, the federation halted ----
+cl client dev api recovery_slice '[0,1000000]' --peer-id 0 --module mintv2 > $P/claims/issued.json 2>$P/issued.err
+echo "{\"step\":\"issued set from g0\",\"bytes\":$(wc -c < $P/claims/issued.json),\"head\":$(head -c 240 $P/claims/issued.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(s)))')}"
+cl p2 module mintv2 pending-outputs > $P/claims/p2-pending.json 2>$P/p2-pending.err
+echo "{\"step\":\"p2's pending outputs\",\"said\":$(head -c 400 $P/claims/p2-pending.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(s)))')}"
 
 # ---- 6. EVERY WALLET HANDS OVER ITS NOTES, THE FEDERATION HALTED ----
 for p in p1 p2 p3; do
