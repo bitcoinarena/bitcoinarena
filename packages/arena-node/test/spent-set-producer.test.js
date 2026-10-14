@@ -25,7 +25,7 @@ test('the copy: the guardian\'s spent nonces, sorted, as of its last finished se
     return { ok: false, err: 'unknown' }; };
   const got = await produceSpentSet({ guardianDir: dir, clientDir: '/client', federationId: FED, nodeSecret: secret, run });
   assert.equal(got.ok, true, got.why);
-  assert.deepEqual(asked, ['blwp_spent_nonces null --module mint --peer-id 2 --password pw', 'session_count null --peer-id 2']);
+  assert.deepEqual(asked, ['blwp_spent_nonces null --module mintv2 --peer-id 2 --password pw', 'session_count null --peer-id 2']);
   const copy = { ...decodeSpentSet(fromHex(got.copy.spentSet)), signature: fromHex(got.copy.signature) };
   assert.deepEqual([copy.session, copy.nonces.length, Buffer.from(copy.nonces[0]).toString('hex')], [41, 2, nonce('aa')], 'session 42 is running: 41 is the last finished; distinct and sorted');
   const record = { federationId: fromHex(FED), guardians: [{ nodePubkey: me }] };
