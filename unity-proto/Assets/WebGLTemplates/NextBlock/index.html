@@ -634,8 +634,8 @@
     @media (max-width: 520px) { #blwp-next { width: calc(100% - 32px); font-size: 15px; } }
     /* AT THE BOTTOM EDGE IN LANDSCAPE (kanban #9, MF 19: at 18% up it stood over the result summary - "1 still driving",
        "YOU PENDING" - and a wreck's summary has no room above it there). Between the touch pads, which sit in the bottom
-       corners; upright the screen has room above 18% and the pads take the bottom's full width, so it stays. Unity reads
-       its top (nextBoxTop) and ends the card above it. */
+       corners; upright there is room above 18%, and on a touch screen it goes above the pads (below). Unity reads its top
+       (nextBoxTop) and ends the card above it. */
     @media (orientation: landscape) { #blwp-next { bottom: max(10px, env(safe-area-inset-bottom)); } }
     @media (orientation: landscape) and (max-height: 460px) { #blwp-next { padding: 6px 10px; font-size: 14px; gap: 10px; }
       #blwp-next-exit { padding: 5px 10px; } }
