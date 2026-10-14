@@ -230,18 +230,61 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     first deposit
 12. **can stock 0.12 reshare?** measure whether a running federation can
     seat a new guardian or move a gone guardian's share; the answer decides
-    whether §23A.6's succession is the first path or the fallback
+    whether §23A.6's succession is the first path or the fallback. **RUN
+    2026-10-14 01:55Z (kanban #326, `tools/rehearsal-12-regtest.sh`,
+    private regtest on the test host): it cannot - succession is the path.**
+    The 0.12 source has no reshare (no endpoint, no CLI; the peer set is
+    the setup API's, before the key ceremony). A running federation's
+    guardian, asked as its admin for a fifth guardian started fresh:
+    setup status "ConsensusIsRunning"; add-peer, set-local-params,
+    start-dkg and restart_federation_setup all "Invalid rpc id" (the setup
+    API is gone once consensus runs). The fifth guardian takes g0's code,
+    and its start-dkg is refused ("The number of guardians is invalid").
+    After: the same federation id, 4 guardians in g0's config, consensus
+    running.
 13. **succession on regtest:** a 4-guardian federation with notes in three
     wallets and one open lock; one guardian abandons (attested); a successor
     of 4 is founded with the three seated first; every wallet's notes move
     on their own through a gateway that serves both, with no press; the lock
     settles in the old federation and its payout moves; the old record goes
-    CLOSED; nothing lost anywhere, and the amounts written down
+    CLOSED; nothing lost anywhere, and the amounts written down. **RUN
+    2026-10-14 01:44-01:50Z (kanban #326, `tools/rehearsal-13-regtest.sh`
+    + `tools/rehearsal-13.mjs`, private regtest on the test host, EXIT 0 in
+    319 s):** p1-p3 paid in 249,999,872 msat each; p3 locks 100,000,000
+    under the committee's claim key (blwp-stake-lock, ids match, expiry
+    472). Guardian 3 stops; on 3 of 4 the committee settles the lock to p1
+    with one signature (accepted, payout 100,000,000, fees 0) and p1
+    collects it by Refund (accepted). Successor fb7acaf4 (3 seated first +
+    1 drawn). Pass 1 moves p1 349,999,616, p2 249,999,872, p3 134,216,192;
+    p3's lock change, 15,783,424, was still in issuance and moves on pass 2
+    (a client moves on every start). After: every old balance 0; in the
+    successor p1 349,999,616, p2 249,999,872, p3 149,999,616 = 749,999,104
+    of 749,999,616 - the 512 msat are the federation's fee on the lock and
+    on the collect. The gateway pegged its old e-cash out, 19,672,576 msat
+    left behind (the old audit still covers it: 20,191,000 in its wallet).
+    Records: the old one naming the successor (CRITICAL, 3 signers) and
+    CLOSED (3) verify, CLOSED with 2 is refused; the successor OPEN (4)
+    verifies. The 4 old bonds are spent at maturity, refused one block
+    before.
 14. **abandonment to slash:** the attestation set of item 13 committed in a
     slashing transaction by the arbitration keys, 75% evenly to the active
     census nodes minus that federation's guardians, 25% to the donation
     set; and a departure with notice that is *not* slashed and leaves the
-    bond and the census seat as they were
+    bond and the census seat as they were. **RUN 2026-10-13 ~22:40Z (kanban
+    #326, `tools/rehearsal-14.mjs`, private regtest on the test host):** census
+    of 8 bonded nodes, A = n1-n4 and B = n5-n8, 3 of 4. A4 absent 10 blocks
+    (abandon_blocks): 2 attestations, or one spanning 9 blocks, prove
+    nothing; 3 stand. The slashing transaction (5 of 7 arbitration keys; 4
+    refused) commits the proof id and slash_height 145 and moves the
+    100,000,000 sat bond into the escrow (99,997,000, fee 3,000). A CLOSED:
+    the escrow pays n5-n8 18,749,062-18,749,064 sat each (74,996,250, 75 %)
+    and the donation set 24,998,750 (25 %), fee 2,000; 4 of 7 refused,
+    mined. B3 (n7) gives notice at 147 for 157 (one block less is refused),
+    serves to 157 and stops: B1, B2, B4 attest from 157, and the slash is
+    refused (DEPARTED); his bond is unspent, so he keeps his census seat.
+    The same absence from 156 is ABANDONED and slashed. Found and fixed: a
+    seat's record took a due notice before the proof, so a guardian who
+    stopped before leave_after was recorded DEPARTED.
 15. **the seed alone, another device:** twelve words typed into a fresh
     browser find the federation among three, recover the notes and the
     unredeemed contracts, and show the same display name. **AS BUILT
@@ -259,7 +302,38 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     presents its notes on its own start and is paid at face from the
     escrow; a note already spent is refused; the remainder goes 75% / 25%;
     then the same with **no** spent set published, paid pro rata, the rate
-    shown
+    shown. **RUN 2026-10-14 ~01:27-01:35Z (kanban #326 / #323,
+    `tools/rehearsal-17-regtest.sh` + `tools/rehearsal-17.mjs`, private
+    regtest on the test host, fedimintd with `fedimint-spent-nonces.patch`):**
+    our federations run **mintv2** (the probe, testnet4 A and B): the patch
+    adds `blwp_spent_nonces` (admin) to it and a client `module mintv2
+    validate`, the stock CLI having no check. Bonds 4 x 500,000 sat, cap
+    1,000,000; p1-p3 paid in 3 x 299,999,744 msat; p3 sent 100,000,000 msat
+    to p1, received. g3 stopped: 3 attest, the slash (5 of 7) moves 497,000
+    sat into the escrow, the CRITICAL record verifies (3 signers). g2
+    stopped at 341: HALTED - and **neither the abandonment proof (2 of 3)
+    nor any record (2 signers, 3 needed) stands; open for a ruling**: a halt
+    by abandonment cannot be proven, so the second bond is never slashed.
+    g0 and g1 each gave their spent set (session 1, 52 nonces, 220-293 ms),
+    identical. Every wallet sent its notes while halted (mintv2 send works
+    offline). Claims at 351: p1 60 notes, p2 60, p3 48 accepted; p3's spent
+    string (12 notes) refused by the spent set. From the one slashed bond:
+    pro rata 0.6212; had both been slashed (994,000 sat): at face, remainder
+    194,001,024 msat, after drain_blocks (441) 75 % to the 4 nodes outside
+    the federation (36,375 sat each) and 25 % to the donation set (48,501).
+    No spent set: the spent string is paid too, 0.5522 from one bond, at
+    face from two. **Found:** in this run p1's received 100,000 sat was
+    still in issuance at the halt (the receive said Success, the notes need
+    3 signature shares, 2 guardians answer): p1 handed over 299,999,744 and
+    holds 0 - an in-flight payment is lost at a halt (in the first run the
+    same step finished before it and p1 handed over 400,000,000).
+    **Both findings RULED (Claude, on the owner's delegation 2026-10-14):**
+    multiplayer_p2p.md §23A.5 "How a halt is proven" (the seats attest a
+    halt - no session past `S` for `abandon_blocks`, a census majority and
+    at least five; no HALTED record; a guardian that answered through the
+    halt is not slashed) and "Notes still in issuance at the halt" (the
+    seated guardians publish the issued set; the client presents a pending
+    output's secrets; paid at face like a note).
 
 ---
 

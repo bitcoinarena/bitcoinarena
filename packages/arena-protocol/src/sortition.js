@@ -5,6 +5,7 @@ import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG, roleByte, namesNoDraw } from './constants.js';
 import { compareEntries, meetsCensusMinimum, eligibleFor } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
+import { roleFloorSats } from './rules.js';
 
 /**
  * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
@@ -121,7 +122,11 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   // v4.4 unsafe".
   if (typeof contract.bondMinSats !== 'bigint' || contract.bondMinSats <= 0n)
     throw new Error('that round names no positive bond floor to weigh against');
-  const bondMin = contract.bondMinSats;
+  // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per role, kanban #314; rules.js): the role's floor weighs and
+  // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
+  const bondMin = namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
   //
@@ -163,7 +168,7 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
   // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
 
-  const scored = [...byKey.values()].map(({ entry, bondSats }) => ({
+  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats }) => ({
     entry,
     ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
     weight: weightOf(bondSats, bondMin),

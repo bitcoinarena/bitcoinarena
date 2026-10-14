@@ -154,9 +154,14 @@ export function lifecycleBlocks(clocks) {
 export function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
   if (!Number.isInteger(haltHeight) || haltHeight < 0)
     return { ok: false, why: 'a halt happens at a block height' };
+  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
+  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
+  // claim_blocks before (kanban #323, found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
+  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
   return {
     ok: true,
-    claimWindowCloses: haltHeight + clocks.claimBlocks,
+    claimWindowOpens: haltHeight + clocks.abandonBlocks,
+    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
     lateClaimsUntil: haltHeight + clocks.drainBlocks,
     remainderSplitsAt: haltHeight + clocks.drainBlocks,
   };
@@ -212,4 +217,64 @@ export function settleClaims({ escrowMsat, claims = [], spentNonces = null, halt
   return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
     spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
     remainderSplitsAt: when.remainderSplitsAt };
+}
+
+const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
+
+/**
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
+ * the owner 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
+ * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
+ * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
+ */
+export function guardianSlashStands({ proof, departure = null }) {
+  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  if (departure && departure.ok) {
+    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
+    if (proof.sinceHeight >= departure.leaveAfterHeight)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
+    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
+  }
+  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
+}
+
+/**
+ * WHO A SLASHED GUARDIAN'S BOND PAYS once its federation is CLOSED with nothing lost (§23A.5, FEDERATION.md rehearsal 14):
+ * 75 % evenly to the census nodes active at the slash height LESS EVERY GUARDIAN OF THAT FEDERATION (they guarded the federation
+ * that lost one), 25 % to the donation set (splitNodesDevelopers). Amounts in sat, BigInt; the nodes' division's leftover
+ * satoshi go to the first node in key order, so the outputs sum to the amount. Answers { ok, nodes: [{ key, sats }], developers }.
+ */
+export function guardianSlashPayees({ amountSats, censusNodes, record }) {
+  if (typeof amountSats !== 'bigint' || amountSats <= 0n) return { ok: false, why: 'a slashed bond is a positive number of sat' };
+  const guardians = new Set((record && record.guardians || []).map((g) => hexKey(g.nodePubkey)));
+  const keys = [...new Set((censusNodes || []).map(hexKey))].filter((k) => k && !guardians.has(k)).sort();
+  if (!keys.length) return { ok: false, why: 'no census node outside the federation\'s guardians to pay' };
+  const { nodes, developers } = splitNodesDevelopers(amountSats);
+  const each = nodes / BigInt(keys.length);
+  const out = keys.map((key) => ({ key, sats: each }));
+  out[0].sats += nodes - each * BigInt(keys.length);
+  return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
+}
+
+/**
+ * A LIQUIDATION'S REMAINDER, BY NAME (§23A.5: "only the remainder then, 75% / 25% as above" - "75% evenly to every active census
+ * node at that height ... minus the slashed nodes and minus every guardian of the federation concerned; 25% to the donation set
+ * of §22A - the developers - by share_bps"). `msat` BigInt; `censusNodes` keys at the spending height; `slashed` keys; `record`
+ * the federation's; `donation` the donation set in force, recipients with `recipientPk` (x-only, hex or bytes) and `shareBps`.
+ * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
+ * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
+ */
+export function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
+  if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
+  const out = new Set((slashed || []).map(hexKey));
+  const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
+  if (!nodes.ok) return nodes;
+  const keyed = (donation || []).filter((r) => r && r.recipientPk !== undefined && Number.isInteger(r.shareBps) && r.shareBps > 0)
+    .map((r) => ({ key: hexKey(r.recipientPk), bps: BigInt(r.shareBps) })).sort((a, b) => (a.key < b.key ? -1 : 1));
+  const bps = keyed.reduce((a, r) => a + r.bps, 0n);
+  if (!keyed.length || bps !== 10000n) return { ok: false, why: 'the donation set in force names no key recipients whose shares make 10000 bps' };
+  const dev = keyed.map((r) => ({ key: r.key, msat: (nodes.developers * r.bps) / 10000n, part: 'donation' }));
+  dev[0].msat += nodes.developers - dev.reduce((a, r) => a + r.msat, 0n);
+  return { ok: true, payees: [...nodes.nodes.map((n) => ({ key: n.key, msat: n.sats, part: 'node' })), ...dev] };
 }

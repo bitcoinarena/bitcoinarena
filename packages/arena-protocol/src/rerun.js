@@ -20,13 +20,27 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_RERUN_RESULT, TAG } from './constants.js';
-import { encodePlayerResult, decodePlayerResult, resultId, RESULT_BYTES } from './result.js';
+import { encodePlayerResult, decodePlayerResult, resultId, RESULT_BYTES, resultBytesOf } from './result.js';
 import { receiptsNeeded } from './threshold.js';
 
-/** 1 type + 2 version + 32 contradicted run + 8 signed at + the 168-byte PlayerResult. */
-export const RERUN_BYTES = 1 + 2 + 32 + 8 + RESULT_BYTES;
+/** 1 type + 2 version + 32 contradicted run + 8 signed at + the PlayerResult (168 bytes; 178 with a price round's front, #312). */
+export const RERUN_HEAD_BYTES = 1 + 2 + 32 + 8;
+export const RERUN_BYTES = RERUN_HEAD_BYTES + RESULT_BYTES;
 export const RERUN_SIGNATURE_BYTES = 64;
 export const SIGNED_RERUN_BYTES = RERUN_BYTES + RERUN_SIGNATURE_BYTES;
+/** The size of the re-run result starting at `at`, by its embedded result's type; signed: + 64. */
+export const rerunBytesOf = (bytes, at = 0) => RERUN_HEAD_BYTES + resultBytesOf(bytes, at + RERUN_HEAD_BYTES);
+export const signedRerunBytesOf = (bytes, at = 0) => rerunBytesOf(bytes, at) + RERUN_SIGNATURE_BYTES;
+/** Cut a stream of signed re-run results; a record that does not fit ends the stream. */
+export function cutSignedReruns(body) {
+  const out = [];
+  for (let at = 0; at < body.length;) {
+    let n; try { n = signedRerunBytesOf(body, at); } catch { break; }
+    if (at + n > body.length) break;
+    out.push(body.subarray(at, at + n)); at += n;
+  }
+  return out;
+}
 
 /** A result's run: its id with no signer in it, so signer nodes that agree share one. */
 export const runOf = (result) => resultId({ ...result, nodePubkey: new Uint8Array(32) });
@@ -41,7 +55,8 @@ export function encodeRerunResult({ contradictedRunId, signedAtMs, result }) {
   // WHEN ITS SIGNER SIGNED IT, ON ITS OWN CLOCK (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01; it named a block until
   // then): a holder counts the re-run only if this time is within the 5 s tolerance of its own clock when it arrived.
   w.u64(BigInt(signedAtMs));
-  w.bytes(encodePlayerResult(result), RESULT_BYTES);
+  const res = encodePlayerResult(result);
+  w.bytes(res, res.length);
   return w.finish();
 }
 
@@ -52,7 +67,7 @@ export function decodeRerunResult(bytes) {
   if (!speaksVersion(version)) throw new Error('protocol version ' + version);
   const contradictedRunId = r.bytes32();
   const signedAtMs = r.u64();
-  const result = decodePlayerResult(r.bytes(RESULT_BYTES));
+  const result = decodePlayerResult(r.bytes(resultBytesOf(bytes, r.at)));
   r.end();
   return { contradictedRunId, signedAtMs, result };
 }
@@ -61,19 +76,21 @@ export function decodeRerunResult(bytes) {
 export const rerunResultId = (x) => taggedHash(TAG.rerunResult, encodeRerunResult(x));
 
 export function joinSignedRerun(body, signature) {
-  if (body.length !== RERUN_BYTES) throw new Error(`a re-run result is ${RERUN_BYTES} bytes, got ${body.length}`);
+  let n; try { n = rerunBytesOf(body); } catch { n = -1; }
+  if (body.length !== n) throw new Error(`a re-run result is ${n > 0 ? n : RERUN_BYTES} bytes, got ${body.length}`);
   if (signature.length !== RERUN_SIGNATURE_BYTES)
     throw new Error(`a signature is ${RERUN_SIGNATURE_BYTES} bytes, got ${signature.length}`);
-  const out = new Uint8Array(SIGNED_RERUN_BYTES);
+  const out = new Uint8Array(n + RERUN_SIGNATURE_BYTES);
   out.set(body, 0);
-  out.set(signature, RERUN_BYTES);
+  out.set(signature, n);
   return out;
 }
 
 export function splitSignedRerun(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RERUN_BYTES)
-    throw new Error(`a signed re-run result is ${SIGNED_RERUN_BYTES} bytes`);
-  return { body: bytes.subarray(0, RERUN_BYTES), signature: bytes.subarray(RERUN_BYTES) };
+  let n = -1; if (bytes instanceof Uint8Array) { try { n = rerunBytesOf(bytes); } catch { n = -1; } }
+  if (n < 0 || bytes.length !== n + RERUN_SIGNATURE_BYTES)
+    throw new Error(`a signed re-run result is ${n > 0 ? n + RERUN_SIGNATURE_BYTES : SIGNED_RERUN_BYTES} bytes`);
+  return { body: bytes.subarray(0, n), signature: bytes.subarray(n) };
 }
 
 /**

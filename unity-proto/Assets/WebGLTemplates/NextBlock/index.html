@@ -741,6 +741,9 @@
       </div>
       <!-- ALL FEDERATIONS AT A GLANCE (kanban #347, the owner 2026-10-12: on the deposit part of Settings, inline): funds held,
            how many, health before deposits stop (green / yellow / red, its meaning in the tooltip) and possible capacity -->
+      <div id="arena-operator" style="margin:8px 0 10px;font-size:13px;line-height:1.5"><b>Do you run Arena nodes?</b> Then say which operator you are: a node of yours never signs or earns in a round you play (§5A.13).
+        <input id="arena-operator-key" placeholder="your operator key, 64 hex (empty: none)" autocomplete="off" autocapitalize="none" spellcheck="false" style="width:100%;margin-top:4px">
+        <button id="arena-operator-save" type="button">Save</button> <span class="muted" id="arena-operator-said"></span></div>
       <div id="arena-custody" style="margin:8px 0 10px;padding:9px 11px;border:1px solid #2a3442;border-radius:10px;background:#11161d;font-size:13px;line-height:1.5"></div>
       <div id="blwp-money-actions">
         <button id="blwp-deposit-go" type="button">Deposit</button>
@@ -2028,6 +2031,40 @@
       setTimeout(() => readResultSummary(run, nodes), 1000);
       resultTimer = setInterval(() => readResultSummary(run, nodes), 2000);
     };
+    // THE RUN IS SAFE BEFORE IT IS CELEBRATED (§13A "Client duty", kanban #315): "on delivery, the reference client uploads its
+    // complete transcript to at least two committee nodes ... before showing the victory screen. This is what makes the veto work for
+    // a player who closes the browser immediately afterwards." The batches stream live, so this asks the nodes what they hold
+    // (secureTranscript) and, until two hold the whole run, holds a line over the result card: "keep this tab open".
+    // THE CHAIN CHECKED OUTSIDE THE NETWORK (§5A.4, kanban #299): a paid join's census and tip are spot-checked against a block explorer -
+    // mempool.space for testnet4 rounds by default; `arena.explorer` in this browser's storage names another Esplora base, or `off`
+    window.ARENA_EXPLORER_FOR = (round) => {
+      let said = null; try { said = localStorage.getItem('arena.explorer'); } catch { /* no storage: the default */ }
+      if (said === 'off') return null;
+      if (said && /^https:\/\//.test(said)) return said;
+      return round && round.networkId && BLWPCLIENT.toHex(round.networkId) === '1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15' ? 'https://mempool.space/testnet4/api' : null;
+    };
+    window.BLWP_SECURE_RUN = async (word, run, { tries = 30, everyMs = 3000 } = {}) => {
+      if (!run || !/DELIVERED/.test(String(word || '')) || !BLWPCLIENT.secureTranscript) return null;
+      const M = window.unityInstance && window.unityInstance.Module;
+      const n = M && (M.blwpRunNet || M.blwpNet);
+      const finalTick = n && n.client && Number.isInteger(n.client.nextTick) ? n.client.nextTick : null;
+      if (!finalTick || !run.roundHex || !run.entryHex) return null;
+      let el = document.getElementById('blwp-securing');
+      if (!el) { el = document.createElement('div'); el.id = 'blwp-securing';
+        el.style.cssText = 'position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:60;padding:8px 14px;border-radius:8px;background:rgba(10,14,20,.92);color:#ffd27a;font:600 14px system-ui;max-width:92vw;text-align:center';
+        document.body.appendChild(el); }
+      el.style.display = ''; el.textContent = 'Securing your run with the signer nodes … keep this tab open';
+      let got = null;
+      for (let i = 0; i < tries; i++) {
+        got = await BLWPCLIENT.secureTranscript({ roundId: BLWPCLIENT.fromHex(run.roundHex), entryId: BLWPCLIENT.fromHex(run.entryHex), nodes: run.nodes || [], finalTick });
+        if (got.safe) { el.style.color = '#7ee08a'; el.textContent = 'Your run is safe: ' + got.holders.length + ' signer nodes hold all of it'; setTimeout(() => { el.style.display = 'none'; }, 4000); break; }
+        el.textContent = 'Securing your run: ' + got.holders.length + ' of 2 signer nodes hold all of it … keep this tab open';
+        await new Promise((r) => setTimeout(r, everyMs));
+      }
+      window.BLWP_RUN_SAFE = got;
+      if (got && !got.safe) { el.style.color = '#ff8a7a'; el.textContent = 'Your run is not yet held by two signer nodes - keep this tab open (' + got.why + ')'; }
+      return got;
+    };
     window.BLWP_RUN_OVER = (word, run) => {
       if (run) prefetchReplayNodes(run.roundHex, run.nodes);
       window.BLWP_CHAIN = undefined;
@@ -2059,6 +2096,8 @@
       window.BLWP_CARD_UP = true;
       // and the result summary on it, read from the round's signer nodes while it stands
       startResultSummary(run);
+      // and the run made safe on two signer nodes before it is celebrated (kanban #315)
+      if (window.BLWP_SECURE_RUN && (!window.BLWP_SECURING || window.BLWP_SECURING !== (run && run.entryHex))) { window.BLWP_SECURING = run && run.entryHex; window.BLWP_SECURE_RUN(word, run).catch(() => {}); }
       { const pl = document.getElementById('blwp-players'); if (pl) pl.style.display = 'none'; }
       if (noLobby && !window.BLWP_LOBBY_STARTING) {
         window.BLWP_LOBBY_STARTING = true;
@@ -2184,7 +2223,7 @@
       // THE COMMITTEE THIS PAGE BUILDS ITSELF (kanban #296, spec 5A.6): the headers agreed from the round's nodes, the
       // round's census checked entry by entry against them and as a set against its census_root, the beacon off the same
       // headers and the seats' sortition. The nodes' own /committee is only compared - one that differs is named.
-      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE }).then(async (sn) => {
+      const signer = BLWPCLIENT.clientSettlementSignerNodes(roundIdHex, round, nodes, { curve: window.BLWP_CURVE, explorer: window.ARENA_EXPLORER_FOR ? window.ARENA_EXPLORER_FOR(round) : null }).then(async (sn) => {
         // AND THE FEDERATION'S RECORD, checked against the same census (kanban #321): what this page may do with it
         try {
           const census = BLWPCLIENT.checkedCensusFor(round);
@@ -2962,7 +3001,7 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-            donationMsat: donation.donationMsat, joinTick: 0,
+            donationMsat: donation.donationMsat, joinTick: 0, ...(window.ARENA_OPERATOR_DECLARED && window.ARENA_OPERATOR_DECLARED() ? { operatorId: window.ARENA_OPERATOR_DECLARED() } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         entry.commit = BLWPCLIENT.moveCommitment({ roundId: entry.roundId, sessionPubkey, move: hidden.move, salt: hidden.salt });
         // HELD WHEN THE SEATS TOOK THE ENTRY (kanban #293): the move is the tab's once all its seats answered 201; the locks are
@@ -2999,7 +3038,7 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-            donationMsat: donation.donationMsat, joinTick: 0, pick: chosen.pick, confirmedGames: confirmedMarkets(),
+            donationMsat: donation.donationMsat, joinTick: 0, ...(window.ARENA_OPERATOR_DECLARED && window.ARENA_OPERATOR_DECLARED() ? { operatorId: window.ARENA_OPERATOR_DECLARED() } : {}), pick: chosen.pick, confirmedGames: confirmedMarkets(),
             // AN ORDER (kanban #237): the pick at most this price of the scale, until this time - from a market client's order
             ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
@@ -3291,6 +3330,42 @@
       }
     }
     window.ARENA_COLLECT_SLASH = collectSlashPayouts;
+    // A HALTED FEDERATION'S CLAIMS (kanban #323, §23A.5 step 2: "The client does the rest on its own: on every start it presents
+    // each unspent note it holds for that federation"): on load and every 10 min, for each liquidation a seat lists of a federation
+    // this browser holds a wallet in, the whole wallet is presented to the arbitration set (kept in storage until it is taken), and
+    // every payout that set locked to this seed's claim key is collected into this browser's wallet of the federation it was paid in
+    async function claimLiquidations() {
+      const lob = window.BLWP_LEDGER_LOBBY; const seed = walletSeed();
+      if (!lob || !lob.nodes || !lob.nodes.length || !seed || !BLWPCLIENT.presentNotes || !window.BLWP_CURVE) return;
+      let liq = null;
+      for (const n of lob.nodes) {
+        try { const r = await fetch(String((n && n.url) || n).replace(/\/+$/, '') + '/liquidations', { cache: 'no-store' }); if (r.ok) { liq = (await r.json()).liquidations || []; break; } } catch { /* the next seat */ }
+      }
+      if (!liq || !liq.length) return;
+      const held = BLWPCLIENT.ledgerFederations(vault());
+      const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
+      const inviteOf = (fid) => { const st = statuses.find((f) => f && f.invite && String(f.federation).toLowerCase() === String(fid).toLowerCase()); return st ? st.invite : null; };
+      const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+      const walletFor = async (fid) => {
+        const invite = inviteOf(fid);
+        if (!invite) throw new Error('this page holds no invite of federation ' + String(fid).slice(0, 8));
+        return BLWPCLIENT.openPlayerWallet({ federationId: BLWPCLIENT.fromHex(String(fid)), invite, seed, LockClient: wasm.LockClient, storage: vault() });
+      };
+      for (const l of liq.filter((x) => held.includes(String(x.federation).toLowerCase()))) {
+        const key = BLWPCLIENT.liquidationKeyFor(seed, l.federation, window.BLWP_CURVE);
+        const said = await BLWPCLIENT.presentNotes({ liquidations: [l], held, walletFor, payoutPk: key.payoutPk, storage: vault() });
+        for (const x of said) console.log('[blwp] liquidation of ' + x.federation.slice(0, 8) + ': ' + (x.ok ? x.accepted.length + ' note(s) presented' : x.why));
+      }
+      // each arbitration set once, however a seat wrote its door
+      for (const a of [...new Set(liq.map((l) => l.claims).filter(Boolean).map((c) => String(c).replace(/\/+$/, '').replace(/\/liquidation-claims$/, '')))]) {
+        let listed;
+        try { const r = await fetch(a + '/liquidation-payouts', { cache: 'no-store' }); if (!r.ok) continue; listed = await r.json(); } catch { continue; }
+        const got = await BLWPCLIENT.collectLiquidationPayouts({ listed, seed, curve: window.BLWP_CURVE, clientFor: walletFor, storage: vault() });
+        for (const g of got.filter((x) => !x.kept)) console.log('[blwp] liquidation payout ' + g.msat + ' msat: ' + (g.ok ? 'collected' : g.why));
+        if (got.some((g) => g.ok && !g.kept) && window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
+      }
+    }
+    window.ARENA_CLAIM_LIQUIDATIONS = claimLiquidations;
     async function lookThePayout() {
       if (payoutAsking) {
         if (payoutAskingSince && Date.now() - payoutAskingSince > 60000)
@@ -4251,6 +4326,23 @@
       window.ARENA_CUSTODY_SHOWN = { ...sum, band: said.band };
     };
     window.ARENA_PAINT_CUSTODY = paintCustody;
+    // THE OPERATOR THIS PLAYER DECLARES (§7 operator_id_declaration, §5A.13, kanban #309): kept in this browser, written into every
+    // entry it makes - "none" (empty) writes nothing, so every other entry keeps its bytes
+    const OPERATOR_KEY = 'arena.operator-id';
+    const operatorDeclared = () => { try { const h = String(localStorage.getItem(OPERATOR_KEY) || '').trim().toLowerCase(); return /^[0-9a-f]{64}$/.test(h) && !/^0+$/.test(h) ? BLWPCLIENT.fromHex(h) : null; } catch { return null; } };
+    window.ARENA_OPERATOR_DECLARED = operatorDeclared;
+    {
+      const input = document.getElementById('arena-operator-key'), save = document.getElementById('arena-operator-save'), said = document.getElementById('arena-operator-said');
+      if (input && save) {
+        try { input.value = localStorage.getItem(OPERATOR_KEY) || ''; } catch { /* no storage */ }
+        save.addEventListener('click', () => {
+          const h = input.value.trim().toLowerCase();
+          if (h && (!/^[0-9a-f]{64}$/.test(h) || /^0+$/.test(h))) { said.textContent = 'an operator key is 64 hex characters, not all zero'; return; }
+          try { if (h) localStorage.setItem(OPERATOR_KEY, h); else localStorage.removeItem(OPERATOR_KEY); } catch { said.textContent = 'this browser keeps nothing'; return; }
+          said.textContent = h ? 'saved: your entries declare operator ' + h.slice(0, 8) : 'saved: no operator declared';
+        });
+      }
+    }
     window.BLWP_PAINT_SETTINGS = () => { paintSettings(); paintHistory(); paintOtherWallets(); paintCustody(); if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED(); };
     // THE OTHER WALLETS THIS BROWSER KEEPS (the owner 2026-10-02: "now fix the balances" - his 402 sat sat in another kept
     // phrase's wallet while this tab showed 0; seven phrases in one browser, three of them holding sats). Every kept phrase
@@ -5515,7 +5607,7 @@
             let best = null;
             for (const x of read.slice(0, 3)) {
               try {
-                await Promise.race([BLWPCLIENT.clientSettlementSignerNodes(x.r.id, x.c, nodes, { curve: window.BLWP_CURVE }),
+                await Promise.race([BLWPCLIENT.clientSettlementSignerNodes(x.r.id, x.c, nodes, { curve: window.BLWP_CURVE, explorer: window.ARENA_EXPLORER_FOR ? window.ARENA_EXPLORER_FOR(x.c) : null }),
                   new Promise((_, no) => setTimeout(() => no(new Error('no committee in 20 s')), 20000))]);
                 const census = BLWPCLIENT.checkedCensusFor(x.c);
                 const n = census && census.entries ? census.entries.length : 0;
@@ -5672,6 +5764,7 @@
       window.BLWP_LEDGER_GATEWAYS = (new URLSearchParams((testnet ? testnet.search : search).replace(/^\?/, '')).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean);
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[blwp] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
+      if (!window.ARENA_LIQ_TIMER) { const liq = () => claimLiquidations().catch((e) => console.warn('[blwp] liquidation claims: ' + (e && e.message ? e.message : e))); liq(); window.ARENA_LIQ_TIMER = setInterval(liq, 600000); }
       // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
