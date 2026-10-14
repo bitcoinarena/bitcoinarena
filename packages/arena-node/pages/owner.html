@@ -193,7 +193,8 @@ async function area() {
       <div class="row"><span>Games hosted</span><b>${games.length ? games.map((g) => esc(g.name)).join(', ') : 'none'}</b></div></div>
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
-    <h2>Donations</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
+    <h2>Dev clients</h2><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
+    <h2>Donations waiting to be collected</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
     <h2>Games from other seats</h2><div class="card" id="store">
       <p>Games and new versions other seats host. Check runs every check in this browser and shows it; the seat checks again,
       runs the code in a sandbox, and only then runs it - at once, no restart. A version that is newer keeps the old one for
@@ -224,6 +225,7 @@ async function area() {
   if ($('show')) $('show').onclick = () => { $('shown').innerHTML = `<div class="words">${C.phraseFromSeed(readSeed()).words.map((w) => `<span>${w}</span>`).join('')}</div>`; };
   $('forget').onclick = () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); };
   donations();
+  devClients();
   standingPanel();
   leavePanel();
   storePanel();
@@ -483,12 +485,77 @@ async function donations() {
   try { r = await (await fetch(at('/owner/donations'), { cache: 'no-store' })).json(); }
   catch (e) { $('dons').innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
   if (!r.sets || !r.sets.length) { $('dons').innerHTML = '<div class="card"><p>This seat deals with no donation set yet.</p></div>'; return; }
-  $('dons').innerHTML = `<div class="card"><div class="row"><span>In all, verified by this seat</span><b>${sat(r.totalMsat)}</b></div></div>` + r.sets.map((s) => `<div class="card">
+  $('dons').innerHTML = `<div class="card"><p class="sub">Donations this seat verified that their dev's client has not collected yet: a client deletes them here once it has them. What each dev received is under Dev clients.</p><div class="row"><span>Waiting at this seat</span><b>${sat(r.totalMsat)}</b></div></div>` + r.sets.map((s) => `<div class="card">
     <h3>${esc(s.title)}</h3><div class="row"><span>${s.kind === 'protocol' ? 'Protocol set, serial ' + s.serial : 'Game developer set'} · per UTC day this seat verified it</span><b>${esc(s.setId.slice(0, 16))}…</b></div>
     ${s.recipients.map((x) => `<div class="row"><span>${esc(x.label || 'recipient')} · ${esc(x.key.slice(0, 12))}…</span><b>${sat(x.totalMsat)} · ${x.donations} donation${x.donations === 1 ? '' : 's'}</b></div>
       ${x.byDay.slice(0, 7).map((d) => `<div class="row sub"><span>${d.day}</span><b>${sat(d.msat)}</b></div>`).join('')}
       ${x.byRound.length ? `<details><summary class="sub">${x.byRound.length} round${x.byRound.length === 1 ? '' : 's'}</summary>${x.byRound.slice(0, 50).map((d) => `<div class="row sub"><span>round ${esc(d.roundId.slice(0, 16))}…</span><b>${sat(d.msat)}</b></div>`).join('')}</details>` : ''}`).join('')}
   </div>`).join('');
+}
+// THE DEV CLIENTS (kanban #358): a donation recipient's key and its wallets, run by this node. Set one up with a new key or a dev key
+// you already have; it collects what the protocol and the games donate to that key, and you withdraw it over Lightning from here.
+async function devClients() {
+  let r;
+  try { r = await (await fetch(at('/owner/dev'), { cache: 'no-store' })).json(); }
+  catch (e) { $('devs').innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
+  const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
+  const split = (S) => !S ? '' : row('For the protocol developers', sat(S.protocolMsat)) + (S.games || []).map((g) => row('For ' + esc(g.title || g.game), `${sat(g.msat)} · ${g.donations} donation${g.donations === 1 ? '' : 's'}`)).join('')
+    + (S.unknownMsat && S.unknownMsat !== '0' ? row('Rounds this node no longer holds', sat(S.unknownMsat)) : '');
+  const card = (V, managed) => {
+    if (V.error) return `<div class="card"><h3>${esc(V.label || V.slug || 'Dev client')}</h3><p class="err">${esc(V.error)}</p></div>`;
+    const holds = (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
+    const last = (V.requests || [])[0];
+    return `<div class="card"><h3>${esc(V.label || V.slug)}${managed ? (V.running ? ' <span class="ok">· running</span>' : ' <span class="err">· stopped</span>') : ' · beside this node'}</h3>
+      ${row('Recipient key', `<span title="${esc(V.recipientPk)}">${esc(V.recipientPk.slice(0, 16))}…</span>`)}
+      ${row('Received', `${sat(V.receivedMsat)} · ${V.donations} donation${V.donations === 1 ? '' : 's'}`)}
+      ${split(V.split)}
+      ${(V.balances || []).map((b) => row('Holds in ' + esc(b.federation.slice(0, 12)), sat(b.msat))).join('')}
+      ${row('Withdrawn over Lightning', sat(V.withdrawnMsat))}
+      ${V.lastPass ? row('Last pass', `${esc(String(V.lastPass.at).slice(0, 16).replace('T', ' '))} · asked ${V.lastPass.seats} nodes`) : row('Last pass', 'not yet')}
+      ${last ? row('Last withdrawal you asked for', `${esc(last.state || '?')}${last.msat ? ' · ' + sat(last.msat) : ''}${last.why ? ' · ' + esc(last.why) : ''}`) : ''}
+      ${managed ? `<details${holds > 0n ? ' open' : ''}><summary>Withdraw over Lightning</summary>
+        <label>A Lightning invoice (it names the amount) or a Lightning address</label>
+        <input id="wd-${esc(V.slug)}" placeholder="lntb… or name@domain" autocomplete="off" autocapitalize="none" spellcheck="false">
+        <label>Amount in sat, for an address (empty = everything it can send)</label><input id="wa-${esc(V.slug)}" inputmode="numeric" placeholder="all">
+        <button class="primary" data-wd="${esc(V.slug)}">Withdraw</button><div class="err" id="we-${esc(V.slug)}"></div></details>
+        <details><summary class="sub">Remove this client</summary><p>The client stops; its directory and key stay on the node.</p><button data-rm="${esc(V.slug)}">Remove</button></details>` : ''}
+    </div>`;
+  };
+  const setup = r.managed ? `<div class="card"><h3>Set up a dev client</h3>
+      <p>A dev client collects what the protocol and the games donate to one recipient key, keeps it in a wallet per federation, and pays it out
+      over Lightning when you ask. Use a <b>new key</b> (put its public key in your game's donation set), or a <b>dev key you already have</b>:
+      its wallets are recovered from the federation. Only one client may run per key.</p>
+      <label>Label</label><input id="dlabel" placeholder="dev a" autocomplete="off">
+      <label>Your dev key's secret (64 hex), or empty for a new key</label><input id="dsecret" type="password" placeholder="empty = a new key" autocomplete="off" autocapitalize="none" spellcheck="false">
+      <p class="sub">The secret travels in your signed request: only do this over https or on the node's own machine.</p>
+      <button class="primary" id="dsetup">Set up</button><div class="err" id="derr"></div></div>`
+    : '<div class="card"><p>This node runs no dev clients of its own: its operator starts it with ARENA_DEV_WASM_PKG to set them up here.</p></div>';
+  $('devs').innerHTML = (r.beside ? card(r.beside, false) : '') + (r.clients || []).map((c) => card(c, true)).join('') + setup;
+  if ($('dsetup')) $('dsetup').onclick = async () => {
+    $('derr').textContent = '';
+    try {
+      const args = { label: $('dlabel').value.trim() };
+      if ($('dsecret').value.trim()) args.secretHex = $('dsecret').value.trim();
+      const a = await post('/owner/dev/setup', signed('dev/setup', args));
+      $('dsecret').value = '';
+      $('derr').innerHTML = `<span class="ok">Set up ✓ ${esc(a.slug)} · key ${esc(a.recipientPk.slice(0, 16))}…</span>`;
+      setTimeout(devClients, 1500);
+    } catch (e) { $('derr').textContent = e.message; }
+  };
+  for (const b of document.querySelectorAll('[data-wd]')) b.onclick = async () => {
+    const slug = b.dataset.wd, to = $('wd-' + slug).value.trim(), amt = $('wa-' + slug).value.trim();
+    $('we-' + slug).textContent = '';
+    try {
+      const args = { slug, ...(/^ln/i.test(to) ? { invoice: to } : { lnAddress: to }), ...(amt && !/^ln/i.test(to) ? { msat: String(BigInt(amt) * 1000n) } : {}) };
+      const a = await post('/owner/dev/withdraw', signed('dev/withdraw', args));
+      $('we-' + slug).innerHTML = `<span class="ok">Asked ✓ the client pays it within seconds (${esc(a.id)})</span>`;
+      const poll = async (n) => { await devClients(); const v = (await (await fetch(at('/owner/dev'), { cache: 'no-store' })).json()).clients.find((c) => c.slug === slug); const q = v && (v.requests || []).find((x) => x.id === a.id); if ((!q || q.state === 'Paying') && n < 40) setTimeout(() => poll(n + 1), 3000); };
+      setTimeout(() => poll(0), 3000);
+    } catch (e) { $('we-' + slug).textContent = e.message; }
+  };
+  for (const b of document.querySelectorAll('[data-rm]')) b.onclick = async () => {
+    try { await post('/owner/dev/remove', signed('dev/remove', { slug: b.dataset.rm })); devClients(); } catch (e) { alert(e.message); }
+  };
 }
 async function start() {
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
