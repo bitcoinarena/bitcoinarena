@@ -273,7 +273,31 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     presents its notes on its own start and is paid at face from the
     escrow; a note already spent is refused; the remainder goes 75% / 25%;
     then the same with **no** spent set published, paid pro rata, the rate
-    shown
+    shown. **RUN 2026-10-14 ~01:27-01:35Z (kanban #326 / #323,
+    `tools/rehearsal-17-regtest.sh` + `tools/rehearsal-17.mjs`, private
+    regtest on the test host, fedimintd with `fedimint-spent-nonces.patch`):**
+    our federations run **mintv2** (the probe, testnet4 A and B): the patch
+    adds `blwp_spent_nonces` (admin) to it and a client `module mintv2
+    validate`, the stock CLI having no check. Bonds 4 x 500,000 sat, cap
+    1,000,000; p1-p3 paid in 3 x 299,999,744 msat; p3 sent 100,000,000 msat
+    to p1, received. g3 stopped: 3 attest, the slash (5 of 7) moves 497,000
+    sat into the escrow, the CRITICAL record verifies (3 signers). g2
+    stopped at 341: HALTED - and **neither the abandonment proof (2 of 3)
+    nor any record (2 signers, 3 needed) stands; open for a ruling**: a halt
+    by abandonment cannot be proven, so the second bond is never slashed.
+    g0 and g1 each gave their spent set (session 1, 52 nonces, 220-293 ms),
+    identical. Every wallet sent its notes while halted (mintv2 send works
+    offline). Claims at 351: p1 60 notes, p2 60, p3 48 accepted; p3's spent
+    string (12 notes) refused by the spent set. From the one slashed bond:
+    pro rata 0.6212; had both been slashed (994,000 sat): at face, remainder
+    194,001,024 msat, after drain_blocks (441) 75 % to the 4 nodes outside
+    the federation (36,375 sat each) and 25 % to the donation set (48,501).
+    No spent set: the spent string is paid too, 0.5522 from one bond, at
+    face from two. **Found:** in this run p1's received 100,000 sat was
+    still in issuance at the halt (the receive said Success, the notes need
+    3 signature shares, 2 guardians answer): p1 handed over 299,999,744 and
+    holds 0 - an in-flight payment is lost at a halt (in the first run the
+    same step finished before it and p1 handed over 400,000,000).
 
 ---
 

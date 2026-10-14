@@ -3,8 +3,8 @@
 // redeemed) as of the last session they hold."
 //
 // The node runs its guardian (§23A.2), so it asks it, as the guardian's admin, through the fork's admin endpoint
-// `blwp_spent_nonces` (tools/fedimint-spent-nonces.patch) and the public `session_count` - both over a client of that federation:
-//   fedimint-cli --data-dir <client> dev api blwp_spent_nonces null --module mint --peer-id <own id> --password <admin password>
+// `blwp_spent_nonces` of its MINTV2 module (tools/fedimint-spent-nonces.patch; our federations run mintv2, not mint) and the public `session_count` - both over a client of that federation:
+//   fedimint-cli --data-dir <client> dev api blwp_spent_nonces null --module mintv2 --peer-id <own id> --password <admin password>
 //   fedimint-cli --data-dir <client> dev api session_count null --peer-id <own id>
 // The guardian's id is its config's `identity` (local.json), its password the `admin-password` beside it. The copy is signed with
 // the node key (spent-set.js signSpentSet) and posted to every seat's POST /liquidations/spent-set, its own included.
@@ -25,13 +25,13 @@ const valueOf = (out) => { const j = JSON.parse(out); return j && typeof j === '
  * THE COPY. `guardianDir` this node's guardian data dir; `clientDir` a fedimint-cli client of the federation; `federationId` hex;
  * `nodeSecret` 32 bytes. Answers { ok, copy: { spentSet hex, signature hex }, session, nonces } or why not.
  */
-export async function produceSpentSet({ guardianDir, clientDir, cli = 'fedimint-cli', federationId, nodeSecret, run = runCli, env = process.env }) {
+export async function produceSpentSet({ guardianDir, clientDir, cli = 'fedimint-cli', federationId, nodeSecret, mintModule = 'mintv2', run = runCli, env = process.env }) {
   let peer, password;
   try { peer = JSON.parse(readFileSync(join(guardianDir, 'local.json'), 'utf8')).identity; password = readFileSync(join(guardianDir, 'admin-password'), 'utf8').trim(); }
   catch (e) { return { ok: false, why: `this node's guardian config is not readable: ${e.message}` }; }
   if (!Number.isInteger(peer)) return { ok: false, why: 'the guardian config names no identity' };
   const base = ['--data-dir', clientDir, 'dev', 'api'];
-  const n = await run(cli, [...base, 'blwp_spent_nonces', 'null', '--module', 'mint', '--peer-id', String(peer), '--password', password], env);
+  const n = await run(cli, [...base, 'blwp_spent_nonces', 'null', '--module', mintModule, '--peer-id', String(peer), '--password', password], env);
   if (!n.ok) return { ok: false, why: `the guardian did not answer its spent nonces: ${(n.err || n.out).trim().split('\n').pop().slice(0, 200)}` };
   const c = await run(cli, [...base, 'session_count', 'null', '--peer-id', String(peer)], env);
   if (!c.ok) return { ok: false, why: `the guardian did not answer its session count: ${(c.err || c.out).trim().split('\n').pop().slice(0, 200)}` };

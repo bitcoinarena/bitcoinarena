@@ -48,3 +48,100 @@ index 48da60c0bb4..a7fb9aa14c9 100644
              public_api_endpoint! {
                  NOTE_SPENT_ENDPOINT,
                  ApiVersion::new(0, 1),
+diff --git a/modules/fedimint-mintv2-client/src/cli.rs b/modules/fedimint-mintv2-client/src/cli.rs
+index 897477d287d..42b3ead8205 100644
+--- a/modules/fedimint-mintv2-client/src/cli.rs
++++ b/modules/fedimint-mintv2-client/src/cli.rs
+@@ -22,6 +22,9 @@ enum Opts {
+     },
+     /// Receive the `ECash` by reissuing the notes and return the amount.
+     Receive { ecash: String },
++    /// BLWP (kanban #323, liquidation step 3): check every note of the `ECash` offline against this federation's mint keys
++    /// and name each note's nonce - nothing is sent and nothing reissued, so it answers while the federation is halted.
++    Validate { ecash: String },
+ }
+ 
+ pub(crate) async fn handle_cli_command(
+@@ -52,6 +55,32 @@ pub(crate) async fn handle_cli_command(
+ 
+             Ok(json(state))
+         }
++        Opts::Validate { ecash } => {
++            let ecash: crate::ECash = base32::decode_prefixed(FEDIMINT_PREFIX, &ecash)?;
++            let ours = ecash.mint() == Some(mint.federation_id);
++            let notes: Vec<Value> = ecash
++                .notes()
++                .into_iter()
++                .map(|n| {
++                    let nonce = n.keypair.public_key();
++                    let valid = mint.cfg.tbs_agg_pks.get(&n.denomination).is_some_and(|pk| {
++                        fedimint_mintv2_common::verify_note(
++                            fedimint_mintv2_common::Note { denomination: n.denomination, nonce, signature: n.signature },
++                            *pk,
++                        )
++                    });
++                    serde_json::json!({ "nonce": nonce.to_string(), "amount_msat": n.amount().msats, "valid": valid })
++                })
++                .collect();
++            let all = !notes.is_empty() && notes.iter().all(|n| n["valid"] == Value::Bool(true));
++            Ok(serde_json::json!({
++                "federation_id": ecash.mint().map(|m| m.to_string()),
++                "ours": ours,
++                "amount_msat": ecash.amount().msats,
++                "valid": ours && all,
++                "notes": notes,
++            }))
++        }
+     }
+ }
+ 
+diff --git a/modules/fedimint-mintv2-common/src/endpoint_constants.rs b/modules/fedimint-mintv2-common/src/endpoint_constants.rs
+index 552554bd126..ffe7ddbef70 100644
+--- a/modules/fedimint-mintv2-common/src/endpoint_constants.rs
++++ b/modules/fedimint-mintv2-common/src/endpoint_constants.rs
+@@ -3,3 +3,5 @@
+ pub const RECOVERY_SLICE_ENDPOINT: &str = "recovery_slice";
+ pub const RECOVERY_SLICE_HASH_ENDPOINT: &str = "recovery_slice_hash";
+ pub const RECOVERY_COUNT_ENDPOINT: &str = "recovery_count";
++/// BLWP (kanban #323, liquidation step 1): every spent note nonce this guardian holds, for its signed spent set. Admin only.
++pub const SPENT_NONCES_ENDPOINT: &str = "blwp_spent_nonces";
+diff --git a/modules/fedimint-mintv2-server/src/lib.rs b/modules/fedimint-mintv2-server/src/lib.rs
+index 352069cb53d..167dbab652f 100644
+--- a/modules/fedimint-mintv2-server/src/lib.rs
++++ b/modules/fedimint-mintv2-server/src/lib.rs
+@@ -22,7 +22,7 @@
+ use fedimint_core::module::audit::Audit;
+ use fedimint_core::module::{
+     AmountUnit, Amounts, ApiEndpoint, ApiError, ApiVersion, CoreConsensusVersion, InputMeta,
+-    ModuleConsensusVersion, ModuleInit, TransactionItemAmounts, public_api_endpoint,
++    ModuleConsensusVersion, ModuleInit, TransactionItemAmounts, admin_api_endpoint, public_api_endpoint,
+ };
+ use fedimint_core::{
+     InPoint, NumPeers, NumPeersExt, OutPoint, PeerId, apply, async_trait_maybe_send,
+@@ -34,7 +34,7 @@
+ };
+ use fedimint_mintv2_common::endpoint_constants::{
+     RECOVERY_COUNT_ENDPOINT, RECOVERY_SLICE_ENDPOINT, RECOVERY_SLICE_HASH_ENDPOINT,
+-    SIGNATURE_SHARES_ENDPOINT, SIGNATURE_SHARES_RECOVERY_ENDPOINT,
++    SIGNATURE_SHARES_ENDPOINT, SIGNATURE_SHARES_RECOVERY_ENDPOINT, SPENT_NONCES_ENDPOINT,
+ };
+ use fedimint_mintv2_common::{
+     Denomination, MODULE_CONSENSUS_VERSION, MintCommonInit, MintConsensusItem, MintInput,
+@@ -497,6 +497,17 @@ async fn audit(
+ 
+     fn api_endpoints(&self) -> Vec<ApiEndpoint<Self>> {
+         vec![
++            // BLWP (kanban #323, liquidation step 1): the spent-note set a seated guardian of a halted federation signs and
++            // publishes - every nonce the consensus of this guardian has redeemed. Admin only: a guardian reads its own.
++            admin_api_endpoint! {
++                SPENT_NONCES_ENDPOINT,
++                ApiVersion::new(0, 1),
++                async |_module: &Mint, context, _params: ()| -> Vec<fedimint_core::secp256k1::PublicKey> {
++                    let db = context.db();
++                    let mut dbtx = db.begin_transaction_nc().await;
++                    Ok(dbtx.find_by_prefix(&NonceKeyPrefix).await.map(|(key, ())| key.0).collect::<Vec<_>>().await)
++                }
++            },
+             public_api_endpoint! {
+                 SIGNATURE_SHARES_ENDPOINT,
+                 ApiVersion::new(0, 1),
