@@ -1,0 +1,50 @@
+diff --git a/modules/fedimint-mint-common/src/endpoint_constants.rs b/modules/fedimint-mint-common/src/endpoint_constants.rs
+index 98fa5f948e6..0c9fc271a07 100644
+--- a/modules/fedimint-mint-common/src/endpoint_constants.rs
++++ b/modules/fedimint-mint-common/src/endpoint_constants.rs
+@@ -5,3 +5,5 @@
+ pub const RECOVERY_SLICE_ENDPOINT: &str = "recovery_slice";
+ pub const RECOVERY_SLICE_HASH_ENDPOINT: &str = "recovery_slice_hash";
+ pub const RECOVERY_BLIND_NONCE_OUTPOINTS_ENDPOINT: &str = "recovery_blind_nonce_outpoints";
++/// BLWP (kanban #323, liquidation step 1): every spent note nonce this guardian holds, for its signed spent set. Admin only.
++pub const SPENT_NONCES_ENDPOINT: &str = "blwp_spent_nonces";
+diff --git a/modules/fedimint-mint-server/src/lib.rs b/modules/fedimint-mint-server/src/lib.rs
+index 48da60c0bb4..a7fb9aa14c9 100644
+--- a/modules/fedimint-mint-server/src/lib.rs
++++ b/modules/fedimint-mint-server/src/lib.rs
+@@ -26,7 +26,7 @@
+ use fedimint_core::module::{
+     Amounts, ApiEndpoint, ApiError, ApiVersion, CoreConsensusVersion, InputMeta,
+     ModuleConsensusVersion, ModuleInit, SerdeModuleEncodingBase64, TransactionItemAmounts,
+-    public_api_endpoint,
++    admin_api_endpoint, public_api_endpoint,
+ };
+ use fedimint_core::{
+     Amount, InPoint, NumPeersExt, OutPoint, PeerId, Tiered, TieredMulti, apply,
+@@ -70,7 +70,7 @@
+ 
+ use crate::common::endpoint_constants::{
+     BLIND_NONCE_USED_ENDPOINT, NOTE_SPENT_ENDPOINT, RECOVERY_BLIND_NONCE_OUTPOINTS_ENDPOINT,
+-    RECOVERY_COUNT_ENDPOINT, RECOVERY_SLICE_ENDPOINT, RECOVERY_SLICE_HASH_ENDPOINT,
++    RECOVERY_COUNT_ENDPOINT, RECOVERY_SLICE_ENDPOINT, RECOVERY_SLICE_HASH_ENDPOINT, SPENT_NONCES_ENDPOINT,
+ };
+ use crate::common::{BlindNonce, Nonce, RecoveryItem};
+ use crate::db::{
+@@ -771,6 +771,17 @@ async fn audit(
+ 
+     fn api_endpoints(&self) -> Vec<ApiEndpoint<Self>> {
+         vec![
++            // BLWP (kanban #323, liquidation step 1): the spent-note set a seated guardian of a halted federation signs and
++            // publishes - every nonce the consensus of this guardian has redeemed. Admin only: a guardian reads its own.
++            admin_api_endpoint! {
++                SPENT_NONCES_ENDPOINT,
++                ApiVersion::new(0, 1),
++                async |_module: &Mint, context, _params: ()| -> Vec<Nonce> {
++                    let db = context.db();
++                    let mut dbtx = db.begin_transaction_nc().await;
++                    Ok(dbtx.find_by_prefix(&NonceKeyPrefix).await.map(|(key, ())| key.0).collect::<Vec<_>>().await)
++                }
++            },
+             public_api_endpoint! {
+                 NOTE_SPENT_ENDPOINT,
+                 ApiVersion::new(0, 1),
