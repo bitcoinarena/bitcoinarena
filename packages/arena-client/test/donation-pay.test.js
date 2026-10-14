@@ -563,3 +563,30 @@ test('the page asks for the donation only once the signer nodes hold the stake',
   const guard = page.slice(page.lastIndexOf('if (c && c.joinedEntry', at), at);
   assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the signer nodes hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });
+
+test('a node that does not answer holds no join, and a set fetched and checked is not fetched again for the next round (kanban #353)', async () => {
+  const round = contractFor([b32(1), b32(2), b32(3)]);
+  const honest = signedBytes(SET);
+  let setAsks = 0;
+  const fetcher = async (url) => {
+    const u = new URL(url);
+    if (u.pathname === '/donation-rotations') return new Response(JSON.stringify({ rotations: [] }), { status: 200 });
+    if (u.pathname === '/game-donation-set') return new Response(encodeDonationSet(NEXTBLOCK.donationSet), { status: 200 });
+    setAsks++;
+    if (u.port === '3') return new Promise(() => {});            // a seat behind a link that never answers
+    return new Response(honest, { status: 200 });
+  };
+  const nodes = ['http://127.0.0.1:1', 'http://127.0.0.1:2', 'http://127.0.0.1:3'];
+  const t = Date.now();
+  const first = await fetchDonationSet({ round, nodes, verifyEd25519, fetcher, keepBySet: true });
+  assert.equal(first.ok, true, first.why);
+  assert.equal(first.signerNodes, 2, 'the two that answered');
+  assert.ok(Date.now() - t < 8000, 'not held past the answer budget');
+  const asked = setAsks;
+  const next = await fetchDonationSet({ round: { ...round, id: b32(0x22) }, nodes, verifyEd25519, fetcher, keepBySet: true });
+  assert.equal(next.ok, true, next.why);
+  assert.equal(setAsks, asked, 'the set this round names was not fetched again');
+  // without keepBySet (every other caller), nothing is kept: all three asked again, the silent one left out after its budget
+  const lone = await fetchDonationSet({ round, nodes: nodes.slice(2), verifyEd25519, fetcher });
+  assert.match(lone.why, /only 0 of 1 nodes served/);
+});
