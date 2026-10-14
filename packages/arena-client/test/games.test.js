@@ -84,3 +84,16 @@ test('a tile\'s players are the most any seat counts, and its description shows 
   assert.equal(forged, null, 'a description its developer did not sign is not shown');
   assert.equal(await checkedGameInfo({ ...g, info: null }, verify), null);
 });
+
+test('a seat reached at two addresses hosts a game once (the owner 2026-10-14 07:42Z: "28 nodes" for 14, a phone off the tailnet)', async () => {
+  const k = (n) => n.repeat(64);
+  const seats = { 'https://tn4.bitcoin-arena.io/guardian-1': k('a'), 'https://seat.example.com/guardian-1': k('a'),
+    'https://tn4.bitcoin-arena.io/fed2-1': k('b'), 'https://seat.example.com/fed2-1': k('b'), 'http://old': null };
+  const fetcher = async (url) => {
+    const at = url.replace(/\/games$/, '');
+    return answer({ ...(seats[at] ? { node: seats[at] } : {}), games: [listed(NEXTBLOCK)] });
+  };
+  const got = await fetchGames({ nodes: Object.keys(seats), fetcher });
+  assert.deepEqual(got.games[0].nodes, ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/fed2-1', 'http://old'],
+    'two seats with keys, once each; a seat that names no key counts by its address');
+});
