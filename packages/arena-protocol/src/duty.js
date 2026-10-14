@@ -34,8 +34,8 @@ export const targetWindow = (slot) => ({ startMs: (slot + DUTY_AHEAD_SLOTS) * DU
  * median time past (s) at a height; `tip`. Median time never falls, so the answer is the same for everybody once the block exists;
  * null while it does not.
  */
-export async function anchorHeight(slot, { mtpAt, tip, low = 0 }) {
-  const want = (slotStartMs(slot) - DUTY_ANCHOR_BACK_MS) / 1000;
+export async function anchorHeight(slot, { mtpAt, tip, low = 0, slotMs = DUTY_SLOT_MS }) {
+  const want = (slot * slotMs - DUTY_ANCHOR_BACK_MS) / 1000;
   if ((await mtpAt(tip)) <= want) return null;
   let lo = low, hi = tip;                              // the first h with mtp > want, by bisection (mtp is non-decreasing)
   while (lo < hi) { const mid = Math.floor((lo + hi) / 2); if ((await mtpAt(mid)) > want) hi = mid; else lo = mid + 1; }
@@ -92,4 +92,21 @@ export function slotsToPost({ nowMs, onDuty, posted, lookback = DUTY_LOOKBACK_SL
   if (missedToo) for (let i = nowSlot - lookback; i < nowSlot; i++) if (!posted.has(i)) out.push(i);
   if (!posted.has(nowSlot)) out.push(nowSlot);
   return out;
+}
+
+// ONE POSTING PER GAME PER DAY (the owner 2026-10-14 ~11:22Z: "Each game may only have one round posting per day and the fees must be as low
+// as possible"). The slot is a UTC day: day d's duty is the rounds of day d + 1 - one transaction per game carrying every federation's
+// series of it, at the lowest fee the network relays. Who posts: the census at the day's anchor in duty order, as above; the first is due
+// from the day's start, and each next one an hour after the one before it while the day's marker is not seen - so a missed post falls
+// to the next node within the same day, long before the grid's committee time (the next day's start less DUTY_COMMITTEE_LEAD_MS).
+export const DUTY_DAY_MS = 86400000;
+export const DUTY_FALLBACK_MS = 3600000;
+export const daySlotOf = (ms) => Math.floor(Number(ms) / DUTY_DAY_MS);
+export const dayStartMs = (slot) => slot * DUTY_DAY_MS;
+/** The day whose rounds day `slot` posts: [start, end) ms - the next day. */
+export const targetDay = (slot) => ({ startMs: (slot + 1) * DUTY_DAY_MS, endMs: (slot + 2) * DUTY_DAY_MS });
+/** Is the day's post due from the node at `rank` (0 = first in duty order) now? Not once the day's marker is seen (`posted`). */
+export function dayPostDue({ nowMs, slot, rank, posted }) {
+  if (posted || !Number.isInteger(rank) || rank < 0) return false;
+  return Number(nowMs) >= dayStartMs(slot) + rank * DUTY_FALLBACK_MS && Number(nowMs) < dayStartMs(slot + 1);
 }

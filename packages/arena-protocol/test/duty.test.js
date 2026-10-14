@@ -52,3 +52,20 @@ test('the duty node posts its own slot; a missed earlier slot only from 5 min in
   const all = new Set(Array.from({ length: 21 }, (_, i) => s - 20 + i));
   assert.deepEqual(slotsToPost({ nowMs: start + DUTY_SLOT_MS - 1, onDuty: true, posted: all }), [], 'everything posted: nothing');
 });
+
+test('one posting per game per day: the day posts the next day; the first in duty order from the start, each next one an hour later', async () => {
+  const { daySlotOf, dayStartMs, targetDay, dayPostDue, DUTY_DAY_MS, anchorHeight } = await import('../src/duty.js');
+  const t0 = Date.UTC(2026, 9, 14, 0, 0, 0);
+  const d = daySlotOf(t0 + 5 * 3600000);
+  assert.equal(dayStartMs(d), t0);
+  assert.deepEqual(targetDay(d), { startMs: t0 + DUTY_DAY_MS, endMs: t0 + 2 * DUTY_DAY_MS });
+  assert.equal(dayPostDue({ nowMs: t0 + 60000, slot: d, rank: 0, posted: false }), true, 'the first node from the day\'s start');
+  assert.equal(dayPostDue({ nowMs: t0 + 60000, slot: d, rank: 1, posted: false }), false, 'the second not yet');
+  assert.equal(dayPostDue({ nowMs: t0 + 3600000, slot: d, rank: 1, posted: false }), true, 'the second an hour in');
+  assert.equal(dayPostDue({ nowMs: t0 + 5 * 3600000, slot: d, rank: 1, posted: true }), false, 'nobody once the day is posted');
+  assert.equal(dayPostDue({ nowMs: t0 + DUTY_DAY_MS, slot: d, rank: 0, posted: false }), false, 'not after the day is over');
+  // the anchor of a day: the first block whose median time is past the day's start less 3 h
+  const mtp = (h) => (t0 - 4 * 3600000) / 1000 + h * 1200;                  // a block every 20 min from 4 h before the day
+  const a = await anchorHeight(d, { mtpAt: async (h) => mtp(h), tip: 100, slotMs: DUTY_DAY_MS });
+  assert.equal(a, 4);                                                       // 3 h before = 1 h after the first block: 3 blocks, the first past it is 4
+});
