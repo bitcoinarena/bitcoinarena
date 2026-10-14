@@ -65,7 +65,8 @@ import { PriceFeed } from './price-feed.js';
 import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
-import { season, seasonWindow } from '../../arena-protocol/src/season.js';
+import { season, seasonWindow, mergeSeasonAccounts, seasonRoundsToJson, seasonRoundsFromJson, SEASON_NETWORK_AGREE,
+  SEASON_NETWORK_UNCHECKED } from '../../arena-protocol/src/season.js';
 import { seasonRounds } from './season-read.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
@@ -374,6 +375,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   stakeLocks = null,
   // HOW A WINNER'S LIGHTNING ADDRESS IS FETCHED (winnings-send.js), and the round network its invoices are for.
   lnurlFetch = (u) => fetch(u),
+  // HOW A NETWORK SEASON ASKS THE OTHER SEATS FOR THEIR ROUNDS (GET /season?scope=network, kanban #362): the process's fetch -
+  // routed and capped per seat by fetch-routes.js - unless a test hands in its own seats.
+  seasonFetch = (u, o) => fetch(u, o),
   winningsNetwork = 'regtest',
   // HOW OFTEN THE WINNINGS SWEEP VISITS unpaid winnings; the finality back-off unless a harness names its own.
   winningsEveryMs = null,
@@ -429,6 +433,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // GET /season's boards, kept per query (kanban #362): { at, json }, 32 at most
   const seasonKept = new Map();
   const SEASON_KEEP_MS = 30000;
+  // A NETWORK SEASON'S ASKS (kanban #362): each other seat's /season-rounds within SEASON_PEER_TIMEOUT_MS (8 s), its silence
+  // counted as missing; SEASON_PEER_LANES of them at once, so one board never opens a request to every seat in one burst
+  const SEASON_PEER_TIMEOUT_MS = 8000;
+  const SEASON_PEER_LANES = 4;
   // THE NODE'S OPEN MUSIG2 SESSIONS (kanban #307): session id -> its message, tweak and secret nonce, each signed once
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
@@ -786,6 +794,89 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!fresh && Date.now() - networkGames.atMs < NETWORK_GAMES_MS) return networkGames;
     if (!networkGames.reading) networkGames.reading = readNetworkGames().finally(() => { networkGames.reading = null; });
     return networkGames.reading;
+  };
+  // A SEASON'S QUERY (GET /season, GET /season-rounds; kanban #362): the game ids and the window, or a refusal by name. A
+  // name is every version this node hosts under it; one id in hex is that id; with `list`, a comma list of ids in hex (at
+  // most 16) - how a network season asks another seat for exactly the ids it resolved, hosted there or not.
+  const seasonQuery = (url, { list = false } = {}) => {
+    const want = String(url.searchParams.get('game') || '').trim().toLowerCase();
+    if (!want) return { ok: false, status: 400, why: 'a season is asked for by a game: ?game=<name or id hex>' };
+    const parts = want.split(',').map((x) => x.trim());
+    let ids;
+    if (/^[0-9a-f]{64}$/.test(want)) ids = [want];
+    else if (list && parts.length <= 16 && parts.every((x) => /^[0-9a-f]{64}$/.test(x))) ids = [...new Set(parts)].sort();
+    else ids = [...hosted.values()].filter((p) => String(p.name || '').toLowerCase() === want).map((p) => toHex(p.gameId)).sort();
+    if (!ids.length) return { ok: false, status: 404, why: 'this node hosts no game by that name' };
+    const w = seasonWindow({ nowMs: Date.now(), days: url.searchParams.has('days') ? url.searchParams.get('days') : undefined });
+    if (!w.ok) return { ok: false, status: 400, why: w.why };
+    return { ok: true, ids, w };
+  };
+  const keepSeason = (q, kept) => { seasonKept.set(q, kept); if (seasonKept.size > 32) seasonKept.delete(seasonKept.keys().next().value); };
+  // A SEASON'S ANSWER: the board season() built, its rows as the round result shows them
+  const seasonBody = (s, ids, w, { leftOut = 0, unchecked = [] } = {}) => {
+    const hostedAs = ids.map((id) => hosted.get(id)).find(Boolean);
+    return {
+      node: toHex(round.pubkey), game: { name: hostedAs ? hostedAs.name : null, ids }, days: w.days,
+      from: new Date(s.fromMs).toISOString(), to: new Date(s.toMs).toISOString(), fromMs: s.fromMs, toMs: s.toMs,
+      // THE NAME AS THE ROUND RESULT SHOWS IT: the player's own from its latest round, else the one made from its key
+      rows: s.rows.map((r) => ({ rank: r.rank, player: r.player, name: r.name || displayNameFromKey(fromHex(r.player)),
+        rounds: r.rounds, wins: r.wins, netMsat: String(r.netMsat), stakedMsat: String(r.stakedMsat), paidMsat: String(r.paidMsat),
+        bestScore: r.bestScore, lastPlayed: new Date(r.lastPlayedMs).toISOString() })),
+      rounds: s.rounds, leftOut: s.excluded.length + leftOut, unchecked: [...s.unchecked, ...unchecked] };
+  };
+
+  // THE NETWORK SEASON (GET /season?scope=network, kanban #362): this seat's own rounds and every other seat's, merged by
+  // agreement. Each seat is counted under the node key its answer names - two addresses of one seat (a census endpoint and
+  // a peer given) are one seat's word, not two: the first in address order is taken - and an answer naming this seat's own
+  // key is this seat reached through its own address, not another witness. Every seat's answer is a claim only: what
+  // makes a round count is SEASON_NETWORK_AGREE seats agreeing on it byte for byte (season.js). One read per query at a time.
+  const seasonNetKept = new Map();               // query -> { at, json } | { reading }
+  const seasonNetwork = async (ids, w) => {
+    const games = new Set(ids);
+    const own = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+    const seats = networkSeats();
+    const answers = new Array(seats.length).fill(null);
+    let next = 0;
+    const lane = async () => {
+      while (next < seats.length) {
+        const i = next++;
+        try {
+          const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${w.days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
+          if (!r.ok) continue;
+          const j = await r.json();
+          if (!j || !Array.isArray(j.rounds)) continue;
+          const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
+          answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
+        } catch { /* missing: no answer in time, or none that reads */ }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SEASON_PEER_LANES, seats.length) }, lane));
+    const me = toHex(round.pubkey);
+    const bySeat = new Map([[me, own]]);
+    for (const a of answers.filter(Boolean).sort((x, y) => (x.seat < y.seat ? -1 : x.seat > y.seat ? 1 : 0))) {
+      const label = a.node || a.seat;
+      if (!bySeat.has(label)) bySeat.set(label, a.rounds);
+    }
+    const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE });
+    if (!m.ok) throw new Error(m.why);
+    const s = season(m.rounds, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
+    if (!s.ok) throw new Error(s.why);
+    return JSON.stringify({ ...seasonBody(s, ids, w, { leftOut: m.excluded.length, unchecked: SEASON_NETWORK_UNCHECKED }),
+      scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: seats.length, answered: bySeat.size - 1 } });
+  };
+  const seasonNetworkNow = async (ids, w) => {
+    const q = `${ids.join(',')}|${w.days}`;
+    const had = seasonNetKept.get(q);
+    if (had && had.json && Date.now() - had.at <= SEASON_KEEP_MS) return had;
+    if (had && had.reading) return had.reading;
+    const reading = seasonNetwork(ids, w).then((json) => {
+      const kept = { at: Date.now(), json };
+      seasonNetKept.set(q, kept);
+      if (seasonNetKept.size > 32) seasonNetKept.delete(seasonNetKept.keys().next().value);
+      return kept;
+    }, (e) => { if (had && had.json) seasonNetKept.set(q, had); else seasonNetKept.delete(q); throw e; });
+    seasonNetKept.set(q, { ...(had || {}), reading });
+    return reading;
   };
   const networkGamesTimer = setInterval(() => { networkGamesNow().catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_GAMES_MS);
   if (networkGamesTimer.unref) networkGamesTimer.unref();
@@ -4312,33 +4403,51 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // (season-read.js: FINAL results, amounts the ACCEPTED settlements paid) by protocol season.js, which computes no
       // payout - presentation, not authority. Public and read-only; kept SEASON_KEEP_MS (30 s) per query, as a lobby's
       // listing is: a page polls it, and every ask would otherwise verify the window's results again.
+      //
+      // ?scope=network: THE SAME SEASON ACROSS EVERY SEAT THIS ONE KNOWS (networkSeats: the newest census's advertised
+      // endpoints, the peers given, the owner's sources) - each one's GET /season-rounds for the same game ids and days,
+      // merged with this seat's own by protocol mergeSeasonAccounts: a round counts only when SEASON_NETWORK_AGREE (3)
+      // distinct seats, this one included, handed in byte-identical accounts of it, so no one seat can forge a row. A seat
+      // that does not answer within SEASON_PEER_TIMEOUT_MS is missing, not an error. Kept 30 s per query too.
       if (req.method === 'GET' && url.pathname === '/season') {
-        const want = String(url.searchParams.get('game') || '').trim().toLowerCase();
-        if (!want) return text(res, 400, 'a season is asked for by a game: ?game=<name or id hex>');
-        const ids = /^[0-9a-f]{64}$/.test(want) ? [want]
-          : [...hosted.values()].filter((p) => String(p.name || '').toLowerCase() === want).map((p) => toHex(p.gameId)).sort();
-        if (!ids.length) return text(res, 404, 'this node hosts no game by that name');
-        const asked = url.searchParams.has('days') ? url.searchParams.get('days') : undefined;
-        const w = seasonWindow({ nowMs: Date.now(), days: asked });
-        if (!w.ok) return text(res, 400, w.why);
+        const asked = seasonQuery(url);
+        if (!asked.ok) return text(res, asked.status, asked.why);
+        const scope = url.searchParams.has('scope') ? String(url.searchParams.get('scope')).trim().toLowerCase() : '';
+        if (scope !== '' && scope !== 'network') return text(res, 400, 'a season\'s scope is network, or none for this seat\'s own rounds');
+        const { ids, w } = asked;
         const q = `${ids.join(',')}|${w.days}`;
+        let kept;
+        if (scope === 'network') {
+          try { kept = await seasonNetworkNow(ids, w); } catch (e) { return text(res, 500, `that season could not be built: ${e.message}`); }
+        } else {
+          kept = seasonKept.get(q);
+          if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
+            const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+            const s = season(read, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
+            if (!s.ok) return text(res, 500, `that season could not be built: ${s.why}`);
+            kept = { at: Date.now(), json: JSON.stringify(seasonBody(s, ids, w)) };
+            keepSeason(q, kept);
+          }
+        }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
+        return res.end(kept.json);
+      }
+
+      // A SEASON'S ROUNDS AS THIS SEAT HOLDS THEM (kanban #362): what /season builds its own board from (season-read.js), for
+      // another seat's network season to merge - every msat and start time a decimal string. ?game= as /season's, or a comma
+      // list of game ids in hex (a network season asks for exactly the ids it resolved), ?days= as /season's. Public and
+      // read-only; kept SEASON_KEEP_MS (30 s) per query, so fourteen seats asking at once cost one read of the store.
+      if (req.method === 'GET' && url.pathname === '/season-rounds') {
+        const asked = seasonQuery(url, { list: true });
+        if (!asked.ok) return text(res, asked.status, asked.why);
+        const { ids, w } = asked;
+        const q = `rounds|${ids.join(',')}|${w.days}`;
         let kept = seasonKept.get(q);
         if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
-          const games = new Set(ids);
-          const read = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
-          const s = season(read, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
-          if (!s.ok) return text(res, 500, `that season could not be built: ${s.why}`);
-          const hostedAs = ids.map((id) => hosted.get(id)).find(Boolean);
-          kept = { at: Date.now(), json: JSON.stringify({
-            node: toHex(round.pubkey), game: { name: hostedAs ? hostedAs.name : null, ids }, days: w.days,
-            from: new Date(s.fromMs).toISOString(), to: new Date(s.toMs).toISOString(), fromMs: s.fromMs, toMs: s.toMs,
-            // THE NAME AS THE ROUND RESULT SHOWS IT: the player's own from its latest round, else the one made from its key
-            rows: s.rows.map((r) => ({ rank: r.rank, player: r.player, name: r.name || displayNameFromKey(fromHex(r.player)),
-              rounds: r.rounds, wins: r.wins, netMsat: String(r.netMsat), stakedMsat: String(r.stakedMsat), paidMsat: String(r.paidMsat),
-              bestScore: r.bestScore, lastPlayed: new Date(r.lastPlayedMs).toISOString() })),
-            rounds: s.rounds, leftOut: s.excluded.length, unchecked: s.unchecked }) };
-          seasonKept.set(q, kept);
-          if (seasonKept.size > 32) seasonKept.delete(seasonKept.keys().next().value);
+          const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+          kept = { at: Date.now(), json: JSON.stringify({ node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs,
+            rounds: seasonRoundsToJson(read) }) };
+          keepSeason(q, kept);
         }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
         return res.end(kept.json);

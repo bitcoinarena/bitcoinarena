@@ -6857,7 +6857,7 @@
      "Players"
     ],
     "summary": "Season board of a game",
-    "description": "One game's per-player board over its FINAL rounds in a window (presentation, not authority).\n\nAccess: none\n\nReturns: 200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); 400/404/500\n\nSource: `packages/arena-node/src/server.js` line 4315.",
+    "description": "One game's per-player board over its FINAL rounds in a window (presentation, not authority): this node's own rounds, or with scope=network every seat's, a round counted only when 3 seats hand in byte-identical accounts of it.\n\nAccess: none\n\nReturns: 200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); with scope=network also {scope, agree, seats {asked, answered}}; 400/404/500\n\nSource: `packages/arena-node/src/server.js` line 4412.",
     "operationId": "get_season",
     "parameters": [
      {
@@ -6879,17 +6879,27 @@
        "type": "integer"
       },
       "example": 7
+     },
+     {
+      "name": "scope",
+      "in": "query",
+      "required": false,
+      "description": "network: ask every seat this node knows for its rounds (GET /season-rounds) and merge them with its own; a round counts only when 3 distinct seats hand in byte-identical accounts of it, so no single seat can forge a row. Omitted: this node's own rounds.",
+      "schema": {
+       "type": "string"
+      },
+      "example": "network"
      }
     ],
     "responses": {
      "200": {
-      "description": "{node, game:{name, ids}, days, from, to, fromMs, toMs, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s).",
+      "description": "{node, game:{name, ids}, days, from, to, fromMs, toMs, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s). With scope=network also scope: 'network', agree: 3, seats: {asked, answered}; leftOut includes the rounds without agreement.",
       "content": {
        "application/json": {}
       }
      },
      "400": {
-      "description": "No game named, or days out of range.",
+      "description": "No game named, days out of range, or a scope other than network.",
       "content": {
        "text/plain": {}
       }
@@ -6902,6 +6912,58 @@
      },
      "500": {
       "description": "Season could not be built.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/season-rounds": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Season rounds held by this node",
+    "description": "The rounds this node's own season is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network season to merge.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
+    "operationId": "get_season_rounds",
+    "parameters": [
+     {
+      "name": "game",
+      "in": "query",
+      "required": true,
+      "description": "A hosted game's name, one game id in hex, or a comma list of game ids in hex (how a network season asks).",
+      "schema": {
+       "type": "string"
+      },
+      "example": "nextblock"
+     },
+     {
+      "name": "days",
+      "in": "query",
+      "required": false,
+      "description": "Window in whole days, 1 to 90; default 7.",
+      "schema": {
+       "type": "integer"
+      },
+      "example": 7
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, game:{ids}, days, fromMs, toMs, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score}]}]} (cache 30 s).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No game named, or days out of range.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No hosted game by that name.",
       "content": {
        "text/plain": {}
       }

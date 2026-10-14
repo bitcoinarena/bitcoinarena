@@ -301,6 +301,7 @@
     <li>Rows are ordered by net, then wins, then best score, then the player's key, never by who arrived first.</li>
     <li>A result counts once it is final at that node, and an amount once the round's settlement is accepted. Refunds, void rounds and free markets are left out.</li>
     <li>A season computes no payout; it only sums what the settlements paid. Answers are kept 30 seconds.</li>
+    <li>A round is held only by the nodes of its committee, so one node's season misses rounds. Add <code>&amp;scope=network</code> for the whole network's: the node asks every node it knows for its rounds (<code>GET /season-rounds</code>, same game and days) and counts a round only when at least 3 different nodes hand in exactly the same account of it. A finished round is held by at least 5 nodes, so a real one always reaches 3; no single node, nor two, can put a made-up row on the board. The answer says how many nodes were asked and how many answered.</li>
   </ul>
 
   <h2 id="nostr">Nostr</h2>
