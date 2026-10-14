@@ -10,7 +10,7 @@
 // the round fits the manifest (run length, rank curve, min_score). Nothing here imports a game: `replay.js` drives the
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf } from '../../arena-protocol/src/manifest.js';
+import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, payoutRuleForRound } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
@@ -164,6 +164,18 @@ export function pluginForRound(contract, plugins) {
   // deadline, and its results are decided over all the round's reveals at once (verify.js)
   if (isHeadToHead(plugin.manifest)) return { ok: true, plugin, ...runs, headToHead: true, runTicks: null };
   return { ok: true, plugin, ...runs };
+}
+
+/**
+ * HOW A ROUND PAYS, AS THIS NODE READS IT (kanban #362): the payout rule of the game the round names, from the manifest this
+ * node hosts it under (manifest.js payoutRuleForRound) - { ok, payoutShares } with null for §18A's curve, or a refusal for a
+ * round that may pay by a top split whose game this node does not host. The one place the node's settlement, its standing
+ * line and its signed table take the rule from, so each computes the same table as the protocol does.
+ */
+export function payoutRuleOfRound(contract, plugins) {
+  const hosted = plugins instanceof Map && contract && contract.gameId instanceof Uint8Array && contract.gameId.length === 32
+    ? plugins.get(toHex(contract.gameId)) : undefined;
+  return payoutRuleForRound(contract, hosted ? hosted.manifest : null);
 }
 
 /**

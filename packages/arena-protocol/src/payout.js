@@ -142,7 +142,39 @@ export function remainderOrder(roundId, entries) {
  */
 export const isQualifier = (e, minScore = 0) => e.outcome === DELIVERED && e.score >= minScore;
 
-export function computePayoutTable({ roundId, entries, minScore = 0 }) {
+/**
+ * TOP-N PRIZE SPLITS (kanban #362 feature 3; manifest.js PAYOUT_RULE.TOP_SPLIT). A replayed game's manifest may pay its
+ * pot by fixed shares over its top places instead of §18A's curve - [10000] winner takes all, [5000, 3000, 2000] the
+ * classic 50/30/20. The shares are basis points of the pot: 1 to PAYOUT_SHARES_MAX of them, each a whole number of at
+ * least 1, none above the place before it (a lower place is never paid more than a higher one), together exactly
+ * PAYOUT_SHARES_TOTAL - so no basis point is left for anyone to keep, and none is invented. One rule, read by the
+ * manifest's encoder (what a developer may sign) and by `computePayoutTable` (what a table may be computed with).
+ */
+export const PAYOUT_SHARES_MAX = 10;
+export const PAYOUT_SHARES_TOTAL = 10000;
+export function payoutSharesFit(shares) {
+  if (!Array.isArray(shares) || shares.length < 1 || shares.length > PAYOUT_SHARES_MAX)
+    return { ok: false, why: `a top split names 1 to ${PAYOUT_SHARES_MAX} shares` };
+  for (let i = 0; i < shares.length; i++) {
+    const s = shares[i];
+    if (!Number.isInteger(s) || s < 1 || s > PAYOUT_SHARES_TOTAL)
+      return { ok: false, why: `a top split's share is a whole number of basis points, 1 to ${PAYOUT_SHARES_TOTAL}; place ${i + 1} names ${s}` };
+    if (i > 0 && s > shares[i - 1])
+      return { ok: false, why: `a top split never pays a lower place more: place ${i + 1} names ${s} bps after ${shares[i - 1]}` };
+  }
+  const sum = shares.reduce((t, s) => t + s, 0);
+  if (sum !== PAYOUT_SHARES_TOTAL) return { ok: false, why: `a top split's shares come to ${PAYOUT_SHARES_TOTAL} bps (the whole pot); these come to ${sum}` };
+  return { ok: true };
+}
+
+// `payoutShares`: the round's game's top split (manifest.js payoutSharesOf), or null for §18A's rank curve - the default,
+// so every caller that names none computes exactly the table it always did.
+export function computePayoutTable({ roundId, entries, minScore = 0, payoutShares = null }) {
+  if (payoutShares !== null && payoutShares !== undefined) {
+    const fit = payoutSharesFit(payoutShares);
+    if (!fit.ok) throw new Error(fit.why);
+  }
+  const split = payoutShares !== null && payoutShares !== undefined;
   const net = new Map(entries.map((e) => [e, netStakeMsat(e)]));
 
   const activated = entries.filter((e) => !isRefund(e.outcome));
@@ -180,7 +212,10 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
   for (const e of activated) payouts.set(e, 0n);
   for (const e of qualifiers) payouts.set(e, net.get(e));       // net stake back
 
-  const k = Math.min(payingRanks(qualifiers.length), qualifiers.length);
+  // THE PAYING PLACES: §18A's K = ceil(qualifiers / 4) under the curve; under a top split, its places - or every
+  // qualifier, when fewer qualified than it has places
+  const k = split ? Math.min(payoutShares.length, qualifiers.length)
+    : Math.min(payingRanks(qualifiers.length), qualifiers.length);
 
   // 22A'S NET-STAKE WEIGHTING (M3.2-6e, ruled 2026-09-13, pick A). With an
   // inclusive donation "players no longer contribute equally", and left there
@@ -201,7 +236,21 @@ export function computePayoutTable({ roundId, entries, minScore = 0 }) {
   // Measured before (TASKBOOK, 6e): qualifiers with different nets were refused
   // and every hold expired - one 2% donor, and the pool got 0 of the loser's
   // 98000 msat.
-  const weights = rankWeights(k).map((w, i) => w * net.get(qualifiers[i]));
+  //
+  // A TOP SPLIT (kanban #362) IS THE SAME ARITHMETIC WITH ITS SHARES FOR THE CURVE: place i's weight is its share in bps
+  // times its own net stake, so 22A's pick A holds for it unchanged (no double reward for donating; with every net equal
+  // the net cancels and the pot is split exactly by the shares), the floors and the leftover go exactly as above, and the
+  // pot is spent exactly.
+  //
+  // FEWER QUALIFIERS THAN PLACES: the unused places' shares go to the qualifiers PRO RATA TO THEIR OWN SHARES - the
+  // weights are renormalised over the places filled, so [5000, 3000, 2000] with two qualifiers pays 5000/8000 and
+  // 3000/8000 of the pot (62.5 % / 37.5 %), and with one, the whole pot. Picked over the alternatives because it is no
+  // second rule (the same weighted split, over fewer places), it keeps the order of the places (a higher place still never
+  // gets less), and it hands out the whole pot with no share left for an operator to keep; "unused shares to the winner"
+  // would be a silent extra prize for first place, and "unused shares split evenly" would bend the proportions between
+  // the places the developer signed.
+  const weights = (split ? payoutShares.slice(0, k).map((s) => BigInt(s)) : rankWeights(k))
+    .map((w, i) => w * net.get(qualifiers[i]));
   const total = weights.reduce((s, w) => s + w, 0n);
 
   let handed = 0n;
