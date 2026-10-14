@@ -230,7 +230,18 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     first deposit
 12. **can stock 0.12 reshare?** measure whether a running federation can
     seat a new guardian or move a gone guardian's share; the answer decides
-    whether §23A.6's succession is the first path or the fallback
+    whether §23A.6's succession is the first path or the fallback. **RUN
+    2026-10-14 01:55Z (kanban #326, `tools/rehearsal-12-regtest.sh`,
+    private regtest on the test host): it cannot - succession is the path.**
+    The 0.12 source has no reshare (no endpoint, no CLI; the peer set is
+    the setup API's, before the key ceremony). A running federation's
+    guardian, asked as its admin for a fifth guardian started fresh:
+    setup status "ConsensusIsRunning"; add-peer, set-local-params,
+    start-dkg and restart_federation_setup all "Invalid rpc id" (the setup
+    API is gone once consensus runs). The fifth guardian takes g0's code,
+    and its start-dkg is refused ("The number of guardians is invalid").
+    After: the same federation id, 4 guardians in g0's config, consensus
+    running.
 13. **succession on regtest:** a 4-guardian federation with notes in three
     wallets and one open lock; one guardian abandons (attested); a successor
     of 4 is founded with the three seated first; every wallet's notes move
