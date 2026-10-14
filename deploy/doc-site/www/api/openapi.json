@@ -247,6 +247,94 @@
     }
    }
   },
+  "/badge-definitions": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Badge definitions (NIP-58)",
+    "description": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, season top 3.\n\nAccess: none\n\nReturns: 200 JSON {node, on, version, definitions[{event, publishedMs}]}\n\nSource: `packages/arena-node/src/server.js` line 4503.",
+    "operationId": "get_badge_definitions",
+    "responses": {
+     "200": {
+      "description": "The definitions, in catalogue order.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/badge-image/{file}": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "A badge's image",
+    "description": "A badge's image, as its definition's image tag names it under the node's public base.\n\nAccess: none\n\nReturns: 200 image/svg+xml; 404\n\nSource: `packages/arena-node/src/server.js` line 4517.",
+    "operationId": "get_badge_image_file",
+    "parameters": [
+     {
+      "name": "file",
+      "in": "path",
+      "required": true,
+      "description": "The badge's d and .svg, e.g. arena-first-win.svg.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The badge's SVG.",
+      "content": {
+       "image/svg+xml": {}
+      }
+     },
+     "404": {
+      "description": "No such badge image.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/badges": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "A player's badges (NIP-58)",
+    "description": "The NIP-58 badges this node awarded to one player identity (kind-8 award events, each with the round ids or the board week that earned it) and their kind-30009 definitions, exactly as signed, so a client checks ids and signatures itself. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).\n\nAccess: none\n\nReturns: 200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 4507.",
+    "operationId": "get_badges",
+    "parameters": [
+     {
+      "name": "player",
+      "in": "query",
+      "required": true,
+      "description": "The player's identity key, 64 hex (an x-only Nostr key). A bare round key holds no badge.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The awards (oldest first) and the definitions they name.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a 64-hex player key.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/batch": {
    "post": {
     "tags": [
