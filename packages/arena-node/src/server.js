@@ -4918,11 +4918,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         // `feed`: this seat runs the committee's feed for that round - a page then plays only attested prices (slice 3)
         const row = round.get(Buffer.from(rh, 'hex'));
-        return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0), feed: !!(row && feedFor(row.contract)) }));
+        return res.end(JSON.stringify({ ...prices.list(rh, Number(url.searchParams.get('since') || 0) || 0, url.searchParams.has('ks') ? String(url.searchParams.get('ks')).split(',').slice(0, 4).map(Number).filter((k) => Number.isInteger(k) && k >= 0) : null), feed: !!(row && feedFor(row.contract)) }));
       }
       // WHO WON A PRICE ROUND (§13 RoundResult, kanban #312): this seat's signed result, once the round has ended
       if (req.method === 'GET' && url.pathname === '/round-result') {
-        const got = prices.result(String(url.searchParams.get('round') || '').toLowerCase());
+        const got = await prices.result(String(url.searchParams.get('round') || '').toLowerCase());
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
