@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { routeGuardianSockets } from './guardian-ws-local.mjs';
 import { randomBytes } from 'node:crypto';
+import WebSocket from 'ws';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { feldmanGroup } from '../src/curve.js';
@@ -51,6 +52,16 @@ for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCL
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
 const log = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
 const rand = (n) => new Uint8Array(randomBytes(n));
+// A SEAT'S /play AT ITS OWN ADDRESS (kanban #348: the fixture's say() opens ws://127.0.0.1:<port>/play, so with NODES naming the
+// test host's seats every batch and mark went to a local port nothing listens on, and those signers never held the run)
+const sayAt = (node, message) => new Promise((resolve, reject) => {
+  const ws = new WebSocket(`${String(node).replace(/^http/, 'ws').replace(/\/+$/, '')}/play`);
+  const t = setTimeout(() => { try { ws.close(); } catch { /* closed */ } reject(new Error('no answer in 20 s')); }, 20000);
+  ws.on('open', () => ws.send(message));
+  ws.on('message', (d, bin) => { clearTimeout(t); resolve(bin ? new Uint8Array(d) : d.toString()); ws.close(); });
+  ws.on('error', (e) => { clearTimeout(t); reject(e); });
+});
+const saidOf = (got) => (got instanceof Uint8Array ? (got.length === SIGNED_RECEIPT_BYTES ? 'receipt' : `${got.length} bytes`) : String(got).slice(0, 80));
 const run = (bin, args) => new Promise((done) => execFile(bin, args, { timeout: 240000 },
   (err, out, errOut) => done({ ok: !err, out: String(out), err: String(errOut || (err && err.message) || '') })));
 const payer = (...a) => run(env.LNCLI, [`--lnddir=${env.PAYER_DIR}`, `--rpcserver=${env.PAYER_RPC}`, `--network=${env.ARENA_TN4_NETWORK || 'testnet4'}`, ...a]);
@@ -164,19 +175,6 @@ try {
     feePreimage: fee ? fee.preimage : new Uint8Array(32), stakeLockOutpoint: lk.outpoint,
     feeLockOutpoint: fee ? fee.outpoint : { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: att.ref };
   const eid = entryId(entry);
-  const signerNodes = [];
-  for (const n of nodes) {
-    const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
-    const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
-    const enWhy = (await en.text()).trim().slice(0, 140);
-    if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
-    const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
-    signerNodes.push({ node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
-      lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160) });
-  }
-  log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
-  if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
-
   // THE RUN: the world the round's randomness seeds, driven to the gate, under the round's core and run length
   const seed = await worldSeedFor({ entry, round: env.ROUND, nodes, contract: c });
   const core = NEXTBLOCK_CORES.get(toHex(c.simCoreHash));
@@ -210,18 +208,37 @@ try {
     }
     from = to;
   }
+  const signerNodes = [];
+  for (const n of nodes) {
+    const h = await fetch(`${n}/handout`, { method: 'POST', body: encodeHandout(dealt.handout) });
+    const en = await fetch(`${n}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    const enWhy = (await en.text()).trim().slice(0, 140);
+    if (hand) await fetch(`${n}/fee-lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(hand)) });
+    const l = await fetch(`${n}/lock?entry=${toHex(eid)}`, { method: 'POST', body: JSON.stringify(lockFieldsToJson(lk.fields)) });
+    // ITS FIRST MARK AT ONCE (kanban #348, measured 2026-10-14: published 30 s after the seats stored the entry, past their start
+    // deadline - 900 ticks + 5 s from the stake seen - two seats signed FORFEIT at the door and the entry went VOID), as the page
+    // sends it a second into the run; the rest after every seat holds the entry
+    const early = [];
+    if (Date.now() >= Number(c.startTimeMs)) for (const [m, kind] of msgs.slice(0, 2)) { let got; try { got = await sayAt(n, m); } catch (e) { got = `error ${e.message}`; } early.push(`${kind}: ${saidOf(got)}`); }
+    signerNodes.push({ node: n, handout: h.status, entry: en.status, ...(en.status >= 300 ? { entryWhy: enWhy } : {}),
+      lock: l.status, lockSaid: (await l.text()).trim().slice(0, 160), ...(early.length ? { early } : {}) });
+  }
+  log({ step: 'handed over', entry: toHex(eid).slice(0, 16), signerNodes });
+  if (signerNodes.filter((x) => x.lock >= 200 && x.lock < 300).length < needed) throw new Error('fewer seats than needed took the lock');
+
+
   // after the round's start, as a player's inputs are
   const waitMs = Number(c.startTimeMs) - Date.now() + 2000;
   if (waitMs > 0) { log({ step: 'waiting for the start', ms: waitMs }); await new Promise((ok) => setTimeout(ok, waitMs)); }
   const published = [];
   for (const n of nodes) {
-    const port = Number(new URL(n).port);
     const said = [];
-    for (const [m, kind] of msgs) {
-      let got; try { got = await sayTo(port, m); } catch (e) { got = `error ${e.message}`; }
-      said.push(`${kind}: ${got instanceof Uint8Array ? (got.length === SIGNED_RECEIPT_BYTES ? 'receipt' : `${got.length} bytes`) : String(got).slice(0, 80)}`);
+    const sent = signerNodes.find((x) => x.node === n);
+    for (const [m, kind] of msgs.slice(sent && sent.early ? 2 : 0)) {
+      let got; try { got = await sayAt(n, m); } catch (e) { got = `error ${e.message}`; }
+      said.push(`${kind}: ${saidOf(got)}`);
     }
-    published.push({ port, said });
+    published.push({ node: n, said });
   }
   log({ step: 'published', published });
 

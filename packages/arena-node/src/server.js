@@ -2409,6 +2409,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const DOOR_GRACE_MS = 5000;
   let doorTimer = null;
   const doorTried = new Map();
+  const doorSaid = new Map();                  // round:entry -> when the door last said why it did not sign
   if (doorSweepMs > 0) {
     const doorSweep = () => timed('door sweep', () => {
       if (shuttingDown) return;
@@ -2437,6 +2438,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           doorTried.set(key, nowMs);
           verifier.retryClose(held.roundId, entryId).then((r) => {
             if (r && r.stored) console.log(`[door] ${key.slice(0, 16)} ${toHex(entryId).slice(0, 16)}: no first mark past the start deadline - signed at the door`);
+            // AND WHY NOT, once per entry every 5 min (kanban #348, measured 2026-10-14 09:50Z: paid Tick Tock 6d6447b0 went VOID with
+            // the test host signers retrying its no-show every minute, unsigned, and nothing in their logs said why)
+            else if (r && r.why && nowMs - (doorSaid.get(key) || 0) >= 300000) {
+              doorSaid.set(key, nowMs);
+              console.log(`[door] ${key.slice(0, 16)} ${toHex(entryId).slice(0, 16)}: no first mark past the start deadline - not signed: ${String(r.why).slice(0, 240)}`);
+            }
           }).catch((e) => console.error(`[door] ${key.slice(0, 16)}: ${e.message}`));
         }
       }
