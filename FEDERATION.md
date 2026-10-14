@@ -236,7 +236,25 @@ Regtest, unpatched fedimintd 0.12.0 (4 guardians, 3 of 4), two gateways, a
     of 4 is founded with the three seated first; every wallet's notes move
     on their own through a gateway that serves both, with no press; the lock
     settles in the old federation and its payout moves; the old record goes
-    CLOSED; nothing lost anywhere, and the amounts written down
+    CLOSED; nothing lost anywhere, and the amounts written down. **RUN
+    2026-10-14 01:44-01:50Z (kanban #326, `tools/rehearsal-13-regtest.sh`
+    + `tools/rehearsal-13.mjs`, private regtest on the test host, EXIT 0 in
+    319 s):** p1-p3 paid in 249,999,872 msat each; p3 locks 100,000,000
+    under the committee's claim key (blwp-stake-lock, ids match, expiry
+    472). Guardian 3 stops; on 3 of 4 the committee settles the lock to p1
+    with one signature (accepted, payout 100,000,000, fees 0) and p1
+    collects it by Refund (accepted). Successor fb7acaf4 (3 seated first +
+    1 drawn). Pass 1 moves p1 349,999,616, p2 249,999,872, p3 134,216,192;
+    p3's lock change, 15,783,424, was still in issuance and moves on pass 2
+    (a client moves on every start). After: every old balance 0; in the
+    successor p1 349,999,616, p2 249,999,872, p3 149,999,616 = 749,999,104
+    of 749,999,616 - the 512 msat are the federation's fee on the lock and
+    on the collect. The gateway pegged its old e-cash out, 19,672,576 msat
+    left behind (the old audit still covers it: 20,191,000 in its wallet).
+    Records: the old one naming the successor (CRITICAL, 3 signers) and
+    CLOSED (3) verify, CLOSED with 2 is refused; the successor OPEN (4)
+    verifies. The 4 old bonds are spent at maturity, refused one block
+    before.
 14. **abandonment to slash:** the attestation set of item 13 committed in a
     slashing transaction by the arbitration keys, 75% evenly to the active
     census nodes minus that federation's guardians, 25% to the donation
