@@ -10,6 +10,8 @@
 //   13194, 23194, 23195  NIP-47 wallet connect: a wallet's info (kept, replaceable), requests and answers (ephemeral)
 //   30762  a node's signed round result (kanban #362 feature 2, nostr-results.js): public, parameterized replaceable - newest per
 //          node and `d` (arena:result:<round id>) - checked like every other kind
+//   30009, 8  a node's NIP-58 badges (kanban #362, nostr-badges.js): its badge definitions (parameterized replaceable, newest per
+//          node and `d`) and its badge awards (regular events, each kept) - a player's badges are found by `#p`
 // Every event's id is recomputed and its signature checked (BIP-340) before anything is kept or passed on.
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -17,7 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer } from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762]);   // + NIP-47 (wallet connect), + round results (#362)
+export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges (#362)
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
@@ -64,7 +66,7 @@ export function matches(f, e) {
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
 export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memory:', kinds = RELAY_KINDS, name = 'Bitcoin Arena relay',
-  description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47) and the nodes\' signed round results (kind 30762). Nothing else is kept.' } = {}) {
+  description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8). Nothing else is kept.' } = {}) {
   const db = new DatabaseSync(dbPath || ':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);`);
@@ -73,7 +75,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   const clients = new Set();
-  const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 65, 78], software: 'arena-node/nostr-relay', version: '1',
+  const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
     limitation: { max_message_length: MAX_EVENT_BYTES, max_subscriptions: MAX_SUBS, max_filters: MAX_FILTERS, max_limit: MAX_LIMIT }, kinds };
   const server = createServer((req, res) => {
     // NIP-11: the information document; anything else is a short page

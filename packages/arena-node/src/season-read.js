@@ -48,13 +48,22 @@ export function seasonRounds(round, { games, fromMs, toMs, isMarket = () => fals
     if (!(c.gameId instanceof Uint8Array) || !games.has(hex(c.gameId))) continue;
     const startMs = BigInt(c.startTimeMs);
     if (startMs < BigInt(fromMs) || startMs >= BigInt(toMs)) continue;
-    const rid = new Uint8Array(row.round_id);
-    const paid = c.stakeMsat > 0n;
-    const market = !!isMarket(c);
-    if (market && !paid) continue;
-    out.push({ roundId: hex(rid), gameId: hex(c.gameId), startMs, entries: entriesOf(round, rid, c, { paid, market }) });
+    const r = seasonRoundOf(round, new Uint8Array(row.round_id), c, { isMarket });
+    if (r) out.push(r);
   }
   return out;
+}
+
+/**
+ * ONE ROUND as seasonRounds reads it, by its id and decoded contract - or null for a free market, which has no result per
+ * entry and no settlement. What the badges (nostr-badges.js) read each round with, once its settlement is ACCEPTED, so a
+ * badge counts a round exactly as the season board does.
+ */
+export function seasonRoundOf(round, rid, c, { isMarket = () => false } = {}) {
+  const paid = c.stakeMsat > 0n;
+  const market = !!isMarket(c);
+  if (market && !paid) return null;
+  return { roundId: hex(rid), gameId: hex(c.gameId), startMs: BigInt(c.startTimeMs), entries: entriesOf(round, rid, c, { paid, market }) };
 }
 
 function entriesOf(round, rid, contract, { paid, market }) {
@@ -78,7 +87,9 @@ function entriesOf(round, rid, contract, { paid, market }) {
     const proven = typeof round.identityOf === 'function' ? round.identityOf(entryId) : null;
     const record = named.get(key) || null;
     const player = proven ? hex(proven.identity) : record ? record.identity : key;
-    const base = { player, name: record ? record.name : null, stakeMsat: entry.stakeMsat, outcome: null, score: null, payoutMsat: null };
+    // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
+    // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds does not send it.
+    const base = { player, roundKey: key, name: record ? record.name : null, stakeMsat: entry.stakeMsat, outcome: null, score: null, payoutMsat: null };
 
     // THE RESULT (not for a market pick, whose round has an attested outcome and no run)
     if (!market) {

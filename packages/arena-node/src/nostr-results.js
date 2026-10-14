@@ -88,11 +88,18 @@ export const publishRelays = (v = process.env.ARENA_NOSTR_PUBLISH || '') =>
  * lock_settlements row, a round that takes any federation by its fed_lock_settlements rows (the caller asks settlementState
  * whether every one of them is ACCEPTED). Hex ids, oldest first, at most `limit`.
  */
-export function acceptedWithoutEvent(db, sinceMs, limit = 50) {
+export function acceptedWithoutEvent(db, sinceMs, limit = 50) { return acceptedNotIn(db, 'nostr_results', sinceMs, limit); }
+
+/**
+ * The same rounds, not yet in `table` (its `round_id` the hex id): how the badge book (nostr-badges.js) finds each newly
+ * ACCEPTED round on the same clock as the results, in its own ledger. `table` is one of this package's own names, never input.
+ */
+export function acceptedNotIn(db, table, sinceMs, limit = 50) {
+  if (!/^[a-z_]+$/.test(table)) throw new Error('a table name is lowercase letters');
   return db.prepare(`SELECT lower(hex(round_id)) AS rid, MAX(made_ms) AS at FROM (
       SELECT round_id, made_ms FROM lock_settlements WHERE state = 'ACCEPTED' AND made_ms >= ?
       UNION ALL SELECT round_id, made_ms FROM fed_lock_settlements WHERE state = 'ACCEPTED' AND made_ms >= ?)
-    WHERE lower(hex(round_id)) NOT IN (SELECT round_id FROM nostr_results) GROUP BY round_id ORDER BY at LIMIT ?`)
+    WHERE lower(hex(round_id)) NOT IN (SELECT round_id FROM ${table}) GROUP BY round_id ORDER BY at LIMIT ?`)
     .all(Number(sinceMs), Number(sinceMs), limit).map((r) => r.rid);
 }
 
@@ -119,6 +126,36 @@ export async function sendToRelay(url, events, { connect = (u) => new WebSocket(
   });
   try { ws.terminate(); } catch { /* gone */ }
   return answers;
+}
+
+/**
+ * ONE PUBLISHING PASS over kept rows `{ event, relays, attempts }` (a result's, a badge's): each relay is sent what it has not
+ * answered yet, all relays at once; an OK true (or "duplicate:") is done, an OK false is that relay's refusal, kept and not
+ * asked again; no answer in time is asked again later. Each row's `relays` is filled in place, and each answers what to
+ * write back: `{ publishedMs, nextMs, why, attempts, done }` - published once every relay answered, else again after a backoff
+ * that doubles from 30 s to an hour (`done` false: the caller says so, or gives up after its maxAttempts).
+ */
+export async function publishPass(rows, relays, { connect, timeoutMs = 10000, now = () => Date.now(), maxAttempts = 10 } = {}) {
+  await Promise.all(relays.map(async (url) => {
+    const owed = rows.filter((r) => !r.relays[url]);
+    const answers = await sendToRelay(url, owed.map((r) => r.event), { connect, timeoutMs });
+    for (const r of owed) {
+      const a = answers.get(r.event.id);
+      if (a) r.relays[url] = a.ok || /^duplicate:/.test(a.why) ? 'ok' : `refused: ${a.why}`.slice(0, 200);
+    }
+  }));
+  const after = now();
+  return rows.map((r) => {
+    const attempts = r.attempts + 1;
+    if (relays.every((u) => r.relays[u])) {
+      const refused = relays.filter((u) => r.relays[u] !== 'ok');
+      return { done: true, publishedMs: after, nextMs: 0, attempts, refused, why: refused.length ? `refused by ${refused.join(', ')}` : null };
+    }
+    const waitMs = Math.min(BACKOFF_MS * 2 ** (attempts - 1), BACKOFF_MAX_MS);
+    const silent = relays.filter((u) => !r.relays[u]);
+    return { done: false, publishedMs: null, nextMs: after + waitMs, attempts, waitMs,
+      why: `no answer from ${silent.join(', ')} (attempt ${attempts} of ${maxAttempts})` };
+  });
 }
 
 /**
@@ -182,32 +219,14 @@ export function nostrResults({ db, secret, resultOf, relays = [], settled = () =
       const rows = due.all(maxAttempts, t, budget).map(rowOf);
       if (!rows.length) return { sent: 0 };
       for (const _ of rows) sentAt.push(t);
-      // 3. EACH RELAY IS SENT WHAT IT HAS NOT ANSWERED YET, all relays at once; an OK true (or "duplicate:") is done, an OK false
-      // is that relay's refusal, kept and not asked again; no answer in time is asked again later
-      await Promise.all(relays.map(async (url) => {
-        const owed = rows.filter((r) => !r.relays[url]);
-        const answers = await sendToRelay(url, owed.map((r) => r.event), { connect, timeoutMs });
-        for (const r of owed) {
-          const a = answers.get(r.event.id);
-          if (a) r.relays[url] = a.ok || /^duplicate:/.test(a.why) ? 'ok' : `refused: ${a.why}`.slice(0, 200);
-        }
-      }));
-      const after = now();
-      for (const r of rows) {
-        const answered = relays.filter((u) => r.relays[u]);
-        const attempts = r.attempts + 1;
-        if (answered.length === relays.length) {
-          const refused = relays.filter((u) => r.relays[u] !== 'ok');
-          mark.run(after, attempts, 0, JSON.stringify(r.relays), refused.length ? `refused by ${refused.join(', ')}` : null, r.round);
-          log(`[nostr] round ${r.round.slice(0, 16)} result ${r.event.id.slice(0, 16)} published: ${relays.length - refused.length} of ${relays.length} relays took it`);
-        } else {
-          const waitMs = Math.min(BACKOFF_MS * 2 ** (attempts - 1), BACKOFF_MAX_MS);
-          const silent = relays.filter((u) => !r.relays[u]);
-          const why = `no answer from ${silent.join(', ')} (attempt ${attempts} of ${maxAttempts})`;
-          mark.run(null, attempts, after + waitMs, JSON.stringify(r.relays), why, r.round);
-          log(`[nostr] round ${r.round.slice(0, 16)} result not published yet: ${why}${attempts < maxAttempts ? `; again in ${Math.round(waitMs / 1000)} s` : '; given up'}`);
-        }
-      }
+      // 3. EACH RELAY IS SENT WHAT IT HAS NOT ANSWERED YET (publishPass)
+      const outcomes = await publishPass(rows, relays, { connect, timeoutMs, now, maxAttempts });
+      rows.forEach((r, i) => {
+        const o = outcomes[i];
+        mark.run(o.publishedMs, o.attempts, o.nextMs, JSON.stringify(r.relays), o.why, r.round);
+        if (o.done) log(`[nostr] round ${r.round.slice(0, 16)} result ${r.event.id.slice(0, 16)} published: ${relays.length - o.refused.length} of ${relays.length} relays took it`);
+        else log(`[nostr] round ${r.round.slice(0, 16)} result not published yet: ${o.why}${o.attempts < maxAttempts ? `; again in ${Math.round(o.waitMs / 1000)} s` : '; given up'}`);
+      });
       return { sent: rows.length };
     } catch (e) {
       log(`[nostr] ${e.message}`);
