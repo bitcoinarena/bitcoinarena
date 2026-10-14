@@ -128,6 +128,7 @@ public class SplashScreen : MonoBehaviour
             _continuingPolledAt = Time.unscaledTime;
             var page = Blwp.DailyLobby.Poll();
             Continuing = page != null && page.continuing;
+            NextBoxTop = page != null ? page.nextBoxTop : 0f;
             if (FollowsThePage(Continuing, _nextJoin) && page != null) _lobby = page;
         }
         if (Showing) Continuing = false;
@@ -189,6 +190,8 @@ public class SplashScreen : MonoBehaviour
 
     /// <summary>True while the page is taking the player to the next round (SPECTATE-2158); DriveHud keeps the card up.</summary>
     public static bool Continuing { get; private set; }
+    /// <summary>Where the page's next-round box starts, a fraction of the canvas from its top (0 while it is not up): the result card's floor (kanban #9).</summary>
+    public static float NextBoxTop { get; private set; }
 
     /// <summary>
     /// THE NEXT ROUND IS PLAYED, NOT THE LOBBY (the owner 2026-09-30 09:39, item 2: "After the countdown the lobby comes back and

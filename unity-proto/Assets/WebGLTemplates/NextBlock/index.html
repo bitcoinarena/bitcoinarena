@@ -632,6 +632,18 @@
     #blwp-next-say { flex: 1 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
     #blwp-next { width: max-content; }
     @media (max-width: 520px) { #blwp-next { width: calc(100% - 32px); font-size: 15px; } }
+    /* AT THE BOTTOM EDGE IN LANDSCAPE (kanban #9, MF 19: at 18% up it stood over the result summary - "1 still driving",
+       "YOU PENDING" - and a wreck's summary has no room above it there). Between the touch pads, which sit in the bottom
+       corners; upright the screen has room above 18% and the pads take the bottom's full width, so it stays. Unity reads
+       its top (nextBoxTop) and ends the card above it. */
+    @media (orientation: landscape) { #blwp-next { bottom: max(10px, env(safe-area-inset-bottom)); } }
+    @media (orientation: landscape) and (max-height: 460px) { #blwp-next { padding: 6px 10px; font-size: 14px; gap: 10px; }
+      #blwp-next-exit { padding: 5px 10px; } }
+    /* on a touch screen no wider than the gap between the pads: each corner group is 2 buttons of 20% of the short side and
+       1.5 margins of 3.5% (TouchPad.ButtonSize, Margin) - 45.25vh a side; the words wrap inside */
+    @media (orientation: landscape) and (pointer: coarse) { #blwp-next { max-width: calc(100vw - 92vh); } }
+    /* upright on a touch screen, above the pads: their top is 2 buttons and 1.5 margins up (45.25vw) */
+    @media (orientation: portrait) and (pointer: coarse) { #blwp-next { bottom: max(18%, calc(45.25vw + 10px)); } }
     #blwp-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
       border: 1px solid #3a4a5c; border-radius: 6px; }
     body.blwp-clean #blwp-next { display: none !important; }
@@ -2249,6 +2261,15 @@
       window.BLWP_NEXT_VIEW = v;
       setTimeout(paintNext, 250);
     })();
+    // WHERE THE NEXT ROUND'S BOX STARTS (kanban #9): its top edge as a fraction of the game canvas from the canvas's top while
+    // it is up, else 0 - Unity ends the result card, its fold control and a wreck's summary above it
+    window.BLWP_NEXT_BOX_TOP = () => {
+      const b = document.getElementById('blwp-next'); const c = document.getElementById('canvas');
+      if (!b || !c || b.style.display === 'none') return 0;
+      const br = b.getBoundingClientRect(); const cr = c.getBoundingClientRect();
+      if (!(cr.height > 0) || !(br.height > 0)) return 0;
+      return Math.round(((br.top - cr.top) / cr.height) * 1000) / 1000;
+    };
     // THE NEXT ROUND'S JOIN DROPPED (exit game, or kanban #158: a continuing join that would need a deposit). A join still
     // being made, or held for its start, is dropped; a stake a paying round already locked refunds by the lock's own expiry
     // (§23.1) - nothing new is sent.
@@ -6299,6 +6320,8 @@
         // "exit game" or that round's start. Unity shows no lobby meanwhile - the result card, or WASTED, stays.
         continuing: (() => { const n = window.BLWP_NEXT;
           return !!n && window.BLWP_CONTINUE !== false && (n.state === 'looking' || n.state === 'joining'); })(),
+        // AND WHERE ITS BOX STARTS (kanban #9), for the result card to end above it
+        nextBoxTop: typeof window.BLWP_NEXT_BOX_TOP === 'function' ? window.BLWP_NEXT_BOX_TOP() : 0,
         // A WITHDRAWAL AVAILABLE (the owner 2026-09-14), for the lobby to say so.
         withdraw: withdrawAvailable(),
         // THE COLLECT'S LINES (kanban #153): another kept seed's records, a failed collect, an uncollectable record - the

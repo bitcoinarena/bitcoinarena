@@ -883,7 +883,9 @@ public class DriveHud : MonoBehaviour
     {
         float bw = style != null ? Measure(style, label).x + fontSize * 1.6f : fontSize * 8f;
         float bh = fontSize * 2.2f;
-        float y = Mathf.Min(card.yMax + 4f, h - bh - 4f);
+        // above the next round's box while it stands (kanban #9), else above the screen's edge as before
+        float limit = SplashScreen.Continuing ? CardFloor(h, true, SplashScreen.NextBoxTop) : h - 4f;
+        float y = Mathf.Min(card.yMax + 4f, limit - bh);
         return new Rect(card.xMax - bw, y, bw, bh);
     }
 
@@ -1202,6 +1204,27 @@ public class DriveHud : MonoBehaviour
         return new Rect((w - rw) * 0.5f, bandBottom + font * 0.6f, rw, font * 2.6f);
     }
 
+    /// <summary>
+    /// THE WRECK'S SUMMARY PANEL: under its lone copy-game-replay control, `lines` rows, its font shrunk (to 9 at least) so
+    /// the panel ends above `floor` - the screen's edge, or the next round's box while it stands (kanban #9).
+    /// </summary>
+    public static Rect WreckSummaryPanel(int w, int h, int lines, float floor, out int fontSize)
+    {
+        var row = CopyReplayAloneRow(w, h);
+        int lineFont = Mathf.RoundToInt(Mathf.Max(12f, Mathf.Min(w, h) * 0.034f));
+        fontSize = Mathf.RoundToInt(lineFont * 0.8f);
+        float lh = fontSize * 1.45f;
+        var panel = new Rect(row.x - row.width * 0.25f, row.yMax + 4f, row.width * 1.5f, lh * lines + 8f);
+        panel.x = Mathf.Max(8f, panel.x); panel.width = Mathf.Min(w - 16f, panel.width);
+        if (panel.yMax > floor)
+        {
+            float k = Mathf.Max(0f, floor - panel.y) / panel.height;
+            fontSize = Mathf.Max(9, Mathf.RoundToInt(fontSize * k));
+            panel.height = fontSize * 1.45f * lines + 8f;
+        }
+        return panel;
+    }
+
     bool _wreckSummaryUp, _scoreBlockWas = true;
     string _wreckPanelLogged;
 
@@ -1225,11 +1248,11 @@ public class DriveHud : MonoBehaviour
         ReadSummary(w, h, CardHead(w, h, true));
         _wreckSummaryUp = _summaryLines.Count > 0;
         if (_summaryLines.Count == 0) return;
-        var sl = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(line.fontSize * 0.8f) };
+        // ABOVE THE NEXT ROUND'S BOX while it stands (kanban #9), else above the screen's edge as before
+        float panelFloor = SplashScreen.Continuing ? CardFloor(h, true, SplashScreen.NextBoxTop) : h - 4f;
+        var panel = WreckSummaryPanel(w, h, _summaryLines.Count, panelFloor, out int summaryFont);
+        var sl = new GUIStyle(GUI.skin.label) { alignment = TextAnchor.MiddleCenter, fontSize = summaryFont };
         float lh = sl.fontSize * 1.45f;
-        var panel = new Rect(row.x - row.width * 0.25f, row.yMax + 4f, row.width * 1.5f, lh * _summaryLines.Count + 8f);
-        panel.x = Mathf.Max(8f, panel.x); panel.width = Mathf.Min(w - 16f, panel.width);
-        if (panel.yMax > h - 4f) { float k = (h - 4f - panel.y) / panel.height; sl.fontSize = Mathf.Max(9, Mathf.RoundToInt(sl.fontSize * k)); lh = sl.fontSize * 1.45f; panel.height = lh * _summaryLines.Count + 8f; }
         GUI.color = new Color(0.02f, 0.03f, 0.05f, 0.85f);
         GUI.DrawTexture(panel, _flat);
         GUI.color = Color.white;
@@ -1659,25 +1682,49 @@ public class DriveHud : MonoBehaviour
     }
 
     /// <summary>
+    /// THE NEXT ROUND'S BOX IS THE CARD'S FLOOR (kanban #9, MF 19 - measured unattended on 0.0.2523: "joining next round ·
+    /// exit game" stood over the result summary's lines, "1 still driving" and "YOU PENDING"). From the run's end until the
+    /// next start the page draws that box at 18% above the bottom (index.html #blwp-next), and the card here was let down to
+    /// 98% of the screen, so a card with its summary ran under the box. While the page takes the player to the next round
+    /// (SplashScreen.Continuing) the card - and the fold control under it, `foldReserve` - ends above the box: at the top
+    /// the page reports (`nextBoxTop`, a fraction of the canvas from its top), or at NextBoxTopDefault before it has drawn it.
+    /// Not continuing, the floor is the screen's as before.
+    /// </summary>
+    public const float NextBoxTopDefault = 0.70f;
+    public static float CardFloor(int h, bool continuing, float nextBoxTop, float foldReserve = 0f)
+    {
+        float bottom = h - Mathf.Max(8f, h * 0.02f);
+        if (!continuing) return bottom;
+        float top = nextBoxTop > 0.3f && nextBoxTop < 1f ? nextBoxTop : NextBoxTopDefault;
+        return Mathf.Min(bottom, h * top - Mathf.Max(6f, h * 0.01f) - foldReserve);
+    }
+
+    /// <summary>The fold control's height and its gap, which stand under the card: what the floor keeps free for them.</summary>
+    public static float FoldReserve(float head) => Mathf.Max(11f, ArrivalLineFont(head)) * 2.2f + 4f;
+
+    /// <summary>This frame's floor for an arrival card whose unscaled headline font is `head`.</summary>
+    float CardFloorNow(int w, int h, float head) => CardFloor(h, SplashScreen.Continuing, SplashScreen.NextBoxTop, FoldReserve(head));
+
+    /// <summary>
     /// The card at a font scale that keeps its bottom on screen: when the rows are taller than the room under the block
     /// clock, every font shrinks by the same factor - the copy is not shortened.
     /// </summary>
-    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead, bool replay = false, int summary = 0)
+    public float ArrivalScale(int w, int h, float head, float stoppedHeight, bool lead, bool replay = false, int summary = 0, float floor = -1f)
     {
         float padY = head * 0.55f;
         float height = ArrivalHeight(padY, ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight, lead, replay, summary));
-        float room = h - Mathf.Max(8f, h * 0.02f) - CardIn(w, h, height).y;
+        float room = (floor >= 0f ? floor : CardFloorNow(w, h, head)) - CardIn(w, h, height).y;
         return height <= room || height <= 1f ? 1f : Mathf.Max(0.4f, room / height);
     }
 
     /// <summary>The arrival card of a networked run: headline, score, factors, foot line and the copy-game-replay control.</summary>
     public Rect ArrivalBox(int w, int h) => ArrivalBox(w, h, 0f, false, true);
 
-    public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead, bool replay = false)
+    public Rect ArrivalBox(int w, int h, float stoppedHeight, bool lead, bool replay = false, float floor = -1f, int summaryLines = -1)
     {
         float head = CardHead(w, h, true);
-        int summary = replay ? _summaryLines.Count : 0;
-        float k = ArrivalScale(w, h, head, stoppedHeight, lead, replay, summary);
+        int summary = replay ? (summaryLines >= 0 ? summaryLines : _summaryLines.Count) : 0;
+        float k = ArrivalScale(w, h, head, stoppedHeight, lead, replay, summary, floor);
         head *= k;
         return CardIn(w, h, ArrivalHeight(head * 0.55f,
             ArrivalRowHeights(head, ArrivalMidFont(head), ArrivalLineFont(head), stoppedHeight * k, lead, replay, summary)));

@@ -90,6 +90,11 @@ namespace Blwp
         public int answerS = 10;
         /// <summary>The page is taking the player to the next round (SPECTATE-2158): no lobby until exit game or its start.</summary>
         public bool continuing;
+        /// <summary>
+        /// The top of the page's "joining next round · exit game" box while it is up, a fraction of the game canvas from its
+        /// top, else 0 (kanban #9): the result card, its fold control and a wreck's summary end above it.
+        /// </summary>
+        public float nextBoxTop;
         /// <summary>The collect's own lines (kanban #153): at most three, drawn under the round rows; none when empty.</summary>
         public LobbyCollectLine[] collect = new LobbyCollectLine[0];
     }
