@@ -51,7 +51,7 @@ import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donatio
 import { TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 
 // 2026.0.2 (kanban #348): ARENA_PROTOCOL_VERSION=2 opens the v2 game (its manifest requires the round that names no draw)
-const ROCK_PAPER_SCISSORS = process.env.ARENA_PROTOCOL_VERSION === '2' ? RPS_V2 : RPS_V1;
+const ROCK_PAPER_SCISSORS = Number(process.env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? RPS_V2 : RPS_V1;
 const RPS_ROUND_FIELDS = Object.freeze({ ...RPS_FIELDS_V1, gameId: ROCK_PAPER_SCISSORS.gameId });
 const env = process.env;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
@@ -199,7 +199,7 @@ if (env.PAID_DUTY === '1') {
   const fromSlot = Number(env.DUTY_FROM_SLOT || 0);
   const dir = join(home, 'paid', 'duty'); mkdirSync(dir, { recursive: true });
   const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
-  const UPDOWN = env.ARENA_PROTOCOL_VERSION === '2' ? UPDOWN_V2 : UPDOWN_TN4;
+  const UPDOWN = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
   const inflight = new Set();
   const censusAt = new Map();
   let busy = false, lastSaid = '';
@@ -296,7 +296,7 @@ if (env.PAID_DUTY_DAILY === '1') {
   const fromDay = Number(env.DUTY_FROM_DAY || 0);              // the first day this duty posts for (days before it are covered)
   const dir = join(home, 'paid', 'duty-day'); mkdirSync(dir, { recursive: true });
   const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
-  const UPDOWN = env.ARENA_PROTOCOL_VERSION === '2' ? UPDOWN_V2 : UPDOWN_TN4;
+  const UPDOWN = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
   const censusAt = new Map();
   let busy = false, lastSaid = '';
   const donationSet = () => {
@@ -526,7 +526,7 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
 // the 15 min before (attested.js marketWindowOf) - on the lowest-load OPEN federation this opener serves, its locks lasting
 // through the grid's last window (lock-expiry.js marketExpiryBlocks), and keeps the next one UPDOWN_GRID_AHEAD_MS ahead.
 if (env.PAID_UPDOWN_GRID === '1') {
-  const UPDOWN = env.ARENA_PROTOCOL_VERSION === '2' ? UPDOWN_V2 : UPDOWN_TN4;
+  const UPDOWN = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
   const period = BigInt(UPDOWN.manifest.roundPeriodMs);
   const slots = Number(env.UPDOWN_GRID_SLOTS || 96);
   const aheadMs = Number(env.UPDOWN_GRID_AHEAD_MS || 3 * 3600000);
