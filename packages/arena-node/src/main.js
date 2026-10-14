@@ -180,6 +180,8 @@ options.gridSeriesFile = process.env.ARENA_GRID_SERIES_FILE || `${path}.grid-ser
 // whose address moved since answers there no more. The free pair's nodes run as their own units (the owner 2026-10-01) and
 // lost the peers the 2-of-2 launcher handed them: 44 runs sat at 1 of 2 FINAL signatures. Comma-separated base URLs.
 // WHAT THIS NODE HOSTS (the owner 2026-10-03 22:50): node 1 gateway A + LND 1, node 2 gateway B + LND 2 - read for its /dashboard
+// A DEV CLIENT BESIDE THIS NODE (kanban #357): its directory, read for the dashboard (never its key)
+if (process.env.ARENA_DEV_CLIENT_DIR) options.devClientDir = process.env.ARENA_DEV_CLIENT_DIR;
 { const hc = hostsFromEnv(); if (hc) { options.hosts = hostsReader(hc).start(); console.log(`hosts: ${hc.lnd ? 'LND ' + hc.lnd.rest : 'no LND'}, ${hc.gateway ? 'gateway ' + hc.gateway.name + ' ' + hc.gateway.base : 'no gateway'}`); } }
 if (process.env.ARENA_PEERS) options.peers = process.env.ARENA_PEERS.split(',').map((s) => s.trim()).filter(Boolean);
 if (process.env.ARENA_ATTACH_PROOF_DIR) {

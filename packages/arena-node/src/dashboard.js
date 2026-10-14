@@ -27,7 +27,7 @@ const hex = (b) => toHex(new Uint8Array(b));
 
 /** The dashboard's figures, from `round` (a Round over this node's store) at `nowMs`. */
 // `matchFor(roundIdBytes)`: a head-to-head round's match record (match.js, kanban #280) - its score shown with the round
-export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null } = {}) {
+export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, poolsFor = null, hosts = null, games = null, matchFor = null, devClient = null } = {}) {
   const db = round.db;
   const me = hex(round.pubkey);
   const first = db.prepare('SELECT MIN(opened_ms) AS t FROM rounds').get();
@@ -153,6 +153,8 @@ export function dashboardData(round, { nowMs = Date.now(), roundsShown = 200, po
         return { ...rest, paymentsWithFee: (paymentFees || []).length, paidFeesMsat: String((paymentFees || []).reduce((t, x) => t + BigInt(x.feeMsat), 0n)) }; })() : null,
       gateway: hosts.gateway || null,
     } : null,
+    // A DEV CLIENT BESIDE THIS NODE (kanban #357, dev-client.js): what the donation recipient's client received, holds and withdrew
+    devClient: devClient || null,
   };
 }
 
@@ -202,9 +204,17 @@ function readPlayers(id){players.set(id,{loading:true});fetch('api/round-result?
 function totals(){const T=D.totals[period];const names=[['gameVerifyMsat','Game/verify fee'],['settlementMsat','Settlement fee'],['guardianMsat','Guardian/custody fee'],['otherMsat','Other earnings'],['lightningCostMsat','Lightning costs'],['gatewayCostMsat','Gateway costs']];
 el('totals').innerHTML='<div class="card"><h3>'+({day:'Today',month:'This month',year:'This year'}[period])+' (earned: settlement ACCEPTED)</h3>'+names.map(([k,n])=>'<div class="row"><span>'+n+'</span><b>'+(k.includes('Cost')&&T[k]!=='0'?'−':'')+sat(T[k])+'</b></div>').join('')+'<div class="row profit"><span>Absolute profit</span><b>'+sat(T.profitMsat)+'</b></div></div>'
  +'<div class="card"><h3>Owed (rounds not settled yet)</h3><div class="row"><span>Game/verify</span><b>'+sat(D.totals.owed.gameVerifyMsat)+'</b></div><div class="row"><span>Settlement</span><b>'+sat(D.totals.owed.settlementMsat)+'</b></div><div class="row"><span>Guardian</span><b>'+sat(D.totals.owed.guardianMsat)+'</b></div></div>'
- +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard()+gamesCard();
+ +'<div class="card"><h3>Notes</h3><div class="notes"><p>'+keep(D.notes.guardian)+'</p><p>'+keep(D.notes.lightning)+'</p><p>'+keep(D.notes.gateway)+'</p></div></div>'+hostsCard()+devCard()+gamesCard();
 el('tabs').innerHTML=['day','month','year'].map(p=>'<button class="'+(p===period?'on':'')+'" data-p="'+p+'">'+({day:'Day',month:'Month',year:'Year'}[p])+'</button>').join('');
 el('tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{period=b.dataset.p;totals()});}
+// THE DEV CLIENT CARD (kanban #357): only on a node whose operator runs a donation recipient's client beside it
+function devCard(){const V=D.devClient;if(!V)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="devclient"><h3>Dev client'+(V.label?' · '+esc(V.label):'')+'</h3>';
+ if(V.error)return s+r('Not read',esc(V.error))+'</div>';
+ s+=r('Recipient key',esc(V.recipientPk.slice(0,16))+'…')+r('Donations received',V.donations+' · '+sat(V.receivedMsat))+V.byFederation.map(f=>r('In '+esc(f.federation.slice(0,12)),f.donations+' · '+sat(f.msat)+(f.balanceMsat!==null?' · holds '+sat(f.balanceMsat):''))).join('')
+  +r('Withdrawn to its LND',sat(V.withdrawnMsat))+(V.withdrawals.length?r('Last withdrawal',esc(V.withdrawals[0].state||'?')+' · '+sat(V.withdrawals[0].msat)+' · '+esc(String(V.withdrawals[0].at||'').slice(0,16))):'')
+  +(V.lastPass?r('Last pass',esc(String(V.lastPass.at).slice(0,16).replace('T',' '))+' · asked '+V.lastPass.seats+' nodes'+(V.lastPass.unanswered?' ('+V.lastPass.unanswered+' unanswered)':'')):'');
+ if(V.recent.length)s+='<table><tr><th>Round</th><th>Federation</th><th class="n">Donation</th><th>When</th></tr>'+V.recent.map(x=>'<tr><td>'+esc(x.round.slice(0,12))+'</td><td>'+esc(x.federation.slice(0,8))+'</td><td class="n">'+sat(x.amountMsat)+'</td><td>'+t(x.atMs)+'</td></tr>').join('')+'</table>';
+ return s+'</div>'}
 // THE HOSTS CARD (node 1: gateway A + LND 1, node 2: gateway B + LND 2): only on a node that hosts them
 function gamesCard(){const G=D.byGame||[];if(!G.length)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="games"><h3>By game</h3>';for(const g of G){const e=g.earned,o=g.owed;s+='<div class="notes"><p><b>'+keep(String(g.name||(g.game?g.game.slice(0,16):'(no game)')).replace(/[&<>"']/g,(c)=>'&#'+c.charCodeAt(0)+';'))+'</b> - '+g.rounds+' round'+(g.rounds===1?'':'s')+'</p></div>'+r('Earned',sat(String(BigInt(e.gameVerifyMsat)+BigInt(e.settlementMsat)+BigInt(e.guardianMsat))))+r('Owed',sat(String(BigInt(o.gameVerifyMsat)+BigInt(o.settlementMsat)+BigInt(o.guardianMsat))));}return s+'</div>'}
 function hostsCard(){const H=D.hosts;if(!H)return '';const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';let s='<div class="card" id="hosts"><h3>Hosts</h3>';
