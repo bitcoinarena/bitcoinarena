@@ -57,8 +57,8 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
     return { ok: true, status: 201, kept: true };
   }
 
-  /** One step at chain height `tip`: post this node's code, replace no-shows past the window, run the DKG once all codes are in. */
-  async function step(tip) {
+  /** One advance at chain height `tip`: post this node's code, replace no-shows past the window, run the DKG once all codes are in. */
+  async function advance(tip) {
     if (!draw.ok) return state();
     if (failed || started) return state();
     // NO-SHOWS: founding_window after the window opened, the seated without a code
@@ -99,5 +99,5 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
   }
   // a code to take again from a peer's GET /founding (the codes list, as state() shows it)
   const takeAll = (list) => (list || []).map((c) => take({ id: toHex(id), ...c }));
-  return { id: toHex(id), take, takeAll, step, state };
+  return { id: toHex(id), take, takeAll, advance, state };
 }
