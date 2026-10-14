@@ -157,3 +157,39 @@ test('the ends survive a restart and are asked of the committee (kanban #312, me
   const c = (t = START + Number(msForTicks(BigInt(net.contract.blockTicks)).ms) + 1000, await late.result(rh));
   assert.equal(c.ok, false); assert.match(c.why, /no attested opening sample \(k 0\)/);
 });
+
+// THE INTERIM RULES (kanban #312, RULED the owner 2026-10-14 ~21:50Z: B, C and D until protocol 5 signs each seat's own reading)
+test('C: a reading older than one period (5 s) is no reading - a seat that holds only that signs nothing', async () => {
+  let t = START + 0 * 5000 + 100;   // sample 1 reads round time 0
+  // every seat's price is a trade 6 s old when it is read (the cached-feed case): not kept
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => ({ cents: 8297000, atMs: t - 6000 })), now: () => t });
+  for (const s of net.seats) assert.equal(await s.read(), null, 'a price older than one period is not read');
+  const rh = toHex(net.rid);
+  assert.match(net.seats[4].sign({ round: rh, kind: 'sample', k: 1, priceCents: 8297000 }).why, /no reading of its own/);
+  // a fresh trade (1 s old) is a reading, and is signed
+  const fresh = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => ({ cents: 8297000, atMs: t - 1000 })), now: () => t });
+  for (const s of fresh.seats) await s.read();
+  assert.equal(fresh.seats[4].sign({ round: toHex(fresh.rid), kind: 'sample', k: 1, priceCents: 8297000 }).ok, true);
+});
+
+test('C: a reading more than one period away from the moment a sample reads is not used for it', async () => {
+  let t = START + 0 * 5000 + 100;
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => ({ cents: 8297000, atMs: t })), now: () => t });
+  for (const s of net.seats) await s.read();
+  assert.equal(net.seats[0].ownAt(START), 8297000, 'within one period');
+  assert.equal(net.seats[0].ownAt(START + 5100 + 100), null, '5.1 s later: no reading of its own for that moment');
+  assert.equal(net.seats[0].ownAt(START - 5100 + 100), null, '5.1 s earlier: none either');
+});
+
+test('D: a proposed price outside 0.05 % of the seat\'s own reading is refused; inside, it is signed', async () => {
+  let t = START + 0 * 5000 + 100;
+  const own = 8297000;
+  const net = network({ readings: [0, 1, 2, 3, 4, 5, 6].map(() => () => own), now: () => t });
+  for (const s of net.seats) await s.read();
+  const rh = toHex(net.rid);
+  const out = Math.round(own * 1.00051), edge = Math.floor(own * 1.0005), below = Math.ceil(own * 0.9995);
+  assert.match(net.seats[3].sign({ round: rh, kind: 'sample', k: 1, priceCents: out }).why, /not within 0.05 %/);
+  assert.match(net.seats[5].sign({ round: rh, kind: 'sample', k: 1, priceCents: Math.round(own * 1.005) }).why, /not within 0.05 %/, 'what 0.5 % let through is refused');
+  assert.equal(net.seats[2].sign({ round: rh, kind: 'sample', k: 1, priceCents: edge }).ok, true);
+  assert.equal(net.seats[6].sign({ round: rh, kind: 'sample', k: 1, priceCents: below }).ok, true);
+});
