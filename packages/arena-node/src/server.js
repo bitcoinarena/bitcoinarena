@@ -5168,7 +5168,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             makeClaimKey(new Uint8Array(rid));
             return text(res, 409, 'this signer node is making that table\'s claim key now: ask again in a few seconds');
           }
-          return text(res, 409, 'this signer node holds no claim key for that round yet');
+          // AND A ROUND WHOSE KEY RUN THIS NODE LOST (kanban #353, measured 2026-10-14 02:21Z): a seat restarted after the round
+          // was seated never ran it again - seating, assignment and POST /round start it, none of them comes twice - and three
+          // test host signer nodes answered "no claim key yet" until the round was gone, 4 of the 5 attestations a page needs.
+          // Asked for it, the node makes it (makeClaimKey runs once per committee and makes nothing it holds).
+          makeClaimKey(new Uint8Array(rid));
+          return text(res, 409, 'this signer node holds no claim key for that round yet: it is making it now, ask again in a few seconds');
         }
         const a = { roundId: new Uint8Array(rid), claimPk, signerNodePubkey: round.pubkey };
         const body = encodeClaimKeyAttestation(a);
