@@ -109,9 +109,9 @@ test('a provider that leaves blocks out is carried, not refused', async () => {
  * node holding the whole chain; here two providers forking means at least one
  * is lying or broken, and taking the heavier one would be guessing which.
  */
-test('providers that fork are refused, and the stray block is named', async () => {
-  const left = run(3, { seed: 1 });
-  const right = [left[0], ...run(2, { previous: blockHashOf(left[0]), seed: 90 })];
+test('providers that fork deeper than a tip split are refused, and the stray block is named', async () => {
+  const left = run(16, { seed: 1 });
+  const right = [left[0], ...run(15, { previous: blockHashOf(left[0]), seed: 90 })];
   const a = await serving(left);
   const b = await serving(right);
   try {
@@ -122,6 +122,24 @@ test('providers that fork are refused, and the stray block is named', async () =
     // the named block is one the winner does not hold
     const winner = new Set(left.concat(right).map((h) => toHex(blockHashOf(h))));
     assert.ok(winner.has(seen.why.split(': ')[1].split(' ')[0]));
+  } finally { a.server.close(); b.server.close(); }
+});
+
+// A SPLIT AT THE TIP (measured on testnet4 2026-10-14: two bitcoinds at one height and one chainwork, six blocks apart): the
+// providers agree on everything below it, and the chain answered stops at the last block both hold
+test('providers split only at the tip agree on the blocks they share, and the chain stops there', async () => {
+  const { TIP_SPLIT_BLOCKS } = await import('../src/headers.js');
+  const left = run(10, { seed: 1 });
+  const right = [...left.slice(0, 6), ...run(4, { previous: blockHashOf(left[5]), seed: 90 })];
+  const a = await serving(left);
+  const b = await serving(right);
+  try {
+    const seen = await agreedChain([a.get, b.get], { anchor: blockHashOf(left[0]) });
+    assert.equal(seen.ok, true, seen.why);
+    assert.equal(seen.headers.length, 6, 'up to the last block both hold');
+    assert.equal(toHex(blockHashOf(seen.headers[5])), toHex(blockHashOf(left[5])));
+    assert.equal(seen.split, 4);
+    assert.equal(TIP_SPLIT_BLOCKS, 12);
   } finally { a.server.close(); b.server.close(); }
 });
 
