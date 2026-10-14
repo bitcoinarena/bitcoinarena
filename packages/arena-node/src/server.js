@@ -3435,7 +3435,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             let s; try { s = roster.committeeFor(new Uint8Array(r.round_id), 'settlement'); } catch { continue; }
             if (!s || !s.ok || !s.seated) continue;
             rows.push({ round: toHex(new Uint8Array(r.round_id)), atMs: Number(c.committeeTimeMs), drawn: (s.drawn || []).some((e) => toHex(e.pubkey) === me),
-              seated: s.committee.some((e) => toHex(e.pubkey) === me) });
+              seated: s.committee.some((e) => toHex(e.pubkey) === me), present: !!(seating && seating.presentHere && seating.presentHere(new Uint8Array(r.round_id))) });
           }
           const missed = missedInARow(rows);
           return answer(200, { missedInARow: missed, warning: seatingWarning(missed), rounds: rows.slice(0, 20) });
