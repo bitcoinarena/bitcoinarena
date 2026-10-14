@@ -1,9 +1,9 @@
 // A SEAT'S PART IN A FOUNDING (spec §23A.2, kanban #320): when to start one and how its own guardian takes part. founding.js runs
 // the ceremony; this reads its inputs off what the seat holds and drives the node's own guardian.
 //
-//   TRIGGER   foundingTrigger over the federation records this seat holds: a record that entered DRAINING (succession) at its
-//             height. Every seat holding the same records names the same trigger. (Genesis and load need a per-height history of
-//             the census and the federations' loads; they are not read here yet.)
+//   TRIGGER   foundingTrigger over what this seat holds: a record that entered DRAINING (succession) at its height; the first height
+//             with federation_nominal guardian-capable operators while no federation exists (genesis); every OPEN federation at 80 %
+//             of its cap for abandon_blocks (load). The seat keeps the census and load history it saw at each tick (kanban #320).
 //   SEED      the beacon: the hash of the block after trigger_height, once it is in the seat's chain.
 //   CENSUS    the bonded census at trigger_height, its entries with their adverts (guardian_capable, guardian_endpoint).
 //   GUARDIAN  a node takes part only while its own guardian waits in Fedimint's setup (its admin status names no federation):
@@ -11,6 +11,7 @@
 //             `admin setup` against the guardian's own API socket, with its admin password.
 import { foundingTrigger } from '../../arena-protocol/src/guardian-founding.js';
 import { createFounding } from './founding.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
 
 /**
  * The guardian's setup, through the stock CLI: `run(args)` runs fedimint-cli and answers its stdout. The code is the
@@ -38,10 +39,28 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
  * ids guarding an OPEN federation; `peers()` the seats' roots, whose GET /founding is read for codes this seat missed.
  */
 export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = () => new Set(), nominal,
-  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {} }) {
+  bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
+  // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2, kanban #320), one row per chain height this seat ticked at:
+  //   capable  { height, operators }: the distinct operators of guardian-capable census nodes with an endpoint (the draw's own rule)
+  //   loads    { height, federations: [{ federation, status, load }] }: every held record's status and load (reserve over exposure cap)
+  const capable = [], loads = [];
+  const remember = (rows, row) => { if (!rows.length || rows[rows.length - 1].height < row.height) rows.push(row); if (rows.length > keep) rows.shift(); };
+  async function history(h) {
+    const held = records() || [];
+    remember(loads, { height: h, federations: held.map((r) => ({ federation: r.federation, status: r.status, load: typeof r.load === 'number' ? r.load : null })) });
+    let entries = null; try { entries = await entriesAt(h); } catch { entries = null; }
+    if (entries) {
+      const ops = new Set();
+      for (const e of entries) { const a = e && e.advert; if (a && a.guardianCapable === true && a.guardianEndpoint) ops.add(String(a.operatorId || toHex(e.pubkey))); }
+      remember(capable, { height: h, operators: ops.size });
+    }
+    return held;
+  }
   async function tick() {
-    const t = foundingTrigger({ records: records(), nominal, abandonBlocks: clocks.abandonBlocks, federationExists: true });
+    const h0 = await tip();
+    const held = await history(h0);
+    const t = foundingTrigger({ records: held, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0 });
     if (!t.ok) return { ok: false, why: t.why };
     const key = `${t.kind}:${t.height}`;
     const h = await tip();

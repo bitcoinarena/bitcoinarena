@@ -2855,7 +2855,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const runCli = (args) => new Promise((res, rej) => execFileCb(process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args, { timeout: 120000 }, (e, out) => (e ? rej(e) : res(String(out)))));
     const foundingSetup = cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16) });
     foundingSeat = createFoundingSeat({
-      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height })),
+      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null })),
       entriesAt: async (h) => { const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null; },
       beaconAt: async (h) => { const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null; },
       tip: async () => Number(await chainTip()),
