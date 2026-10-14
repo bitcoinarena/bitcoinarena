@@ -438,6 +438,35 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A CENSUS OBJECTED (§5A.4, kanban #299): rounds whose census block this seat found, on its own chain, to be another block than an
   // explorer outside the network names - after a client's objection, checked here; such a round takes no new entry and lists it
   const censusObjections = new Map();          // round hex -> { explorer, why, atMs }
+  // THE BOND_MIN A 2026.0.3 ROUND MAY NAME (§27A.2-3, kanban #305): at least the floor in force at its census height - the bond-weighted
+  // median of the declared bond_min, a rise counted only once it has held notice_period (bondMinInForce). The median is read at the census
+  // height and at six points across the notice before it (a dip between two of them is not seen, so this errs strict), each kept per
+  // height. A round naming a higher bond_min is stricter, and taken. Rounds of protocol 1 and 2 are not asked: their floor is their own.
+  const medianAtHeight = new Map();            // height -> bigint | null
+  const bondMinFloorFor = (contract, rid) => {
+    if (!(contract.protocolVersion >= 3)) return null;
+    const notice = NOTICE_BLOCKS[networkOf(contract.networkId)] || NOTICE_BLOCKS.mainnet;
+    const H = Number(contract.censusHeight), step = Math.max(1, Math.floor(notice / 6));
+    const heights = []; for (let h = H - notice; h < H; h += step) heights.push(h); heights.push(H);
+    const history = [];
+    for (const h of heights) {
+      if (!medianAtHeight.has(h)) {
+        let c; try { c = roster.censusFor(rid, h, { asRoundsOwn: false, posted: contract }); } catch { c = { ok: false }; }
+        if (!c.ok) continue;                     // not readable now: asked again next time
+        medianAtHeight.set(h, bondWeightedMedian(c.entries || [], 'bondMinSats'));
+        if (medianAtHeight.size > 4096) medianAtHeight.delete(medianAtHeight.keys().next().value);
+      }
+      const m = medianAtHeight.get(h);
+      if (typeof m === 'bigint') history.push({ height: h, median: m });
+    }
+    return history.length ? { ...bondMinInForce(history, H, notice), points: history.length } : null;
+  };
+  const bondMinStands = (contract, rid) => {
+    const f = bondMinFloorFor(contract, rid);
+    if (!f || f.inForce === null) return { ok: true };
+    return BigInt(contract.bondMinSats) >= f.inForce ? { ok: true, floor: f }
+      : { ok: false, why: `that round names bond_min ${contract.bondMinSats} sat, under the ${f.inForce} sat in force at its census height ${contract.censusHeight} (the census's bond-weighted median, a rise counted after notice_period; §27A.2-3)` };
+  };
   const warningsOf = (c, rid = null) => { const f = pluginForRound(c, hosted); let w = []; try { w = contractWarnings(c, f.ok ? f.plugin.roundWarnings : null); } catch { w = []; }
     return rid && censusObjections.has(toHex(rid)) ? [...w, 'census_objected'] : w; };
   const outcomeOf = (rid, c, { table = false } = {}) => {
@@ -2648,6 +2677,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // A SERIES THAT NAMES ITS CREATOR COMES WITH THE CREATOR'S SIGNATURE OVER ITS ID (kanban #313): the line's creator=<signature>
     { const cr = seriesCreatorStands(t, t.creatorSignature || null, { verify: (sg, m, k) => schnorr.verify(sg, m, k), seriesIdOf: seriesId });
       if (!cr.ok) return { ok: false, code: 403, why: `series ${id.slice(0, 16)}: ${cr.why}` }; }
+    // AND A 2026.0.3 SERIES' BOND_MIN, ONCE FOR ALL ITS ROUNDS (kanban #305): they share its template's census height and floor
+    { const r0 = seriesRound(t, 0); const bm = bondMinStands(r0, roundIdOf(r0)); if (!bm.ok) return { ok: false, code: 409, why: `series ${id.slice(0, 16)}: ${bm.why}` }; }
     if (refuseSeries(t)) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} is not written here: its game is not hosted, or its donation set or federation is refused` };
     if (persist && !funded({ kind: 'series', contract: { stakeMsat: t.stakeMsat, seriesIdBytes: sid }, node: fundingView }))
       return { ok: false, code: 402, why: `this node stores nothing for a series nobody has funded (series ${id.slice(0, 16)})` };
@@ -3498,6 +3529,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE RULES IT NAMES, THIS BUILD'S OR REFUSED (§6, kanban #314; rules.js): a round settled under rules this seat does not run is
         // not selectable here - refused by name, nothing of it stored
         { const ru = rulesStand(contract); if (!ru.ok) return text(res, 409, ru.why); }
+        { const bm = bondMinStands(contract, roundIdOf(contract)); if (!bm.ok) return text(res, 409, bm.why); }
         // A GAME THIS NODE DOES NOT HOST, FIRST AND BY NAME (§0A.4, kanban #204) - and remembered, so an entry into that
         // round is refused by the same game rather than as a round nobody heard of
         { const refused = unhostedRefusal(contract); if (refused) return text(res, 409, refused); }

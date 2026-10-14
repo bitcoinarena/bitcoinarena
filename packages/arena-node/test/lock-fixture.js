@@ -102,7 +102,7 @@ export function bondedChainSlot(port = lockPort()) {
 // placeholder for a key no daemon stands behind.
 // `hostedGames`: the games the bonded nodes' advertisements host (kanban #204) - nextblock unless a test hands others
 // `protocolVersions`: what the bonded nodes' advertisements speak (#349: a round of a version none of them speaks seats nobody) - [1]
-export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [], hostedGames = [NEXTBLOCK_GAME_ID], protocolVersions = [1] } = {}) {
+export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [], hostedGames = [NEXTBLOCK_GAME_ID], protocolVersions = [1], declares = null } = {}) {
   const hosted = [...hostedGames].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
   slot.federationId = contract.federationId;
   slot.committeeSec = Math.floor(Number(contract.committeeTimeMs) / 1000);
@@ -113,6 +113,7 @@ export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endp
     endpoint: endpoints[i] || `ws://node${i}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
     guardianOf: [{ federationId: contract.federationId, guardianKey: slot.guardianKeys[i] }], timestamp: 1788700000000n,
+    ...(declares ? { declares } : {}),
   }, { previousTxid: b32(0xa0 + i), previousVout: 0, outputKey: bondFor(key) }));
   // THE ROUND'S OWN COMMITTEE TIME: the chain is mined around it (above), so it stands - the entry window it opens is the
   // contract's, unchanged. Returned so the fixture spreads exactly the fields the ruling names.
