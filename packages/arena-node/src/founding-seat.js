@@ -24,6 +24,10 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
     addPeer: async (code) => { await setup('add-peer', code); },
     startDkg: async () => { await setup('start-dkg'); },
     invite: async () => null,
+    // WHETHER THE GUARDIAN WAITS IN SETUP (kanban #320, rehearsal 20b 2026-10-14): asked of the SETUP API itself. A guardian in setup mode
+    // does not serve the admin `status` ("Method not found"), so a seat asking that never took part; `admin setup status` answers
+    // "ConsensusIsRunning" once its federation runs, and a setup state (AwaitingLocalParams, SharingConnectionCodes, ...) before
+    inSetup: async () => { try { const st = unq(await setup('status')); return !!st && st !== 'ConsensusIsRunning'; } catch { return false; } },
   };
 }
 
