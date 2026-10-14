@@ -79,7 +79,12 @@ async function paidEntry(c, rid, roundHex, move, who) {
   const log0 = log;
   const log1 = (o) => log0({ player: who, ...o });
   { const log = log1;
-    const att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
+    // A TABLE'S KEY IS MADE WHEN A PLAYER FIRST ASKS (kanban #293 pick (c)): asked again every 3 s for up to 90 s, as the page does
+    let att = null;
+    for (let t0 = Date.now(); ; await new Promise((r) => setTimeout(r, 3000))) {
+      att = await attestedClaimKey({ round: { ...c, id: rid }, signerNodes: c.nodes, nodes, curve: pageCurve });
+      if (att.ok || Date.now() - t0 > 90000) break;
+    }
     if (!att.ok) throw new Error(`claim key: ${att.why}`);
     log({ step: 'claim key', claimPk: toHex(att.claimPk).slice(0, 16) });
 
