@@ -1222,7 +1222,7 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   // table's line is posted to every seat (POST /series - one post per table, not 450 round posts), and the seats' series
   // writers open the rounds. A beacon that came before the publication confirmed answers `dead`: nothing is posted.
   async function openGrid(kind = {}, { slots = 225, tables = 2, windowMs = 8000n, entryAfterStartMs = 80000n, firstCloseMs,
-    committeeTimeMs, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {} } = {}) {
+    committeeTimeMs, feeRate = 1, maxFeeRate = 4, onPublished = () => {}, onPosted = () => {}, extraOutputs = [], waitBeacon = true } = {}) {
     if (!onChain || onChain.minable) throw new Error('a grid is published on a chain nobody here mines (testnet4)');
     if (firstCloseMs === undefined || committeeTimeMs === undefined) throw new Error('a grid names its first close and its committee time');
     const committee = BigInt(committeeTimeMs), first = BigInt(firstCloseMs);
@@ -1261,6 +1261,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // 30+ relays several. One zero-value OP_RETURN "ARN" SERIES series_id (36 bytes) per table.
     const le = (n, bytes) => { const b = Buffer.alloc(bytes); if (bytes === 8) b.writeBigUInt64LE(BigInt(n)); else b.writeUIntLE(n, 0, bytes); return b; };
     const outs = ids.map((id) => { const o = seriesPublicationOutput(id); return Buffer.concat([le(0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]); });
+    // AND ANY OTHER ZERO-VALUE OUTPUT THE CALLER NAMES - the duty marker of the slot this grid posts (kanban #352, duty.js)
+    for (const o of extraOutputs) outs.push(Buffer.concat([le(o.value || 0, 8), Buffer.from([o.script.length]), Buffer.from(o.script)]));
     // THE COINS CHOSEN HERE, AT feeRate - under the wallet's 1 sat/vB floor when asked (fund-at-rate.js; the owner 2026-10-12
     // "Mach das deutlich sparsamer"); the wallet signs
     const { hex: signed, vsize, fee } = await fundAtRate(chainRpc, outs, feeRate);
@@ -1278,6 +1280,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // the first 900 rounds' contracts for the tools that read them (a 24 h grid derives 21,600; every seat derives them itself)
       contracts: grid.slice(0, 900).map((c) => toHex(encodeRoundContract(c))), firstClose: new Date(Number(first)).toISOString(),
       committeeTime: new Date(Number(committee)).toISOString() });
+    // THE DUTY KEEPER (kanban #352) waits for nothing here: it posts the series to the seats itself once the publication confirms
+    if (!waitBeacon) for (const sid of ids) if (funded.nameRound) funded.nameRound(sid);   // named funded before any seat is asked
+    if (!waitBeacon) return { ok: true, published: true, txid, series: ids.map((id) => toHex(id)), lines, rounds: grid.length,
+      lastCloseMs: grid[grid.length - 1].entryCloseMs, firstStartMs: start };
     // LOOKED FOR UNTIL THE GRID'S LAST ROUND HAS STARTED, not 240 looks (kanban #293, measured 2026-10-12: grid 8290176f was
     // published at 156211 and its beacon 156216 was 4 deep when the keeper gave up after 2 h - "neither a beacon above its
     // publication nor a dead round after 240 looks" - testnet4's coinbase-only blocks came one per 20 min)
@@ -1395,6 +1401,36 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
 
   return {
     id, url, lobbyUrl, contract, openNext, openGrid, keepOpen,
+    // A SERIES LINE TO EVERY SEAT THIS TOOL RUNS AND EVERY OTHER NODE OF THE CENSUS (kanban #352, as openGrid posts a grid's): the
+    // seats that took it, and why the others did not
+    postSeries: async (line) => {
+      const targets = [...[a, b, ...rest].map((n) => [String(n.port), `http://${host}:${n.port}`]), ...otherCensusSeats()];
+      const answers = await Promise.all(targets.map(async ([who, url]) => {
+        let ok = false, why = '';
+        for (let t = 0; t < 30 && !ok; t++) {
+          try { const r = await fetch(`${url}/series`, { method: 'POST', body: line, signal: AbortSignal.timeout(30000) }); ok = r.ok; if (!ok) why = await r.text(); }
+          catch (e) { why = e.message; }
+          if (!ok && !/no chain view|view .*pending|fetch failed|unreachable|not confirmed|no publication|nobody has funded/i.test(why)) break;
+          if (!ok) await new Promise((res) => setTimeout(res, 3000));
+        }
+        return { who: who.slice(0, 8), ok, why: ok ? '' : String(why).slice(0, 160) };
+      }));
+      return { took: answers.filter((x) => x.ok).length, of: answers.length, refused: answers.filter((x) => !x.ok) };
+    },
+    // THE CHAIN, FOR THE DUTY KEEPER (kanban #352): the view to the tip, and the census's node keys at a height - derived as the seats do
+    dutyChain: {
+      view: async () => (censusView = await viewToTip()),
+      censusKeysAt: (height) => {
+        const byTxid = new Map();
+        for (const block of censusView.blocks) for (const raw of block.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
+        const at = decodeRoundContract(encodeRoundContract({ ...contract, censusHeight: height }));
+        const c = deriveCensus(censusView, { contract: at, bond: bondSetFor(network),
+          verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+          resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; } });
+        if (!c.ok) throw new Error('no census at ' + height + ': ' + c.why);
+        return c.entries.map((e) => e.pubkey);
+      },
+    },
     // THE ADVERTS THIS START BONDED, one per signer node, in member order.
     adverts: bonded.map((m) => m.advert),
     rounds: () => held.map((c) => ({ id: toHex(roundId(c)), committeeTimeMs: c.committeeTimeMs, entryCloseMs: c.entryCloseMs })),
