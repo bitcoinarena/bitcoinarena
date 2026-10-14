@@ -3881,6 +3881,56 @@
   "pathParams": []
  },
  {
+  "method": "POST",
+  "path": "/game-outcome",
+  "params": "query round (hex 32: the market round); body JSON {openCents, closeCents, front?, sigs:[{key, signature}]} - the source round's RoundResult and its seats' BIP-340 signatures, as GET /round-result answers them",
+  "auth": "the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7)",
+  "returns": "200 JSON {round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}; 400/404/409",
+  "purpose": "Checks a market on a game (protocol 2026.0.6): its outcome from its source round's signed result. Answered, not held.",
+  "audience": "game/market developer",
+  "line": 5125,
+  "summary": "Check a market-on-a-game outcome",
+  "query": [
+   {
+    "name": "round",
+    "required": true,
+    "type": "string",
+    "description": "The market round's id, 64 hex (32 bytes)."
+   }
+  ],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{openCents, closeCents, front?, sigs:[{key, signature}]}: the source round's RoundResult and the seats' signatures over its id."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}: the verified resolution, or VOID."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No round named, or not a JSON round result."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such round, or its source round is not held here."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "Not a market on a game, no committee drawn, or the result does not stand."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
   "method": "GET",
   "path": "/outcome",
   "params": "query round (hex 32)",

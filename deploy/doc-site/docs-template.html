@@ -151,6 +151,7 @@
   <a href="#payout-rules">Payout rules</a>
   <a href="#market">Implement a prediction market</a>
   <a href="#templates">Event-market templates</a>
+  <a href="#game-markets">Markets on games</a>
   <a href="#money">Where the money goes</a>
 </aside>
 
@@ -713,6 +714,15 @@ for (const node of committeeNodes)
     <li>A template must name its market terms, require protocol version <code>2026.0.3</code> or later, and run on no grid. Rounds are written one by one.</li>
     <li>Nodes refuse a template round without an event, an event on any other game's round, too many labels, or a resolution time outside the template's window.</li>
     <li>The attestors sign an outcome index into the round's own labels. <code>GET /rounds</code> rows carry the <code>event</code>; <code>GET /round</code> names it in the <code>x-question</code>, <code>x-outcomes</code> and <code>x-resolve-at-ms</code> headers; <code>GET /outcome</code> answers with the question and labels. The page shows the question and labels from the contract it checked.</li>
+  </ul>
+
+  <h3 id="game-markets">Markets on games</h3>
+  <p>A market can be <b>on a game round</b>: spectators back BULLS or BEARS of one Tick Tock round, and that round's own result, signed by 5 of its 7 nodes, decides the market. No attestor and no outside source. Built in protocol version <code>2026.0.6</code>; it runs once nodes advertise that version.</p>
+  <ul>
+    <li>The manifest names the source game, the kind of result it reads (a Tick Tock round's result: BULLS, BEARS or FLAT) and which outcome each result pays, or a refund. It names no attestors, and no attestation is taken for it.</li>
+    <li>Each round of the market names the one source round it is on. Its entries must close before that round starts, and the source round must end by the market's resolution time; otherwise the market is void and every stake goes back.</li>
+    <li>FLAT (or any result the manifest maps to a refund), and no signed result by the deadline, also give every stake back.</li>
+    <li>A node checks a result at <code>POST /game-outcome</code> against the source round it holds and the committee it draws for it. Rock Paper Scissors is not a source yet: it signs each player's result, not a table winner.</li>
   </ul>
 
   <h2 id="money">Where the money goes</h2>

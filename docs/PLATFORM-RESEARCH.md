@@ -50,6 +50,12 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
 2. **Results and season boards on Nostr** (2) - nodes publish what is already signed; the relay accepts the event kind.
 3. **Top-N prize splits** (3) - a new payout rule; only manifests that pick it are affected, every existing game id unchanged.
 4. **Event-market templates** (5), then **markets on games** (6) - the composability unlocks.
+   Markets on games (6): State: built (protocol 6, dormant until seats advertise 6). A manifest names its source game, the
+   result kind (Tick Tock's §13 RoundResult) and a mapping onto its outcomes (marker 0x05, no attestors); each round names its
+   source round (contract tail 0xc4, version 6 only). Resolved only by the source round's own result, signed by its settlement
+   committee's threshold (5 of 7); entries close before the source starts; FLAT, a misfit source or no result by the
+   deadline is VOID. RPS is not a source kind yet: it signs per-entry results, no table winner. A seat verifies at
+   `POST /game-outcome`; holding the outcome for settlement is left (multiplayer_p2p.md §0A.7d).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
 6. Then 8-16 by demand.
 

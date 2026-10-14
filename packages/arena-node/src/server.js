@@ -146,6 +146,7 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
+import { gameMarketHook } from './game-market.js';
 import { isHeadToHead, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
@@ -5115,6 +5116,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
         res.writeHead(fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ held: true, fresh, why: stands.why, ...now }));
+      }
+      // A MARKET ON A GAME'S OUTCOME (kanban #362 feature 6, protocol 2026.0.6): POST /game-outcome?round=<the market round's id>
+      // with { openCents, closeCents, front?, sigs: [{ key, signature }] } - the source round's RoundResult and its seats'
+      // signatures, as each answers GET /round-result. Checked against the source round THIS seat holds and the settlement
+      // committee its roster draws for it, by the source's own threshold (game-market.js); answered, never held - nothing of it
+      // settles the market yet (arena-node/src/game-market.js says what is left). No attestation decides such a market.
+      if (req.method === 'POST' && url.pathname === '/game-outcome') {
+        const target = Buffer.from(url.searchParams.get('round') || '', 'hex');
+        if (target.length !== 32) return text(res, 400, 'POST /game-outcome?round=<the market round\'s id>');
+        let body;
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `that is not a JSON round result: ${e.message}`); }
+        if (!body || typeof body !== 'object' || !Array.isArray(body.sigs)) return text(res, 400, 'a round result is { openCents, closeCents, front?, sigs: [{ key, signature }] }');
+        const resolveGameMarket = gameMarketHook({ round, plugins: hosted, committeeFor: (id, role) => roster.committeeFor(id, role),
+          verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, now: () => round.now() });
+        const got = resolveGameMarket(new Uint8Array(target), { openCents: body.openCents, closeCents: body.closeCents, front: body.front, sigs: body.sigs });
+        if (!got.ok && !got.void) return text(res, got.status || 409, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(target), ...got }));
       }
       if (req.method === 'GET' && url.pathname === '/outcome') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');

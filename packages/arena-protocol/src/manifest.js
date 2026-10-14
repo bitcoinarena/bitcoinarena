@@ -12,6 +12,8 @@
 //           deadline_after_resolve, source_rule (kanban #235),
 //         [optional, marker 0x04] template: category, max_outcomes, resolve_within (kanban #362 feature 5: each ROUND
 //           asks its own question - contracts.js `event`),
+//         [optional, marker 0x05] game source: source_game_id, source_kind, mapping[] (kanban #362 feature 6: a market on a
+//           game - each ROUND names the source round whose signed result decides it, contracts.js `sourceRoundId`; no attestors),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (kanban #362 feature 3),
 //       [optional, marker 0x02] required_protocol_version (kanban #349),
@@ -19,10 +21,11 @@
 //     }
 //
 // THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
-// terms and template, a head-to-head game's table, a top split's shares - never two of these in one manifest), then the
-// required version, which any manifest may name, last. Each is optional or bound to its rule, so a manifest that names none
-// keeps its bytes and its game id; a reader takes each only where its marker stands, and its four markers 0x01-0x04 are
-// distinct, so no field can be read as another. A node too old to know one cannot read the manifest (trailing bytes).
+// terms, template and game source, a head-to-head game's table, a top split's shares - never two result types' fields in one
+// manifest), then the required version, which any manifest may name, last. Each is optional or bound to its rule, so a
+// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its five
+// markers 0x01-0x05 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
+// (trailing bytes).
 //     game_id = H(GameManifest)
 //
 // The developer signs the BODY's id (TAG.gameManifestBody), not the bytes that carry the signature - an object whose
@@ -39,7 +42,7 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
 import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
@@ -121,6 +124,68 @@ export function marketTemplateFits(t, m) {
 /** Is this manifest an event-market template (kanban #362 feature 5): an attested game whose rounds ask their own question? */
 export const isTemplate = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.template;
 
+/**
+ * A MARKET ON A GAME (kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6: "an attested market whose outcome is a game
+ * round's signed result (e.g. BULLS vs BEARS of a Tick Tock round, the winner of an RPS table). It turns every game into a
+ * spectator sport with no external oracle: the committee's 5-of-7 RoundResult resolves it"). An ATTESTED manifest may name,
+ * after its own marker 0x05 (behind the market terms, never beside a template, before the required version):
+ *
+ *     game_source { source_game_id (32 bytes), source_kind (u8), mapping[] (u8 each) }
+ *
+ * - `source_game_id`: the manifest id of the game whose rounds its rounds are markets on; each ROUND of it names the one round
+ *   of that game it is on (contracts.js `sourceRoundId`), and a source round of any other game is no source of it.
+ * - `source_kind`: which signed result of that round decides it. One kind exists, ROUND_RESULT: the §13 RoundResult of a price
+ *   round (Tick Tock / nextblock; round-result.js) - { round_id, open_cents, close_cents, front }, its id signed by each seat's
+ *   node key (BIP-340), standing when the source round's settlement committee's threshold (5 of 7) signed the same one.
+ *   NOT A KIND, AND WHY: a head-to-head round (Rock Paper Scissors) signs no round-level result - each entry's PlayerResult
+ *   (result.js) names one player key, WIN/DRAW/LOSS mapped onto DELIVERED/FAILED and a score - and its players are known only
+ *   when its entries close, after a market on it must have closed (game-market.js gameMarketFitsSource); a market could name
+ *   no seat whose result it pays on before it is too late to pick. Such a kind needs a signed per-table winner first.
+ * - `mapping`: one byte per value of that kind's result, in the kind's order (SOURCE_VALUES: BULLS, BEARS, FLAT) - the index
+ *   of the market outcome it pays, or GAME_MARKET_REFUND (0xff): every stake back (pari-mutuel VOID). Tick Tock's natural
+ *   market is outcomes [BULLS, BEARS] with mapping [0, 1, 0xff]: FLAT refunds. Every outcome is some value's, so no pick is
+ *   one that can never win.
+ *
+ * ITS TRUST IS THE SOURCE ROUND'S: it names no attestors and a threshold of 0 (the fields are written empty) - nobody but the
+ * source round's own committee says anything, and an attestation for it is refused (attested.js attestationStands). Its money
+ * and times are its market terms, which it must name: its fees, its question, `resolve_after_close_ms` - the latest its source
+ * round may END after its entry close (the market resolves once its source's result is signed) - and the deadline after that,
+ * when a market with no standing result is VOID. It runs on no grid (round_period 0): each round names its source and its
+ * times. It REQUIRES protocol version 2026.0.6 or later (#349): its rounds carry the source in a contract tail only builds of
+ * 2026.0.6 read, so a seat without the code is never seated for them, and a node too old to know the field cannot read the
+ * manifest at all (trailing bytes). Optional: every manifest without it keeps its bytes and its game id.
+ */
+export const GAME_SOURCE_MARKER = 0x05;
+export const GAME_MARKET_MIN_PROTOCOL_VERSION = GAME_MARKET_VERSION;
+export const SOURCE_KIND = Object.freeze({ ROUND_RESULT: 1 });
+/** The values each source kind's result takes, in the order a mapping names them (ROUND_RESULT: round-result.js FRONT 1, 2, 3). */
+export const SOURCE_VALUES = Object.freeze({ [SOURCE_KIND.ROUND_RESULT]: Object.freeze(['BULLS', 'BEARS', 'FLAT']) });
+export const GAME_MARKET_REFUND = 0xff;
+export function gameSourceFits(g, m) {
+  if (!g || typeof g !== 'object') return { ok: false, why: 'a game source is an object { sourceGameId, sourceKind, mapping }' };
+  if (!manIs32(g.sourceGameId) || manIsZero(g.sourceGameId)) return { ok: false, why: 'a market on a game names its source game by its 32-byte manifest id' };
+  const values = SOURCE_VALUES[g.sourceKind];
+  if (!values) return { ok: false, why: `source kind ${g.sourceKind} is not one this engine reads (ROUND_RESULT ${SOURCE_KIND.ROUND_RESULT}: a price round's §13 RoundResult)` };
+  const outcomes = Array.isArray(m && m.outcomes) ? m.outcomes.length : 0;
+  if (!Array.isArray(g.mapping) || g.mapping.length !== values.length)
+    return { ok: false, why: `a market on a game maps each of its source's ${values.length} results (${values.join(', ')}) to an outcome or a refund: ${values.length} bytes` };
+  for (let i = 0; i < values.length; i++) {
+    const x = g.mapping[i];
+    if (!(Number.isInteger(x) && ((x >= 0 && x < outcomes) || x === GAME_MARKET_REFUND)))
+      return { ok: false, why: `a market on a game maps ${values[i]} to ${x}: an outcome index 0 to ${outcomes - 1}, or ${GAME_MARKET_REFUND} for a refund` };
+  }
+  for (let o = 0; o < outcomes; o++)
+    if (!g.mapping.includes(o)) return { ok: false, why: `outcome ${o} "${m.outcomes[o]}" is no source result's: a pick on it could never win` };
+  if (!m.marketTerms) return { ok: false, why: 'a market on a game names its market terms: its fees, its question, the latest its source round may end and the deadline after that' };
+  if (m.template !== undefined && m.template !== null) return { ok: false, why: 'a market on a game is no template: it asks its manifest\'s question, of the source round each round names' };
+  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= GAME_MARKET_MIN_PROTOCOL_VERSION))
+    return { ok: false, why: `a market on a game requires protocol version ${protocolVersionName(GAME_MARKET_MIN_PROTOCOL_VERSION)} or later (#349): its rounds name their source round` };
+  if (m.roundPeriodMs !== 0n) return { ok: false, why: 'a market on a game runs on no grid (round_period 0): each round names its source round and its own times' };
+  return { ok: true };
+}
+/** Is this manifest a market on a game (kanban #362 feature 6): an attested market decided by a source round's signed result? */
+export const isGameMarket = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.gameSource;
+
 
 /**
  * A TOP SPLIT'S SHARES (kanban #362 feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
@@ -200,12 +265,21 @@ export function encodeManifestBody(m) {
         || !m.outcomes.every((o) => typeof o === 'string' && o.length >= 1 && o.length <= 64))
       throw new Error(`an attested game names 2 to ${OUTCOMES_MAX} outcomes, each 1 to 64 characters`);
     if (new Set(m.outcomes).size !== m.outcomes.length) throw new Error('an attested game names each outcome once');
-    if (!Array.isArray(m.attestors) || m.attestors.length < 1 || m.attestors.length > ATTESTORS_MAX || !m.attestors.every(manIs32))
-      throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
-    if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
-      throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+    // A MARKET ON A GAME (kanban #362 feature 6) NAMES NO ATTESTOR: its outcome is its source round's signed result, so the
+    // fields are written empty and nothing an attestor signs can decide it; every other attested game names 1 to 16, as before
+    const onGame = m.gameSource !== undefined && m.gameSource !== null;
+    if (onGame) {
+      if (!Array.isArray(m.attestors) || m.attestors.length !== 0 || m.attestThreshold !== 0)
+        throw new Error('a market on a game names no attestors and a threshold of 0: its outcome is its source round\'s signed result');
+    } else {
+      if (!Array.isArray(m.attestors) || m.attestors.length < 1 || m.attestors.length > ATTESTORS_MAX || !m.attestors.every(manIs32))
+        throw new Error(`an attested game names 1 to ${ATTESTORS_MAX} attestor keys of 32 bytes`);
+      if (!Number.isInteger(m.attestThreshold) || m.attestThreshold < 1 || m.attestThreshold > m.attestors.length)
+        throw new Error(`an attested game's threshold is 1 to its ${m.attestors.length} attestor(s)`);
+    }
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
     if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
+    if (onGame) { const f = gameSourceFits(m.gameSource, m); if (!f.ok) throw new Error(f.why); }
   } else if (isHeadToHead(m)) {
     // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
     if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
@@ -240,6 +314,7 @@ export function encodeManifestBody(m) {
   }
   if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
   if (!isAttested(m) && m.template !== undefined && m.template !== null) throw new Error('only an attested game is a market template: its rounds ask a question its attestors answer');
+  if (!isAttested(m) && m.gameSource !== undefined && m.gameSource !== null) throw new Error('only an attested game is a market on a game: its outcome is read, not played');
   if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
   if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
   if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
@@ -290,6 +365,12 @@ export function encodeManifestBody(m) {
       const t = m.template;
       w.u8(TEMPLATE_MARKER); w.str(t.category); w.u8(t.maxOutcomes); w.u64(t.resolveWithinMs);
     }
+    // ITS GAME SOURCE (kanban #362 feature 6), after its own marker and only when it is a market on a game: every attested
+    // manifest before keeps its bytes
+    if (m.gameSource) {
+      const g = m.gameSource;
+      w.u8(GAME_SOURCE_MARKER); w.bytes32(g.sourceGameId); w.u8(g.sourceKind); w.vec(g.mapping, (x, ww) => ww.u8(x));
+    }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -336,6 +417,10 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === TEMPLATE_MARKER) {
       r.u8();
       body.template = { category: r.str(), maxOutcomes: r.u8(), resolveWithinMs: r.u64() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === GAME_SOURCE_MARKER) {
+      r.u8();
+      body.gameSource = { sourceGameId: r.bytes32(), sourceKind: r.u8(), mapping: r.vec((rr) => rr.u8()) };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -404,6 +489,9 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
   // AND A TEMPLATE WHOSE ROUNDS THIS BUILD CANNOT READ (kanban #362 feature 5): likewise
   if (isTemplate(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a market template under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
+  // AND A MARKET ON A GAME WHOSE ROUNDS THIS BUILD CANNOT READ (kanban #362 feature 6): likewise
+  if (isGameMarket(m) && !speaksVersion(m.requiredProtocolVersion))
+    return { ok: false, why: `${name}: it is a market on a game under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
   if (m.version === 1) {
     if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
     return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
@@ -433,6 +521,10 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
   // and when it resolves - is its manifest's, and a round naming its own there would show players a market nobody signed
   const asks = contract.event !== undefined && contract.event !== null;
   if (asks && !isTemplate(m)) return { ok: false, why: `${name} is not a market template: its question is its manifest's, and a round of it carries none of its own` };
+  // A ROUND NAMES A SOURCE ROUND ONLY UNDER A MARKET ON A GAME (kanban #362 feature 6): on any other game it would be a claim
+  // about an outcome nobody reads
+  const onRound = contract.sourceRoundId !== undefined && contract.sourceRoundId !== null;
+  if (onRound && !isGameMarket(m)) return { ok: false, why: `${name} is no market on a game: a round of it names no source round` };
   // AN ATTESTED ROUND (§0A.7a) NAMES NO CORE AND NO CONFIG: both 32 zero bytes - there is nothing to replay it with
   if (isAttested(m)) {
     if (!manIs32(contract.simCoreHash) || !manIsZero(contract.simCoreHash) || !manIs32(contract.configHash) || !manIsZero(contract.configHash))
@@ -441,6 +533,15 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
       const fits = eventFitsTemplate(contract, m);
       if (!fits.ok) return fits;
       return { ok: true, attested: true, template: true };
+    }
+    // A MARKET ON A GAME'S ROUND NAMES ITS SOURCE ROUND (kanban #362 feature 6), and is no round of a series. Whether that source
+    // fits - its game, and its start no earlier than this round's entry close - needs the source's contract: game-market.js
+    // gameMarketFitsSource, asked by a seat that holds it and again by every resolution
+    if (isGameMarket(m)) {
+      if (!onRound) return { ok: false, why: `${name} is a market on a game: each round of it names the source round whose signed result decides it, and this one names none` };
+      if (contract.seriesId !== undefined && contract.seriesId !== null)
+        return { ok: false, why: `${name}: a market on a game is published on its own, never as a round of a series (a series round's id does not hash its source)` };
+      return { ok: true, attested: true, gameMarket: true };
     }
     return { ok: true, attested: true };
   }

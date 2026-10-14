@@ -55,18 +55,19 @@ export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDeno
  */
 export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'attestor b', 'attestor c'], threshold = 2, dev = name,
   donationSet = testDonationSet(dev), version = 1, parentManifestId = NO_PARENT, clients = [], marketTerms = null, roundPeriodMs = 0n,
-  template = null, requiredProtocolVersion = null }) {
+  template = null, requiredProtocolVersion = null, gameSource = null }) {
   const devKey = testDevKey(dev);
-  // in key order, as the manifest lists them
-  const keys = attestors.map((w) => testDevKey(`attestor: ${w}`)).sort((x, y) => Buffer.compare(Buffer.from(x.pubkey), Buffer.from(y.pubkey)));
+  // in key order, as the manifest lists them - and none for a market on a game (kanban #362 feature 6): its source round decides it
+  const keys = (gameSource ? [] : attestors).map((w) => testDevKey(`attestor: ${w}`)).sort((x, y) => Buffer.compare(Buffer.from(x.pubkey), Buffer.from(y.pubkey)));
   const body = {
     gameName: name, gameDevPubkey: devKey.pubkey, version, parentManifestId, resultType: RESULT_TYPE.ATTESTED,
     cores: [], runTicksMax: 0, roundPeriodMs, payoutRule: PAYOUT_RULE.PARI_MUTUEL, rankNumerator: 0, rankDenominator: 0, minScore: 0,
     clients: [...clients].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y))), gameDonationSetId: donationSetId(donationSet),
-    outcomes, attestors: keys.map((k) => k.pubkey), attestThreshold: threshold,
+    outcomes, attestors: keys.map((k) => k.pubkey), attestThreshold: gameSource ? 0 : threshold,
     ...(marketTerms ? { marketTerms } : {}),
     // AN EVENT-MARKET TEMPLATE (kanban #362 feature 5): its rounds ask their own question; it requires a protocol version (#349)
     ...(template ? { template } : {}),
+    ...(gameSource ? { gameSource } : {}),
     ...(requiredProtocolVersion ? { requiredProtocolVersion } : {}),
   };
   const manifest = signManifest(body, devKey);

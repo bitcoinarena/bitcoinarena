@@ -41,7 +41,7 @@ test('an outlier cannot move the median beyond the honest range: two of seven ly
 test('protocol 5 is 2026.0.5: spoken, named, and it is the round\'s version that picks the median', () => {
   assert.equal(PRICE_MEDIAN_VERSION, 5);
   assert.equal(speaksVersion(5), true);
-  assert.deepEqual(SUPPORTED_PROTOCOL_VERSIONS, [1, 2, 3, 4, 5]);
+  assert.deepEqual(SUPPORTED_PROTOCOL_VERSIONS, [1, 2, 3, 4, 5, 6], '2026.0.6: markets on games (kanban #362 feature 6)');
   assert.equal(protocolVersionName(5), '2026.0.5');
   assert.deepEqual([1, 2, 3, 4, 5, 6].map((v) => mediansPrices({ protocolVersion: v })), [false, false, false, false, true, true]);
   assert.equal(mediansPrices(null), false);

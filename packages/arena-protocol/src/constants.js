@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -59,6 +59,14 @@ export const TOP_SPLIT_VERSION = 4;
 // picks the scheme, never the seat's.
 export const PRICE_MEDIAN_VERSION = 5;
 export const mediansPrices = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= PRICE_MEDIAN_VERSION;
+// MARKETS ON GAMES (2026.0.6, kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6: "an attested market whose outcome is a
+// game round's signed result ... no external oracle: the committee's 5-of-7 RoundResult resolves it"). From version 6 an ATTESTED
+// manifest may name a source game instead of attestors (manifest.js `gameSource`, marker 0x05), and each round of it names the one
+// round of that game it is a market on (contracts.js `sourceRoundId`, marker 0xc4). Its outcome is that source round's own
+// signed result, verified against the source round's committee and threshold (game-market.js) - no attestor signs anything.
+// Both fields are new bytes only a version-6 manifest and round may carry, so nothing below 6 moves; and a game market REQUIRES
+// this version (#349), so the census seats its rounds only on nodes whose advert lists 6.
+export const GAME_MARKET_VERSION = 6;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
