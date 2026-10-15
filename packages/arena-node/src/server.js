@@ -457,7 +457,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const musigNodeSessions = new Map();
   let fedRecords = null;                       // federation-records.js (kanban #321), set once the roster and the invites are known
   // ABSENCE ATTESTATIONS (§23A.4, kanban #322): taken at POST /absence, and what proves a guardian ABANDONED in the record
-  const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } } });
+  // HELD ACROSS A RESTART (kanban #326): beside the store, as the other per-seat files are
+  const absencesFile = db && db.blwpPath ? `${db.blwpPath}.held-absences.json` : null;
+  const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } },
+    store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => writeFileSync(absencesFile, JSON.stringify(v)) } : null });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
   let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
   // THIS SEAT'S NETWORK'S GENESIS (kanban #297), read once: null where this build names none
@@ -3226,7 +3229,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
       say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
     guardianWiring.founding = true;
-    const ft = setInterval(() => { foundingSeat.tick().catch((e) => console.log(`[founding] tick: ${e.message}`)); }, Number(process.env.ARENA_FOUNDING_MS || 600000));
+    // WHY A TICK STARTS NO FOUNDING, said once per reason (kanban #326, measured live 2026-10-15: a held notice started nothing, silently)
+    let foundingWhy = null;
+    const ft = setInterval(() => {
+      foundingSeat.tick().then((r) => { if (r && r.ok === false && r.why !== foundingWhy) { foundingWhy = r.why; console.log(`[founding] no founding: ${r.why}`); } })
+        .catch((e) => console.log(`[founding] tick: ${e.message}`));
+    }, Number(process.env.ARENA_FOUNDING_MS || 600000));
     if (ft.unref) ft.unref();
   }
   // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which

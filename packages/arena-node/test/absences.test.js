@@ -34,3 +34,22 @@ test('a departure notice travels as hex and reads back the same; a seat keeps th
   assert.equal(h.listDepartures().length, 1);
   assert.match(h.offerDeparture({ ...n(130), signature: new Uint8Array(64) }).why, /not signed/);
 });
+
+test('notices and attestations a seat holds are there again after a restart; one altered in the file is not (kanban #326)', async () => {
+  const { signDeparture } = await import('../../arena-protocol/src/absence.js');
+  const notice = signDeparture({ federationId: FED, peerKey: peer, leaveAfterHeight: 156960, postedAt: 156644, nodePubkey: g.pubkey }, (m) => schnorr.sign(m, g.secret));
+  let file = null;
+  const store = { read: () => (file ? JSON.parse(file) : null), write: (v) => { file = JSON.stringify(v); } };
+  const before = createAbsences({ verify, store });
+  assert.equal(before.offerDeparture(notice).kept, true);
+  assert.equal(before.offer(att(1300)).kept, true);
+  // THE RESTART: a new seat on the same file
+  const after = createAbsences({ verify, store });
+  assert.deepEqual([after.listDepartures().length, after.list().length], [1, 1]);
+  assert.equal(after.listDepartures()[0], before.listDepartures()[0], 'the same notice, byte for byte');
+  // an entry altered in the file is checked like any offer and dropped
+  const v = JSON.parse(file); v.departures[0] = v.departures[0].slice(0, -2) + (v.departures[0].endsWith('00') ? '01' : '00'); file = JSON.stringify(v);
+  assert.equal(createAbsences({ verify, store }).listDepartures().length, 0);
+  // no store: as before
+  assert.equal(createAbsences({ verify }).listDepartures().length, 0);
+});
