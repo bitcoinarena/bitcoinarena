@@ -32,7 +32,7 @@ import { entryFeeBpsOf, feeBpsOf, donationBpsOf } from '../../arena-protocol/src
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
-import { marketOfRound, isScalar } from '../../arena-protocol/src/manifest.js';
+import { marketOfRound } from '../../arena-protocol/src/manifest.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
 const verifyEd = (sig, msg, key) => { try { return ed25519.verify(sig, msg, key); } catch { return false; } };
@@ -60,8 +60,8 @@ export class OrderBook {
     if (!found.ok || !found.attested) return refuse('that round is not a market this node hosts');
     // a round of a template counts its own outcomes (kanban #362 feature 5)
     if ((marketOfRound(found.plugin.manifest, contract).outcomes || []).length !== 2) return refuse('the order book trades a two-outcome market (Up / Down)');
-    // a scalar market's two sides are paid by its value, not a share per outcome (kanban #362 feature 8): no book
-    if (isScalar(found.plugin.manifest)) return refuse('a scalar market is no order book: its sides are paid by where its value lies');
+    // A SCALAR MARKET'S BOOK (kanban #362, §0A.7e): its two sides trade as any two outcomes do; at resolution a LONG share is worth
+    // (V - low) / (high - low) of a sat and a SHORT share the rest (book-ledger.js bookSettlement `scalar`)
     const m = found.plugin.manifest;
     return { ok: true, contract, manifest: m, feeBps: entryFeeBpsOf(m), nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) || 0,
       needed: receiptsNeeded(contract.nodes.length), seats: contract.nodes.map(toHex) };

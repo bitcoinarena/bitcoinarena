@@ -62,3 +62,29 @@ test('cancels: an unfilled order leaves no position to claim; a partly filled on
   assert.equal(s.feesDueMsat, sum(s.claimed.map((r) => r.buyFeeMsat + r.sellFeeMsat)));
   assert.deepEqual(bookSettlement({ positions: L.positions, outcome: null }), { claimed: [], poolMsat: 0n, feesDueMsat: 0n, voided: true });
 });
+
+// A SCALAR MARKET'S BOOK (kanban #362, §0A.7e): a LONG share (0) is worth (V - low) / (high - low) of a sat at the clamped value, a
+// SHORT share (1) the rest - the pool split by where V lies, each side pro rata by its shares; every msat paid out or due.
+test('a scalar book splits its pool between LONG and SHORT by where the value lies, clamped, to the msat', () => {
+  const b1 = { k: 1, cutoffMs: 1000n, orders: [o('a', YES, 60, 10), o('b', NO, 45, 10), o('c', YES, 55, 4), o('d', NO, 50, 6)] };
+  const L = bookLedger({ batches: [b1], feeBps: FEE });
+  const bounds = { low: 8000000n, high: 9000000n };
+  const outs = {};
+  for (const [name, value] of [['low', 7000000n], ['quarter', 8250000n], ['mid', 8500000n], ['high', 9999999n]]) {
+    const s = bookSettlement({ positions: L.positions, outcome: null, scalar: { value, bounds } });
+    assert.equal(sum(s.claimed.map((r) => r.outMsat)) + s.feesDueMsat, locksOf(s), `${name}: the book does not balance`);
+    const win = (side) => sum(s.claimed.filter((r) => L.positions.get(r.entry).shares[side] > 0n).map((r) => r.winMsat));
+    outs[name] = { long: win(YES), short: win(NO), pool: s.poolMsat };
+  }
+  console.log('  SCALAR BOOK:', JSON.stringify(Object.fromEntries(Object.entries(outs).map(([k, v]) => [k, [String(v.long), String(v.short), String(v.pool)]]))));
+  assert.equal(outs.low.long, 0n, 'at or below low SHORT takes the whole pool');
+  assert.equal(outs.low.short, outs.low.pool);
+  assert.equal(outs.high.short, 0n, 'at or above high LONG takes the whole pool');
+  assert.equal(outs.high.long, outs.high.pool);
+  assert.equal(outs.mid.long, outs.mid.pool / 2n, 'the middle splits it in half (LONG floored)');
+  assert.equal(outs.quarter.long, outs.quarter.pool / 4n);
+  assert.throws(() => bookSettlement({ positions: L.positions, outcome: null, scalar: { value: 1n, bounds: { low: 5n, high: 5n } } }), /between bounds low < high/);
+  // the binary book is unchanged by it
+  const yes = bookSettlement({ positions: L.positions, outcome: YES });
+  assert.equal(sum(yes.claimed.map((r) => r.outMsat)) + yes.feesDueMsat, locksOf(yes));
+});

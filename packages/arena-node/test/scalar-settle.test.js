@@ -148,13 +148,16 @@ test('one side only: the return door hands every stake and fee back at once; two
   console.log(`  FACTS: two sides - ${waits.why.slice(0, 80)} | one side - ${back.why.slice(0, 80)} | plan - ${plan.why.slice(0, 80)}`);
 });
 
-test('a scalar market is no order book: an entry with a limit price is refused at the door, a plain pick of a side is not refused for it', () => {
+test('a scalar market trades its sides in a book too (kanban #362, §0A.7e): an order passes the door\'s scalar rule, and a plain pick of a side does', () => {
   const M = market();
   const rid = roundId(M);
   const { round, clock } = seatStore([M]);
   clock.ms = Number(S) - 1000;                                  // its entries still open
   const pick = { roundId: rid, pick: 0, worldSecret: new Uint8Array(32), sessionPubkey: b32(0x11) };
-  assert.throws(() => round.enter({ ...pick, limitPrice: 500000n }), /is a scalar market: it takes plain picks of a side \(LONG or SHORT\), no order/);
+  // an order at a whole cent: no longer refused for being on a scalar market (it stops later, at this harness's missing stake)
+  let orderWhy = null;
+  try { round.enter({ ...pick, limitPrice: 50000n }); } catch (e) { orderWhy = e.message; }
+  assert.doesNotMatch(String(orderWhy), /scalar market/);
   // a plain pick passes that rule (and stops later, at this harness's missing stake)
   let why = null;
   try { round.enter(pick); } catch (e) { why = e.message; }
