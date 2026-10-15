@@ -75,7 +75,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const drop = db.prepare('DELETE FROM events WHERE pubkey = ? AND kind = ? AND d = ? AND id != ?');
   const all = db.prepare('SELECT json FROM events ORDER BY created_at DESC');
   const clients = new Set();
-  const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
+  const info = { name, description, supported_nips: [1, 11, 42, 46, 47, 57, 58, 65, 78], software: 'arena-node/nostr-relay', version: '1',
     limitation: { max_message_length: MAX_EVENT_BYTES, max_subscriptions: MAX_SUBS, max_filters: MAX_FILTERS, max_limit: MAX_LIMIT }, kinds };
   const server = createServer((req, res) => {
     // NIP-11: the information document; anything else is a short page
