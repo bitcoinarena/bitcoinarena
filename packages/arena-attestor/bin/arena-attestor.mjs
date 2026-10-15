@@ -9,10 +9,12 @@
 // whose window ended (the period before its entry close) gets this attestor's word once - signed or "signs nothing" -
 // served at GET /attestation?round=; the other attestors' words are pulled, and with the threshold of signatures over one
 // body the attestation goes to every seat (POST /outcome), again until each seat holds it. One line per event in the log.
+//   --mode value: a SCALAR market's attestor (kanban #362 feature 8): it signs the value it observed - the 60 s average at the
+//   window's end, whole cents (the market's unit must be cents) - as a value attestation, and POST /outcome takes that kind too.
 import http from 'node:http';
 import { readFileSync, appendFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { readSources } from '../src/sources.js';
-import { attestorKey, attestWindow, combine, wordToJson, wordFromJson } from '../src/attestor.js';
+import { attestorKey, attestWindow, attestValue, combine, wordToJson, wordFromJson } from '../src/attestor.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 
 const arg = (name, dflt = null) => { const i = process.argv.indexOf(`--${name}`); return i > 1 ? process.argv[i + 1] : dflt; };
@@ -28,6 +30,8 @@ const SEATS = String(arg('seats', '')).split(',').filter(Boolean);
 const PEERS = String(arg('peers', '')).split(',').filter(Boolean);
 const ATTESTORS = String(arg('attestors', '')).split(',').filter(Boolean);
 const THRESHOLD = Number(arg('threshold', '2'));
+const MODE = arg('mode', 'outcome');
+if (MODE !== 'outcome' && MODE !== 'value') throw new Error('--mode outcome (an Up/Down market) or value (a scalar market)');
 const PORT = Number(arg('port', '21661'));
 const LOG = arg('log');
 const SAMPLE_MS = Number(arg('sample-ms', '10000'));
@@ -94,10 +98,11 @@ const tick = async () => {
     const window = { startMs: r.closeMs - PERIOD_MS, endMs: r.closeMs };
     // ONE WORD PER ROUND, once its window ended and the reading at its end is in (one sample period after it)
     if (!words.has(r.id) && now >= window.endMs + BigInt(SAMPLE_MS) && now < window.endMs + 3600000n) {
-      const w = attestWindow({ samples, roundId: fromHex(r.id), window, attestor });
+      const w = (MODE === 'value' ? attestValue : attestWindow)({ samples, roundId: fromHex(r.id), window, attestor });
       words.set(r.id, w.ok ? w : { none: w.why });
       log(w.ok ? { step: 'signed', round: r.id, window: { start: new Date(Number(window.startMs)).toISOString(), end: new Date(Number(window.endMs)).toISOString() },
-        priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label, samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
+        ...(MODE === 'value' ? { value: w.value } : { priceToBeat: w.priceToBeat, endPrice: w.endPrice, outcome: w.label }),
+        samples: samples.filter((s) => s.atMs >= window.startMs - 60000n && s.atMs < window.endMs).length }
         : { step: 'signs nothing', round: r.id, why: w.why });
     }
     const mine = words.get(r.id);
@@ -116,7 +121,8 @@ const tick = async () => {
       try {
         const x = await fetch(`${seat}/outcome?round=${r.id}`, { method: 'POST', body: att.bytes, signal: AbortSignal.timeout(8000) });
         const text = (await x.text()).trim();
-        if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, outcome: att.body.outcome, words: all.map((w) => ({ key: w.key.slice(0, 8), outcome: w.body.outcome })) }); }
+        if (x.status === 201 || x.status === 200) { held.add(seat); log({ step: 'posted', round: r.id, seat, status: x.status, signers: att.signers, ...(MODE === 'value' ? { value: att.body.value } : { outcome: att.body.outcome }),
+          words: all.map((w) => ({ key: w.key.slice(0, 8), ...(MODE === 'value' ? { value: w.body.value } : { outcome: w.body.outcome }) })) }); }
         else log({ step: 'post refused', round: r.id, seat, status: x.status, why: text.slice(0, 200) });
       } catch (e) { log({ step: 'post failed', round: r.id, seat, why: e.message }); }
     }
@@ -137,7 +143,7 @@ http.createServer((req, res) => {
     return res.end(JSON.stringify({ attestor: NAME, key: toHex(attestor.pubkey), sources: SOURCES, samples: samples.length, last: last ? { at: new Date(Number(last.atMs)).toISOString(), cents: String(last.price) } : null, words: words.size }));
   }
   res.writeHead(404); res.end();
-}).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
+}).listen(PORT, '0.0.0.0', () => log({ step: 'up', port: PORT, mode: MODE, key: toHex(attestor.pubkey), sources: SOURCES, gameIds: GAME_IDS, readingsFromDisk: samplesFromDisk, seats: SEATS, peers: PEERS }));
 
 await sample();
 setInterval(() => sample().catch((e) => log({ step: 'sample failed', why: e.message })), SAMPLE_MS);
