@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -658,6 +658,12 @@ const SCALAR_VERSION = 7;
 // within the manifest's bounds, in the manifest's unit. The bounds are in the round's hashed bytes, so they are its id. Only a
 // version-8 round may carry them and only a version-8 manifest may be a scalar template (#349): nothing below 8 moves.
 const SCALAR_TEMPLATE_VERSION = 8;
+// THE WEBSITE THAT BROUGHT THE ENTRY (2026.0.9, kanban #362 roadmap item 7, RULED the owner 2026-10-15: path (a) - "Take it out of the
+// nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased by this fee"). An entry may name the
+// payout key of the page that brought it (contracts.js `frontendPk`, marker 0xac); at settlement that key is paid 20% of the nodes'
+// fee on the stakes it brought, off the top of the nodes' part (fee.js frontendShares, lock-settlement.js). Only on a round of
+// version 9 or later, so its seats are only nodes that pay it; every entry without it keeps its bytes.
+const FRONTEND_FEE_VERSION = 9;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -2328,6 +2334,15 @@ function encodeEntryContract(e) {
     w.u8(OPERATOR_MARKER);
     w.bytes32(e.operatorId);
   }
+  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9, kanban #362 item 7): its 33-byte payout key, paid 20% of the nodes' fee on this
+  // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
+  // of all, after its own marker: every other entry keeps exactly its bytes and its id.
+  if (e.frontendPk !== undefined && e.frontendPk !== null) {
+    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3))
+      throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+    w.u8(FRONTEND_MARKER);
+    w.bytes(e.frontendPk, 33);
+  }
   return w.finish();
 }
 
@@ -2339,7 +2354,9 @@ const COMMIT_MARKER = 0xa8;
 const ORDER_MARKER = 0xa9;
 /** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
 const FEDERATION_MARKER = 0xaa;
-/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), last of all. */
+/** The byte before the payout key of the website that brought the entry (2026.0.9, kanban #362 item 7), last of all. */
+const FRONTEND_MARKER = 0xac;
+/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), before the website's key. */
 const OPERATOR_MARKER = 0xab;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
@@ -2376,7 +2393,7 @@ function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -2397,10 +2414,15 @@ function decodeEntryContract(bytes) {
     e.federationId = r.bytes32();
     if (e.federationId.every((b) => b === 0)) throw new Error('an entry names its federation in 32 bytes, not zero');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== OPERATOR_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation nor its operator');
+  if (r.at < bytes.length && bytes[r.at] === OPERATOR_MARKER) {
+    r.u8();
     e.operatorId = r.bytes32();
     if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== FRONTEND_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator nor its website');
+    e.frontendPk = r.bytes(33);
+    if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
   }
   r.end();
   return e;
@@ -8387,6 +8409,8 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 7, year: 2026, x: 0 }),
   // scalar templates: a scalar market whose rounds each name their own question and bounds (kanban #362, items 5 + 8)
   Object.freeze({ version: 8, year: 2026, x: 0 }),
+  // the website that brought the entry: 20% of the nodes' fee on its entries, paid to its key (kanban #362 item 7, path (a))
+  Object.freeze({ version: 9, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -8701,6 +8725,31 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
     throw new Error(`fee table broken: ${paid} paid and ${unallocated} unallocated of ${fee}`);
 
   return { gross, fee, pools: shareOf, signerNodes, unallocated };
+}
+
+/**
+ * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, kanban #362 roadmap item 7; RULED the owner
+ * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
+ * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
+ * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
+ * { shares: Map key -> msat (keys in ascending order), totalMsat }.
+ */
+const FRONTEND_FEE_PERCENT = 20n;
+function frontendShares({ entries, fee, gross }) {
+  const brought = new Map();
+  for (const e of entries || []) {
+    if (isRefund(e.outcome) || !(e.frontendPk instanceof Uint8Array)) continue;
+    const k = hex(e.frontendPk);
+    brought.set(k, (brought.get(k) || 0n) + e.stakeMsat);
+  }
+  const shares = new Map();
+  let totalMsat = 0n;
+  for (const k of [...brought.keys()].sort()) {
+    const msat = gross > 0n ? (fee * FRONTEND_FEE_PERCENT * brought.get(k)) / (100n * gross) : 0n;
+    shares.set(k, msat); totalMsat += msat;
+  }
+  if (totalMsat > (fee * FRONTEND_FEE_PERCENT) / 100n) throw new Error('the websites\' shares exceed 20% of the nodes\' fee');
+  return { shares, totalMsat };
 }
 
 /**
@@ -11456,12 +11505,26 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
       payouts.push({ pubkey: pub.payoutPk.subarray(1), payoutPk: pub.payoutPk, owedMsat: pub.msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'publisher' });
     } else unpaid.push({ pubkey: pub.payoutPk.subarray(1), owedMsat: pub.msat, why: 'the publisher\'s fee back does not pay its own output fee' });
   }
-  const nodesSpendable = nodePartMsat - publisherGross;
+  // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, kanban #362 item 7, RULED path (a)): 20% of the nodes' fee on the stakes it brought,
+  // one line per website key, off the top of the NODES' part - never the donation's, never the player's (its stake and fee locks
+  // are what they were) - scaled to what the claimed locks pay as the nodes' shares are. The nodes share the rest.
+  const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross });
+  let frontendGross = 0n;
+  for (const [k, siteMsat] of sites.shares) {
+    const payoutPk = fromHex(k);
+    const got = largestPayoutMsat(fees, (siteMsat * spendable) / poolMsat);
+    if (got === 0n) { unpaid.push({ pubkey: payoutPk.subarray(1), owedMsat: siteMsat, why: 'the website\'s share does not pay its own output fee' }); continue; }
+    frontendGross += got + lnv2FeeMsat(fees, got);
+    payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });
+  }
+  const nodesSpendable = nodePartMsat - publisherGross - frontendGross;
   for (const [key, msat] of owed) {
     const pubkey = fromHex(key);
-    const got = largestPayoutMsat(fees, publisherGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
-    if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
+    // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
+    const owedMsat = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
+    const got = largestPayoutMsat(fees, publisherGross || frontendGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
+    if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
+    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
   }
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {

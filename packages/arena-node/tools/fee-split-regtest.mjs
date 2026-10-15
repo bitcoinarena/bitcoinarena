@@ -38,6 +38,7 @@ import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lo
 import { lockFromClient } from '../../arena-client/src/lock-result.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { FRONTEND_FEE_VERSION } from '../../arena-protocol/src/constants.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
@@ -113,7 +114,7 @@ for (const t = Date.now(); Date.now() - t < 300000; await wait(5000)) {
  * ONE PLAYER, AS THE PAGE LOCKS: the stake, the fee lock and the donation's payout contracts in ONE transaction
  * (`lockWithDonations`, the donation image the player's own key), then the run played and marked at both signer nodes.
  */
-async function lockAndPlayReal(w, who, { game = null, target, pick = undefined }) {
+async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, frontendPk = null }) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -146,6 +147,8 @@ async function lockAndPlayReal(w, who, { game = null, target, pick = undefined }
     donationOutpoints: donated.map((d) => d.outpoint),
     // AN ATTESTED ROUND'S ENTRY BACKS AN OUTCOME (#206 slice 2) and plays no run
     ...(pick !== undefined ? { pick } : {}),
+    // THE WEBSITE THAT BROUGHT THIS ENTRY (kanban #362 item 7): its payout key, in the entry's signed bytes
+    ...(frontendPk ? { frontendPk } : {}),
   };
   const eid = entryId(entry);
   const hashOf = (hex) => Uint8Array.from(hex.match(/../g).map((x) => parseInt(x, 16)));
@@ -243,6 +246,40 @@ const w = await lockRound({ stakeMsat: STAKE, port, serveOpts: { plugins: [NEXTB
 // THE ENTRY DOOR OPENS AT THE COMMITTEE TIME: the fixtures' clock goes there, the round's end ~230 s on - room for real locks
 skipTo(Number(w.c.committeeTimeMs) + 100);
 try {
+  // ===== FRONTEND=1 (kanban #362 roadmap item 7, RULED path (a)): THE WEBSITE'S SHARE ON THE REAL FEDERATION =====
+  // The same tally round twice on the same two seats and federation: once with no website, once at 2026.0.9 with both entries
+  // naming a website's payout key. Every line of each settlement transaction, to the msat, and what the federation holds after.
+  if (env.FRONTEND) {
+    const siteSk = schnorr.utils.randomSecretKey();
+    const SITE = new Uint8Array([2, ...schnorr.getPublicKey(siteSk)]);
+    const play = { adapter: TALLY_CORE.adapter, config: {} };
+    const tTarget = { network: NETWORK, game: TALLY_DEV_SET };
+    const tallyRound = async (version, frontendPk) => {
+      const r = await openLockRound(w, { stakeMsat: STAKE, endMs: testNow() + 900000, round: { ...NETWORK_ROUND, gameId: TALLY205.gameId, simCoreHash: TALLY_CORE_HASH,
+        configHash: TALLY_CONFIG_HASH, blockTicks: 600, startDeadlineTicks: 300, ...(version > 1 ? { protocolVersion: version } : {}) } });
+      skipTo(Number(r.c.committeeTimeMs) + 100);
+      const high = await lockAndPlayReal(r, { name: `high-v${version}`, key: playerKey(), worldSecret: b32(0x31), ticks: 600, words: () => [7, 0, 0, 0, 0], address: true }, { game: play, target: tTarget, frontendPk });
+      const low = await lockAndPlayReal(r, { name: `low-v${version}`, key: playerKey(), worldSecret: b32(0x32), ticks: 600, words: () => [2, 0, 0, 0, 0] }, { game: play, target: tTarget, frontendPk });
+      await closeRound(r);
+      const s = await settled(r, [high, low]);
+      const site = toHex(SITE);
+      const raw = (s.raw && s.raw.payouts) || [];
+      const keyOf = (p) => String(p.payoutPk || p.key || p.pk || '').toLowerCase();
+      const lines = raw.map((p) => ({ kind: p.kind, key: keyOf(p).slice(0, 12), msat: BigInt(p.msat ?? p.amountMsat), guardianFeeMsat: BigInt(p.feeMsat || 0), owedMsat: p.owedMsat !== undefined ? BigInt(p.owedMsat) : null }));
+      const playerKeys = new Set([high, low].map((p) => toHex(refundKeyOf(p.entry.playerPubkey))));
+      const sumOf = (f) => sum(raw.filter(f).map((p) => BigInt(p.msat ?? p.amountMsat)));
+      return { version, state: s.state, why: s.why, txid: s.txid, lines, stored: s.stored,
+        nodesMsat: sumOf((p) => !playerKeys.has(keyOf(p)) && keyOf(p) !== site), websiteMsat: sumOf((p) => keyOf(p) === site), playersMsat: sumOf((p) => playerKeys.has(keyOf(p))),
+        claims: ((s.raw && s.raw.claims) || []).map((c) => [c.kind, String(c.msat ?? c.amountMsat)]),
+        entries: [high, low].map((p) => ({ stakeMsat: p.entry.stakeMsat, feeLockMsat: p.entry.feeMsat, donationMsat: p.entry.donationMsat, website: p.entry.frontendPk ? toHex(p.entry.frontendPk).slice(0, 12) : null })),
+        websiteOutputs: s.txid ? await Promise.all(raw.map(async (p, i) => (keyOf(p) === site ? !!(await port.status({ txid: fromHex(s.txid), outIdx: BigInt(i) })).stored : null))).then((x) => x.filter((v) => v !== null)) : [] };
+    };
+    const plain = await tallyRound(1, null);
+    out({ frontend: 'control: no website', ...plain });
+    const viaSite = await tallyRound(FRONTEND_FEE_VERSION, SITE);
+    out({ frontend: 'both entries name the website (2026.0.9)', ...viaSite });
+    facts.frontend = { website: toHex(SITE), plain, viaSite, feePerEntry: entryFeeMsat(STAKE), nodesFeeOfGross: (2n * STAKE * 500n) / 10000n };
+  } else {   // every other round of this harness, as before
   // NEXTBLOCK: protocol devs = game dev, merged
   const nbTarget = { network: NETWORK, game: NEXTBLOCK.donationSet };
   const won = await lockAndPlayReal(w, winnerUnder(playerKey(), w.randomness), { target: nbTarget });
@@ -366,6 +403,7 @@ try {
   for (const p of m3.players) locks3.push(!!(await port.status(p.outpoint)).stored, !!(await port.status(p.feeOutpoint)).stored);
   facts.marketDisputed = { contradiction: contra, state: o3.state, proof: (o3.proof || []).length, settlement: s3.state || 'none', why: s3.why, locksStillHeld: locks3 };
   out({ market: 'M3 disputed', ...facts.marketDisputed });
+  }
 } catch (e) {
   out({ failed: e.message, stack: String(e.stack).split('\n').slice(0, 4) });
   process.exitCode = 1;

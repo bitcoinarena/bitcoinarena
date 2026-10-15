@@ -134,7 +134,9 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   // ONLY THE TWO FIELDS THE CHAIN DICTATES (RULED 2026-09-25): the census root its bonds derive to, and a committee time
   // among its blocks. The round id follows from them.
   const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`),
-    ...(on.hostedGames ? { hostedGames: on.hostedGames } : {}) });
+    ...(on.hostedGames ? { hostedGames: on.hostedGames } : {}),
+    // a round of a later version is seated only on nodes whose advert lists it (#349): the bonded nodes then speak 1 .. that version
+    ...(drafted.protocolVersion > 1 ? { protocolVersions: Array.from({ length: drafted.protocolVersion }, (_, i) => i + 1) } : {}) });
   const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };
   const rid = roundId(c);
   for (const d of nodes) {
@@ -167,7 +169,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
 // until it resolves), a game's the network's - as the page pays it
 const gameFeeBps = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).round.plugins); return f.ok ? entryFeeBpsOf(f.plugin.manifest) : undefined; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order (kanban #278): the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, expirySpan = null } = {}) {
+export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, expirySpan = null, frontendPk = null } = {}) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -189,6 +191,8 @@ export async function lockAndPlay(w, who, { feeLock = true, feeFirst = false, ad
     claimKeyAttestationRef: b32(0x9a),
     ...(pick !== undefined ? { pick } : {}),
     ...(order ? { limitPrice: Number(order.price), orderExpiryMs: order.expiryMs ?? 0n } : {}),
+    // the website that brought this entry (kanban #362 item 7): its payout key, in the entry's signed bytes
+    ...(frontendPk ? { frontendPk } : {}),
   };
   if (hidden) entry.commit = headToHeadCommit({ roundId: w.rid, entryKey: entry.sessionPubkey, move: hidden.move, salt: hidden.salt });
   // THE DONATION'S OUTPUTS (kanban #205): one payout contract per share, to its key, for exactly its amount

@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -82,6 +82,12 @@ export const SCALAR_VERSION = 7;
 // within the manifest's bounds, in the manifest's unit. The bounds are in the round's hashed bytes, so they are its id. Only a
 // version-8 round may carry them and only a version-8 manifest may be a scalar template (#349): nothing below 8 moves.
 export const SCALAR_TEMPLATE_VERSION = 8;
+// THE WEBSITE THAT BROUGHT THE ENTRY (2026.0.9, kanban #362 roadmap item 7, RULED the owner 2026-10-15: path (a) - "Take it out of the
+// nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased by this fee"). An entry may name the
+// payout key of the page that brought it (contracts.js `frontendPk`, marker 0xac); at settlement that key is paid 20% of the nodes'
+// fee on the stakes it brought, off the top of the nodes' part (fee.js frontendShares, lock-settlement.js). Only on a round of
+// version 9 or later, so its seats are only nodes that pay it; every entry without it keeps its bytes.
+export const FRONTEND_FEE_VERSION = 9;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**

@@ -36,7 +36,7 @@
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
-import { nodeFeeTable, entryFeeMsat, GAME_VERIFY, SETTLEMENT, GUARDIAN } from './fee.js';
+import { nodeFeeTable, entryFeeMsat, frontendShares, GAME_VERIFY, SETTLEMENT, GUARDIAN } from './fee.js';
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
@@ -598,12 +598,26 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
       payouts.push({ pubkey: pub.payoutPk.subarray(1), payoutPk: pub.payoutPk, owedMsat: pub.msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'publisher' });
     } else unpaid.push({ pubkey: pub.payoutPk.subarray(1), owedMsat: pub.msat, why: 'the publisher\'s fee back does not pay its own output fee' });
   }
-  const nodesSpendable = nodePartMsat - publisherGross;
+  // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, kanban #362 item 7, RULED path (a)): 20% of the nodes' fee on the stakes it brought,
+  // one line per website key, off the top of the NODES' part - never the donation's, never the player's (its stake and fee locks
+  // are what they were) - scaled to what the claimed locks pay as the nodes' shares are. The nodes share the rest.
+  const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross });
+  let frontendGross = 0n;
+  for (const [k, siteMsat] of sites.shares) {
+    const payoutPk = fromHex(k);
+    const got = largestPayoutMsat(fees, (siteMsat * spendable) / poolMsat);
+    if (got === 0n) { unpaid.push({ pubkey: payoutPk.subarray(1), owedMsat: siteMsat, why: 'the website\'s share does not pay its own output fee' }); continue; }
+    frontendGross += got + lnv2FeeMsat(fees, got);
+    payouts.push({ pubkey: payoutPk.subarray(1), payoutPk, owedMsat: siteMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'frontend' });
+  }
+  const nodesSpendable = nodePartMsat - publisherGross - frontendGross;
   for (const [key, msat] of owed) {
     const pubkey = fromHex(key);
-    const got = largestPayoutMsat(fees, publisherGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
-    if (got === 0n) { unpaid.push({ pubkey, owedMsat: msat, why: 'its fee share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat: msat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
+    // what this node is owed once the websites' 20% is taken from the nodes' fee (its table share, scaled down by their total)
+    const owedMsat = sites.totalMsat ? (msat * (table.fee - sites.totalMsat)) / table.fee : msat;
+    const got = largestPayoutMsat(fees, publisherGross || frontendGross ? (msat * nodesSpendable) / table.fee : (msat * spendable) / poolMsat);
+    if (got === 0n) { unpaid.push({ pubkey, owedMsat, why: 'its fee share does not pay its own output fee' }); continue; }
+    payouts.push({ pubkey, payoutPk: refundKeyOf(pubkey), owedMsat, msat: got, feeMsat: lnv2FeeMsat(fees, got), kind: 'signer node' });
   }
   // THE DONATION'S SHARES, scaled to what the claimed locks pay as the nodes' are, each to its own key
   for (const d of donated) {

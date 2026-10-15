@@ -169,7 +169,7 @@ export class LockSettlement {
       // fee lock, so an entry that brought none never reaches this set.
       if (this.round.stakeSeen && !this.round.stakeSeen(entryId)) continue;
       const base = { entryId, pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat,
-        feePreimage: entry.feePreimage };
+        feePreimage: entry.feePreimage, ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) };   // the website that brought it (#362 item 7)
       if (this.round.entryVoid && this.round.entryVoid(entryId)) { entries.push({ ...base, outcome: ENTRY_VOID, score: 0 }); continue; }
       const nq = this.round.noQuorum ? this.round.noQuorum(entryId) : null;
       // §13C's FORFEIT is proven equivocation (§13B): claimed like a walk-away's when nobody qualifies (kanban #25 (b))
@@ -589,7 +589,8 @@ export class LockSettlement {
     if (this.round.cancelsOf) await this.#carryCancels(roundIdBytes);
     const entries = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || !!this.round.stakeSeen(entryId))
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
-        donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId }));
+        donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId,
+        ...(entry.frontendPk ? { frontendPk: entry.frontendPk } : {}) }));
     if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed');
     // THE TABLE BY THE GAME'S RULE: pari-mutuel on the outcome, or a scalar market's split by its signed value (kanban #362 feature 8)
     let table;

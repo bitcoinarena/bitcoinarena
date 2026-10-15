@@ -163,6 +163,31 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
 }
 
 /**
+ * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, kanban #362 roadmap item 7; RULED the owner
+ * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
+ * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
+ * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
+ * { shares: Map key -> msat (keys in ascending order), totalMsat }.
+ */
+export const FRONTEND_FEE_PERCENT = 20n;
+export function frontendShares({ entries, fee, gross }) {
+  const brought = new Map();
+  for (const e of entries || []) {
+    if (isRefund(e.outcome) || !(e.frontendPk instanceof Uint8Array)) continue;
+    const k = hex(e.frontendPk);
+    brought.set(k, (brought.get(k) || 0n) + e.stakeMsat);
+  }
+  const shares = new Map();
+  let totalMsat = 0n;
+  for (const k of [...brought.keys()].sort()) {
+    const msat = gross > 0n ? (fee * FRONTEND_FEE_PERCENT * brought.get(k)) / (100n * gross) : 0n;
+    shares.set(k, msat); totalMsat += msat;
+  }
+  if (totalMsat > (fee * FRONTEND_FEE_PERCENT) / 100n) throw new Error('the websites\' shares exceed 20% of the nodes\' fee');
+  return { shares, totalMsat };
+}
+
+/**
  * What one signer node is owed FOR ONE ROLE, or nothing at all.
  *
  * The role is required: 22A pays the two pools separately and a signer node held in
