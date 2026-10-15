@@ -1,0 +1,24 @@
+# kanban #364 (TEST ONLY): the armed one-shot rejection - a guardian whose BLWP_TEST_ARM_DIR holds the file blwp-test-reject-next
+# answers the next submitted transaction with an error although it was sent to consensus (the 10-06 stranding, on demand).
+# Built as fedimintd-364 for the throwaway testnet4 federation T only (B's binary restored byte for byte). Never on A or B.
+--- a/fedimint-server/src/consensus/api.rs
++++ b/fedimint-server/src/consensus/api.rs
+@@ -214,6 +214,18 @@
+                 warn!(target: LOG_NET_API, %txid, err = %err.fmt_compact(), "Unable to submit the tx into consensus");
+             });
+         debug!(target: LOG_NET_API, %txid, "Transaction sent to consensus");
++
++        // BLWP kanban #364 (TEST ONLY - the throwaway testnet4 federation T, the owner 2026-10-15): a guardian whose data directory holds
++        // the arm file `blwp-test-reject-next` answers the NEXT submitted transaction with an error although it was just sent to
++        // consensus - the "rejected by the threshold, accepted by consensus" race of 10-06 that strands issued e-cash, made on demand.
++        // One-shot: the file is removed first. Without the file nothing changes. Never armed on A or B.
++        if let Ok(dir) = std::env::var("BLWP_TEST_ARM_DIR") {
++            let arm = std::path::Path::new(&dir).join("blwp-test-reject-next");
++            if std::fs::remove_file(&arm).is_ok() {
++                warn!(target: LOG_NET_API, %txid, "BLWP TEST: the armed rejection - answered as unbalanced, the transaction is in consensus");
++                return Err(TransactionError::UnbalancedTransaction { inputs: fedimint_core::Amount::ZERO, outputs: fedimint_core::Amount::ZERO, fee: fedimint_core::Amount::ZERO });
++            }
++        }
+ 
+         let mut dbtx = self.db.begin_transaction_nc().await;
+         let mut item_index = dbtx.find_by_prefix(&AcceptedItemPrefix).await.count().await as u64;
