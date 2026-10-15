@@ -175,3 +175,28 @@ test('a shared block cache: an overlapping view reads only its new blocks and ho
   small.put('a', 1); small.put('b', 2); small.put('c', 3);
   assert.deepEqual([small.get('a'), small.get('b'), small.get('c'), small.size], [undefined, 2, 3, 2]);
 });
+
+test('views read at the same time share one read of each block and hold one object of it (the load, 2026-10-15)', async () => {
+  const { blocksOver, blockCache } = await import('../src/chain-rpc.js');
+  const tx = [1, 0, 0, 0, 1, ...new Array(36).fill(0), 1, 0, 255, 255, 255, 255, 1, ...new Array(8).fill(0), 0, 0, 0, 0, 0];
+  const rawFor = (hash) => { const b = new Uint8Array([...new Array(80).fill(0), 1, ...tx]); b[0] = hash.length; b[1] = hash.charCodeAt(1); return b; };
+  let reads = 0;
+  // bitcoind answers a block only after a while: every view asks for it before the first answer is back
+  const call = async (method, [arg]) => {
+    if (method === 'getblockhash') return `h${arg}`;
+    if (method === 'getblock') { reads++; await new Promise((r) => setTimeout(r, 20)); return Buffer.from(rawFor(arg)).toString('hex'); }
+    throw new Error(method);
+  };
+  const cache = blockCache();
+  const views = await Promise.all(Array.from({ length: 8 }, () => blocksOver(call, 0, 9, { cache })));
+  console.log('  CONCURRENT:', JSON.stringify({ views: views.length, blocks: 10, reads, cached: cache.size, inFlight: cache.inFlight.size }));
+  assert.equal(reads, 10, 'a block was read more than once while its first read was out');
+  for (const v of views) for (let i = 0; i < 10; i++) assert.equal(v.blocks[i], views[0].blocks[i], 'two views hold two copies of one block');
+  assert.equal(cache.inFlight.size, 0, 'a finished read stayed in flight');
+  // a read that fails is not kept: the next asker reads again
+  let fail = true;
+  const flaky = async (method, [arg]) => { if (method === 'getblockhash') return `x${arg}`; if (fail) { fail = false; throw new Error('bitcoind said no'); } return Buffer.from(rawFor(`x${arg}`)).toString('hex'); };
+  await assert.rejects(blocksOver(flaky, 0, 0, { cache }), /bitcoind said no/);
+  assert.equal(cache.inFlight.size, 0);
+  assert.equal((await blocksOver(flaky, 0, 0, { cache })).blocks.length, 1);
+});
