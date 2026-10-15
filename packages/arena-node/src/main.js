@@ -330,6 +330,19 @@ if (url) {
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats }));
       },
+      // THE WHOLE CENSUS AT A HEIGHT, ADVERTS AND ALL (kanban #326): a founding's trigger height is the chain's, not any round's - the
+      // seats' newest rounds name census heights days back, and their views end at those rounds' beacons (measured live 2026-10-15:
+      // B1's newest round names 156538, node 15's 156388, so B7's notice at 156644 never found its beacon or census and no founding
+      // started). The same derivation and window as censusAt above, every entry whole (the draw reads guardian_capable,
+      // guardian_endpoint, operator and guardian_of).
+      censusEntriesAt: async (networkIdHex, height) => {
+        const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
+          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION };
+        const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
+        const census = censusOfView(view, contract);
+        if (!census.ok) { console.error(`[founding] no census at ${height}: ${census.why}`); return null; }
+        return census.entries;
+      },
       everyMs: Number(process.env.ARENA_BALLOT_EVERY_MS || 10000),
     },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes

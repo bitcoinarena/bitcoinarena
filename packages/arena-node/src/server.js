@@ -3205,8 +3205,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return { federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null, ...(held && held.record ? { record: held.record } : {}) }; }),
       notices: () => absences.listDepartures().map((h) => { try { return readDepartureHex(h); } catch { return null; } }).filter(Boolean),
       next: nextSetup ? { setup: nextSetup, inSetup: async () => nextSetup.inSetup() } : null,
-      entriesAt: async (h) => { const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null; },
-      beaconAt: async (h) => { const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null; },
+      // THE TRIGGER HEIGHT'S CENSUS AND BEACON FROM THIS SEAT'S OWN CHAIN (kanban #326, measured live 2026-10-15): the newest round's
+      // view ends at that round's beacon, days before a notice - read at the height itself when the launcher hands the chain
+      // (main.js ballot.censusEntriesAt / blockHashAt; the hash in the byte order blockHashOf answers), the round's view otherwise
+      entriesAt: async (h) => {
+        if (ballot && typeof ballot.censusEntriesAt === 'function' && chainNetworkId()) return ballot.censusEntriesAt(chainNetworkId(), h);
+        const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null;
+      },
+      beaconAt: async (h) => {
+        if (ballot && typeof ballot.blockHashAt === 'function') { const x = await ballot.blockHashAt(h); return x ? fromHex(String(x)).reverse() : null; }
+        const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null;
+      },
       tip: async () => Number(await chainTip()),
       guardianInSetup: async () => foundingSetup.inSetup(),
       setup: foundingSetup,
