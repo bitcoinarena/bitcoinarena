@@ -39,7 +39,8 @@ import { FINAL } from '../../arena-protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
-import { heldOutcomes } from './game-market.js';
+import { heldOutcomes, attestedTable } from './game-market.js';
+import { isScalar } from '../../arena-protocol/src/manifest.js';
 import { pluginForRound } from './plugins.js';
 
 /** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
@@ -132,6 +133,19 @@ export class StakeSecrets {
         const heldAtt = heldOutcomes(this.round, roundIdBytes);
         const f = outcomeFinality(heldAtt, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
         if (!f.final) return { ok: false, why: `no share of an attested round is handed out before its outcome is final (${f.state}${f.finalAtMs ? `, final at ${new Date(f.finalAtMs).toISOString()}` : ''})` };
+        // A SCALAR MARKET (kanban #362 feature 8): a lock is claimed when its entry gets back less than its net stake - by the table
+        // the settlement pays (game-market.js attestedTable over the entries whose stake this seat saw), and only then
+        if (isScalar(found.plugin.manifest)) {
+          const counted = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || this.round.stakeSeen(entryId))
+            .map(({ entryId, entry: e }) => ({ entryId, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat, pick: e.pick }));
+          let t;
+          try { t = attestedTable(found.plugin.manifest, counted, f); } catch (e) { return { ok: false, why: `no scalar table for that round: ${e.message}` }; }
+          if (t.refunded) return { ok: false, why: `${t.why}: no stake secret is handed out` };
+          const mine = t.rows.find((r) => r.entryId === toHex(entryIdBytes));
+          if (!mine) return { ok: false, why: 'that entry is not in the round\'s table: its stake was not seen here' };
+          if (mine.won) return { ok: false, why: 'that entry gets back at least its stake: its lock is its own, and its stake secret stays sealed' };
+          return { ok: true, outcome: 'SCALAR_CLAIMED' };
+        }
         const stored = this.round.entry(entryIdBytes);
         if (!stored) return { ok: false, why: 'this node holds no such entry' };
         const entry = decodeEntryContract(stored);

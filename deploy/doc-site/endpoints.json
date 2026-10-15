@@ -3925,12 +3925,12 @@
  {
   "method": "POST",
   "path": "/outcome",
-  "params": "query round (hex 32); body: encoded outcome attestation (binary)",
-  "auth": "attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close",
+  "params": "query round (hex 32); body: encoded outcome attestation, or for a scalar market (protocol 2026.0.7) an encoded value attestation (binary)",
+  "auth": "attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close (and the market's resolution time); a scalar market takes only a value attestation, every other market only an outcome attestation",
   "returns": "201/200 JSON {held, fresh, why, state, ...}; 400/404/409",
-  "purpose": "Submits an attested (oracle/market) round outcome; a conflicting one marks the round DISPUTED.",
+  "purpose": "Submits an attested (oracle/market) round outcome - or a scalar market's observed value; a conflicting one marks the round DISPUTED.",
   "audience": "game/market developer",
-  "line": 5193,
+  "line": 5223,
   "summary": "Submit an outcome attestation",
   "query": [
    {
@@ -3943,7 +3943,7 @@
   "body": {
    "contentType": "application/octet-stream",
    "required": true,
-   "description": "Encoded outcome attestation."
+   "description": "Encoded outcome attestation (type 0x1d), or value attestation (type 0x2a, a scalar market's value)."
   },
   "responses": [
    {
@@ -3959,7 +3959,7 @@
    {
     "status": "400",
     "contentType": "text/plain",
-    "description": "No round named, or not an attestation."
+    "description": "No round named, or not an outcome or value attestation."
    },
    {
     "status": "404",
@@ -3969,7 +3969,7 @@
    {
     "status": "409",
     "contentType": "text/plain",
-    "description": "Not an attested round, does not stand, or too early."
+    "description": "Not an attested round, the wrong kind of attestation for its market, does not stand, or too early."
    }
   ],
   "headers": [],
@@ -4037,10 +4037,10 @@
   "path": "/outcome",
   "params": "query round (hex 32)",
   "auth": "none",
-  "returns": "200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}; 400/404/409",
-  "purpose": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund.",
+  "returns": "200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, scalar? {low, high, unit}, outcome?, label?, value?, clamped?, valuesNamed?, attestation? | gameOutcome?, table?, ...}; 400/404/409",
+  "purpose": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund; for a scalar market, its bounds, the attested value and where it pays (clamped), and the scalar table.",
   "audience": "game/market developer",
-  "line": 5242,
+  "line": 5278,
   "summary": "Outcome of an attested round",
   "query": [
    {
@@ -4055,7 +4055,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes, question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}."
+    "description": "{round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes, question?, resolveAtMs?, scalar?, outcome?, label?, value?, clamped?, attestation? | gameOutcome?, table?, ...}."
    },
    {
     "status": "400",

@@ -68,6 +68,17 @@ export class Writer {
     return this.u32(v >>> 0);
   }
 
+  /**
+   * 64-bit SIGNED, BigInt only, two's complement (kanban #362 feature 8: a scalar market's bounds and an attested value may be
+   * below zero - a temperature, a price change). Written as the u64 with the same bits, so a reader that knows the field is
+   * signed reads it back exactly; nothing written before uses it.
+   */
+  i64(v) {
+    if (typeof v !== 'bigint') throw new Error('i64 needs a BigInt, got ' + typeof v);
+    if (v < -0x8000000000000000n || v > 0x7fffffffffffffffn) throw new Error('i64 out of range: ' + v);
+    return this.u64(v < 0n ? v + 0x10000000000000000n : v);
+  }
+
   bytes(b, expected) {
     // SAID BY NAME, not crashed. A missing field used to read `undefined.length`
     // and hand the caller "Cannot read properties of undefined" - which names
@@ -142,6 +153,7 @@ export class Reader {
   u16() { const b = this._take(2); return (b[0] << 8) | b[1]; }
   u32() { const b = this._take(4); return ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0; }
   i32() { return this.u32() | 0; }
+  i64() { const v = this.u64(); return v >= 0x8000000000000000n ? v - 0x10000000000000000n : v; }
 
   u64() {
     const b = this._take(8);

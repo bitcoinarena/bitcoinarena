@@ -19,7 +19,7 @@
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_OUTCOME_ATTESTATION, TAG } from './constants.js';
-import { isAttested, isTemplate, isGameMarket, marketOfRound } from './manifest.js';
+import { isAttested, isTemplate, isGameMarket, isScalar, marketOfRound } from './manifest.js';
 
 export const OUTCOME_SIGNATURE_BYTES = 64;
 
@@ -85,6 +85,10 @@ export function attestationStands(a, { manifest: game, roundIdBytes, verify, rou
   // signature at all - refused by name; its outcome is its source round's signed result (game-market.js gameMarketResolution)
   if (isGameMarket(game))
     return { ok: false, why: `game "${game.gameName}" is a market on a game: its outcome is its source round's signed result, and no attestation decides it` };
+  // A SCALAR MARKET (kanban #362 feature 8) IS DECIDED BY A SIGNED VALUE, NEVER AN INDEX: its attestors sign a ValueAttestation
+  // (scalar.js valueAttestationStands) - an outcome attestation for it, even one its own attestors signed, is refused by name
+  if (isScalar(game))
+    return { ok: false, why: `game "${game.gameName}" is a scalar market: its attestors sign the observed value (a value attestation), and an outcome index decides nothing of it` };
   if (isTemplate(game) && !(round && round.event))
     return { ok: false, why: `game "${game.gameName}" is a market template: an attestation is checked against its round's own outcomes, and no round naming them was given` };
   const manifest = marketOfRound(game, round);
@@ -163,8 +167,19 @@ export function pariMutuelTable({ entries, outcome }) {
  * different outcomes (DISPUTED - the pair is the proof, and the round settles on neither). `held` is every standing
  * attestation a seat keeps for the round, decoded.
  */
+//
+// A SCALAR MARKET'S STANDING (kanban #362 feature 8): its held attestations are VALUE attestations (scalar.js), each with a BigInt
+// `value` and no outcome index - ATTESTED answers that `value`; two standing values that differ are DISPUTED, exactly as two
+// outcomes are. A value held beside an index (which no seat can hold for one round: each door refuses the other kind) is a
+// contradiction too, never a mixture. A list with no value is read exactly as before.
 export function outcomeStanding(held) {
   if (!held.length) return { state: 'OPEN' };
+  if (held.some((a) => typeof a.value === 'bigint')) {
+    const said = [...new Set(held.map((a) => (typeof a.value === 'bigint' ? `value ${a.value}` : `outcome ${a.outcome}`)))];
+    if (said.length === 1 && typeof held[0].value === 'bigint') return { state: 'ATTESTED', value: held[0].value };
+    const values = [...new Set(held.filter((a) => typeof a.value === 'bigint').map((a) => a.value))];
+    return { state: 'DISPUTED', values, why: `two standing attestations name ${said.join(' and ')}: the pair is proof the attestors contradicted themselves, and the round settles on neither` };
+  }
   const outcomes = [...new Set(held.map((a) => a.outcome))];
   if (outcomes.length === 1) return { state: 'ATTESTED', outcome: outcomes[0] };
   return { state: 'DISPUTED', outcomes, why: `two standing attestations name outcomes ${outcomes.join(' and ')}: the pair is proof the attestors contradicted themselves, and the round settles on neither` };
