@@ -65,3 +65,45 @@ test('the website is paid 20% of the nodes\' fee on the stakes it brought; the n
   // the player's fee lock is the network's 5% of the stake whether or not a website brought it
   assert.equal(entryFeeMsat(2000000n), 100000n);
 });
+
+// THE SAME 20% ON AN ORDER BOOK (kanban #362 comment 2295): the book's fee lines, at the plan's numbers - two 10,000 sat orders, YES and
+// NO at 0.50, both filled, Up/Down fees (node 0.5% + donation 0.5%), YES wins.
+test('an order book pays the website 20% of the nodes\' part of the fees; the donation and the players are untouched', async () => {
+  const { bookLedger, bookSettlement } = await import('../src/book-ledger.js');
+  const { YES, NO } = await import('../src/order-book.js');
+  const { bookLockSettlement } = await import('../src/lock-settlement.js');
+  const { TEST_DONATION_SET_KEYS_REGTEST } = await import('../src/test-donation-set-keys-regtest.js');
+  const STAKE = 10_000_000n;
+  const feeMsat = entryFeeMsat(STAKE, 100);
+  const id = (s) => s.padStart(64, '0');
+  const L = bookLedger({ batches: [{ k: 1, cutoffMs: 1000n, orders: [{ id: id('a'), outcome: YES, price: 50000n, stakeMsat: STAKE, feeMsat, expiryMs: 0n },
+    { id: id('b'), outcome: NO, price: 50000n, stakeMsat: STAKE, feeMsat, expiryMs: 0n }] }], feeBps: 100 });
+  const table = bookSettlement({ positions: L.positions, outcome: YES });
+  const nodeKey = (n) => { const k = new Uint8Array(32).fill(n); return k; };
+  const contract = { nodes: [nodeKey(0x11), nodeKey(0x22)] };
+  const player = { a: new Uint8Array(32).fill(0xa1), b: new Uint8Array(32).fill(0xb1) };
+  const op = (n) => ({ txid: new Uint8Array(32).fill(n), outIdx: 0n });
+  const settle = (withSite) => {
+    const entries = ['a', 'b'].map((x) => ({ entryId: id(x), pubkey: player[x], ...(withSite ? { frontendPk: site(0xaa) } : {}) }));
+    const locks = new Map(['a', 'b'].map((x, i) => [toHex(player[x]), { outpoint: op(1 + i), amountMsat: STAKE - feeMsat, refundPk: new Uint8Array([2, ...player[x]]) }]));
+    const feeLocks = new Map(['a', 'b'].map((x, i) => [toHex(player[x]), { outpoint: op(5 + i), amountMsat: feeMsat, preimage: new Uint8Array(32).fill(9) }]));
+    return bookLockSettlement({ roundId: b32(1), table, entries, locks, feeLocks, fees: { ppm: 0n, baseMsat: 0n }, contract, nodeBps: 50, donationBps: 50,
+      donation: { recipients: TEST_DONATION_SET_KEYS_REGTEST.recipients } });
+  };
+  const lines = (s, kind) => s.payouts.filter((p) => p.kind === kind).map((p) => p.msat);
+  const plain = settle(false), viaSite = settle(true);
+  assert.ok(plain.ok, plain.why); assert.ok(viaSite.ok, viaSite.why);
+  const sumOf = (xs) => xs.reduce((a, b) => a + b, 0n);
+  console.log('  BOOK:', JSON.stringify({ plain: { nodes: lines(plain, 'signer node'), donation: sumOf(lines(plain, 'donation key')), players: plain.payouts.filter((p) => p.kind === 'qualifier').map((p) => p.msat) },
+    viaSite: { nodes: lines(viaSite, 'signer node'), website: lines(viaSite, 'frontend'), donation: sumOf(lines(viaSite, 'donation key')) } }, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
+  assert.equal(feeMsat, 100000n);
+  assert.equal(table.feesDueMsat, 200000n);
+  assert.deepEqual(lines(plain, 'signer node'), [50000n, 50000n]);
+  assert.deepEqual(lines(viaSite, 'signer node'), [40000n, 40000n], 'the nodes earn 20% less');
+  assert.deepEqual(lines(viaSite, 'frontend'), [20000n], 'the website: 20% of the nodes\' 100,000');
+  assert.equal(sumOf(lines(plain, 'donation key')), 100000n);
+  assert.equal(sumOf(lines(viaSite, 'donation key')), 100000n, 'the donation is untouched');
+  const others = (s) => s.payouts.filter((p) => !['signer node', 'frontend', 'donation key'].includes(p.kind)).map((p) => [toHex(p.payoutPk), p.msat]);
+  assert.deepEqual(others(viaSite), others(plain), 'every player line is the same');
+  assert.equal(sumOf(others(plain).map((x) => x[1])), 19800000n, 'the winner is paid the whole pool');
+});
