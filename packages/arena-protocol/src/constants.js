@@ -88,6 +88,11 @@ export const SCALAR_TEMPLATE_VERSION = 8;
 // fee on the stakes it brought, off the top of the nodes' part (fee.js frontendShares, lock-settlement.js). Only on a round of
 // version 9 or later, so its seats are only nodes that pay it; every entry without it keeps its bytes.
 export const FRONTEND_FEE_VERSION = 9;
+// IN-GAME ITEMS (kanban #365, the owner 2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25%
+// an die protocol devs gehen, 25% an den a game dev und 50% an die nodes die in den letzten 24h an einer Runde beteiligt waren"): a
+// manifest's item catalogue (items.js, marker 0x07) requires version 10. NOT YET IN SUPPORTED_PROTOCOL_VERSIONS: a manifest with items
+// stands on no node until the purchase, its money path and the use in a round are built - then 10 is added and the seats roll.
+export const ITEMS_VERSION = 10;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**

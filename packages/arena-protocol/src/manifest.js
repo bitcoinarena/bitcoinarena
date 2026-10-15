@@ -18,6 +18,7 @@
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (kanban #362 feature 3),
+//       [optional, marker 0x07] items[]: id, name, price_sat, unlock (kanban #365: a game's in-game items; protocol 10 - items.js),
 //       [optional, marker 0x02] required_protocol_version (kanban #349),
 //       signature by game_dev_pubkey
 //     }
@@ -25,8 +26,8 @@
 // THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
 // terms, template and game source, a head-to-head game's table, a top split's shares - never two result types' fields in one
 // manifest), then the required version, which any manifest may name, last. Each is optional or bound to its rule, so a
-// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its six
-// markers 0x01-0x06 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
+// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its seven
+// markers 0x01-0x07 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
 // (trailing bytes).
 //     game_id = H(GameManifest)
 //
@@ -46,6 +47,7 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION, SCALAR_VERSION, SCALAR_TEMPLATE_VERSION } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
+import { itemsFit, writeItems, readItems, ITEMS_MARKER } from './items.js';
 import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
 
@@ -393,6 +395,8 @@ export function encodeManifestBody(m) {
   } else if (m.payoutShares !== undefined && m.payoutShares !== null) {
     throw new Error('only a game paid by a top split (payout rule TOP_SPLIT) names payout shares');
   }
+  // ITS ITEMS (kanban #365): any game may sell items, from version 10 - checked, never sorted here (the order is in the hash)
+  if (m.items !== undefined && m.items !== null) { const f = itemsFit(m.items, m); if (!f.ok) throw new Error(f.why); }
 
   const w = new Writer();
   w.u8(TYPE_GAME_MANIFEST);
@@ -448,6 +452,8 @@ export function encodeManifestBody(m) {
   }
   // A TOP SPLIT'S SHARES (kanban #362), after their marker and only under that rule: no manifest before it moves
   if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT) { w.u8(PAYOUT_SHARES_MARKER); w.vec(m.payoutShares, (x, ww) => ww.u16(x)); }
+  // ITS ITEMS (kanban #365), after their marker and only when it sells some: no manifest before it moves
+  if (m.items) writeItems(w, m.items);
   // THE REQUIRED PROTOCOL VERSION, LAST AND ONLY WHEN NAMED: no manifest before it moves
   if (m.requiredProtocolVersion) { w.u8(REQUIRED_VERSION_MARKER); w.u16(m.requiredProtocolVersion); }
   return w.finish();
@@ -505,6 +511,10 @@ function readBody(r) {
     if (!(r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.u8() === PAYOUT_SHARES_MARKER))
       throw new Error('a game paid by a top split carries its shares after their marker');
     body.payoutShares = r.vec((rr) => rr.u16());
+  }
+  if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === ITEMS_MARKER) {
+    r.u8();
+    body.items = readItems(r);
   }
   if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === REQUIRED_VERSION_MARKER) {
     r.u8();
@@ -567,6 +577,9 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
   // AND A SCALAR MARKET WHOSE VALUE THIS BUILD CANNOT PAY (kanban #362 feature 8): likewise
   if (isScalar(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a scalar market under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
+  // AND ITEMS THIS BUILD CANNOT SELL OR CHECK (kanban #365): likewise - until version 10 is spoken, no node hosts a game with items
+  if (Array.isArray(m.items) && m.items.length && !speaksVersion(m.requiredProtocolVersion))
+    return { ok: false, why: `${name}: it sells items under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
   if (m.version === 1) {
     if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
     return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
