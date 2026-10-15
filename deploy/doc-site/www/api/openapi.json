@@ -4029,7 +4029,7 @@
      "Builders"
     ],
     "summary": "[signed] Submit an outcome attestation",
-    "description": "Submits an attested (oracle/market) round outcome; a conflicting one marks the round DISPUTED.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close\n\nReturns: 201/200 JSON {held, fresh, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5193.",
+    "description": "Submits an attested (oracle/market) round outcome - or a scalar market's observed value; a conflicting one marks the round DISPUTED.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close (and the market's resolution time); a scalar market takes only a value attestation, every other market only an outcome attestation\n\nReturns: 201/200 JSON {held, fresh, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5223.",
     "operationId": "post_outcome",
     "parameters": [
      {
@@ -4044,7 +4044,7 @@
     ],
     "requestBody": {
      "required": true,
-     "description": "Encoded outcome attestation.",
+     "description": "Encoded outcome attestation (type 0x1d), or value attestation (type 0x2a, a scalar market's value).",
      "content": {
       "application/octet-stream": {
        "schema": {
@@ -4068,7 +4068,7 @@
       }
      },
      "400": {
-      "description": "No round named, or not an attestation.",
+      "description": "No round named, or not an outcome or value attestation.",
       "content": {
        "text/plain": {}
       }
@@ -4080,7 +4080,7 @@
       }
      },
      "409": {
-      "description": "Not an attested round, does not stand, or too early.",
+      "description": "Not an attested round, the wrong kind of attestation for its market, does not stand, or too early.",
       "content": {
        "text/plain": {}
       }
@@ -4093,7 +4093,7 @@
      "Builders"
     ],
     "summary": "Outcome of an attested round",
-    "description": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund.\n\nAccess: none\n\nReturns: 200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5242.",
+    "description": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund; for a scalar market, its bounds, the attested value and where it pays (clamped), and the scalar table.\n\nAccess: none\n\nReturns: 200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, scalar? {low, high, unit}, outcome?, label?, value?, clamped?, valuesNamed?, attestation? | gameOutcome?, table?, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5278.",
     "operationId": "get_outcome",
     "parameters": [
      {
@@ -4108,7 +4108,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes, question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}.",
+      "description": "{round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes, question?, resolveAtMs?, scalar?, outcome?, label?, value?, clamped?, attestation? | gameOutcome?, table?, ...}.",
       "content": {
        "application/json": {}
       }

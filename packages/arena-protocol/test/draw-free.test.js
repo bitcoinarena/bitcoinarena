@@ -36,9 +36,9 @@ test('a v2 round is written at version 2, names no nodes, and keeps its id when 
   const v1 = { ...base, nodes: seven };
   assert.equal(decodeRoundContract(encodeRoundContract(v1)).protocolVersion, 1);
   assert.notEqual(toHex(roundId(v1)), toHex(roundId({ ...v1, nodes: seven.slice(0, 6) })));
-  // 4 is 2026.0.4 (top-N prize splits, kanban #362), 5 is 2026.0.5 (the median of signed readings, kanban #312) and 6 is 2026.0.6
-  // (markets on games, kanban #362 feature 6), spoken; 7 is not
-  assert.throws(() => encodeRoundContract({ ...base, protocolVersion: 7 }), /protocol version 7/);
+  // 4 is 2026.0.4 (top-N prize splits, kanban #362), 5 is 2026.0.5 (the median of signed readings, kanban #312), 6 is 2026.0.6
+  // (markets on games, kanban #362 feature 6) and 7 is 2026.0.7 (scalar markets, kanban #362 feature 8), spoken; 8 is not
+  assert.throws(() => encodeRoundContract({ ...base, protocolVersion: 8 }), /protocol version 8/);
 });
 
 test('a v2 series: its id and its rounds\' ids ignore nodes, and a round with its seats written in is still the series\' round', () => {

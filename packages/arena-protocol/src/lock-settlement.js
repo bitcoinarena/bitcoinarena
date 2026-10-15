@@ -227,6 +227,12 @@ const stakeClaim = ({ atTheDoor: _door, ...c }) => ({ ...c, kind: 'stake' });
  * (the shape a nextblock qualifier is paid by, kind 'qualifier'); a winner's own stake lock is not claimed and comes back
  * to it by the stake-return path. Nobody picked the outcome (`table.refunded`): no stake lock is claimed, only the fee
  * locks. Under a fee rule that charges, the shares are scaled to what the claimed locks can pay, the dust to the first.
+ *
+ * A SCALAR MARKET'S TABLE (kanban #362 feature 8, scalar.js scalarPayoutTable) IS READ BY THE SAME RULE, because a lock moves
+ * whole: a row that gets back LESS than its net stake (`won` false) has its lock claimed, and - unlike a pari-mutuel loser, whose
+ * payout is 0 - is paid its `payoutMsat` back out of the claimed pool by the same payout contract to its own key; a row that gets
+ * back at least its net (`won`) keeps its lock and is paid the excess, as a winner. The claimed pool then pays exactly the
+ * winners' excess plus the claimed rows' rest. Every pari-mutuel table pays a loser 0, so what it builds is unchanged.
  */
 // `donation`: { recipients }, the market's donation target - its donation is in the fee locks (feeSettlement), due here
 export function attestedLockSettlement({ roundId, table, entries, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null, feeBps = undefined, donation = null }) {
@@ -243,7 +249,8 @@ export function attestedLockSettlement({ roundId, table, entries, locks, fees, f
   // NOBODY PICKED THE OUTCOME: NOTHING IS CLAIMED, THE FEES TOO (kanban #235, the owner 2026-10-09: "refund the fees too") - every
   // stake comes back by the return door at once (forfeit.js), every fee lock to its player at its expiry; no settlement moves
   if (table.refunded || !table.rows.some((r) => r.won))
-    return { ok: true, nothing: true, refunded: true, why: 'nobody picked the outcome: nothing is claimed - every stake comes back, its fee too' };
+    // (a scalar market's one-sided round says so in its own words: scalar.js scalarOneSided)
+    return { ok: true, nothing: true, refunded: true, why: table.refunded && table.why ? `${table.why}: nothing is claimed` : 'nobody picked the outcome: nothing is claimed - every stake comes back, its fee too' };
   const losers = table.rows.filter((r) => !r.won && r.netMsat > 0n);
   const winners = table.rows.filter((r) => r.won);
   const claims = [];
@@ -259,8 +266,10 @@ export function attestedLockSettlement({ roundId, table, entries, locks, fees, f
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendableMsat = poolMsat - inputFeesMsat;
   if (spendableMsat <= 0n) return refuse(`the guardians' fees on the losing locks (${inputFeesMsat} msat) take the whole pool of ${poolMsat}`);
-  // EACH WINNER'S SHARE OF THE LOSING POOL, as the table says it, over what the claimed locks can pay after their fees
-  const shares = winners.map((r) => ({ r, owed: r.payoutMsat - r.netMsat }));
+  // EACH WINNER'S SHARE OF THE LOSING POOL, as the table says it, over what the claimed locks can pay after their fees - and
+  // after them, a scalar market's claimed rows that get some of their stake back (none in a pari-mutuel table)
+  const shares = winners.map((r) => ({ r, owed: r.payoutMsat - r.netMsat }))
+    .concat(losers.filter((r) => r.payoutMsat > 0n).map((r) => ({ r, owed: r.payoutMsat })));
   const owedTotal = shares.reduce((s, x) => s + x.owed, 0n);
   if (owedTotal !== poolMsat) return refuse(`the table hands the winners ${owedTotal} msat and the losing locks hold ${poolMsat}`);
   const split = shares.map((x) => ({ ...x, msat: largestPayoutMsat(fees, (x.owed * spendableMsat) / poolMsat) }));

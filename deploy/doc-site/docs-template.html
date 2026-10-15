@@ -153,6 +153,7 @@
   <a href="#market">Implement a prediction market</a>
   <a href="#templates">Event-market templates</a>
   <a href="#game-markets">Markets on games</a>
+  <a href="#scalar-markets">Scalar markets</a>
   <a href="#money">Where the money goes</a>
 </aside>
 
@@ -770,6 +771,15 @@ for (const node of committeeNodes)
     <li>Each round of the market names the one source round it is on. Its entries must close before that round starts, and the source round must end by the market's resolution time; otherwise the market is void and every stake goes back.</li>
     <li>FLAT (or any result the manifest maps to a refund) gives every stake back at once; so does no signed result by the deadline.</li>
     <li>The nodes of a market round fetch the source round's signed result themselves once it has ended, check it against the committee they draw for it, and keep it as the market's outcome: the market then settles like any other (pari-mutuel), after the objection window. A node that does not hold the source round fetches its contract from other nodes and checks it against the round's id. Anybody can also hand a node the result at <code>POST /game-outcome</code>; <code>GET /outcome</code> shows it with its signatures. Rock Paper Scissors is not a source yet: it signs each player's result, not a table winner.</li>
+  </ul>
+
+  <h3 id="scalar-markets">Scalar markets</h3>
+  <p>A market can ask for a <b>number</b> - a price, a count - and pay by where it lands between two bounds, instead of one outcome per bucket. Built in protocol version <code>2026.0.7</code>; it runs once nodes advertise that version.</p>
+  <ul>
+    <li>The manifest names the bounds <code>low</code> &lt; <code>high</code> (whole numbers, may be negative) and their unit, and its two outcomes are the sides <b>LONG</b> and <b>SHORT</b>. A player picks a side.</li>
+    <li>The attestors (k of n, as for any market) sign the <b>value</b> they observed in a value attestation of its own kind - an outcome attestation is refused for a scalar market, and a value attestation for any other. Hand it in at <code>POST /outcome</code>, as an outcome attestation.</li>
+    <li>The value is clamped to the bounds. LONG's share of the whole pool (the net stakes of both sides) is <code>(value - low) ÷ (high - low)</code>, SHORT's the rest; each side's share is split over its own players by their net stakes. Every amount is whole millisats, rounded down, the leftovers to named places; nothing is kept back.</li>
+    <li>If only one side has players there is no counterparty, and every stake goes back, its fee too. No value by the deadline, or two different values signed, makes the market void: every stake back.</li>
   </ul>
 
   <h2 id="money">Where the money goes</h2>

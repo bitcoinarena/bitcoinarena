@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -67,6 +67,15 @@ export const mediansPrices = (c) => !!c && Number.isInteger(c.protocolVersion) &
 // Both fields are new bytes only a version-6 manifest and round may carry, so nothing below 6 moves; and a game market REQUIRES
 // this version (#349), so the census seats its rounds only on nodes whose advert lists 6.
 export const GAME_MARKET_VERSION = 6;
+// SCALAR MARKETS (2026.0.7, kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8: "a numeric outcome (a price, a count) paid
+// linearly between bounds. Richer questions than buckets; one market instead of many"). From version 7 an ATTESTED manifest may
+// name a scalar (manifest.js `scalar`, marker 0x06): integer bounds low < high in a named unit and the two sides LONG and SHORT.
+// Its attestors sign the observed VALUE, not an outcome index - a message of its own type and tag (scalar.js
+// ValueAttestation), so neither kind of attestation can ever stand for the other - and the pool is split linearly between the
+// sides by where the clamped value lies (scalar.js scalarPayoutTable). No round byte changes: a round of a scalar market is an
+// attested round whose picks are 0 (LONG) and 1 (SHORT); the manifest REQUIRES this version (#349), so its rounds name 7 and the
+// census seats them only on nodes whose advert lists 7. Nothing below 7 reads or writes any of it.
+export const SCALAR_VERSION = 7;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -311,6 +320,9 @@ export const TYPE_ROUND_RESULT = 0x27;
 export const TYPE_RESULT_FRONT = 0x28;
 // A SEAT'S OBSERVATION THAT A FEDERATION HALTED (§23A.5 "How a halt is proven", kanban #323): no guardian past session S
 export const TYPE_HALT_OBSERVATION = 0x29;
+// AN ATTESTED VALUE (kanban #362 feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
+// own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
+export const TYPE_VALUE_ATTESTATION = 0x2a;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -469,6 +481,9 @@ export const TAG = {
   roundResult: 'ARENA/v1/RoundResult',
   // What an attestor signs for a non-replay round (§0A.7a): the outcome attestation's body.
   outcomeAttestation: 'ARENA/v1/OutcomeAttestation',
+  // What a scalar market's attestors sign (kanban #362 feature 8): the value attestation's body - another tag than the outcome's,
+  // so a signature over one is never a signature over the other, whatever their bytes
+  valueAttestation: 'ARENA/v1/ValueAttestation',
   priceSample: 'ARENA/v1/PriceSample',
   priceTape: 'ARENA/v1/PriceTape',
   // protocol 5 (kanban #312): ONE seat's own reading of one moment, and of the 64 moments before the start - each signed by that

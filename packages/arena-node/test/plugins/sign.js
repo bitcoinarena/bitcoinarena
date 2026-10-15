@@ -8,6 +8,7 @@ import { gameDevKey, signManifest } from '../../../arena-donor/src/manifest-sign
 import { sign as edSign } from 'node:crypto';
 import { gameIdOf, RESULT_TYPE, PAYOUT_RULE, NO_PARENT } from '../../../arena-protocol/src/manifest.js';
 import { attestationBodyId } from '../../../arena-protocol/src/attested.js';
+import { valueAttestationBodyId } from '../../../arena-protocol/src/scalar.js';
 import { fromHex } from '../../../arena-protocol/src/hash.js';
 import { donationSetId } from '../../../arena-protocol/src/donation.js';
 
@@ -55,7 +56,7 @@ export function testGame({ name, cores, runTicksMax, rankNumerator = 3, rankDeno
  */
 export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'attestor b', 'attestor c'], threshold = 2, dev = name,
   donationSet = testDonationSet(dev), version = 1, parentManifestId = NO_PARENT, clients = [], marketTerms = null, roundPeriodMs = 0n,
-  template = null, requiredProtocolVersion = null, gameSource = null }) {
+  template = null, requiredProtocolVersion = null, gameSource = null, scalar = null }) {
   const devKey = testDevKey(dev);
   // in key order, as the manifest lists them - and none for a market on a game (kanban #362 feature 6): its source round decides it
   const keys = (gameSource ? [] : attestors).map((w) => testDevKey(`attestor: ${w}`)).sort((x, y) => Buffer.compare(Buffer.from(x.pubkey), Buffer.from(y.pubkey)));
@@ -68,6 +69,8 @@ export function testAttestedGame({ name, outcomes, attestors = ['attestor a', 'a
     // AN EVENT-MARKET TEMPLATE (kanban #362 feature 5): its rounds ask their own question; it requires a protocol version (#349)
     ...(template ? { template } : {}),
     ...(gameSource ? { gameSource } : {}),
+    // A SCALAR MARKET (kanban #362 feature 8): bounds and a unit, its outcomes LONG and SHORT; it requires protocol version 7
+    ...(scalar ? { scalar } : {}),
     ...(requiredProtocolVersion ? { requiredProtocolVersion } : {}),
   };
   const manifest = signManifest(body, devKey);
@@ -94,3 +97,5 @@ export function testHeadToHeadGame({ name, core, players = 2, moveCount = 3, rev
 
 /** An attestor's signature on an outcome attestation's body: { key, signature } as the attestation carries it. */
 export const attestorSign = (attestor, body) => ({ key: attestor.pubkey, signature: new Uint8Array(edSign(null, Buffer.from(attestationBodyId(body)), attestor.key)) });
+/** One attestor's signature over a scalar market's value attestation body { roundId, value, observedAtMs } (kanban #362 feature 8). */
+export const attestorSignValue = (attestor, body) => ({ key: attestor.pubkey, signature: new Uint8Array(edSign(null, Buffer.from(valueAttestationBodyId(body)), attestor.key)) });

@@ -28,11 +28,11 @@ import { decodeRoundContract, decodeEntryContract, entryFederation } from '../..
 import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
-import { heldOutcomes, marketVoidOf } from './game-market.js';
+import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
-import { outcomeFinality, pariMutuelTable } from '../../arena-protocol/src/attested.js';
+import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -588,8 +588,9 @@ export class LockSettlement {
       .map(({ entryId, entry }) => ({ entryId: toHex(entryId), pubkey: entry.playerPubkey, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat,
         donationMsat: entry.donationMsat, pick: entry.pick, feePreimage: entry.feePreimage, entryIdBytes: entryId }));
     if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed');
+    // THE TABLE BY THE GAME'S RULE: pari-mutuel on the outcome, or a scalar market's split by its signed value (kanban #362 feature 8)
     let table;
-    try { table = pariMutuelTable({ entries, outcome: a.finality.outcome }); } catch (e) { return refuse(e.message); }
+    try { table = attestedTable(a.plugin.manifest, entries, a.finality); } catch (e) { return refuse(e.message); }
     const locks = new Map();
     const lockEntry = new Map();
     const feeLocks = new Map();

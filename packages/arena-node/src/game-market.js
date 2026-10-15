@@ -24,15 +24,18 @@
 // NOTHING IS TAKEN ON A SEAT'S WORD: a fetched source contract counts only if it hashes to the id the market names (a series
 // round only as a series this seat holds derives it); a fetched result only by the signatures of the committee drawn here.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { isGameMarket, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
+import { isGameMarket, isScalar, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { gameMarketResolution, gameMarketVoided, gameMarketFitsSource } from '../../arena-protocol/src/game-market.js';
-import { decodeAttestation, marketVoided, marketTimes, roundTermsOf } from '../../arena-protocol/src/attested.js';
+import { decodeAttestation, marketVoided, marketTimes, roundTermsOf, pariMutuelTable } from '../../arena-protocol/src/attested.js';
+import { decodeValueAttestation, isValueAttestationBytes, scalarPayoutTable } from '../../arena-protocol/src/scalar.js';
 import { encodeRoundResult, roundResultId, decodeRoundResult, frontOf, frontName } from '../../arena-protocol/src/round-result.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { endpointsOf } from './roster.js';
 
 const refuse = (why, status = 409) => ({ ok: false, status, why });
+/** The outcome column of a held VALUE attestation (kanban #362 feature 8): no index - its value is in its bytes (heldOutcomes). */
+export const VALUE_HELD_OUTCOME = -1;
 /** A VOID held with no source result (a source that can never fit the market): its result id is 32 zero bytes. */
 export const NO_RESULT_ID = new Uint8Array(32);
 const SOURCES_KEPT = 4096;
@@ -42,14 +45,31 @@ const SOURCES_KEPT = 4096;
  * `receivedMs` and their `bytes`) and a market on a game's held source results that pay an outcome (`signatures` empty, the
  * evidence in `game`). A VOID (outcome 255) is not an outcome: `marketVoidOf` answers it. What attested.js outcomeFinality,
  * outcomeStanding and marketVoided read, wherever a seat reads an attested round's outcome.
+ *
+ * A SCALAR MARKET'S VALUE ATTESTATIONS (kanban #362 feature 8) are held in the same table and read back by their own type byte:
+ * decoded as a value attestation, with its BigInt `value` and no outcome index - outcomeStanding answers the value they agree on.
  */
 export function heldOutcomes(round, roundIdBytes) {
   const held = (round.outcomeAttestations ? round.outcomeAttestations(roundIdBytes) : [])
-    .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms), bytes: new Uint8Array(r.bytes) }));
+    .map((r) => {
+      const bytes = new Uint8Array(r.bytes);
+      return { ...(isValueAttestationBytes(bytes) ? decodeValueAttestation(bytes) : decodeAttestation(bytes)), receivedMs: Number(r.received_ms), bytes };
+    });
   const games = (round.gameOutcomes ? round.gameOutcomes(roundIdBytes) : []).filter((g) => g.outcome !== GAME_MARKET_REFUND);
   if (!games.length) return held;
   for (const g of games) held.push({ roundId: roundIdBytes, outcome: g.outcome, observedAtMs: BigInt(g.observedMs), signatures: [], receivedMs: g.receivedMs, game: g });
   return held.sort((a, b) => a.receivedMs - b.receivedMs);
+}
+
+/**
+ * THE TABLE OF AN ATTESTED ROUND WHOSE OUTCOME STANDS, by its game's rule: a scalar market's (kanban #362 feature 8) by the value
+ * its attestors signed - scalar.js scalarPayoutTable over its manifest's bounds - and every other market's pari-mutuel over the
+ * outcome, as before. `standing` is outcomeStanding's or outcomeFinality's answer. One answer for the settlement, the stake-share
+ * handout and GET /outcome, so the three never read a round by two rules. Throws as the tables do.
+ */
+export function attestedTable(manifest, entries, standing) {
+  if (isScalar(manifest)) return scalarPayoutTable({ entries, value: standing.value, bounds: manifest.scalar });
+  return pariMutuelTable({ entries, outcome: standing.outcome });
 }
 
 /** The VOID a seat holds for a market round on a game - a refunding source result or a source that never fits - or null. */
