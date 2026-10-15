@@ -296,6 +296,27 @@ if (cmd === 'receive-ecash') {
   say({ step: ecash ? 'receive-ecash' : 'wallet opened', federation: fed.slice(0, 16), before, said, after: await read() });
   process.exit(0);
 }
+// PAYOUTS TO KEYS FROM THIS WALLET (kanban #365, an in-game item's purchase): arena-donor pay-keys <dir> <federation> <payouts.json>
+// [--wasm <pkg>] - the lock client's paySubmit (one transaction of pre-expired payout contracts, [{ pk, msat, image }]) and its
+// acceptance read back output by output (lockAccepted); prints the txid, every output and the balance before and after
+if (cmd === 'pay-keys') {
+  const [fedPrefix, file] = rest.filter((x) => !x.startsWith('--'));
+  if (flag('wasm', '')) cfg.wasmPkg = flag('wasm', '');
+  const known = await invites();
+  const fed = Object.keys(known).find((k) => k.startsWith(String(fedPrefix || '').toLowerCase()));
+  if (!fed || !file) { console.error('arena-donor pay-keys <dir> <federation id or its prefix> <payouts.json> [--wasm <pkg>]'); process.exit(2); }
+  const client = await clientFor(known[fed], fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
+  if (typeof client.paySubmit !== 'function') { console.error(`the lock client at ${cfg.wasmPkg} has no paySubmit`); process.exit(2); }
+  const before = String(await client.balanceMsat());
+  const t0 = Date.now();
+  const submitted = JSON.parse(await client.paySubmit(readFileSync(file, 'utf8')));
+  const t1 = Date.now();
+  const accepted = JSON.parse(await client.lockAccepted(JSON.stringify(submitted)));
+  const t2 = Date.now();
+  say({ step: 'paid to keys', federation: fed.slice(0, 16), txid: submitted.txid, submitMs: t1 - t0, acceptMs: t2 - t1, before,
+    after: String(await client.balanceMsat()), outputs: (accepted.donations || []).map((d) => ({ outIdx: d.out_idx, pk: d.recipient_pk, msat: d.amount_msat, idsMatch: d.ids_match, stored: d.stored_contract_id })) });
+  process.exit(0);
+}
 if (cmd === 'once') { await pass(); process.exit(0); }
 if (cmd === 'loop') {
   for (;;) {

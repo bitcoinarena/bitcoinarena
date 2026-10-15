@@ -1214,6 +1214,65 @@ impl LockClient {
         .to_string())
     }
 
+    /// A PAYMENT TO KEYS AND NOTHING ELSE (kanban #365, an in-game item's purchase): one transaction from this wallet's e-cash whose
+    /// outputs are only pre-expired payout contracts - each `payouts` entry (JSON `[{"pk": 33-byte hex, "msat": "n", "image": 64
+    /// hex}]`, in the order given) one contract its payee alone can Refund, built exactly as `lockSubmit` builds a donation's. No
+    /// stake, no fee lock, no block count (a payout's expiration is 0). Answered on submission in `lockSubmit`'s shape (every output
+    /// of role "payout", block_count_at_lock and expiry_delta 0), so `lockAccepted` awaits and checks it unchanged.
+    #[wasm_bindgen(js_name = paySubmit)]
+    pub async fn pay_submit(&self, payouts: String) -> Result<String, JsError> {
+        let given: Vec<serde_json::Value> = serde_json::from_str(&payouts).map_err(js)?;
+        if given.is_empty() {
+            return Err(js("a payment names at least one payout"));
+        }
+        let mut contracts: Vec<OutgoingContract> = Vec::with_capacity(given.len());
+        for d in &given {
+            let pk = PublicKey::from_str(d.get("pk").and_then(|v| v.as_str()).ok_or_else(|| js("a payout names no pk"))?).map_err(js)?;
+            let msat: u64 = d.get("msat").and_then(|v| v.as_str()).ok_or_else(|| js("a payout names no msat"))?.parse().map_err(js)?;
+            if msat == 0 {
+                return Err(js("a payout output of 0 msat is not made"));
+            }
+            contracts.push(OutgoingContract {
+                payment_image: donation_image(d)?,
+                amount: Amount::from_msats(msat),
+                expiration: 0,
+                claim_pk: pk,
+                refund_pk: pk,
+                ephemeral_pk: pk,
+            });
+        }
+        let outputs = contracts
+            .iter()
+            .map(|c| ClientOutput {
+                output: LightningOutput::V0(LightningOutputV0::Outgoing(c.clone())),
+                amounts: Amounts::new_bitcoin(c.amount),
+            })
+            .collect::<Vec<_>>();
+        let bundle = ClientOutputBundle::new_no_sm(outputs).into_dyn(self.lnv2);
+        let operation = OperationId::new_random();
+        let change = self
+            .client
+            .finalize_and_submit_transaction(operation, "blwp-lock-client", |_| (), TransactionBuilder::new().with_outputs(bundle))
+            .await
+            .map_err(js)?;
+        let txid = change.txid();
+        let built: Vec<serde_json::Value> = contracts
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                serde_json::json!({
+                    "out_idx": i, "role": "payout", "computed_contract_id": c.contract_id().0.to_string(),
+                    "computed_expiration": c.expiration, "amount_msat": c.amount.msats, "recipient_pk": c.refund_pk.to_string(),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({
+            "operation": operation.fmt_full().to_string(), "txid": txid.to_string(), "block_count_at_lock": 0,
+            "expiry_delta": 0, "with_fee": false, "outputs": built,
+        })
+        .to_string())
+    }
+
     /// AND ITS ACCEPTANCE: the submitted lock (`submitted`, `lockSubmit`'s answer) awaited until the guardians accept it, then
     /// every output read where it was built and checked against the contract id computed - answered in `lockWithDonations`'
     /// shape ({ stake, fee, donations }), so the page checks it exactly as before. An output the guardians hold elsewhere, or
