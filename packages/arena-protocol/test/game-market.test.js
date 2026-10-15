@@ -159,7 +159,7 @@ test('version 6 is spoken: 2026.0.6, markets on games', () => {
   assert.equal(GAME_MARKET_VERSION, 6);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(6));
   assert.equal(speaksVersion(6), true);
-  assert.equal(speaksVersion(10), false, '9 is 2026.0.9, the website\'s fee (kanban #362 item 7); 10 is spoken by no build');
+  assert.equal(speaksVersion(11), false, '10 is 2026.0.10, in-game items (kanban #365); 11 is spoken by no build');
 });
 
 test('a game source rides in its manifest after its own marker: read back whole, after the market terms and before the required version', () => {
@@ -217,10 +217,10 @@ test('a market on a game\'s rules, each refused by name', () => {
   // FLAT may pay an outcome too (a three-way market), and all three may: the mapping is the dev's, the refund one choice of it
   assert.ok(encodeManifestBody({ ...BODY, outcomes: ['BULLS', 'BEARS', 'FLAT'], gameSource: { ...GAME_SOURCE, mapping: [0, 1, 2] } }));
   // and a manifest that requires a version this build does not speak is no game it hosts
-  const tooNew = signed({ ...BODY, requiredProtocolVersion: 10 });
+  const tooNew = signed({ ...BODY, requiredProtocolVersion: 11 });
   const st = manifestStands(tooNew, { verify: verifyEd });
   assert.equal(st.ok, false);
-  assert.match(st.why, /market on a game under protocol version \?\.\?\.10, which this build does not speak/);
+  assert.match(st.why, /market on a game under protocol version \?\.\?\.11, which this build does not speak/);
   console.log('  FACTS (refusals):', JSON.stringify(said));
 });
 
@@ -266,8 +266,8 @@ test('a source round below version 6, on a series, beside a question, or of zero
   const v5 = new Uint8Array(v6); v5[2] = 5;
   assert.throws(() => decodeRoundContract(v5), /trailing bytes/);
   // and a version 10 contract is no contract of this build (9 is 2026.0.9, the website's fee - kanban #362 item 7)
-  const v10 = new Uint8Array(v6); v10[2] = 10;
-  assert.throws(() => decodeRoundContract(v10), /protocol version 10/);
+  const v10 = new Uint8Array(v6); v10[2] = 11;
+  assert.throws(() => decodeRoundContract(v10), /protocol version 11/);
 });
 
 test('which rounds name a source: a market on a game\'s round must (v6 or later), any other game\'s must not - each refused by name', () => {

@@ -28,7 +28,9 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
+import { itemOf } from '../../arena-protocol/src/items.js';
+import { itemsOwned } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
@@ -407,6 +409,21 @@ export class Round {
     // nodes that pay the website its 20% of the nodes' fee; on an older round the key would be a promise nobody keeps
     if (contract.frontendPk && !(asks.protocolVersion >= FRONTEND_FEE_VERSION))
       throw new Error(`that entry names the website that brought it, and a round pays a website from protocol version ${FRONTEND_FEE_VERSION} on; this round runs ${asks.protocolVersion}`);
+    // THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #365): only on a round of version 10 or later, each an item the round's game
+    // sells, bought by this entry's player - a purchase this seat keeps (POST /item-purchase) of this game's developer and name
+    if (contract.items) {
+      if (!(asks.protocolVersion >= ITEMS_VERSION))
+        throw new Error(`that entry plays with items, and a round takes items from protocol version ${ITEMS_VERSION} on; this round runs ${asks.protocolVersion}`);
+      const g = pluginForRound(asks, this.plugins);
+      if (!g.ok) throw new Error(g.why);
+      const m = g.plugin.manifest;
+      const mine = itemsOwned(this.db, { player: toHex(contract.playerPubkey), gameDev: toHex(m.gameDevPubkey), gameName: m.gameName });
+      for (const it of contract.items) {
+        if (!itemOf(m, it.itemId)) throw new Error(`game "${m.gameName}" sells no item "${it.itemId}"`);
+        if (!mine.some((o) => o.id === toHex(it.purchaseId) && o.itemId === it.itemId))
+          throw new Error(`purchase ${toHex(it.purchaseId).slice(0, 16)} of "${it.itemId}" is not one this seat keeps for this player: hand it to POST /item-purchase first`);
+      }
+    }
     // AND NOT A ROUND WHOSE OBJECTION WINDOW IS NOT 600 000 ms (§13A, WINDOW-10-SPEC): one opened before the rule is held,
     // never entered.
     const windows = roundWindowsAreValid(asks);

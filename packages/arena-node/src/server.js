@@ -4739,6 +4739,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         if (!got.ok) return text(res, got.status || 422, got.why);
+        // KEPT HERE THE FIRST TIME: handed on to every other seat, each of which checks it for itself and hands it on only when it
+        // too keeps it for the first time - so an entry naming the item finds its purchase on whichever seats it is sent to
+        if (got.kept === 'new') {
+          const body = JSON.stringify({ purchase: j.purchase, signature: j.signature });
+          for (const s of networkSeats()) seasonFetch(`${s}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) }).catch(() => {});
+        }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ id: got.id, kept: got.kept }));
       }
