@@ -8,9 +8,10 @@
 // or config - what the game's core is handed when an entry names the item). A price changes only with a new manifest version. Only
 // under protocol version 10 or later (constants.js ITEMS_VERSION), so no node that cannot sell or check an item hosts the game.
 //
-// THE SPLIT (itemSplit): of the price in msat, 25 % to the network's donation set (the protocol devs), 25 % to the game's donation
-// set (its developer), 50 % in equal parts to the nodes that served a round in the 24 hours before the purchase. Integer msat, every
-// remainder - the quarters' and the node shares' - to the protocol devs, so the parts always add up to the price exactly.
+// THE SPLIT (itemSplit): of the price in msat, 50 % in equal parts to the nodes that served a round in the 24 hours before the
+// purchase (each floored), and the rest - the developers' half and what the node shares' floors leave - in two halves exactly as a
+// round's donation is split over its two sets (donation.js splitTwoSets, ruled 2026-10-06): the protocol devs' half floored, the
+// game dev's the rest. So 25 % / 25 % / 50 %, integer msat, the parts always adding up to the price exactly.
 import { toHex } from './hash.js';
 import { protocolVersionName } from './protocol-version.js';
 import { ITEMS_VERSION } from './constants.js';
@@ -56,9 +57,8 @@ export const itemOf = (m, id) => (m && Array.isArray(m.items) ? m.items.find((it
 
 /**
  * THE SPLIT OF ONE PURCHASE, in msat. `priceMsat` a BigInt; `nodes` the served nodes' keys (hex, any order; each once - the served
- * list's keys). Answers { protocolMsat, gameMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat } - every
- * remainder to the protocol devs - or throws on a price below 1 msat or no served node (a purchase with nobody to pay half to is
- * refused before any money moves).
+ * list's keys). Answers { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat },
+ * or throws on a price below 1 msat or no served node (a purchase with nobody to pay half to is refused before any money moves).
  */
 export function itemSplit({ priceMsat, nodes }) {
   const price = BigInt(priceMsat);
@@ -66,13 +66,12 @@ export function itemSplit({ priceMsat, nodes }) {
   const keys = [...new Set((nodes || []).map((k) => String(k).toLowerCase()))].sort();
   if (!keys.length) throw new Error('no node served a round in the window: an item\'s half for the nodes has nobody to go to');
   if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
-  const quarter = price / 4n;
-  const gameMsat = quarter;
-  const nodesPool = price / 2n;
-  const perNodeMsat = nodesPool / BigInt(keys.length);
+  const perNodeMsat = (price / 2n) / BigInt(keys.length);
   const nodesMsat = perNodeMsat * BigInt(keys.length);
-  const protocolMsat = price - gameMsat - nodesMsat;          // its quarter, the quarters' remainder and the node shares' remainder
-  return { protocolMsat, gameMsat, nodesMsat, perNodeMsat, nodes: keys.map((key) => ({ key, msat: perNodeMsat })), sumMsat: protocolMsat + gameMsat + nodesMsat };
+  const devsMsat = price - nodesMsat;                          // the developers' half and the node shares' floors
+  const protocolMsat = devsMsat / 2n;                          // as splitTwoSets: the protocol devs' half floored,
+  const gameMsat = devsMsat - protocolMsat;                    // the game dev's the rest
+  return { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: keys.map((key) => ({ key, msat: perNodeMsat })), sumMsat: protocolMsat + gameMsat + nodesMsat };
 }
 
 /** A short line for logs and pages: "trick-x (Double jump) 2,100 sat". */

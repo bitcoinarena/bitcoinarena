@@ -61,16 +61,19 @@ test('until version 10 is spoken, no node hosts a game with items', () => {
   assert.equal(manifestStands(signed(BODY), { verify: verifyEd25519 }).ok, true);
 });
 
-test('the split: 25 % protocol devs, 25 % game dev, 50 % equal per served node, every msat accounted, remainders to the protocol devs', () => {
+test('the split: 50 % equal per served node, the rest halved between protocol devs and game dev as a donation is, every msat accounted', () => {
   const k = (n) => n.toString(16).padStart(2, '0').repeat(32);
   const even = itemSplit({ priceMsat: 2100000n, nodes: [k(2), k(1), k(3), k(4)] });
   assert.deepEqual([even.protocolMsat, even.gameMsat, even.nodesMsat, even.perNodeMsat, even.sumMsat], [525000n, 525000n, 1050000n, 262500n, 2100000n]);
   assert.deepEqual(even.nodes.map((n) => n.key), [k(1), k(2), k(3), k(4)], 'sorted by key');
-  // 1001 msat over 3 nodes: quarter 250 to the game; 500 for the nodes -> 166 each (498); the protocol devs 1001 - 250 - 498 = 253
+  // 1001 msat over 3 nodes: 500 for the nodes -> 166 each (498); the developers 503 -> protocol 251 (floored), game 252
   const odd = itemSplit({ priceMsat: 1001n, nodes: [k(7), k(8), k(9), k(9)] });
-  assert.deepEqual([odd.gameMsat, odd.perNodeMsat, odd.nodesMsat, odd.protocolMsat, odd.sumMsat, odd.nodes.length], [250n, 166n, 498n, 253n, 1001n, 3], 'a key listed twice is one node');
+  assert.deepEqual([odd.perNodeMsat, odd.nodesMsat, odd.devsMsat, odd.protocolMsat, odd.gameMsat, odd.sumMsat, odd.nodes.length], [166n, 498n, 503n, 251n, 252n, 1001n, 3], 'a key listed twice is one node');
   const one = itemSplit({ priceMsat: 1n, nodes: [k(5)] });
-  assert.deepEqual([one.protocolMsat, one.gameMsat, one.nodesMsat], [1n, 0n, 0n]);
+  assert.deepEqual([one.protocolMsat, one.gameMsat, one.nodesMsat], [0n, 1n, 0n]);
+  // 500 sat (the larger truck, #369) over the 12 nodes measured on 2026-10-15: 20,833 msat each (249,996), the devs 125,002 each
+  const truck = itemSplit({ priceMsat: 500000n, nodes: Array.from({ length: 12 }, (_, i) => k(i + 1)) });
+  assert.deepEqual([truck.perNodeMsat, truck.nodesMsat, truck.protocolMsat, truck.gameMsat], [20833n, 249996n, 125002n, 125002n]);
   assert.throws(() => itemSplit({ priceMsat: 1000n, nodes: [] }), /no node served a round/);
   assert.throws(() => itemSplit({ priceMsat: 0n, nodes: [k(1)] }), /at least 1 msat/);
   assert.throws(() => itemSplit({ priceMsat: 1000n, nodes: ['xyz'] }), /32-byte key/);
