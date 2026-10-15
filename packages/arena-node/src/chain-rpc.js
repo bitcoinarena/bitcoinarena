@@ -81,9 +81,22 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
     // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (the owner 2026-09-18 02:40: name the leftover). The
     // read itself waits on bitcoind; what runs here is the answer's continuation - a megabyte of hex parsed and split -
     // and it lands on the thread that draws the other players' trucks.
-    const answer = await call('getblock', [hash, 0]);
-    const block = timed('chain block read', () => splitBlock(fromHex(answer)), { over: 20 });
-    if (cache) cache.put(hash, block);
+    // ONE READ OF A BLOCK IN FLIGHT, HOWEVER MANY VIEWS ASK FOR IT AT ONCE (the owner 2026-10-15: "Do everything you can to
+    // lower the load"; measured on a testnet4 seat's heap: 96,494 parsed blocks, 1,004,407 transactions, 940 MB, for views
+    // that span about 2,600 distinct blocks). The 8 s grids make a view per round, and their views are read together: every
+    // one of them missed the cache for the same block while the first read was still out, parsed its own copy and kept it -
+    // tens of copies of each block. A read in flight is now shared: the second asker waits for the first and holds its object.
+    const read = () => call('getblock', [hash, 0]).then((answer) => {
+      const block = timed('chain block read', () => splitBlock(fromHex(answer)), { over: 20 });
+      if (cache) cache.put(hash, block);
+      return block;
+    });
+    let block;
+    if (cache && cache.inFlight) {
+      let p = cache.inFlight.get(hash);
+      if (!p) { p = read(); cache.inFlight.set(hash, p); p.then(() => cache.inFlight.delete(hash), () => cache.inFlight.delete(hash)); }
+      block = await p;
+    } else block = await read();
     blocks.push(block);
   }
   return { blocks, firstHeight: from };
@@ -99,6 +112,7 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
 export function blockCache({ max = 50000 } = {}) {
   const kept = new Map();
   return {
+    inFlight: new Map(),                     // block hash -> the read of it still out (blocksOver)
     get: (hash) => kept.get(hash),
     put: (hash, block) => {
       kept.set(hash, block);
