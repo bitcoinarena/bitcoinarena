@@ -184,3 +184,27 @@ test('a succession by notice: the remaining guardians seated first through their
   assert.deepEqual(w.log.filter((l) => l[0] === 'params' && l[3]).map((l) => l[1]), [seated[0]], 'the first seated-first node leads');
   assert.equal(seats[3].state().via, null, 'the leaving node takes no part');
 });
+
+test('federation B: a notice from B7 founds a successor of SEVEN (the record\'s nominal, not genesis\'s 4) - B1..B6 seated first, node15 drawn', async () => {
+  const bKeys = Array.from({ length: 8 }, (_, i) => key(`b${i}`));                 // b0..b6 guard B (one operator, 2of2), b7 is node15
+  const B = taggedHash('TEST/fed', Uint8Array.of(7));
+  const ents = bKeys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/btx', Uint8Array.of(i)), vout: 0, bondSats: 50000n,
+    advert: { operatorId: i < 7 ? '2of2' : 'node15', guardianCapable: true, guardianEndpoint: `wss://b${i}/guardian`, guardianOf: i < 7 ? [{ federationId: B, guardianKey: peerKeyOf(20 + i) }] : [] } }));
+  const rec = buildFederationRecord({ federationId: B, networkId: new Uint8Array(32), invite: 'fed11', nominal: 7, height: 700,
+    guardians: bKeys.slice(0, 7).map((k, i) => ({ peerKey: peerKeyOf(20 + i), nodePubkey: k.pub, operatorId: '2of2', bondTxid: ents[i].txid, bondVout: 0, endpoint: `wss://b${i}/guardian`, bondSats: 50000n })) });
+  const d = signDeparture({ federationId: B, peerKey: peerKeyOf(26), leaveAfterHeight: 730, postedAt: 710, nodePubkey: bKeys[6].pub }, (h) => schnorr.sign(h, bKeys[6].secret));
+  const w = { tip: 711 };
+  const seat = createFoundingSeat({ records: () => [{ federation: toHex(B), status: 'OPEN', height: 700, record: rec }], notices: () => [d], entriesAt: async () => ents,
+    beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+    guardianInSetup: async () => false, setup: null, nominal: 4, bondMinGuardian: 50000n, clocks: { abandonBlocks: 12, foundingWindow: 18, departureNotice: 18 },
+    ownKey: bKeys[7].pub, sign: (h) => schnorr.sign(h, bKeys[7].secret), verify });
+  const r = await seat.tick();
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual([r.trigger.kind, r.trigger.height, r.trigger.nominal], ['succession', 710, 7]);
+  const st = seat.state();
+  assert.equal(st.seated.length, 7); assert.equal(st.seatedFirst, 6);
+  const at = (hex) => bKeys.findIndex((k) => toHex(k.pub) === hex);
+  assert.deepEqual(st.seated.slice(0, 6).map((x) => at(x.node)).sort(), [0, 1, 2, 3, 4, 5]);
+  assert.equal(at(st.seated[6].node), 7, 'node15 drawn into the seventh seat');
+  assert.deepEqual(st.alternates, []);
+});

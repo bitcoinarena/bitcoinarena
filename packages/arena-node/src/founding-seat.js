@@ -38,7 +38,7 @@ const goneNodes = (record) => { const s = new Set(seatedOf(record).map((g) => to
 /**
  * THE NOTICE TRIGGERS (§23A.6, kanban #326): of `notices` (decoded departure notices), each one that stands against the held record
  * of its federation (`held`: [{ federation, status, record }], status OPEN, DRAINING or CRITICAL) and leaves that federation's seated
- * guardians DRAINING or CRITICAL. Answers [{ federation, height: posted_at, wouldBe, seatedFirst, departing }] (node keys hex).
+ * guardians DRAINING or CRITICAL. Answers [{ federation, height: posted_at, wouldBe, nominal, seatedFirst, departing }] (node keys hex).
  */
 export function noticeTriggers({ held = [], notices = [], departureNotice, verify }) {
   const rows = [];
@@ -51,7 +51,7 @@ export function noticeTriggers({ held = [], notices = [], departureNotice, verif
     const seated = seatedOf(h.record).filter((g) => toHex(g.peerKey) !== toHex(d.peerKey));
     let wouldBe; try { wouldBe = statusFor({ nominal: h.record.nominal, seated: Math.min(h.record.nominal, seated.length) }).status; } catch { continue; }
     if (wouldBe !== 'DRAINING' && wouldBe !== 'CRITICAL') continue;
-    rows.push({ federation: fid, height: d.postedAt, wouldBe, seatedFirst: seated.map((g) => toHex(g.nodePubkey)),
+    rows.push({ federation: fid, height: d.postedAt, wouldBe, nominal: h.record.nominal, seatedFirst: seated.map((g) => toHex(g.nodePubkey)),
       departing: [...new Set([toHex(d.nodePubkey), ...goneNodes(h.record)])] });
   }
   return rows;
@@ -119,7 +119,7 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     const held = await history(h0);
     // a DRAINING record seats its seated guardians first, its gone ones leave; a standing notice triggers as of its posting
     const rows = held.map((r) => (r && r.record && r.status === 'DRAINING'
-      ? { ...r, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
+      ? { ...r, nominal: r.record.nominal, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
     let notes = [];
     try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
     const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0 });
@@ -139,9 +139,12 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
       let use = null, via = null;
       if (await guardianInSetup()) { use = setup; via = 'guardian'; }
       else if (next && next.setup && typeof next.inSetup === 'function' && await next.inSetup()) { use = next.setup; via = 'guardian-next'; }
-      current = { key, trigger: t, via, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal, bondMinGuardian, guardingOpen: out, seatedFirst,
+      // A SUCCESSOR HAS ITS PREDECESSOR'S SIZE (kanban #326): the held record's nominal (federation B: 7) - genesis's federation_nominal
+      // is 4 on testnet4 and regtest, and B's successor drawn at 4 would seat four of B and draw nobody
+      const size = Number.isInteger(t.nominal) && t.nominal > 0 ? t.nominal : nominal;
+      current = { key, trigger: t, via, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal: size, bondMinGuardian, guardingOpen: out, seatedFirst,
         foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say }) };
-      say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, seatedFirst: seatedFirst.length,
+      say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, nominal: size, seatedFirst: seatedFirst.length,
         leftOut: [...out], takesPart: !!use, via });
     }
     // codes this seat missed, from the others' GET /founding
