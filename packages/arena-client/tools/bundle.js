@@ -269,6 +269,8 @@ out += '         winningsQualify: winningsQualify,\n';
 // A MARKET (kanban #206 slice 2, §0A.7a): the pick sheet's model, the pick handed to the seats, the outcome checked, the lines
 out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,\n';
 out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
+// A SCALAR MARKET'S VALUE AND A MARKET ON A GAME'S SOURCE RESULT, CHECKED BY THE PAGE (kanban #362, protocols 7 and 6)
+out += '         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine,\n';
 // A HEAD-TO-HEAD ROUND (kanban #233): the hidden move, its commitment, its reveal, and the reveals the seats hold
 out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
 // THE SEASON BOARD (kanban #362): its lines from a /season answer, and the ask of the game's seats in turn

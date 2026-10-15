@@ -27134,6 +27134,232 @@ function payoutRuleForRound(contract, manifest = null) {
   return { ok: true, payoutShares: null };
 }
 
+// ---- arena-protocol/src/scalar.js
+// SCALAR MARKETS (kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8; protocol 2026.0.7): "a numeric outcome (a price, a
+// count) paid linearly between bounds. Richer questions than buckets; one market instead of many."
+//
+// THE SHAPE. The market's manifest names a scalar (manifest.js `scalar`, marker 0x06): bounds low < high, whole numbers in a named
+// unit, and its two outcomes are the SIDES - LONG (pick 0) and SHORT (pick 1). A round of it is an attested round like any
+// other: no round byte changes, its entries pick a side. Its attestors - k of n, as for any attested market - sign the VALUE V
+// they observed:
+//
+//     ValueAttestation {
+//       round_id, value (i64, in the manifest's unit), observed_at_ms,
+//       signatures[] - each { attestor key, signature by it over the body's id }
+//     }
+//
+// A MESSAGE OF ITS OWN: its type byte (0x2a, TYPE_VALUE_ATTESTATION) is not an outcome attestation's (0x1d), its body is written
+// at version 7 or later and its id is taken under its own tag (ARENA/v1/ValueAttestation). So an outcome attestation can never be
+// replayed as a value or a value as an outcome: the bytes do not decode as the other kind, and a signature over one id is no
+// signature over the other's. And each door asks the kind its market reads: attested.js attestationStands refuses an index for a
+// scalar market, valueAttestationStands a value for any other.
+//
+// THE PAYOUT (scalarPayoutTable): V clamped to [low, high]; of the whole net pool T (every entry's stake less its fee and its
+// donation, as for any attested round - §0A.8), the LONG side's share is T * (V - low) / (high - low) and the SHORT side's the
+// rest; each side's share is split pari-mutuel over that side's own net stakes. Integer msat only, every remainder named:
+//   - the two sides' shares are each FLOORED; the at most 1 msat the floors leave goes to the side of the entry FIRST in
+//     ascending entry id (among the entries that staked anything) - so the LONG total is ceil or floor of its exact share,
+//     never moving against V, and the rule reads the same with the sides swapped and V mirrored;
+//   - within a side each entry gets floor(share * net / side_net); the msats those floors leave go one each to that side's
+//     entries in ascending entry id - as pariMutuelTable hands out its own.
+// Nothing is invented and nothing is kept: fees + donations + payouts = gross, payouts = T, every payout >= 0.
+//
+// ONE SIDE ONLY (decided here): a market where nobody backed one side has no counterparty - the side's share of a value it
+// did not reach would belong to nobody. It is REFUNDED: every net stake back to its own entry, its fee too, exactly as a
+// pari-mutuel round "nobody picked" (kanban #235, the owner 2026-10-09: "refund the fees too"; lock-settlement.js claims nothing).
+// Likewise a market with no entry. A round where both sides staked nothing (a free round) is not a refund: each gets its 0.
+//
+// NO VALUE BY THE DEADLINE, OR TWO DIFFERENT VALUES: VOID, every stake back - attested.js marketVoided reads a value's standing
+// as it reads an outcome's (outcomeStanding).
+//
+// NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected - Ed25519, the attestors' scheme.
+
+
+
+
+
+const VALUE_SIGNATURE_BYTES = 64;
+
+const scIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const scSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const scSum = (xs) => xs.reduce((t, x) => t + x, 0n);
+
+/** The bytes a scalar market's attestors sign: the round, the value they observed (in the manifest's unit), when. */
+function encodeValueAttestationBody(a) {
+  if (!scIs32(a.roundId)) throw new Error('a value attestation names its 32-byte round');
+  if (typeof a.value !== 'bigint' || a.value < SCALAR_I64_MIN || a.value > SCALAR_I64_MAX) throw new Error('a value attestation names its value as a signed 64-bit BigInt');
+  if (typeof a.observedAtMs !== 'bigint' || a.observedAtMs < 0n) throw new Error('observed_at_ms is a BigInt of milliseconds');
+  const w = new Writer();
+  w.u8(TYPE_VALUE_ATTESTATION);
+  // WRITTEN AT THE VERSION THAT READS IT: no build below 2026.0.7 decodes a value attestation
+  w.u16(SCALAR_VERSION);
+  w.bytes32(a.roundId);
+  w.i64(a.value);
+  w.u64(a.observedAtMs);
+  return w.finish();
+}
+
+/** The digest every attestor of a scalar market signs - under its own tag, never the outcome attestation's. */
+const valueAttestationBodyId = (a) => taggedHash(TAG.valueAttestation, encodeValueAttestationBody(a));
+
+/** The value attestation on the wire: its body, then its signatures (key, signature), in the order given. */
+function encodeValueAttestation(a) {
+  const w = new Writer();
+  w.bytes(encodeValueAttestationBody(a));
+  const sigs = a.signatures || [];
+  if (!Array.isArray(sigs)) throw new Error('a value attestation carries a list of signatures');
+  w.vec(sigs, (s, ww) => {
+    if (!scIs32(s.key)) throw new Error('a signature names its 32-byte attestor key');
+    if (!(s.signature instanceof Uint8Array) || s.signature.length !== VALUE_SIGNATURE_BYTES) throw new Error(`an attestor's signature is ${VALUE_SIGNATURE_BYTES} bytes`);
+    ww.bytes32(s.key); ww.bytes(s.signature);
+  });
+  return w.finish();
+}
+
+/** Is this the start of a value attestation's bytes (its type byte)? What a door reads to tell the two kinds apart. */
+const isValueAttestationBytes = (bytes) => bytes instanceof Uint8Array && bytes.length > 0 && bytes[0] === TYPE_VALUE_ATTESTATION;
+
+function decodeValueAttestation(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_VALUE_ATTESTATION) throw new Error('not a value attestation');
+  const version = r.u16();
+  // REFUSED BELOW 7: a value attestation exists from 2026.0.7 on; one naming an older version is no message any build wrote
+  if (!speaksVersion(version) || version < SCALAR_VERSION)
+    throw new Error(`a value attestation is written at protocol version ${protocolVersionName(SCALAR_VERSION)} or later; this one names ${protocolVersionName(version)}`);
+  const a = { roundId: r.bytes32(), value: r.i64(), observedAtMs: r.u64() };
+  a.signatures = r.vec((rr) => ({ key: rr.bytes32(), signature: rr.bytes(VALUE_SIGNATURE_BYTES) }));
+  r.end();
+  return a;
+}
+
+/** Do these bounds make a scalar market: BigInt low below BigInt high? `low >= high` is refused by name. */
+function scalarBoundsFit(bounds) {
+  if (!bounds || typeof bounds.low !== 'bigint' || typeof bounds.high !== 'bigint') return { ok: false, why: 'a scalar market\'s bounds are { low, high }, BigInt whole numbers' };
+  if (bounds.low >= bounds.high) return { ok: false, why: `a scalar market's low bound is below its high bound; this one names low ${bounds.low} and high ${bounds.high}` };
+  return { ok: true };
+}
+
+/** V clamped to [low, high]: a value at or beyond a bound pays as that bound. */
+function scalarClamp(value, { low, high }) {
+  if (typeof value !== 'bigint') throw new Error('a scalar market\'s value is a BigInt');
+  return value < low ? low : value > high ? high : value;
+}
+
+/**
+ * DOES THIS VALUE ATTESTATION STAND FOR THIS ROUND? The round's game is a scalar market; the attestation is for this round; and at
+ * least the manifest's threshold of DISTINCT attestors it names signed its body. The value itself is any signed 64-bit number -
+ * one beyond a bound is not refused but clamped when the table is made (`clamped` says where it pays). Each refusal by name;
+ * answers, never throws. Whether it came in time is attested.js attestationTimely, read on its observed_at_ms as for any market.
+ */
+function valueAttestationStands(a, { manifest, roundIdBytes, verify }) {
+  if (!isScalar(manifest)) return { ok: false, why: `game "${manifest && manifest.gameName}" is not a scalar market: its outcome is an index its attestors sign, and a value decides nothing of it` };
+  let digest;
+  try { digest = valueAttestationBodyId(a); } catch (e) { return { ok: false, why: `that value attestation does not encode: ${e.message}` }; }
+  if (!scIs32(roundIdBytes) || !scSame(a.roundId, roundIdBytes))
+    return { ok: false, why: `that value attestation is for round ${toHex(a.roundId).slice(0, 16)}, not this round ${scIs32(roundIdBytes) ? toHex(roundIdBytes).slice(0, 16) : ''}`.trim() };
+  if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check the attestors\' signatures' };
+  const named = new Set(manifest.attestors.map(toHex));
+  const signed = new Set();
+  for (const s of a.signatures || []) {
+    const k = toHex(s.key);
+    if (!named.has(k)) return { ok: false, why: `that value attestation is signed by key ${k.slice(0, 16)}, which game "${manifest.gameName}" does not name as an attestor` };
+    let good = false;
+    try { good = verify(s.signature, digest, s.key) === true; } catch { good = false; }
+    if (!good) return { ok: false, why: `attestor ${k.slice(0, 16)}'s signature on that value attestation does not verify` };
+    signed.add(k);
+  }
+  if (signed.size < manifest.attestThreshold)
+    return { ok: false, why: `that value attestation carries ${signed.size} attestor signature(s), and game "${manifest.gameName}" asks ${manifest.attestThreshold} of its ${manifest.attestors.length}` };
+  const sc = manifest.scalar;
+  const clamped = scalarClamp(a.value, sc);
+  return { ok: true, value: a.value, clamped, signers: signed.size,
+    why: `value ${a.value} ${sc.unit}${clamped !== a.value ? ` (paid as ${clamped}, its bound)` : ''}, signed by ${signed.size} of ${manifest.attestors.length} attestors (threshold ${manifest.attestThreshold})` };
+}
+
+/** One row per entry: its id as hex, its amounts, its net stake and its side - refused by name when an entry is not a side's. */
+function scalarRows(entries) {
+  return entries.map((e) => {
+    const id = typeof e.entryId === 'string' ? e.entryId : toHex(e.entryId);
+    if (typeof e.stakeMsat !== 'bigint' || typeof e.feeMsat !== 'bigint' || typeof e.donationMsat !== 'bigint')
+      throw new Error(`entry ${id.slice(0, 16)}: stakes are BigInt millisatoshi - its stake, its fee and its donation`);
+    const net = e.stakeMsat - e.feeMsat - e.donationMsat;
+    if (net < 0n) throw new Error(`entry ${id.slice(0, 16)} pays more in fee and donation than it stakes`);
+    if (e.pick !== SCALAR_LONG && e.pick !== SCALAR_SHORT) throw new Error(`entry ${id.slice(0, 16)} backs no side of a scalar market: its pick is ${SCALAR_LONG} (LONG) or ${SCALAR_SHORT} (SHORT)`);
+    return { entryId: id, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat, netMsat: net, pick: e.pick, side: SCALAR_SIDES[e.pick] };
+  }).sort((x, y) => (x.entryId < y.entryId ? -1 : x.entryId > y.entryId ? 1 : 0));
+}
+
+/**
+ * IS A SCALAR ROUND REFUNDED WHATEVER ITS VALUE? No entry; nobody on one side; or a pool with stakes on one side only. Answers
+ * { refunded, why }. One rule, read by the table and by a seat's return door (arena-node forfeit.js), which decides from its
+ * entries before any table is made.
+ */
+function scalarOneSided(entries) {
+  const rows = scalarRows(entries);
+  const longs = rows.filter((r) => r.pick === SCALAR_LONG), shorts = rows.filter((r) => r.pick === SCALAR_SHORT);
+  const L = scSum(longs.map((r) => r.netMsat)), S = scSum(shorts.map((r) => r.netMsat));
+  if (!rows.length) return { refunded: true, why: 'nobody entered: nothing to settle' };
+  if (!longs.length || !shorts.length || (L + S > 0n && (L === 0n || S === 0n)))
+    return { refunded: true, why: `only the ${L > 0n || (longs.length && !shorts.length) ? 'LONG' : 'SHORT'} side staked: no counterparty, every stake comes back, its fee too` };
+  return { refunded: false };
+}
+
+/**
+ * THE SCALAR TABLE. `entries`: [{ entryId (hex or bytes), stakeMsat, feeMsat, donationMsat, pick (0 LONG, 1 SHORT) }] - each
+ * entry's fee and donation come out of its stake as pariMutuelTable takes them (§0A.8, checked at the door); `value` the
+ * attested V (BigInt, any signed 64-bit number); `bounds` { low, high } - the manifest's scalar. Answers the table: per row its
+ * `payoutMsat` and `won` (true when it gets back at least its net stake - its lock is its own, the excess paid from the claimed
+ * locks; false when it gets back less - its lock is claimed and the rest paid back to it: lock-settlement.js
+ * attestedLockSettlement), the two sides' pools and shares, `refunded` for a one-sided round. Pure; throws on bounds that do
+ * not fit, an entry backing no side, or a table that would not balance.
+ */
+function scalarPayoutTable({ entries, value, bounds }) {
+  const fit = scalarBoundsFit(bounds);
+  if (!fit.ok) throw new Error(fit.why);
+  const clamped = scalarClamp(value, bounds);
+  const rows = scalarRows(entries);
+  const longs = rows.filter((r) => r.pick === SCALAR_LONG), shorts = rows.filter((r) => r.pick === SCALAR_SHORT);
+  const longPool = scSum(longs.map((r) => r.netMsat)), shortPool = scSum(shorts.map((r) => r.netMsat));
+  const pool = longPool + shortPool;
+  const span = bounds.high - bounds.low, reach = clamped - bounds.low;
+  const one = scalarOneSided(entries);
+  let longShare = longPool, shortShare = shortPool;
+  if (one.refunded) {
+    // NO COUNTERPARTY: every net stake back to its own entry
+    for (const r of rows) r.payoutMsat = r.netMsat;
+  } else {
+    // THE SIDES: each share floored, the one msat the two floors may leave to the side of the first entry that staked
+    longShare = (pool * reach) / span;
+    shortShare = (pool * (span - reach)) / span;
+    const left = pool - longShare - shortShare;
+    if (left > 0n) {
+      const first = rows.find((r) => r.netMsat > 0n);
+      if (first.pick === SCALAR_LONG) longShare += left; else shortShare += left;
+    }
+    // WITHIN A SIDE: pari-mutuel over its own net stakes, floored, the leftover one msat each in ascending entry id
+    const split = (side, share, sideNet) => {
+      let given = 0n;
+      for (const r of side) { r.payoutMsat = sideNet > 0n ? (share * r.netMsat) / sideNet : 0n; given += r.payoutMsat; }
+      let rest = share - given;
+      const staked = side.filter((r) => r.netMsat > 0n);
+      for (let i = 0; rest > 0n; i = (i + 1) % staked.length, rest--) staked[i].payoutMsat += 1n;
+    };
+    split(longs, longShare, longPool);
+    split(shorts, shortShare, shortPool);
+  }
+  for (const r of rows) r.won = r.payoutMsat >= r.netMsat;
+  const gross = scSum(rows.map((r) => r.stakeMsat));
+  const fees = scSum(rows.map((r) => r.feeMsat));
+  const donations = scSum(rows.map((r) => r.donationMsat));
+  const paid = scSum(rows.map((r) => r.payoutMsat));
+  // NEVER MORE OUT THAN IN, NOTHING KEPT: the net pool exactly, every msat of the gross accounted for, no negative payout
+  if (paid !== pool || fees + donations + paid !== gross || rows.some((r) => r.payoutMsat < 0n))
+    throw new Error(`the scalar table does not balance: ${fees} + ${donations} + ${paid} is not the gross ${gross} (pool ${pool})`);
+  return { value, clamped, low: bounds.low, high: bounds.high, refunded: one.refunded, ...(one.refunded ? { why: one.why } : {}),
+    grossMsat: gross, feesMsat: fees, donationsMsat: donations, poolMsat: pool, longPoolMsat: longPool, shortPoolMsat: shortPool,
+    longShareMsat: longShare, shortShareMsat: shortShare, payoutsMsat: paid, rows };
+}
+
 // ---- arena-protocol/src/attested.js
 // AN ATTESTED OUTCOME AND THE PARI-MUTUEL TABLE (§0A.7a, kanban #206, the owner 2026-10-07): the result of a round of an
 // attested game - a prediction market - is not a replayed run but the outcome its attestors sign. The game's manifest
@@ -27403,6 +27629,595 @@ function marketWindowOf(contract, manifest) {
   if (contract.entryCloseMs % period !== 0n)
     return { ok: false, why: `game "${manifest.gameName}" runs one round per ${period} ms on the UTC grid, and that round's entries close at ${contract.entryCloseMs}, off it` };
   return { ok: true, window: { startMs: contract.entryCloseMs - period, endMs: contract.entryCloseMs, periodMs: period } };
+}
+
+// ---- arena-protocol/src/publication.js
+// A ROUND EXISTS ONLY ONCE ITS HASH IS ON BITCOIN, BELOW ITS BEACON BLOCK.
+//
+// Section 5A.5 (v4.6.2, P1): "a Round Contract exists only once its hash is in
+// a Bitcoin block before the beacon block."
+//
+//     publication_txid   a transaction carrying
+//                        OP_RETURN "ARN" ROUND H(RoundContract)   (36 bytes)
+//                        confirmed at a height strictly below the beacon block
+//
+// THE HOLE IT CLOSES. 4.6.1 ordered a contract against its beacon by timestamp
+// receipts, which were free: a creator published a thousand candidate rounds,
+// waited for the beacon, and promoted the one whose committee was his. On chain
+// every candidate costs a transaction, and the ordering is objective - the
+// beacon block's hash did not exist when the publication confirmed.
+//
+// WHY THE TXID IS NOT IN THE CONTRACT although section 6 lists it: the
+// transaction carries H(RoundContract), which is the round id, so a contract
+// holding that transaction's id has no fixed point. It rides beside the
+// contract, as `round_id` and `creator_signature` do.
+//
+// THE KIND BYTE IS OURS. The spec writes `ROUND` and fixes no value for it; it
+// is 0x52, 'R', in keeping with the ASCII "ARN". A vote (27A.7.3) is "ARN" 'V'
+// (ballot.js, the owner 2026-10-13), 77 bytes: the kind byte keeps them apart.
+
+const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
+const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
+const PUBLICATION_BYTES = 36;
+
+const pubIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** The 36 bytes a round's publication carries: "ARN", ROUND, round id. */
+function publicationPayload(roundIdBytes) {
+  if (!pubIs32(roundIdBytes)) throw new TypeError('a publication commits to a 32-byte round id');
+  const out = new Uint8Array(PUBLICATION_BYTES);
+  out.set(PUBLICATION_MAGIC, 0);
+  out[3] = PUBLICATION_KIND_ROUND;
+  out.set(roundIdBytes, 4);
+  return out;
+}
+
+/** The output a creator adds to publish a round: zero value, one direct push. */
+function publicationOutput(roundIdBytes) {
+  const payload = publicationPayload(roundIdBytes);
+  const script = new Uint8Array(2 + PUBLICATION_BYTES);
+  script[0] = OP_RETURN;
+  script[1] = PUBLICATION_BYTES;
+  script.set(payload, 2);
+  return { value: 0n, script };
+}
+
+/** Does this parsed transaction publish that round? */
+function publishesRound(tx, roundIdBytes) {
+  const want = publicationPayload(roundIdBytes);
+  return commitmentsOf(tx).some((p) => p.length === PUBLICATION_BYTES
+    && p.every((b, i) => b === want[i]));
+}
+
+/**
+ * WHERE A ROUND WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF.
+ *
+ * The same view the census is derived from - `{ firstHeight, blocks: [{
+ * header, transactions }] }` - so the height is the chain's, and nobody has to
+ * be believed about a txid. The LOWEST publication counts: a creator who
+ * publishes the same round twice gained nothing by the second.
+ */
+function findPublication(view, roundIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  for (let i = 0; i < view.blocks.length; i++) {
+    for (const raw of view.blocks[i].transactions || []) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (publishesRound(tx, roundIdBytes)) return { tx, height: view.firstHeight + i };
+    }
+  }
+  return null;
+}
+
+/**
+ * IS THIS ROUND PUBLISHED, AND BEFORE ITS BEACON?
+ *
+ * The heights are the caller's own chain's - where the transaction confirmed
+ * and which block the beacon rule named - never a number the creator wrote.
+ * Missing either is a refusal: "I do not know when it confirmed" and "it
+ * confirmed in time" must never be the same answer. So is an equal height,
+ * because a publication in the beacon block itself was made knowing nothing of
+ * that block's hash only if the miner says so.
+ */
+function publicationIsBeforeBeacon({ roundId, tx, txHeight, beaconHeight } = {}) {
+  if (!pubIs32(roundId)) return { ok: false, why: 'that publication names no 32-byte round id' };
+  if (!tx || !Array.isArray(tx.outputs)) return { ok: false, why: 'there is no publication transaction to read' };
+  if (!publishesRound(tx, roundId))
+    return { ok: false, why: 'that transaction does not carry OP_RETURN "ARN" ROUND and this round\'s id' };
+  if (!Number.isInteger(txHeight) || txHeight < 0)
+    return { ok: false, why: 'that publication names no height, so nothing says it came before the beacon' };
+  if (!Number.isInteger(beaconHeight) || beaconHeight < 0)
+    return { ok: false, why: 'there is no beacon height to measure the publication against' };
+  if (txHeight >= beaconHeight)
+    return {
+      ok: false,
+      why: `that round was published at height ${txHeight}, at or after its beacon block `
+        + `${beaconHeight} - its creator could have seen the beacon first`,
+    };
+  return { ok: true, txHeight, beaconHeight };
+}
+
+// ---- arena-protocol/src/series.js
+// A ROUND SERIES: ONE PUBLICATION, A NEW ROUND EVERY 90 s, WRITTEN 72 h AHEAD (multiplayer_p2p.md §5A.5 "Round series";
+// the owner 2026-09-28, 18738972 and HORIZON72-1131 / NODE72-1131).
+//
+// The unit anchored on chain is a SERIES: its template - every field of a Round Contract, its committee_time and its
+// start - is hashed once, and `OP_RETURN "ARN" SERIES series_id` publishes it. Round `i` of it is derived, never
+// authored: the template with start_time = series_start + i * 90 s and its entry closing at that start (every run of a
+// round starts together). Nothing per round is chosen after the beacon, so a series grinds no better than one round.
+//
+// THE TIMES ARE THE SPEC'S, counted back from the series' start:
+//
+//     committee_time(k)  = series_start(k) - committee lead   (mainnet 72 h, testnet4 24 h)
+//     census_height(k)   = the highest block whose MTP <= series_start(k) - census lead   (mainnet 72 h, testnet4 36 h)
+//     series_lead_min    = mainnet 72 h, testnet4 24 h: a node refuses a series whose start is less than that after
+//                          its committee_time; the writer still lays 72 h of rounds ahead on every network
+//
+// A ROUND OF A SERIES CARRIES ITS SERIES ID AND ITS INDEX, and its id is round_id(i) = H(series_id || i)
+// (ALL-BUT-MIN-1727, the owner 2026-09-29 17:27; contracts.js). A node holds such a round only when its contract is
+// exactly the one the series derives - index inside 0 .. round_count - 1, entry window the derived one
+// (seriesRoundCheck) - and refuses entries, locks and settlements for any other.
+
+
+
+
+
+
+
+
+
+// THE GRID ITSELF LIVES IN constants.js (kanban #206: the manifest reads it there, so a client bundle carrying manifests
+// does not carry the series code); every series reader takes it from here as before.
+
+// LATE JOIN (the owner 2026-10-03: "Joining an existing round is possible with 45 seconds in"): a series may close each round's
+// entry LATE_JOIN_MS after its start instead of at it. The template's own entry_close - start is the series' late join
+// (0 or LATE_JOIN_MS), and every round derives the same: it is in the template's bytes, so in the series id.
+const LATE_JOIN_MS = 45000n;
+// The last entry of a late-join round (kanban #130) is contracts.js LATE_JOIN_LAST_ENTRY_MS.
+
+const lateJoinOf = (template) => {
+  const late = template.entryCloseMs - template.startTimeMs;
+  return late === 0n || late === LATE_JOIN_MS ? late : null;
+};
+const SERIES_MAX_MS = 86400000n;                     // a series lasts at most 24 h
+
+// A GRID SERIES (kanban #293, the owner 2026-10-12: "Pick S ... Publish the grid as a short series, the format the spec
+// already has: one ARN S series_id output per table, two per grid"): an on-demand head-to-head grid - Rock Paper Scissors'
+// 2 tables of 8 s rounds - published as one series per table instead of one OP_RETURN per round (450 outputs, ~21,000 sat
+// at 1 sat/vB). Its own rule, in the owner's words: "lead of at least 45 minutes, as path B already uses; any start time; at
+// most 30 minutes of rounds; its own entry window". Still published on demand, about 1 h ahead: a series only in how it
+// is written on chain. Nothing per round is chosen after the beacon - every round is derived from the template.
+// 24 HOURS OF ROUNDS (the owner 2026-10-12 ~09:55Z: "Make sure each grid has 24 hours of gameplay, and cost as less as possible
+// on chain"): a grid runs at most a day - 10,800 slots of 8 s per table - published once a day for ~20 sat at 0.1 sat/vB;
+// the 30 minutes ruled at ~06:20Z gave way to it.
+// A template is one by `seriesGrid: true`, its period (`seriesPeriodMs`) and count (`seriesCount`) named; all three are
+// in its series id (H(template || period || count || 'G')), so a grid's id is never a day series' or a tail's.
+const GRID_SERIES_MAX_MS = SERIES_MAX_MS;            // 24 h
+const GRID_SERIES_LEAD_MIN_MS = 45n * 60000n;
+const GRID_ID_MARK = 0x47;                                  // 'G'
+const isGridSeries = (template) => !!template && template.seriesGrid === true;
+// A GRID'S ENTRY WINDOW IS ITS OWN: entry_close - start, as the template names it, for every round of it
+const gridLateOf = (template) => template.entryCloseMs - template.startTimeMs;
+const ROUNDS_PER_SERIES = Number(SERIES_MAX_MS / ROUND_PERIOD_MS);   // 960
+
+// A SERIES RUNS ON ITS GAME'S OWN round_period (kanban #236/#237, §0A.7b.4 "Market rounds on their own 15 min period
+// instead of the 90 s grid"): a template may carry `seriesPeriodMs` - the node sets it from the game's manifest
+// (series-writer.js) - and every function here reads the period, and the day's round count, off the template. A template
+// without one is on the 90 s grid, as every series before this: its id, rounds and count are unchanged.
+const periodOf = (template, periodMs) => (periodMs !== undefined && periodMs !== null ? BigInt(periodMs)
+  : (template && template.seriesPeriodMs !== undefined && template.seriesPeriodMs !== null ? BigInt(template.seriesPeriodMs) : ROUND_PERIOD_MS));
+/** A day's rounds on a period: 960 on 90 s, 96 on 15 min. */
+const roundsPerSeries = (periodMs = ROUND_PERIOD_MS) => Number(SERIES_MAX_MS / BigInt(periodMs));
+const HOUR = 3600000n;
+// THE WRITER'S HORIZON IS 72 h ON EVERY NETWORK (TN24-1405): the schedule is laid 72 h ahead whatever the clock below.
+const SERIES_WRITE_AHEAD_MS = 72n * HOUR;
+
+/**
+ * THE SERIES CLOCK, PER NETWORK. Mainnet (CENSUS3D-1401): census cut, committee_time and lead are one 72 h.
+ * Testnet4 (TN24-1405, and the owner 14:1x: "Take the 36 h census lead"): committee_time 24 h before the start and a
+ * 24 h lead, so a round can be tested the next day - and the census 36 h before the start, because a census cut at the
+ * committee_time puts the beacon (the first block past committee_time) one block after the census block, below any
+ * publication that names that census: measured on census 154206, committee_time 1 s after its median and block 154207
+ * already past it. The 12 h between census and committee_time is the publication window.
+ */
+const SERIES_CLOCKS = Object.freeze({
+  mainnet: Object.freeze({ censusLeadMs: 72n * HOUR, committeeLeadMs: 72n * HOUR, leadMinMs: 72n * HOUR }),
+  testnet4: Object.freeze({ censusLeadMs: 36n * HOUR, committeeLeadMs: 24n * HOUR, leadMinMs: 24n * HOUR }),
+});
+const seriesSameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+/** The clock a contract's network runs: testnet4's for its network id, mainnet's for every other. */
+const seriesClockFor = (networkId) => (seriesSameBytes(networkId, NETWORK_ID_TESTNET4) || isOldTestnet4Id(networkId)
+  ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
+// the mainnet figures under their old names, for callers that name no network
+const SERIES_LEAD_MIN_MS = SERIES_CLOCKS.mainnet.leadMinMs;
+const SERIES_COMMITTEE_LEAD_MS = SERIES_CLOCKS.mainnet.committeeLeadMs;
+const SERIES_CENSUS_LEAD_MS = SERIES_CLOCKS.mainnet.censusLeadMs;
+const PUBLICATION_KIND_SERIES = 0x53;                // 'S', beside ROUND's 'R'
+
+const u64 = (v) => { const b = new Uint8Array(8); new DataView(b.buffer).setBigUint64(0, BigInt(v)); return b; };
+const u32 = (v) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b; };
+
+/** When series 0 starts on the network a contract names: its genesis parameter (ALL-BUT-MIN-1727). */
+function genesisSeriesStart(networkId) {
+  const network = networkOf(networkId);
+  if (!network) throw new Error('that contract names a network this build has no genesis for, so no series start');
+  return genesisFor(network).genesisSeriesStartMs;
+}
+
+/** series_start(k) = genesis_series_start + k * series_max. */
+function seriesStartOf(networkId, k) {
+  if (!Number.isInteger(k) || k < 0) throw new Error('a series is numbered 0, 1, 2 ...');
+  return genesisSeriesStart(networkId) + BigInt(k) * SERIES_MAX_MS;
+}
+
+/** The first series whose start is at or after `ms` on that network. */
+function seriesIndexAt(networkId, ms) {
+  const g = genesisSeriesStart(networkId);
+  const at = BigInt(ms);
+  return at <= g ? 0 : Number((at - g + SERIES_MAX_MS - 1n) / SERIES_MAX_MS);
+}
+
+/**
+ * SERIES k's TEMPLATE from any Round Contract of its committee: its start the network's genesis_series_start + k * 24 h
+ * (a series does not name its own start), committee_time its network's lead before it, entry closing at it.
+ */
+function seriesTemplate(contract, k) {
+  const start = seriesStartOf(contract.networkId, k);
+  const clock = seriesClockFor(contract.networkId);
+  return { ...contract, committeeTimeMs: start - clock.committeeLeadMs, startTimeMs: start, entryCloseMs: start };
+}
+
+/** HORIZON72-1131: a series whose start is less than 72 h after its committee_time is refused - listed, opened, entered never. */
+function seriesLeadIsValid(template) {
+  if (!template || typeof template.startTimeMs !== 'bigint' || typeof template.committeeTimeMs !== 'bigint')
+    return { ok: false, why: 'a series names its committee time and its start' };
+  const lead = template.startTimeMs - template.committeeTimeMs;
+  if (isGridSeries(template)) return gridIsValid(template, lead);
+  // A TAIL (the 82/90 fork, the owner 2026-10-01: "the partial-day tail"): fewer rounds than a day's, starting on the 90 s grid
+  // inside its day and running to that day's end, on testnet4 only, with a committee lead of at least 12 h.
+  if (Number.isInteger(template.seriesCount) && template.seriesCount !== roundsPerSeries(periodOf(template))) return tailIsValid(template, lead);
+  const min = seriesClockFor(template.networkId).leadMinMs;
+  if (lead < min)
+    return { ok: false, why: `that series starts ${lead} ms after its committee time, and a round must exist ${min} ms (${min / HOUR} h) before its first entry` };
+  if (lateJoinOf(template) === null)
+    return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
+  // PICK B (old-series.js): series 3cfbe516 of testnet4's old id predates genesis_series_start - no grid to be on
+  if (isOldTestnet4Id(template.networkId) && isOldTestnet4Series(seriesId(template))) return { ok: true, leadMs: lead, oldSeries: true };
+  // ON THE GENESIS GRID (ALL-BUT-MIN-1727): a series starts at genesis_series_start + k * 24 h, never where it names
+  let g;
+  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
+  if (template.startTimeMs < g || (template.startTimeMs - g) % SERIES_MAX_MS !== 0n)
+    return { ok: false, why: `that series starts at ${template.startTimeMs}, and a series starts at genesis_series_start ${g} + k * ${SERIES_MAX_MS} ms` };
+  return { ok: true, leadMs: lead };
+}
+
+function gridIsValid(template, lead) {
+  const period = template.seriesPeriodMs, count = template.seriesCount;
+  if (typeof period !== 'bigint' || period <= 0n) return { ok: false, why: 'a grid series names its period' };
+  if (!Number.isInteger(count) || count < 1) return { ok: false, why: 'a grid series names its round count' };
+  if (BigInt(count) * period > GRID_SERIES_MAX_MS)
+    return { ok: false, why: `a grid series of ${count} rounds every ${period} ms runs ${BigInt(count) * period} ms, and a grid runs at most ${GRID_SERIES_MAX_MS} ms (24 h)` };
+  if (lead < GRID_SERIES_LEAD_MIN_MS)
+    return { ok: false, why: `that grid starts ${lead} ms after its committee time, and a grid needs ${GRID_SERIES_LEAD_MIN_MS} ms (45 min)` };
+  if (typeof template.entryCloseMs !== 'bigint' || gridLateOf(template) < 0n)
+    return { ok: false, why: 'a grid round\'s entry closes at or after its start' };
+  return { ok: true, leadMs: lead, grid: true };
+}
+
+function tailIsValid(template, lead) {
+  if (seriesClockFor(template.networkId) !== SERIES_CLOCKS.testnet4) return { ok: false, why: 'a tail series is testnet4\'s only: the mainnet clock is one 72 h' };
+  if (lateJoinOf(template) === null) return { ok: false, why: `a series round's entry closes at its start or ${LATE_JOIN_MS} ms after it (late join)` };
+  let g;
+  try { g = genesisSeriesStart(template.networkId); } catch (e) { return { ok: false, why: e.message }; }
+  const into = template.startTimeMs - g;
+  if (template.startTimeMs < g || into % ROUND_PERIOD_MS !== 0n) return { ok: false, why: `a tail starts on the 90 s grid from genesis_series_start ${g}` };
+  const index = Number((into % SERIES_MAX_MS) / ROUND_PERIOD_MS);
+  if (index === 0 || template.seriesCount !== ROUNDS_PER_SERIES - index)
+    return { ok: false, why: `a tail from round ${index} of its day runs ${ROUNDS_PER_SERIES - index} rounds, to the day's end - not ${template.seriesCount}` };
+  if (lead < TAIL_COMMITTEE_LEAD_MIN_MS)
+    return { ok: false, why: `that tail starts ${lead} ms after its committee time, and a tail needs ${TAIL_COMMITTEE_LEAD_MIN_MS} ms (12 h)` };
+  return { ok: true, leadMs: lead, tail: true, fromIndex: index };
+}
+
+/** A contract without its series fields: what a series' template is. */
+const withoutSeries = (c) => { const { seriesId: _s, roundIndex: _i, seriesCount: _n, seriesCutFrom: _c, seriesPeriodMs: _p, seriesGrid: _g, ...rest } = c; void _s; void _i; void _n; void _c; void _p; void _g; return rest; };
+
+/**
+ * A HELD SERIES' ROUND COUNT AND CUT (the 82/90 tail, the owner 2026-10-01): a template may carry `seriesCount` - a tail's
+ * rounds, fewer than a day's 960 - and `seriesCutFrom` - the index from which a held series is replaced by a tail. Neither
+ * is in the template's bytes; the count is in its series id (H(template || period || count)), the cut is the node's.
+ */
+const countOf = (template, count) => (count !== undefined ? count
+  : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
+const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
+
+/** series_id = H(template || round_period || round_count), tagged; a grid's with 'G' after its count. */
+function seriesId(template, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
+  count = countOf(template, count);
+  // a v2 template's `nodes` is no part of its id (2026.0.2, kanban #348): its rounds' seats are drawn after it
+  const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
+  const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
+  bytes.set(body, 0);
+  bytes.set(u64(periodMs), body.length);
+  bytes.set(u32(count), body.length + 8);
+  if (isGridSeries(template)) bytes[body.length + 12] = GRID_ID_MARK;
+  return taggedHash('ARENA/v1/Series', bytes);
+}
+
+/** Round `i` of the series, derived: start = series_start + i * 90 s, entry closing at that start. */
+function seriesRound(template, i, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
+  count = countOf(template, count);
+  if (!Number.isInteger(i) || i < 0 || i >= count) throw new Error(`round ${i} is outside the series' 0 .. ${count - 1}`);
+  const start = template.startTimeMs + BigInt(i) * BigInt(periodMs);
+  const late = isGridSeries(template) ? gridLateOf(template)
+    : template.entryCloseMs !== undefined && lateJoinOf(template) !== null ? lateJoinOf(template) : 0n;
+  return { ...withoutSeries(template), startTimeMs: start, entryCloseMs: start + late,
+    seriesId: seriesId(template, { periodMs, count }), roundIndex: i };
+}
+
+/**
+ * IS THIS THE ROUND A SERIES THIS NODE HOLDS DERIVES? A contract naming no series is not a series round ({ ok, series:
+ * false }). One naming a series must name one of `templates` (the series this node holds), an index inside
+ * 0 .. round_count - 1, and be byte for byte `seriesRound(template, i)` - its entry window the derived one.
+ */
+/**
+ * A SERIES' RUN FITS ITS 90 s SLOT (the 82/90 hard fork, the owner 2026-10-01; multiplayer_p2p.md "Timing": "a run lasts at
+ * most 82 seconds ... run ends <= start_time(i+1) - 8 s"): the run its rounds name (blockTicks, at the core's tick rate)
+ * ends at least 8 s before the next round starts. Asked of a series on a core that takes its rounds' run length; a core
+ * held to one length (the truck before the fork, 180 s) is that core's own and was posted before the rule.
+ */
+const SERIES_RESULT_CARD_MS = 8000n;
+function seriesRunFits(template, { periodMs } = {}) {
+  periodMs = periodOf(template, periodMs);
+  let runMs;
+  try { runMs = msForTicks(template.blockTicks).ms; } catch (e) { return { ok: false, why: `the series names no run length: ${e.message}` }; }
+  const most = BigInt(periodMs) - SERIES_RESULT_CARD_MS;
+  if (BigInt(runMs) > most)
+    return { ok: false, why: `a run of ${template.blockTicks} ticks is ${runMs} ms, and a round of a ${periodMs} ms series runs at most ${most} ms (its next start less ${SERIES_RESULT_CARD_MS} ms)` };
+  return { ok: true, runMs: BigInt(runMs) };
+}
+
+function seriesRoundCheck(contract, templates, { periodMs, count: given } = {}) {
+  if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
+  const t = (templates || []).find((x) => seriesSameBytes(seriesId(x, { periodMs, count: given }), contract.seriesId));
+  const count = t ? countOf(t, given) : ROUNDS_PER_SERIES;
+  const hex = Array.from(contract.seriesId.subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
+  if (!t) return { ok: false, series: true, why: `that round names series ${hex}, and this node holds no such series` };
+  if (!Number.isInteger(contract.roundIndex) || contract.roundIndex < 0 || contract.roundIndex >= count)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} is outside series ${hex}'s 0 .. ${count - 1}` };
+  // REPLACED FROM ITS CUT (the 82/90 tail): a held series cut at index C takes no round from C on - a tail carries them.
+  if (Number.isInteger(t.seriesCutFrom) && contract.roundIndex >= t.seriesCutFrom)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} is replaced from index ${t.seriesCutFrom} by its 82 s tail: not announced, entered, locked or settled` };
+  const derived = seriesRound(t, contract.roundIndex, { periodMs: periodOf(t, periodMs), count });
+  if (contract.startTimeMs !== derived.startTimeMs || contract.entryCloseMs !== derived.entryCloseMs
+    || contract.committeeTimeMs !== derived.committeeTimeMs)
+    return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
+      + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
+  // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2, kanban #348): compared without it
+  if (!seriesSameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
+    return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
+  return { ok: true, series: true, index: contract.roundIndex, template: t };
+}
+
+/** The indices of the series' rounds whose start lies in [fromMs, toMs]. */
+function seriesRoundsWithin(template, fromMs, toMs, { periodMs, count } = {}) {
+  periodMs = periodOf(template, periodMs);
+  count = countOf(template, count);
+  const p = BigInt(periodMs), s = template.startTimeMs, from = BigInt(fromMs), to = BigInt(toMs);
+  if (to < s) return [];
+  const first = from <= s ? 0n : (from - s + p - 1n) / p;
+  const last = (to - s) / p;
+  const out = [];
+  for (let i = first; i <= last && i < BigInt(count); i++) out.push(Number(i));
+  return out;
+}
+
+/** The 36 bytes a series' publication carries: "ARN", SERIES, series id. */
+function seriesPublicationPayload(seriesIdBytes) {
+  if (!(seriesIdBytes instanceof Uint8Array) || seriesIdBytes.length !== 32) throw new TypeError('a series publication commits to a 32-byte series id');
+  const out = new Uint8Array(PUBLICATION_BYTES);
+  out.set(PUBLICATION_MAGIC, 0);
+  out[3] = PUBLICATION_KIND_SERIES;
+  out.set(seriesIdBytes, 4);
+  return out;
+}
+
+/**
+ * WHERE A SERIES WAS PUBLISHED, IN A CHAIN VIEW THIS NODE READ ITSELF: the lowest block carrying its series payload - a
+ * series round has no publication of its own, the series' is its (§5A.5 for a series). Null when the view holds none.
+ */
+function findSeriesPublication(view, seriesIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  const want = seriesPublicationPayload(seriesIdBytes);
+  for (let i = 0; i < view.blocks.length; i++) {
+    for (const raw of view.blocks[i].transactions || []) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      if (commitmentsOf(tx).some((p) => p.length === want.length && p.every((b, j) => b === want[j]))) return { tx, height: view.firstHeight + i };
+    }
+  }
+  return null;
+}
+
+/** The output that publishes a series: zero value, one direct push. */
+function seriesPublicationOutput(seriesIdBytes) {
+  const payload = seriesPublicationPayload(seriesIdBytes);
+  const script = new Uint8Array(2 + PUBLICATION_BYTES);
+  script[0] = OP_RETURN;
+  script[1] = PUBLICATION_BYTES;
+  script.set(payload, 2);
+  return { value: 0n, script };
+}
+
+// ---- arena-protocol/src/game-market.js
+// MARKETS ON GAMES (kanban #362 feature 6, docs/PLATFORM-RESEARCH.md item 6; protocol 2026.0.6): "an attested market whose
+// outcome is a game round's signed result (e.g. BULLS vs BEARS of a Tick Tock round ...). It turns every game into a spectator
+// sport with no external oracle: the committee's 5-of-7 RoundResult resolves it."
+//
+// THE SHAPE. The market's manifest names a source game, the kind of signed result it reads and a mapping of that result's values
+// onto its outcomes (manifest.js `gameSource`, marker 0x05); each round of the market names the ONE round of that game it is a
+// market on (contracts.js `sourceRoundId`, marker 0xc4). Both are bytes only a version-6 manifest and round carry.
+//
+// WHAT DECIDES IT: the source round's own signed result, checked here exactly as a client checks it for the source round
+// itself (round-result.js roundResultStands, as arena-client round-verdict.js does): for source kind ROUND_RESULT the §13
+// RoundResult { round_id, open_cents, close_cents, front } whose id at least the source round's threshold (5 of 7, threshold.js
+// receiptsNeeded of its settlement slots) of distinct keys of the source round's settlement committee signed with their node
+// keys (BIP-340). Nothing else: no attestor, no seat's word, no price of the market's own.
+//
+// THE COMMITTEE IS THE CALLER'S DERIVATION, NEVER A CONTRACT'S `nodes`: from version 2 a round's id hashes its contract with
+// `nodes` emptied (constants.js DRAW_FREE_VERSION), so a source contract handed in by anyone could carry any keys there. A seat
+// passes the committee the census and the beacon draw for the source round (arena-node roster.committeeFor(id, 'settlement')),
+// as the page passes the one it derived.
+//
+// TIMING (the market's picks must be made blind): its entries close no later than its source round STARTS - before the
+// source's first price sample exists - and its source round ends no later than its resolution time (entry close + the
+// terms' `resolveAfterCloseMs`), so its attestors' deadline (`deadlineAfterResolveMs` after that, attested.js marketTimes) is a
+// deadline for the source's result too. A market whose source does not fit is never decided on an outcome: VOID, every stake
+// back. So is one whose source result maps to a refund (Tick Tock FLAT), and one with no standing result by its deadline.
+//
+// NO CURVE, as everywhere in this package: `verify(signature, message, key)` is injected (BIP-340 for node keys).
+
+
+
+
+
+
+
+
+const gmIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const gmSame = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const at = (ms) => { try { return new Date(Number(ms)).toISOString(); } catch { return String(ms); } };
+
+/**
+ * WHEN A SOURCE ROUND ENDS: its start plus its run (blockTicks), rounded UP to the whole millisecond - the RoundResult's close
+ * is the last sample at or before its last tick (round-result.js roundResultFrom), so nothing of it is known before this.
+ */
+function sourceRoundEndMs(source) {
+  const { ms, exact } = msForTicks(BigInt(source.blockTicks));
+  return BigInt(source.startTimeMs) + ms + (exact ? 0n : 1n);
+}
+
+/**
+ * WHICH OUTCOME A SOURCE RESULT PAYS (the market's `gameSource` mapping). `value`: for ROUND_RESULT the front - FRONT 1 BULLS,
+ * 2 BEARS, 3 FLAT, or its name. Answers { ok, outcome, value } for an outcome index, { ok, refund: true, value } for a value
+ * mapped to GAME_MARKET_REFUND (every stake back), or { ok: false, why }. Pure: it checks no signature - gameMarketResolution
+ * calls it only on a result that stands.
+ */
+function gameMarketOutcome(value, gameSource) {
+  const values = gameSource && SOURCE_VALUES[gameSource.sourceKind];
+  if (!values) return { ok: false, why: `source kind ${gameSource && gameSource.sourceKind} is not one this engine reads` };
+  const i = typeof value === 'string' ? values.indexOf(value) : Number.isInteger(value) ? value - 1 : -1;
+  if (i < 0 || i >= values.length) return { ok: false, why: `${value} is no result of a ${values.join(' / ')} source` };
+  const to = gameSource.mapping[i];
+  if (to === GAME_MARKET_REFUND) return { ok: true, refund: true, value: values[i], why: `the source round ended ${values[i]}, which this market refunds: every stake goes back` };
+  if (!Number.isInteger(to)) return { ok: false, why: `the market maps ${values[i]} to nothing` };
+  return { ok: true, outcome: to, value: values[i] };
+}
+
+/**
+ * DOES THIS SOURCE ROUND FIT THIS MARKET ROUND? `market` the market round's contract, `manifest` its game's (a market on a game),
+ * `source` the source round's contract. It is the round the market names (its id - H(contract) or a series' H(series_id || i)
+ * - is the market's `sourceRoundId`), a round of the manifest's source game, it STARTS no earlier than the market's entries
+ * close, and it ENDS no later than the market's resolution time. Each refusal by name; answers, never throws. A refusal
+ * about the round the market names - its game, its times - carries `void: true`: those bytes are that round's id, so it can
+ * never come to fit, and the market is VOID; a refusal before that (another contract, none) says nothing of the market.
+ *
+ * A SOURCE ROUND OF A SERIES (Tick Tock's rounds are): its id H(series_id || i) does not hash its contract, so a contract that
+ * names the right series and index could name any times. It is taken only as its series derives it - `sourceSeries` the
+ * series templates to check it against (series.js seriesRoundCheck), or `sourceHeld: true` from a caller whose store keeps a
+ * series round only after that same check (a seat: POST /round's series refusal). Neither: refused, and not VOID.
+ */
+function gameMarketFitsSource({ market, manifest, source, sourceSeries = null, sourceHeld = false }) {
+  if (!isGameMarket(manifest)) return { ok: false, why: 'that game is no market on a game: no source round decides it' };
+  const name = `market "${manifest.gameName}"`;
+  if (!market || !gmIs32(market.sourceRoundId)) return { ok: false, why: `that round of ${name} names no source round` };
+  if (!source) return { ok: false, why: `no contract of source round ${toHex(market.sourceRoundId).slice(0, 16)} to check ${name} against` };
+  let sid;
+  try { sid = roundId(source); } catch (e) { return { ok: false, why: `that source contract does not encode: ${e.message}` }; }
+  if (!gmSame(sid, market.sourceRoundId))
+    return { ok: false, why: `that contract is round ${toHex(sid).slice(0, 16)}; ${name}'s round is on ${toHex(market.sourceRoundId).slice(0, 16)}` };
+  if (source.seriesId !== undefined && source.seriesId !== null && sourceHeld !== true) {
+    if (!Array.isArray(sourceSeries))
+      return { ok: false, why: `source round ${toHex(sid).slice(0, 16)} is round ${source.roundIndex} of a series: its id does not hash its contract, so it is taken only as its series derives it, and no series was handed in to check it` };
+    const sc = seriesRoundCheck(source, sourceSeries);
+    if (!sc.ok) return { ok: false, why: `source round ${toHex(sid).slice(0, 16)}: ${sc.why}` };
+  }
+  if (!gmIs32(source.gameId) || !gmSame(source.gameId, manifest.gameSource.sourceGameId))
+    return { ok: false, void: true, why: `source round ${toHex(sid).slice(0, 16)} plays game ${gmIs32(source.gameId) ? toHex(source.gameId).slice(0, 16) : '(none)'}; ${name} is on game ${toHex(manifest.gameSource.sourceGameId).slice(0, 16)}` };
+  if (typeof market.entryCloseMs !== 'bigint' || typeof source.startTimeMs !== 'bigint') return { ok: false, why: 'that round names no entry close, or its source no start' };
+  // ENTRY CLOSES BEFORE THE SOURCE STARTS: a pick made while the source round runs is a pick made on its first prices
+  if (market.entryCloseMs > source.startTimeMs)
+    return { ok: false, void: true, why: `${name}'s entries close at ${at(market.entryCloseMs)}, after its source round ${toHex(sid).slice(0, 16)} starts at ${at(source.startTimeMs)}: a pick would be made with the outcome under way` };
+  const terms = manifest.marketTerms;
+  if (!terms) return { ok: false, void: true, why: `${name} names no market terms: no resolution time to hold its source round's end to` };
+  const resolveAtMs = market.entryCloseMs + terms.resolveAfterCloseMs;
+  let endMs;
+  try { endMs = sourceRoundEndMs(source); } catch (e) { return { ok: false, void: true, why: `that source round names no run: ${e.message}` }; }
+  if (endMs > resolveAtMs)
+    return { ok: false, void: true, why: `source round ${toHex(sid).slice(0, 16)} ends at ${at(endMs)}, after ${name}'s resolution time ${at(resolveAtMs)} (${terms.resolveAfterCloseMs} ms after its entry close)` };
+  return { ok: true, sourceRoundId: sid, sourceEndMs: endMs, resolveAtMs };
+}
+
+/**
+ * THE OUTCOME OF A MARKET ROUND ON A GAME, FROM ITS SOURCE ROUND'S SIGNED RESULT. `result` the source's RoundResult
+ * { roundId, openCents, closeCents } (its front follows from them), `sigs` [{ key, signature }] (hex or bytes) over its id,
+ * `committee` the source round's settlement committee as the CALLER derived it (never `source.nodes`), `verify` BIP-340;
+ * `sourceSeries` / `sourceHeld` for a source round of a series, as gameMarketFitsSource takes them.
+ * The threshold is the source's own: receiptsNeeded(source.settlementSlots) - 5 of 7 - a number its id hashes.
+ *
+ * Answers one of:
+ *   { ok: true, outcome, label, value, signers }   the market pays `outcome`
+ *   { ok: true, refund: true, value, signers }      the source's result is one the market refunds (VOID: every stake back)
+ *   { ok: false, void: true, why }                  the source does not fit this market round, and never will: VOID
+ *   { ok: false, why }                              no standing result yet (too few signatures, a stranger's, another round's)
+ * Never throws.
+ */
+function gameMarketResolution({ market, manifest, source, result, sigs, committee, verify, sourceSeries = null, sourceHeld = false }) {
+  // A SOURCE THAT DOES NOT FIT NEVER WILL (gameMarketFitsSource's `void`): the market is VOID
+  const fits = gameMarketFitsSource({ market, manifest, source, sourceSeries, sourceHeld });
+  if (!fits.ok) return fits;
+  const g = manifest.gameSource;
+  if (g.sourceKind !== SOURCE_KIND.ROUND_RESULT) return { ok: false, why: `source kind ${g.sourceKind} is not one this engine reads` };
+  if (!result || !gmIs32(result.roundId)) return { ok: false, why: 'no round result to read: { roundId, openCents, closeCents }' };
+  if (!gmSame(result.roundId, fits.sourceRoundId))
+    return { ok: false, why: `that result is round ${toHex(result.roundId).slice(0, 16)}'s; this market is on ${toHex(fits.sourceRoundId).slice(0, 16)}` };
+  let front;
+  try { front = frontOf(result.openCents, result.closeCents); } catch (e) { return { ok: false, why: `that result names no prices: ${e.message}` }; }
+  if (result.front !== undefined && result.front !== front && result.front !== frontName(front))
+    return { ok: false, why: `that result says ${result.front}, and ${result.openCents} -> ${result.closeCents} cents is ${frontName(front)}` };
+  let threshold;
+  try { threshold = receiptsNeeded(source.settlementSlots); } catch (e) { return { ok: false, why: `the source round's threshold: ${e.message}` }; }
+  const keys = (committee || []).map((k) => (typeof k === 'string' ? k.toLowerCase() : gmIs32(k) ? toHex(k) : ''));
+  if (!keys.length || keys.some((k) => !/^[0-9a-f]{64}$/.test(k))) return { ok: false, why: 'no source committee of 32-byte keys to count signatures against' };
+  if (new Set(keys).size > source.settlementSlots)
+    return { ok: false, why: `the source round seats ${source.settlementSlots}; a committee of ${new Set(keys).size} keys is not its committee` };
+  const st = roundResultStands({ result: { roundId: result.roundId, openCents: result.openCents, closeCents: result.closeCents, front }, sigs, committee: keys, threshold, verify });
+  if (!st.ok) return { ok: false, why: `source round ${toHex(fits.sourceRoundId).slice(0, 16)}'s result ${frontName(front)} does not stand: ${st.why}` };
+  const out = gameMarketOutcome(front, g);
+  if (!out.ok) return out;
+  if (out.refund) return { ok: true, refund: true, value: out.value, signers: st.signed.length, threshold, why: out.why };
+  return { ok: true, outcome: out.outcome, label: manifest.outcomes[out.outcome], value: out.value, signers: st.signed.length, threshold,
+    why: `source round ${toHex(fits.sourceRoundId).slice(0, 16)} ended ${out.value} (signed by ${st.signed.length} of its committee, ${threshold} needed): outcome ${out.outcome} "${manifest.outcomes[out.outcome]}"` };
+}
+
+/**
+ * IS A MARKET ROUND ON A GAME VOID (pari-mutuel VOID: every stake back, its fee too - as attested.js marketVoided for a market
+ * with attestors)? When its resolution is a refund (the source ended on a value it refunds), when its source does not fit it,
+ * or when no result of its source stands by its deadline - entry close + resolveAfterCloseMs + deadlineAfterResolveMs, on the
+ * seat's clock (a source round that was VOID itself, or never ran, signs no result). `resolution` is gameMarketResolution's
+ * answer, or null for none yet. Answers { voided, why }.
+ */
+function gameMarketVoided(resolution, { market, manifest, nowMs }) {
+  if (resolution && resolution.ok && resolution.refund) return { voided: true, why: resolution.why };
+  if (resolution && !resolution.ok && resolution.void) return { voided: true, why: `its source does not fit it: ${resolution.why}` };
+  if (resolution && resolution.ok) return { voided: false };
+  const terms = roundTermsOf(manifest, market);
+  if (!terms) return { voided: false };
+  const { deadlineMs } = marketTimes({ entryCloseMs: market.entryCloseMs, terms });
+  if (BigInt(nowMs) >= deadlineMs) return { voided: true, why: `no signed result of its source round stood by the market's deadline ${at(deadlineMs)}: every stake goes back` };
+  return { voided: false };
 }
 
 // ---- arena-protocol/src/order-book.js
@@ -27733,6 +28548,9 @@ function batchDeclineId({ roundId, k }) {
 
 
 
+
+
+
 const sats = (msat) => (Number(BigInt(msat)) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 });
 
 /**
@@ -27752,7 +28570,12 @@ function marketForRound(round, { manifestBytes = null } = {}) {
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
-    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null }, round);
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null,
+    // A SCALAR MARKET'S BOUNDS (protocol 7) and A MARKET ON A GAME'S SOURCE (protocol 6), kanban #362: what its lines say and
+    // what its outcome is checked by - the decoded manifest kept beside them for that check
+    ...(isScalar(m) ? { scalar: { low: m.scalar.low, high: m.scalar.high, unit: m.scalar.unit } } : {}),
+    ...(isGameMarket(m) ? { gameSource: { sourceGameId: toHex(m.gameSource.sourceGameId), mapping: [...m.gameSource.mapping] } } : {}),
+    manifest: m }, round);
 }
 
 /**
@@ -27861,6 +28684,8 @@ const LOCK_HAND_MS_PICK = 120000;
  */
 function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = false }) {
   return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
+    // a market on a game's round names its source round (kanban #362 feature 6): its outcome is that round's signed result
+    ...(round.sourceRoundId instanceof Uint8Array ? { sourceRoundIdHex: toHex(round.sourceRoundId) } : {}),
     nodes: [...nodes], confirmed: !!confirmed };
 }
 
@@ -27897,6 +28722,69 @@ async function checkAttestation({ attestationHex, market, roundIdHex, verify = w
 }
 
 /**
+ * A MARKET OUTCOME, CHECKED BY THIS PAGE (kanban #362: the market lines of protocols 6 and 7), whatever its kind - the seats'
+ * GET /outcome answer `o`, the pick's `market` (marketForRound's), its round id:
+ * - an outcome attestation: checkAttestation, against the attestors the page pinned or the player confirmed;
+ * - a VALUE attestation (a scalar market, type 0x2a): its attestors' signatures (Ed25519, `verify`) and threshold, for this
+ *   round, against the manifest's attestors - answers the value, and where it is paid (clamped to the bounds);
+ * - a market on a game's source result: the source round's RoundResult, signed by ITS settlement committee - which
+ *   `sourceCommittee(sourceRoundIdHex, sourceContract)` derives on this page (clientCommittee), never the seats' list - at its
+ *   own threshold, mapped by the manifest. A source round of a series is not checked here yet (its id does not hash its
+ *   contract, and the page holds no series templates): shown unverified, by name.
+ * `{ verified, outcome, label, value, refund, why }`; never throws.
+ */
+async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundIdHex = null, entryCloseMs = null,
+  sourceCommittee = null, verify = webCryptoEd25519, verifySchnorr = null }) {
+  try {
+    if (o && o.gameOutcome && market && market.gameSource) {
+      const g = o.gameOutcome;
+      if (g.void) return { verified: false, why: `the seats hold it VOID: ${g.why || 'its source round refunds it'} (not checked here)` };
+      let source;
+      try { source = decodeRoundContract(fromHex(String(g.sourceContract))); } catch (e) { return { verified: false, why: `the source contract does not decode: ${e.message}` }; }
+      if (source.seriesId !== undefined && source.seriesId !== null)
+        return { verified: false, why: `its source is round ${source.roundIndex} of a series, which this page does not check yet` };
+      if (typeof sourceCommittee !== 'function' || typeof verifySchnorr !== 'function') return { verified: false, why: 'this page cannot derive the source round\'s committee' };
+      const committee = await sourceCommittee(String(g.source), source);
+      if (!committee || !committee.length) return { verified: false, why: 'this page could not derive the source round\'s committee from the chain' };
+      const r = gameMarketResolution({ market: { sourceRoundId: fromHex(String(sourceRoundIdHex || g.source)), entryCloseMs: BigInt(entryCloseMs ?? o.entryCloseMs) },
+        manifest: market.manifest, source, result: { roundId: fromHex(String(g.source)), openCents: Number(g.openCents), closeCents: Number(g.closeCents) },
+        sigs: g.sigs, committee, verify: verifySchnorr });
+      if (!r.ok) return { verified: false, why: r.why };
+      return r.refund ? { verified: true, refund: true, value: r.value, why: r.why }
+        : { verified: true, outcome: r.outcome, label: r.label, value: r.value, signers: r.signers, threshold: r.threshold, why: r.why };
+    }
+    if (o && o.attestation && market && market.scalar && isValueAttestationBytes(fromHex(String(o.attestation)))) {
+      let a;
+      try { a = decodeValueAttestation(fromHex(String(o.attestation))); } catch (e) { return { verified: false, why: `not a value attestation: ${e.message}` }; }
+      const digest = valueAttestationBodyId(a);
+      const said = new Map();
+      for (const x of a.signatures) {
+        const v = await verify(x.signature, digest, x.key);
+        if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the value is shown unverified' };
+        said.set(`${toHex(x.key)}:${toHex(x.signature)}`, v === true);
+      }
+      const st = valueAttestationStands(a, { manifest: market.manifest, roundIdBytes: fromHex(roundIdHex),
+        verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
+      return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
+    }
+    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify });
+    return { verified: false, why: 'the seats handed no evidence for it' };
+  } catch (e) { return { verified: false, why: e.message }; }
+}
+
+/** A scalar value in its unit: "8,300,000 USD cents" -> "83,000.00 USD" for cents, else the number and its unit. */
+function scalarValueLine(value, unit) {
+  const v = BigInt(value);
+  const u = String(unit || '');
+  const m = u.match(/^(.*?)\s*cents$/i);
+  if (m) {
+    const neg = v < 0n, a = neg ? -v : v;
+    return `${neg ? '-' : ''}${(a / 100n).toLocaleString('en-US')}.${String(a % 100n).padStart(2, '0')} ${m[1] || ''}`.trim();
+  }
+  return `${v.toLocaleString('en-US')} ${u}`.trim();
+}
+
+/**
  * THE LOBBY'S MARKET LINES (Unity draws them under the round rows, kind 'market'): for each pick this page made, the pick
  * while its round is open, then the outcome as the page checked it, and what it means for this pick.
  * `picks`: [{ roundIdHex, entryIdHex, market, pick, stakeMsat, entryCloseMs }]; `outcomes`: Map roundIdHex -> the seats'
@@ -27914,7 +28802,14 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
       continue;
     }
     if (!o || o.state === 'OPEN') {
-      lines.push({ kind: 'market', text: `${head}: you picked '${label}' · waiting for the outcome · ${p.market.threshold} of ${p.market.attestors.length} attestors` });
+      // what decides it: a market on a game waits for its source round's signed result, any other for its attestors
+      const by = p.market.gameSource ? `source round ${String(p.sourceRoundIdHex || '').slice(0, 8)}'s signed result`
+        : `${p.market.threshold} of ${p.market.attestors.length} attestors${p.market.scalar ? ' to sign the value' : ''}`;
+      lines.push({ kind: 'market', text: `${head}: you picked '${label}' · waiting for ${by}` });
+      continue;
+    }
+    if (o.state === 'VOID') {
+      lines.push({ kind: 'market', text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
     if (o.state === 'DISPUTED') {
@@ -27927,7 +28822,11 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
       continue;
     }
     const row = o.table && o.table.rows ? o.table.rows.find((r) => r.entryId === p.entryIdHex) : null;
-    const signed = `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
+    // WHAT WAS SIGNED, as this page checked it: a scalar market's value and where it pays, a market on a game's source result,
+    // else the attestors' outcome
+    const signed = p.market.scalar ? `value ${scalarValueLine(check.value, p.market.scalar.unit)}${check.clamped !== undefined && check.clamped !== check.value ? ` (paid as ${scalarValueLine(check.clamped, p.market.scalar.unit)})` : ''} between ${scalarValueLine(p.market.scalar.low, p.market.scalar.unit)} and ${scalarValueLine(p.market.scalar.high, p.market.scalar.unit)} (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`
+      : p.market.gameSource ? `'${check.label}' (source round ${String(p.sourceRoundIdHex || '').slice(0, 8)} ended ${check.value}, signed by its committee, verified)`
+        : `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
     if (!row) { lines.push({ kind: 'market', text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     const net = BigInt(row.netMsat);
     const pay = BigInt(row.payoutMsat);
@@ -27936,7 +28835,9 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
     // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
-    else if (row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
+    else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
+    // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
+    else if (p.market.scalar) lines.push({ kind: 'market', text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
     else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
@@ -29119,6 +30020,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          winningsQualify: winningsQualify,
          marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,
          marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,
+         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine,
          hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,
          seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,
          SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,
