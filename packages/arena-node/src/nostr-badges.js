@@ -56,7 +56,9 @@ export const BADGE_AWARD_KIND = 8;
  * and a later version of the catalogue dates its own - in the past when it ships: a relay refuses an event dated more than
  * a few minutes ahead of its clock (ours: 15 min), and a date set to the release day is ahead of every clock west of it.
  */
-export const BADGES_AT_S = Math.floor(Date.UTC(2026, 9, 14) / 1000);
+// version 2 (kanban #367, 2026-10-15): the top-3 badge renamed "Leaderboard top 3" - dated the 15th, so every relay replaces the
+// definitions of the 14th (a replaceable event of the same date would be kept by the lower id, not the newer name)
+export const BADGES_AT_S = Math.floor(Date.UTC(2026, 9, 15) / 1000);
 /** How long after a week closes its board is read for the board badge: two hours, for the rounds started at its end to settle. */
 export const BOARD_GRACE_MS = 2 * 3600 * 1000;
 /**
