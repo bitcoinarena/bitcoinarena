@@ -5,7 +5,12 @@
 //
 //   POST /proposal   { proposal: hex of body || signature, blockHash: hex }   -> 201 { id, publishedAt, votingFrom, ... } or 422 why
 //   GET  /proposals                                                            -> { proposals: [...] }, newest publication first
-import { decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES } from '../../arena-protocol/src/ballot.js';
+//
+// A REPEAL (§27A.7.6) is read against the history live AT THE PROPOSAL'S PUBLICATION HEIGHT (`historyFor(net, height)`, the
+// tally's - ballot-tally.js): the same answer at every seat, whenever it is asked. Until this seat has decided every proposal
+// that activates at or before that height, it cannot know that history, and says so (503) rather than guess a schedule.
+// A proposal's outcome is written into its record once (`decide`), and never tallied again.
+import { decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -13,9 +18,12 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
  * `confirmedTx(txidHex, blockHashHex)` -> { raw: Uint8Array, height } or null: the transaction from that block of this seat's
  * chain, and the block's height (main.js: getrawtransaction with the block hash, which needs no txindex). `recipientsFor(networkIdHex,
  * height)` -> the network's donation set in force at that height (its recipients), or null; `lowestBondMinSatsFor(networkIdHex)` -> BigInt; `verify(sig, msg, pubkey)`; `store`:
- * { read() -> [], write(list) }.
+ * { read() -> [], write(list) }. `scheduleFor(net)` / `repealScheduleFor(net)`: the network's schedules (regtest's short ones);
+ * `historyFor(net, height)` -> the live history at that height ([{ config }], liveConfig's), or null while it cannot be known yet;
+ * none given: no proposal is read as a repeal (the first slice's behaviour).
  */
-export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null }) {
+export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsFor, verify, store, schedule = SCHEDULES.mainnet, scheduleFor = null,
+  repealSchedule = REPEAL_SCHEDULES.mainnet, repealScheduleFor = null, historyFor = null }) {
   const held = new Map((store && store.read ? store.read() || [] : []).map((x) => [x.id, x]));
   const save = () => { if (store && store.write) store.write([...held.values()]); };
   return {
@@ -36,7 +44,12 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (!recipients) return { ok: false, status: 422, why: `this seat knows no donation set in force for that network at height ${tx.height}` };
       const dep = depositOf({ raw: tx.raw, height: tx.height, proposal: p, recipients });
       if (!dep.ok) return { ok: false, status: 422, why: dep.why };
-      const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net), schedule: (scheduleFor && scheduleFor(net)) || schedule, verify });
+      // THE HISTORY A REPEAL IS READ AGAINST: the configs live before, at the height it was published at (27A.7.6)
+      const history = historyFor ? historyFor(net, dep.publishedAt) : null;
+      if (historyFor && !history)
+        return { ok: false, status: 503, why: `this seat has not yet decided every proposal that activates by height ${dep.publishedAt}, so it cannot yet say whether this one is a repeal: ask again shortly` };
+      const stands = proposalStands(p, { publishedAt: dep.publishedAt, depositSats: dep.depositSats, lowestBondMinSats: lowestBondMinSatsFor(net),
+        schedule: (scheduleFor && scheduleFor(net)) || schedule, repealSchedule: (repealScheduleFor && repealScheduleFor(net)) || repealSchedule, verify, history });
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
@@ -45,5 +58,12 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
+    /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): a decided proposal is never tallied again, across restarts too. */
+    decide(id, outcome) {
+      const had = held.get(id);
+      if (!had || had.decided) return false;
+      held.set(id, { ...had, decided: outcome }); save();
+      return true;
+    },
   };
 }
