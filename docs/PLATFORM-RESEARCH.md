@@ -67,7 +67,9 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    a pick waits for "source round X's signed result"; the seats' evidence is believed only once the source round's RoundResult
    stands under the settlement committee the page derives itself (`clientCommittee` on the source contract, never the seats'
    list) at the source's own threshold, mapped by the manifest; VOID says why and that every stake comes back. A source round
-   of a series is shown unverified, by name: its id does not hash its contract and the page holds no series templates yet.
+   of a series (Tick Tock's) is first checked as its series derives it: the page asks the seats `GET /series-template?id=`
+   (the template as its series line) and believes a line only once it hashes to that series id, then the contract must be
+   its round byte for byte (`fetchSeriesTemplate`, `seriesRoundCheck`).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
 6. Then 8-16 by demand.
    **Developer devnet** (15). State: built. `node packages/arena-node/tools/devnet.mjs up | status | play | replay | down`, everything
