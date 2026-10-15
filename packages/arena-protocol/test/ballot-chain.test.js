@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
 import { votesInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf, configServesRound, configForNewRound, BALLOT_GENESIS } from '../src/ballot-chain.js';
 import { TESTNET4_DONATION_SET } from '../src/testnet4-donation-set.js';
-import { encodeVote, voteMessage, decodeVote, CHOICE, CLASS, proposalStands, proposalBodyId, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../src/ballot.js';
+import { encodeVote, voteMessage, decodeVote, CHOICE, CLASS, proposalStands, proposalBodyId, isRepeal, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../src/ballot.js';
 import { splitBlock } from '../src/block.js';
 import { parseTransaction } from '../src/tx.js';
 import { toHex, fromHex } from '../src/hash.js';
@@ -58,7 +58,7 @@ test('a repeal - a config the network ran before - runs on the short schedule; a
   const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
   const history = [{ config: Uint8Array.of(1) }, { config: Uint8Array.of(2) }];
   const make = (config, activationHeight) => {
-    const p = { networkId: H(0x10), parent: H(2), configHash: H(config[0]), config, class: CLASS.MONEY, activationHeight, proposer, depositTxid: H(0x77) };
+    const p = { networkId: H(0x10), parent: H(2), configHash: configHashOf(config), config, class: CLASS.MONEY, activationHeight, proposer, depositTxid: H(0x77) };
     return { ...p, signature: schnorr.sign(proposalBodyId(p), secret) };
   };
   const facts = { publishedAt: 1000, depositSats: 100, lowestBondMinSats: 100000, verify, history };

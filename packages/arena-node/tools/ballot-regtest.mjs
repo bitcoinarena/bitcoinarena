@@ -18,6 +18,10 @@
 //      naming the old one (taken, before and after) or the new one (refused)
 //   5  a forward proposal on the repeal's short schedule (refused), then the repeal f51759b6 -> 2170f250 (the genesis bytes) on
 //      regtest's 0 / 6 / 0, voted YES by seats 1 and 2, activated; GET /config and the rounds again
+//   6  (the hole of kanban #329 comment 2255) a proposal whose config_hash is not the hash of the config it carries, with its
+//      deposit: refused by every seat by name; then a REORG under the decided repeal - its first voting block invalidated and
+//      the chain mined on in EMPTY blocks (generateblock [], so its votes stay out): every seat takes the outcome back, counts
+//      it again (FAILED) and GET /config goes back to f51759b6; then a reorg under its PUBLICATION: every seat forgets it
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdirSync, appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -35,7 +39,7 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { encodeConfigProposalBody, proposalBodyId, CLASS } from '../../arena-protocol/src/ballot.js';
+import { encodeConfigProposalBody, proposalBodyId, CLASS, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
@@ -212,7 +216,7 @@ try {
 
   // ---- the repeal, and a forward proposal on its short schedule
   const t1 = Date.now();
-  await propose('5a forward on the short schedule (0 / 6 / 0)', { parent: V3, configHash: b32(0x6f), config: Uint8Array.of(7), activationAfter: 6 });
+  await propose('5a forward on the short schedule (0 / 6 / 0)', { parent: V3, configHash: configHashOf(Uint8Array.of(7)), config: Uint8Array.of(7), activationAfter: 6 });
   const repeal = await propose('5b repeal f51759b6 -> 2170f250 (genesis bytes)', { parent: V3, configHash: V4, config: BALLOT_GENESIS.config, activationAfter: 6 });
   const Q = repeal.at;
   const r1 = [await castVote(0, repeal.id, 'YES'), await castVote(1, repeal.id, 'YES')]; mineOne();
@@ -226,6 +230,32 @@ try {
   await roundLine('6 created after the repeal, the genesis hash', roundAt(V4, live2.since));
   await roundLine('7 created after the repeal, f51759b6', roundAt(V3, live2.since));
   await roundLine('8 created at the first activation height (f51759b6 live there), posted after the repeal', roundAt(V3, live1.since));
+  // ---- 6: the config hash a proposal names must be its config's; and a reorg under a decided proposal, and under its publication
+  await propose('6a config_hash of other bytes (f51759b6 named, the genesis bytes carried)', { parent: V4, configHash: V3, config: BALLOT_GENESIS.config, activationAfter: 8 });
+  const empty = (n) => { const a = wcli('getnewaddress'); for (let k = 0; k < n; k++) cli('generateblock', a, '[]'); return tip(); };
+  const reorgLine = async (label, id) => {
+    await settle();
+    const rows = await Promise.all([0, 1, 2].map(proposalsAt));
+    const mine = rows.map((r) => r.proposals.find((p) => p.id === id));
+    say({ step: 'reorg', label, tip: tip(), kept: mine.map((m) => !!m), phase: mine.map((m) => (m ? m.phase : null)),
+      passed: mine.map((m) => (m && m.tally ? m.tally.passed : null)), yesSats: mine[0] && mine[0].tally ? mine[0].tally.yesSats : null,
+      anchor: mine[0] && mine[0].decided && mine[0].decided.anchor ? `${mine[0].decided.anchor.height}:${short(mine[0].decided.anchor.hash)}` : null,
+      seen: rows.map((r) => (r.reorgs || []).filter((x) => x.id === id).map((x) => x.what)) });
+  };
+  await reorgLine('6b before: the repeal decided on this chain', repeal.id);
+  const height0 = tip();
+  const gone = cli('getblockhash', String(Q + 1));
+  cli('invalidateblock', gone);                                                // the block with the repeal's two YES votes
+  const height1 = empty(height0 - Q + 1);                                      // the chain mined on, longer, without them
+  say({ step: 'reorg', label: '6b invalidated', block: Q + 1, hash: short(gone), from: height0, to: height1, votesInMempool: JSON.parse(wcli('getrawmempool')).length });
+  await reorgLine('6b after: the outcome taken back and counted again', repeal.id);
+  await configLine('6b after the reorg under the repeal');
+  const pub = cli('getblockhash', String(Q));
+  cli('invalidateblock', pub);                                                 // the repeal's deposit block
+  const height2 = empty(tip() - Q + 2);
+  say({ step: 'reorg', label: '6c invalidated', block: Q, hash: short(pub), to: height2 });
+  await reorgLine('6c after: its publication gone, the repeal forgotten', repeal.id);
+  await configLine('6c after the reorg under the publication');
   // what each seat logged of the count
   for (let i = 0; i < 3; i++) say({ step: `seat ${i + 1} log`, ballot: (readFileSync(join(WORK, `node-${i + 1}.log`), 'utf8').match(/\[ballot\][^\n]*/g) || []).slice(-4) });
 } finally {

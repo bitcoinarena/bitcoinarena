@@ -3,13 +3,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
 import { encodeConfigProposalBody, decodeConfigProposalBody, proposalBodyId, proposalId, proposalStands, encodeVote, decodeVote,
-  voteMessage, tally, CLASS, CHOICE, SCHEDULES, VOTE_BYTES } from '../src/ballot.js';
+  voteMessage, tally, CLASS, CHOICE, SCHEDULES, VOTE_BYTES, configHashOf, TAG_GAME_CONFIG } from '../src/ballot.js';
+import { taggedHash, toHex } from '../src/hash.js';
+import { BALLOT_GENESIS } from '../src/ballot-chain.js';
 
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const key = (n) => { const secret = new Uint8Array(32).fill(n); return { secret, pubkey: schnorr.getPublicKey(secret) }; };
 const b32 = (n) => new Uint8Array(32).fill(n);
 const proposer = key(1);
-const draft = (over = {}) => ({ networkId: b32(0x4e), parent: b32(0x10), configHash: b32(0x20), config: Uint8Array.from([1, 2, 3]),
+const draft = (over = {}) => ({ networkId: b32(0x4e), parent: b32(0x10), configHash: configHashOf(Uint8Array.from([1, 2, 3])), config: Uint8Array.from([1, 2, 3]),
   class: CLASS.DESIGN, activationHeight: 100 + 1 + 6 + 1, proposer: proposer.pubkey, depositTxid: b32(0x30), ...over });
 const signed = (p) => ({ ...p, signature: schnorr.sign(proposalBodyId(p), proposer.secret) });
 const facts = { publishedAt: 100, depositSats: 500, lowestBondMinSats: 50000, schedule: SCHEDULES.regtest, verify };
@@ -27,6 +29,34 @@ test('a proposal: the full config, signed by its proposer, activation not before
   assert.throws(() => encodeConfigProposalBody(draft({ config: new Uint8Array(0) })), /FULL config, never a diff/);
   assert.throws(() => encodeConfigProposalBody(draft({ class: 9 })), /DESIGN, MONEY or UPGRADE/);
   assert.notEqual(Buffer.from(proposalId(p)).toString('hex'), Buffer.from(proposalId(signed(draft({ configHash: b32(0x21) })))).toString('hex'));
+});
+
+test('the config_hash a proposal names is the hash of the config it carries (27A.7.1, kanban #329): a mismatch is refused, a match stands', () => {
+  // the hash the network names configs by: the genesis 2170f250 is it over its own bytes
+  assert.equal(TAG_GAME_CONFIG, 'BLWP/v1/GameConfig');
+  assert.equal(toHex(configHashOf(BALLOT_GENESIS.config)), toHex(BALLOT_GENESIS.configHash));
+  assert.equal(toHex(configHashOf(BALLOT_GENESIS.config)), '2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d');
+  // A MISMATCH, signed by its proposer and otherwise in order: refused by name, whatever it names
+  const config = Uint8Array.from([1, 2, 3]);
+  for (const configHash of [b32(0x20), configHashOf(Uint8Array.from([1, 2, 4])), BALLOT_GENESIS.configHash, taggedHash('BLWP/v1/Other', config)]) {
+    const bad = signed(draft({ configHash, config }));
+    const s = proposalStands(bad, facts);
+    assert.equal(s.ok, false, 'a hash that is not the hash of the carried config is refused');
+    assert.match(s.why, /is not the hash of the config the proposal carries/);
+    assert.ok(s.why.includes(toHex(configHashOf(config))), 'the refusal names the hash the bytes have');
+  }
+  // the full genesis config with a hash of other bytes: refused too
+  assert.equal(proposalStands(signed(draft({ configHash: configHashOf(config), config: BALLOT_GENESIS.config })), facts).ok, false);
+  // A MATCH STANDS, for small bytes and for the real config
+  const good = proposalStands(signed(draft({ configHash: configHashOf(config), config })), facts);
+  assert.equal(good.ok, true, good.why);
+  const real = proposalStands(signed(draft({ configHash: BALLOT_GENESIS.configHash, config: BALLOT_GENESIS.config })), facts);
+  assert.equal(real.ok, true, real.why);
+  // and the other checks are where they were: a matching hash does not excuse a bad signature, cooldown or deposit
+  const p = signed(draft());
+  assert.match(proposalStands({ ...p, signature: schnorr.sign(proposalBodyId(p), key(2).secret) }, facts).why, /not signed by the node it names/);
+  assert.match(proposalStands(signed(draft({ activationHeight: 107 })), facts).why, /before the end of cooldown \(108\)/);
+  assert.match(proposalStands(p, { ...facts, depositSats: 501 }).why, /over the cap of 500/);
 });
 
 test('a vote is 77 bytes: "ARN" \'V\' (the owner 2026-10-13), the proposal id\'s first 8 bytes, the choice, the bond key\'s signature', () => {
