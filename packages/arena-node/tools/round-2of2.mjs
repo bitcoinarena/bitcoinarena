@@ -1343,6 +1343,18 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       for (const x of answers) if (!x.ok) console.log(`[grid] series ${toHex(ids[k]).slice(0, 16)} refused by ${x.port}: ${x.why}`);
       posted.push({ series: toHex(ids[k]), seats: answers.filter((x) => x.ok).length, of: answers.length });
     }
+    // THE PUBLISHER'S FEE, ASKED AGAIN (kanban #304): the seats that did not take a proof yet, every 10 min until each has, 30 h at most
+    function proveLater(id, txHex, parents, seats, untilMs = Date.now() + 30 * 3600 * 1000) {
+      setTimeout(async () => {
+        const still = [];
+        for (const u of seats) {
+          try { const r = await fetch(`${u}/series-publication`, { method: 'POST', body: JSON.stringify({ series: toHex(id), tx: txHex, parents }), signal: AbortSignal.timeout(30000) });
+            if (r.ok) console.log(`[grid] series ${toHex(id).slice(0, 16)}: publication fee proven at ${u}`); else still.push(u); } catch { still.push(u); }
+        }
+        if (still.length && Date.now() < untilMs) proveLater(id, txHex, parents, still, untilMs);
+        else if (still.length) console.log(`[grid] series ${toHex(id).slice(0, 16)}: publication fee never proven at ${still.length} seat(s)`);
+      }, 600000);
+    }
     // THE PUBLISHER'S FEE, PROVEN (§5A.5, kanban #304): a grid that names its creator posts its publication and that transaction's
     // parents (the wallet's own, so it holds them) to every seat it posted the series to - each seat proves the fee from the bytes and
     // pays it back (capped) to the creator's key in the series' first round with entries
@@ -1362,6 +1374,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
           }));
           proven.push({ series: toHex(id), seats: said.filter((x) => x.ok).length, of: seats.length, feeSats: (said.find((x) => x.ok) || {}).feeSats || null,
             why: (said.find((x) => !x.ok) || {}).why || null });
+          // AND AGAIN UNTIL EVERY SEAT HOLDS IT (measured 2026-10-15: the 10-16 postings went out unconfirmed, every seat answered "no
+          // confirmed publication of that series yet", and a seat reads the publication only once its view of the round refreshes -
+          // after the series' committee time, hours later - so the one try at publish time proved nothing and round 0 would have paid
+          // nothing back): each seat that has not taken it is asked again every 10 min, for up to 30 h
+          const left = seats.filter((u, k) => !said[k].ok);
+          if (left.length) proveLater(id, txHex, parents, left);
         }
       } catch (e) { proven = [{ why: `the publication was not proven: ${e.message}` }]; }
     }
