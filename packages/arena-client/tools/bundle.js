@@ -86,6 +86,9 @@ walk(SRC + 'head-to-head.js');
 // AND THE GAMES (kanban #208): the games the lobby's nodes host, and a game's client loaded only by its manifest's hashes.
 walk(SRC + 'games.js');
 walk(SRC + 'node-discovery.js');
+// AND A GAME'S SEASON BOARD (kanban #362, PLATFORM-RESEARCH item 1): the rows the page draws from a seat's GET /season, and
+// the ask that falls through the game's seats. Nothing in the client imports it; the page's season view calls it.
+walk(SRC + 'season-view.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -262,6 +265,9 @@ out += '         marketForRound: marketForRound, pickSheet: pickSheet, submitPic
 out += '         marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,\n';
 // A HEAD-TO-HEAD ROUND (kanban #233): the hidden move, its commitment, its reveal, and the reveals the seats hold
 out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,\n';
+// THE SEASON BOARD (kanban #362): its lines from a /season answer, and the ask of the game's seats in turn
+out += '         seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
+out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
