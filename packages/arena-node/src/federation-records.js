@@ -323,7 +323,17 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       // A FEDERATION THIS SEAT HAS NO INVITE FOR IS MIRRORED, NOT SKIPPED (kanban #348, the owner 2026-10-12: "Make it happen
       // automatically so we don't have to update nodes, it needs to find federations"): its guardians' own nodes - their bond
       // adverts' endpoints in this census - are asked for its signed record, which stands only against this seat's census
-      for (const fid of federationsOf(b.census)) { try { out.push({ federation: toHex(fid), ...(inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : await mirror(fid, b, inviteFederationId)) }); } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); } }
+      // AND A GATHER THAT FAILS IS MIRRORED TOO (kanban #326, measured live 2026-10-15): a seat that holds a federation's invite but
+      // whose own basis is another census height than its guardians' (node 15: newest readable round at 156388, B's guardians sign
+      // at 156538) gathered "0 of its bonded guardians signed it" every pass and never held B's record; the record its guardians keep
+      // stands against this seat's census all the same
+      for (const fid of federationsOf(b.census)) {
+        try {
+          let got = inviteFor(toHex(fid)) ? await gather(fid, inviteFederationId) : null;
+          if (!got || got.ok === false) { const m = await mirror(fid, b, inviteFederationId); got = m.ok || !got ? { ...m, ...(got ? { gathered: got.why } : {}) } : got; }
+          out.push({ federation: toHex(fid), ...got });
+        } catch (e) { out.push({ federation: toHex(fid), ok: false, why: e.message }); }
+      }
       return out;
     },
     list: () => [...kept.entries()].map(([federation, k]) => ({ federation, status: k.status, height: k.height, signers: k.signers, record: toHex(k.bytes),
