@@ -17,7 +17,7 @@ import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDepartur
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord,
-  FEDERATION_STATUS, GONE } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 
 /** The census nodes guarding `federationId`, as the record lists them. */
 export function guardiansOf(census, federationId) {
@@ -48,7 +48,11 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   successorOf = () => null, closedOf = () => false, reserveOf = null, absences = null, abandonBlocks = null, departureNotice = null,
   // THE GUARDIANS' ADDRESSES FROM THE FEDERATION'S OWN CONFIGURATION (kanban #326, federation-endpoints.js): async (fidHex) -> Map(peer key
   // hex -> API URL) | null; a guardian it names takes that endpoint into the body, one it does not keeps its advert's
-  endpointsOf = null }) {
+  endpointsOf = null,
+  // THE CENSUS AT A RECORD'S OWN HEIGHT (kanban #326, measured live 2026-10-15): async (height) -> census entries | null, from this seat's
+  // chain (main.js ballot.censusEntriesAt). A seat whose basis is an older census than the record's (node 15: 156388, B's record at
+  // 156538, its guardians' current keys in the newer census) checks a mirrored record against the census the record names
+  censusAt = null }) {
   const kept = new Map();                    // federation id hex -> { bytes, record, status, height, signers, atMs }
   const draining = new Map();                // federation id hex -> status name
   // THE HALT A LIQUIDATION COUNTS FROM (§23A.5, kanban #323): the lowest-height signed HALTED record of the run of HALTED records
@@ -247,6 +251,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   /** MIRROR: the newest signed record of `federationId` its guardians' nodes hold, checked against this seat's census `b`. */
   async function mirror(federationId, b, inviteFederationId) {
     const fid = toHex(federationId);
+    const censusKept = new Map();          // record height -> its census (one read per height in a pass)
     const guardians = guardiansOf(b.census, federationId);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
@@ -260,7 +265,15 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
         const j = await r.json();
         for (const x of j.federations || []) {
           if (String(x.federation).toLowerCase() !== fid) continue;
-          const v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId });
+          let v = verifyFederationRecord(fromHex(String(x.record)), { census: b.census.entries, verify, inviteFederationId });
+          if (!v.ok && typeof censusAt === 'function') {
+            let h = null; try { h = decodeFederationRecord(splitSignedRecord(fromHex(String(x.record))).body).height; } catch { h = null; }
+            if (Number.isInteger(h)) {
+              if (!censusKept.has(h)) censusKept.set(h, Promise.resolve(censusAt(h)).catch(() => null));
+              const entries = await censusKept.get(h);
+              if (entries) v = verifyFederationRecord(fromHex(String(x.record)), { census: entries, verify, inviteFederationId });
+            }
+          }
           if (!v.ok) { why = v.why; continue; }
           if (!best || v.record.height > best.v.record.height) best = { v, bytes: fromHex(String(x.record)) };
         }
