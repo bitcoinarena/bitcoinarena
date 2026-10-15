@@ -97,16 +97,39 @@ export const positionFilled = (p) => !!p && (p.cost > 0n || p.sellDebt > 0n || p
  * poolMsat, feesDueMsat } - every entry with a fill, its locks claimed whole; the sum of every out and the fees due is the
  * sum of the locks claimed, to the msat.
  */
-export function bookSettlement({ positions, outcome }) {
-  if (outcome === null) return { claimed: [], poolMsat: 0n, feesDueMsat: 0n, voided: true };
-  if (outcome !== YES && outcome !== NO) throw new Error('a market resolves to 0 (YES), 1 (NO) or null (VOID)');
+//
+// A SCALAR MARKET'S BOOK (kanban #362, §0A.7e "Left: an order book for scalar sides"): `scalar` { value, bounds { low, high } } in
+// place of an outcome. A LONG share (0) is worth (V - low) / (high - low) of a sat at the clamped value V and a SHORT share (1) the
+// rest, so the pool is split between the two sides by where V lies - LONG's part floored, SHORT the remainder - and each side's
+// part pro rata by its shares, the msat left one each in entry order; a side holding no share hands its part to the other.
+export function bookSettlement({ positions, outcome, scalar = null }) {
+  if (outcome === null && !scalar) return { claimed: [], poolMsat: 0n, feesDueMsat: 0n, voided: true };
+  if (!scalar && outcome !== YES && outcome !== NO) throw new Error('a market resolves to 0 (YES), 1 (NO) or null (VOID)');
   const rows = [...positions.values()].filter(positionFilled).sort((a, b) => byIdOrder(a.entry, b.entry));
   const pool = rows.reduce((t, p) => t + p.cost + p.sellDebt, 0n);
-  const claim = rows.reduce((t, p) => t + p.shares[outcome], 0n);
-  const win = new Map();
-  let given = 0n;
-  for (const p of rows) { const w = claim === 0n ? 0n : (p.shares[outcome] * pool) / claim; win.set(p.entry, w); given += w; }
-  for (const p of rows) { if (given >= pool || claim === 0n) break; if (p.shares[outcome] > 0n) { win.set(p.entry, win.get(p.entry) + 1n); given += 1n; } }
+  const win = new Map(rows.map((p) => [p.entry, 0n]));
+  // one side's part of the pool, pro rata by its shares, the msat left one each in entry order
+  const pay = (side, part) => {
+    const claim = rows.reduce((t, p) => t + p.shares[side], 0n);
+    if (claim === 0n || part === 0n) return part;
+    let given = 0n;
+    for (const p of rows) { const w = (p.shares[side] * part) / claim; win.set(p.entry, win.get(p.entry) + w); given += w; }
+    for (const p of rows) { if (given >= part) break; if (p.shares[side] > 0n) { win.set(p.entry, win.get(p.entry) + 1n); given += 1n; } }
+    return 0n;
+  };
+  if (scalar) {
+    const { low, high } = scalar.bounds || {};
+    if (typeof scalar.value !== 'bigint' || typeof low !== 'bigint' || typeof high !== 'bigint' || low >= high)
+      throw new Error('a scalar book settles on a BigInt value between bounds low < high');
+    const v = scalar.value < low ? low : scalar.value > high ? high : scalar.value;
+    const longPart = (pool * (v - low)) / (high - low);
+    const leftLong = pay(YES, longPart);
+    const leftShort = pay(NO, pool - longPart + leftLong);
+    if (leftShort > 0n && pay(YES, leftShort) > 0n) throw new Error('a filled scalar book holds no share on either side');
+  } else {
+    const claim = rows.reduce((t, p) => t + p.shares[outcome], 0n);
+    if (claim > 0n) pay(outcome, pool);
+  }
   const claimed = rows.map((p) => {
     const winMsat = win.get(p.entry);
     const outMsat = winMsat - p.sellDebt - p.sellFee + (p.N - p.cost) + (p.F - p.buyFee);

@@ -100,7 +100,9 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    bounds, the value and the table. The value-signing attestor is `arena-attestor --mode value` (9c1958a2). Scalar templates (protocol 2026.0.8,
    2026-10-15): a scalar manifest may be a template (max_outcomes 2); each round names its own question and its own bounds
    - two i64 inside its question's tail, within the template's range - and is paid between them (`marketOfRound` gives the
-   round's view to the value check, the table and the page); dormant until seats advertise 8.
+   round's view to the value check, the table and the page); dormant until seats advertise 8. An order book for scalar sides
+   (2026-10-15): a LONG share is worth its side's part of a sat at the value, so the book's pool splits by where the value
+   lies (`bookSettlement` `scalar`). Left: a client page for trading a scalar book.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
    versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
    (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through

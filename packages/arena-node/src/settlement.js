@@ -32,6 +32,7 @@ import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
+import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
@@ -488,7 +489,9 @@ export class LockSettlement {
     const L = this.orderBook.ledger(roundIdBytes);
     if (!L.ok) return refuse(`no lock is claimed: ${L.why}`);
     let table;
-    try { table = bookSettlement({ positions: L.positions, outcome: a.finality.outcome }); } catch (e) { return refuse(`no lock is claimed: ${e.message}`); }
+    // a scalar market's book (kanban #362, §0A.7e) settles on the signed value between THIS round's bounds (marketOfRound)
+    const scalar = isScalar(a.plugin.manifest) ? { value: a.finality.value, bounds: marketOfRound(a.plugin.manifest, contract).scalar } : null;
+    try { table = bookSettlement({ positions: L.positions, outcome: a.finality.outcome, scalar }); } catch (e) { return refuse(`no lock is claimed: ${e.message}`); }
     const entries = [];
     const locks = new Map();
     const lockEntry = new Map();
