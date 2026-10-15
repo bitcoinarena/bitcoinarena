@@ -20,7 +20,7 @@
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
 import { decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
-import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
+import { takesAnyFederation, FRONTEND_FEE_VERSION } from '../../arena-protocol/src/constants.js';
 import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { httpProvider } from './headers.js';
@@ -844,7 +844,7 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -944,6 +944,11 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     ...(round.anyFederation ? { federationId: round.federationId } : {}),
     // THE OPERATOR THIS PLAYER IS (§7 operator_id_declaration, kanban #309): only when the player declared one (a player who runs nodes)
     ...(operatorId instanceof Uint8Array && operatorId.length === 32 && operatorId.some((b) => b !== 0) ? { operatorId } : {}),
+    // THE WEBSITE THAT BROUGHT THIS ENTRY (kanban #362 item 7, 2026.0.9): the page's own payout key, paid 20% of the nodes' fee on this
+    // stake out of the nodes' 5% - never more for the player. Only on a round of version 9 or later (a seat refuses it below), and
+    // only a 33-byte compressed key
+    ...(frontendPk instanceof Uint8Array && frontendPk.length === 33 && (frontendPk[0] === 2 || frontendPk[0] === 3)
+      && Number(round.protocolVersion) >= FRONTEND_FEE_VERSION ? { frontendPk } : {}),
     // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry

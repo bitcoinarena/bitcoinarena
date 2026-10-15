@@ -62,3 +62,17 @@ test('a declared operator rides as the entry\'s tail; none declared leaves the e
   assert.deepEqual(toHex(encodeEntryContract(make({ operatorId: null }))), toHex(encodeEntryContract(plain)), 'none declared: the same bytes');
   assert.equal(toHex(encodeEntryContract(declared)).startsWith(toHex(encodeEntryContract(plain))), true, 'the declaration is a tail');
 });
+
+test('the page\'s website key rides on an entry only into a round of 2026.0.9 or later (kanban #362 item 7)', () => {
+  const site = new Uint8Array(33).fill(0x5e); site[0] = 3;
+  const make = (version, more) => ({ sessionPubkey: new Uint8Array(32).fill(3), roundId: ANY.id,
+    ...entryFor({ ...ANY, protocolVersion: version, federationId: fromHex(A) }, { seed: new Uint8Array(32).fill(5), curve: feldmanGroup, random: (n) => new Uint8Array(n).fill(9), ...lockedFor(), ...more }) });
+  assert.equal(make(8, { frontendPk: site }).frontendPk, undefined, 'a round below 9 pays no website: none is named');
+  const v9 = make(9, { frontendPk: site });
+  assert.deepEqual(v9.frontendPk, site);
+  assert.deepEqual(decodeEntryContract(encodeEntryContract(v9)).frontendPk, site);
+  assert.equal(make(9, {}).frontendPk, undefined);
+  assert.equal(make(9, { frontendPk: new Uint8Array(33) }).frontendPk, undefined, 'not a compressed key: none is named');
+  assert.equal(make(9, { frontendPk: site }).stakeMsat, make(9, {}).stakeMsat, 'the stake is the same');
+  assert.equal(make(9, { frontendPk: site }).feeMsat, make(9, {}).feeMsat, 'the fee is the same');
+});
