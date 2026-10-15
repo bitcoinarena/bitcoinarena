@@ -967,9 +967,14 @@ and fee back at once for a one-sided round. `GET /outcome` adds `scalar
 
 Since built: the page's market lines (the value checked against the
 manifest's attestors, its unit, where it pays and what a side got back) and
-the value-signing attestor (`arena-attestor --mode value`). Left: an order
-book for scalar sides. **Dormant until seats advertise 7**: a version-7 round
-draws a committee only from nodes whose advert lists 7.
+the value-signing attestor (`arena-attestor --mode value`), and an order book
+for scalar sides (2026-10-15): a round is a book or a pool, as any two-outcome
+market; at resolution a LONG share is worth (V - low) / (high - low) of a sat
+at the clamped value V and a SHORT share the rest, so the book's pool is split
+between the sides by where V lies (LONG's part floored, SHORT the rest) and
+within a side pro rata by shares - every msat paid out or due as a fee
+(book-ledger.js `bookSettlement` `scalar`). **Dormant until seats advertise
+7**: a version-7 round draws a committee only from nodes whose advert lists 7.
 
 **Scalar templates** *(AS BUILT 2026-10-15, protocol 2026.0.8)*. From version 8
 a scalar manifest may also be a template (§0A.7c): anyone opens a numeric
