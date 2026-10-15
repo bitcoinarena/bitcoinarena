@@ -25,7 +25,7 @@ import { toHex as hex } from '../../arena-protocol/src/hash.js';
 import { batchId, batchTicks } from '../../arena-protocol/src/batch.js';
 import { GENESIS, decodeTranscript } from '../../arena-protocol/src/transcript.js';
 import { replay, RunInProgress } from './replay.js';
-import { pluginForRound, hostedPlugins } from './plugins.js';
+import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
 const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
   && a.length === b.length && a.every((v, i) => v === b[i]);
@@ -239,7 +239,7 @@ export class Ghosts {
     // AN ATTESTED ROUND (§0A.7a) HAS NO CORE: nothing of it is pictured
     if (found.ok && found.attested) return null;
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
-    return found.ok ? { ...found.core, game: found.plugin.name, config: found.config, runTicks: found.runTicks,
+    return found.ok ? { ...found.core, game: found.plugin.name, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin),
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes),
         sharedWorld: [...found.plugin.sharedWorld] } } : null;
   }
