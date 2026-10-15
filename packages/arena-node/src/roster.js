@@ -25,7 +25,34 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
 import { findPublication, publicationIsBeforeBeacon } from '../../arena-protocol/src/publication.js';
-import { findSeriesPublication } from '../../arena-protocol/src/series.js';
+import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
+import { commitmentsOf } from '../../arena-protocol/src/tx.js';
+
+// A BLOCK'S COMMITMENTS, READ ONCE PER BLOCK (the owner 2026-10-15: "Do everything you can to lower the load"; profiled on a testnet4
+// seat: 22.9 % of its main thread was series.js findSeriesPublication - parse and hash every transaction of a ~2,600-block view -
+// asked again for every round of the 8 s grids, whose chain check is kept per committee time, so per round). The blocks are one
+// shared object each (main.js blockCache), so their commitments - the OP_RETURN payloads, as hex - are kept beside each block
+// object and a series' publication is a set lookup per block. The same answer as findSeriesPublication: the first block of the
+// view whose transactions commit the series' payload, by height.
+const commitmentsKept = new WeakMap();      // block object -> Set of its transactions' commitment payloads (hex)
+function blockCommitments(block) {
+  let got = commitmentsKept.get(block);
+  if (!got) {
+    got = new Set();
+    for (const raw of block.transactions || []) {
+      let tx; try { tx = parseTransaction(raw); } catch { continue; }
+      for (const p of commitmentsOf(tx)) got.add(toHex(p));
+    }
+    commitmentsKept.set(block, got);
+  }
+  return got;
+}
+export function findSeriesPublication(view, seriesIdBytes) {
+  if (!view || !Array.isArray(view.blocks) || !Number.isInteger(view.firstHeight)) return null;
+  const want = toHex(seriesPublicationPayload(seriesIdBytes));
+  for (let i = 0; i < view.blocks.length; i++) if (blockCommitments(view.blocks[i]).has(want)) return { height: view.firstHeight + i };
+  return null;
+}
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_CENSUS_FROM } from '../../arena-protocol/src/old-series.js';
 import { bondSetFor } from './curve.js';
 import { schnorr } from '@noble/curves/secp256k1.js';

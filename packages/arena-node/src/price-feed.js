@@ -354,14 +354,40 @@ export class PriceFeed {
     return { ok: true, signed: sigs.length };
   }
 
+  /**
+   * THE OPEN PRICE ROUNDS, EACH CONTRACT DECODED ONCE (the owner 2026-10-15: "Do everything you can to lower the load"; profiled on
+   * a testnet4 seat: the beat was 13.8 % of its main thread - every 5 s it read every open round's contract out of the store and
+   * decoded it twice, the 8 s grids' thousands of rounds, to find the few that play against the price). A round's contract never
+   * changes: the open ids are read (no contract), a round seen for the first time is decoded once and remembered as a price round
+   * or not, and a round no longer open is forgotten.
+   */
+  #openPriceRounds() {
+    if (!this.kept) this.kept = new Map();       // round hex -> its contract when a price round, else null
+    const ids = typeof this.round.openRoundIds === 'function' ? this.round.openRoundIds() : this.round.openRounds().map((r) => r.roundId);
+    const open = new Set();
+    const out = [];
+    for (const id of ids) {
+      const rh = toHex(id);
+      open.add(rh);
+      if (!this.kept.has(rh)) {
+        let contract = null;
+        try { const row = this.round.get(id); if (row) contract = decodeRoundContract(new Uint8Array(row.contract)); } catch { contract = null; }
+        this.kept.set(rh, contract && this.priceRound(contract) ? contract : null);
+      }
+      const c = this.kept.get(rh);
+      if (c) out.push({ roundId: id, contract: c });
+    }
+    for (const rh of this.kept.keys()) if (!open.has(rh)) this.kept.delete(rh);
+    return out;
+  }
+
   /** One beat of the timer (every 5 s): read the feed; lead the samples (and the tape) this seat leads in its open price rounds. */
   async beat() {
     await this.read();
     const now = this.now();
     const out = [];
-    for (const r of this.round.openRounds()) {
-      let contract; try { contract = decodeRoundContract(r.contract); } catch { continue; }
-      if (!this.priceRound(contract)) continue;
+    for (const r of this.#openPriceRounds()) {
+      const contract = r.contract;
       const start = Number(contract.startTimeMs);
       if (now < start - EVERY) continue;   // the tape and sample 0 go out a period before the start
       const rh = toHex(r.roundId);
