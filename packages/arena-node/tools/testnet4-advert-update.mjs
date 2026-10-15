@@ -85,6 +85,8 @@ for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   db.close?.();
   const entries = [guardianEntry(`${store}.guardian`)];
   if (GUARDIAN_NEXT && existsSync(`${store}.guardian-next/consensus.json`)) entries.push(guardianEntry(`${store}.guardian-next`));
+  // in the order the advertisement encodes them (advert.js: a sorted vec - by federation id, then key)
+  entries.sort((x, y) => { const a = toHex(x.federationId) + toHex(x.guardianKey), b = toHex(y.federationId) + toHex(y.guardianKey); return a < b ? -1 : a > b ? 1 : 0; });
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) throw new Error(`node ${n} (${toHex(pubkey).slice(0, 8)}) has no confirmed unspent bond: nothing to update, and no bond is posted`);
   const bond = bonds[0];
