@@ -1234,7 +1234,7 @@ function networkOf(networkId) {
 // the name arrived, which took the client's whole suite with it.
 
 function genesisConfigHash() {
-  return GENESIS_CONFIG_HASH_ID;
+  return GENESIS_CONFIG_HASH;
 }
 
 /**
@@ -28840,7 +28840,7 @@ async function fetchSeriesTemplate({ seriesIdHex, nodes = [], fetcher = fetch, t
       const r = await fetcher(`${base}/series-template?id=${want}`, timeout ? { signal: timeout(8000) } : {});
       if (!r.ok) { refused.push(`${base}: ${r.status}`); continue; }
       const t = parseSeriesLine(await r.text());
-      if (toHex(seriesIdOf(t)) !== want) { refused.push(`${base}: its template is another series`); continue; }
+      if (toHex(seriesId(t)) !== want) { refused.push(`${base}: its template is another series`); continue; }
       return { ok: true, template: t, from: base };
     } catch (e) { refused.push(`${base}: ${e.message}`); }
   }

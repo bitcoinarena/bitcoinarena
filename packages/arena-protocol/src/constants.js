@@ -10,7 +10,7 @@ import { taggedHash } from './hash.js';
 import { isOldTestnet4Id } from './old-series.js';
 import { utf8Encode } from './utf8.js';
 import {
-  GENESIS_CONFIG_HASH as GENESIS_CONFIG_HASH_ID,
+  GENESIS_CONFIG_HASH,
   NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4,
 } from './genesis-ids.js';
 
@@ -659,7 +659,7 @@ export function networkOf(networkId) {
 export { GENESIS_CONFIG_HASH } from './genesis-ids.js';
 
 export function genesisConfigHash() {
-  return GENESIS_CONFIG_HASH_ID;
+  return GENESIS_CONFIG_HASH;
 }
 
 /**
