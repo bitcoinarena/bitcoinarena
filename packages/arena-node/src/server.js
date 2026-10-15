@@ -20,7 +20,10 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
-import { servedNodes, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
+import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
+import { decodePurchase } from '../../arena-protocol/src/purchase.js';
+import { itemOf } from '../../arena-protocol/src/items.js';
+import { keepItemPurchase, itemsOwned } from './item-purchase-seat.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
@@ -4700,6 +4703,51 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // WHO SERVED A ROUND IN A WINDOW (kanban #365): GET /served?to=<ms>[&from=<ms>] - from the FINAL signatures this seat holds,
       // each checked against its round's committee and its signature, counted once per round (protocol served-nodes.js); `from`
       // defaults to 24 h before `to`. Two seats that hold the same FINALs answer the same root.
+      // AN ITEM BOUGHT (kanban #365): POST /item-purchase { purchase, signature } (hex) - the buyer's record, checked by its own
+      // terms against the game this seat hosts, the network's donation set in force and the game's, and the served list merged
+      // from every seat's FINALs for the record's window (as the buyer's client merged it), then output by output with the
+      // federation; kept, it is the buyer's ownership: GET /items?player=<key>[&game=<name>][&dev=<key>]
+      if (req.method === 'POST' && url.pathname === '/item-purchase') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an item purchase is JSON { purchase, signature } in hex'); }
+        let p; try { p = { ...decodePurchase(fromHex(String(j.purchase || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
+        catch (e) { return text(res, 400, `that is not an item purchase: ${e.message}`); }
+        const dev = toHex(p.gameDevPubkey);
+        const game = [...hosted.values()].find((g) => g.manifest && toHex(g.manifest.gameDevPubkey) === dev && g.manifest.gameName === p.gameName && itemOf(g.manifest, p.itemId));
+        if (!game) return text(res, 404, `this seat hosts no game "${p.gameName}" by ${dev.slice(0, 16)} selling "${p.itemId}"`);
+        if (!Array.isArray(game.donationSet)) return text(res, 404, 'this seat holds no donation set of that game');
+        let latest = null; try { latest = round.db.prepare('SELECT contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); } catch { latest = null; }
+        const net = latest ? decodeRoundContract(new Uint8Array(latest.contract)) : null;
+        const keys = net ? donationKeysForNetworkId(net.networkId) : null;
+        if (!keys) return text(res, 503, 'this seat knows no network donation authority to pay the protocol devs\' part to');
+        let height = net.censusHeight; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { /* the newest round's height */ }
+        const forced = donationSetInForce({ networkId: net.networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
+          rotations: donationRotations, height, verify: verifyDonation });
+        if (!forced.ok) return text(res, 503, `no network donation set in force here: ${forced.why}`);
+        // THE SERVED LIST OF THE RECORD'S WINDOW, merged from this seat's FINALs and every other seat's
+        const from = Number(p.servedFromMs), to = Number(p.servedToMs);
+        const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
+        await Promise.all(networkSeats().map(async (s) => {
+          try {
+            const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
+            if (!r.ok) return;
+            const a = await r.json();
+            held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+          } catch { /* a seat that does not answer adds nothing */ }
+        }));
+        const merged = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: forced.recipients, gameSet: game.donationSet,
+          served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
+          verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        if (!got.ok) return text(res, got.status || 422, got.why);
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ id: got.id, kept: got.kept }));
+      }
+      if (req.method === 'GET' && url.pathname === '/items') {
+        const player = String(url.searchParams.get('player') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(player)) return text(res, 400, 'GET /items?player=<the buyer\'s 32-byte key>[&game=<name>][&dev=<key>]');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), items: itemsOwned(round.db, { player, gameName: url.searchParams.get('game') || null, gameDev: url.searchParams.get('dev') || null }) }));
+      }
       if (req.method === 'GET' && url.pathname === '/served') {
         const to = Number(url.searchParams.get('to'));
         const from = url.searchParams.has('from') ? Number(url.searchParams.get('from')) : to - SERVED_WINDOW_MS;
