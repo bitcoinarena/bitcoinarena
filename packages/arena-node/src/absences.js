@@ -37,9 +37,14 @@ export function dueDeparture(notices, { record, peerKey, departureNotice, height
   return best ? { ok: true, notice: best, sinceHeight: best.leaveAfterHeight, id: departureId(best) } : { ok: false, why };
 }
 
-export function createAbsences({ verify, max = 4096 }) {
+export function createAbsences({ verify, max = 4096, store = null }) {
   const notices = new Map();                 // `${fid}:${peer}` -> departure notice (one per guardian: the latest posted)
   const held = new Map();                    // `${fid}:${peer}:${attester}` -> attestation (the newest height)
+  // KEPT ACROSS A RESTART (kanban #326, measured live 2026-10-15: the founding seats restarted after B7's notice held 0 departures,
+  // and the founding it triggers never started): `store` { read() -> { departures: [hex], absences: [hex] }, write(that) } - every
+  // kept notice and attestation is written, and read back at start through the same checks (each signature verified again)
+  let loading = false;
+  const save = () => { if (!store || loading) return; try { store.write({ departures: [...notices.values()].map(departureHex), absences: [...held.values()].map(absenceHex) }); } catch { /* kept in memory */ } };
 
   /** Takes one attestation; it must be signed by its attester (whether that is a guardian is the record's to say). */
   function offer(a) {
@@ -49,6 +54,7 @@ export function createAbsences({ verify, max = 4096 }) {
     if (had && had.height >= a.height) return { ok: true, kept: false };
     if (!had && held.size >= max) return { ok: false, why: 'this seat holds as many attestations as it keeps' };
     held.set(k, a);
+    save();
     return { ok: true, kept: true };
   }
   const about = (fidHex, peerHex) => [...held.entries()].filter(([k]) => k.startsWith(`${fidHex}:${peerHex}:`)).map(([, a]) => a);
@@ -62,11 +68,19 @@ export function createAbsences({ verify, max = 4096 }) {
     if (had && had.postedAt >= d.postedAt) return { ok: true, kept: false };
     if (!had && notices.size >= max) return { ok: false, why: 'this seat holds as many notices as it keeps' };
     notices.set(k, d);
+    save();
     return { ok: true, kept: true };
   }
   const departureFor = (record, peerKey, departureNotice, height) => dueDeparture([notices.get(`${toHex(record.federationId)}:${toHex(peerKey)}`)].filter(Boolean),
     { record, peerKey, departureNotice, height, verify });
   const listDepartures = (fidHex) => [...notices.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, d]) => departureHex(d));
   const list = (fidHex) => [...held.entries()].filter(([k]) => !fidHex || k.startsWith(`${fidHex}:`)).map(([, a]) => absenceHex(a));
+  if (store) {
+    let had = null; try { had = store.read(); } catch { had = null; }
+    loading = true;
+    for (const h of (had && had.departures) || []) { try { offerDeparture(readDepartureHex(h)); } catch { /* not one */ } }
+    for (const h of (had && had.absences) || []) { try { offer(readAbsenceHex(h)); } catch { /* not one */ } }
+    loading = false;
+  }
   return { offer, proofFor, list, offerDeparture, departureFor, listDepartures };
 }

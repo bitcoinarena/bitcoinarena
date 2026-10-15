@@ -235,6 +235,26 @@ test('a seat with no invite for a federation its census knows mirrors the record
   assert.equal(verifyFederationRecord(fromHex(listed[0].record), { census: s.census.entries, verify, inviteFederationId }).ok, true);
 });
 
+test('a seat that holds the invite but whose gather no guardian signs keeps the record its guardians hold (kanban #326)', async () => {
+  const s = seven();
+  for (const seat of s.seats) assert.equal((await seat.gather(FED, inviteFederationId)).ok, true);
+  const me = { secret: new Uint8Array(32).fill(0x56) }; me.pubkey = schnorr.getPublicKey(me.secret);
+  // node 15's case, measured live: it holds B's invite, its own basis is another census height, and B's guardians sign nothing for it
+  const o = federationRecords({
+    round: { pubkey: me.pubkey, identity: { secret: me.secret } }, newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => s.census }, inviteFor: () => 'an invite this seat holds', networkId: NET,
+    fetcher: async (url) => {
+      const i = s.nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')));
+      if (i < 0 || !url.endsWith('/federations')) return new Response('no basis at that height', { status: 404 });
+      return new Response(JSON.stringify({ federations: s.seats[i].list() }), { status: 200 });
+    },
+  });
+  const got = await o.gatherAll(inviteFederationId);
+  assert.deepEqual([got[0].ok, got[0].mirrored, got[0].status, got[0].signers], [true, true, 'OPEN', 7], got[0].why);
+  assert.ok(got[0].gathered, 'the gather\'s own refusal is kept beside the mirrored record');
+  assert.equal(o.list().length, 1);
+});
+
 test('a mirrored record that does not stand against the seat\'s own census is not kept', async () => {
   const s = seven();
   for (const seat of s.seats) await seat.gather(FED, inviteFederationId);
