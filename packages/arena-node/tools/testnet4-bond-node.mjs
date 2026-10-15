@@ -6,7 +6,9 @@
 // It broadcasts and returns; the census counts the bond once it is buried (six deep at the census height).
 //
 //   BITCOIN_CLI=<bitcoin-cli> BTC_DATADIR=<dir> WALLET=<wallet> STORE=<node store> ENDPOINT=wss://... GUARDIAN_ENDPOINT=wss://.../guardian \
-//   OPERATOR=<id> [BOND_SATS=50000] [FUND_BTC=0.00056] [PROTOCOLS=1,2,3,4,5,6,7] [HOSTED=<hex,hex,..>] node tools/testnet4-bond-node.mjs [--publish]
+//   OPERATOR=<id> [BOND_SATS=50000] [FUND_BTC=0.00056] [PROTOCOLS=1,2,3,4,5,6,7] [HOSTED=<hex,hex,..>] [ROLES=game,verify,settlement] node tools/testnet4-bond-node.mjs [--publish]
+// ROLES=relay: a node no committee of any live round is drawn from (kanban #326, the throwaway federation T of the testnet4 slash
+// and liquidation, the owner 2026-10-15 option 1) - it counts in the census, guards its federation, and is never a signer node.
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { regtest } from './regtest-bond.mjs';
@@ -30,17 +32,19 @@ if (have.length) { out({ step: 'refused', why: `this node already has ${have.len
 // that funding - without --publish this prints what it would post and stops before any coin moves
 const plan = { operatorId: env.OPERATOR, endpoint: env.ENDPOINT, guardianEndpoint: env.GUARDIAN_ENDPOINT, bondSats: env.BOND_SATS || '50000',
   fundBtc: env.FUND_BTC || '0.00056', protocols: env.PROTOCOLS || '1,2,3,4,5,6,7', hosted: String(env.HOSTED || '').split(',').filter(Boolean).length,
+  roles: env.ROLES || 'game,verify,settlement',
   walletTrusted: JSON.parse(cli('getbalances')).mine.trusted };
 if (!publish) { out({ step: 'plan (nothing built, nothing sent): --publish to post', ...plan }); process.exit(0); }
 const hosted = String(env.HOSTED || '').split(',').filter(Boolean).map((h) => fromHex(h)).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
 const p = rt.postBond(secret, {
   endpoint: env.ENDPOINT, guardianCapable: true, guardianEndpoint: env.GUARDIAN_ENDPOINT, guardianOf: [],
   operatorId: env.OPERATOR, protocolVersions: String(env.PROTOCOLS || '1,2,3,4,5,6,7').split(',').map(Number),
+  ...(env.ROLES ? { roles: env.ROLES.split(',').map((r) => r.trim()).filter(Boolean) } : {}),
   ...(hosted.length ? { hostedGames: hosted } : {}),
   bondSats: BigInt(env.BOND_SATS || 50000), fundBtc: env.FUND_BTC || '0.00056',
 });
 const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([p.hex])))[0];
-out({ step: 'bond built', txid: p.txid, bondSats: p.bondSats, maturity: p.maturity, operatorId: p.advert.operatorId, protocolVersions: p.advert.protocolVersions,
+out({ step: 'bond built', txid: p.txid, bondSats: p.bondSats, maturity: p.maturity, operatorId: p.advert.operatorId, protocolVersions: p.advert.protocolVersions, roles: p.advert.roles,
   endpoint: p.advert.endpoint, guardianEndpoint: p.advert.guardianEndpoint, hostedGames: p.advert.hostedGames.length, vsize: JSON.parse(cli('decoderawtransaction', p.hex)).vsize,
   mempoolAccept: accept.allowed, why: accept['reject-reason'] || null });
 if (!accept.allowed) { out({ step: 'not published: refused by the mempool - its carrier funding is in the wallet\'s history', funding: 'see gettransaction' }); process.exit(1); }
