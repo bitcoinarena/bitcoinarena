@@ -39,7 +39,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
-import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
+import { H2H_REVEAL_MIN_MS, marketOfRound, isScalar } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf } from '../../arena-protocol/src/attested.js';
 import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
@@ -475,6 +475,9 @@ export class Round {
         if (others.some((x) => (x.entry.limitPrice !== undefined && x.entry.limitPrice !== null) !== order))
           throw new Error(order ? 'that round takes plain picks (pari-mutuel): it takes no order' : 'that round is an order book: it takes orders, not a plain pick');
         if (order) {
+          // A SCALAR MARKET (kanban #362 feature 8) IS NO BOOK: a share pays 1 sat if its outcome wins, and a scalar's sides are paid
+          // by where its value lies - its entries are plain picks of a side, settled by the scalar table
+          if (isScalar(game.plugin.manifest)) throw new Error(`game "${game.plugin.manifest.gameName}" is a scalar market: it takes plain picks of a side (LONG or SHORT), no order`);
           if (outcomes.length !== 2) throw new Error(`the order book trades a two-outcome market, and game "${game.plugin.manifest.gameName}" has ${outcomes.length}`);
           const price = BigInt(contract.limitPrice);
           if (price < 1n || price >= PRICE_SCALE || price % TICK !== 0n)

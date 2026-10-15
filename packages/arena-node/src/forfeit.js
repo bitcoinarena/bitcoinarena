@@ -23,6 +23,8 @@
 // the same share back; with another list, nothing.
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
 import { heldOutcomes, marketVoidOf } from './game-market.js';
+import { isScalar } from '../../arena-protocol/src/manifest.js';
+import { scalarOneSided } from '../../arena-protocol/src/scalar.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -264,6 +266,15 @@ export class Forfeit {
     const voided = marketVoidOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, held, nowMs });
     if (voided.voided) return { ok: true, why: voided.why };
     const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs });
+    // A SCALAR MARKET (kanban #362 feature 8) HAS NO PICK THAT MISSES: every side is paid by where the value lies. It is refunded
+    // only when one side had nobody (scalar.js scalarOneSided - the table's own rule, so it claims nothing either)
+    if (isScalar(f.plugin.manifest)) {
+      if (!fin.final) return { ok: false };
+      let one;
+      try { one = scalarOneSided(this.round.entriesOf(roundIdBytes).map(({ entryId, entry }) => ({ entryId, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat, pick: entry.pick }))); }
+      catch { return { ok: false }; }
+      return one.refunded ? { ok: true, why: one.why } : { ok: false };
+    }
     if (fin.final && !this.round.entriesOf(roundIdBytes).some(({ entry }) => entry.pick === fin.outcome))
       return { ok: true, why: `nobody picked the outcome ${fin.outcome}: every stake comes back` };
     return { ok: false };

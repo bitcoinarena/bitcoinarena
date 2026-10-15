@@ -61,7 +61,8 @@ test('one type carries no authority, and it is the ghost', () => {
   // 39 since the round result (kanban #312, §13): it decides who won a price round's war - bulls or bears - and moves no money.
   // 40 since the player result with its front (kanban #312, §13): the result of a price round's run, and the lead it ended on.
   // 41 since a seat's halt observation (kanban #323, §23A.5 "How a halt is proven"): which federation the liquidation takes.
-  assert.equal(FRAMES.size, 41, 'a type was added without saying what it decides');
+  // 42 since a scalar market's value attestation (kanban #362 feature 8): the number that decides how its pool is split.
+  assert.equal(FRAMES.size, 42, 'a type was added without saying what it decides');
 });
 
 /**

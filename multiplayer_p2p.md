@@ -270,6 +270,8 @@ GameManifest {
                                   //   each round then asks its own question
   game_source                     // ATTESTED, optional (§0A.7d): source_game_id, source_kind, mapping[] -
                                   //   each round names its source round, whose signed result decides it
+  scalar                          // ATTESTED, optional (§0A.7e): low, high, unit - the attestors sign a value,
+                                  //   paid linearly between the bounds to the sides LONG and SHORT
   signature                       // by game_dev_pubkey over all of the above
 }
 game_id = H(GameManifest)
@@ -870,6 +872,104 @@ attested one (arena-node `game-market.js`):
 
 Left: the page's market lines. **Dormant until seats advertise 6**: a
 version-6 round draws a committee only from nodes whose advert lists 6.
+
+## 0A.7e Scalar markets *(AS BUILT 2026-10-15, kanban #362 feature 8, protocol 2026.0.7; docs/PLATFORM-RESEARCH.md item 8)*
+
+**Why.** "A numeric outcome (a price, a count) paid linearly between bounds.
+Richer questions than buckets; one market instead of many." One market asks
+"BTC/USD at 18:00 UTC, in cents?" where buckets needed one outcome per range.
+
+**The scalar, in the manifest.** An `ATTESTED` manifest may name, after its
+own marker byte `0x06` (behind the market terms, never beside a template or a
+game source, before the required version `0x02`):
+
+```text
+scalar {
+  low                             // i64: the lower bound, a whole number in `unit` (may be negative)
+  high                            // i64: the upper bound; low < high, refused by name otherwise
+  unit                            // 1 to 16 characters: "cents", "blocks", "tenths °C"
+}
+```
+
+Its `outcomes` are exactly the two **sides**, `[LONG, SHORT]` (LONG = pick 0,
+SHORT = pick 1); its attestors are k of n as for any attested market; it must
+name market terms (fees, question, `resolve_after_close_ms` - when the value
+is read - and `deadline_after_resolve_ms`), and it **requires protocol version
+2026.0.7 or later** (#349). **No round byte changes**: a round of a scalar
+market is an attested round whose entries pick a side; `roundFitsManifest`
+refuses a round of it below version 7 by name. A node too old to know the
+field cannot read the manifest (trailing bytes); every manifest without it
+keeps its bytes and its game id.
+
+**The value, in its own message.** The attestors sign the observed value V:
+
+```text
+ValueAttestation {                // type 0x2a, written at protocol version 7
+  round_id                        // 32 bytes
+  value                           // i64, in the manifest's unit
+  observed_at_ms                  // u64
+  signatures[]                    // { attestor key, Ed25519 signature over the body's id }
+}
+id = H_tag("ARENA/v1/ValueAttestation", body)
+```
+
+Its type byte (`0x2a`) is not an outcome attestation's (`0x1d`), its body
+names version 7 (a decoder refuses one below 7), and its id is taken under its
+own tag - so **an outcome index can never be replayed as a value, nor a value
+as an index**: neither the bytes nor a signature cross. And each door asks the
+kind its market reads: `attestationStands` refuses an outcome attestation for
+a scalar market, `valueAttestationStands` a value attestation for any other.
+It stands by the manifest's threshold of distinct attestor keys and must be
+observed at or after the market's resolution time, as an outcome is.
+
+**The payout** (`scalar.js scalarPayoutTable`, integer msat only). Each
+entry's fee and donation come out of its stake first (§0A.8, as pari-mutuel);
+T is the net pool of both sides. V is clamped to `[low, high]`;
+
+```text
+LONG share  = floor(T * (V - low) / (high - low))
+SHORT share = floor(T * (high - V) / (high - low))
+the 0 or 1 msat the two floors leave -> the side of the entry first in ascending entry id
+each side: floor(share * net / side_net) per entry, the leftover msats one each in ascending entry id
+```
+
+Nothing is invented or kept: fees + donations + payouts = stakes, payouts = T.
+The LONG total never falls as V rises (it is floor or ceil of its exact share)
+and SHORT's never rises; one entry may step 1 msat against V where the named
+remainders move. Swapping every pick and mirroring V to `low + high - V` pays
+every entry the same.
+
+**Edge cases, decided.** V at or beyond a bound pays as that bound (LONG takes
+the whole pool at or above `high`, SHORT at or below `low`). **One side only**
+- nobody on a side, or a side that staked nothing against one that did - has
+no counterparty: it is **refunded**, every stake back, its fee too, exactly as
+a pari-mutuel round "nobody picked" (`scalarOneSided`). No entry: refunded. A
+free round of both sides: each gets its 0. No value by entry close +
+`resolve_after_close_ms` + `deadline_after_resolve_ms`, or two different
+values standing (DISPUTED: the pair is the proof): **VOID**, every stake back.
+
+**At a seat (as built).** `POST /outcome?round=` takes a value attestation's
+bytes beside an outcome attestation's (told apart by the type byte); a
+standing, timely one is held in `outcome_attestations` (its outcome column
+-1, the value in its bytes) and every reader of an attested round's outcome
+reads it back as the value (`game-market.js heldOutcomes`;
+`attested.js outcomeStanding` answers `{ ATTESTED, value }`, two values
+DISPUTED). Final after the round's objection window (600 s), the settlement
+makes the scalar table (`attestedTable`) and pays it by the lock rule
+(`attestedLockSettlement`): a lock moves whole, so a row paid **less** than its
+net stake has its lock claimed and its rest paid back to its own key, and a
+row paid **at least** its stake keeps its lock (the return door hands it back)
+and is paid the excess from the claimed locks. The stake-share handout
+releases exactly the claimed rows' secrets; the return door hands every stake
+and fee back at once for a one-sided round. `GET /outcome` adds `scalar
+{ low, high, unit }`, `value`, `clamped`, the scalar `table`, and
+`valuesNamed` when DISPUTED.
+
+Left: the page's market lines (a value input and the two sides), an attestor
+daemon mode that reads and signs a value (arena-attestor signs Up/Down
+indices only), a scalar template (per-round bounds, which would need a round
+field), and an order book for scalar sides. **Dormant until seats advertise
+7**: a version-7 round draws a committee only from nodes whose advert lists 7.
 
 ## 0A.8 The money: 10% of the gross stake
 

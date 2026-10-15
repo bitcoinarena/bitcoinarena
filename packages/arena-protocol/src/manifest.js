@@ -14,6 +14,8 @@
 //           asks its own question - contracts.js `event`),
 //         [optional, marker 0x05] game source: source_game_id, source_kind, mapping[] (kanban #362 feature 6: a market on a
 //           game - each ROUND names the source round whose signed result decides it, contracts.js `sourceRoundId`; no attestors),
+//         [optional, marker 0x06] scalar: low, high (i64 each), unit (kanban #362 feature 8: a numeric outcome paid linearly
+//           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (kanban #362 feature 3),
 //       [optional, marker 0x02] required_protocol_version (kanban #349),
@@ -23,8 +25,8 @@
 // THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
 // terms, template and game source, a head-to-head game's table, a top split's shares - never two result types' fields in one
 // manifest), then the required version, which any manifest may name, last. Each is optional or bound to its rule, so a
-// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its five
-// markers 0x01-0x05 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
+// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its six
+// markers 0x01-0x06 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
 // (trailing bytes).
 //     game_id = H(GameManifest)
 //
@@ -42,7 +44,7 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION, SCALAR_VERSION } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
 import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
@@ -186,6 +188,59 @@ export function gameSourceFits(g, m) {
 /** Is this manifest a market on a game (kanban #362 feature 6): an attested market decided by a source round's signed result? */
 export const isGameMarket = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.gameSource;
 
+/**
+ * A SCALAR MARKET (kanban #362 feature 8, docs/PLATFORM-RESEARCH.md item 8: "a numeric outcome (a price, a count) paid linearly
+ * between bounds. Richer questions than buckets; one market instead of many"). An ATTESTED manifest may name, after its own
+ * marker 0x06 (behind the market terms, never beside a template or a game source, before the required version):
+ *
+ *     scalar { low (i64), high (i64), unit (1 to 16 characters) }
+ *
+ * - `low` < `high`: whole numbers in the named unit ("cents", "blocks", "tenths of a degree") - the bounds the market pays
+ *   between. Signed, so a market may ask for a change or a temperature; 64 bits, so a price in msat fits.
+ * - Its outcomes are exactly the two SIDES, in this order: LONG (index 0) and SHORT (1). A round's entries pick a side as any
+ *   attested round's entries pick an outcome (contracts.js `pick`), so no round byte changes.
+ *
+ * ITS TRUST IS ITS ATTESTORS', k of n as for any attested market (1 to 16 keys, a threshold of 1 to their number) - but what they
+ * sign is the OBSERVED VALUE V, in a message of its own type and tag (scalar.js ValueAttestation): an outcome attestation is
+ * refused for it by name (attested.js attestationStands), and a value attestation for any other market (scalar.js
+ * valueAttestationStands). THE PAYOUT: V clamped to [low, high]; the LONG side's share of the whole net pool is
+ * (V - low) / (high - low), the SHORT side's the rest, each side's share split pari-mutuel over its own net stakes
+ * (scalar.js scalarPayoutTable - integer msat, every remainder named). Its money and times are its market terms, which it must
+ * name: its fees, its question, when V is read (`resolve_after_close_ms`) and the deadline after that, when a market with no
+ * standing value is VOID - every stake back. It REQUIRES protocol version 2026.0.7 or later (#349): a node that cannot pay it is
+ * never seated for its rounds, and a node too old to know the field cannot read the manifest at all (trailing bytes).
+ * Optional: every manifest without it keeps its bytes and its game id.
+ */
+export const SCALAR_MARKER = 0x06;
+export const SCALAR_MIN_PROTOCOL_VERSION = SCALAR_VERSION;
+export const SCALAR_SIDES = Object.freeze(['LONG', 'SHORT']);
+export const SCALAR_LONG = 0;
+export const SCALAR_SHORT = 1;
+export const SCALAR_UNIT_MAX = 16;
+export const SCALAR_I64_MIN = -0x8000000000000000n;
+export const SCALAR_I64_MAX = 0x7fffffffffffffffn;
+export function scalarFits(sc, m) {
+  if (!sc || typeof sc !== 'object') return { ok: false, why: 'a scalar is an object { low, high, unit }' };
+  if (typeof sc.low !== 'bigint' || typeof sc.high !== 'bigint') return { ok: false, why: 'a scalar market names its bounds low and high as BigInt whole numbers' };
+  if (sc.low < SCALAR_I64_MIN || sc.low > SCALAR_I64_MAX || sc.high < SCALAR_I64_MIN || sc.high > SCALAR_I64_MAX)
+    return { ok: false, why: 'a scalar market\'s bounds are signed 64-bit whole numbers' };
+  // LOW BELOW HIGH, BY NAME: equal bounds would divide by zero, and reversed ones would pay LONG for a falling value
+  if (sc.low >= sc.high) return { ok: false, why: `a scalar market's low bound is below its high bound; this one names low ${sc.low} and high ${sc.high}` };
+  if (typeof sc.unit !== 'string' || sc.unit.length < 1 || sc.unit.length > SCALAR_UNIT_MAX)
+    return { ok: false, why: `a scalar market names the unit of its bounds and its value in 1 to ${SCALAR_UNIT_MAX} characters` };
+  const outcomes = m && Array.isArray(m.outcomes) ? m.outcomes : [];
+  if (outcomes.length !== SCALAR_SIDES.length || outcomes.some((o, i) => o !== SCALAR_SIDES[i]))
+    return { ok: false, why: `a scalar market's outcomes are its two sides, ${SCALAR_SIDES.join(' and ')}, in that order` };
+  if (!m.marketTerms) return { ok: false, why: 'a scalar market names its market terms: its fees, its question, when its value is read and its attestors\' deadline' };
+  if (m.template !== undefined && m.template !== null) return { ok: false, why: 'a scalar market is no template: its bounds and its question are its manifest\'s' };
+  if (m.gameSource !== undefined && m.gameSource !== null) return { ok: false, why: 'a scalar market is no market on a game: its attestors sign its value' };
+  if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= SCALAR_MIN_PROTOCOL_VERSION))
+    return { ok: false, why: `a scalar market requires protocol version ${protocolVersionName(SCALAR_MIN_PROTOCOL_VERSION)} or later (#349): its attestors sign a value` };
+  return { ok: true };
+}
+/** Is this manifest a scalar market (kanban #362 feature 8): an attested market paid linearly by a signed value between bounds? */
+export const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.scalar;
+
 
 /**
  * A TOP SPLIT'S SHARES (kanban #362 feature 3): written only by a manifest whose payout_rule is TOP_SPLIT, after its own
@@ -280,6 +335,7 @@ export function encodeManifestBody(m) {
     if (m.marketTerms !== undefined && m.marketTerms !== null) { const f = marketTermsFit(m.marketTerms); if (!f.ok) throw new Error(f.why); }
     if (m.template !== undefined && m.template !== null) { const f = marketTemplateFits(m.template, m); if (!f.ok) throw new Error(f.why); }
     if (onGame) { const f = gameSourceFits(m.gameSource, m); if (!f.ok) throw new Error(f.why); }
+    if (m.scalar !== undefined && m.scalar !== null) { const f = scalarFits(m.scalar, m); if (!f.ok) throw new Error(f.why); }
   } else if (isHeadToHead(m)) {
     // A HEAD-TO-HEAD GAME HAS ONE DECIDE ADAPTER AND NO RUN: its core is the adapter, named by hash with its configs
     if (!Array.isArray(m.cores) || m.cores.length !== 1) throw new Error('a head-to-head game names exactly one core: its decide adapter');
@@ -315,6 +371,7 @@ export function encodeManifestBody(m) {
   if (typeof m.roundPeriodMs !== 'bigint') throw new Error('round_period is a BigInt of milliseconds');
   if (!isAttested(m) && m.template !== undefined && m.template !== null) throw new Error('only an attested game is a market template: its rounds ask a question its attestors answer');
   if (!isAttested(m) && m.gameSource !== undefined && m.gameSource !== null) throw new Error('only an attested game is a market on a game: its outcome is read, not played');
+  if (!isAttested(m) && m.scalar !== undefined && m.scalar !== null) throw new Error('only an attested game is a scalar market: its value is attested, not played');
   if (!manNameOf(m.payoutRule, PAYOUT_RULE)) throw new Error(`payout rule ${m.payoutRule} is not one of the engine's (§0A.5)`);
   if (!Array.isArray(m.clients) || !m.clients.every(manIs32)) throw new Error('a client is named by its 32-byte hash');
   if (!manIs32(m.gameDonationSetId)) throw new Error('a game names its donation set by its 32-byte id');
@@ -371,6 +428,11 @@ export function encodeManifestBody(m) {
       const g = m.gameSource;
       w.u8(GAME_SOURCE_MARKER); w.bytes32(g.sourceGameId); w.u8(g.sourceKind); w.vec(g.mapping, (x, ww) => ww.u8(x));
     }
+    // ITS SCALAR (kanban #362 feature 8), after its own marker and only when it is one: every attested manifest before keeps its bytes
+    if (m.scalar) {
+      const sc = m.scalar;
+      w.u8(SCALAR_MARKER); w.i64(sc.low); w.i64(sc.high); w.str(sc.unit);
+    }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -421,6 +483,10 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === GAME_SOURCE_MARKER) {
       r.u8();
       body.gameSource = { sourceGameId: r.bytes32(), sourceKind: r.u8(), mapping: r.vec((rr) => rr.u8()) };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === SCALAR_MARKER) {
+      r.u8();
+      body.scalar = { low: r.i64(), high: r.i64(), unit: r.str() };
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
@@ -492,6 +558,9 @@ export function manifestStands(m, { verify, parentOf = () => null } = {}) {
   // AND A MARKET ON A GAME WHOSE ROUNDS THIS BUILD CANNOT READ (kanban #362 feature 6): likewise
   if (isGameMarket(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a market on a game under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
+  // AND A SCALAR MARKET WHOSE VALUE THIS BUILD CANNOT PAY (kanban #362 feature 8): likewise
+  if (isScalar(m) && !speaksVersion(m.requiredProtocolVersion))
+    return { ok: false, why: `${name}: it is a scalar market under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
   if (m.version === 1) {
     if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
     return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
@@ -543,6 +612,9 @@ export function roundFitsManifest(contract, m, gameId = gameIdOf(m)) {
         return { ok: false, why: `${name}: a market on a game is published on its own, never as a round of a series (a series round's id does not hash its source)` };
       return { ok: true, attested: true, gameMarket: true };
     }
+    // A SCALAR MARKET'S ROUND (kanban #362 feature 8) is an attested round like any other: its entries pick a side (LONG 0, SHORT 1)
+    // as an index into the manifest's outcomes, and its version is held to the manifest's required one above
+    if (isScalar(m)) return { ok: true, attested: true, scalar: true };
     return { ok: true, attested: true };
   }
   if (!manIs32(contract.simCoreHash)) return { ok: false, why: 'that round names no 32-byte core' };

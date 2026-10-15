@@ -79,6 +79,17 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    --game <name>` plays it end to end. Measured on the test host: `up` 75 s from empty, `play` 229 s (Tick Tock) and 157 s
    (the template), 7 of 7 signatures, `replay` agreeing with all seven. Left: the paid round is published but the gateways
    hold no channels or e-cash, so no deposit goes through; the browser link is printed, not tested.
+   **Scalar markets** (8). State: built (protocol 7, dormant until seats advertise 7). An attested manifest names a scalar
+   (marker 0x06: `low` < `high` as i64 in a named unit) and the outcomes LONG, SHORT; no round byte changes - entries pick a
+   side, and the manifest requires 2026.0.7. The attestors (k of n) sign the observed value in a ValueAttestation of its own
+   (type 0x2a, tag `ARENA/v1/ValueAttestation`, body at version 7), so an index can never be replayed as a value or a value
+   as an index. Payout (`scalar.js scalarPayoutTable`): V clamped to the bounds, LONG's share of the net pool
+   (V - low) / (high - low), SHORT the rest, each side pari-mutuel over its own stakes - integer msat, floors, every
+   remainder to a named place, payouts + fees = stakes. One side only (no counterparty): refunded, fees too. No value by the
+   deadline, or two values: VOID. Node side built: `POST /outcome` takes the value attestation, the seat holds it beside the
+   outcome attestations, settles the scalar table after the objection window (a row paid less than its stake has its lock
+   claimed and its rest paid back; a row paid more keeps its lock and is paid the excess), and `GET /outcome` serves the
+   bounds, the value and the table. Left: the page's market lines, an attestor daemon that signs values, scalar templates.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
    versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
    (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through

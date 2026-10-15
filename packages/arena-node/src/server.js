@@ -148,13 +148,14 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
-import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf } from './game-market.js';
-import { isHeadToHead, marketOfRound, isGameMarket, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
+import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, VALUE_HELD_OUTCOME } from './game-market.js';
+import { isHeadToHead, marketOfRound, isGameMarket, isScalar, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
+import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { nonceGen as musigNonceGen, bondSigningContext as musigBondContext, bondPartialSign as musigBondPartial } from './musig2.js';
-import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, pariMutuelTable, roundTermsOf } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, attestationStands, attestationBodyId, outcomeFinality, attestationTimely, roundTermsOf } from '../../arena-protocol/src/attested.js';
 import { verifyEd25519 } from './ed25519.js';
 import { readFileSync, existsSync, mkdirSync, writeFileSync, statSync, readdirSync, renameSync, appendFileSync } from 'node:fs';
 import { join as joinPath } from 'node:path';
@@ -526,10 +527,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const market = marketOfRound(plugin.manifest, c);
     const out = { state: standing.state, outcomes: market.outcomes, attestThreshold: plugin.manifest.attestThreshold,
       attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs),
-      ...(c.event ? { question: c.event.question, resolveAtMs: String(c.event.resolveAtMs) } : {}) };
+      ...(c.event ? { question: c.event.question, resolveAtMs: String(c.event.resolveAtMs) } : {}),
+      // A SCALAR MARKET (kanban #362 feature 8): its bounds and their unit, every number a decimal string
+      ...(isScalar(plugin.manifest) ? { scalar: { low: String(plugin.manifest.scalar.low), high: String(plugin.manifest.scalar.high), unit: plugin.manifest.scalar.unit } } : {}) };
     if (voidHeld) {
       Object.assign(out, { state: 'VOID', why: voidHeld.why, gameOutcome: gameEvidenceOf(voidHeld) });
     } else if (standing.state === 'ATTESTED') {
+      // a scalar market's standing is the VALUE its attestors signed, and where it pays - clamped to the bounds (kanban #362 feature 8)
+      if (typeof standing.value === 'bigint') {
+        const sc = plugin.manifest.scalar;
+        const clamped = standing.value < sc.low ? sc.low : standing.value > sc.high ? sc.high : standing.value;
+        Object.assign(out, { value: String(standing.value), clamped: String(clamped) });
+      }
       Object.assign(out, { outcome: standing.outcome, label: market.outcomes[standing.outcome],
         observedAtMs: String(held[0].observedAtMs), final: standing.final, finalAtMs: String(standing.finalAtMs),
         // the attestation's own bytes: a page checks its signatures against the manifest it pinned, not this seat's word - or,
@@ -539,11 +548,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE ENTRIES THAT COUNT: a free round's every entry; a paying round's only those whose stake this seat has seen
         const counted = round.entriesOf(rid).filter(({ entryId }) => c.stakeMsat === 0n || !!round.stakeSeen(entryId))
           .map(({ entryId, entry }) => ({ entryId, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat, pick: entry.pick }));
-        const t = pariMutuelTable({ entries: counted, outcome: standing.outcome });
+        // by the game's rule: pari-mutuel on the outcome, or a scalar market's split by its value (game-market.js attestedTable)
+        const t = attestedTable(plugin.manifest, counted, standing);
         out.table = JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
       }
     } else if (standing.state === 'DISPUTED') {
-      Object.assign(out, { outcomesNamed: standing.outcomes, why: standing.why, proof: held.map((h) => (h.game ? gameEvidenceOf(h.game) : toHex(h.bytes))) });
+      Object.assign(out, { outcomesNamed: standing.outcomes, ...(standing.values ? { valuesNamed: standing.values.map(String) } : {}), why: standing.why,
+        proof: held.map((h) => (h.game ? gameEvidenceOf(h.game) : toHex(h.bytes))) });
     }
     return out;
   };
@@ -5204,25 +5215,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // the proof, and the round is DISPUTED.
       // POST /outcome?round=<id>: the round the attestation is handed for is named apart from it, so one made for another
       // round is refused as that, not filed under the round it names.
+      //
+      // A SCALAR MARKET'S VALUE (kanban #362 feature 8, protocol 2026.0.7) comes in at the same door: a value attestation's bytes
+      // (its own type byte, scalar.js), held only if it stands for a scalar market's round - an outcome attestation for one is
+      // refused by attestationStands, a value attestation for any other market by valueAttestationStands - and timed and kept
+      // as an attestation is. Two standing values that differ are the proof, and the round is DISPUTED.
       if (req.method === 'POST' && url.pathname === '/outcome') {
         const target = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (target.length !== 32) return text(res, 400, 'POST /outcome?round=<the round\'s id>');
-        let a, raw;
-        try { raw = new Uint8Array(await read(req)); a = decodeAttestation(raw); } catch (e) { return text(res, 400, `that is not an outcome attestation: ${e.message}`); }
+        let a, raw, valued = false;
+        try {
+          raw = new Uint8Array(await read(req));
+          valued = isValueAttestationBytes(raw);
+          a = valued ? decodeValueAttestation(raw) : decodeAttestation(raw);
+        } catch (e) { return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
         const row = round.get(target);
         if (!row) return text(res, 404, 'this node holds no such round');
         const c = decodeRoundContract(new Uint8Array(row.contract));
         const plugin = attestedOf(c);
         if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
         // A TEMPLATE'S ROUND (kanban #362 feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
-        const stands = attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519, round: c });
+        const stands = valued ? valueAttestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
+          : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519, round: c });
         if (!stands.ok) return text(res, 409, stands.why);
         // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
         // AND NOT BEFORE THE MARKET'S RESOLUTION TIME, when its manifest names one (kanban #235)
         const timely = attestationTimely(a, { entryCloseMs: c.entryCloseMs, nowMs: round.now(), terms: roundTermsOf(plugin.manifest, c) });
         if (!timely.ok) return text(res, 409, timely.why);
-        const fresh = round.putOutcomeAttestation({ bodyId: attestationBodyId(a), roundId: a.roundId, outcome: a.outcome, observedAtMs: a.observedAtMs,
-          bytes: raw, receivedMs: round.now() });
+        // a value is kept in the same table under its own body id, its outcome column -1 (no index: the value is in its bytes)
+        const fresh = round.putOutcomeAttestation({ bodyId: valued ? valueAttestationBodyId(a) : attestationBodyId(a), roundId: a.roundId,
+          outcome: valued ? VALUE_HELD_OUTCOME : a.outcome, observedAtMs: a.observedAtMs, bytes: raw, receivedMs: round.now() });
         if (fresh) settleAttestedSoon();
         const now = outcomeOf(a.roundId, c);
         console.log(`[outcome] ${toHex(a.roundId).slice(0, 16)}: ${stands.why}${fresh ? '' : ' (held already)'} - the round is ${now.state}`);
