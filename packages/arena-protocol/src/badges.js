@@ -58,6 +58,8 @@ export const PERFECT_RUN_SCORE = 100000000;
  * board as /season shows it, free rounds and all - and a board of fewer than three players hands no podium (one player
  * alone would be "top 3" of a board of one).
  */
+// THE SEASON BOARD IS THE LEADERBOARD (kanban #367, the owner 2026-10-15 "367 ok"): the top-3 badge is named so; its `d` stays, so its
+// definition replaces the old one on the relays and every award already given still names it
 export const BADGES = Object.freeze([
   { d: 'arena-first-win', name: 'First win', description: 'Won a staked round of a game for the first time.',
     image: '/badge-image/arena-first-win.svg', rule: 'first-win' },
@@ -65,7 +67,7 @@ export const BADGES = Object.freeze([
     image: '/badge-image/arena-five-rounds.svg', rule: 'rounds-played', rounds: 5 },
   { d: 'arena-perfect-run', name: 'Perfect run', description: 'Delivered a staked Tick Tock, Next Block run scoring 1000 points or more.',
     image: '/badge-image/arena-perfect-run.svg', rule: 'delivered-score', game: PERFECT_RUN_GAME, minScore: PERFECT_RUN_SCORE },
-  { d: 'arena-season-top-3', name: 'Season top 3', description: 'Finished first, second or third on a game\'s weekly board (Monday to Monday, UTC).',
+  { d: 'arena-season-top-3', name: 'Leaderboard top 3', description: 'Finished first, second or third on a game\'s weekly leaderboard (Monday to Monday, UTC).',
     image: '/badge-image/arena-season-top-3.svg', rule: 'season-top', top: 3, minPlayers: 3 },
 ].map((b) => Object.freeze(b)));
 
