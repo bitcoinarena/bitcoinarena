@@ -72,7 +72,7 @@ test('the definition (kind 30009) and the award (kind 8): tags exactly as NIP-58
   }
   assert.equal(badgesOn(undefined), false, 'off by default');
   assert.equal(badgesOn('1'), true);
-  assert.match(badgeImage(BADGES[3]), /^<svg [^>]*>.*Season top 3<\/text><\/svg>$/);
+  assert.match(badgeImage(BADGES[3]), /^<svg [^>]*>.*Leaderboard top 3<\/text><\/svg>$/);
   assert.ok(!/script|href/i.test(BADGES.map(badgeImage).join('')));
 });
 
