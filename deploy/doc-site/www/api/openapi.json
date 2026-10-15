@@ -172,7 +172,7 @@
      "Builders"
     ],
     "summary": "Players, outcomes and winnings of a round",
-    "description": "Who played a round, their signed outcome/score and what they won or lost.\n\nAccess: none\n\nReturns: 200 JSON {id, state, free, players:[{entry, player, name, stakeMsat, outcome, score, signedBy, wonMsat, winningsState, ...balance}], match (head-to-head record or null)}; 400/404\n\nSource: `packages/arena-node/src/server.js` line 4258.",
+    "description": "Who played a round, their signed outcome/score and what they won or lost.\n\nAccess: none\n\nReturns: 200 JSON {id, state, free (development rounds only), players:[{entry, player, name, stakeMsat, outcome, score, signedBy, wonMsat, winningsState, ...balance}], match (head-to-head record or null)}; 400/404\n\nSource: `packages/arena-node/src/server.js` line 4258.",
     "operationId": "get_api_round_result",
     "parameters": [
      {
@@ -6968,7 +6968,7 @@
      "Players"
     ],
     "summary": "Lobby listing of announced rounds",
-    "description": "Lobby listing of announced rounds this node holds, each row signed by the node.\n\nAccess: none\n\nReturns: 200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, event? {question, outcomes, resolveAtMs}, outcome, startTime, endTime, committee, stakeMsat, free, wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}\n\nSource: `packages/arena-node/src/server.js` line 4188.",
+    "description": "Lobby listing of announced rounds this node holds, each row signed by the node.\n\nAccess: none\n\nReturns: 200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, event? {question, outcomes, resolveAtMs}, outcome, startTime, endTime, committee, stakeMsat, free (development rounds only), wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}\n\nSource: `packages/arena-node/src/server.js` line 4188.",
     "operationId": "get_rounds",
     "parameters": [
      {
@@ -8226,7 +8226,7 @@
      "Players"
     ],
     "summary": "Stake and finality of an entry",
-    "description": "Where an entry's stake and result finality stand.\n\nAccess: none\n\nReturns: 200 JSON {entry, stake FREE|SEEN|UNSEEN, finality, finalityWhy, windowClosesAtMs}; 404\n\nSource: `packages/arena-node/src/server.js` line 4625.",
+    "description": "Where an entry's stake and result finality stand.\n\nAccess: none\n\nReturns: 200 JSON {entry, stake FREE (development rounds only)|SEEN|UNSEEN, finality, finalityWhy, windowClosesAtMs}; 404\n\nSource: `packages/arena-node/src/server.js` line 4625.",
     "operationId": "get_settlement",
     "parameters": [
      {
