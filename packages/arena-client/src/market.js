@@ -13,7 +13,7 @@ import { stakeOf } from './join.js';
 import { decodeManifest, gameIdOf, isAttested, isScalar, isGameMarket, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, isValueAttestationBytes, valueAttestationBodyId, valueAttestationStands } from '../../arena-protocol/src/scalar.js';
 import { gameMarketResolution } from '../../arena-protocol/src/game-market.js';
-import { seriesId as seriesIdOf, seriesRoundCheck } from '../../arena-protocol/src/series.js';
+import { seriesId, seriesRoundCheck } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
@@ -269,7 +269,7 @@ export async function fetchSeriesTemplate({ seriesIdHex, nodes = [], fetcher = f
       const r = await fetcher(`${base}/series-template?id=${want}`, timeout ? { signal: timeout(8000) } : {});
       if (!r.ok) { refused.push(`${base}: ${r.status}`); continue; }
       const t = parseSeriesLine(await r.text());
-      if (toHex(seriesIdOf(t)) !== want) { refused.push(`${base}: its template is another series`); continue; }
+      if (toHex(seriesId(t)) !== want) { refused.push(`${base}: its template is another series`); continue; }
       return { ok: true, template: t, from: base };
     } catch (e) { refused.push(`${base}: ${e.message}`); }
   }
