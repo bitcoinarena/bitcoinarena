@@ -9,8 +9,16 @@
 //                 main.js: the same derivation the roster's rounds use, roster.js censusOfView) - read once per proposal
 //   THE TALLY     ballot.js tally, re-run only when a block with new votes was read for that proposal
 //   THE OUTCOME   once the voting phase is over and its last block is `decideDepthFor(net)` deep, written into the proposal's
-//                 record once (proposals.js decide, the ballot_proposals table) - and a decided proposal is never read again:
-//                 not its blocks, not its census, not after a restart
+//                 record once (proposals.js decide, the ballot_proposals table), with the hash of that last voting block (its
+//                 ANCHOR) - and a decided proposal's blocks and census are not read again, not after a restart either
+//   A REORG       the chain a count was made on is held to by hash (`blockHashAt(height)`, main.js getblockhash): a block's
+//                 hash commits to every block below it, so ONE hash per proposal says whether anything it was counted on
+//                 changed. Each pass asks it: a decided proposal's anchor (moved: the outcome is taken back, proposals.js
+//                 undecide, and the proposal is counted again from its phase's first block), an open proposal's last block read
+//                 (moved: its votes are read again from the start of its phase), and a proposal not read yet its publication
+//                 block. Whichever moved, the publication block is asked too: gone from this chain, the proposal is forgotten
+//                 (proposals.js forget) - it was never published on the chain the seat now follows. Cost with no reorg: one
+//                 getblockhash per kept proposal a pass
 //   GOING LIVE    ballot-chain.js liveConfig over the passed proposals of a network (§27A.7.5): `live(net)` at the tip for
 //                 GET /config, `spans(net)` over every passed proposal for the serving rule (configServesRound)
 //
@@ -29,15 +37,18 @@ const tallyJson = (t) => ({ totalSats: str(t.totalSats), yesSats: str(t.yesSats)
   bondsVoted: t.bondsVoted, turnoutPct: t.turnoutPct, approvalPct: t.approvalPct, quorum: t.quorum, approved: t.approved, passed: t.passed });
 
 /**
- * `proposals`: proposals.js (list, decide). `tipHeight()` -> this seat's tip; `votesAt(height)` -> [{ payload, height, txid }];
+ * `proposals`: proposals.js (list, decide, undecide, forget). `blockHashAt(height)` -> the hash of this seat's block at that
+ * height, or null above the tip (none given: no reorg is followed - the first slice's behaviour, kept for a harness). `tipHeight()` -> this seat's tip; `votesAt(height)` -> [{ payload, height, txid }];
  * `censusAt(networkIdHex, height)` -> [{ pubkey, outpoint, bondSats }] or null (not readable yet); `verify(sig, msg, pubkey)`;
  * `genesisFor(net)` -> { configHash, config }; `decideDepthFor(net)` -> confirmations of the last voting block before the outcome
- * is written (a reorg below it is not followed - named, not handled).
+ * is written (a reorg below it is followed through the anchor: the outcome is taken back and counted again).
  */
-export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, verify, genesisFor = () => BALLOT_GENESIS,
+export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, verify, blockHashAt = null, genesisFor = () => BALLOT_GENESIS,
   decideDepthFor = () => 6, maxBlocksPerPass = 64, log = () => {} }) {
   const votesByHeight = new Map();          // height -> the vote outputs of that block (shared by every proposal voting there)
-  const open = new Map();                   // proposal id -> { readTo, census, votes: [], result } while undecided
+  const hashByHeight = new Map();           // height -> the hash of the block those votes were read from
+  const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
+  const reorgs = [];                        // what the reorg checks did, newest last (GET /proposals shows the last few)
   const bodies = new Map();                 // proposal id -> its decoded body (parent, configHash, config bytes)
   let tip = null;
   let lives = new Map();                    // network hex -> liveConfig at the tip
@@ -68,18 +79,50 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     lives = l; spansAll = s;
   };
 
-  /** One pass: the tip, then for each undecided proposal in its voting phase its census once and its new blocks. */
+  /**
+   * THE REORG CHECK, before anything is counted: per kept proposal one hash - its anchor if decided, its last block read if
+   * open, its publication block otherwise. Answers how many proposals were taken back or forgotten.
+   */
+  async function followReorgs() {
+    if (typeof blockHashAt !== 'function') return 0;
+    const hashAt = async (h) => { try { const x = await blockHashAt(h); return x ? String(x).toLowerCase() : null; } catch { return null; } };
+    let moved = 0;
+    for (const p of proposals.list()) {
+      const o = open.get(p.id);
+      let changed = false;
+      if (p.decided && p.decided.anchor) changed = (await hashAt(p.decided.anchor.height)) !== p.decided.anchor.hash;
+      else if (!p.decided && o && o.readHash) changed = (await hashAt(o.readTo)) !== o.readHash;
+      else if (!p.decided && p.blockHash) changed = (await hashAt(p.publishedAt)) !== p.blockHash;
+      if (!changed) continue;
+      moved++;
+      open.delete(p.id);
+      const published = !p.blockHash || (await hashAt(p.publishedAt)) === p.blockHash;
+      const what = !published ? 'its publication block left this chain: forgotten until posted again'
+        : p.decided ? `the chain under its outcome (${p.decided.passed ? 'PASSED' : 'FAILED'} at ${p.decided.decidedAt}) changed: counted again`
+          : 'the chain under its count changed: its votes are read again';
+      if (!published) proposals.forget(p.id);
+      else if (p.decided) proposals.undecide(p.id);
+      reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
+      log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
+    }
+    // a moved chain: no vote read before is trusted again - every open proposal reads its heights afresh
+    if (moved) { votesByHeight.clear(); hashByHeight.clear(); }
+    return moved;
+  }
+
+  /** One pass: the tip, the reorg check, then for each undecided proposal in its voting phase its census once and its new blocks. */
   async function pass() {
     if (running) return { skipped: true };
     running = true;
-    let read = 0, decided = 0;
+    let read = 0, decided = 0, reorged = 0;
     try {
       tip = Number(await tipHeight());
+      reorged = await followReorgs();
       for (const p of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom)) {
         if (p.decided) { open.delete(p.id); continue; }
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
         let o = open.get(p.id);
-        if (!o) { o = { readTo: p.votingFrom - 1, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }
+        if (!o) { o = { readTo: p.votingFrom - 1, readHash: null, census: null, votes: [], result: null, dirty: true }; open.set(p.id, o); }
         // THE CENSUS AT ITS PUBLICATION (27A.7.3: "the census is snapshotted when the proposal is published"), read once
         if (!o.census) {
           let c = null;
@@ -91,10 +134,15 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         const last = Math.min(tip, p.votingUntil - 1);
         while (o.readTo < last && read < maxBlocksPerPass) {
           const h = o.readTo + 1;
-          if (!votesByHeight.has(h)) { votesByHeight.set(h, await votesAt(h)); read++; }
+          if (!votesByHeight.has(h)) {
+            // the block's hash first, and its votes from THAT block: the hash the count is later held to is the block it read
+            const hash = typeof blockHashAt === 'function' ? await blockHashAt(h) : null;
+            if (typeof blockHashAt === 'function' && !hash) break;          // above this seat's tip after all: the next pass
+            votesByHeight.set(h, await votesAt(h, hash || undefined)); hashByHeight.set(h, hash ? String(hash).toLowerCase() : null); read++;
+          }
           const got = votesByHeight.get(h);
           if (got.length) { o.votes.push(...got); o.dirty = true; }
-          o.readTo = h;
+          o.readTo = h; o.readHash = hashByHeight.get(h) || null;
         }
         if (o.dirty) {
           o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil },
@@ -106,7 +154,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         // config live here, or it would be taken under the old one and refused later, mid-flight
         const depth = Math.max(1, Math.min(decideDepthFor(p.networkId), p.activationHeight - p.votingUntil + 1));
         if (o.readTo >= p.votingUntil - 1 && tip >= p.votingUntil - 2 + depth) {
-          const outcome = { ...tallyJson(o.result), decidedAt: tip, census: o.census.length };
+          // ITS ANCHOR: the last voting block's hash - it commits to the publication, the census and every vote below it
+          const outcome = { ...tallyJson(o.result), decidedAt: tip, census: o.census.length,
+            anchor: o.readHash ? { height: o.readTo, hash: o.readHash } : null };
           if (proposals.decide(p.id, outcome)) {
             decided++;
             log(`[ballot] proposal ${p.id.slice(0, 16)} ${outcome.passed ? 'PASSED' : 'FAILED'} at ${tip}: turnout ${outcome.turnoutPct} %, approval ${outcome.approvalPct} % `
@@ -117,9 +167,9 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       }
       // THE VOTE CACHE BELOW EVERY OPEN PHASE IS LET GO: no undecided proposal will ask for those heights again
       const floor = Math.min(...[...open.keys()].map((id) => { const p = proposals.list().find((x) => x.id === id); return p ? p.votingFrom : Infinity; }));
-      for (const h of votesByHeight.keys()) if (h < floor) votesByHeight.delete(h);
+      for (const h of votesByHeight.keys()) if (h < floor) { votesByHeight.delete(h); hashByHeight.delete(h); }
       refreshLive();
-      return { tip, read, decided };
+      return { tip, read, decided, reorged };
     } finally { running = false; }
   }
 
@@ -136,6 +186,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   return {
     pass,
     get tip() { return tip; },
+    /** The last reorg checks that moved something (newest last), for GET /proposals. */
+    reorgs: () => reorgs.slice(),
     /** GET /proposals: each kept proposal with its phase and its tally - the decided one, or the running count of its phase. */
     list: () => proposals.list().map((p) => {
       const o = open.get(p.id);

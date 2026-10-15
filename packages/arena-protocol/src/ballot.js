@@ -6,7 +6,7 @@
 // NO CURVE, as everywhere in this package: `verify(signature, digest, pubkey)` is injected (BIP-340 over the node keys).
 //
 // Two choices the spec leaves open, made here and named:
-//   - the config travels as its bytes with the config_hash it declares; the canonical encoding of game_config is a later slice
+//   - the config travels as its bytes with the config_hash it declares, and the two must agree (configHashOf, 27A.7.1)
 //   - the vote's marker is "ARN" 'V' (RULED the owner 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
 //     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
 //     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
@@ -44,6 +44,15 @@ export const THRESHOLDS = Object.freeze({
 });
 export const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
 export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
+
+/**
+ * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
+ * the hash every config of the network is named by (nextblock config/game-config.js TAG_GAME_CONFIG; the ballot's genesis
+ * 2170f250 is exactly this over its bytes, ballot-genesis.test.js). A proposal carries the FULL config and the hash it names,
+ * and the two must be one: otherwise a ballot could make live a hash whose bytes nobody voted on (kanban #329, the hole).
+ */
+export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
+export const configHashOf = (config) => taggedHash(TAG_GAME_CONFIG, config);
 
 const is32 = (b) => b instanceof Uint8Array && b.length === 32;
 const className = (c) => Object.keys(CLASS).find((k) => CLASS[k] === c);
@@ -87,6 +96,9 @@ export function proposalId(p) {
  */
 export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify, history = null, repealSchedule = REPEAL_SCHEDULES.mainnet }) {
   try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, why: e.message }; }
+  // THE HASH IT NAMES IS THE HASH OF THE CONFIG IT CARRIES (27A.7.1), or nobody voted on the config it would make live
+  const named = toHex(p.configHash), carried = toHex(configHashOf(p.config));
+  if (named !== carried) return { ok: false, why: `config_hash ${named} is not the hash of the config the proposal carries (${carried}): config_hash = H(canonical(game_config)), 27A.7.1` };
   if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
   // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
   const repeal = !!history && isRepeal(p, history);

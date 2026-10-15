@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createBallotTally } from '../src/ballot-tally.js';
-import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE } from '../../arena-protocol/src/ballot.js';
+import { encodeConfigProposalBody, proposalBodyId, proposalId, encodeVote, voteMessage, CLASS, CHOICE, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { encodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -82,6 +82,88 @@ test('the tally from blocks: votes outside the phase ignored, the last vote per 
   assert.equal(t.live(toHex(H(0x4e))).since, 108);
 });
 
+// A REORG (kanban #329, the hole of comment 2255): a count is held to the hashes of the blocks it read. A chain that can fork:
+// each height a block with its own hash and votes; fork(at, votes) replaces every block from `at` up with new ones.
+function forkable(votesByHeight, top = 120) {
+  const c = { tip: 0, reads: [], hashCalls: 0, censusReads: 0, blocks: new Map(), byHash: new Map(), branch: 0 };
+  const put = (h, votes) => { const hash = `${String(c.branch).padStart(2, '0')}${String(h).padStart(6, '0')}`.padEnd(64, 'f'); c.blocks.set(h, hash); c.byHash.set(hash, votes || []); };
+  for (let h = 0; h <= top; h++) put(h, votesByHeight.get(h));
+  c.fork = (at, votes) => { c.branch++; for (let h = at; h <= top; h++) put(h, votes.get(h)); };
+  c.tipHeight = async () => c.tip;
+  c.blockHashAt = async (h) => { c.hashCalls++; return h <= c.tip ? c.blocks.get(h) : null; };
+  c.votesAt = async (h, hash) => { c.reads.push(h); return c.byHash.get(hash || c.blocks.get(h)) || []; };
+  c.censusAt = async () => { c.censusReads++; return CENSUS; };
+  return c;
+}
+/** store() with proposals.js's undecide and forget. */
+function reorgStore(records) {
+  const held = new Map(records.map((r) => [r.id, r]));
+  const s = { writes: 0, forgotten: [],
+    list: () => [...held.values()],
+    decide: (id, outcome) => { const h = held.get(id); if (!h || h.decided) return false; held.set(id, { ...h, decided: outcome }); s.writes++; return true; },
+    undecide: (id) => { const h = held.get(id); if (!h || !h.decided) return false; const { decided, ...rest } = h; held.set(id, rest); s.writes++; return true; },
+    forget: (id) => { if (!held.delete(id)) return false; s.forgotten.push(id); s.writes++; return true; } };
+  return s;
+}
+
+test('a reorg below a decided proposal takes its outcome back and counts it again on the new chain; nothing moved costs one hash a pass', async () => {
+  const { idBytes, record } = kept();
+  const yes = new Map([[101, [vote(A, idBytes, CHOICE.YES, 101, 'a1')]], [102, [vote(B, idBytes, CHOICE.ABSTAIN, 102, 'b1')]]]);
+  const ch = forkable(yes);
+  const proposals = reorgStore([{ ...record, blockHash: ch.blocks.get(100) }]);
+  const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify,
+    decideDepthFor: () => 1 });
+  ch.tip = 106; await t.pass();
+  const first = proposals.list()[0].decided;
+  assert.deepEqual([first.passed, first.yesSats, first.anchor], [true, '50000000', { height: 106, hash: ch.blocks.get(106) }], 'decided with its anchor: the last voting block');
+  ch.tip = 110; await t.pass();
+  assert.equal(t.live(toHex(H(0x4e))).configHash, toHex(H(0x22)), 'passed and live from 108');
+  // NOTHING MOVED: one hash for the decided proposal a pass, no block read again
+  const before = { hashCalls: ch.hashCalls, reads: ch.reads.length };
+  assert.equal((await t.pass()).reorged, 0); assert.equal((await t.pass()).reorged, 0);
+  assert.deepEqual([ch.hashCalls - before.hashCalls, ch.reads.length - before.reads], [2, 0]);
+  // A REORG FROM 101 - above the publication (100), below the decision: A and B vote NO on the new branch
+  ch.fork(101, new Map([[101, [vote(A, idBytes, CHOICE.NO, 101, 'a1x')]], [102, [vote(B, idBytes, CHOICE.NO, 102, 'b1x')]]]));
+  ch.tip = 112; ch.reads = [];
+  const r = await t.pass();
+  const again = proposals.list()[0];
+  console.log('  REORG:', JSON.stringify({ pass: r, decided: { passed: again.decided.passed, noSats: again.decided.noSats, anchor: again.decided.anchor.hash.slice(0, 8) }, reorgs: t.reorgs() }));
+  assert.equal(r.reorged, 1);
+  assert.match(t.reorgs()[0].what, /PASSED at 106\) changed: counted again/);
+  assert.deepEqual(ch.reads, [101, 102, 103, 104, 105, 106], 'the whole phase read again from the new chain, once');
+  assert.deepEqual([again.decided.passed, again.decided.yesSats, again.decided.noSats, again.decided.anchor.hash], [false, '0', '80000000', ch.blocks.get(106)]);
+  assert.equal(t.list()[0].phase, 'failed');
+  assert.equal(t.live(toHex(H(0x4e))).configHash, toHex(BALLOT_GENESIS.configHash), 'the config it made live is taken back with it');
+  assert.equal(proposals.forgotten.length, 0, 'its publication still stands: kept');
+});
+
+test('a reorg inside an open phase reads its votes again; a reorg under its publication forgets the proposal', async () => {
+  const { idBytes, record } = kept();
+  const ch = forkable(new Map([[102, [vote(A, idBytes, CHOICE.YES, 102, 'a1')]]]));
+  const proposals = reorgStore([{ ...record, blockHash: ch.blocks.get(100) }]);
+  const t = createBallotTally({ proposals, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify,
+    decideDepthFor: () => 1 });
+  ch.tip = 103; await t.pass();
+  assert.equal(t.list()[0].tally.yesSats, '50000000');
+  ch.fork(102, new Map([[102, [vote(A, idBytes, CHOICE.NO, 102, 'a1x')]]]));
+  ch.tip = 104; ch.reads = [];
+  assert.equal((await t.pass()).reorged, 1);
+  const running = t.list()[0].tally;
+  assert.deepEqual([running.running, running.yesSats, running.noSats], [true, '0', '50000000'], 'the vote on the old branch is gone, the new one counts');
+  assert.deepEqual(ch.reads, [101, 102, 103, 104]);
+  assert.match(t.reorgs()[0].what, /its votes are read again/);
+  // IN REVIEW, ITS PUBLICATION BLOCK REPLACED: not published on this chain - forgotten (posted again, it is taken again)
+  const late = kept({ configHash: H(0x24), config: Uint8Array.of(4), publishedAt: 110 });
+  const p2 = reorgStore([{ ...late.record, blockHash: ch.blocks.get(110) }]);
+  const t2 = createBallotTally({ proposals: p2, tipHeight: ch.tipHeight, votesAt: ch.votesAt, censusAt: ch.censusAt, blockHashAt: ch.blockHashAt, verify });
+  ch.tip = 110; await t2.pass();
+  assert.equal(t2.list()[0].phase, 'review');
+  ch.fork(110, new Map()); ch.tip = 111;
+  assert.equal((await t2.pass()).reorged, 1);
+  assert.deepEqual([p2.list().length, p2.forgotten], [0, [late.record.id]]);
+  assert.match(t2.reorgs()[0].what, /publication block left this chain/);
+});
+
 test('a DESIGN proposal under 30 % turnout fails, and the config stays the genesis', async () => {
   const { idBytes, record } = kept();
   const ch = chain(new Map([[101, [vote(C, idBytes, CHOICE.YES, 101, 'c')]]]));         // 20 % of the bonded capital
@@ -112,7 +194,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
   const le = (n, bytes) => Uint8Array.from({ length: bytes }, (_, i) => Number((BigInt(n) >> BigInt(8 * i)) & 0xffn));
   const tx = (outs, salt) => Uint8Array.from([...le(2, 4), 1, ...new Uint8Array(32).fill(salt), ...le(0, 4), 0, ...le(0xffffffff, 4),
     outs.length, ...outs.flatMap((o) => [...le(o.sats, 8), o.script.length, ...o.script]), ...le(0, 4)]);
-  const NEW = { hash: H(0x5e), bytes: Uint8Array.of(3, 1, 4) };
+  const NEW = { hash: configHashOf(Uint8Array.of(3, 1, 4)), bytes: Uint8Array.of(3, 1, 4) };
   const deposits = new Map();                                                    // txid (display) -> { raw, height }
   /** A proposal with its deposit confirmed at `at`, posted to the seat. */
   const propose = async (base, { parent, configHash, config, at, activationHeight, salt }) => {
@@ -170,7 +252,7 @@ test('on a seat: a proposal passes and activates, rounds are served under the co
     assert.match((await post(NEW.hash, 307)).text, BOUND, 'and could not name the new one');
 
     // THE REPEAL (27A.7.6): NEW -> the genesis bytes again, at 310: review 0, voting 6, cooldown 0 - activation from 316
-    const forward = await propose(base, { parent: NEW.hash, configHash: H(0x6f), config: Uint8Array.of(7), at: 310, activationHeight: 316, salt: 2 });
+    const forward = await propose(base, { parent: NEW.hash, configHash: configHashOf(Uint8Array.of(7)), config: Uint8Array.of(7), at: 310, activationHeight: 316, salt: 2 });
     assert.equal(forward.status, 422); assert.match(forward.body.why, /before the end of cooldown \(318\)/, 'a new config never runs on the short schedule');
     const back = await propose(base, { parent: NEW.hash, configHash: BALLOT_GENESIS.configHash, config: BALLOT_GENESIS.config, at: 310, activationHeight: 316, salt: 3 });
     assert.equal(back.status, 201, back.body.why);

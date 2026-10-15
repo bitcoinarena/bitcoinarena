@@ -9,7 +9,9 @@
 // A REPEAL (§27A.7.6) is read against the history live AT THE PROPOSAL'S PUBLICATION HEIGHT (`historyFor(net, height)`, the
 // tally's - ballot-tally.js): the same answer at every seat, whenever it is asked. Until this seat has decided every proposal
 // that activates at or before that height, it cannot know that history, and says so (503) rather than guess a schedule.
-// A proposal's outcome is written into its record once (`decide`), and never tallied again.
+// A proposal's outcome is written into its record once (`decide`), and tallied again only when the chain it was counted on
+// changed below it (`undecide`, ballot-tally.js: a reorg). A proposal whose publication block left this seat's chain is
+// forgotten (`forget`): it was never published on the chain the seat now follows, and is taken again when posted again.
 import { decodeConfigProposalBody, proposalId, proposalStands, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
 import { depositOf } from '../../arena-protocol/src/ballot-chain.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
@@ -53,16 +55,33 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       if (!stands.ok) return { ok: false, status: 422, why: stands.why };
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
-        votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal };
+        votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal,
+        // THE BLOCK IT WAS PUBLISHED IN: a reorg that takes it out unpublishes the proposal (ballot-tally.js)
+        blockHash: String(blockHash).toLowerCase() };
       held.set(id, kept); save();
       return { ok: true, status: 201, ...kept };
     },
     list: () => [...held.values()].sort((a, b) => b.publishedAt - a.publishedAt),
-    /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): a decided proposal is never tallied again, across restarts too. */
+    /** THE OUTCOME, WRITTEN ONCE (ballot-tally.js): a decided proposal is not tallied again, across restarts too - unless `undecide`. */
     decide(id, outcome) {
       const had = held.get(id);
       if (!had || had.decided) return false;
       held.set(id, { ...had, decided: outcome }); save();
+      return true;
+    },
+    /** A REORG BELOW ITS DECISION (ballot-tally.js): the outcome is taken back, and the proposal is counted again on the chain now. */
+    undecide(id) {
+      const had = held.get(id);
+      if (!had || !had.decided) return false;
+      const { decided, ...rest } = had;
+      held.set(id, { ...rest, undecided: { at: decided.decidedAt, was: decided.passed ? 'PASSED' : 'FAILED' } }); save();
+      return true;
+    },
+    /** ITS PUBLICATION LEFT THE CHAIN (ballot-tally.js): not kept any more - posted again, it is taken again, from its new block. */
+    forget(id) {
+      if (!held.delete(id)) return false;
+      if (store && store.remove) store.remove(id);
+      save();
       return true;
     },
   };
