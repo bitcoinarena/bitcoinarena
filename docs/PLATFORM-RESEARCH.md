@@ -66,6 +66,19 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    `POST /game-outcome` hands a result in. Left: the page's market lines (multiplayer_p2p.md §0A.7d).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
 6. Then 8-16 by demand.
+   **Developer devnet** (15). State: built. `node packages/arena-node/tools/devnet.mjs up | status | play | replay | down`, everything
+   in one directory (DEVNET_DIR) on ports derived from one base (DEVNET_BASE_PORT, default 24000; all below 32768, none of the
+   live stacks', refused by name when taken). `up` reuses the harnesses: a regtest bitcoind, the federation founded by
+   `testnet4-found.mjs` (seven nodes, each one guardian, 5 of 7), seven `src/main.js` nodes, two lnds with a gateway each
+   (`testnet4-gateway.sh`, registered at every guardian), and `round-2of2.mjs` standUpRound attached with
+   ARENA_POST_FIRST_BONDS - the bonds, a free and a paid round, and a keeper. `play` drives one headless entry through a fresh
+   free round (tn4-live-run's run without the lock) and prints every node's signed result; `replay` is the replay simulator
+   (the node's own replay, in the core's sandbox, over a node's transcript and marks); `down` stops what it started by its pid
+   files. The game template (`tools/devnet-template`, `devnet.mjs new-game <dir> <name>`) is a whole replayed game - core,
+   manifest body, registration - signed with the developer's own keys by the dev client and hosted with DEVNET_GAMES; `play
+   --game <name>` plays it end to end. Measured on the test host: `up` 75 s from empty, `play` 229 s (Tick Tock) and 157 s
+   (the template), 7 of 7 signatures, `replay` agreeing with all seven. Left: the paid round is published but the gateways
+   hold no channels or e-cash, so no deposit goes through; the browser link is printed, not tested.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
    versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
    (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through

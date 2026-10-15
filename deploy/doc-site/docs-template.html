@@ -146,6 +146,7 @@
   <a href="https://docs.bitcoin-arena.io/api/">API reference ↗</a>
   <b>Build</b>
   <a href="#why-build">Build and earn</a>
+  <a href="#devnet">Run a devnet</a>
   <a href="#game">Implement a game</a>
   <a href="#h2h">Implement a head-to-head game</a>
   <a href="#payout-rules">Payout rules</a>
@@ -504,7 +505,52 @@ arena-donor sign &lt;dir&gt; # sign a game's manifest</pre>
     <a class="box link" href="#h2h"><h4>A head-to-head game</h4><p>Hidden moves, revealed together, like Rock Paper Scissors.</p></a>
     <a class="box link" href="#market"><h4>Build a market</h4><p>Outcomes, attestors and a pari-mutuel payout.</p></a>
     <a class="box link" href="#run"><h4>Run a node and earn</h4><p>A bond, a seat and 5% of every paid stake for the work.</p></a>
+    <a class="box link" href="#devnet"><h4>Run a devnet</h4><p>A chain, a federation and seven nodes on your own machine, in one command.</p></a>
   </div>
+
+  <h2 id="devnet">Run a devnet</h2>
+  <p>A <b>devnet</b> is the whole network on your own machine: a private Bitcoin chain (regtest), a Fedimint federation of seven guardians (5 of 7), seven Arena nodes that are each one guardian, two Lightning gateways, and a free and a paid round of Tick Tock open in the lobby. One command starts it, one stops it. Nothing in it touches testnet4 or mainnet, and it needs no test coins: it mines its own.</p>
+  <p><b>What you need:</b> Node.js 24 with the repository's packages installed; Bitcoin Core (<code>bitcoind</code>, <code>bitcoin-cli</code>); the Fedimint build the network runs (<code>fedimintd</code>, <code>fedimint-cli</code>, <code>gatewayd</code>, <code>gateway-cli</code>) with <code>blwp-stake-lock</code> built beside it (<code>packages/arena-node/tools/stake-lock</code>); and <code>lnd</code> with <code>lncli</code> for the two gateways. Without lnd the devnet runs free rounds only and says so.</p>
+<pre>export BITCOIN_BIN=&lt;dir with bitcoind&gt; FEDIMINT_BIN=&lt;dir with fedimintd and blwp-stake-lock&gt; LND_BIN=&lt;dir with lnd&gt;
+node packages/arena-node/tools/devnet.mjs up        # start everything, print the links
+node packages/arena-node/tools/devnet.mjs status    # what runs, its ports, the chain tip, the rounds
+node packages/arena-node/tools/devnet.mjs play      # one player through a free round, to its signed result
+node packages/arena-node/tools/devnet.mjs replay    # that run replayed here, checked against every node's result
+node packages/arena-node/tools/devnet.mjs down      # stop everything it started</pre>
+  <ol class="steps">
+    <li><b>up</b>
+      <p>Starts the chain and mines it to maturity, founds the federation (each node's guardian takes part in the key ceremony), starts the seven nodes, joins a federation client for each, starts two lnds with a gateway each and registers both at every guardian, then bonds the seven nodes on the chain and publishes a free round and a paid round. It prints the node addresses, the federation invite, both round ids and a lobby link. Measured on a test host: 75 s from an empty directory, 32 s after a <code>down</code> (the federation and the bonds are kept), 6 s when everything already runs.</p></li>
+    <li><b>status</b>
+      <p>Each process and whether it still runs, each node and its guardian, the chain's height, every port that answers, and the rounds node 1 lists.</p></li>
+    <li><b>play</b>
+      <p>Opens a fresh free round, joins it as a new player, plays the run with the round's own core (a driver steers the truck), sends the inputs and signed marks to all seven nodes as the page does, waits for the round to close, and prints each node's signed result with its signature checked: outcome, score and transcript hash, how many of the seven agree, and whether that matches the run it played. Measured: 229 s for a Tick Tock round (an 82 s run), 157 s for the template's 10 s game, every one of the seven nodes signing the same result.</p></li>
+    <li><b>replay</b> <code>[round entry]</code>
+      <p>The replay simulator: fetches a run's inputs and signed marks from a node, replays them here with the node's own replay code in the core's sandbox, and compares the outcome, score and transcript hash with every node's signed result. With no arguments it replays the last <code>play</code>.</p></li>
+    <li><b>down</b>
+      <p>Stops exactly what <code>up</code> started, by the process ids it wrote (each in its own process group, so a node's guardian goes with it), and checks that none of its ports still answers. The directory is kept, and <code>up</code> starts on it again.</p></li>
+  </ol>
+  <div class="tbl"><table><thead><tr><th>Setting</th><th>What it does</th></tr></thead><tbody>
+    <tr><td><code>DEVNET_DIR</code></td><td>Where everything lives: chain, node stores and guardians, clients, logs, process ids (default <code>./devnet-data</code>).</td></tr>
+    <tr><td><code>DEVNET_BASE_PORT</code></td><td>Every port is derived from it (default 24000): bitcoind RPC base+1, the runner's control door base+5, lnds base+10 and base+20, gateways base+30 and base+40, the seven nodes base+100 to base+160 in steps of 10, and each node's guardian at node+1000 to node+4000. All must stay below 32768. <code>up</code> refuses a port another program holds.</td></tr>
+    <tr><td><code>DEVNET_GAMES</code></td><td>More games for the nodes to host, as modules that export <code>GAME</code> (see below). Kept for every later command.</td></tr>
+    <tr><td><code>DEVNET_PAID_STAKE_MSAT</code></td><td>The paid round's stake (default 10,000,000 msat).</td></tr>
+    <tr><td><code>DEVNET_BLOCK_SECONDS</code></td><td>A block every N seconds once the rounds are up (default 30; 0 for none).</td></tr>
+    <tr><td><code>DEVNET_PAGE</code>, <code>DEVNET_PAGE_DIR</code></td><td>The page the printed links open, or a built page directory the devnet serves on base+3.</td></tr>
+  </tbody></table></div>
+  <h3 id="devnet-game">Your own game on the devnet</h3>
+  <p>The game template is a whole replayed game called <code>coin-count</code>: each tick the player presses a number from 0 to 9, some ticks count three times, and the score is the sum. One command copies it into a directory of yours, makes your developer keys with the dev client and signs its manifest:</p>
+<pre>node packages/arena-node/tools/devnet.mjs new-game ./my-game my-game
+# {"step":"new game","name":"my-game","gameId":"…","core":"…","hostedAs":true,…}
+DEVNET_DIR=./my-devnet DEVNET_GAMES=./my-game/game.js node packages/arena-node/tools/devnet.mjs up
+node packages/arena-node/tools/devnet.mjs play --game my-game
+node packages/arena-node/tools/devnet.mjs replay</pre>
+  <p>Three files are yours to change:</p>
+  <ul>
+    <li><code>core.js</code>, the rules: pure integer arithmetic over the seed and the inputs, run by every node in a sandbox with no network, files, clock or randomness. Its id is the SHA-256 of the file.</li>
+    <li><code>body.mjs</code>, the manifest: the core and its config by hash, the run length (<code>runTicksMax</code>), the payout rule, your client pages and your donation set. Sign it again after any change: <code>node packages/arena-donor/bin/arena-donor.mjs sign ./my-game/dev ./my-game/body.mjs</code>. The signed manifest's hash (<code>gameIdOf</code>) is your game id; a new version names the old id as its parent.</li>
+    <li><code>game.js</code>, what a node loads: the signed manifest, the core and its configs, and your donation set. A node checks all of it at start and refuses a game that does not match.</li>
+  </ul>
+  <div class="note"><b>Name your games at the first <code>up</code> of a devnet directory.</b> Each node's bond lists the games it hosts and is posted once, so a game added later is hosted but no committee is drawn for its rounds: start it on a new <code>DEVNET_DIR</code>. Not built yet: the devnet's gateways have no channels and no e-cash, so the paid round is published and listed but a deposit into it does not go through; <code>play</code> drives free rounds only; and the printed browser link was not tested.</div>
 
   <h2 id="game">Implement a game</h2>
   <p>A game is four things: its <b>rules</b> (a small core every node can run and get the same result), its <b>client</b> (the web page the player sees), its <b>donation key</b> (where your share of the donations goes) and its <b>manifest</b> (your signed record of all of it). The example below is a whole game called <code>coin-count</code>: each tick the player presses a number, and the score is the sum.</p>
@@ -566,7 +612,7 @@ export const GAME = { name: 'coin-count', title: 'Coin Count', manifest, gameId,
   donationSet: DONATION_SET };</pre>
       <p>Then ask node operators to host it. Each decides alone; the game appears in the lobby of every page whose nodes host it. Check it with <code>GET /games</code> on their nodes.</p></li>
     <li><b>Test on your own machine</b>
-      <p><code>packages/arena-node/tools/games-regtest.mjs</code> starts a private test chain with two nodes hosting two games and serves the page, so you see the game picker, your client and a join with test coins.</p></li>
+      <p><code>devnet.mjs new-game</code> makes this whole game from the template, signed with your own keys, and a <a href="#devnet">devnet</a> hosts it on seven nodes and plays it end to end. <code>packages/arena-node/tools/games-regtest.mjs</code> serves a built page beside two nodes, so you see the game picker and your client.</p></li>
     <li><b>Ship updates</b>
       <p>An update is a new manifest with the same key, <code>version</code> + 1 and the old game id as <code>parentManifestId</code>. Rounds already written keep the manifest they named.</p></li>
   </ol>
