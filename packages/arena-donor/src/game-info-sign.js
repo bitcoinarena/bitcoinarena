@@ -5,11 +5,11 @@ import { createPublicKey, sign, verify } from 'node:crypto';
 import { gameInfoDigest } from '../../arena-protocol/src/game-info.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
-export function signGameInfo({ gameId, manifest, description = '', website = '' }, { key, pubkey }) {
+export function signGameInfo({ gameId, manifest, description = '', website = '', lightning = '' }, { key, pubkey }) {
   if (Buffer.compare(Buffer.from(manifest.gameDevPubkey), Buffer.from(pubkey)) !== 0)
     throw new Error('that game names another developer key than the one this client holds');
-  const digest = Buffer.from(gameInfoDigest(gameId, { description, website }));
+  const digest = Buffer.from(gameInfoDigest(gameId, { description, website, lightning }));
   const signature = new Uint8Array(sign(null, digest, key));
   if (!verify(null, digest, createPublicKey(key), signature)) throw new Error('the signature does not verify');
-  return { description, website, signature: toHex(signature) };
+  return { description, website, ...(lightning ? { lightning } : {}), signature: toHex(signature) };
 }
