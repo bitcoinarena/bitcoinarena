@@ -197,7 +197,8 @@ export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, o
  */
 export const tooOldFor = (contract) => keptTooOld.get(toHex(contract.censusRoot)) || [];
 /** The census this client checked for a round's census root (its entries, with their advertisements), or null. */
-export const checkedCensusFor = (contract) => { const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
+// null for a contract naming no census root (the page hands this whole, and names no contract field itself: join.test.js)
+export const checkedCensusFor = (contract) => { if (!contract || !(contract.censusRoot instanceof Uint8Array)) return null; const c = keptChecked.get(toHex(contract.censusRoot)); return c ? c.entries : null; };
 /**
  * THE NEWEST CENSUS THIS CLIENT CHECKED, and how many nodes it bonds (kanban #348, the owner 2026-10-12: "in the same settings
  * window show how many nodes the network currently has"): the census at the highest height among the rounds this page checked,
