@@ -20,6 +20,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
+import { servedNodes, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
@@ -4696,6 +4697,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A RANDOM NUMBER FROM A RECENT BITCOIN BLOCK (kanban #366): GET /block-random?height=H&label=L&n=N[&count=K] - from THIS
       // seat's own chain (ballot.blockHashAt), once block H is buried BLOCK_RANDOM_DEPTH deep; any node or page recomputes it
       // (protocol block-random.js) and must get the same numbers. 409 with when it will be ready while the block is too recent.
+      // WHO SERVED A ROUND IN A WINDOW (kanban #365): GET /served?to=<ms>[&from=<ms>] - from the FINAL signatures this seat holds,
+      // each checked against its round's committee and its signature, counted once per round (protocol served-nodes.js); `from`
+      // defaults to 24 h before `to`. Two seats that hold the same FINALs answer the same root.
+      if (req.method === 'GET' && url.pathname === '/served') {
+        const to = Number(url.searchParams.get('to'));
+        const from = url.searchParams.has('from') ? Number(url.searchParams.get('from')) : to - SERVED_WINDOW_MS;
+        if (!Number.isSafeInteger(to) || !Number.isSafeInteger(from) || to <= from || to - from > 7 * SERVED_WINDOW_MS)
+          return text(res, 400, 'GET /served?to=<ms>[&from=<ms>] - a window of at most 7 days');
+        const rounds = round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }));
+        const got = servedNodes({ rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), fromMs: String(got.fromMs), toMs: String(got.toMs), rounds: got.rounds,
+          root: got.root, nodes: got.nodes, refused: got.refused.length }));
+      }
       if (req.method === 'GET' && url.pathname === '/block-random') {
         if (!ballot || typeof ballot.blockHashAt !== 'function' || typeof ballot.tipHeight !== 'function') return text(res, 503, 'this node reads no chain to draw from');
         const height = Number(url.searchParams.get('height'));

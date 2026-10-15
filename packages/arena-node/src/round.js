@@ -1979,6 +1979,22 @@ export class Round {
       .map((r) => ({ signerPubkey: new Uint8Array(r.signer_pubkey), bytes: new Uint8Array(r.bytes), seenMs: Number(r.seen_ms) }));
   }
 
+  /**
+   * EVERY FINAL SIGNATURE THAT CAME BETWEEN TWO TIMES, by round (kanban #365, who served a round in the last 24 h): rows that
+   * arrived in [fromMs, toMs + 5 s) - a FINAL counts only when signed within 5 s of its arrival, so its own time is then within the
+   * window or just past it; the protocol's servedNodes reads the signed time itself.
+   */
+  finalSigsBetween(fromMs, toMs) {
+    const byRound = new Map();
+    for (const r of this.db.prepare('SELECT round_id, bytes FROM final_sigs WHERE seen_ms >= ? AND seen_ms < ? ORDER BY round_id')
+      .all(Number(fromMs) - 5000, Number(toMs) + 5000)) {
+      const k = toHex(r.round_id);
+      if (!byRound.has(k)) byRound.set(k, { roundId: new Uint8Array(r.round_id), finals: [] });
+      byRound.get(k).finals.push(new Uint8Array(r.bytes));
+    }
+    return [...byRound.values()];
+  }
+
   /** The FINAL signatures refused for their time (§13A rule 3), as evidence. */
   finalSigEvidence(roundIdBytes, entryIdBytes) {
     return this.db.prepare('SELECT signer_pubkey, bytes, seen_ms, why FROM final_sig_evidence WHERE round_id = ? AND entry_id = ? ORDER BY seen_ms')
