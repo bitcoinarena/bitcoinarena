@@ -56,3 +56,26 @@ test('a claimed list that leaves a node out, adds one, or miscounts is shown exa
   assert.notEqual(Buffer.from(servedNodesRoot(claimed)).toString('hex'), mine.root);
   assert.throws(() => servedNodesRoot({ fromMs: FROM, toMs: TO, nodes: [{ key: k(0), rounds: 1 }, { key: k(0), rounds: 2 }] }), /listed twice/);
 });
+
+test('seats that each hold only their own rounds merge into one list: the same root whichever seats answer first, a forged FINAL adds nothing', async () => {
+  const { mergeServedRounds } = await import('../src/served-nodes.js');
+  const rA = { roundId: b32(0x21), committee: NODES.slice(0, 3).map((n) => n.pub) };
+  const rB = { roundId: b32(0x22), committee: NODES.slice(2, 5).map((n) => n.pub) };
+  const fA = NODES.slice(0, 3).map((n) => final(n, rA.roundId, 1, TO - 100n));
+  const fB = NODES.slice(2, 5).map((n) => final(n, rB.roundId, 1, TO - 100n));
+  const forged = final(NODES[0], rB.roundId, 1, TO - 100n);       // node 0 is not of rB's committee
+  const seat1 = [{ ...rA, finals: fA.slice(0, 2) }];
+  const seat2 = [{ ...rA, finals: fA.slice(1) }, { ...rB, finals: fB.slice(0, 1) }];
+  const seat3 = [{ ...rB, finals: [...fB.slice(1), forged] }];
+  const one = servedNodes({ rounds: mergeServedRounds([seat1, seat2, seat3]).rounds, fromMs: FROM, toMs: TO, verify });
+  const two = servedNodes({ rounds: mergeServedRounds([seat3, seat1, seat2]).rounds, fromMs: FROM, toMs: TO, verify });
+  assert.equal(one.root, two.root);
+  assert.deepEqual(one.nodes.map((n) => n.rounds), [...one.nodes.map((n) => n.rounds)]);
+  assert.equal(one.nodes.length, 5); assert.equal(one.rounds, 2);
+  assert.equal(one.nodes.find((n) => n.key === Buffer.from(NODES[2].pub).toString('hex')).rounds, 2);
+  assert.equal(one.refused.length, 1, 'the forged FINAL');
+  const partial = servedNodes({ rounds: seat1, fromMs: FROM, toMs: TO, verify });
+  assert.notEqual(partial.root, one.root, 'one seat alone sees less');
+  const clash = mergeServedRounds([[{ ...rA, finals: fA }], [{ ...rA, committee: NODES.slice(1, 4).map((n) => n.pub), finals: [] }]]);
+  assert.deepEqual([clash.rounds.length, clash.conflicts.length], [0, 1]);
+});

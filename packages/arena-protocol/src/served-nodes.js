@@ -76,3 +76,24 @@ export function servedNodesDiffer(claimed, mine) {
   for (const [k, r] of b) if (!a.has(k)) out.push({ key: k, why: `served ${r} round(s) here, and is left out` });
   return out;
 }
+
+/**
+ * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (kanban #365, measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
+ * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
+ * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
+ * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ */
+export function mergeServedRounds(held) {
+  const hx = (b) => toHex(b);
+  const rounds = new Map(), conflicts = new Set();
+  for (const seat of held || []) for (const r of seat || []) {
+    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
+    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
+    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
+    const into = rounds.get(k);
+    if (into.key !== committee) { conflicts.add(k); continue; }
+    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  }
+  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+    conflicts: [...conflicts] };
+}

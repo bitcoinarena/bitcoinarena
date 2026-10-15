@@ -4707,9 +4707,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return text(res, 400, 'GET /served?to=<ms>[&from=<ms>] - a window of at most 7 days');
         const rounds = round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }));
         const got = servedNodes({ rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+        // ?finals=1 hands over what it read: the rounds with their committees and the signed FINALs, so a reader merges every
+        // seat's (protocol mergeServedRounds) - each seat holds only the rounds it sat on
+        const held = url.searchParams.get('finals') === '1'
+          ? rounds.map((r) => ({ roundId: toHex(r.roundId), committee: r.committee.map(toHex), finals: r.finals.map(toHex) })) : undefined;
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), fromMs: String(got.fromMs), toMs: String(got.toMs), rounds: got.rounds,
-          root: got.root, nodes: got.nodes, refused: got.refused.length }));
+          root: got.root, nodes: got.nodes, refused: got.refused.length, held }));
       }
       if (req.method === 'GET' && url.pathname === '/block-random') {
         if (!ballot || typeof ballot.blockHashAt !== 'function' || typeof ballot.tipHeight !== 'function') return text(res, 503, 'this node reads no chain to draw from');
