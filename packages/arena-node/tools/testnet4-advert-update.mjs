@@ -19,7 +19,7 @@
 //
 //   ARENA_FUND_INPUT=<txid>:<vout> node tools/testnet4-advert-update.mjs [--publish]
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { regtest } from './regtest-bond.mjs';
 import { openStore, nodeIdentity } from '../src/store.js';
@@ -45,7 +45,13 @@ const ADD_GAMES = (env.ARENA_ADVERT_ADD_GAMES || '').split(',').filter((x) => /^
 // STEPPING OUT WITHOUT UNBONDING (§5A.3, kanban #302): ARENA_ADVERT_SERVING=false takes the named nodes out of every census from
 // the update's block on (true brings them back), their bonds untouched; ARENA_ADVERT_NODES="3,5" names which (all seven when unset)
 const SERVING = env.ARENA_ADVERT_SERVING === 'false' ? false : env.ARENA_ADVERT_SERVING === 'true' ? true : null;
-const ONLY = (env.ARENA_ADVERT_NODES || '').split(',').map(Number).filter((n) => n >= 1 && n <= 7);
+const ONLY = (env.ARENA_ADVERT_NODES || '').split(',').map(Number).filter((n) => Number.isInteger(n) && n >= 1);
+// THE SUCCESSOR TOO (§23A.2 "every guardian re-advertises with guardian_of[] naming (federation_id, peer key)", kanban #326):
+// ARENA_ADVERT_GUARDIAN_NEXT=1 - a node seated first in its federation's successor runs a second guardian (<store>.guardian-next);
+// once its ceremony is done, guardian_of names both: the federation it still guards through the drain and its successor. Each
+// guardian's federation is read from its own directory's invite-code (a node drawn into a successor guards the successor, not
+// the federation this machine's invite names); ARENA_ADVERT_NODES may name node numbers past 7 (node 15)
+const GUARDIAN_NEXT = env.ARENA_ADVERT_GUARDIAN_NEXT === '1';
 // THE NODE'S DECLARED SCALARS (§27A.2, kanban #305): ARENA_ADVERT_DECLARE="<bond_min sats>:<proposal deposit sats>"
 const DECLARE = /^\d+:\d+$/.test(env.ARENA_ADVERT_DECLARE || '')
   ? (([b, p]) => ({ bondMinSats: BigInt(b), proposalDepositSats: BigInt(p) }))(env.ARENA_ADVERT_DECLARE.split(':')) : null;
@@ -61,23 +67,29 @@ if (!/^[0-9a-f]{64}$/.test(fundTxid || '') || !/^\d+$/.test(fundVout || ''))
 
 const rt = regtest(cli, { network: 'testnet4', wallet });
 const federationId = fromHex(readInvite(readFileSync(join(home, 'invite-code'), 'utf8').replace(/["\s]/g, '')).federationId);
+/** One guardian directory's entry: its own peer's broadcast key, and its federation (its own invite-code, else this machine's). */
+function guardianEntry(dir) {
+  const peer = JSON.parse(readFileSync(`${dir}/local.json`, 'utf8')).identity;
+  const guardianKey = JSON.parse(readFileSync(`${dir}/consensus.json`, 'utf8')).broadcast_public_keys[String(peer)];
+  if (!/^[0-9a-f]{66}$/.test(guardianKey || '')) throw new Error(`${dir}: no broadcast key for its own peer ${peer}`);
+  let fid = federationId;
+  try { fid = fromHex(readInvite(readFileSync(`${dir}/invite-code`, 'utf8').replace(/["\s]/g, '')).federationId); } catch { /* this machine's */ }
+  return { federationId: fid, guardianKey: fromHex(guardianKey) };
+}
 
 const plans = [];
-for (let n = 1; n <= 7; n++) {
-  if (ONLY.length && !ONLY.includes(n)) continue;
+for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
   const store = join(home, `node-${n}.db`);
   const db = openStore(store);
   const { secret, pubkey } = nodeIdentity(db);
   db.close?.();
-  const dir = `${store}.guardian`;
-  const peer = JSON.parse(readFileSync(`${dir}/local.json`, 'utf8')).identity;
-  const guardianKey = JSON.parse(readFileSync(`${dir}/consensus.json`, 'utf8')).broadcast_public_keys[String(peer)];
-  if (!/^[0-9a-f]{66}$/.test(guardianKey || '')) throw new Error(`${dir}: no broadcast key for its own peer ${peer}`);
+  const entries = [guardianEntry(`${store}.guardian`)];
+  if (GUARDIAN_NEXT && existsSync(`${store}.guardian-next/consensus.json`)) entries.push(guardianEntry(`${store}.guardian-next`));
   const bonds = rt.bondsOf(secret);
   if (!bonds.length) throw new Error(`node ${n} (${toHex(pubkey).slice(0, 8)}) has no confirmed unspent bond: nothing to update, and no bond is posted`);
   const bond = bonds[0];
   const now = (bond.advert.guardianOf || []).map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`);
-  const want = `${toHex(federationId)}:${guardianKey}`;
+  const want = entries.map((x) => `${toHex(x.federationId)}:${toHex(x.guardianKey)}`).join(',');
   say({ node: n, nodeKey: toHex(pubkey).slice(0, 16), bond: `${bond.txid}:${bond.vout}`, bondHeight: bond.height, sats: bond.sats,
     otherBonds: bonds.slice(1).map((b) => `${b.txid}:${b.vout}`), advertises: now, updatedBy: bond.updatedBy || null, wants: want });
   const versionsDiffer = VERSIONS && (bond.advert.protocolVersions || []).join(',') !== VERSIONS.join(',');
@@ -86,8 +98,8 @@ for (let n = 1; n <= 7; n++) {
   const operatorDiffers = OPERATOR !== null && bond.advert.operatorId !== OPERATOR;
   const declaresDiffer = DECLARE && JSON.stringify(bond.advert.declares || null, (k, v) => (typeof v === 'bigint' ? String(v) : v))
     !== JSON.stringify(DECLARE, (k, v) => (typeof v === 'bigint' ? String(v) : v));
-  if (now.length === 1 && now[0] === want && !versionsDiffer && !gamesDiffer && !servingDiffers && !declaresDiffer && !operatorDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
-  const advert = { ...bond.advert, guardianOf: [{ federationId, guardianKey: fromHex(guardianKey) }], timestamp: BigInt(Date.now()),
+  if (now.join(',') === want && !versionsDiffer && !gamesDiffer && !servingDiffers && !declaresDiffer && !operatorDiffers) { say({ node: n, update: 'not needed: its advertisement already says all of it' }); continue; }
+  const advert = { ...bond.advert, guardianOf: entries, timestamp: BigInt(Date.now()),
     ...(VERSIONS ? { protocolVersions: VERSIONS } : {}), ...(ADD_GAMES.length ? { hostedGames: gamesWith(bond.advert.hostedGames) } : {}),
     ...(SERVING !== null ? { serving: SERVING } : {}), ...(DECLARE ? { declares: DECLARE } : {}), ...(OPERATOR ? { operatorId: OPERATOR } : {}) };
   plans.push({ n, secret, bond, advert, prepared: rt.prepareAdvertUpdate(secret, advert) });
@@ -127,7 +139,7 @@ const updates = await Promise.all(plans.map(async (p) => {
   const checked = read.ok ? await checkAgainstBond(read, { txid: fromHex(p.bond.txid).reverse(), vout: p.bond.vout,
     nodePubkey: p.advert.nodePubkey }, (sig, msg, key) => schnorr.verify(sig, msg, key)) : read;
   if (!checked.ok) throw new Error(`node ${p.n}: the update does not read back: ${checked.why}`);
-  if (toHex(checked.advert.guardianOf[0].guardianKey) !== toHex(p.advert.guardianOf[0].guardianKey)) throw new Error(`node ${p.n}: read back another key`);
+  if (checked.advert.guardianOf.map((g) => toHex(g.guardianKey)).join(',') !== p.advert.guardianOf.map((g) => toHex(g.guardianKey)).join(',')) throw new Error(`node ${p.n}: read back other keys`);
   return { ...p, ...u, vsize: d.vsize };
 }));
 const accept = JSON.parse(cli('testmempoolaccept', JSON.stringify([fundingHex, ...updates.map((u) => u.hex)])));
@@ -136,7 +148,7 @@ say({ funding: fundingTx.txid, fundingFee: funded.fee, carriers: plans.length, c
 if (!accept.every((a) => a.allowed)) throw new Error('the mempool refuses a transaction above; nothing is broadcast');
 for (const u of updates)
   say({ node: u.n, update: u.txid, advertId: u.advertId, bond: `${u.bond.txid}:${u.bond.vout}`, vsize: u.vsize,
-    guardianKey: toHex(u.advert.guardianOf[0].guardianKey) });
+    guardianOf: u.advert.guardianOf.map((g) => `${toHex(g.federationId).slice(0, 8)}:${toHex(g.guardianKey).slice(0, 10)}`) });
 if (!publish) { say({ published: false, why: 'no --publish: built and checked, nothing broadcast' }); process.exit(0); }
 cli('sendrawtransaction', fundingHex);
 for (const u of updates) cli('sendrawtransaction', u.hex);
