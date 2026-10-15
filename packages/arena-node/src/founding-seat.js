@@ -29,6 +29,8 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
     // does not serve the admin `status` ("Method not found"), so a seat asking that never took part; `admin setup status` answers
     // "ConsensusIsRunning" once its federation runs, and a setup state (AwaitingLocalParams, SharingConnectionCodes, ...) before
     inSetup: async () => { try { const st = unq(await setup('status')); return !!st && st !== 'ConsensusIsRunning'; } catch { return false; } },
+    // THE FEDERATION RUNS (§23A.2: the founding is void only "if the window passes without a federation"): its DKG done, consensus running
+    done: async () => { try { return unq(await setup('status')) === 'ConsensusIsRunning'; } catch { return false; } },
   };
 }
 
@@ -76,7 +78,10 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     }
     // codes this seat missed, from the others' GET /founding
     if (fetchJson) for (const root of peers()) {
-      try { const s = await fetchJson(`${root}/founding`); if (s && s.id === current.founding.id) current.founding.takeAll(s.codes); } catch { /* the next tick */ }
+      try {
+        const s = await fetchJson(`${root}/founding`);
+        if (s && s.id === current.founding.id) { current.founding.takeAll(s.codes); if (s.federation === true) current.founding.federationSeen(); }
+      } catch { /* the next tick */ }
     }
     const st = await current.founding.advance(h);
     return { ok: true, trigger: current.trigger, state: st };

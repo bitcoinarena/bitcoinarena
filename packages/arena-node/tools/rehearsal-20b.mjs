@@ -9,6 +9,9 @@
 // drawn, two alternates; the drawn node at position SILENT (default 1) never takes part. Blocks are mined as the window runs.
 // Asked: the draw; who posted; the no-show replaced after founding_window; the DKG on the four seated; the federation then answers
 // (invite code, session_count on every seated guardian). One JSON line per question; it decides nothing. Never testnet4.
+// THE WINDOW (kanban #320, comment 2258): one block a step, and each step names the beacon, the window's end, its fifth, when each
+// seated node was seated, the no-shows, and whether the founding runs or is void. CRASH=<position>: the guardian seated there is
+// killed right after it posted its setup code, so the DKG cannot finish - the founding must be void at beacon + founding_window.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -21,6 +24,7 @@ import { wsSessionCount } from '../src/halts.js';
 
 const P = process.env.P, B = process.env.BITCOIN_CLI, ARGS = (process.env.BTC_ARGS || '').split(' ').filter(Boolean);
 const F = process.env.FEDIMINT_BIN, FH = process.env.FEDIMINT_HOME, N = Number(process.env.NODES || 6), SILENT = Number(process.env.SILENT ?? 1);
+const CRASH = process.env.CRASH === undefined || process.env.CRASH === '' ? null : Number(process.env.CRASH);
 if (!P || !B || !F) throw new Error('P, BITCOIN_CLI, BTC_ARGS, FEDIMINT_BIN, FEDIMINT_HOME');
 const out = (o) => console.log(JSON.stringify(o));
 const cli = (...a) => execFileSync(B, [...ARGS, ...a], { encoding: 'utf8' }).trim();
@@ -65,18 +69,47 @@ out({ step: 'trigger', kind: draw.trigger.kind, height: draw.trigger.height, why
 out({ step: 'draw', trigger, seed: toHex(seed).slice(0, 16), id: draw.id.slice(0, 16), seated: draw.seated.map((x) => ix(x.node)), alternates: draw.alternates.map(ix),
   silent: ix(draw.seated[SILENT].node), foundingWindow: clocks.foundingWindow });
 const silent = ix(draw.seated[SILENT].node);
+const crashed = CRASH === null ? null : ix(draw.seated[CRASH].node);
+const down = new Set([silent]);
+out({ step: 'window opens', beacon: draw.beacon, windowEnd: draw.windowEnd, fifth: draw.fifth, foundingWindow: draw.foundingWindow, crash: crashed });
+const pidOf = (g) => { try { const line = readFileSync(join(P, 'pids'), 'utf8').split('\n').find((l) => l.endsWith(`fedimintd-${g}`)); return line ? Number(line.split(' ')[0]) : null; } catch { return null; } };
 const t0 = Date.now();
-for (let n = 0; n < 40; n++) {
+let last = null;
+for (let n = 0; n < 30; n++) {
   const tip = height();
-  for (let i = 0; i < N; i++) if (i !== silent) { try { await seats[i].tick(); } catch (e) { out({ step: 'step failed', seat: i, tip, why: String(e.message).slice(0, 300) }); } }
-  const st = seats[(silent + 1) % N].state();
-  out({ step: 'window', tip, seated: st.seated.map((x) => `${ix(x.node)}${x.code ? '+' : '-'}`), noShows: st.noShows.map(ix), windowFrom: st.windowFrom,
-    started: seats.filter((s) => (s.state() || {}).started).map((s) => ix(seats.indexOf(s) >= 0 ? toHex(keys[seats.indexOf(s)].pub) : '')) });
-  if (st.seated.every((x) => (seats[ix(x.node)].state() || {}).started)) break;
-  mine(2);
+  for (let i = 0; i < N; i++) if (!down.has(i)) { try { await seats[i].tick(); } catch (e) { out({ step: 'step failed', seat: i, tip, why: String(e.message).slice(0, 300) }); } }
+  // CRASH: the guardian at that position dies once its code is out - it never finishes the DKG
+  if (crashed !== null && !down.has(crashed) && (seats[crashed].state() || { codes: [] }).codes.some((c) => c.node === toHex(keys[crashed].pub))) {
+    const pid = pidOf(crashed);
+    try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+    down.add(crashed);
+    out({ step: 'crashed', guardian: crashed, pid, tip, note: 'its setup code is out; its fedimintd is killed' });
+  }
+  const watch = [...Array(N).keys()].find((i) => !down.has(i));
+  const st = seats[watch].state();
+  last = st;
+  out({ step: 'window', tip, seated: st.seated.map((x) => `${ix(x.node)}${x.code ? '+' : '-'}@${x.since}`), noShows: st.noShows.map(ix),
+    started: [...Array(N).keys()].filter((i) => (seats[i].state() || {}).started), federation: st.federation, void: st.void, why: st.failed });
+  if (st.federation || st.void) break;
+  // REAL TIME FOR A REAL DKG: a chain gives minutes between blocks; once a DKG has started here, every block gets up to
+  // PACE_S seconds (ticking every 2 s) before the next is mined - the guardians finish their key generation on their own clock
+  if ([...Array(N).keys()].some((i) => (seats[i].state() || {}).started)) {
+    for (let w = 0; w < Number(process.env.PACE_S || 20) / 2; w++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      for (let i = 0; i < N; i++) if (!down.has(i)) { try { await seats[i].tick(); } catch { /* the next */ } }
+      if (seats[watch].state().federation) break;
+    }
+    const now = seats[watch].state();
+    if (now.federation) { last = now; out({ step: 'window', tip: height(), federation: true, note: 'the seated guardians are in consensus' }); break; }
+  }
+  mine(1);
 }
-const seatedNow = seats[(silent + 1) % N].state().seated.map((x) => ix(x.node));
-out({ step: 'dkg started', seated: seatedNow, ms: Date.now() - t0 });
+const seatedNow = last.seated.map((x) => ix(x.node));
+out({ step: last.void ? 'void' : 'dkg started', seated: seatedNow, at: height(), windowEnd: last.windowEnd, why: last.failed, ms: Date.now() - t0 });
+if (last.void) {
+  out({ step: 'no federation', invites: seatedNow.map((g) => ({ guardian: g, invite: existsSync(join(P, `g${g}`, 'invite-code')) })) });
+  process.exit(0);
+}
 // THE FEDERATION ANSWERS: each seated guardian's invite code and session_count, once its DKG is done
 for (let t = 0; t < 60; t++) {
   const done = seatedNow.filter((g) => existsSync(join(P, `g${g}`, 'invite-code')));
