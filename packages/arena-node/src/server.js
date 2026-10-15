@@ -820,8 +820,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (id !== String(g.id).toLowerCase()) continue;              // a listing whose manifest is another game is not read
         const info = g.info ? gameInfoStands(g.info, { gameId: gameIdOf(m), manifest: m, verify: verifyEd25519 }) : null;
         const row = byId.get(id) || { id, name: m.gameName, title: String(g.title || m.gameName).slice(0, 80), type: gameTypeOf(m), version: m.version,
-          devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), description: null, website: null, infoSigned: false, seats: [] };
-        if (info && info.ok && !row.infoSigned) Object.assign(row, { description: info.description, website: info.website, infoSigned: true });
+          devKey: toHex(m.gameDevPubkey), parent: toHex(m.parentManifestId), description: null, website: null, lightning: null, infoSigned: false, seats: [] };
+        if (info && info.ok && !row.infoSigned) Object.assign(row, { description: info.description, website: info.website, lightning: info.lightning || null, infoSigned: true });
         row.seats.push(from);
         byId.set(id, row);
       }

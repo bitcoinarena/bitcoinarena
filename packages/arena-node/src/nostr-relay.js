@@ -19,7 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer } from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
-export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges (#362)
+export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8, 9735]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges, + NIP-57 zap receipts (#362)
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
 const hex = (n) => new RegExp(`^[0-9a-f]{${n}}$`);
 const HEX64 = hex(64), HEX128 = hex(128);
@@ -66,7 +66,7 @@ export function matches(f, e) {
  * THE RELAY: `{ port, host, dbPath }` ('' or ':memory:' keeps nothing on disk). Answers { port, close(), events() }.
  */
 export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memory:', kinds = RELAY_KINDS, name = 'Bitcoin Arena relay',
-  description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8). Nothing else is kept.' } = {}) {
+  description = 'The game\'s own relay: profiles, relay lists, encrypted game seeds (NIP-78), remote signing (NIP-46), wallet connect (NIP-47), the nodes\' signed round results (kind 30762) and their badges (NIP-58: kinds 30009 and 8), and zap receipts (NIP-57: kind 9735). Nothing else is kept.' } = {}) {
   const db = new DatabaseSync(dbPath || ':memory:');
   db.exec(`CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT);
     CREATE INDEX IF NOT EXISTS ev_author ON events (pubkey, kind, d);`);
