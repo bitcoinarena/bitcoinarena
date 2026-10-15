@@ -279,6 +279,23 @@ if (cmd === 'status') {
       redeemed: ds.filter((d) => state.done.includes(d.outpoint)).length }])), withdrawals: state.withdrawals.slice(-5) });
   process.exit(0);
 }
+// AN E-CASH STRING INTO THIS DEV'S OWN WALLET (kanban #364): the receive whose claim a test can strand (the throwaway federation T's
+// armed guardians, tools/fedimint-test-reject-armed.patch); the passes then note, back up and recover what stays unclaimed, as for a
+// donation's redeem (claimUnclaimed). Without an e-cash string it only opens the wallet: the passes look at every federation this
+// dev holds a wallet file for.
+if (cmd === 'receive-ecash') {
+  const [fedPrefix, ecash] = rest.filter((x) => !x.startsWith('--'));
+  const known = await invites();
+  const fed = Object.keys(known).find((k) => k.startsWith(String(fedPrefix || '').toLowerCase()));
+  if (!fed) { console.error('arena-donor receive-ecash <dir> <federation id or its prefix> [<e-cash>]: no invite to that federation is known'); process.exit(2); }
+  const client = await clientFor(known[fed], fed, walletSecretFor(key.secretHex, fed), fileStore(join(dir, `wallet-${fed.slice(0, 16)}.json`)));
+  const read = async () => { let b = null, p = null; try { b = String(await client.balanceMsat()); } catch (e) { b = e.message; } try { p = JSON.parse(await client.pendingOutputs()); } catch (e) { p = e.message; } return { balanceMsat: b, pending: p }; };
+  const before = await read();
+  let said = null;
+  if (ecash) { try { said = await client.receiveEcash(ecash); } catch (e) { said = { error: String(e && e.message || e) }; } }
+  say({ step: ecash ? 'receive-ecash' : 'wallet opened', federation: fed.slice(0, 16), before, said, after: await read() });
+  process.exit(0);
+}
 if (cmd === 'once') { await pass(); process.exit(0); }
 if (cmd === 'loop') {
   for (;;) {
