@@ -125,6 +125,12 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    and Settings' Zaps card (where zaps go, and the zaps received, counted from the receipts). `arena-node` `zap-address.js` (+
    `tools/zap-address.mjs`) is a zap-taking Lightning address in front of one LND: it checks each request (appendix D), invoices
    under its hash, and signs and publishes the receipt once the invoice is paid, keeping unpaid zaps across a restart.
+   Measured live on testnet4 (2026-10-15, page UI 123): headless Chrome zapped a test player whose profile names
+   `arena-zap-test@seat.example.com` (that server on testnet4 LND B; unit arena-zap-test) 21 sat over NWC from LND A -
+   paid in 2.0 s from the press, the receipt on relay.bitcoin-arena.io 0.3 s after the payment and counted by a third party
+   reading the relay; a plain tip to the same address paid too, and a season row's Zap for a player with no profile says so.
+   Left: the seats still run a game-info.js without `lightning`, so no tile shows a developer's tip until they are patched,
+   and no developer has signed an address yet.
 
 Rules for every feature: additive, versioned where it changes bytes (§#349 required versions), no change to any existing
 game or market id, tests first, measured live before it is called done.
