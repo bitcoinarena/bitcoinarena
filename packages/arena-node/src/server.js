@@ -148,8 +148,8 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES } from '../../arena-protocol/src/posting.js';
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
 import { hostedPlugins, pluginForRound, advertisedGamesCheck } from './plugins.js';
-import { gameMarketHook } from './game-market.js';
-import { isHeadToHead, marketOfRound } from '../../arena-protocol/src/manifest.js';
+import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf } from './game-market.js';
+import { isHeadToHead, marketOfRound, isGameMarket, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { encodeManifest, decodeManifest, gameIdOf, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { gameTypeOf, gameInfoStands } from '../../arena-protocol/src/game-info.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
@@ -512,21 +512,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const outcomeOf = (rid, c, { table = false } = {}) => {
     const plugin = attestedOf(c);
     if (!plugin) return null;
-    const rows = round.outcomeAttestations(rid);
-    const held = rows.map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    // EVERY STANDING OUTCOME: the attestations, and a market on a game's held source result in an attestation's shape (kanban
+    // #362 feature 6, game-market.js heldOutcomes)
+    const held = heldOutcomes(round, rid);
     // FINAL 600 s AFTER THE FIRST STANDING ATTESTATION, on this seat's clock (§0A.7a slice 2)
     const standing = outcomeFinality(held, { windowMs: c.objectionWindowMs, nowMs: round.now() });
+    // A MARKET ON A GAME HELD VOID (its source result refunds it, or its source can never fit it): VOID at once, its evidence beside
+    const voidHeld = gameVoidOf(round, rid);
+    // the evidence of a held outcome: an attestation's own bytes, or a source round's signed result and contract
+    const evidence = (h) => (h.game ? { gameOutcome: gameEvidenceOf(h.game) } : { attestation: toHex(h.bytes) });
     // A ROUND OF A TEMPLATE (kanban #362 feature 5) answers ITS OWN question and labels (contracts.js `event`); any other market
     // its manifest's, as before
     const market = marketOfRound(plugin.manifest, c);
     const out = { state: standing.state, outcomes: market.outcomes, attestThreshold: plugin.manifest.attestThreshold,
       attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs),
       ...(c.event ? { question: c.event.question, resolveAtMs: String(c.event.resolveAtMs) } : {}) };
-    if (standing.state === 'ATTESTED') {
+    if (voidHeld) {
+      Object.assign(out, { state: 'VOID', why: voidHeld.why, gameOutcome: gameEvidenceOf(voidHeld) });
+    } else if (standing.state === 'ATTESTED') {
       Object.assign(out, { outcome: standing.outcome, label: market.outcomes[standing.outcome],
         observedAtMs: String(held[0].observedAtMs), final: standing.final, finalAtMs: String(standing.finalAtMs),
-        // the attestation's own bytes: a page checks its signatures against the manifest it pinned, not this seat's word
-        attestation: toHex(new Uint8Array(rows[0].bytes)) });
+        // the attestation's own bytes: a page checks its signatures against the manifest it pinned, not this seat's word - or,
+        // for a market on a game, the source's RoundResult, its committee's signatures and the source contract
+        ...evidence(held[0]) });
       if (table) {
         // THE ENTRIES THAT COUNT: a free round's every entry; a paying round's only those whose stake this seat has seen
         const counted = round.entriesOf(rid).filter(({ entryId }) => c.stakeMsat === 0n || !!round.stakeSeen(entryId))
@@ -535,7 +543,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         out.table = JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
       }
     } else if (standing.state === 'DISPUTED') {
-      Object.assign(out, { outcomesNamed: standing.outcomes, why: standing.why, proof: rows.map((r) => toHex(new Uint8Array(r.bytes))) });
+      Object.assign(out, { outcomesNamed: standing.outcomes, why: standing.why, proof: held.map((h) => (h.game ? gameEvidenceOf(h.game) : toHex(h.bytes))) });
     }
     return out;
   };
@@ -552,7 +560,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (sweeping) return;
       sweeping = true;
       try {
-      const ids = round.db.prepare('SELECT DISTINCT round_id FROM outcome_attestations').all().map((r) => new Uint8Array(r.round_id));
+      // AND THE MARKETS ON GAMES HOLDING A SOURCE RESULT THAT PAYS AN OUTCOME (kanban #362 feature 6) - not one held VOID: nothing
+      // of it is settled, every stake comes back by the return door on the seat's own record
+      const ids = round.db.prepare(`SELECT DISTINCT round_id FROM outcome_attestations UNION SELECT DISTINCT round_id FROM game_outcomes WHERE outcome <> ${GAME_MARKET_REFUND}`)
+        .all().map((r) => new Uint8Array(r.round_id));
       const waiting = ids.filter((rid) => stateOf(round, rid) !== 'ACCEPTED');
       if (!waiting.length) { clearInterval(attestedSweep); attestedSweep = null; return; }
       for (const rid of waiting) {
@@ -1575,6 +1586,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return endpointsOf(picked.committee, round.pubkey);
     },
   });
+  // MARKETS ON GAMES (kanban #362 feature 6, §0A.7d): a market round's outcome is its source round's signed RoundResult, checked
+  // against the settlement committee THIS seat's roster draws for the source, held where an attestation is held (game_outcomes),
+  // and settled by the attested sweep below as any market. A source round this seat does not hold is fetched from the market
+  // round's census seats (GET /round, through the routed fetch) and taken only if it hashes to the id the market names - a
+  // series round only as a series this seat holds derives it; its committee is then drawn on that contract here.
+  const markets = gameMarkets({ round, plugins: hosted, now: () => round.now(), self: round.pubkey, seriesHeld: () => series,
+    committeeFor: (id, role, o) => roster.committeeFor(id, role, o),
+    verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+    sourcePeers: (marketRid) => { const c = roster.censusFor(marketRid); return c.ok ? endpointsOf(c.entries, round.pubkey) : []; },
+    // THIS SEAT'S OWN SIGNED RESULT where it sits on the source's committee (GET /round-result's answer, asked in-process)
+    ownResult: (hex) => prices.result(hex) });
+  // AND WITHOUT BEING ASKED: every 10 s a pass over the market rounds on games this seat holds - each round of the store looked at
+  // once behind a cursor, only the pending markets tried, each when due (game-market.js gameMarketSweep). Only on a seat that
+  // hosts a market on a game.
+  const marketsSweep = [...hosted.values()].some((p) => p && p.manifest && isGameMarket(p.manifest)) ? gameMarketSweep({ markets, round, plugins: hosted,
+    roundsAfter: (after, n) => round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid LIMIT ?').all(after, n),
+    now: () => round.now(), log: (l) => console.log(l), onHeld: () => settleAttestedSoon() }) : null;
+  const marketsTimer = marketsSweep ? setInterval(() => { if (!shuttingDown) marketsSweep.pass().catch((e) => console.error(`[game-market] ${e.message}`)); },
+    Number(process.env.ARENA_GAME_MARKET_SWEEP_MS || 10000)) : null;
+  if (marketsTimer && marketsTimer.unref) marketsTimer.unref();
   // A SETTLEMENT COMBINED WHILE THIS NODE WAS DOWN (ruled window, 2026-09-23/24): a peer's settlement row counts only if
   // its combined signature verifies under the round's claim key over the message it names.
   verifier.combinedElsewhere = async (rid) => {
@@ -5186,21 +5217,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // A MARKET ON A GAME'S OUTCOME (kanban #362 feature 6, protocol 2026.0.6): POST /game-outcome?round=<the market round's id>
       // with { openCents, closeCents, front?, sigs: [{ key, signature }] } - the source round's RoundResult and its seats'
-      // signatures, as each answers GET /round-result. Checked against the source round THIS seat holds and the settlement
-      // committee its roster draws for it, by the source's own threshold (game-market.js); answered, never held - nothing of it
-      // settles the market yet (arena-node/src/game-market.js says what is left). No attestation decides such a market.
+      // signatures, as each answers GET /round-result. Checked against the source round this seat holds - or fetches from the
+      // market's census seats and checks against its id - and the settlement committee its roster draws for it, by the source's
+      // own threshold (game-market.js); once the source has ended, HELD where an attestation is (201 new, 200 held already) and
+      // settled by the attested sweep. A result the market refunds (Tick Tock FLAT), and a source that can never fit the market,
+      // are held as VOID at once: every stake back. The seat's own sweep asks the source's committee itself; this door is for
+      // anybody to hand it the result sooner. No attestation decides such a market.
       if (req.method === 'POST' && url.pathname === '/game-outcome') {
         const target = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (target.length !== 32) return text(res, 400, 'POST /game-outcome?round=<the market round\'s id>');
         let body;
         try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `that is not a JSON round result: ${e.message}`); }
         if (!body || typeof body !== 'object' || !Array.isArray(body.sigs)) return text(res, 400, 'a round result is { openCents, closeCents, front?, sigs: [{ key, signature }] }');
-        const resolveGameMarket = gameMarketHook({ round, plugins: hosted, committeeFor: (id, role) => roster.committeeFor(id, role),
-          verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, now: () => round.now() });
-        const got = resolveGameMarket(new Uint8Array(target), { openCents: body.openCents, closeCents: body.closeCents, front: body.front, sigs: body.sigs });
-        if (!got.ok && !got.void) return text(res, got.status || 409, got.why);
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ round: toHex(target), ...got }));
+        const got = await markets.hold(new Uint8Array(target), { openCents: body.openCents, closeCents: body.closeCents, front: body.front, sigs: body.sigs.slice(0, 64) });
+        if (!got.held) return text(res, got.status || 409, got.why);
+        if (got.fresh) {
+          settleAttestedSoon();
+          console.log(`[game-market] ${toHex(target).slice(0, 16)}: ${got.voided ? `VOID - ${got.voidWhy}` : got.why} (handed in)`);
+        }
+        const c = decodeRoundContract(new Uint8Array(round.get(target).contract));
+        res.writeHead(got.fresh ? 201 : 200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ round: toHex(target), ...got, ...outcomeOf(new Uint8Array(target), c) }));
       }
       if (req.method === 'GET' && url.pathname === '/outcome') {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
@@ -7008,6 +7045,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         shuttingDown = true;
         clearInterval(settleRecoverTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
+        if (marketsTimer) clearInterval(marketsTimer);
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
         if (priceTimeout) { clearTimeout(priceTimeout); priceTimeout = null; }
         clearTimeout(attestedBoot);

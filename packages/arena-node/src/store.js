@@ -720,6 +720,28 @@ export function openStore(path = ':memory:') {
     );
     CREATE INDEX IF NOT EXISTS outcome_attestations_round ON outcome_attestations (round_id);
 
+    -- A MARKET ON A GAME'S OUTCOME (kanban #362 feature 6, §0A.7d): what stands where an attestation would - the source round's
+    -- RoundResult (its encoded bytes) with the source committee's BIP-340 signatures that made it stand (JSON [{ key,
+    -- signature }] in hex) and the source round's contract as this seat verified it against its id, so any seat re-verifies
+    -- the settlement from these bytes and the census. The outcome is the market outcome the result maps to, or 255 (0xff,
+    -- GAME_MARKET_REFUND) for a VOID: a result the market refunds (Tick Tock FLAT), or - result_id 32 zero bytes, no result -
+    -- a source round that can never fit the market (why says which). observed_ms: when the result was knowable, the source
+    -- round's end. Kept once per (market round, result); two standing results of different outcomes are the committee
+    -- contradicting itself, and the round settles on neither (attested.js outcomeStanding). Never deleted.
+    CREATE TABLE IF NOT EXISTS game_outcomes (
+      round_id        BLOB NOT NULL,
+      result_id       BLOB NOT NULL,
+      source_round_id BLOB NOT NULL,
+      outcome         INTEGER NOT NULL,
+      why             TEXT,
+      result          BLOB NOT NULL,
+      sigs            TEXT NOT NULL,
+      source          BLOB NOT NULL,
+      observed_ms     INTEGER NOT NULL,
+      received_ms     INTEGER NOT NULL,
+      PRIMARY KEY (round_id, result_id)
+    );
+
     -- A HEAD-TO-HEAD ENTRY'S REVEALED MOVE (kanban #233): the (move, salt) that hashed to the commitment its entry named,
     -- taken by this seat's door inside the reveal window or pulled from a peer at the round's close. One per entry; never
     -- deleted - it is what the round's results were decided from.

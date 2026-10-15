@@ -57,8 +57,12 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    result kind (Tick Tock's §13 RoundResult) and a mapping onto its outcomes (marker 0x05, no attestors); each round names its
    source round (contract tail 0xc4, version 6 only). Resolved only by the source round's own result, signed by its settlement
    committee's threshold (5 of 7); entries close before the source starts; FLAT, a misfit source or no result by the
-   deadline is VOID. RPS is not a source kind yet: it signs per-entry results, no table winner. A seat verifies at
-   `POST /game-outcome`; holding the outcome for settlement is left (multiplayer_p2p.md §0A.7d).
+   deadline is VOID. RPS is not a source kind yet: it signs per-entry results, no table winner. Node side built: a seat
+   holds a standing source result where an attestation is held (RoundResult bytes, the committee's signatures, the source
+   contract) and settles the market as an attested one (pari-mutuel, after the objection window); FLAT and a misfit source
+   are VOID at once; its own sweep asks the source's committee once the source has ended (each stored round looked at
+   once); a seat without the source fetches its contract from other seats and checks it against the id itself.
+   `POST /game-outcome` hands a result in. Left: the page's market lines (multiplayer_p2p.md §0A.7d).
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
 6. Then 8-16 by demand.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,

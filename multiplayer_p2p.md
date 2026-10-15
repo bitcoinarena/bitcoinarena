@@ -817,16 +817,59 @@ known only when its entries close - after a market on it must have closed. A
 market could name no seat whose result it pays before it is too late to pick.
 That kind needs a signed per-table winner first.
 
-**At a seat (as built).** `POST /game-outcome?round=<market round id>` takes
-`{ openCents, closeCents, front?, sigs: [{ key, signature }] }` - what each
-source seat answers at `GET /round-result` - and answers the verified
-resolution, checked against the source round the seat holds and the
-committee its roster draws (arena-node `game-market.js`). It holds and settles
-nothing yet: writing the resolution as the round's outcome for the attested
-settlement, an early VOID on a refund, fetching a source round the seat does
-not hold, and the page's market lines are what is left. **Dormant until seats
-advertise 6**: a version-6 round draws a committee only from nodes whose
-advert lists 6.
+**At a seat (as built).** The source round's signed result is **held where
+an attestation is held** and settles the market exactly as §0A.7a settles an
+attested one (arena-node `game-market.js`):
+
+- **Checked.** Against the source round the seat holds, or - a market's seats
+  being another draw than its source's - the source contract fetched from the
+  market round's census seats (`GET /round?id=`, through the routed fetch) and
+  taken only if it hashes to the `source_round_id` the market names; a series
+  round only as a series the seat holds derives it (its id does not hash its
+  times, so a seat answering the right id with other times is refused). A
+  fetched contract is never written into the seat's rounds. The committee is
+  drawn by the seat's own roster on that contract (census root checked against
+  the chain, the beacon's seed) - never by the answering seat's word.
+- **Held** (`game_outcomes`, beside `outcome_attestations`), once per
+  (market round, result), only once the source round has **ended** on the
+  seat's clock: the RoundResult's encoded bytes, the signatures of the drawn
+  committee that verify over its id (one per key; nothing else of a handed-in
+  list is kept), and the source contract - the evidence any seat re-verifies
+  the settlement from. `GET /outcome` serves them as `gameOutcome` where an
+  attested round serves `attestation`.
+- **Settled as an attested market.** Every reader of an attested round's
+  outcome (settlement, the return door, the stake-share handout, `GET
+  /outcome`) reads the held result as a standing attestation of the outcome it
+  maps to: final after the market round's objection window (600 s) from when
+  it was held, then the pari-mutuel table (§0A.7a) and its lock settlement by
+  the seats' attested sweep. Two standing results of different outcomes - the
+  committee contradicting itself - would make it DISPUTED, settled on neither.
+- **VOID at once.** A result mapped to `0xff` (Tick Tock FLAT), and a source
+  that can never fit the market (another game, entries closing after it
+  starts, ending after the resolution time), are held as a VOID (outcome 255;
+  a misfit with no result, its source contract as evidence): from then on the
+  round is VOID - nothing claimed, every stake back by the return door - not
+  only at the deadline. No result by the deadline is VOID as before.
+- **On its own.** A seat hosting a market on a game sweeps every 10 s
+  (`ARENA_GAME_MARKET_SWEEP_MS`): each round of its store is looked at **once**,
+  behind a rowid cursor; a market round on a game with nothing held is
+  remembered as pending and tried only when due - from its entry close (the
+  source contract), from its source round's end (the committee's results), then
+  every 30 s, at most 4 a pass - and leaves for good once an outcome or VOID is
+  held, or at its deadline. It asks each seat of the source's committee for
+  `GET /round-result` (and its own where it sits on it), groups the answers by
+  the result signed, and holds the first group that stands: a seat answering
+  another open or close signs another result and counts only towards that.
+- **`POST /game-outcome?round=<market round id>`** stays the way for anybody
+  to hand a seat the result sooner: `{ openCents, closeCents, front?, sigs:
+  [{ key, signature }] }` - what each source seat answers at `GET
+  /round-result`. Checked as above (fetching the source if the seat does not
+  hold it) and held: 201 when new, 200 when held already, with the round's
+  outcome as `GET /outcome` answers it; 409 by name when it does not stand,
+  before the source ended, or the seat cannot draw the source's committee.
+
+Left: the page's market lines. **Dormant until seats advertise 6**: a
+version-6 round draws a committee only from nodes whose advert lists 6.
 
 ## 0A.8 The money: 10% of the gross stake
 

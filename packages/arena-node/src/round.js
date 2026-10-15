@@ -463,7 +463,9 @@ export class Round {
           if (w.ok && w.window && BigInt(this.now()) < w.window.startMs)
             throw new Error(`that market opens at ${new Date(Number(w.window.startMs)).toISOString()} and runs to ${new Date(Number(w.window.endMs)).toISOString()}: it takes no pick before its window`); }
         // AND NOT ONCE THE OUTCOME IS KNOWN HERE: a pick made after its attestation came is not a pick, it is a copy
-        if (this.outcomeAttestations(contract.roundId).length)
+        // (and a market on a game's held source result, kanban #362 feature 6 - its entries close before its source starts, so
+        // this is the second guard)
+        if (this.outcomeAttestations(contract.roundId).length || this.gameOutcomes(contract.roundId).length)
           throw new Error('that round\'s outcome is already attested at this signer node: it takes no pick after it');
         // A MARKET ORDER (kanban #278, comment 1127): a pick bought at a limit price on a two-outcome market - a whole cent,
         // at least 5 shares at its limit out of its stake less its fee, an expiry not past. A round is a book or a pool: it
@@ -2797,6 +2799,24 @@ export class Round {
   putOutcomeAttestation({ bodyId, roundId, outcome, observedAtMs, bytes, receivedMs = Date.now() }) {
     return this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(bodyId), Buffer.from(roundId), outcome, Number(observedAtMs), Buffer.from(bytes), receivedMs).changes === 1;
+  }
+
+  /**
+   * A MARKET ON A GAME'S STANDING OUTCOME (kanban #362 feature 6), kept once per (market round, source result): the evidence
+   * an attestation's bytes are for an attested round - the source's RoundResult bytes, the committee signatures that made it
+   * stand, the source contract. `outcome` 255 is a VOID (a refund, or a source that can never fit). Answers whether it is new.
+   */
+  putGameOutcome({ roundId, resultId, sourceRoundId, outcome, why = null, result, sigs, source, observedMs, receivedMs = Date.now() }) {
+    return this.db.prepare('INSERT OR IGNORE INTO game_outcomes (round_id, result_id, source_round_id, outcome, why, result, sigs, source, observed_ms, received_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(Buffer.from(roundId), Buffer.from(resultId), Buffer.from(sourceRoundId), outcome, why, Buffer.from(result), JSON.stringify(sigs),
+        Buffer.from(source), Number(observedMs), Number(receivedMs)).changes === 1;
+  }
+
+  /** Every game outcome this seat holds for a market round, oldest first: [{ resultId, sourceRoundId, outcome, why, result, sigs, source, observedMs, receivedMs }]. */
+  gameOutcomes(roundIdBytes) {
+    return this.db.prepare('SELECT result_id, source_round_id, outcome, why, result, sigs, source, observed_ms, received_ms FROM game_outcomes WHERE round_id = ? ORDER BY received_ms, result_id')
+      .all(Buffer.from(roundIdBytes)).map((r) => ({ resultId: new Uint8Array(r.result_id), sourceRoundId: new Uint8Array(r.source_round_id), outcome: Number(r.outcome),
+        why: r.why, result: new Uint8Array(r.result), sigs: JSON.parse(r.sigs), source: new Uint8Array(r.source), observedMs: Number(r.observed_ms), receivedMs: Number(r.received_ms) }));
   }
 
   /** A market entry's cancel (kanban #278), kept once: its player's signature over cancelId. */
