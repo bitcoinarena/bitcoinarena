@@ -70,7 +70,7 @@
   },
   {
    "name": "Players",
-   "description": "What the game page uses: the lobby, joining, stake locks, winnings, seasons and results."
+   "description": "What the game page uses: the lobby, joining, stake locks, winnings, leaderboards and results."
   },
   {
    "name": "Operators",
@@ -253,7 +253,7 @@
      "Players"
     ],
     "summary": "Badge definitions (NIP-58)",
-    "description": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, season top 3.\n\nAccess: none\n\nReturns: 200 JSON {node, on, version, definitions[{event, publishedMs}]}\n\nSource: `packages/arena-node/src/server.js` line 4503.",
+    "description": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, leaderboard top 3.\n\nAccess: none\n\nReturns: 200 JSON {node, on, version, definitions[{event, publishedMs}]}\n\nSource: `packages/arena-node/src/server.js` line 4503.",
     "operationId": "get_badge_definitions",
     "responses": {
      "200": {
@@ -7007,7 +7007,7 @@
     "tags": [
      "Players"
     ],
-    "summary": "Season board of a game",
+    "summary": "Leaderboard of a game",
     "description": "One game's per-player board over its FINAL rounds in a window (presentation, not authority): this node's own rounds, or with scope=network every seat's, a round counted only when 3 seats hand in byte-identical accounts of it.\n\nAccess: none\n\nReturns: 200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); with scope=network also {scope, agree, seats {asked, answered}}; 400/404/500\n\nSource: `packages/arena-node/src/server.js` line 4412.",
     "operationId": "get_season",
     "parameters": [
@@ -7062,7 +7062,7 @@
       }
      },
      "500": {
-      "description": "Season could not be built.",
+      "description": "Leaderboard could not be built.",
       "content": {
        "text/plain": {}
       }
@@ -7075,15 +7075,15 @@
     "tags": [
      "Players"
     ],
-    "summary": "Season rounds held by this node",
-    "description": "The rounds this node's own season is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network season to merge - and for its weekly top-3 badge, which merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
+    "summary": "Leaderboard rounds held by this node",
+    "description": "The rounds this node's own leaderboard is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network leaderboard to merge - and for its weekly top-3 badge, which merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
     "operationId": "get_season_rounds",
     "parameters": [
      {
       "name": "game",
       "in": "query",
       "required": true,
-      "description": "A hosted game's name, one game id in hex, or a comma list of game ids in hex (how a network season asks).",
+      "description": "A hosted game's name, one game id in hex, or a comma list of game ids in hex (how a network leaderboard asks).",
       "schema": {
        "type": "string"
       },

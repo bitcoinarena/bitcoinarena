@@ -2571,7 +2571,7 @@
   "purpose": "One game's per-player board over its FINAL rounds in a window (presentation, not authority): this node's own rounds, or with scope=network every seat's, a round counted only when 3 seats hand in byte-identical accounts of it.",
   "audience": "player/page",
   "line": 4412,
-  "summary": "Season board of a game",
+  "summary": "Leaderboard of a game",
   "query": [
    {
     "name": "game",
@@ -2615,7 +2615,7 @@
    {
     "status": "500",
     "contentType": "text/plain",
-    "description": "Season could not be built."
+    "description": "Leaderboard could not be built."
    }
   ],
   "headers": [],
@@ -2629,16 +2629,16 @@
   "params": "query game (hosted game name, 64-hex game id, or a comma list of up to 16 game ids), days (1..90, default 7)",
   "auth": "none",
   "returns": "200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404",
-  "purpose": "The rounds this node's own season is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network season to merge - and for its weekly top-3 badge, which merges on the round keys too.",
+  "purpose": "The rounds this node's own leaderboard is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network leaderboard to merge - and for its weekly top-3 badge, which merges on the round keys too.",
   "audience": "player/page",
   "line": 4440,
-  "summary": "Season rounds held by this node",
+  "summary": "Leaderboard rounds held by this node",
   "query": [
    {
     "name": "game",
     "required": true,
     "type": "string",
-    "description": "A hosted game's name, one game id in hex, or a comma list of game ids in hex (how a network season asks).",
+    "description": "A hosted game's name, one game id in hex, or a comma list of game ids in hex (how a network leaderboard asks).",
     "example": "nextblock"
    },
    {
@@ -2767,7 +2767,7 @@
   "params": "none",
   "auth": "none",
   "returns": "200 JSON {node, on, version, definitions[{event, publishedMs}]}",
-  "purpose": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, season top 3.",
+  "purpose": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, leaderboard top 3.",
   "audience": "player/page",
   "line": 4503,
   "summary": "Badge definitions (NIP-58)",

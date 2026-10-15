@@ -25,10 +25,10 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
 
 | # | Feature | Serves | Why it matters | Size |
 |---|---|---|---|---|
-| 1 | **Seasons and cross-round leaderboards** | players, devs | Status over time is what brings players back; a round board is forgotten after the round. Deterministic, from signed FINAL results only | S |
-| 2 | **Results on Nostr** (each node publishes FINAL results and season boards as signed events) | players, devs | "Share my win" travels with the player's Nostr key; clients, bots and other sites can follow a game without our page; it fits "Nostr native" | S |
+| 1 | **Leaderboards across rounds** | players, devs | Status over time is what brings players back; a round board is forgotten after the round. Deterministic, from signed FINAL results only | S |
+| 2 | **Results on Nostr** (each node publishes FINAL results and leaderboards as signed events) | players, devs | "Share my win" travels with the player's Nostr key; clients, bots and other sites can follow a game without our page; it fits "Nostr native" | S |
 | 3 | **Top-N prize splits** (e.g. 50/30/20, winner-takes-all) as a payout rule a manifest picks | devs, players | Tournament-style games need fixed splits; the rank curve is one shape only | M |
-| 4 | **Sponsored prize pools** - anyone adds sats to a round's or a season's pot, paid only to winners | players, devs, brands | Freerolls with real prizes are the strongest acquisition tool there is; devs can launch with a pot; refunds if the round is void | M-L |
+| 4 | **Sponsored prize pools** - anyone adds sats to a round's or a leaderboard's pot, paid only to winners | players, devs, brands | Freerolls with real prizes are the strongest acquisition tool there is; devs can launch with a pot; refunds if the round is void | M-L |
 | 5 | **Event markets from templates** - a manifest is a template (attestors, terms, category); each round carries its own question, outcome labels and resolve time | market creators | Today every new question needs a newly signed manifest; with templates anyone opens "Will X happen by Y" in one transaction | M |
 | 6 | **Markets on games** - an attested market whose outcome is a game round's signed result (e.g. BULLS vs BEARS of a Tick Tock round, the winner of an RPS table) | spectators, devs | Turns every game into a spectator sport with no external oracle: the committee's 5-of-7 RoundResult resolves it | M |
 | 7 | **Frontend (referrer) fee** - a capped share of the fee for the page that brought the entry | integrators | Third-party frontends, wallets and Nostr clients become distribution; a growth loop without a central company | M |
@@ -44,16 +44,16 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
 
 ## 3. Order of building
 
-1. **Seasons and cross-round leaderboards** (1) - protocol function + node door, presentation only, no money path.
+1. **Leaderboards across rounds** (1) - protocol function + node door, presentation only, no money path.
    State: built. `GET /season` is one node's board from its own store; `GET /season-rounds` hands out the rounds it is built
    from; `GET /season?scope=network` asks every seat it knows for theirs and counts a round only when 3 distinct seats hand
    in byte-identical accounts of it (protocol `mergeSeasonAccounts`, `SEASON_NETWORK_AGREE`): an honest FINAL round sits in
-   at least 5 committee seats, and forging one takes 3 colluding seats. The testnet page shows it: a "Season" link on each
-   game's tile, a Season button beside the gear and on the wallet bar once a game is chosen; the board of the last 7, 30 or
+   at least 5 committee seats, and forging one takes 3 colluding seats. The testnet page shows it: a "Leaderboard" link on each
+   game's tile, a Leaderboard button beside the gear and on the wallet bar once a game is chosen; the board of the last 7, 30 or
    90 days from the game's first seat that answers `?scope=network`, the viewer's own row marked, asked again every 30 s
    while open (arena-client `season-view.js`). `/season-rounds` also names each entry's round key (`roundKeys: true`),
    which the weekly top-3 badge (13) merges on; the network board does not read it.
-2. **Results and season boards on Nostr** (2) - nodes publish what is already signed; the relay accepts the event kind.
+2. **Results and leaderboards on Nostr** (2) - nodes publish what is already signed; the relay accepts the event kind.
 3. **Top-N prize splits** (3) - a new payout rule; only manifests that pick it are affected, every existing game id unchanged.
 4. **Event-market templates** (5), then **markets on games** (6) - the composability unlocks.
    Markets on games (6): State: built (protocol 6, dormant until seats advertise 6). A manifest names its source game, the
@@ -112,20 +112,20 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    (2026-10-15): a LONG share is worth its side's part of a sat at the value, so the book's pool splits by where the value
    lies (`bookSettlement` `scalar`). Left: a client page for trading a scalar book.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
-   versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
+   versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), leaderboard top 3
    (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through
-   `season()`, so a badge agrees with the season board. A seat reads each round once its settlement is ACCEPTED (the
+   `season()`, so a badge agrees with the leaderboard. A seat reads each round once its settlement is ACCEPTED (the
    moment its Nostr result is built) and each closed week once, and signs NIP-58 events with its node key: a Badge
    Definition (kind 30009) per badge and a Badge Award (kind 8, `a` = `30009:<seat>:<d>`, `p` = the player's identity,
    `evidence` = the round ids) once per badge, player and game (or week), kept across restarts. Only an identity key (an
-   x-only Nostr key) is awarded, never a bare round key. The season top 3 ranks THE NETWORK'S week, not the seat's own
+   x-only Nostr key) is awarded, never a bare round key. The leaderboard top 3 ranks THE NETWORK'S week, not the seat's own
    (one seat holds only its committees' rounds, about half): 2 h 15 min after the week closes the seat asks every seat
    it knows for the week's `/season-rounds` and merges them with protocol `mergeSeasonAccounts` (3 seats agreeing byte
    for byte, round keys included - `keys`), so seats that read the same agreed rounds award the same podium; with fewer
    than 3 seats answering the week waits, asked again every 30 min for up to 2 days; the award names the week, the
    rank, the seats that answered and the 3 that had to agree (`seats`, `agree` tags). `GET /badges?player=`,
    `GET /badge-definitions`; published with the results to ARENA_NOSTR_PUBLISH; the Arena relay takes kinds 30009 and 8.
-   The testnet page shows them on the season board: each row's badges in the shown game as small icons after the name
+   The testnet page shows them on the leaderboard: each row's badges in the shown game as small icons after the name
    (the seat's `/badge-image/<d>.svg`, else a built-in glyph; the name and what earned it on hover or tap) and "Your
    badges: N" under the header - the board's seats asked once each which award badges (`on: true`), each player on
    screen once per badge seat for the board's life, the awards merged by (d, scope) (arena-client `badges-view.js`).
@@ -136,20 +136,20 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    that takes zaps (`allowsNostr`, `nostrPubkey`), the invoice a zap may be paid with (exactly the amount, its description hash
    SHA-256 of the request's JSON) and the receipt that counts (kind 9735 signed by the recipient's server, its invoice for its
    request's amount under that hash, its preimage the invoice's; each invoice counted once). A player's address is their own
-   word: the `lud16` of a profile (kind 0) signed by their identity key - the key the season board and the badges name - on the
+   word: the `lud16` of a profile (kind 0) signed by their identity key - the key the leaderboard and the badges name - on the
    game's relay, which now keeps kind 9735. A developer's is the Lightning address the developer key signs beside the manifest
    (game-info.js `lightning`, appended to the digest only when there is one, so every info signed before keeps its digest).
    The client (arena-client `zap.js`) asks the address, has the tab's identity key sign the request (`identitySignEvent`, the
    key never leaves identity.js), checks the invoice and pays it from the player's own wallet: the NWC-connected one, else the
    player wallet's withdraw to exactly that invoice - only on the press. An address that takes no zaps is paid as a plain tip.
-   The page: a Zap button on every other player's season row, "Tip the developer" on a tile whose signed info names an address,
+   The page: a Zap button on every other player's leaderboard row, "Tip the developer" on a tile whose signed info names an address,
    and Settings' Zaps card (where zaps go, and the zaps received, counted from the receipts). `arena-node` `zap-address.js` (+
    `tools/zap-address.mjs`) is a zap-taking Lightning address in front of one LND: it checks each request (appendix D), invoices
    under its hash, and signs and publishes the receipt once the invoice is paid, keeping unpaid zaps across a restart.
    Measured live on testnet4 (2026-10-15, page UI 123): headless Chrome zapped a test player whose profile names
    `arena-zap-test@seat.example.com` (that server on testnet4 LND B; unit arena-zap-test) 21 sat over NWC from LND A -
    paid in 2.0 s from the press, the receipt on relay.bitcoin-arena.io 0.3 s after the payment and counted by a third party
-   reading the relay; a plain tip to the same address paid too, and a season row's Zap for a player with no profile says so.
+   reading the relay; a plain tip to the same address paid too, and a leaderboard row's Zap for a player with no profile says so.
    Left: the seats still run a game-info.js without `lightning`, so no tile shows a developer's tip until they are patched,
    and no developer has signed an address yet.
 
