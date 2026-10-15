@@ -428,7 +428,7 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
   // Measured (kanban #206): with none named every bond this posted was refused by the advertisement's own encoder.
   function postBond(nodeSecret, { endpoint, roles = ['game', 'verify', 'settlement'],
     bondSats = 50000000n, guardianOf = [], guardianCapable = false, guardianEndpoint = '', fundBtc, hostedGames = [NEXTBLOCK_GAME_ID],
-    template = BOND_TEMPLATE_V2 } = {}) {
+    template = BOND_TEMPLATE_V2, operatorId = '2of2', protocolVersions = [1] } = {}) {
     const nodeKey = schnorr.getPublicKey(nodeSecret);
     // A NEW BOND IS TEMPLATE 2 (kanban #295): its maturity is the next block, a few of slack and this network's offset
     // - the census counts it once it confirms no later than that slack allows. `template: 1` posts genesis' fixed height.
@@ -436,7 +436,9 @@ export function regtest(cli, { wallet = 'blwp', network = 'regtest' } = {}) {
     const built = keyAt(nodeKey, maturity);
 
     const advert = {
-      nodePubkey: nodeKey, operatorId: '2of2', protocolVersions: [1], roles, hostedGames,
+      // the operator and the protocol versions it speaks: '2of2' and [1] unless the caller names them (kanban #326: a node of
+      // its own operator, drawable beside the 14 '2of2' nodes; it speaks what its build speaks)
+      nodePubkey: nodeKey, operatorId, protocolVersions, roles, hostedGames,
       endpoint, region: 'eu-west', capacityClass: 1,
       softwareHash: new Uint8Array(32).fill(2),
       settlementCapabilities: 0, lightningCapabilities: 0,
