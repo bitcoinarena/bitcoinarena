@@ -7,7 +7,7 @@ esc = lambda s: html.escape(str(s))
 # THE GROUPS: the audience of each door in endpoints.json, as OpenAPI tags (kanban #363)
 TAGS = [
     ('game/market developer', 'Builders', 'List your game, read its rounds, follow results and, for a market, report the outcome.'),
-    ('player/page', 'Players', 'What the game page uses: the lobby, joining, stake locks, winnings, seasons and results.'),
+    ('player/page', 'Players', 'What the game page uses: the lobby, joining, stake locks, winnings, leaderboards and results.'),
     ('operator/monitoring', 'Operators', 'The dashboard, the owner area, operator tokens, the census and the node\'s health.'),
     ('node-to-node', 'Nodes', 'Signing ceremonies, shares and gossip between the nodes of a committee. You do not call these yourself; they are listed so nothing is hidden.'),
 ]
