@@ -120,6 +120,14 @@ test('the zap address answers a zap pay request, invoices under the request\'s h
   assert.match((await (await fetch(cb(22000, JSON.stringify(request)))).json()).reason, /is for 21000 msat/);
   assert.match((await (await fetch(cb(21000, JSON.stringify({ ...request, content: 'x' })))).json()).reason, /not the hash of its own fields/);
   assert.match((await (await fetch(cb(21000, JSON.stringify(request), `&lnurl=${lnurlFor('https://other.example/x')}`))).json()).reason, /not this address/);
+  // THE CALLBACK UNDER A PATH (measured live: publicBase https://host/zap): the request names the address's well-known URL
+  const based = await serveZapAddresses({ port: 0, publicHost: 'zap.example', publicBase: 'https://zap.example/zap', names: ['bob'], secret: server.secret, curve,
+    invoice: ln.invoice, lookup: ln.lookup, publish: async () => {}, watchMs: 50 });
+  const bpr = await (await fetch(`http://127.0.0.1:${based.port}/.well-known/lnurlp/bob`)).json();
+  assert.equal(bpr.callback, 'https://zap.example/zap/lnurlp/bob/cb');
+  const via = await (await fetch(`http://127.0.0.1:${based.port}/lnurlp/bob/cb?amount=21000&nostr=${encodeURIComponent(JSON.stringify(request))}&lnurl=${lnurlFor('https://zap.example/.well-known/lnurlp/bob')}`)).json();
+  assert.ok(via.pr, JSON.stringify(via));
+  await based.close();
   const tip = await (await fetch(cb(5000, null))).json();
   assert.equal(ln.made.get([...ln.made.keys()].pop()).descriptionHash, hex(sha(pr.metadata)), 'a plain tip is invoiced under the address\'s metadata');
   assert.ok(tip.pr);
