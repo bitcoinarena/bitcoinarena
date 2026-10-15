@@ -46,7 +46,10 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    State: built. `GET /season` is one node's board from its own store; `GET /season-rounds` hands out the rounds it is built
    from; `GET /season?scope=network` asks every seat it knows for theirs and counts a round only when 3 distinct seats hand
    in byte-identical accounts of it (protocol `mergeSeasonAccounts`, `SEASON_NETWORK_AGREE`): an honest FINAL round sits in
-   at least 5 committee seats, and forging one takes 3 colluding seats.
+   at least 5 committee seats, and forging one takes 3 colluding seats. The testnet page shows it: a "Season" link on each
+   game's tile, a Season button beside the gear and on the wallet bar once a game is chosen; the board of the last 7, 30 or
+   90 days from the game's first seat that answers `?scope=network`, the viewer's own row marked, asked again every 30 s
+   while open (arena-client `season-view.js`).
 2. **Results and season boards on Nostr** (2) - nodes publish what is already signed; the relay accepts the event kind.
 3. **Top-N prize splits** (3) - a new payout rule; only manifests that pick it are affected, every existing game id unchanged.
 4. **Event-market templates** (5), then **markets on games** (6) - the composability unlocks.
