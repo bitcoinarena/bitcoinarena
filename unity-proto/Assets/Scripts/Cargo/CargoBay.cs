@@ -255,6 +255,12 @@ public class CargoBay : MonoBehaviour
         Slots.Clear();
     }
 
+    /// <summary>
+    /// THE BED CHANGED LENGTH (kanban #369, LargeTruckView: the larger truck's 3.9 m, or back to 3.0): every crate packed again
+    /// from the front over the new bed - what no longer fits on a shorter one stays off.
+    /// </summary>
+    public void ReflowForNewBed() => Repack();
+
     /// <summary>Close the gap left by a crate taken off the bed.</summary>
     void Repack()
     {

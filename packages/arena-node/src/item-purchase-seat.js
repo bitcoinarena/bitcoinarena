@@ -46,4 +46,10 @@ export function itemsOwned(db, { player, gameDev = null, gameName = null }) {
     .map((r) => ({ id: r.id, gameDev: r.game_dev, gameName: r.game_name, itemId: r.item_id, txid: r.txid,
       purchase: Buffer.from(r.bytes).toString('hex'), signature: Buffer.from(r.signature).toString('hex') }));
 }
+/** ONE KEPT PURCHASE BY ITS ID (kanban #369: an entry names it, its buyer's key checks the entry's proof), or null. */
+export function itemPurchaseKept(db, id) {
+  db.exec(ITEM_PURCHASES_SQL);
+  const r = db.prepare('SELECT * FROM item_purchases WHERE id = ?').get(String(id).toLowerCase());
+  return r ? { id: r.id, player: r.player, gameDev: r.game_dev, gameName: r.game_name, itemId: r.item_id, txid: r.txid } : null;
+}
 export { purchaseId };

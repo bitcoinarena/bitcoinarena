@@ -33,6 +33,7 @@ namespace Blwp
         [DllImport("__Internal")] private static extern int BlwpRestart(int seed);
         [DllImport("__Internal")] private static extern int BlwpReliefEpoch();
         [DllImport("__Internal")] private static extern int BlwpRunTicks();
+        [DllImport("__Internal")] private static extern int BlwpTruckBed();
         [DllImport("__Internal")] private static extern int BlwpTeleport(int x, int z, int heading);
         [DllImport("__Internal")] private static extern int BlwpTakeImpact();
         [DllImport("__Internal")] private static extern int BlwpReadImpact();
@@ -71,6 +72,7 @@ namespace Blwp
         private static int BlwpRestart(int seed) => 0;
         private static int BlwpReliefEpoch() => 0;
         private static int BlwpRunTicks() => 0;
+        private static int BlwpTruckBed() => 0;
         private static int BlwpTeleport(int x, int z, int h) => 0;
         private static int BlwpTakeImpact() => 0;
         private static int BlwpCopyReplay() => 0;
@@ -361,6 +363,18 @@ namespace Blwp
         /// default (`Layout.BLOCK_TICKS`) where no run says otherwise (the editor, a run with no round).
         /// </summary>
         public static int RunTicks { get { int t = BlwpRunTicks(); return t > 0 ? t : Layout.BLOCK_TICKS; } }
+
+        /// <summary>
+        /// THE BED OF THE TRUCK THIS RUN DRIVES, in Q16.16 metres (kanban #369): the larger truck's 255590 (3.9 m, the core's
+        /// 1.3 x 196608) when the run plays with that item, else 0 - the standard truck. Read off the core that started the run
+        /// with the entry's unlocks, so the view is the truck the signer nodes replay; <see cref="TruckBedOverride"/> stands in
+        /// for it where there is no core (the editor's tests).
+        /// </summary>
+        public static int TruckBedQ16 => TruckBedOverride > 0 ? TruckBedOverride : BlwpTruckBed();
+        /// <summary>The same in metres; 0 for the standard truck.</summary>
+        public static float TruckBedMeters => TruckBedQ16 / 65536f;
+        /// <summary>A test's stand-in for the core's answer (Q16.16); 0 asks the core.</summary>
+        public static int TruckBedOverride;
         static int _reliefEpoch;
 
         /// <summary>

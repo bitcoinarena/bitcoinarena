@@ -13,6 +13,9 @@ import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-pr
 import { purchaseOutputs, purchaseId, encodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { itemsSecretFor } from '../../arena-protocol/src/player-key.js';
+import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
+import { ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
@@ -82,4 +85,59 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
     } catch { /* the next seat */ }
   }
   return [];
+}
+
+/**
+ * THE PLAYER'S ITEMS KEY (kanban #369): the same in every round, from the seed (protocol player-key.js itemsSecretFor) - it buys an
+ * item and signs, per entry, that the entry plays with it. `curve` the page's (pointX, signSchnorr). Answers { secret, pubkey, sign }.
+ */
+export function itemsKeyFor(seed, curve) {
+  const secret = itemsSecretFor(seed);
+  const pubkey = curve.pointX(secret);
+  return { secret, pubkey, sign: (digest) => curve.signSchnorr(digest, secret) };
+}
+
+/** WHAT A GAME'S ITEMS UNLOCK: its manifest's catalogue as { item id: unlock hex } ({} when it sells none). */
+export function itemUnlocksOf(manifest) {
+  const out = {};
+  for (const it of (manifest && manifest.items) || []) out[it.id] = toHex(it.unlock);
+  return out;
+}
+
+/**
+ * THE SHOP OF A GAME: the items its newest manifest that sells any names, from the lobby's games (games.js fetchGames, one entry per
+ * version) of that game name. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ */
+export function shopOf(games, gameName) {
+  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && (g.manifest.items || []).length)
+    .sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version));
+  if (!selling.length) return null;
+  const game = selling[0];
+  return { game, items: game.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
+}
+
+/**
+ * THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #369): of the purchases this player owns (ownedItems) of the round's game, the
+ * ones `use` names and the game sells, each with its owner's proof for THIS entry - the items key's signature over
+ * entryItemDigest(round, the entry's per-round key, purchase). Sorted by item id, one purchase per item. [] on a round before
+ * version 10, or with nothing to play with: the entry then names no items at all.
+ */
+export function entryItemsFor({ round, roundId, playerPubkey, owned, use = null, manifest, key }) {
+  if (!(Number(round && round.protocolVersion) >= ITEMS_VERSION)) return [];
+  const sells = itemUnlocksOf(manifest);
+  const byItem = new Map();
+  for (const o of owned || []) {
+    if (!sells[o.itemId] || (use && !use.includes(o.itemId)) || byItem.has(o.itemId)) continue;
+    byItem.set(o.itemId, o);
+  }
+  return [...byItem.values()].sort((a, b) => (a.itemId < b.itemId ? -1 : 1)).map((o) => {
+    const purchaseId = fromHex(o.id);
+    return { itemId: o.itemId, purchaseId, ownerSig: key.sign(entryItemDigest({ roundId, playerPubkey, purchaseId })) };
+  });
+}
+
+/** THE UNLOCKS A RUN STARTS WITH: an entry's items as its game's catalogue unlocks them, in the entry's order ([] for none). */
+export function entryUnlocks(entry, manifest) {
+  const sells = itemUnlocksOf(manifest);
+  return ((entry && entry.items) || []).map((it) => sells[it.itemId]).filter(Boolean);
 }

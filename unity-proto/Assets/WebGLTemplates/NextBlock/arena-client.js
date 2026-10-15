@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -664,6 +664,11 @@ const SCALAR_TEMPLATE_VERSION = 8;
 // fee on the stakes it brought, off the top of the nodes' part (fee.js frontendShares, lock-settlement.js). Only on a round of
 // version 9 or later, so its seats are only nodes that pay it; every entry without it keeps its bytes.
 const FRONTEND_FEE_VERSION = 9;
+// IN-GAME ITEMS (kanban #365, the owner 2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25%
+// an die protocol devs gehen, 25% an den a game dev und 50% an die nodes die in den letzten 24h an einer Runde beteiligt waren"): a
+// manifest's item catalogue (items.js, marker 0x07), a purchase (purchase.js) and an entry's items (contracts.js, marker 0xad) require
+// version 10; spoken since the purchase, its money path (paySubmit) and the seats' check of an entry's items were built.
+const ITEMS_VERSION = 10;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -1016,6 +1021,9 @@ const TAG = {
   // WHO A TAB IS IN THE LOBBY (M3.3-34): its identity key, from the same seed
   // as every round's player key but under its own tag, so it is never one.
   lobbyIdentity: 'ARENA/v1/LobbyIdentity',
+  // kanban #369: the key a player buys in-game items with, and its proof on an entry that plays with one (contracts.js)
+  itemsKey: 'ARENA/v1/ItemsKey',
+  entryItem: 'ARENA/v1/EntryItem',
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',
@@ -2343,8 +2351,41 @@ function encodeEntryContract(e) {
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
   }
+  // THE ITEMS THIS ENTRY PLAYS WITH (protocol 10, kanban #365): each an item of the round's game by its id, the purchase that made its
+  // owner, and the owner's proof (kanban #369) - the BIP340 signature, by the key the purchase names (player-key.js itemsSecretFor),
+  // over entryItemDigest(round, this entry's player key, purchase): the entry's key is fresh per round, the owner's is not, so the
+  // seats check the purchase is kept and that its buyer signed for this entry. WRITTEN ONLY WHEN IT NAMES ANY, last of all, after its
+  // own marker: every other entry keeps exactly its bytes and its id. Sorted by item id, each once.
+  if (e.items !== undefined && e.items !== null) {
+    if (!Array.isArray(e.items) || e.items.length < 1 || e.items.length > ENTRY_ITEMS_MAX) throw new Error(`an entry plays with 1 to ${ENTRY_ITEMS_MAX} items`);
+    for (let i = 0; i < e.items.length; i++) {
+      const it = e.items[i];
+      if (!it || typeof it.itemId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(it.itemId) || !(it.purchaseId instanceof Uint8Array) || it.purchaseId.length !== 32)
+        throw new Error('an entry names an item by its id and the 32-byte id of the purchase that made it the player\'s');
+      if (!(it.ownerSig instanceof Uint8Array) || it.ownerSig.length !== 64)
+        throw new Error('an entry\'s item carries its owner\'s 64-byte signature (entryItemDigest)');
+      if (i > 0 && !(e.items[i - 1].itemId < it.itemId)) throw new Error('an entry\'s items are sorted by id, each once');
+    }
+    w.u8(ITEMS_ENTRY_MARKER);
+    w.vec(e.items, (it, ww) => { ww.str(it.itemId); ww.bytes32(it.purchaseId); ww.bytes(it.ownerSig, 64); });
+  }
   return w.finish();
 }
+
+/**
+ * WHAT AN ITEM'S OWNER SIGNS FOR AN ENTRY (kanban #369): taggedHash("ARENA/v1/EntryItem", round id || the entry's player key ||
+ * purchase id). Bound to the round and to this entry's key, so the proof is no good on any other entry.
+ */
+function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
+  for (const [n, b] of [['round id', roundId], ['player key', playerPubkey], ['purchase id', purchaseId]])
+    if (!(b instanceof Uint8Array) || b.length !== 32) throw new Error(`an entry item's proof names its ${n} in 32 bytes`);
+  const m = new Uint8Array(96); m.set(roundId, 0); m.set(playerPubkey, 32); m.set(purchaseId, 64);
+  return taggedHash(TAG.entryItem, m);
+}
+
+/** The byte before the items an entry plays with (protocol 10, kanban #365), last of all. */
+const ITEMS_ENTRY_MARKER = 0xad;
+const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
 const PICK_MARKER = 0xa7;
@@ -2393,7 +2434,7 @@ function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -2419,10 +2460,15 @@ function decodeEntryContract(bytes) {
     e.operatorId = r.bytes32();
     if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== FRONTEND_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator nor its website');
+  if (r.at < bytes.length && bytes[r.at] === FRONTEND_MARKER) {
+    r.u8();
     e.frontendPk = r.bytes(33);
     if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== ITEMS_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website nor its items');
+    e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32(), ownerSig: rr.bytes(64) }));
+    if (!e.items.length) throw new Error('an empty list of items is not written: these bytes are not an entry\'s one encoding');
   }
   r.end();
   return e;
@@ -8207,6 +8253,25 @@ function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) {
   return { ok: true, fingerprint: refundFingerprint(playerPubkey) };
 }
 
+/**
+ * THE KEY A PLAYER OWNS IN-GAME ITEMS WITH (kanban #365 ruling 2, #369): from the same seed, under its own tag, and the SAME in every
+ * round - an item is bought once and kept, while a round's player key is fresh per round (so locks stay unlinkable). It signs the
+ * purchase (purchase.js) and, on an entry that plays with the item, the proof that this entry's per-round key is its owner's
+ * (contracts.js entryItemDigest). It never holds a stake and nothing is refunded to it.
+ */
+function itemsSecretFor(seed) {
+  if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
+  const msg = new Uint8Array(33);
+  msg.set(seed, 0);
+  for (let c = 0; c < 256; c++) {
+    msg[32] = c;
+    const secret = taggedHash(TAG.itemsKey, msg);
+    const v = scalarFrom32(secret);
+    if (v > 0n && v < FIELD) return secret;
+  }
+  throw new Error('no scalar of the group in 256 tries, which should not happen');
+}
+
 // ---- arena-protocol/src/known-games.js
 // GENERATED by packages/arena-protocol/tools/known-games.js from each game's signed manifest - do not edit by hand.
 //
@@ -8411,6 +8476,9 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 8, year: 2026, x: 0 }),
   // the website that brought the entry: 20% of the nodes' fee on its entries, paid to its key (kanban #362 item 7, path (a))
   Object.freeze({ version: 9, year: 2026, x: 0 }),
+  // in-game items: a game sells items for sat (25 % protocol devs, 25 % game dev, 50 % the nodes that served), an entry plays with
+  // the items its player bought (kanban #365)
+  Object.freeze({ version: 10, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -9906,7 +9974,7 @@ function feeLockOf(stakeLock, round) {
 // `limitPrice` / `orderExpiryMs`: an ORDER on a market's book (kanban #278, #237) - the pick it backs at most this price of
 // the scale (protocol order-book.js), until that time (0n: until the market closes); written only with a pick.
 function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stake, claimKey, stakeLock,
-  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null } = {}) {
+  donationMsat = 0n, pick = undefined, confirmedGames = null, limitPrice = undefined, orderExpiryMs = 0n, playerOrder = 0, operatorId = null, frontendPk = null, items = null } = {}) {
   if (!round) throw new Error('there is no round to join');
   // THE PLAYER'S OWN DONATION (M3.2 6e, §22A), chosen on the page
   // (`chooseDonation`) and written here - never rewritten by anybody else. It
@@ -10011,6 +10079,9 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     // only a 33-byte compressed key
     ...(frontendPk instanceof Uint8Array && frontendPk.length === 33 && (frontendPk[0] === 2 || frontendPk[0] === 3)
       && Number(round.protocolVersion) >= FRONTEND_FEE_VERSION ? { frontendPk } : {}),
+    // THE ITEMS IT PLAYS WITH (protocol 10, kanban #365/#369): each with its owner's proof for this entry (item-buy.js entryItemsFor) -
+    // only on a round of version 10 or later, and only when there are any, so every other entry keeps its bytes
+    ...(Array.isArray(items) && items.length && Number(round.protocolVersion) >= ITEMS_VERSION ? { items } : {}),
     // THE PICK, ON A MARKET ROUND (§0A.7a): after every other field, so an entry without one keeps its bytes
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
@@ -26496,6 +26567,562 @@ async function askForWinnings({ run, prompt, storage, fetcher = fetch } = {}) {
   return { asked: true, named: true, address, posted: mine ? mine.posted : [], acked: mine ? mine.acked : [], complete: !!(mine && mine.complete) };
 }
 
+// ---- arena-protocol/src/final-sig.js
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+//
+// "A result is FINAL only when five settlement seats have each signed FINAL for it, and a seat signs only once its own
+// clock reads final_after and it holds no valid objection." "Signed times are checked on arrival. A seat counts a result
+// or FINAL signature only if the time it carries is within the tolerance of the receiving seat's own clock. A
+// back-dated or forward-dated signature does not count and is itself evidence against its signer."
+//
+// The record: the round, the entry, the run it makes FINAL (the agreed run id - the first result's, or an agreed
+// re-run's), the seat that signs, and the time it signed on its own clock. The count: distinct committee seats whose
+// signature verifies, signed at or after the window's final_after, and received within the tolerance of the
+// receiving seat's clock (the `seenMs` it was stored with) - at the round's own threshold (5 of 7, 2 of 2).
+//
+// The curve is not this package's business: `verify(signature, digest, key)` is injected, as rerun.js takes it.
+
+
+
+
+
+/** 1 type + 2 version + 32 round + 32 entry + 32 run + 32 signer + 8 signed at. */
+const FINAL_SIG_BYTES = 1 + 2 + 32 + 32 + 32 + 32 + 8;
+const FINAL_SIG_SIGNATURE_BYTES = 64;
+const SIGNED_FINAL_SIG_BYTES = FINAL_SIG_BYTES + FINAL_SIG_SIGNATURE_BYTES;
+
+const fsIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodeFinalSig({ roundId, entryId, runId, signerPubkey, signedAtMs }) {
+  const w = new Writer();
+  w.u8(TYPE_FINAL_SIGNATURE);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId);
+  w.bytes32(entryId);
+  w.bytes32(runId);
+  w.bytes32(signerPubkey);
+  w.u64(BigInt(signedAtMs));
+  return w.finish();
+}
+
+function decodeFinalSig(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FINAL_SIGNATURE) throw new Error('not a FINAL signature');
+  const version = r.u16();
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
+  const x = { roundId: r.bytes32(), entryId: r.bytes32(), runId: r.bytes32(), signerPubkey: r.bytes32(), signedAtMs: r.u64() };
+  r.end();
+  return x;
+}
+
+/** What the seat signs. */
+const finalSigId = (x) => taggedHash(TAG.finalSignature, encodeFinalSig(x));
+
+function joinSignedFinalSig(body, signature) {
+  if (body.length !== FINAL_SIG_BYTES) throw new Error(`a FINAL signature body is ${FINAL_SIG_BYTES} bytes, got ${body.length}`);
+  if (signature.length !== FINAL_SIG_SIGNATURE_BYTES) throw new Error(`a signature is ${FINAL_SIG_SIGNATURE_BYTES} bytes, got ${signature.length}`);
+  const out = new Uint8Array(SIGNED_FINAL_SIG_BYTES);
+  out.set(body, 0);
+  out.set(signature, FINAL_SIG_BYTES);
+  return out;
+}
+
+function splitSignedFinalSig(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_FINAL_SIG_BYTES)
+    throw new Error(`a signed FINAL signature is ${SIGNED_FINAL_SIG_BYTES} bytes`);
+  return { body: bytes.subarray(0, FINAL_SIG_BYTES), signature: bytes.subarray(FINAL_SIG_BYTES) };
+}
+
+/** Sign one FINAL record with `sign(digest) -> 64-byte signature`. */
+function signFinalSig(x, sign) {
+  const body = encodeFinalSig(x);
+  return joinSignedFinalSig(body, sign(finalSigId(x)));
+}
+
+/**
+ * WHY ONE ARRIVING FINAL SIGNATURE DOES NOT COUNT, or null if it does: about this round, entry and run; a committee
+ * seat; a signature that verifies; signed at or after `finalAfterMs`; and signed within the tolerance of `seenMs`, the
+ * receiving seat's own clock when it arrived.
+ */
+function finalSigFault({ bytes, seenMs }, { roundId, entryId, runId, committee, finalAfterMs, verify }) {
+  let x, signature;
+  try {
+    const split = splitSignedFinalSig(bytes);
+    signature = split.signature;
+    x = decodeFinalSig(split.body);
+  } catch (e) { return { why: `not a FINAL signature: ${e.message}` }; }
+  if (toHex(x.roundId) !== toHex(roundId) || toHex(x.entryId) !== toHex(entryId)) return { x, why: 'about another round or entry' };
+  if (runId && toHex(x.runId) !== toHex(runId)) return { x, why: 'about another run' };
+  if (!committee.map(toHex).includes(toHex(x.signerPubkey))) return { x, why: 'not signed by a seat of this round\'s committee' };
+  let good = false;
+  try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
+  if (!good) return { x, why: 'the signature does not verify' };
+  if (x.signedAtMs < BigInt(finalAfterMs))
+    return { x, evidence: true, why: `signed at ${x.signedAtMs}, before the window's final_after ${finalAfterMs}: a seat signed FINAL early` };
+  if (seenMs === null || seenMs === undefined || !withinTolerance(x.signedAtMs, seenMs))
+    return { x, evidence: true, why: `signed at ${x.signedAtMs} and received at ${seenMs}: outside the 5 s tolerance of the receiving seat's clock` };
+  return null;
+}
+
+/**
+ * IS THIS RUN FINAL? The distinct committee seats whose FINAL signature on `runId` counts (finalSigFault), against the
+ * round's threshold for `slots` seats. `records` are `{ bytes, seenMs }`.
+ */
+function finalSigned({ roundId, entryId, runId, records, committee, slots, finalAfterMs, verify } = {}) {
+  if (!fsIs32(roundId) || !fsIs32(entryId) || !fsIs32(runId)) return { ok: false, signed: 0, why: 'FINAL is counted for one round, one entry and one run' };
+  if (typeof verify !== 'function') return { ok: false, signed: 0, why: 'counting FINAL signatures needs a verifier, and none was injected' };
+  if (!Array.isArray(committee) || !committee.length) return { ok: false, signed: 0, why: 'this round has no committee to sign FINAL' };
+  let needed;
+  try { needed = receiptsNeeded(slots); } catch (e) { return { ok: false, signed: 0, why: e.message }; }
+  const counted = new Set();
+  const refused = [];
+  for (const rec of records || []) {
+    const fault = finalSigFault(rec, { roundId, entryId, runId, committee, finalAfterMs, verify });
+    if (fault) { refused.push({ signer: fault.x ? toHex(fault.x.signerPubkey) : null, why: fault.why, evidence: !!fault.evidence }); continue; }
+    counted.add(toHex(decodeFinalSig(splitSignedFinalSig(rec.bytes).body).signerPubkey));
+  }
+  const signed = counted.size;
+  if (signed < needed) return { ok: false, signed, needed, refused, why: `${signed} of ${needed} seats have signed FINAL` };
+  return { ok: true, signed, needed, refused, signers: [...counted] };
+}
+
+// ---- arena-protocol/src/served-nodes.js
+// THE NODES THAT SERVED A ROUND IN THE LAST 24 HOURS (kanban #365, the owner 2026-10-15: an in-game item's price goes "50% an die
+// nodes die in den letzten 24h an einer Runde beteiligt waren"). The part of the item plan that moves no money (plan: comment 2310):
+// WHICH nodes, and in how many rounds each, read so that every node arrives at the same list.
+//
+// WHAT COUNTS AS SERVING: a seat's signed FINAL on a round (final-sig.js) - public, signed by the node's own key, and only a member
+// of that round's committee can give one. A round counts once per node, however many entries it signed FINAL for. The window is
+// [fromMs, toMs) on the signature's own clock; the caller fixes `toMs` from something every node reads alike (a purchase names its
+// anchor block, whose time it is), never its own clock.
+//
+// THE LIST AND ITS ROOT: the nodes sorted by key, each with its count of rounds; root = taggedHash('ARENA/v1/ServedNodes',
+// from || to || [key || rounds]...). A purchase names the root; a node that rebuilds another root from the FINAL signatures it holds
+// can show exactly which node or count differs (servedNodesDiffer). Equal or weighted shares are both read from this one list.
+//
+// NO CURVE: `verify(signature, digest, key)` is injected, as final-sig.js takes it.
+
+
+
+const SERVED_WINDOW_MS = 24 * 3600 * 1000;
+const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
+const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/**
+ * THE SERVED LIST over `rounds` = [{ roundId, committee: [key32...], finals: [signed FINAL bytes...] }], window [fromMs, toMs).
+ * A FINAL counts when it is about that round, signed by a member of its committee, verifies, and was signed inside the window.
+ * Answers { fromMs, toMs, nodes: [{ key (hex), rounds }], rounds (counted), root (hex), refused: [{ round, why }] }.
+ */
+function servedNodes({ rounds, fromMs, toMs, verify }) {
+  if (typeof verify !== 'function') throw new Error('reading who served needs a verifier, and none was injected');
+  const from = BigInt(fromMs), to = BigInt(toMs);
+  if (!(to > from)) throw new Error('a served window ends after it starts');
+  const served = new Map();                                  // key hex -> Set of round hex
+  const refused = [];
+  let counted = 0;
+  for (const round of rounds || []) {
+    if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
+    const rid = toHex(round.roundId);
+    const committee = new Set(round.committee.map(toHex));
+    let any = false;
+    for (const bytes of round.finals || []) {
+      let x, signature;
+      try { ({ signature } = splitSignedFinalSig(bytes)); x = decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)); }
+      catch (e) { refused.push({ round: rid, why: `not a FINAL signature: ${e.message}` }); continue; }
+      const key = toHex(x.signerPubkey);
+      if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
+      if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
+      let good = false;
+      try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
+      if (!good) { refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` }); continue; }
+      if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
+      if (!served.has(key)) served.set(key, new Set());
+      served.get(key).add(rid); any = true;
+    }
+    if (any) counted++;
+  }
+  const nodes = [...served.entries()].map(([key, s]) => ({ key, rounds: s.size })).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { fromMs: from, toMs: to, nodes, rounds: counted, root: toHex(servedNodesRoot({ fromMs: from, toMs: to, nodes })), refused };
+}
+
+/** The root of a served list: what a purchase names and every node rebuilds. */
+function servedNodesRoot({ fromMs, toMs, nodes }) {
+  const w = new Writer();
+  w.u64(BigInt(fromMs)); w.u64(BigInt(toMs));
+  const sorted = [...nodes].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  for (let i = 1; i < sorted.length; i++) if (sorted[i].key === sorted[i - 1].key) throw new Error(`node ${sorted[i].key.slice(0, 16)} is listed twice`);
+  w.vec(sorted, (n, ww) => { ww.bytes32(Uint8Array.from(n.key.match(/../g).map((h) => parseInt(h, 16)))); ww.u32(n.rounds); });
+  return taggedHash(TAG_SERVED_NODES, w.finish());
+}
+
+/** WHERE TWO SERVED LISTS DIFFER (a claimed one against the reader's own): [] when they agree. */
+function servedNodesDiffer(claimed, mine) {
+  const out = [];
+  if (BigInt(claimed.fromMs) !== BigInt(mine.fromMs) || BigInt(claimed.toMs) !== BigInt(mine.toMs)) out.push({ why: 'another window' });
+  const a = new Map(claimed.nodes.map((n) => [n.key, n.rounds])), b = new Map(mine.nodes.map((n) => [n.key, n.rounds]));
+  for (const [k, r] of a) if (!b.has(k)) out.push({ key: k, why: `named with ${r} round(s), and served none here` }); else if (b.get(k) !== r) out.push({ key: k, why: `named with ${r} round(s), and ${b.get(k)} here` });
+  for (const [k, r] of b) if (!a.has(k)) out.push({ key: k, why: `served ${r} round(s) here, and is left out` });
+  return out;
+}
+
+/**
+ * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (kanban #365, measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
+ * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
+ * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
+ * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ */
+function mergeServedRounds(held) {
+  const hx = (b) => toHex(b);
+  const rounds = new Map(), conflicts = new Set();
+  for (const seat of held || []) for (const r of seat || []) {
+    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
+    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
+    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
+    const into = rounds.get(k);
+    if (into.key !== committee) { conflicts.add(k); continue; }
+    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  }
+  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+    conflicts: [...conflicts] };
+}
+
+// ---- arena-protocol/src/items.js
+// IN-GAME ITEMS (kanban #365, the owner 2026-10-15: "ein Spiel kann ingame items haben zb ein neuer Trick. Der kostet X Satoshi, wobei 25% an
+// die protocol devs gehen, 25% an den a game dev und 50% an die nodes die in den letzten 24h an einer Runde beteiligt waren"; rulings the
+// same day: the nodes' half EQUAL per node; an item bound to the buyer's player key and the game across its versions, not transferable;
+// payable through every federation; the nodes named by the merged signed FINALs of every seat - served-nodes.js).
+//
+// THE CATALOGUE is part of the signed manifest, after its own marker (0x07, behind a top split's shares, before the required version):
+// each item an id (what a round's entry names), a name, a price in whole sat, and the hash of what it unlocks (the trick's core data
+// or config - what the game's core is handed when an entry names the item). A price changes only with a new manifest version. Only
+// under protocol version 10 or later (constants.js ITEMS_VERSION), so no node that cannot sell or check an item hosts the game.
+//
+// THE SPLIT (itemSplit): of the price in msat, 50 % in equal parts to the nodes that served a round in the 24 hours before the
+// purchase (each floored), and the rest - the developers' half and what the node shares' floors leave - in two halves exactly as a
+// round's donation is split over its two sets (donation.js splitTwoSets, ruled 2026-10-06): the protocol devs' half floored, the
+// game dev's the rest. So 25 % / 25 % / 50 %, integer msat, the parts always adding up to the price exactly.
+
+
+
+const ITEMS_MARKER = 0x07;
+const ITEMS_MAX = 64;
+const ITEM_NAME_MAX = 48;
+/** The highest price an item may name: 10 BTC in sat. */
+const ITEM_PRICE_MAX_SAT = 1000000000n;
+const ITEM_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const itIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** Does a catalogue fit its manifest? { ok } or { ok: false, why }. Items sorted by id, each id once. */
+function itemsFit(items, m) {
+  if (!Array.isArray(items) || items.length < 1 || items.length > ITEMS_MAX) return { ok: false, why: `an item catalogue names 1 to ${ITEMS_MAX} items` };
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it || typeof it !== 'object') return { ok: false, why: 'an item is an object' };
+    if (typeof it.id !== 'string' || !ITEM_ID.test(it.id)) return { ok: false, why: `an item id is 1 to 32 of a-z, 0-9 and "-", starting with a letter or digit: ${JSON.stringify(it.id)}` };
+    if (i > 0 && !(items[i - 1].id < it.id)) return { ok: false, why: `the catalogue is sorted by id, each id once: "${items[i - 1].id}" then "${it.id}"` };
+    if (typeof it.name !== 'string' || it.name.trim().length < 1 || it.name.length > ITEM_NAME_MAX) return { ok: false, why: `item "${it.id}" names itself in 1 to ${ITEM_NAME_MAX} characters` };
+    if (typeof it.priceSat !== 'bigint' || it.priceSat < 1n || it.priceSat > ITEM_PRICE_MAX_SAT) return { ok: false, why: `item "${it.id}" costs 1 to ${ITEM_PRICE_MAX_SAT} sat` };
+    if (!itIs32(it.unlock)) return { ok: false, why: `item "${it.id}" names what it unlocks by a 32-byte hash` };
+  }
+  if (!(m && Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= ITEMS_VERSION))
+    return { ok: false, why: `a game with items requires protocol version ${protocolVersionName(ITEMS_VERSION)} or later (#349): no node that cannot sell or check one hosts it` };
+  return { ok: true };
+}
+
+/** Writes the catalogue (marker, then the sorted items) into a manifest's Writer. */
+function writeItems(w, items) {
+  w.u8(ITEMS_MARKER);
+  w.vec(items, (it, ww) => { ww.str(it.id); ww.str(it.name); ww.u64(it.priceSat); ww.bytes32(it.unlock); }, { sortedBy: (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0) });
+}
+
+/** Reads a catalogue after its marker (the caller took the marker). */
+function readItems(r) {
+  return r.vec((rr) => ({ id: rr.str(), name: rr.str(), priceSat: rr.u64(), unlock: rr.bytes32() }));
+}
+
+/** The item of a catalogue by id, or null. */
+const itemOf = (m, id) => (m && Array.isArray(m.items) ? m.items.find((it) => it.id === id) || null : null);
+
+/**
+ * THE SPLIT OF ONE PURCHASE, in msat. `priceMsat` a BigInt; `nodes` the served nodes' keys (hex, any order; each once - the served
+ * list's keys). Answers { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat },
+ * or throws on a price below 1 msat or no served node (a purchase with nobody to pay half to is refused before any money moves).
+ */
+function itemSplit({ priceMsat, nodes }) {
+  const price = BigInt(priceMsat);
+  if (price < 1n) throw new Error('an item costs at least 1 msat');
+  const keys = [...new Set((nodes || []).map((k) => String(k).toLowerCase()))].sort();
+  if (!keys.length) throw new Error('no node served a round in the window: an item\'s half for the nodes has nobody to go to');
+  if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
+  const perNodeMsat = (price / 2n) / BigInt(keys.length);
+  const nodesMsat = perNodeMsat * BigInt(keys.length);
+  const devsMsat = price - nodesMsat;                          // the developers' half and the node shares' floors
+  const protocolMsat = devsMsat / 2n;                          // as splitTwoSets: the protocol devs' half floored,
+  const gameMsat = devsMsat - protocolMsat;                    // the game dev's the rest
+  return { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: keys.map((key) => ({ key, msat: perNodeMsat })), sumMsat: protocolMsat + gameMsat + nodesMsat };
+}
+
+/** A short line for logs and pages: "trick-x (Double jump) 2,100 sat". */
+const itemLine = (it) => `${it.id} (${it.name}) ${String(it.priceSat).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sat`;
+const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String(it.priceSat), unlock: toHex(it.unlock) }));
+
+// ---- arena-protocol/src/purchase.js
+// AN ITEM, BOUGHT (kanban #365 step 2): the buyer's signed record of one purchase, and the check any node makes of it.
+//
+// THE MONEY IS ONE FEDERATION TRANSACTION from the buyer's e-cash whose outputs are pre-expired payout contracts, each spendable only
+// by its payee's key - the same outputs a round's donation pays its recipients in today (page-lock.js lockSubmit, role "donation").
+// Its outputs are exactly the split (items.js itemSplit): the nodes' half equal per served node (each to refundKeyOf(node key)), the
+// developers' half over the network's and the game's donation sets as a round's donation is split (donation.js splitTwoSets).
+//
+// THE RECORD names what was bought and how it was paid - the game (its developer key and name, so the item outlives versions), the
+// item and its price, the buyer's key, the federation and the transaction, every output (index, payee key, msat), and the served list
+// it paid (its window and root, served-nodes.js) - and the buyer signs it (BIP340, injected). `purchaseStands` rebuilds the outputs
+// from the manifest, the two donation sets and the reader's own merged served list and compares them one by one; a record whose
+// outputs pay anybody else, or anything else, does not stand. Whether the federation accepted the transaction is the federation's
+// to say (the seats ask it, as for a stake lock) - this file only says what that transaction must be.
+//
+// OWNERSHIP is a standing record whose transaction the federation accepted: bound to the buyer's key and the game, not transferable
+// (no record names a second owner), the same across the game's versions while the item's id stays in its catalogue.
+
+
+
+
+
+
+
+const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
+const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
+const PURCHASE_OUTPUTS_MAX = 255;
+/** How far before the purchase its served window may end: the buyer's client merges the seats' lists just before it pays. */
+const PURCHASE_WINDOW_SLACK_MS = 3600000;
+const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const pIs33 = (b) => b instanceof Uint8Array && b.length === 33 && (b[0] === 2 || b[0] === 3);
+
+/** The record's bytes, without the signature. Outputs sorted by index. */
+function encodePurchase(p) {
+  if (!pIs32(p.gameDevPubkey) || !pIs32(p.playerPubkey) || !pIs32(p.federationId) || !pIs32(p.txid) || !pIs32(p.servedRoot))
+    throw new Error('a purchase names the game\'s developer, the buyer, the federation, the transaction and the served root by 32 bytes each');
+  if (!Array.isArray(p.outputs) || p.outputs.length < 1 || p.outputs.length > PURCHASE_OUTPUTS_MAX) throw new Error(`a purchase pays 1 to ${PURCHASE_OUTPUTS_MAX} outputs`);
+  for (const o of p.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !pIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
+    throw new Error('an output names its index, its payee\'s 33-byte key and its msat');
+  const w = new Writer();
+  w.u8(TYPE_ITEM_PURCHASE); w.u16(ITEMS_VERSION);
+  w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
+  w.bytes32(p.playerPubkey); w.bytes32(p.federationId); w.bytes32(p.txid);
+  w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs)); w.bytes32(p.servedRoot);
+  w.vec(p.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
+  w.u64(BigInt(p.boughtAtMs));
+  return w.finish();
+}
+
+function decodePurchase(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
+  const version = r.u16();
+  if (version !== ITEMS_VERSION) throw new Error(`an item purchase of version ${version}`);
+  const p = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64(), playerPubkey: r.bytes32(), federationId: r.bytes32(),
+    txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
+    outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
+  r.end();
+  return p;
+}
+
+/** What the buyer signs, and the purchase's id. */
+const purchaseId = (p) => taggedHash(TAG_ITEM_PURCHASE, encodePurchase(p));
+
+/**
+ * THE OUTPUTS A PURCHASE MUST PAY: [{ pk (33 bytes), msat }] sorted by key, one per payee (a key paid as a node and as a developer
+ * is paid once, the sum), none of 0 msat. `servedKeys` the served nodes' keys in hex; `networkSet` / `gameSet` the two donation
+ * sets' recipients (they must pay keys).
+ */
+function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet }) {
+  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys });
+  const devs = splitTwoSets({ donationMsat: split.devsMsat, networkSet, gameSet });
+  if (!devs.owed) throw new Error(`the developers' half cannot be paid: ${devs.why}`);
+  const by = new Map();
+  const add = (pk, msat) => { if (msat <= 0n) return; const k = toHex(pk); by.set(k, { pk, msat: (by.get(k) ? by.get(k).msat : 0n) + msat }); };
+  for (const n of split.nodes) add(refundKeyOf(fromHex(n.key)), n.msat);
+  for (const s of devs.shares) {
+    if (!(s.recipientPk instanceof Uint8Array)) throw new Error('an item is paid in the federation: both donation sets must pay keys, not LNURLs');
+    add(s.recipientPk, s.amountMsat);
+  }
+  return { outputs: [...by.values()].sort((a, b) => (toHex(a.pk) < toHex(b.pk) ? -1 : 1)), split, devs };
+}
+
+/**
+ * DOES A PURCHASE STAND? `p` the record with `signature`; `manifest` the game's (any version naming the item); `networkSet` /
+ * `gameSet` the donation sets; `served` the reader's own merged list for the record's window ({ fromMs, toMs, nodes, root });
+ * `verify(sig, digest, key)` BIP340. Answers { ok, id } or { ok: false, why }.
+ */
+function purchaseStands(p, { manifest, networkSet, gameSet, served, verify }) {
+  const no = (why) => ({ ok: false, why });
+  let id; try { id = purchaseId(p); } catch (e) { return no(`that purchase does not encode: ${e.message}`); }
+  if (!manifest || toHex(manifest.gameDevPubkey) !== toHex(p.gameDevPubkey) || manifest.gameName !== p.gameName)
+    return no(`the purchase is of game "${p.gameName}" by ${toHex(p.gameDevPubkey).slice(0, 16)}, not of the manifest given`);
+  const item = itemOf(manifest, p.itemId);
+  if (!item) return no(`"${p.gameName}" sells no item "${p.itemId}"`);
+  if (BigInt(p.priceSat) !== item.priceSat) return no(`item "${p.itemId}" costs ${item.priceSat} sat, and the purchase paid ${p.priceSat}`);
+  if (BigInt(p.servedToMs) - BigInt(p.servedFromMs) !== BigInt(SERVED_WINDOW_MS)) return no('the served window is 24 hours');
+  if (BigInt(p.servedToMs) > BigInt(p.boughtAtMs) || BigInt(p.boughtAtMs) - BigInt(p.servedToMs) > BigInt(PURCHASE_WINDOW_SLACK_MS))
+    return no('the served window ends at most an hour before the purchase, and not after it');
+  if (!served || BigInt(served.fromMs) !== BigInt(p.servedFromMs) || BigInt(served.toMs) !== BigInt(p.servedToMs) || served.root !== toHex(p.servedRoot))
+    return no(`the purchase paid the served list ${toHex(p.servedRoot).slice(0, 16)}, and the one read here is ${served && served.root ? served.root.slice(0, 16) : 'none'}`);
+  let want; try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet }).outputs; }
+  catch (e) { return no(e.message); }
+  const got = [...p.outputs].map((o) => ({ pk: toHex(o.pk), msat: o.msat })).sort((a, b) => (a.pk < b.pk ? -1 : 1));
+  const line = (o) => `${typeof o.pk === 'string' ? o.pk : toHex(o.pk)}:${o.msat}`;
+  if (got.length !== want.length || got.some((o, i) => line(o) !== line(want[i])))
+    return no(`its outputs are not the split: it pays ${got.length} output(s), the split ${want.length}`);
+  let good = false;
+  try { good = verify(p.signature, id, p.playerPubkey) === true; } catch { good = false; }
+  if (!good) return no('the buyer\'s signature does not verify');
+  return { ok: true, id };
+}
+
+// ---- arena-client/src/item-buy.js
+// AN IN-GAME ITEM, BOUGHT FROM THE PAGE (kanban #365 step 5; #369's larger truck the first): the player's wallet pays the item's split
+// in one federation transaction, the player signs the record, and the seats keep it as the player's for good.
+//
+//   1. WHO SERVED: every seat's signed FINALs of the 24 h before now (GET /served?finals=1), merged by round and each FINAL checked
+//      here (served-nodes.js) - the same list every seat rebuilds when it checks the purchase.
+//   2. THE SPLIT: purchaseOutputs over the item's price, those nodes and the two donation sets (purchase.js).
+//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, the buyer's key as their image),
+//      its acceptance read back output by output (lockAccepted).
+//   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
+//      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
+// No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
+
+
+
+
+
+
+
+/** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
+async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
+  const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
+  const held = [];
+  await Promise.all((seats || []).map(async (s) => {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) return;
+      const a = await r.json();
+      held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+    } catch { /* a seat that does not answer adds nothing */ }
+  }));
+  if (!held.length) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  const served = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs, toMs: BigInt(toMs), verify });
+  if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
+  return { ok: true, served, seats: held.length };
+}
+
+/**
+ * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
+ * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
+ * `seats` the game's seats; `verify` BIP340. Answers { ok, purchaseId, txid, priceSat, outputs, keptBy } or { ok: false, step, why }.
+ */
+async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now() }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const item = itemOf(manifest, itemId);
+  if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
+  const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
+  const got = await servedFromSeats({ seats, toMs, fetch, verify });
+  if (!got.ok) return no('served', got.why);
+  let built;
+  try { built = purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet }); }
+  catch (e) { return no('split', e.message); }
+  let submitted, accepted;
+  try {
+    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(player.pubkey) })))));
+    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
+  } catch (e) { return no('payment', String(e && e.message || e)); }
+  const outs = accepted.donations || [];
+  if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, playerPubkey: player.pubkey,
+    federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
+    outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()) };
+  const signature = player.sign(purchaseId(record));
+  const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
+  // HANDED TO THE FIRST SEAT THAT KEEPS IT: it checks the record and the federation, then hands it on to every other seat
+  let keptBy = null, last = 'no seat to hand it to';
+  for (const s of seats || []) {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
+      if (r.ok) { keptBy = s; break; }
+      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
+    } catch (e) { last = `${s}: ${e.message}`; }
+  }
+  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
+    retry: body };
+  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, outputs: outs.length, keptBy };
+}
+
+/** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
+async function ownedItems({ seats, player, gameName = null, fetch }) {
+  for (const s of seats || []) {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
+      if (r.ok) return (await r.json()).items || [];
+    } catch { /* the next seat */ }
+  }
+  return [];
+}
+
+/**
+ * THE PLAYER'S ITEMS KEY (kanban #369): the same in every round, from the seed (protocol player-key.js itemsSecretFor) - it buys an
+ * item and signs, per entry, that the entry plays with it. `curve` the page's (pointX, signSchnorr). Answers { secret, pubkey, sign }.
+ */
+function itemsKeyFor(seed, curve) {
+  const secret = itemsSecretFor(seed);
+  const pubkey = curve.pointX(secret);
+  return { secret, pubkey, sign: (digest) => curve.signSchnorr(digest, secret) };
+}
+
+/** WHAT A GAME'S ITEMS UNLOCK: its manifest's catalogue as { item id: unlock hex } ({} when it sells none). */
+function itemUnlocksOf(manifest) {
+  const out = {};
+  for (const it of (manifest && manifest.items) || []) out[it.id] = toHex(it.unlock);
+  return out;
+}
+
+/**
+ * THE SHOP OF A GAME: the items its newest manifest that sells any names, from the lobby's games (games.js fetchGames, one entry per
+ * version) of that game name. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ */
+function shopOf(games, gameName) {
+  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && (g.manifest.items || []).length)
+    .sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version));
+  if (!selling.length) return null;
+  const game = selling[0];
+  return { game, items: game.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
+}
+
+/**
+ * THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #369): of the purchases this player owns (ownedItems) of the round's game, the
+ * ones `use` names and the game sells, each with its owner's proof for THIS entry - the items key's signature over
+ * entryItemDigest(round, the entry's per-round key, purchase). Sorted by item id, one purchase per item. [] on a round before
+ * version 10, or with nothing to play with: the entry then names no items at all.
+ */
+function entryItemsFor({ round, roundId, playerPubkey, owned, use = null, manifest, key }) {
+  if (!(Number(round && round.protocolVersion) >= ITEMS_VERSION)) return [];
+  const sells = itemUnlocksOf(manifest);
+  const byItem = new Map();
+  for (const o of owned || []) {
+    if (!sells[o.itemId] || (use && !use.includes(o.itemId)) || byItem.has(o.itemId)) continue;
+    byItem.set(o.itemId, o);
+  }
+  return [...byItem.values()].sort((a, b) => (a.itemId < b.itemId ? -1 : 1)).map((o) => {
+    const purchaseId = fromHex(o.id);
+    return { itemId: o.itemId, purchaseId, ownerSig: key.sign(entryItemDigest({ roundId, playerPubkey, purchaseId })) };
+  });
+}
+
+/** THE UNLOCKS A RUN STARTS WITH: an entry's items as its game's catalogue unlocks them, in the entry's order ([] for none). */
+function entryUnlocks(entry, manifest) {
+  const sells = itemUnlocksOf(manifest);
+  return ((entry && entry.items) || []).map((it) => sells[it.itemId]).filter(Boolean);
+}
+
 // ---- arena-client/src/replay-link.js
 // COPY GAME REPLAY (the owner 2026-09-25 18:39): the one https link a player copies from the result screen.
 //
@@ -26544,6 +27171,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 //           between the bounds to the sides LONG and SHORT - its attestors sign a value, scalar.js),
 //       [HEAD_TO_HEAD only] players, move_count, reveal_window,
 //       [REPLAY with payout_rule TOP_SPLIT only, marker 0x03] payout_shares[] (kanban #362 feature 3),
+//       [optional, marker 0x07] items[]: id, name, price_sat, unlock (kanban #365: a game's in-game items; protocol 10 - items.js),
 //       [optional, marker 0x02] required_protocol_version (kanban #349),
 //       signature by game_dev_pubkey
 //     }
@@ -26551,8 +27179,8 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 // THE TRAILING FIELDS, IN THIS ORDER AND EACH AFTER ITS OWN MARKER: what only one result type writes (an attested game's
 // terms, template and game source, a head-to-head game's table, a top split's shares - never two result types' fields in one
 // manifest), then the required version, which any manifest may name, last. Each is optional or bound to its rule, so a
-// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its six
-// markers 0x01-0x06 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
+// manifest that names none keeps its bytes and its game id; a reader takes each only where its marker stands, and its seven
+// markers 0x01-0x07 are distinct, so no field can be read as another. A node too old to know one cannot read the manifest
 // (trailing bytes).
 //     game_id = H(GameManifest)
 //
@@ -26568,6 +27196,7 @@ function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } =
 //
 // NO CURVE, as everywhere in this package: `verify(signature, digest, key)` is injected (Ed25519, the scheme the
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
+
 
 
 
@@ -26918,6 +27547,8 @@ function encodeManifestBody(m) {
   } else if (m.payoutShares !== undefined && m.payoutShares !== null) {
     throw new Error('only a game paid by a top split (payout rule TOP_SPLIT) names payout shares');
   }
+  // ITS ITEMS (kanban #365): any game may sell items, from version 10 - checked, never sorted here (the order is in the hash)
+  if (m.items !== undefined && m.items !== null) { const f = itemsFit(m.items, m); if (!f.ok) throw new Error(f.why); }
 
   const w = new Writer();
   w.u8(TYPE_GAME_MANIFEST);
@@ -26973,6 +27604,8 @@ function encodeManifestBody(m) {
   }
   // A TOP SPLIT'S SHARES (kanban #362), after their marker and only under that rule: no manifest before it moves
   if (m.payoutRule === PAYOUT_RULE.TOP_SPLIT) { w.u8(PAYOUT_SHARES_MARKER); w.vec(m.payoutShares, (x, ww) => ww.u16(x)); }
+  // ITS ITEMS (kanban #365), after their marker and only when it sells some: no manifest before it moves
+  if (m.items) writeItems(w, m.items);
   // THE REQUIRED PROTOCOL VERSION, LAST AND ONLY WHEN NAMED: no manifest before it moves
   if (m.requiredProtocolVersion) { w.u8(REQUIRED_VERSION_MARKER); w.u16(m.requiredProtocolVersion); }
   return w.finish();
@@ -27030,6 +27663,10 @@ function readBody(r) {
     if (!(r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.u8() === PAYOUT_SHARES_MARKER))
       throw new Error('a game paid by a top split carries its shares after their marker');
     body.payoutShares = r.vec((rr) => rr.u16());
+  }
+  if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === ITEMS_MARKER) {
+    r.u8();
+    body.items = readItems(r);
   }
   if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === REQUIRED_VERSION_MARKER) {
     r.u8();
@@ -27092,6 +27729,9 @@ function manifestStands(m, { verify, parentOf = () => null } = {}) {
   // AND A SCALAR MARKET WHOSE VALUE THIS BUILD CANNOT PAY (kanban #362 feature 8): likewise
   if (isScalar(m) && !speaksVersion(m.requiredProtocolVersion))
     return { ok: false, why: `${name}: it is a scalar market under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
+  // AND ITEMS THIS BUILD CANNOT SELL OR CHECK (kanban #365): likewise - until version 10 is spoken, no node hosts a game with items
+  if (Array.isArray(m.items) && m.items.length && !speaksVersion(m.requiredProtocolVersion))
+    return { ok: false, why: `${name}: it sells items under protocol version ${protocolVersionName(m.requiredProtocolVersion)}, which this build does not speak` };
   if (m.version === 1) {
     if (!manIsZero(m.parentManifestId)) return { ok: false, why: `${name}: version 1 names a parent; the first manifest of a game has none` };
     return { ok: true, gameId: id, why: `${name} v1, signed by ${toHex(m.gameDevPubkey).slice(0, 16)}` };
@@ -30262,6 +30902,8 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,
          sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,
          zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
+         shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
+         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;

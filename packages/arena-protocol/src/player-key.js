@@ -94,3 +94,22 @@ export function playerKeyIsDerived({ seed, roundId, playerPubkey, curve } = {}) 
     };
   return { ok: true, fingerprint: refundFingerprint(playerPubkey) };
 }
+
+/**
+ * THE KEY A PLAYER OWNS IN-GAME ITEMS WITH (kanban #365 ruling 2, #369): from the same seed, under its own tag, and the SAME in every
+ * round - an item is bought once and kept, while a round's player key is fresh per round (so locks stay unlinkable). It signs the
+ * purchase (purchase.js) and, on an entry that plays with the item, the proof that this entry's per-round key is its owner's
+ * (contracts.js entryItemDigest). It never holds a stake and nothing is refunded to it.
+ */
+export function itemsSecretFor(seed) {
+  if (!isPlayerBytes32(seed)) throw new Error('a player seed is 32 bytes');
+  const msg = new Uint8Array(33);
+  msg.set(seed, 0);
+  for (let c = 0; c < 256; c++) {
+    msg[32] = c;
+    const secret = taggedHash(TAG.itemsKey, msg);
+    const v = scalarFrom32(secret);
+    if (v > 0n && v < FIELD) return secret;
+  }
+  throw new Error('no scalar of the group in 256 tries, which should not happen');
+}

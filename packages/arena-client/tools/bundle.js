@@ -78,6 +78,9 @@ walk(SRC + 'donation-pay.js');
 // AND WHERE A WINNER'S WINNINGS ARE SENT (ruled 2026-09-23): the one question at the run's end, and the signed
 // address posted to every signer node that has not taken it. Nothing in the client imports it; the page calls it.
 walk(SRC + 'winnings.js');
+// AND THE GAME'S ITEMS (kanban #365, #369): the shop, the purchase paid from the player's wallet, what the player owns, and the items
+// an entry plays with - the page calls them, nothing in the client imports them
+walk(SRC + 'item-buy.js');
 // COPY GAME REPLAY (2026-09-25 18:39): the link a player copies from the result screen.
 walk(SRC + 'replay-link.js');
 walk(SRC + 'market.js');
@@ -297,6 +300,9 @@ out += '         yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeIm
 // ZAPS AND TIPS (kanban #362 item 14): a zap or a tip from the player's own wallet, the player's address and the zaps they received
 out += '         sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,\n';
 out += '         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,\n';
+// THE GAME'S ITEMS (kanban #365, #369): the shop, the purchase, what the player owns, the items an entry plays with and their unlocks
+out += '         shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,\n';
+out += '         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 

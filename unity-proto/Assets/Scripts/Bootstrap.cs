@@ -411,6 +411,8 @@ public class Bootstrap : MonoBehaviour
         var bay = truck.gameObject.AddComponent<CargoBay>();
         bay.crateMaterial = crateMaterial;
         bay.boxPrefab = boxPrefab;
+        // THE LARGER TRUCK (kanban #369): the bay and the body drawn at the bed the core drives
+        truck.gameObject.AddComponent<LargeTruckView>();
 
         // The yard: the waiting transactions as crates you can actually tap.
         var yardGo = new GameObject("PackageYard");
