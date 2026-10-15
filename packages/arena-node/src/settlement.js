@@ -28,11 +28,11 @@ import { decodeRoundContract, decodeEntryContract, entryFederation } from '../..
 import { takesAnyFederation } from '../../arena-protocol/src/constants.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
-import { marketVoided, roundTermsOf } from '../../arena-protocol/src/attested.js';
+import { heldOutcomes, marketVoidOf } from './game-market.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement } from '../../arena-protocol/src/lock-settlement.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
-import { decodeAttestation, outcomeFinality, pariMutuelTable } from '../../arena-protocol/src/attested.js';
+import { outcomeFinality, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { FORFEIT, VOID, ENTRY_VOID, isQualifier } from '../../arena-protocol/src/payout.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
@@ -417,7 +417,9 @@ export class LockSettlement {
     if (this.round.fedLockSettlementsOf && (this.round.fedLockSettlementsOf(roundIdBytes) || []).some((r) => r.state === ACCEPTED)) return null;
     // REFUND AT THE DEADLINE (kanban #235): a market round with no standing outcome by its deadline, or whose attestors
     // contradicted themselves, is VOID - nothing is claimed, every stake comes back by the return door (forfeit.js)
-    const voided = marketVoided(a.held, { entryCloseMs: a.contract.entryCloseMs, terms: roundTermsOf(a.plugin.manifest, a.contract), nowMs: this.round.now ? this.round.now() : Date.now() });
+    // AND A MARKET ON A GAME WHOSE SOURCE RESULT REFUNDS IT, OR WHOSE SOURCE CAN NEVER FIT IT (kanban #362 feature 6): VOID at once,
+    // not at its deadline (game-market.js marketVoidOf)
+    const voided = marketVoidOf(this.round, roundIdBytes, { contract: a.contract, manifest: a.plugin.manifest, held: a.held, nowMs: this.round.now ? this.round.now() : Date.now() });
     if (voided.voided) return { ok: false, state: 'VOID', why: `a market round that is not settled on any outcome: ${voided.why}`, outcome: 'VOID' };
     if (a.finality.final) return null;
     const f = a.finality;
@@ -434,8 +436,9 @@ export class LockSettlement {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.round.plugins);
     if (!found.ok || !found.attested) return null;
-    const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
-      .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    // EVERY STANDING OUTCOME: the attestations, and a market on a game's held source result in an attestation's shape (kanban
+    // #362 feature 6, game-market.js heldOutcomes) - final, held, disputed and paid by the same rules
+    const held = heldOutcomes(this.round, roundIdBytes);
     return { contract, plugin: found.plugin, held,
       finality: outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() }) };
   }

@@ -21,7 +21,8 @@
 // commitment list: the same nonce over two lists is two signatures over two
 // messages, which publishes the share. A second asker with the same list gets
 // the same share back; with another list, nothing.
-import { decodeAttestation, outcomeFinality, marketVoided, roundTermsOf } from '../../arena-protocol/src/attested.js';
+import { outcomeFinality } from '../../arena-protocol/src/attested.js';
+import { heldOutcomes, marketVoidOf } from './game-market.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
@@ -245,8 +246,7 @@ export class Forfeit {
     if (book.inPending) return refuse('that order is in a batch not decided yet: its locks wait for it');
     if (book.filled) return refuse('that order filled: its locks are claimed at resolution and its unfilled rest paid back there');
     if (book.cancelled) return this.#signable(contract, lock);
-    const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
-      .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    const held = heldOutcomes(this.round, roundIdBytes);
     const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
     if (fin.final) return this.#signable(contract, lock);
     return refuse('that order stands unfilled: cancel it (at no cost) or wait for the market to resolve');
@@ -256,11 +256,12 @@ export class Forfeit {
   #marketRefund(roundIdBytes, contract) {
     const f = pluginForRound(contract, this.round.plugins);
     if (!f.ok || !f.attested) return { ok: false };
-    const held = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
-      .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+    // every standing outcome: the attestations and a market on a game's held source result (kanban #362 feature 6)
+    const held = heldOutcomes(this.round, roundIdBytes);
     const nowMs = this.round.now ? this.round.now() : Date.now();
-    // a template's round is VOID by its own resolution time's deadline (kanban #362 feature 5: roundTermsOf)
-    const voided = marketVoided(held, { entryCloseMs: contract.entryCloseMs, terms: roundTermsOf(f.plugin.manifest, contract), nowMs });
+    // a template's round is VOID by its own resolution time's deadline (kanban #362 feature 5: roundTermsOf); a market on a game
+    // AT ONCE when its source result refunds it or its source can never fit it (feature 6: game-market.js marketVoidOf)
+    const voided = marketVoidOf(this.round, roundIdBytes, { contract, manifest: f.plugin.manifest, held, nowMs });
     if (voided.voided) return { ok: true, why: voided.why };
     const fin = outcomeFinality(held, { windowMs: contract.objectionWindowMs, nowMs });
     if (fin.final && !this.round.entriesOf(roundIdBytes).some(({ entry }) => entry.pick === fin.outcome))

@@ -3930,7 +3930,7 @@
   "returns": "201/200 JSON {held, fresh, why, state, ...}; 400/404/409",
   "purpose": "Submits an attested (oracle/market) round outcome; a conflicting one marks the round DISPUTED.",
   "audience": "game/market developer",
-  "line": 4985,
+  "line": 5193,
   "summary": "Submit an outcome attestation",
   "query": [
    {
@@ -3981,12 +3981,12 @@
   "method": "POST",
   "path": "/game-outcome",
   "params": "query round (hex 32: the market round); body JSON {openCents, closeCents, front?, sigs:[{key, signature}]} - the source round's RoundResult and its seats' BIP-340 signatures, as GET /round-result answers them",
-  "auth": "the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7)",
-  "returns": "200 JSON {round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}; 400/404/409",
-  "purpose": "Checks a market on a game (protocol 2026.0.6): its outcome from its source round's signed result. Answered, not held.",
+  "auth": "the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7); a source round this node does not hold is fetched from other seats and checked against its id",
+  "returns": "201/200 JSON {round, held, fresh, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why, state, ...}; 400/404/409",
+  "purpose": "Hands a seat a market on a game's outcome (protocol 2026.0.6): its source round's signed result, checked and held where an attestation is held; the market then settles as an attested one (pari-mutuel). A refund (Tick Tock FLAT) or a source that can never fit is held as VOID at once. Seats also fetch the result themselves.",
   "audience": "game/market developer",
-  "line": 5125,
-  "summary": "Check a market-on-a-game outcome",
+  "line": 5226,
+  "summary": "Hand in a market-on-a-game outcome",
   "query": [
    {
     "name": "round",
@@ -4002,9 +4002,14 @@
   },
   "responses": [
    {
+    "status": "201",
+    "contentType": "application/json",
+    "description": "{round, held, fresh, outcome?, label?, refund?, void?, signers, threshold, source, voided, why, state, ...}: held now - an outcome, or VOID."
+   },
+   {
     "status": "200",
     "contentType": "application/json",
-    "description": "{round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}: the verified resolution, or VOID."
+    "description": "Held already."
    },
    {
     "status": "400",
@@ -4014,16 +4019,16 @@
    {
     "status": "404",
     "contentType": "text/plain",
-    "description": "No such round, or its source round is not held here."
+    "description": "No such round, or no seat answered its source round as the round the market names."
    },
    {
     "status": "409",
     "contentType": "text/plain",
-    "description": "Not a market on a game, no committee drawn, or the result does not stand."
+    "description": "Not a market on a game, the source round has not ended, no committee drawn, or the result does not stand."
    }
   ],
   "headers": [],
-  "changesState": false,
+  "changesState": true,
   "needsAuth": "signature",
   "pathParams": []
  },
@@ -4032,10 +4037,10 @@
   "path": "/outcome",
   "params": "query round (hex 32)",
   "auth": "none",
-  "returns": "200 JSON {round, state OPEN|ATTESTED|DISPUTED, outcomes (the round's own labels for a template round), question?, resolveAtMs?, outcome?, label?, table?, ...}; 400/404/409",
-  "purpose": "Current outcome of an attested round, with the round's own question and labels when it asks one.",
+  "returns": "200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}; 400/404/409",
+  "purpose": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund.",
   "audience": "game/market developer",
-  "line": 5010,
+  "line": 5242,
   "summary": "Outcome of an attested round",
   "query": [
    {
@@ -4050,7 +4055,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{round, state OPEN|ATTESTED|DISPUTED, outcomes, question?, resolveAtMs?, outcome?, label?, table?, ...}."
+    "description": "{round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes, question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}."
    },
    {
     "status": "400",

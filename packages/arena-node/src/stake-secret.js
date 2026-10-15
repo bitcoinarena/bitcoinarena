@@ -38,7 +38,8 @@ import { resultFinality } from './finality.js';
 import { FINAL } from '../../arena-protocol/src/objection.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { decodeAttestation, outcomeFinality } from '../../arena-protocol/src/attested.js';
+import { outcomeFinality } from '../../arena-protocol/src/attested.js';
+import { heldOutcomes } from './game-market.js';
 import { pluginForRound } from './plugins.js';
 
 /** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
@@ -127,8 +128,8 @@ export class StakeSecrets {
     { const contract = decodeRoundContract(new Uint8Array(row.contract));
       const found = this.round.plugins ? pluginForRound(contract, this.round.plugins) : null;
       if (found && found.ok && found.attested) {
-        const heldAtt = (this.round.outcomeAttestations ? this.round.outcomeAttestations(roundIdBytes) : [])
-          .map((r) => ({ ...decodeAttestation(new Uint8Array(r.bytes)), receivedMs: Number(r.received_ms) }));
+        // (a market on a game's held source result counts as its attestation would: kanban #362 feature 6, heldOutcomes)
+        const heldAtt = heldOutcomes(this.round, roundIdBytes);
         const f = outcomeFinality(heldAtt, { windowMs: contract.objectionWindowMs, nowMs: this.round.now ? this.round.now() : Date.now() });
         if (!f.final) return { ok: false, why: `no share of an attested round is handed out before its outcome is final (${f.state}${f.finalAtMs ? `, final at ${new Date(f.finalAtMs).toISOString()}` : ''})` };
         const stored = this.round.entry(entryIdBytes);
