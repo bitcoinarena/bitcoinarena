@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { createProposals } from '../src/proposals.js';
-import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
 import { depositOutputsExpected } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -20,7 +20,7 @@ const NET = new Uint8Array(32).fill(0x4e);
 function proposalWithDeposit(sats, { activationHeight = 200 + 8 } = {}) {
   const want = depositOutputsExpected(sats, SET);
   const raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
-  const p = { networkId: NET, parent: new Uint8Array(32).fill(0x10), configHash: new Uint8Array(32).fill(0x20), config: Uint8Array.of(1, 2, 3),
+  const p = { networkId: NET, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(Uint8Array.of(1, 2, 3)), config: Uint8Array.of(1, 2, 3),
     class: CLASS.DESIGN, activationHeight, proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
   const signature = schnorr.sign(proposalBodyId(p), secret);
   return { raw, hex: toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...signature])), txidDisplay: toHex(Uint8Array.from(p.depositTxid).reverse()) };
@@ -62,7 +62,7 @@ test('on a running seat: POST /proposal reads the deposit through `ballot`, chec
   const want = depositOutputsExpected(700, KEYS.recipients);
   assert.equal(want.ok, true, want.why);
   const raw = tx(want.outputs.map((o) => ({ sats: o.sats, script: o.script })));
-  const p = { networkId: NETWORK_ID_REGTEST, parent: new Uint8Array(32).fill(0x10), configHash: new Uint8Array(32).fill(0x20), config: Uint8Array.of(9),
+  const p = { networkId: NETWORK_ID_REGTEST, parent: new Uint8Array(32).fill(0x10), configHash: configHashOf(Uint8Array.of(9)), config: Uint8Array.of(9),
     class: CLASS.MONEY, activationHeight: 300 + 8, proposer, depositTxid: Uint8Array.from(parseTransaction(raw).txid) };
   const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
   const BLOCK = 'cc'.repeat(32);

@@ -316,8 +316,10 @@ if (url) {
       // at the version the proposal is written in, every bond at or above the lowest bracket's bond_min, one confirmation deep at
       // that height. ARENA_BALLOT_EVERY_MS: how often it counts (10 s by default).
       tipHeight: async () => Number(await call('getblockcount')),
-      votesAt: async (height) => {
-        const raw = fromHex(String(await call('getblock', [await call('getblockhash', [height]), 0])));
+      // the block at a height by its hash - the tally holds a count to the hashes it read (a reorg is followed); null above the tip
+      blockHashAt: async (height) => { try { return String(await call('getblockhash', [height])); } catch { return null; } },
+      votesAt: async (height, hash) => {
+        const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
         return votesInBlock(raw, height);
       },
       censusAt: async (networkIdHex, height) => {

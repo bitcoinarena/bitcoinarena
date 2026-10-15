@@ -975,11 +975,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
       write: (list) => { round.db.exec('CREATE TABLE IF NOT EXISTS ballot_proposals (id TEXT PRIMARY KEY, json TEXT NOT NULL)');
-        const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); } } }) : null);
+        const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); },
+      // a proposal whose publication left the chain is not kept (ballot-tally.js, a reorg)
+      remove: (id) => { try { round.db.prepare('DELETE FROM ballot_proposals WHERE id = ?').run(id); } catch { /* no table yet: nothing kept */ } } } }) : null);
   if (counts && proposals) {
     // A REGTEST OUTCOME IS WRITTEN AS SOON AS THE LAST VOTING BLOCK IS MINED ("two operators can drive a whole governance cycle
     // through to activation in under a minute", 27A.7.4); every other chain waits for it to be six deep
+    // A REORG IS FOLLOWED when the launcher hands the block hashes (ballot.blockHashAt): a count is held to the blocks it read
     ballotTally = createBallotTally({ proposals, tipHeight: ballot.tipHeight, votesAt: ballot.votesAt, censusAt: ballot.censusAt,
+      ...(typeof ballot.blockHashAt === 'function' ? { blockHashAt: ballot.blockHashAt } : {}),
       verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
       decideDepthFor: (net) => (isRegtestNet(net) ? 1 : 6), log: (l) => console.log(l) });
   }
@@ -4002,7 +4006,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // activated, failed, or void (passed, its parent no longer live at its activation, 27A.7.2)
       if (proposals && url.pathname === '/proposals' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify(ballotTally ? { tip: ballotTally.tip, proposals: ballotTally.list() } : { proposals: proposals.list() }));
+        return res.end(JSON.stringify(ballotTally ? { tip: ballotTally.tip, proposals: ballotTally.list(), reorgs: ballotTally.reorgs() } : { proposals: proposals.list() }));
       }
       // THE CONFIG LIVE ON THIS SEAT'S CHAIN (27A.7.5): { configHash, since, by, history } - ?network=<hex>, this seat's chain's by
       // default. What a round created now names; `history` (genesis first) is what a repeal is read against (27A.7.6).
