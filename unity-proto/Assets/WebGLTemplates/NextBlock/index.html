@@ -405,6 +405,17 @@
     #arena-games.compact .chip .word { display: none; }
     #arena-games.compact .chip.idle { color: #6e7681; }
     #arena-games.compact .chip:not(.idle) .ico { color: #3fb950; }
+    /* EVEN TILES (kanban #368, the owner 2026-10-15 22:09: "Alle Elemente müssen gleichmäßig angeordnet sein, es schaut unruhig aus"):
+       on the phone the three chips wrapped to two lines on a tile whose count had three digits (Rock Paper Scissors' 180 rounds) and
+       one line elsewhere, so the names, counts and Leaderboard links sat at different heights in one row. Now every tile is the same
+       column: the image, the name in two lines' height whether it takes one or two, the chips as equal columns in one row that never
+       wraps (a count from 1,000 on reads 1.2k, the exact one in its title), and the Leaderboard link last - the counts and the link
+       held at the bottom, so a row of tiles lines up. */
+    #arena-games.compact .name { min-height: 2.5em; display: flex; align-items: center; justify-content: center; }
+    #arena-games.compact .stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); width: 100%; gap: 4px; margin-top: auto; }
+    #arena-games.compact .chip { justify-content: center; min-width: 0; padding: 3px 2px; gap: 3px; font-size: 12.5px; letter-spacing: -.02em; }
+    #arena-games.compact .chip .ico { width: 13px; height: 13px; }
+    #arena-games.compact .season-go { margin-top: -2px; }
     /* A CHIP OPENS ITS LIST (kanban #356, the owner 2026-10-14): the nodes with their dashboards, the players by name, the open rounds */
     #arena-games .chip.opens { cursor: pointer; }
     #arena-games .chip.opens:hover, #arena-games .chip.opens:focus-visible { border-color: #f7931a; outline: none; }
@@ -5973,7 +5984,7 @@
                 rounds: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.4 5.2v5.6L11 8z" fill="currentColor"/>' };
               const chip = (n, word, kind, idle) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
                 const dot = document.createElement('i'); const ico = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ico.setAttribute('class', 'ico'); ico.setAttribute('viewBox', '0 0 16 16'); ico.setAttribute('aria-hidden', 'true'); ico.innerHTML = ICONS[kind];
-                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + word; c.append(dot, ico, document.createTextNode(String(n)), w);
+                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + word; c.append(dot, ico, document.createTextNode(n >= 1000 ? (n >= 10000 ? Math.floor(n / 1000) : Math.floor(n / 100) / 10) + 'k' : String(n)), w);
                 // ITS LIST ON A TAP (kanban #356), not the game: the tile's own tap still picks the game
                 c.classList.add('opens'); c.setAttribute('role', 'button'); c.tabIndex = 0;
                 const open = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); };
