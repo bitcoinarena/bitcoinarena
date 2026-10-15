@@ -2,6 +2,7 @@
 // would have to reproduce.
 
 import { test } from 'node:test';
+import { SUPPORTED_PROTOCOL_VERSIONS as SPOKEN } from '../src/constants.js';
 import { TEST_FEDERATION_ID } from '../src/test-federation.js';
 import { TEST_DONATION_SET_REGTEST } from '../src/test-donation-sets.js';
 import { donationSetId as idOfDonationSet } from '../src/donation.js';
@@ -323,7 +324,7 @@ test('a contract round-trips byte for byte', () => {
 
 test('a contract from a future version is refused, not mis-parsed', () => {
   const enc = encodeRoundContract(sampleContract());
-  enc[2] = 9;                                    // bump the version word
+  enc[2] = Math.max(...SPOKEN) + 1;              // bump the version word past the newest this build speaks
   assert.throws(() => decodeRoundContract(enc), /protocol version/);
 });
 
