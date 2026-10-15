@@ -22,6 +22,9 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 8, year: 2026, x: 0 }),
   // the website that brought the entry: 20% of the nodes' fee on its entries, paid to its key (kanban #362 item 7, path (a))
   Object.freeze({ version: 9, year: 2026, x: 0 }),
+  // in-game items: a game sells items for sat (25 % protocol devs, 25 % game dev, 50 % the nodes that served), an entry plays with
+  // the items its player bought (kanban #365)
+  Object.freeze({ version: 10, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

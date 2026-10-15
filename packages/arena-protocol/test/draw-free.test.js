@@ -2,6 +2,7 @@
 // the testnet4 census could open no round: the draw is seeded by the round id, which hashed the `nodes` it had to name. A v2
 // round's id hashes its contract with `nodes` emptied, both roles take one draw, and the seats write the seated 7 in.
 import { test } from 'node:test';
+import { SUPPORTED_PROTOCOL_VERSIONS as SPOKEN } from '../src/constants.js';
 import assert from 'node:assert/strict';
 import { encodeRoundContract, decodeRoundContract, roundId } from '../src/contracts.js';
 import { seriesTemplate, seriesRound, seriesId, seriesRoundCheck, seriesIndexAt } from '../src/series.js';
@@ -38,7 +39,7 @@ test('a v2 round is written at version 2, names no nodes, and keeps its id when 
   assert.notEqual(toHex(roundId(v1)), toHex(roundId({ ...v1, nodes: seven.slice(0, 6) })));
   // 4 is 2026.0.4 (top-N prize splits, kanban #362), 5 is 2026.0.5 (the median of signed readings, kanban #312), 6 is 2026.0.6
   // (markets on games, kanban #362 feature 6) and 7 is 2026.0.7 (scalar markets, kanban #362 feature 8), spoken; 8 is not
-  assert.throws(() => encodeRoundContract({ ...base, protocolVersion: 8 }), /protocol version 8/);
+  assert.throws(() => encodeRoundContract({ ...base, protocolVersion: Math.max(...SPOKEN) + 1 }), new RegExp(`protocol version ${Math.max(...SPOKEN) + 1}`));
 });
 
 test('a v2 series: its id and its rounds\' ids ignore nodes, and a round with its seats written in is still the series\' round', () => {

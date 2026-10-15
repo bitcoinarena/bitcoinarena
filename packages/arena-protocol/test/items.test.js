@@ -53,11 +53,12 @@ test('a catalogue that does not fit is refused by name', () => {
   assert.throws(() => encodeManifestBody({ ...BODY, items: ITEMS, requiredProtocolVersion: 9 }), /requires protocol version/);
 });
 
-test('until version 10 is spoken, no node hosts a game with items', () => {
-  assert.equal(SUPPORTED_PROTOCOL_VERSIONS.includes(ITEMS_VERSION), false, 'added only once the purchase and its money path are built');
+test('version 10 is spoken: a game with items stands, and names its version 2026.0.10', async () => {
+  const { protocolVersionName } = await import('../src/protocol-version.js');
+  assert.equal(SUPPORTED_PROTOCOL_VERSIONS.includes(ITEMS_VERSION), true);
+  assert.equal(protocolVersionName(ITEMS_VERSION), '2026.0.10');
   const st = manifestStands(signed({ ...BODY, items: ITEMS, requiredProtocolVersion: ITEMS_VERSION }), { verify: verifyEd25519 });
-  assert.equal(st.ok, false);
-  assert.match(st.why, /sells items under protocol version .*which this build does not speak/);
+  assert.equal(st.ok, true, st.why);
   assert.equal(manifestStands(signed(BODY), { verify: verifyEd25519 }).ok, true);
 });
 
