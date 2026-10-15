@@ -28,7 +28,11 @@ const say = (s) => console.log(`[found] ${s}`);
 const nodes = (process.argv.slice(2).length ? process.argv.slice(2)
   : [1, 2, 3, 4, 5, 6, 7].map((n) => `${31211 + n * 10}:${env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`}/node-${n}.db`))
   .map((s) => ({ port: Number(s.split(':')[0]), store: s.slice(s.indexOf(':') + 1) }));
-if (nodes.length !== 7) throw new Error(`the testnet federation is seven guardians (5 of 7); got ${nodes.length}`);
+// THE TESTNET FEDERATION IS SEVEN; ARENA_FOUND_N names another size - the throwaway federation T of the live slash and liquidation
+// (kanban #326, the owner 2026-10-15 option 1) is four, 3 of 4, as rehearsal 17 ran on regtest
+const FOUND_N = Number(env.ARENA_FOUND_N || 7);
+if (!Number.isInteger(FOUND_N) || FOUND_N < 4) throw new Error('ARENA_FOUND_N: a federation of at least four guardians');
+if (nodes.length !== FOUND_N) throw new Error(`this federation is ${FOUND_N} guardians; got ${nodes.length}`);
 const url = env.ARENA_BITCOIND_URL, cookiePath = env.ARENA_BITCOIND_COOKIE;
 if (!url || !cookiePath) throw new Error('ARENA_BITCOIND_URL and ARENA_BITCOIND_COOKIE: the chain the guardians run on');
 const call = bitcoindRpc({ url, cookiePath });
@@ -79,7 +83,7 @@ try {
   say('every guardian set its local params');
   for (const [i, x] of guardians.entries())
     for (const [j, code] of codes.entries()) if (i !== j) await cli(['admin', 'setup', x.api, 'add-peer', code], x.password);
-  say('every guardian holds the other six; the ceremony starts');
+  say(`every guardian holds the other ${FOUND_N - 1}; the ceremony starts`);
   await Promise.all(guardians.map((x) => cli(['admin', 'setup', x.api, 'start-dkg'], x.password).catch(() => '')));
   for (let i = 0; !guardians.every((x) => holdsGuardianKey(x.store)); i++) {
     if (i > 300) throw new Error('the ceremony wrote no keys in 300 s');
