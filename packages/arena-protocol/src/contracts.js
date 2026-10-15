@@ -699,8 +699,26 @@ export function encodeEntryContract(e) {
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
   }
+  // THE ITEMS THIS ENTRY PLAYS WITH (protocol 10, kanban #365): each an item of the round's game by its id and the purchase that made
+  // the entry's player its owner (purchase.js; the seats check the purchase is kept and the player's). WRITTEN ONLY WHEN IT NAMES
+  // ANY, last of all, after its own marker: every other entry keeps exactly its bytes and its id. Sorted by item id, each once.
+  if (e.items !== undefined && e.items !== null) {
+    if (!Array.isArray(e.items) || e.items.length < 1 || e.items.length > ENTRY_ITEMS_MAX) throw new Error(`an entry plays with 1 to ${ENTRY_ITEMS_MAX} items`);
+    for (let i = 0; i < e.items.length; i++) {
+      const it = e.items[i];
+      if (!it || typeof it.itemId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(it.itemId) || !(it.purchaseId instanceof Uint8Array) || it.purchaseId.length !== 32)
+        throw new Error('an entry names an item by its id and the 32-byte id of the purchase that made it the player\'s');
+      if (i > 0 && !(e.items[i - 1].itemId < it.itemId)) throw new Error('an entry\'s items are sorted by id, each once');
+    }
+    w.u8(ITEMS_ENTRY_MARKER);
+    w.vec(e.items, (it, ww) => { ww.str(it.itemId); ww.bytes32(it.purchaseId); });
+  }
   return w.finish();
 }
+
+/** The byte before the items an entry plays with (protocol 10, kanban #365), last of all. */
+export const ITEMS_ENTRY_MARKER = 0xad;
+export const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
 export const PICK_MARKER = 0xa7;
@@ -749,7 +767,7 @@ export function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -775,10 +793,15 @@ export function decodeEntryContract(bytes) {
     e.operatorId = r.bytes32();
     if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== FRONTEND_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator nor its website');
+  if (r.at < bytes.length && bytes[r.at] === FRONTEND_MARKER) {
+    r.u8();
     e.frontendPk = r.bytes(33);
     if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== ITEMS_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website nor its items');
+    e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32() }));
+    if (!e.items.length) throw new Error('an empty list of items is not written: these bytes are not an entry\'s one encoding');
   }
   r.end();
   return e;
