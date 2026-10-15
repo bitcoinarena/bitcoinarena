@@ -2,6 +2,7 @@
 // its top places ([10000] winner takes all, [5000, 3000, 2000]) - encoded so every existing manifest keeps its bytes and its
 // game id, required to name protocol version 4 (#349), and computed by the one F every caller shares.
 import { test } from 'node:test';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '../src/constants.js';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, createPublicKey, sign, verify } from 'node:crypto';
 import {
@@ -133,10 +134,12 @@ test('a top split requires protocol version 4 or later, one this build speaks; n
   for (const v of [undefined, null, 1, 3])
     assert.throws(() => encodeManifestBody({ ...SPLIT, requiredProtocolVersion: v }), /requires protocol version 2026\.0\.4 or later/);
   assert.ok(encodeManifestBody({ ...SPLIT, requiredProtocolVersion: 8 }));
-  const tooNew = signed({ ...SPLIT, requiredProtocolVersion: 8 });
+  // one past the newest version this build speaks (was a fixed 8, stale since scalar templates made 8 spoken - kanban #362)
+  const next = Math.max(...SUPPORTED_PROTOCOL_VERSIONS) + 1;
+  const tooNew = signed({ ...SPLIT, requiredProtocolVersion: next });
   const st = manifestStands(tooNew, { verify: verifyEd25519 });
   assert.equal(st.ok, false);
-  assert.match(st.why, /top split under protocol version \?\.\?\.8, which this build does not speak/);
+  assert.match(st.why, new RegExp(`top split under protocol version \\?\\.\\?\\.${next}, which this build does not speak`));
   // shares on the curve, and the split on a market or a head-to-head game, are refused
   assert.throws(() => encodeManifestBody({ ...CURVE, payoutShares: [10000] }), /only a game paid by a top split/);
   assert.throws(() => encodeManifestBody({ ...CURVE, payoutShares: [] }), /only a game paid by a top split/);
