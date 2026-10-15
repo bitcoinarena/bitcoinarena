@@ -1279,7 +1279,10 @@
     // KNOWN FROM THE PAGE'S START (PAID-NIGHT-2155, measured: a page opened on a round link never read the lobby's
     // daily.json, so its play socket went to the Funnel host alone and failed, 1006): read here at once.
     fetch('daily.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(routes, d.testnet.alt); })
+      .then((d) => { if (d && d.testnet && d.testnet.alt && typeof d.testnet.alt === 'object') Object.assign(routes, d.testnet.alt);
+        // THIS WEBSITE'S PAYOUT KEY (kanban #362 item 7): named on every entry into a round of 2026.0.9 or later, which pays it 20% of
+        // the nodes' fee on that stake (never more for the player); daily.json `frontend`, a 33-byte compressed key in hex
+        if (d && /^0[23][0-9a-f]{64}$/.test(String(d.frontend || ''))) window.ARENA_FRONTEND_PK = d.frontend; })
       .catch(() => { /* the lobby reads it again */ });
     const viaAlt = new Map();
     function routed(url) {
@@ -1879,6 +1882,10 @@
     // restarted browser - opens the same wallet under the same key. The seed a NEW round is
     // played under stays in the tab (two tabs are two players).
     const VAULT_KEYS = ['arena.collect.', 'arena.lock.saved.', 'arena.lockdb.'];
+    // THIS WEBSITE'S PAYOUT KEY, as daily.json names it (kanban #362 item 7) - entryFor writes it only on a round of 2026.0.9 or later
+    function pageFrontendPk() {
+      try { return window.ARENA_FRONTEND_PK ? BLWPCLIENT.fromHex(window.ARENA_FRONTEND_PK) : null; } catch { return null; }
+    }
     function vault() {
       try { const s = window.localStorage; s.getItem('arena.vault'); return s; } catch { return window.sessionStorage; }
     }
@@ -3224,7 +3231,7 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-            donationMsat: donation.donationMsat, joinTick: 0,
+            donationMsat: donation.donationMsat, joinTick: 0, frontendPk: pageFrontendPk(),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
         entry.commit = BLWPCLIENT.moveCommitment({ roundId: entry.roundId, sessionPubkey, move: hidden.move, salt: hidden.salt });
         // HELD WHEN THE SEATS TOOK THE ENTRY (kanban #293): the move is the tab's once all its seats answered 201; the locks are
@@ -3261,7 +3268,7 @@
           Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
             seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
             ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-            donationMsat: donation.donationMsat, joinTick: 0, pick: chosen.pick, confirmedGames: confirmedMarkets(),
+            donationMsat: donation.donationMsat, joinTick: 0, pick: chosen.pick, confirmedGames: confirmedMarkets(), frontendPk: pageFrontendPk(),
             // AN ORDER (kanban #237): the pick at most this price of the scale, until this time - from a market client's order
             ...(chosen.limitPrice ? { limitPrice: chosen.limitPrice, orderExpiryMs: BigInt(chosen.orderExpiryMs || 0) } : {}),
           }), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), sessionPubkey });
@@ -3279,7 +3286,7 @@
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-          donationMsat: donation.donationMsat, joinTick: late.joinTick,
+          donationMsat: donation.donationMsat, joinTick: late.joinTick, frontendPk: pageFrontendPk(),
         });
       if (keptEntry) console.log('[blwp] the entry of this round kept from before the reload');
       else if (stakeLock) {
@@ -6533,7 +6540,7 @@
       const lobbyViewRow = (r, nowMs) => {
         const raw = r.raw || null;
         const secsTo = (ms) => Math.max(0, Math.ceil((Number(ms) - nowMs) / 1000));
-        const line = raw ? BLWPCLIENT.lobbyLine(raw, nowMs, { loads: window.ARENA_FED_LOADS, census: (c) => (c && c.censusRoot ? BLWPCLIENT.checkedCensusFor(c) : null), tooOld: BLWPCLIENT.tooOldFor }) : r.line;
+        const line = raw ? BLWPCLIENT.lobbyLine(raw, nowMs, { loads: window.ARENA_FED_LOADS, census: BLWPCLIENT.checkedCensusFor, tooOld: BLWPCLIENT.tooOldFor }) : r.line;
         const startS = raw && raw.startTimeMs !== undefined ? secsTo(raw.startTimeMs) : -1;
         const leftS = raw && raw.entryCloseMs !== undefined && raw.phase !== 'pending' ? secsTo(raw.entryCloseMs) : -1;
         // total: the round's committee size from its verified contract (7 paid, 2 free) - the header's "N OF M" (#43 follow-up)
@@ -6553,7 +6560,7 @@
       // each entry close ("closes in 0:00", not joinable).
       const lobbyNow = () => (window.BLWP_LOBBY = BLWPCLIENT.lobbyRowsAt(window.BLWP_LOBBY_ROWS || [], Date.now(), goingRound(), { going: joinGoing() }).map((r) => ({ id: r.id, phase: r.phase, free: r.free, wallet: r.wallet,
         signerNodesAgree: r.signerNodesAgree, needed: r.needed, joinable: r.joinable, stakeSats: BLWPCLIENT.lobbyStakeSats(r),
-        line: BLWPCLIENT.lobbyLine(r, Date.now(), { loads: window.ARENA_FED_LOADS, census: (c) => (c && c.censusRoot ? BLWPCLIENT.checkedCensusFor(c) : null), tooOld: BLWPCLIENT.tooOldFor }), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null })));
+        line: BLWPCLIENT.lobbyLine(r, Date.now(), { loads: window.ARENA_FED_LOADS, census: BLWPCLIENT.checkedCensusFor, tooOld: BLWPCLIENT.tooOldFor }), raw: r, join: r.joinable ? BLWPCLIENT.lobbyJoinSearch(rowSearch.get(r.id) || search, r.id) : null })));
       const paint = async () => {
         // 2 OF 2 (M3.3-34): each signer node's listing is its own BIP-340 signature,
         // checked with the curve the daemons sign under; Join is offered only
