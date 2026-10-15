@@ -18,6 +18,8 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 6, year: 2026, x: 0 }),
   // scalar markets: an attested number paid linearly between bounds to the LONG and SHORT sides (kanban #362 feature 8)
   Object.freeze({ version: 7, year: 2026, x: 0 }),
+  // scalar templates: a scalar market whose rounds each name their own question and bounds (kanban #362, items 5 + 8)
+  Object.freeze({ version: 8, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

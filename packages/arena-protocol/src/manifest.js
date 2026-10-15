@@ -44,7 +44,7 @@
 // donation authority signs with), and a manifest with no verifier to check it is not a game.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION, SCALAR_VERSION } from './constants.js';
+import { PROTOCOL_VERSION, speaksVersion, TYPE_GAME_MANIFEST, TAG, ROUND_PERIOD_MS, TOP_SPLIT_VERSION, GAME_MARKET_VERSION, SCALAR_VERSION, SCALAR_TEMPLATE_VERSION } from './constants.js';
 import { protocolVersionName } from './protocol-version.js';
 import { EVENT_VERSION } from './contracts.js';
 import { payoutSharesFit } from './payout.js';
@@ -232,7 +232,13 @@ export function scalarFits(sc, m) {
   if (outcomes.length !== SCALAR_SIDES.length || outcomes.some((o, i) => o !== SCALAR_SIDES[i]))
     return { ok: false, why: `a scalar market's outcomes are its two sides, ${SCALAR_SIDES.join(' and ')}, in that order` };
   if (!m.marketTerms) return { ok: false, why: 'a scalar market names its market terms: its fees, its question, when its value is read and its attestors\' deadline' };
-  if (m.template !== undefined && m.template !== null) return { ok: false, why: 'a scalar market is no template: its bounds and its question are its manifest\'s' };
+  // A SCALAR TEMPLATE (2026.0.8): each round names its own question and its own bounds inside the manifest's - which are then the
+  // range a round's bounds may take - and its two sides; before 8 a scalar market is no template
+  if (m.template !== undefined && m.template !== null) {
+    if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= SCALAR_TEMPLATE_VERSION))
+      return { ok: false, why: `a scalar market is a template only under protocol version ${protocolVersionName(SCALAR_TEMPLATE_VERSION)} or later (#349): its rounds name their own bounds` };
+    if (m.template.maxOutcomes !== 2) return { ok: false, why: 'a scalar template\'s rounds name its two sides: max_outcomes is 2' };
+  }
   if (m.gameSource !== undefined && m.gameSource !== null) return { ok: false, why: 'a scalar market is no market on a game: its attestors sign its value' };
   if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= SCALAR_MIN_PROTOCOL_VERSION))
     return { ok: false, why: `a scalar market requires protocol version ${protocolVersionName(SCALAR_MIN_PROTOCOL_VERSION)} or later (#349): its attestors sign a value` };
@@ -659,6 +665,12 @@ export function eventFitsTemplate(contract, m) {
   const name = `template "${m.gameName}"`;
   const ev = contract && contract.event;
   if (!ev) return { ok: false, why: `${name} is a market template: each round of it asks its own question, outcomes and resolution time, and this one names none` };
+  // A SCALAR TEMPLATE'S ROUND NAMES ITS BOUNDS, inside the template's; any other template's round names none (2026.0.8)
+  if (isScalar(m)) {
+    if (!ev.scalar) return { ok: false, why: `${name} is a scalar template: each round names the bounds it is paid between, and this one names none` };
+    if (ev.scalar.low < m.scalar.low || ev.scalar.high > m.scalar.high)
+      return { ok: false, why: `that round's bounds ${ev.scalar.low}..${ev.scalar.high} ${m.scalar.unit} are outside ${name}'s ${m.scalar.low}..${m.scalar.high}` };
+  } else if (ev.scalar) return { ok: false, why: `${name} is no scalar market: its rounds name no bounds` };
   if (contract.seriesId !== undefined && contract.seriesId !== null)
     return { ok: false, why: `${name}: a round that asks its own question is published on its own, never as a round of a series (a series round's id does not hash its question)` };
   if (!Array.isArray(ev.outcomes) || ev.outcomes.length < 2 || ev.outcomes.length > m.template.maxOutcomes)
@@ -686,6 +698,8 @@ export function marketOfRound(m, contract) {
   const ev = contract.event;
   return { ...m, outcomes: [...ev.outcomes],
     marketTerms: { ...m.marketTerms, question: ev.question, resolveAfterCloseMs: ev.resolveAtMs - contract.entryCloseMs },
+    // a scalar template's round is paid between ITS bounds, in the template's unit (2026.0.8)
+    ...(isScalar(m) && ev.scalar ? { scalar: { low: ev.scalar.low, high: ev.scalar.high, unit: m.scalar.unit } } : {}),
     event: ev };
 }
 
