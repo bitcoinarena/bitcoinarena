@@ -63,7 +63,11 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    contract) and settles the market as an attested one (pari-mutuel, after the objection window); FLAT and a misfit source
    are VOID at once; its own sweep asks the source's committee once the source has ended (each stored round looked at
    once); a seat without the source fetches its contract from other seats and checks it against the id itself.
-   `POST /game-outcome` hands a result in. Left: the page's market lines (multiplayer_p2p.md §0A.7d).
+   `POST /game-outcome` hands a result in. The page's market lines (arena-client `market.js` `checkMarketOutcome`, 2026-10-15):
+   a pick waits for "source round X's signed result"; the seats' evidence is believed only once the source round's RoundResult
+   stands under the settlement committee the page derives itself (`clientCommittee` on the source contract, never the seats'
+   list) at the source's own threshold, mapped by the manifest; VOID says why and that every stake comes back. A source round
+   of a series is shown unverified, by name: its id does not hash its contract and the page holds no series templates yet.
 5. **Sponsored pots** (4) and **frontend fees** (7) - money paths, each with its own tests and a regtest rehearsal.
 6. Then 8-16 by demand.
    **Developer devnet** (15). State: built. `node packages/arena-node/tools/devnet.mjs up | status | play | replay | down`, everything
@@ -86,10 +90,12 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    as an index. Payout (`scalar.js scalarPayoutTable`): V clamped to the bounds, LONG's share of the net pool
    (V - low) / (high - low), SHORT the rest, each side pari-mutuel over its own stakes - integer msat, floors, every
    remainder to a named place, payouts + fees = stakes. One side only (no counterparty): refunded, fees too. No value by the
-   deadline, or two values: VOID. Node side built: `POST /outcome` takes the value attestation, the seat holds it beside the
+   deadline, or two values: VOID. The page's lines (2026-10-15): the value attestation checked against the attestors the
+   manifest names, for this round (`checkMarketOutcome`), and the line says the value in its unit, where it pays when clamped,
+   and what the pick's side got back of its net stake. Node side built: `POST /outcome` takes the value attestation, the seat holds it beside the
    outcome attestations, settles the scalar table after the objection window (a row paid less than its stake has its lock
    claimed and its rest paid back; a row paid more keeps its lock and is paid the excess), and `GET /outcome` serves the
-   bounds, the value and the table. Left: the page's market lines, an attestor daemon that signs values, scalar templates.
+   bounds, the value and the table. The value-signing attestor is `arena-attestor --mode value` (9c1958a2). Left: scalar templates.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
    versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
    (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through

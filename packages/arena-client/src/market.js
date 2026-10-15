@@ -10,7 +10,10 @@
 // - The outcome is the seats' GET /outcome, but believed only once its attestation verifies against the attestors the page
 //   pinned (`checkAttestation`, Ed25519 through WebCrypto); otherwise it is shown as unverified and nothing is concluded.
 import { stakeOf } from './join.js';
-import { decodeManifest, gameIdOf, isAttested, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest, gameIdOf, isAttested, isScalar, isGameMarket, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
+import { decodeValueAttestation, isValueAttestationBytes, valueAttestationBodyId, valueAttestationStands } from '../../arena-protocol/src/scalar.js';
+import { gameMarketResolution } from '../../arena-protocol/src/game-market.js';
+import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
@@ -39,7 +42,12 @@ export function marketForRound(round, { manifestBytes = null } = {}) {
   if (toHex(gameIdOf(m)) !== toHex(round.gameId) || !isAttested(m)) return null;
   return marketAsRoundAsks({ gameId: toHex(round.gameId), name: m.gameName, known: false, needsConfirm: true, outcomes: [...m.outcomes],
     attestors: m.attestors.map(toHex), threshold: m.attestThreshold, devKey: toHex(m.gameDevPubkey), networks: [],
-    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null }, round);
+    fee: { nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) }, terms: m.marketTerms || null,
+    // A SCALAR MARKET'S BOUNDS (protocol 7) and A MARKET ON A GAME'S SOURCE (protocol 6), kanban #362: what its lines say and
+    // what its outcome is checked by - the decoded manifest kept beside them for that check
+    ...(isScalar(m) ? { scalar: { low: m.scalar.low, high: m.scalar.high, unit: m.scalar.unit } } : {}),
+    ...(isGameMarket(m) ? { gameSource: { sourceGameId: toHex(m.gameSource.sourceGameId), mapping: [...m.gameSource.mapping] } } : {}),
+    manifest: m }, round);
 }
 
 /**
@@ -148,6 +156,8 @@ const LOCK_HAND_MS_PICK = 120000;
  */
 export function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = false }) {
   return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
+    // a market on a game's round names its source round (kanban #362 feature 6): its outcome is that round's signed result
+    ...(round.sourceRoundId instanceof Uint8Array ? { sourceRoundIdHex: toHex(round.sourceRoundId) } : {}),
     nodes: [...nodes], confirmed: !!confirmed };
 }
 
@@ -184,6 +194,69 @@ export async function checkAttestation({ attestationHex, market, roundIdHex, ver
 }
 
 /**
+ * A MARKET OUTCOME, CHECKED BY THIS PAGE (kanban #362: the market lines of protocols 6 and 7), whatever its kind - the seats'
+ * GET /outcome answer `o`, the pick's `market` (marketForRound's), its round id:
+ * - an outcome attestation: checkAttestation, against the attestors the page pinned or the player confirmed;
+ * - a VALUE attestation (a scalar market, type 0x2a): its attestors' signatures (Ed25519, `verify`) and threshold, for this
+ *   round, against the manifest's attestors - answers the value, and where it is paid (clamped to the bounds);
+ * - a market on a game's source result: the source round's RoundResult, signed by ITS settlement committee - which
+ *   `sourceCommittee(sourceRoundIdHex, sourceContract)` derives on this page (clientCommittee), never the seats' list - at its
+ *   own threshold, mapped by the manifest. A source round of a series is not checked here yet (its id does not hash its
+ *   contract, and the page holds no series templates): shown unverified, by name.
+ * `{ verified, outcome, label, value, refund, why }`; never throws.
+ */
+export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundIdHex = null, entryCloseMs = null,
+  sourceCommittee = null, verify = webCryptoEd25519, verifySchnorr = null }) {
+  try {
+    if (o && o.gameOutcome && market && market.gameSource) {
+      const g = o.gameOutcome;
+      if (g.void) return { verified: false, why: `the seats hold it VOID: ${g.why || 'its source round refunds it'} (not checked here)` };
+      let source;
+      try { source = decodeRoundContract(fromHex(String(g.sourceContract))); } catch (e) { return { verified: false, why: `the source contract does not decode: ${e.message}` }; }
+      if (source.seriesId !== undefined && source.seriesId !== null)
+        return { verified: false, why: `its source is round ${source.roundIndex} of a series, which this page does not check yet` };
+      if (typeof sourceCommittee !== 'function' || typeof verifySchnorr !== 'function') return { verified: false, why: 'this page cannot derive the source round\'s committee' };
+      const committee = await sourceCommittee(String(g.source), source);
+      if (!committee || !committee.length) return { verified: false, why: 'this page could not derive the source round\'s committee from the chain' };
+      const r = gameMarketResolution({ market: { sourceRoundId: fromHex(String(sourceRoundIdHex || g.source)), entryCloseMs: BigInt(entryCloseMs ?? o.entryCloseMs) },
+        manifest: market.manifest, source, result: { roundId: fromHex(String(g.source)), openCents: Number(g.openCents), closeCents: Number(g.closeCents) },
+        sigs: g.sigs, committee, verify: verifySchnorr });
+      if (!r.ok) return { verified: false, why: r.why };
+      return r.refund ? { verified: true, refund: true, value: r.value, why: r.why }
+        : { verified: true, outcome: r.outcome, label: r.label, value: r.value, signers: r.signers, threshold: r.threshold, why: r.why };
+    }
+    if (o && o.attestation && market && market.scalar && isValueAttestationBytes(fromHex(String(o.attestation)))) {
+      let a;
+      try { a = decodeValueAttestation(fromHex(String(o.attestation))); } catch (e) { return { verified: false, why: `not a value attestation: ${e.message}` }; }
+      const digest = valueAttestationBodyId(a);
+      const said = new Map();
+      for (const x of a.signatures) {
+        const v = await verify(x.signature, digest, x.key);
+        if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the value is shown unverified' };
+        said.set(`${toHex(x.key)}:${toHex(x.signature)}`, v === true);
+      }
+      const st = valueAttestationStands(a, { manifest: market.manifest, roundIdBytes: fromHex(roundIdHex),
+        verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
+      return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
+    }
+    if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify });
+    return { verified: false, why: 'the seats handed no evidence for it' };
+  } catch (e) { return { verified: false, why: e.message }; }
+}
+
+/** A scalar value in its unit: "8,300,000 USD cents" -> "83,000.00 USD" for cents, else the number and its unit. */
+export function scalarValueLine(value, unit) {
+  const v = BigInt(value);
+  const u = String(unit || '');
+  const m = u.match(/^(.*?)\s*cents$/i);
+  if (m) {
+    const neg = v < 0n, a = neg ? -v : v;
+    return `${neg ? '-' : ''}${(a / 100n).toLocaleString('en-US')}.${String(a % 100n).padStart(2, '0')} ${m[1] || ''}`.trim();
+  }
+  return `${v.toLocaleString('en-US')} ${u}`.trim();
+}
+
+/**
  * THE LOBBY'S MARKET LINES (Unity draws them under the round rows, kind 'market'): for each pick this page made, the pick
  * while its round is open, then the outcome as the page checked it, and what it means for this pick.
  * `picks`: [{ roundIdHex, entryIdHex, market, pick, stakeMsat, entryCloseMs }]; `outcomes`: Map roundIdHex -> the seats'
@@ -201,7 +274,14 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     if (!o || o.state === 'OPEN') {
-      lines.push({ kind: 'market', text: `${head}: you picked '${label}' · waiting for the outcome · ${p.market.threshold} of ${p.market.attestors.length} attestors` });
+      // what decides it: a market on a game waits for its source round's signed result, any other for its attestors
+      const by = p.market.gameSource ? `source round ${String(p.sourceRoundIdHex || '').slice(0, 8)}'s signed result`
+        : `${p.market.threshold} of ${p.market.attestors.length} attestors${p.market.scalar ? ' to sign the value' : ''}`;
+      lines.push({ kind: 'market', text: `${head}: you picked '${label}' · waiting for ${by}` });
+      continue;
+    }
+    if (o.state === 'VOID') {
+      lines.push({ kind: 'market', text: `${head}: VOID - ${o.why || 'its source round refunds it'} · every stake comes back` });
       continue;
     }
     if (o.state === 'DISPUTED') {
@@ -214,7 +294,11 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     const row = o.table && o.table.rows ? o.table.rows.find((r) => r.entryId === p.entryIdHex) : null;
-    const signed = `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
+    // WHAT WAS SIGNED, as this page checked it: a scalar market's value and where it pays, a market on a game's source result,
+    // else the attestors' outcome
+    const signed = p.market.scalar ? `value ${scalarValueLine(check.value, p.market.scalar.unit)}${check.clamped !== undefined && check.clamped !== check.value ? ` (paid as ${scalarValueLine(check.clamped, p.market.scalar.unit)})` : ''} between ${scalarValueLine(p.market.scalar.low, p.market.scalar.unit)} and ${scalarValueLine(p.market.scalar.high, p.market.scalar.unit)} (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`
+      : p.market.gameSource ? `'${check.label}' (source round ${String(p.sourceRoundIdHex || '').slice(0, 8)} ended ${check.value}, signed by its committee, verified)`
+        : `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
     if (!row) { lines.push({ kind: 'market', text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     const net = BigInt(row.netMsat);
     const pay = BigInt(row.payoutMsat);
@@ -223,7 +307,9 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     else if (o.table.refunded) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody picked it: your ${sats(net)} sats come back` });
     // NOBODY ON THE OTHER SIDE (kanban #350, measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
-    else if (row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
+    else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ kind: 'market', text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
+    // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
+    else if (p.market.scalar) lines.push({ kind: 'market', text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
     else if (row.won) lines.push({ kind: 'market', text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ kind: 'market', text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }

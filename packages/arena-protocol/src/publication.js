@@ -27,11 +27,11 @@ export const PUBLICATION_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e]);   // "ARN"
 export const PUBLICATION_KIND_ROUND = 0x52;                             // 'R'
 export const PUBLICATION_BYTES = 36;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
+const pubIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 /** The 36 bytes a round's publication carries: "ARN", ROUND, round id. */
 export function publicationPayload(roundIdBytes) {
-  if (!is32(roundIdBytes)) throw new TypeError('a publication commits to a 32-byte round id');
+  if (!pubIs32(roundIdBytes)) throw new TypeError('a publication commits to a 32-byte round id');
   const out = new Uint8Array(PUBLICATION_BYTES);
   out.set(PUBLICATION_MAGIC, 0);
   out[3] = PUBLICATION_KIND_ROUND;
@@ -87,7 +87,7 @@ export function findPublication(view, roundIdBytes) {
  * that block's hash only if the miner says so.
  */
 export function publicationIsBeforeBeacon({ roundId, tx, txHeight, beaconHeight } = {}) {
-  if (!is32(roundId)) return { ok: false, why: 'that publication names no 32-byte round id' };
+  if (!pubIs32(roundId)) return { ok: false, why: 'that publication names no 32-byte round id' };
   if (!tx || !Array.isArray(tx.outputs)) return { ok: false, why: 'there is no publication transaction to read' };
   if (!publishesRound(tx, roundId))
     return { ok: false, why: 'that transaction does not carry OP_RETURN "ARN" ROUND and this round\'s id' };

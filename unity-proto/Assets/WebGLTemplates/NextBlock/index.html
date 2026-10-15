@@ -2530,7 +2530,15 @@
             const r = await fetch(String(n).replace(/\/+$/, '') + '/outcome?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
             if (!r.ok) continue;
             const o = await r.json();
-            if (o.attestation) o.check = await BLWPCLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex });
+            // EVERY KIND CHECKED HERE (kanban #362): an outcome attestation, a scalar market's value attestation, or a market on a
+            // game's source result - whose committee this page derives from the chain itself (clientCommittee), never the seats' list
+            if (o.attestation || o.gameOutcome) o.check = BLWPCLIENT.checkMarketOutcome ? await BLWPCLIENT.checkMarketOutcome({ outcome: o, market,
+              roundIdHex: p.roundIdHex, sourceRoundIdHex: p.sourceRoundIdHex || null, entryCloseMs: p.entryCloseMs,
+              verifySchnorr: (sig, msg, key) => window.BLWP_CURVE.verify(sig, msg, key),
+              sourceCommittee: async (sourceHex, source) => {
+                const got = await BLWPCLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.BLWP_CURVE, compare: false, roles: ['settlement'] });
+                return got && got.ok ? got.committees.settlement.map((k) => BLWPCLIENT.toHex(k)) : null;
+              } }) : (o.attestation ? await BLWPCLIENT.checkAttestation({ attestationHex: o.attestation, market, roundIdHex: p.roundIdHex }) : undefined);
             MARKET_OUTCOMES.set(p.roundIdHex, o);
             break;
           } catch { /* the next seat */ }

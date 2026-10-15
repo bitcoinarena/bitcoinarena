@@ -86,9 +86,9 @@ export const SERIES_CLOCKS = Object.freeze({
   mainnet: Object.freeze({ censusLeadMs: 72n * HOUR, committeeLeadMs: 72n * HOUR, leadMinMs: 72n * HOUR }),
   testnet4: Object.freeze({ censusLeadMs: 36n * HOUR, committeeLeadMs: 24n * HOUR, leadMinMs: 24n * HOUR }),
 });
-const sameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+const seriesSameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 /** The clock a contract's network runs: testnet4's for its network id, mainnet's for every other. */
-export const seriesClockFor = (networkId) => (sameBytes(networkId, NETWORK_ID_TESTNET4) || isOldTestnet4Id(networkId)
+export const seriesClockFor = (networkId) => (seriesSameBytes(networkId, NETWORK_ID_TESTNET4) || isOldTestnet4Id(networkId)
   ? SERIES_CLOCKS.testnet4 : SERIES_CLOCKS.mainnet);
 // the mainnet figures under their old names, for callers that name no network
 export const SERIES_LEAD_MIN_MS = SERIES_CLOCKS.mainnet.leadMinMs;
@@ -243,7 +243,7 @@ export function seriesRunFits(template, { periodMs } = {}) {
 
 export function seriesRoundCheck(contract, templates, { periodMs, count: given } = {}) {
   if (!contract || contract.seriesId === undefined || contract.seriesId === null) return { ok: true, series: false };
-  const t = (templates || []).find((x) => sameBytes(seriesId(x, { periodMs, count: given }), contract.seriesId));
+  const t = (templates || []).find((x) => seriesSameBytes(seriesId(x, { periodMs, count: given }), contract.seriesId));
   const count = t ? countOf(t, given) : ROUNDS_PER_SERIES;
   const hex = Array.from(contract.seriesId.subarray(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
   if (!t) return { ok: false, series: true, why: `that round names series ${hex}, and this node holds no such series` };
@@ -258,7 +258,7 @@ export function seriesRoundCheck(contract, templates, { periodMs, count: given }
     return { ok: false, series: true, why: `round ${contract.roundIndex} of series ${hex} opens and closes its entry at `
       + `${derived.committeeTimeMs}..${derived.entryCloseMs}, and that contract names ${contract.committeeTimeMs}..${contract.entryCloseMs}` };
   // A v2 ROUND'S `nodes` IS ITS SEATS' OWN ANSWER (2026.0.2, kanban #348): compared without it
-  if (!sameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
+  if (!seriesSameBytes(encodeRoundContract(idBodyOf(contract)), encodeRoundContract(idBodyOf(derived))))
     return { ok: false, series: true, why: `that contract is not round ${contract.roundIndex} of series ${hex} as the series derives it` };
   return { ok: true, series: true, index: contract.roundIndex, template: t };
 }
