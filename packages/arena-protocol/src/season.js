@@ -60,8 +60,14 @@ const ms = (v) => {
  * One round as handed in, checked and normalised - or `{ why }`. Amounts are BigInt msat or nothing: a number would be a
  * float the first time a pool did not divide, and 'no amount' is NOT zero - zero is a loser's paid amount, null is a
  * settlement this node does not hold yet.
+ *
+ * WITH `keys`, EACH ENTRY'S ROUND KEY IS PART OF THE ACCOUNT: kept on the entry and in the bytes compared. The weekly board
+ * badge (badges.js) awards an identity only, never a bare round key, so a board it reads from other seats must agree on
+ * which key each entry joined under as well as on its amounts - a round key taken from whichever seat answered first would
+ * let that one seat hand a podium place to a round key or take one from an identity. Without `keys` (season(), the network
+ * board) the round key is not read at all: the board shows no such thing, and seats that do not send it still agree.
  */
-function readRound(r) {
+function readRound(r, { keys = false } = {}) {
   if (!r || typeof r !== 'object') return { why: 'that is not a round' };
   const id = String(r.roundId || '').toLowerCase();
   if (!HEX64.test(id)) return { why: 'a round is named by its 32-byte id in hex' };
@@ -82,10 +88,14 @@ function readRound(r) {
     if (score !== null && !Number.isSafeInteger(score)) return { id, why: 'an entry\'s score is an integer, or null for a market pick' };
     const outcome = e.outcome === null || e.outcome === undefined ? null : String(e.outcome);
     const name = typeof e.name === 'string' && e.name !== '' ? e.name : null;
-    entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name });
+    if (!keys) { entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name }); continue; }
+    const roundKey = e.roundKey === null || e.roundKey === undefined ? null : String(e.roundKey).toLowerCase();
+    if (roundKey !== null && !HEX64.test(roundKey)) return { id, why: 'an entry\'s round key is a 32-byte key in hex, or null' };
+    entries.push({ player, stakeMsat: e.stakeMsat, payoutMsat: payout, score, outcome, name, roundKey });
   }
   // THE ENTRIES IN ONE ORDER, so two copies of a round that differ only in the order they were listed are one round
-  const key = (e) => [e.player, e.outcome ?? '', e.score ?? '', e.stakeMsat, e.payoutMsat ?? '', e.name ?? ''].join('|');
+  const key = (e) => [e.player, e.outcome ?? '', e.score ?? '', e.stakeMsat, e.payoutMsat ?? '', e.name ?? '',
+    ...(keys ? [e.roundKey ?? ''] : [])].join('|');
   entries.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   const canon = JSON.stringify([id, game, String(startMs), !!r.void, entries.map(key)]);
   return { id, game, startMs, void: !!r.void, entries, canon };
@@ -238,7 +248,8 @@ const normalised = (r) => ({ roundId: r.id, gameId: r.game, startMs: r.startMs, 
 /**
  * THE ROUNDS SEVERAL SEATS HANDED IN, MERGED BY AGREEMENT. `accountsBySeat`: a Map (or a plain object) of a seat's label -
  * one label per seat, never two for one seat: the caller's to see to - to the rounds that seat handed in, in season()'s
- * shape. `agree`: the seats needed (SEASON_NETWORK_AGREE).
+ * shape. `agree`: the seats needed (SEASON_NETWORK_AGREE). `keys`: each entry's round key is part of the account (readRound),
+ * and handed on with the agreed round - what the weekly board badge merges with; the network board merges without.
  *
  * Each seat's account of a round is read as season() reads it (readRound: the entries in one order, its `canon` the bytes
  * compared), and per round:
@@ -258,7 +269,7 @@ const normalised = (r) => ({ roundId: r.id, gameId: r.game, startMs: r.startMs, 
  * entries in one order) so that the input's order decides nothing; `excluded` `{ round, seat?, why }`, in one order too.
  * season() then runs on `rounds`.
  */
-export function mergeSeasonAccounts(accountsBySeat, { agree = SEASON_NETWORK_AGREE } = {}) {
+export function mergeSeasonAccounts(accountsBySeat, { agree = SEASON_NETWORK_AGREE, keys = false } = {}) {
   if (!Number.isSafeInteger(agree) || agree < 1) return { ok: false, why: 'agreement takes a whole number of seats, 1 or more' };
   const pairs = accountsBySeat instanceof Map ? [...accountsBySeat] : accountsBySeat && typeof accountsBySeat === 'object'
     ? Object.entries(accountsBySeat) : null;
@@ -270,7 +281,7 @@ export function mergeSeasonAccounts(accountsBySeat, { agree = SEASON_NETWORK_AGR
   for (const [label, rounds] of pairs) {
     const seat = String(label);
     for (const raw of Array.isArray(rounds) ? rounds : []) {
-      const r = readRound(raw);
+      const r = readRound(raw, { keys });
       if (r.why) { excluded.push({ round: r.id || null, seat, why: r.why }); continue; }
       const per = held.get(r.id) || new Map();
       const had = per.get(seat) || new Set();
@@ -310,13 +321,15 @@ export function mergeSeasonAccounts(accountsBySeat, { agree = SEASON_NETWORK_AGR
 /**
  * A SEASON'S ROUNDS ON THE WIRE (GET /season-rounds): every msat and the start time as a decimal string - JSON has no
  * BigInt, and a number would be a float past 2^53 - and back. A value that is not a decimal string is handed on as it
- * came, for readRound to refuse by name: nothing is mended on the way in.
+ * came, for readRound to refuse by name: nothing is mended on the way in. Each entry's `roundKey` (the key it joined under,
+ * hex) travels too, null where the caller has none: the board badge merges on it (mergeSeasonAccounts `keys`), and a reader
+ * that does not know the field ignores it.
  */
 export function seasonRoundsToJson(rounds) {
   const s = (v) => (v === null || v === undefined ? null : String(v));
   return (rounds || []).map((r) => ({ roundId: r.roundId, gameId: r.gameId, startMs: s(r.startMs), void: !!r.void,
     entries: (r.entries || []).map((e) => ({ player: e.player, name: e.name ?? null, stakeMsat: s(e.stakeMsat),
-      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null })) }));
+      payoutMsat: s(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null, roundKey: e.roundKey ?? null })) }));
 }
 
 export function seasonRoundsFromJson(list) {
@@ -324,5 +337,6 @@ export function seasonRoundsFromJson(list) {
   if (!Array.isArray(list)) return [];
   return list.map((r) => (!r || typeof r !== 'object' ? r : { roundId: r.roundId, gameId: r.gameId, startMs: big(r.startMs), void: r.void === true,
     entries: Array.isArray(r.entries) ? r.entries.map((e) => (!e || typeof e !== 'object' ? e : { player: e.player, name: e.name ?? null,
-      stakeMsat: big(e.stakeMsat), payoutMsat: big(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null })) : r.entries }));
+      stakeMsat: big(e.stakeMsat), payoutMsat: big(e.payoutMsat), outcome: e.outcome ?? null, score: e.score ?? null,
+      roundKey: e.roundKey ?? null })) : r.entries }));
 }
