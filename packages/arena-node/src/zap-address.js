@@ -98,9 +98,12 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
         try { request = JSON.parse(description); } catch { return refuse('the nostr parameter is not a JSON event'); }
         const stands = zapRequestStands(request, { amountMsat, verify });
         if (!stands.ok) return refuse(stands.why);
+        // THE ADDRESS'S OWN URL (LUD-16: https://host/.well-known/lnurlp/name), or the pay request's under the public base -
+        // measured live: with the callback under a path (/zap) the request's lnurl names the host's well-known URL, not the base's
         const lnurl = u.searchParams.get('lnurl');
-        if (lnurl && lnurl.toLowerCase() !== lnurlFor(`${base}/.well-known/lnurlp/${name}`).toLowerCase()
-          && lnurl.toLowerCase() !== lnurlFor(`${base}/lnurlp/${name}`).toLowerCase()) return refuse('that lnurl is not this address');
+        const ours = [`https://${publicHost}/.well-known/lnurlp/${name}`, `${base}/.well-known/lnurlp/${name}`, `${base}/lnurlp/${name}`]
+          .map((x) => lnurlFor(x).toLowerCase());
+        if (lnurl && !ours.includes(lnurl.toLowerCase())) return refuse('that lnurl is not this address');
         zap = { request, relays: stands.relays };
       } else {
         const comment = u.searchParams.get('comment');
