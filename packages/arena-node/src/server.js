@@ -2863,6 +2863,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // IN SLICES OF ~150 ms (a seat's start held its loop 21-33 s here, answering no join): what is left is written on
     // the next turn of the loop, the soonest rounds first.
     let sliceQueued = false;
+    // THE ROUNDS FOUND ASSIGNED, remembered (measured 2026-10-15 ~00:20Z on the test host: from the first daily-duty day's 8 s
+    // Rock Paper Scissors grids on, every pass asked round.signerNodes - a stored read and a contract decode - of each of the
+    // ~900 rounds a series starts in the next two hours, already assigned or not; on the slower machine that alone outran the
+    // 150 ms slice, so every pass ended "more" and the writer ran again at once: 7 seats at 105-170% of a core, load 19, doors
+    // unanswered. A round once assigned stays assigned, so it is asked once.)
+    const assignedSeen = new Set();
     const writeAll = () => timed('series writer', () => {
       if (shuttingDown) return;
       takeNewSeries();
@@ -2889,17 +2895,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const upcoming = w.startingWithin(round.now(), 2 * 3600 * 1000);
           for (const hex of next && !upcoming.includes(next) ? [next, ...upcoming] : upcoming) {
             if (done >= 20) break;
+            if (assignedSeen.has(hex)) continue;
             // THE ASSIGNING IS SLICED TOO: measured offline, opening a restarted seat's 2,123 rounds took 121 ms - the
             // 15-28 s holds were these assignments, each reading a census from the chain (cold after a restart)
             if (Date.now() >= until) { more = true; break; }
             const rid = new Uint8Array(Buffer.from(hex, 'hex'));
-            if (round.signerNodes(rid).length) continue;
+            if (round.signerNodes(rid).length) { assignedSeen.add(hex); continue; }
             const assigned = roster.assignSignerNodes(rid);
             done++;
             if (assigned.ok) makeClaimKey(rid);
           }
         }
       }
+      if (assignedSeen.size > 200000) assignedSeen.clear();     // bounded: asked once more, then remembered again
       if (more && !sliceQueued) { sliceQueued = true; setImmediate(() => { sliceQueued = false; writeAll(); }); }
     });
     writeSeriesNow = writeAll;
