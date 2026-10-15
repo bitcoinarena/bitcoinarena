@@ -967,9 +967,16 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   const fromWallet = [...page.matchAll(/BLWPCLIENT\.withdrawPlayerWallet\(/g)].map((m) => m.index);
   const settingsAt = page.indexOf("document.getElementById('blwp-wd-go').onclick = async () => {");
   const inside = (i, at, end) => at >= 0 && i > at && i < page.indexOf(end, at);
-  assert.equal(fromWallet.length, 2);
+  // AND A ZAP OR A TIP (kanban #362 item 14): the zap box's pay(), reached only from its Zap press - one call, inside it
+  const zapPayAt = page.indexOf('async function pay(invoice) {');
+  const zapGoAt = page.indexOf("go.addEventListener('click', async () => {", zapPayAt);
+  const zapPays = [...page.matchAll(/return pay\(invoice\);/g)].map((m) => m.index);
+  assert.equal(zapPays.length, 1);
+  assert.ok(inside(zapPays[0], zapGoAt, '\n      });\n'), 'a zap is paid outside its Zap press');
+  assert.equal(fromWallet.length, 3);
   for (const i of fromWallet)
-    assert.ok(inside(i, withdrawAt, '\n    };\n') || inside(i, settingsAt, '\n      };\n'), 'the player wallet is withdrawn outside a Withdraw press');
+    assert.ok(inside(i, withdrawAt, '\n    };\n') || inside(i, settingsAt, '\n      };\n') || inside(i, zapPayAt, '\n      }\n'),
+      'the player wallet is withdrawn outside a Withdraw or Zap press');
 });
 
 // W4 / 6d: A LOCK NO SIGNER NODE WILL SETTLE COMES BACK BY THE PLAYER'S OWN KEY AFTER ITS EXPIRY.

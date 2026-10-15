@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // A NOSTR WALLET CONNECT SERVICE IN FRONT OF A REGTEST LND (kanban #277, for measuring NWC deposits end to end): it announces
 // itself (kind 13194, NIP-44), takes pay_invoice / get_balance / get_info requests for its one app key over the relay, and
-// pays with `lncli payinvoice` - a real Lightning payment, on a private regtest only. Prints its connection link.
+// pays with `lncli payinvoice` - a real Lightning payment, on a private regtest (or, LND_NETWORK=testnet4, a test LND: the
+// zap measurement of kanban #362 item 14). Prints its connection link.
 //   LNCLI=<lncli> LND_DIR=<alice's dir> LND_RPC=127.0.0.1:<port> RELAY=wss://relay.bitcoin-arena.io node tools/nwc-test-wallet.mjs
 import { execFile } from 'node:child_process';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
@@ -11,7 +12,7 @@ import { SimplePool } from 'nostr-tools/pool';
 
 const env = process.env;
 const RELAY = env.RELAY || 'wss://relay.bitcoin-arena.io';
-const lncli = (...a) => new Promise((res, rej) => execFile(env.LNCLI, [`--lnddir=${env.LND_DIR}`, `--rpcserver=${env.LND_RPC}`, '--network=regtest', ...a], { timeout: 60000 },
+const lncli = (...a) => new Promise((res, rej) => execFile(env.LNCLI, [`--lnddir=${env.LND_DIR}`, `--rpcserver=${env.LND_RPC}`, `--network=${env.LND_NETWORK || 'regtest'}`, ...a], { timeout: 60000 },
   (e, out, err) => (e ? rej(new Error(String(err || e.message).trim().slice(0, 200))) : res(String(out)))));
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const pool = new SimplePool();

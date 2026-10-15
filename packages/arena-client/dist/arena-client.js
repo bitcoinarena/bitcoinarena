@@ -13444,6 +13444,7 @@ async function withdrawCollected({ client, invoiceFor, amountMsat = null, gatewa
   const ok = said.state === 'Success';
   return { ok, final: ok, withdrawableMsat: withdrawable, invoiceMsat: said.invoice_msat == null ? null : BigInt(said.invoice_msat),
     state: said.state, gateway: said.gateway, balance_before: said.balance_before, balance_after: said.balance_after,
+    preimage: typeof said.preimage === 'string' && /^[0-9a-f]{64}$/i.test(said.preimage) ? said.preimage.toLowerCase() : null,
     why: ok ? undefined : `the withdraw ended ${said.state}${said.state === 'Refunded' ? ' - the money is back in this tab\'s wallet' : ''}${said.why ? ` (${said.why})` : ''}` };
 }
 
@@ -25237,6 +25238,7 @@ const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record
 
 
 
+
 /** Where a tab keeps the name its player chose. */
 const CUSTOM_NAME_KEY = 'arena.player.name';
 
@@ -25289,6 +25291,17 @@ function tabIdentity({ storage, random, curve } = {}) {
   const custom = !!(chosen && chosen.ok);
   return { pubkey, pubkeyHex: toHex(pubkey), fingerprint: identityFingerprint(pubkey), generated,
     name: custom ? chosen.name : generated, custom };
+}
+
+/**
+ * A NOSTR EVENT SIGNED BY THIS TAB'S IDENTITY KEY (kanban #362 item 14): a zap request to another player, or the profile
+ * (kind 0) that says where this player takes zaps. The key the season board and the badges name signs it, and its private
+ * half still never leaves this module: the page hands a template `{ kind, tags, content }` and gets the signed event.
+ */
+async function identitySignEvent(template, { storage, random, curve, now } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('an event is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  return signEvent({ kind: template.kind, tags: template.tags || [], content: String(template.content || ''), secret, curve, now });
 }
 
 /**
@@ -28075,29 +28088,42 @@ async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch }) {
 // the seats' advertisements, every published series and every market name those ids. So the info is its own small object:
 // the developer key the manifest names signs H(game_id || description || website), and a manifest with it and the same
 // manifest without it are one game with one id. An info whose signature does not stand is shown as unsigned, never trusted.
+//
+// AND WHERE TIPS GO (kanban #362 item 14, tips to developers): a Lightning address (name@host, LUD-16) the developer signs
+// beside the two strings. It is appended to the digest only when there is one, so every info signed before it - with no
+// address - keeps its digest byte for byte and still stands. A tip is the player's own wallet paying that address (zap.js).
+
 
 
 
 const GAME_INFO_DESCRIPTION_MAX = 500;
 const GAME_INFO_WEBSITE_MAX = 200;
 const GAME_INFO_SIGNATURE_BYTES = 64;
+const GAME_INFO_LIGHTNING_MAX = 120;
 
-/** Refused by name: a description of 0..500 characters, a website that is empty or an https:// address of up to 200. */
-function gameInfoFits({ description = '', website = '' } = {}) {
+/**
+ * Refused by name: a description of 0..500 characters, a website that is empty or an https:// address of up to 200, and a
+ * tip address that is empty or a Lightning address (name@host, lower case) of up to 120.
+ */
+function gameInfoFits({ description = '', website = '', lightning = '' } = {}) {
   if (typeof description !== 'string' || description.length > GAME_INFO_DESCRIPTION_MAX)
     return { ok: false, why: `a game's description is a string of at most ${GAME_INFO_DESCRIPTION_MAX} characters` };
   if (typeof website !== 'string' || website.length > GAME_INFO_WEBSITE_MAX || (website !== '' && !/^https:\/\/[^\s/]+(\/\S*)?$/.test(website)))
     return { ok: false, why: `a game's website is empty or an https:// address of at most ${GAME_INFO_WEBSITE_MAX} characters` };
+  if (typeof lightning !== 'string' || lightning.length > GAME_INFO_LIGHTNING_MAX
+    || (lightning !== '' && (!lightningAddressEndpoint(lightning).ok || lightning !== lightning.trim().toLowerCase())))
+    return { ok: false, why: `a game's tip address is empty or a Lightning address (name@host, lower case) of at most ${GAME_INFO_LIGHTNING_MAX} characters` };
   return { ok: true };
 }
 
-/** The digest the developer key signs: this game's id, then its description and website. */
+/** The digest the developer key signs: this game's id, then its description and website, then its tip address if it has one. */
 function gameInfoDigest(gameId, info) {
   if (!(gameId instanceof Uint8Array) || gameId.length !== 32) throw new Error('a game id is 32 bytes');
   const fits = gameInfoFits(info);
   if (!fits.ok) throw new Error(fits.why);
   const w = new Writer();
   w.bytes32(gameId); w.str(info.description || ''); w.str(info.website || '');
+  if (info.lightning) w.str(info.lightning);
   return taggedHash(TAG.gameInfo, w.finish());
 }
 
@@ -28115,11 +28141,12 @@ function gameInfoStands(info, { gameId, manifest, verify } = {}) {
   let good = false;
   try { good = verify(sig, digest, manifest.gameDevPubkey) === true; } catch { good = false; }
   if (!good) return { ok: false, signed: false, why: `its description is not signed by the developer key ${toHex(manifest.gameDevPubkey).slice(0, 16)}` };
-  return { ok: true, signed: true, description: info.description || '', website: info.website || '' };
+  return { ok: true, signed: true, description: info.description || '', website: info.website || '', lightning: info.lightning || '' };
 }
 
-/** The info as JSON carries it: the two strings and the signature in hex. */
+/** The info as JSON carries it: the strings (the tip address only when there is one) and the signature in hex. */
 const gameInfoJson = (info) => (info ? { description: info.description || '', website: info.website || '',
+  ...(info.lightning ? { lightning: info.lightning } : {}),
   signature: info.signature instanceof Uint8Array ? toHex(info.signature) : String(info.signature || '') } : null);
 
 /** What the network store calls a manifest's kind: a replayed or head-to-head game, or an attested market (§0A.7a). */
@@ -28249,7 +28276,8 @@ async function checkedGameInfo(game, verifyEd25519) {
   try { digest = gameInfoDigest(fromHex(game.id), info); sig = fromHex(String(info.signature || '')); } catch { return null; }
   let good = false;
   try { good = (await verifyEd25519(sig, digest, game.manifest.gameDevPubkey)) === true; } catch { good = false; }
-  return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null } : null;
+  return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null,
+    lightning: typeof info.lightning === 'string' && info.lightning ? info.lightning : null } : null;
 }
 
 /**
@@ -28667,6 +28695,357 @@ function badgeBook({ nodes = [], game, fetch, via = (u) => u, timeout, answerMs 
   };
 }
 
+// ---- arena-protocol/src/zap.js
+/**
+ * ZAPS (NIP-57) BETWEEN PLAYERS AND TIPS TO DEVELOPERS, AS RULES (kanban #362 item 14).
+ *
+ * A zap is an LNURL-pay (LUD-06) payment that carries a signed Nostr event: the payer signs a ZAP REQUEST (kind 9734) naming
+ * the recipient's key and the amount, hands it to the recipient's LNURL callback as `nostr`, and gets an invoice whose
+ * description hash is SHA-256 of exactly that request's JSON. Once paid, the recipient's LNURL server - the key its pay
+ * request names as `nostrPubkey` - signs a ZAP RECEIPT (kind 9735) carrying the invoice and the request, and publishes it to
+ * the relays the request listed. Anyone can then count a player's zaps without trusting anyone's word: the receipt is
+ * signed by the server the recipient chose, the invoice inside it is for the request's amount under the request's hash.
+ *
+ * No money path of the game changes: a zap is the payer's own wallet (NWC) paying the recipient's own Lightning address.
+ * These are the decisions; the fetching, signing and paying are the client's and the server's.
+ */
+
+
+
+const ZAP_REQUEST_KIND = 9734;
+const ZAP_RECEIPT_KIND = 9735;
+/** A zap's message, in characters: the request travels in a URL, so it is kept short. */
+const ZAP_COMMENT_MAX = 280;
+/** Relays a request may name for its receipt. */
+const ZAP_RELAYS_MAX = 8;
+
+const ZAP_HEX64 = /^[0-9a-f]{64}$/;
+const zapUtf8 = (s) => new TextEncoder().encode(String(s));
+const zapTagsNamed = (e, name) => (Array.isArray(e && e.tags) ? e.tags.filter((t) => Array.isArray(t) && t[0] === name) : []);
+const zapTagValue = (e, name) => { const t = zapTagsNamed(e, name)[0]; return t ? t[1] : undefined; };
+
+/** NIP-01's id: SHA-256 of [0, pubkey, created_at, kind, tags, content], in hex. */
+const nostrEventId = (e) => toHex(sha256(zapUtf8(JSON.stringify([0, e.pubkey, e.created_at, e.kind, e.tags, e.content]))));
+
+/** Is this a NIP-01 event whose id is its own hash and whose signature is its key's? `verify(sig, id, pubkey)` on bytes. */
+function nostrEventSigned(e, { verify } = {}) {
+  if (!e || typeof e !== 'object') return { ok: false, why: 'that is not an event' };
+  if (!ZAP_HEX64.test(String(e.pubkey)) || !ZAP_HEX64.test(String(e.id)) || !/^[0-9a-f]{128}$/.test(String(e.sig)))
+    return { ok: false, why: 'an event carries a 32-byte key, a 32-byte id and a 64-byte signature in lower-case hex' };
+  if (!Number.isSafeInteger(e.created_at) || !Number.isSafeInteger(e.kind) || !Array.isArray(e.tags) || typeof e.content !== 'string')
+    return { ok: false, why: 'an event carries created_at, kind, tags and content' };
+  if (!e.tags.every((t) => Array.isArray(t) && t.every((x) => typeof x === 'string')))
+    return { ok: false, why: 'every tag is a list of strings' };
+  if (nostrEventId(e) !== e.id) return { ok: false, why: 'its id is not the hash of its own fields' };
+  if (typeof verify !== 'function') return { ok: false, why: 'no verifier to check its signature' };
+  const hex = (h) => Uint8Array.from(h.match(/../g).map((b) => parseInt(b, 16)));
+  let good = false;
+  try { good = verify(hex(e.sig), hex(e.id), hex(e.pubkey)) === true; } catch { good = false; }
+  return good ? { ok: true } : { ok: false, why: `its signature is not ${e.pubkey.slice(0, 16)}'s` };
+}
+
+/**
+ * DOES THIS PAY REQUEST TAKE ZAPS? A LUD-06 pay request saying `allowsNostr: true` and naming the key its receipts are signed
+ * with (`nostrPubkey`). One that does not is still an address a tip can be paid to, without a receipt.
+ */
+function payRequestTakesZaps(said) {
+  if (!said || said.allowsNostr !== true) return { ok: false, why: 'this Lightning address does not take zaps (no allowsNostr)' };
+  if (!ZAP_HEX64.test(String(said.nostrPubkey))) return { ok: false, why: 'this Lightning address names no 32-byte nostrPubkey for its receipts' };
+  return { ok: true, nostrPubkey: said.nostrPubkey };
+}
+
+/**
+ * THE ZAP REQUEST TO SIGN (kind 9734), unsigned: the recipient's key, the amount in msat, the relays its receipt goes to,
+ * the recipient's LNURL (bech32 of its pay request URL), and - when the zap is for one thing - the event (`e`) or the
+ * addressable thing (`a`, e.g. `30762:<seat>:<round>`) it is for. The content is the payer's message.
+ */
+function zapRequestTemplate({ recipient, amountMsat, relays = [], payRequestUrl = null, comment = '', event = null, address = null } = {}) {
+  if (!ZAP_HEX64.test(String(recipient))) throw new Error('a zap names its recipient by a 32-byte key in hex');
+  if (typeof amountMsat !== 'bigint' || amountMsat < 1000n) throw new Error('a zap is at least 1 sat, in msat as a bigint');
+  const message = String(comment || '');
+  if (message.length > ZAP_COMMENT_MAX) throw new Error(`a zap's message is at most ${ZAP_COMMENT_MAX} characters`);
+  const named = [...new Set(relays.map(String))];
+  if (!named.length || named.length > ZAP_RELAYS_MAX || !named.every((r) => /^wss?:\/\/\S+$/.test(r)))
+    throw new Error(`a zap names 1 to ${ZAP_RELAYS_MAX} relays (wss://) its receipt is published to`);
+  const tags = [['relays', ...named], ['amount', String(amountMsat)]];
+  if (payRequestUrl) tags.push(['lnurl', lnurlFor(payRequestUrl)]);
+  tags.push(['p', recipient]);
+  if (event) { if (!ZAP_HEX64.test(String(event))) throw new Error('a zapped event is named by its 32-byte id'); tags.push(['e', event]); }
+  if (address) tags.push(['a', String(address)]);
+  return { kind: ZAP_REQUEST_KIND, tags, content: message };
+}
+
+/**
+ * WHETHER A ZAP REQUEST STANDS, AS THE LNURL SERVER CHECKS IT (NIP-57 appendix D): signed, exactly one `p`, at most one `e`
+ * and one `a`, a `relays` tag, and an `amount` tag - when there is one - equal to the amount the callback was asked for.
+ * Answers `{ ok, recipient, relays }` or why not.
+ */
+function zapRequestStands(request, { amountMsat, verify } = {}) {
+  if (!request || request.kind !== ZAP_REQUEST_KIND) return { ok: false, why: `a zap request is a kind ${ZAP_REQUEST_KIND} event` };
+  const signed = nostrEventSigned(request, { verify });
+  if (!signed.ok) return { ok: false, why: `the zap request: ${signed.why}` };
+  const ps = zapTagsNamed(request, 'p');
+  if (ps.length !== 1 || !ZAP_HEX64.test(String(ps[0][1]))) return { ok: false, why: 'a zap request names exactly one recipient (p)' };
+  if (zapTagsNamed(request, 'e').length > 1) return { ok: false, why: 'a zap request names at most one event (e)' };
+  if (zapTagsNamed(request, 'a').length > 1) return { ok: false, why: 'a zap request names at most one address (a)' };
+  const relayTag = zapTagsNamed(request, 'relays')[0];
+  const relays = relayTag ? relayTag.slice(1).filter((r) => /^wss?:\/\/\S+$/.test(r)).slice(0, ZAP_RELAYS_MAX) : [];
+  if (!relays.length) return { ok: false, why: 'a zap request names the relays its receipt goes to' };
+  const said = zapTagValue(request, 'amount');
+  if (said !== undefined) {
+    if (!/^\d{1,15}$/.test(String(said))) return { ok: false, why: 'a zap request\'s amount is a whole number of msat' };
+    if (typeof amountMsat === 'bigint' && BigInt(said) !== amountMsat)
+      return { ok: false, why: `the zap request is for ${said} msat, and the callback was asked ${amountMsat}` };
+  }
+  return { ok: true, recipient: ps[0][1], relays, amountMsat: said === undefined ? null : BigInt(said) };
+}
+
+/** The callback asked for a zap: exactly `amountMsat`, the signed request as `nostr`, and the recipient's `lnurl` when known. */
+function zapCallbackFor({ callback, amountMsat, request, lnurl = null }) {
+  const u = new URL(callback);
+  u.searchParams.set('amount', String(amountMsat));
+  u.searchParams.set('nostr', JSON.stringify(request));
+  if (lnurl) u.searchParams.set('lnurl', lnurl);
+  return u.toString();
+}
+
+/**
+ * IS THIS THE INVOICE A ZAP MAY BE PAID WITH? Exactly `amountMsat`, its description hash SHA-256 of the request's JSON as it
+ * was sent (`description`, the string), and - when named - on that network.
+ */
+function zapInvoiceStands({ invoice, amountMsat, description, network = null } = {}) {
+  let d;
+  try { d = decodeBolt11(String(invoice || '')); } catch (e) { return { ok: false, why: `that is not an invoice: ${e.message}` }; }
+  if (d.amountMsat !== amountMsat)
+    return { ok: false, why: `the invoice asks ${d.amountMsat === null ? 'any amount' : `${d.amountMsat} msat`}, and the zap is ${amountMsat} msat` };
+  if (!d.descriptionHash || toHex(d.descriptionHash) !== toHex(sha256(zapUtf8(description))))
+    return { ok: false, why: 'the invoice\'s description hash is not the zap request\'s (NIP-57)' };
+  if (network && d.network !== network) return { ok: false, why: `that invoice is for ${d.network}, not ${network}` };
+  return { ok: true, paymentHash: d.paymentHash, amountMsat: d.amountMsat, network: d.network };
+}
+
+/**
+ * THE RECEIPT TO SIGN (kind 9735), unsigned, once the invoice is paid: the request's `p`, `e` and `a`, its signer as `P`, the
+ * invoice (`bolt11`), the request's JSON (`description`) and the preimage. created_at is when the invoice was paid.
+ */
+function zapReceiptTemplate({ request, description, invoice, preimage = null, paidAtS }) {
+  const tags = [['p', zapTagValue(request, 'p')]];
+  for (const name of ['e', 'a']) { const v = zapTagValue(request, name); if (v !== undefined) tags.push([name, v]); }
+  tags.push(['P', request.pubkey], ['bolt11', String(invoice)], ['description', String(description)]);
+  if (preimage) tags.push(['preimage', String(preimage)]);
+  return { kind: ZAP_RECEIPT_KIND, created_at: paidAtS, tags, content: '' };
+}
+
+/**
+ * WHETHER A ZAP RECEIPT STANDS (NIP-57 appendix F): signed by the recipient's LNURL server (`nostrPubkey`); its description is
+ * a zap request that stands, for the receipt's own recipient; its invoice is for the request's amount under SHA-256 of that
+ * description; and, when known, the request names the recipient's LNURL. Answers `{ ok, sender, recipient, amountMsat,
+ * comment, event, address, paidAtS }` - what a board counts - or why not. A preimage, when there is one, must hash to the
+ * invoice's payment hash.
+ */
+function zapReceiptStands(receipt, { nostrPubkey, lnurl = null, verify } = {}) {
+  if (!receipt || receipt.kind !== ZAP_RECEIPT_KIND) return { ok: false, why: `a zap receipt is a kind ${ZAP_RECEIPT_KIND} event` };
+  if (nostrPubkey && receipt.pubkey !== nostrPubkey)
+    return { ok: false, why: `the receipt is signed by ${String(receipt.pubkey).slice(0, 16)}, not the recipient's server ${String(nostrPubkey).slice(0, 16)}` };
+  const signed = nostrEventSigned(receipt, { verify });
+  if (!signed.ok) return { ok: false, why: `the receipt: ${signed.why}` };
+  const description = zapTagValue(receipt, 'description');
+  let request;
+  try { request = JSON.parse(String(description)); } catch { return { ok: false, why: 'the receipt carries no zap request as its description' }; }
+  const stands = zapRequestStands(request, { verify });
+  if (!stands.ok) return { ok: false, why: stands.why };
+  if (stands.amountMsat === null) return { ok: false, why: 'the zap request names no amount, so the receipt cannot be counted' };
+  if (zapTagValue(receipt, 'p') !== stands.recipient) return { ok: false, why: 'the receipt is for another recipient than its request' };
+  const paid = zapInvoiceStands({ invoice: zapTagValue(receipt, 'bolt11'), amountMsat: stands.amountMsat, description });
+  if (!paid.ok) return { ok: false, why: paid.why };
+  if (lnurl) {
+    const named = zapTagValue(request, 'lnurl');
+    if (named !== undefined && String(named).toLowerCase() !== String(lnurl).toLowerCase())
+      return { ok: false, why: 'the zap request names another Lightning address than the recipient\'s' };
+  }
+  const preimage = zapTagValue(receipt, 'preimage');
+  if (preimage !== undefined) {
+    if (!ZAP_HEX64.test(String(preimage)) || toHex(sha256(Uint8Array.from(preimage.match(/../g).map((b) => parseInt(b, 16))))) !== toHex(paid.paymentHash))
+      return { ok: false, why: 'the receipt\'s preimage is not the invoice\'s' };
+  }
+  return { ok: true, sender: request.pubkey, recipient: stands.recipient, amountMsat: stands.amountMsat, comment: request.content,
+    event: zapTagValue(request, 'e') || null, address: zapTagValue(request, 'a') || null, paidAtS: receipt.created_at, receiptId: receipt.id };
+}
+
+/** The sum a board shows: receipts that stand, each counted once by its invoice's payment hash. */
+function zapTotals(receipts, options = {}) {
+  const seen = new Set();
+  const counted = [];
+  let msat = 0n;
+  for (const r of receipts || []) {
+    const s = zapReceiptStands(r, options);
+    if (!s.ok) continue;
+    const key = toHex(decodeBolt11(zapTagValue(r, 'bolt11')).paymentHash);
+    if (seen.has(key)) continue;
+    seen.add(key); counted.push(s); msat += s.amountMsat;
+  }
+  return { count: counted.length, msat, zaps: counted };
+}
+
+// ---- arena-client/src/zap.js
+// ZAPS BETWEEN PLAYERS AND TIPS TO DEVELOPERS (kanban #362 item 14; NIP-57 rules in arena-protocol/src/zap.js).
+//
+// THE PLAYER'S OWN WALLET PAYS, OVER NWC, AND NOTHING ELSE MOVES. A zap is the recipient's Lightning address (LUD-16) asked
+// for an invoice of exactly the amount; when that address takes zaps, the invoice is bound to a zap request the tab signs
+// with its identity key (the key the season board and the badges name), and the recipient's server publishes a receipt
+// anyone can check. An address that does not take zaps is still paid - as a plain tip, under its own metadata hash, with no
+// receipt. Every invoice is checked before it is paid: the amount, the description hash, the network.
+//
+// A PLAYER'S ADDRESS IS THEIR OWN WORD: the lud16 of their Nostr profile (kind 0) on the game's relay, signed by their
+// identity key. A game developer's is the one their developer key signed beside the manifest (game-info.js `lightning`).
+
+
+
+
+
+
+/** How long a relay is given to answer a read, in ms. */
+const ZAP_READ_MS = 8000;
+/** The amounts the page offers, in sat. */
+const ZAP_CHOICES_SAT = Object.freeze([21, 100, 1000]);
+
+const zapFetchJson = async (fetcher, url) => {
+  const r = await fetcher(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`${new URL(url).host} answered ${r.status}`);
+  return r.json();
+};
+
+/**
+ * WHERE A ZAP TO `address` GOES, for `amountMsat`: its pay request, checked, and whether it takes zaps.
+ * `{ ok, url, callback, metadata, commentAllowed, zaps, nostrPubkey, lnurl }` or why not.
+ */
+async function zapTarget(address, amountMsat, { fetcher = fetch } = {}) {
+  const at = lightningAddressEndpoint(address);
+  if (!at.ok) return at;
+  let said;
+  try { said = await zapFetchJson(fetcher, at.url); } catch (e) { return { ok: false, why: `${address} did not answer: ${e.message}` }; }
+  const stands = payRequestStands(said, amountMsat);
+  if (!stands.ok) return { ok: false, why: `${address}: ${stands.why}` };
+  const takes = payRequestTakesZaps(said);
+  return { ok: true, url: at.url, callback: stands.callback, metadata: stands.metadata, commentAllowed: stands.commentAllowed,
+    zaps: takes.ok, nostrPubkey: takes.ok ? takes.nostrPubkey : null, lnurl: lnurlFor(at.url) };
+}
+
+/**
+ * ZAP `address` FOR `amountMsat` FROM THIS TAB'S WALLET (`wallet`: the NWC connection payInvoice takes).
+ * `recipient` is the recipient's Nostr key (hex) - a player's identity key, or a game developer's tip with none (then it
+ * is a plain tip). `sign(template)` - or `secret` and `curve` - signs the zap request (the page hands identitySignEvent, so
+ * the tab's key never leaves identity.js); `relays` are where its receipt goes; `event` / `about`
+ * name what the zap is for (a round result, a game). `network` is the invoice's (`testnet`, `bitcoin`, `regtest`).
+ * `pay(invoice)` is the wallet's half (NWC payInvoice by default). Answers `{ ok, zapped, paymentHash, preimage, invoice,
+ * request }` or `{ ok: false, why, paid }`.
+ */
+async function sendZap({ address, recipient = null, amountMsat, comment = '', relays = [], event = null, about = null,
+  secret, curve, sign = null, wallet, network = null, fetcher = fetch, now, nwc = {}, pay = (invoice) => payInvoice(wallet, invoice, nwc) } = {}) {
+  const target = await zapTarget(address, amountMsat, { fetcher });
+  if (!target.ok) return target;
+  let invoice, check, request = null;
+  if (target.zaps && recipient && (sign || (secret && curve))) {
+    let template;
+    try { template = zapRequestTemplate({ recipient, amountMsat, relays, payRequestUrl: target.url, comment, event, address: about }); }
+    catch (e) { return { ok: false, why: e.message }; }
+    request = sign ? await sign(template) : await signEvent({ kind: template.kind, tags: template.tags, content: template.content, secret, curve, now });
+    const description = JSON.stringify(request);
+    let said;
+    try { said = await zapFetchJson(fetcher, zapCallbackFor({ callback: target.callback, amountMsat, request, lnurl: target.lnurl })); }
+    catch (e) { return { ok: false, why: `${address} made no invoice: ${e.message}` }; }
+    if (said && said.status === 'ERROR') return { ok: false, why: `${address} refused the zap: ${String(said.reason || '').slice(0, 160)}` };
+    invoice = said && said.pr;
+    check = zapInvoiceStands({ invoice, amountMsat, description, network });
+  } else {
+    let said;
+    try { said = await zapFetchJson(fetcher, callbackFor({ callback: target.callback, amountMsat, comment, commentAllowed: target.commentAllowed })); }
+    catch (e) { return { ok: false, why: `${address} made no invoice: ${e.message}` }; }
+    if (said && said.status === 'ERROR') return { ok: false, why: `${address} refused the tip: ${String(said.reason || '').slice(0, 160)}` };
+    invoice = said && said.pr;
+    check = invoiceAnswersPayRequest({ invoice, amountMsat, metadata: target.metadata, network });
+  }
+  if (!check.ok) return { ok: false, why: check.why };
+  const paid = await pay(invoice);
+  if (!paid.ok) return { ok: false, why: `the wallet did not pay: ${paid.why}` };
+  if (toHex(sha256(fromHex(paid.preimage.toLowerCase()))) !== toHex(check.paymentHash))
+    return { ok: false, why: 'the wallet\'s preimage is not the invoice\'s', paid: true };
+  return { ok: true, zapped: !!request, paymentHash: toHex(check.paymentHash), preimage: paid.preimage.toLowerCase(), invoice, request,
+    nostrPubkey: target.nostrPubkey };
+}
+
+/**
+ * ONE READ FROM ONE RELAY: every event matching `filter` until EOSE (or `timeoutMs`), each event's id and signature checked
+ * (`curve.verify`). Never throws: a relay that does not answer gives nothing.
+ */
+function relayRead(url, filter, { curve, timeoutMs = ZAP_READ_MS, WebSocketImpl = typeof WebSocket !== 'undefined' ? WebSocket : null } = {}) {
+  return new Promise((resolve) => {
+    const got = [];
+    let sock = null;
+    let done = false;
+    const verify = (sig, msg, key) => curve.verify(sig, msg, key);
+    const finish = () => { if (done) return; done = true; clearTimeout(timer); try { sock && sock.close(); } catch { /* gone */ } resolve(got); };
+    const timer = setTimeout(finish, timeoutMs);
+    if (!WebSocketImpl) return finish();
+    const sub = `zap-${Math.random().toString(36).slice(2, 10)}`;
+    try { sock = new WebSocketImpl(url); } catch { return finish(); }
+    sock.onopen = () => { try { sock.send(JSON.stringify(['REQ', sub, filter])); } catch { finish(); } };
+    sock.onerror = finish;
+    sock.onclose = finish;
+    sock.onmessage = (m) => {
+      let said; try { said = JSON.parse(String(m.data)); } catch { return; }
+      if (!Array.isArray(said) || said[1] !== sub) return;
+      if (said[0] === 'EOSE' || said[0] === 'CLOSED') return finish();
+      if (said[0] === 'EVENT' && said[2] && nostrEventSigned(said[2], { verify }).ok) got.push(said[2]);
+    };
+  });
+}
+
+/**
+ * A PLAYER'S LIGHTNING ADDRESS: the lud16 of their newest profile (kind 0) on `relays`, signed by their key. null for none.
+ */
+async function playerLightningAddress(pubkey, { relays = [], curve, timeoutMs, WebSocketImpl } = {}) {
+  const reads = await Promise.all(relays.map((r) => relayRead(r, { kinds: [0], authors: [pubkey], limit: 3 }, { curve, timeoutMs, WebSocketImpl })));
+  const newest = reads.flat().filter((e) => e.pubkey === pubkey && e.kind === 0).sort((a, b) => b.created_at - a.created_at)[0];
+  if (!newest) return null;
+  let profile; try { profile = JSON.parse(newest.content); } catch { return null; }
+  const said = profile && typeof profile.lud16 === 'string' ? profile.lud16.trim().toLowerCase() : '';
+  return lightningAddressEndpoint(said).ok ? said : null;
+}
+
+/**
+ * THE PROFILE THAT SAYS WHERE THIS TAB'S PLAYER TAKES ZAPS: a kind 0 signed by the identity key, carrying the name the board
+ * shows and `lud16`. Published by the page to the game's relay; an empty address leaves lud16 out.
+ */
+async function zapProfileEvent({ name, lud16 = '', secret, curve, sign = null, now } = {}) {
+  const address = String(lud16 || '').trim().toLowerCase();
+  if (address && !lightningAddressEndpoint(address).ok) return { ok: false, why: lightningAddressEndpoint(address).why };
+  const content = JSON.stringify({ name: String(name || ''), ...(address ? { lud16: address } : {}) });
+  return { ok: true, event: sign ? await sign({ kind: 0, tags: [], content }) : await signEvent({ kind: 0, tags: [], content, secret, curve, now }) };
+}
+
+/**
+ * THE ZAPS A PLAYER HAS RECEIVED, COUNTED: every receipt for `recipient` on `relays`, kept only when it stands (signed by
+ * the server of the address the player names - `nostrPubkey` - for its request's amount), each invoice once.
+ */
+async function zapsReceived(recipient, { relays = [], nostrPubkey = null, lnurl = null, curve, timeoutMs, WebSocketImpl } = {}) {
+  const reads = await Promise.all(relays.map((r) => relayRead(r, { kinds: [ZAP_RECEIPT_KIND], '#p': [recipient], limit: 500 }, { curve, timeoutMs, WebSocketImpl })));
+  const byId = new Map();
+  for (const e of reads.flat()) byId.set(e.id, e);
+  return zapTotals([...byId.values()], { nostrPubkey, lnurl, verify: (sig, msg, key) => curve.verify(sig, msg, key) });
+}
+
+/** "21 sat" / "1,000 sat": a zap's amount as the page shows it. */
+function zapSatLine(msat) {
+  const sat = BigInt(msat) / 1000n;
+  return `${sat.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sat`;
+}
+
+/** The invoice amount an NWC wallet will be asked to pay, from the bolt11 (for the confirmation line). */
+function zapInvoiceSat(invoice) {
+  try { const d = decodeBolt11(invoice); return d.amountMsat === null ? null : d.amountMsat / 1000n; } catch { return null; }
+}
+
 return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          reach: reach, endpointFor: endpointFor, roundCoreHex: roundCoreHex,
          discover: discover, agreedChain: agreedChain,
@@ -28745,6 +29124,8 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,
          badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,
          yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,
+         sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,
+         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;

@@ -477,6 +477,28 @@
        the name is, as "you" never is - each a button whose tooltip is the badge's name and what earned it; on a phone, where
        nothing hovers, a tap says the same on a line under the row. The seat's own image when its definition names one, else a
        built-in glyph: the badge's colour and one mark. The viewer's count stands under the header. */
+    /* A ZAP (kanban #362 item 14): a small button after a player's badges, never on the viewer's own row */
+    #arena-season .who .zap { flex: none; padding: 1px 7px; border-radius: 999px; border: 1px solid #4a3b12; background: transparent; color: #f7c64a;
+      font: 600 11px/1.5 system-ui, sans-serif; cursor: pointer; }
+    #arena-season .who .zap:hover, #arena-season .who .zap:focus-visible { border-color: #f7931a; color: #f7931a; outline: none; }
+    #arena-zap { position: fixed; inset: 0; z-index: 64; display: none; align-items: center; justify-content: center; padding: 16px; background: rgba(4,6,9,.74); }
+    #arena-zap.show { display: flex; }
+    #arena-zap .zb { width: min(380px, 100%); box-sizing: border-box; background: #141a21; border: 1px solid #2a3442; border-radius: 14px; padding: 16px; color: #e8eaed;
+      font: 14px/1.4 system-ui, sans-serif; }
+    #arena-zap .zt { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    #arena-zap h3 { margin: 0; font-size: 18px; color: #f7931a; overflow-wrap: anywhere; }
+    #arena-zap .x { border: 0; background: none; color: #8b949e; font-size: 24px; line-height: 1; cursor: pointer; padding: 0 4px; }
+    #arena-zap .to { color: #8b949e; font-size: 12.5px; margin: 4px 0 12px; overflow-wrap: anywhere; }
+    #arena-zap .amts { display: flex; gap: 6px; margin: 0 0 10px; }
+    #arena-zap .amts button { flex: 1; height: 38px; border-radius: 9px; border: 1px solid #3a4250; background: #1c2128; color: #e8eaed; font: 600 14px system-ui, sans-serif; cursor: pointer; }
+    #arena-zap .amts button[aria-pressed="true"] { border-color: #f7931a; color: #f7931a; background: #241a0c; }
+    #arena-zap .msg { width: 100%; box-sizing: border-box; padding: 9px; border-radius: 9px; border: 1px solid #3a4655; background: #0b0f14; color: #e8eaed; font: 14px system-ui, sans-serif; }
+    #arena-zap .go { display: block; width: 100%; margin: 10px 0 0; height: 42px; border-radius: 10px; border: 0; background: #f7931a; color: #1b1000;
+      font: 700 15px system-ui, sans-serif; cursor: pointer; }
+    #arena-zap .go:disabled { opacity: .5; cursor: default; }
+    #arena-zap .st { min-height: 1.4em; margin: 10px 0 0; color: #a9b3c1; font-size: 13px; overflow-wrap: anywhere; }
+    #arena-zap .st.ok { color: #3fb950; } #arena-zap .st.bad { color: #f0b72f; }
+    #arena-games .tip-dev { border: 0; background: none; padding: 0; color: #f7c64a; font: inherit; cursor: pointer; text-decoration: underline; }
     #arena-season .who .bdg { display: inline-flex; flex: none; gap: 3px; align-items: center; }
     #arena-season .who .bdg:empty { display: none; }
     #arena-season .who .bi { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; margin: 0;
@@ -911,6 +933,15 @@
         <button id="blwp-name-update" type="button" class="primary">Update</button>
       </div>
       <div class="muted" id="blwp-name-why"></div>
+    </section>
+    <section class="settings-card" id="arena-set-zaps">
+      <h3>Zaps</h3>
+      <div class="muted">Other players can zap you from a season board. Where should their zaps go? Your Lightning address (name@host):</div>
+      <div class="name-row">
+        <input id="arena-zap-addr" type="text" autocomplete="off" spellcheck="false" maxlength="120" placeholder="you@your-wallet.example">
+        <button id="arena-zap-save" type="button" class="primary">Save</button>
+      </div>
+      <div class="muted" id="arena-zap-why"></div>
     </section>
     <section class="settings-card" id="blwp-set-donation">
       <h3>Donation</h3>
@@ -1405,6 +1436,7 @@
   </script>
 
   <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Season</div><h2 id="arena-season-title">Season</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
+  <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
@@ -5555,6 +5587,124 @@
     // of them award badges, then each player ON SCREEN (an IntersectionObserver on the scrolling view; every drawn row where
     // there is none) and the viewer asked once per badge seat - for the board's life, through the 30 s re-asks and the day
     // switch - a few at a time. Closed, the book is dropped: nothing is asked, and an answer still on its way is not drawn.
+    // ZAPS AND TIPS (kanban #362, docs/PLATFORM-RESEARCH.md item 14; the bundle's zap.js, NIP-57). window.ARENA_ZAP.open(...)
+    // shows one box: a player's zap (their Lightning address from their own profile on the game's relay, a zap request signed by
+    // this tab's identity key - the key the board names - and the receipt their address's server publishes) or a developer's
+    // tip (the address the developer key signed beside the manifest; a plain LNURL payment when it takes no zaps). WHO PAYS:
+    // the wallet connected over Nostr Wallet Connect when there is one, else this tab's player wallet - each invoice checked
+    // first (amount, description hash), never paid on a timer, only on the press. The last outcome is window.ARENA_ZAP_LAST.
+    // And Settings' "Zaps" card publishes this player's address (a kind 0 profile signed by the identity key) and reads back
+    // what was received.
+    (function zaps() {
+      const box = document.getElementById('arena-zap');
+      if (!box || !BLWPCLIENT.sendZap) return;
+      const RELAYS = window.ARENA_ZAP_RELAYS || ['wss://relay.bitcoin-arena.io'];
+      const title = box.querySelector('h3'), to = box.querySelector('.to'), amts = box.querySelector('.amts'), msg = box.querySelector('.msg');
+      const go = box.querySelector('.go'), st = box.querySelector('.st');
+      const say = (t, kind = '') => { st.textContent = t; st.className = 'st' + (kind ? ' ' + kind : ''); };
+      const store = () => window.sessionStorage;
+      const noSeed = () => { throw new Error('this tab has no wallet yet: create or restore one first'); };
+      const sign = (t) => BLWPCLIENT.identitySignEvent(t, { storage: store(), random: noSeed, curve: window.BLWP_CURVE });
+      const nwcUri = () => { try { return localStorage.getItem('arena.nwc') || ''; } catch { return ''; } };
+      // THE WALLET THAT PAYS: NWC when connected, else the player wallet (its withdraw, to exactly this invoice)
+      async function pay(invoice) {
+        const u = nwcUri();
+        if (u && window.ARENA_NOSTR_LOAD) {
+          const N = await window.ARENA_NOSTR_LOAD();
+          try { const r = await N.nwcPay(u, invoice, { timeoutMs: 60000 }); return { ok: true, preimage: r.preimage, by: 'your connected wallet' }; }
+          catch (e) { return { ok: false, why: e.message }; }
+        }
+        const ctx = typeof moneyContext === 'function' ? moneyContext('withdraw') : { ok: false, why: 'the wallet is still loading' };
+        if (!ctx.ok) return { ok: false, why: ctx.why };
+        const a = BLWPCLIENT.invoiceAmountMsat(invoice);
+        if (!a.ok) return { ok: false, why: a.why };
+        const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+        const out = await BLWPCLIENT.withdrawPlayerWallet({ round: ctx.round, invite: ctx.invite, seed: ctx.seed, LockClient: wasm.LockClient,
+          storage: vault(), amountMsat: a.msat, gateways: ctx.gateways, invoiceFor: async () => ({ ok: true, invoice }) });
+        try { paintHistory(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); } catch { /* history only */ }
+        return out.ok ? { ok: true, preimage: out.preimage, by: 'your player wallet' } : { ok: false, why: out.why };
+      }
+      let job = null, choice = BigInt((BLWPCLIENT.ZAP_CHOICES_SAT || [21])[0]) * 1000n, busy = false;
+      for (const sat of BLWPCLIENT.ZAP_CHOICES_SAT || [21, 100, 1000]) {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = Number(sat).toLocaleString('en-US') + ' sat'; b.dataset.msat = String(BigInt(sat) * 1000n);
+        b.addEventListener('click', () => { choice = BigInt(b.dataset.msat); for (const x of amts.children) x.setAttribute('aria-pressed', String(x === b)); });
+        amts.append(b);
+      }
+      const close = () => { if (busy) return; box.classList.remove('show'); job = null; };
+      box.querySelector('.x').addEventListener('click', close);
+      box.addEventListener('click', (e) => { if (e.target === box) close(); });
+      async function open(j) {
+        job = Object.assign({}, j); busy = false;
+        title.textContent = j.title || 'Zap'; msg.value = ''; go.disabled = true; go.textContent = j.recipient ? 'Zap' : 'Tip';
+        for (const x of amts.children) x.setAttribute('aria-pressed', String(BigInt(x.dataset.msat) === choice));
+        box.classList.add('show');
+        if (!job.address) {
+          to.textContent = ''; say('Looking up ' + (j.name || 'this player') + '\u2019s Lightning address \u2026');
+          const mine = job;
+          const addr = await BLWPCLIENT.playerLightningAddress(j.recipient, { relays: RELAYS, curve: window.BLWP_CURVE }).catch(() => null);
+          if (mine !== job) return;
+          if (!addr) { say((j.name || 'This player') + ' takes no zaps yet: their profile names no Lightning address.', 'bad'); return; }
+          job.address = addr;
+        }
+        to.textContent = 'to ' + job.address + (nwcUri() ? ' \u00b7 paid by your connected wallet' : ' \u00b7 paid from your player wallet');
+        say(''); go.disabled = false;
+      }
+      go.addEventListener('click', async () => {
+        if (!job || !job.address || busy) return;
+        busy = true; go.disabled = true;
+        const mine = job;
+        say('Asking ' + job.address + ' for an invoice \u2026');
+        let out;
+        try {
+          out = await BLWPCLIENT.sendZap({ address: job.address, recipient: job.recipient || null, amountMsat: choice, comment: msg.value.trim(),
+            relays: RELAYS, sign: job.recipient ? sign : null, about: job.about || null,
+            pay: async (invoice) => { say('Paying ' + BLWPCLIENT.zapSatLine(choice) + ' \u2026'); return pay(invoice); } });
+        } catch (e) { out = { ok: false, why: e && e.message ? e.message : String(e) }; }
+        busy = false;
+        window.ARENA_ZAP_LAST = { at: Date.now(), address: mine.address, msat: String(choice), ok: !!out.ok, zapped: !!out.zapped, why: out.why || null,
+          paymentHash: out.paymentHash || null, request: out.request ? out.request.id : null };
+        if (out.ok) say((out.zapped ? 'Zapped ' : 'Tipped ') + BLWPCLIENT.zapSatLine(choice) + ' \u2713' + (out.zapped ? ' \u00b7 the receipt goes to the relay' : ''), 'ok');
+        else { say('Not sent: ' + out.why, 'bad'); go.disabled = false; }
+      });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && box.classList.contains('show')) close(); });
+      window.ARENA_ZAP = { open, close };
+      // SETTINGS: WHERE THIS PLAYER'S ZAPS GO - a profile signed by the identity key, published to the game's relay
+      const field = document.getElementById('arena-zap-addr'), save = document.getElementById('arena-zap-save'), why = document.getElementById('arena-zap-why');
+      if (!field || !save) return;
+      try { field.value = localStorage.getItem('arena.zap.address') || ''; } catch { /* none kept */ }
+      const received = async (address) => {
+        try {
+          const me = BLWPCLIENT.tabIdentity({ storage: store(), random: noSeed, curve: window.BLWP_CURVE });
+          const t = await BLWPCLIENT.zapTarget(address, 1000n);
+          if (!t.ok || !t.zaps) { why.textContent = t.ok ? address + ' takes payments but no zaps (no receipts to count).' : t.why; return; }
+          const got = await BLWPCLIENT.zapsReceived(me.pubkeyHex, { relays: RELAYS, nostrPubkey: t.nostrPubkey, lnurl: t.lnurl, curve: window.BLWP_CURVE });
+          window.ARENA_ZAPS_RECEIVED = { count: got.count, msat: String(got.msat) };
+          why.textContent = 'Zaps received: ' + got.count + (got.count ? ' \u00b7 ' + BLWPCLIENT.zapSatLine(got.msat) : '');
+        } catch (e) { why.textContent = e.message; }
+      };
+      save.addEventListener('click', async () => {
+        const address = field.value.trim().toLowerCase();
+        why.textContent = 'Publishing \u2026';
+        try {
+          const me = BLWPCLIENT.tabIdentity({ storage: store(), random: noSeed, curve: window.BLWP_CURVE });
+          const made = await BLWPCLIENT.zapProfileEvent({ name: me.name, lud16: address, sign });
+          if (!made.ok) { why.textContent = made.why; return; }
+          const sent = await Promise.all(RELAYS.map((r) => new Promise((done) => {
+            let ws; const t = setTimeout(() => { try { ws.close(); } catch { /* gone */ } done(false); }, 8000);
+            try { ws = new WebSocket(r); } catch { clearTimeout(t); return done(false); }
+            ws.onopen = () => ws.send(JSON.stringify(['EVENT', made.event]));
+            ws.onmessage = (m) => { let a; try { a = JSON.parse(m.data); } catch { return; } if (a[0] === 'OK' && a[1] === made.event.id) { clearTimeout(t); ws.close(); done(a[2] === true); } };
+            ws.onerror = () => { clearTimeout(t); done(false); };
+          })));
+          if (!sent.some(Boolean)) { why.textContent = 'No relay took your profile just now - try again.'; return; }
+          try { localStorage.setItem('arena.zap.address', address); } catch { /* the relay holds it */ }
+          window.ARENA_ZAP_PROFILE = { id: made.event.id, address };
+          why.textContent = address ? 'Saved: zaps go to ' + address + '.' : 'Saved: you take no zaps.';
+          if (address) received(address);
+        } catch (e) { why.textContent = e.message; }
+      });
+      if (field.value) received(field.value);
+    })();
     (function seasonBoard() {
       const box = document.getElementById('arena-season');
       if (!box || !BLWPCLIENT.fetchSeason) return;
@@ -5661,6 +5811,12 @@
           const slot = { icons: el('span', 'bdg'), say: el('div', 'bt') };
           n.append(el('span', 'nm', r.name), slot.icons);
           if (r.mine) n.append(el('span', 'you', 'you'));
+          // A ZAP FOR ANY OTHER PLAYER (kanban #362 item 14): their own Lightning address, from their profile, asked on the tap
+          else if (window.ARENA_ZAP && /^[0-9a-f]{64}$/.test(String(r.player))) {
+            const z = el('button', 'zap', '\u26a1 Zap'); z.type = 'button'; z.title = 'Zap ' + r.name;
+            z.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_ZAP.open({ title: 'Zap ' + r.name, recipient: r.player, name: r.name }); });
+            n.append(z);
+          }
           who.append(n, el('div', 's', [r.rounds + ' round' + (r.rounds === 1 ? '' : 's'), r.wins + ' win' + (r.wins === 1 ? '' : 's'), 'best ' + r.best].join(' \u00b7 ')), slot.say);
           const net = el('b', 'net' + (r.sign > 0 ? ' up' : r.sign < 0 ? ' down' : ''), r.net);
           net.title = r.netMsat + ' msat';
@@ -5823,6 +5979,10 @@
                 desc.className = 'desc'; desc.textContent = info.description;
                 signed.textContent = '\u2713 signed by its developer';
                 if (info.website) { const a = document.createElement('a'); a.href = info.website; a.target = '_blank'; a.rel = 'noopener'; a.textContent = new URL(info.website).host; a.addEventListener('click', (e) => e.stopPropagation()); signed.append(' \u00b7 ', a); }
+                // A TIP TO ITS DEVELOPER (kanban #362 item 14): only to the address the developer key signed (game-info.js)
+                if (info.lightning && window.ARENA_ZAP) { const t = document.createElement('button'); t.type = 'button'; t.className = 'tip-dev'; t.textContent = '\u26a1 Tip the developer';
+                  t.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); window.ARENA_ZAP.open({ title: 'Tip the developer of ' + (g.title || g.name), address: info.lightning }); });
+                  signed.append(' \u00b7 ', t); }
               }).catch(() => {});
               b.addEventListener('click', () => chosen(g));
               grid.append(b);

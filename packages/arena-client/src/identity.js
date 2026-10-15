@@ -25,6 +25,7 @@ import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId, lobbyNameIsValid, LOBBY_NAME_MAX } from '../../arena-protocol/src/lobby-name.js';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
+import { signEvent } from './nwc.js';
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'arena.player.name';
@@ -78,6 +79,17 @@ export function tabIdentity({ storage, random, curve } = {}) {
   const custom = !!(chosen && chosen.ok);
   return { pubkey, pubkeyHex: toHex(pubkey), fingerprint: identityFingerprint(pubkey), generated,
     name: custom ? chosen.name : generated, custom };
+}
+
+/**
+ * A NOSTR EVENT SIGNED BY THIS TAB'S IDENTITY KEY (kanban #362 item 14): a zap request to another player, or the profile
+ * (kind 0) that says where this player takes zaps. The key the season board and the badges name signs it, and its private
+ * half still never leaves this module: the page hands a template `{ kind, tags, content }` and gets the signed event.
+ */
+export async function identitySignEvent(template, { storage, random, curve, now } = {}) {
+  if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('an event is signed with the identity key, and no signer was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  return signEvent({ kind: template.kind, tags: template.tags || [], content: String(template.content || ''), secret, curve, now });
 }
 
 /**

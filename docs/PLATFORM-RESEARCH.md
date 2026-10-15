@@ -110,5 +110,21 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    screen once per badge seat for the board's life, the awards merged by (d, scope) (arena-client `badges-view.js`).
    Not yet: the round badges (first win, five rounds, perfect run) still read the seat's own rounds.
 
+   **Zaps between players and tips to developers** (14). State: built. NIP-57 as rules in protocol `zap.js`: the zap request
+   (kind 9734: one `p`, the amount, the relays, the recipient's `lnurl`, optionally the `e`/`a` it is for), the pay request
+   that takes zaps (`allowsNostr`, `nostrPubkey`), the invoice a zap may be paid with (exactly the amount, its description hash
+   SHA-256 of the request's JSON) and the receipt that counts (kind 9735 signed by the recipient's server, its invoice for its
+   request's amount under that hash, its preimage the invoice's; each invoice counted once). A player's address is their own
+   word: the `lud16` of a profile (kind 0) signed by their identity key - the key the season board and the badges name - on the
+   game's relay, which now keeps kind 9735. A developer's is the Lightning address the developer key signs beside the manifest
+   (game-info.js `lightning`, appended to the digest only when there is one, so every info signed before keeps its digest).
+   The client (arena-client `zap.js`) asks the address, has the tab's identity key sign the request (`identitySignEvent`, the
+   key never leaves identity.js), checks the invoice and pays it from the player's own wallet: the NWC-connected one, else the
+   player wallet's withdraw to exactly that invoice - only on the press. An address that takes no zaps is paid as a plain tip.
+   The page: a Zap button on every other player's season row, "Tip the developer" on a tile whose signed info names an address,
+   and Settings' Zaps card (where zaps go, and the zaps received, counted from the receipts). `arena-node` `zap-address.js` (+
+   `tools/zap-address.mjs`) is a zap-taking Lightning address in front of one LND: it checks each request (appendix D), invoices
+   under its hash, and signs and publishes the receipt once the invoice is paid, keeping unpaid zaps across a restart.
+
 Rules for every feature: additive, versioned where it changes bytes (§#349 required versions), no change to any existing
 game or market id, tests first, measured live before it is called done.

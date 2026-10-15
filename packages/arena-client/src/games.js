@@ -122,7 +122,8 @@ export async function checkedGameInfo(game, verifyEd25519) {
   try { digest = gameInfoDigest(fromHex(game.id), info); sig = fromHex(String(info.signature || '')); } catch { return null; }
   let good = false;
   try { good = (await verifyEd25519(sig, digest, game.manifest.gameDevPubkey)) === true; } catch { good = false; }
-  return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null } : null;
+  return good ? { description: info.description, website: typeof info.website === 'string' && info.website ? info.website : null,
+    lightning: typeof info.lightning === 'string' && info.lightning ? info.lightning : null } : null;
 }
 
 /**

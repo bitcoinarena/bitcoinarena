@@ -92,6 +92,9 @@ walk(SRC + 'season-view.js');
 // AND A PLAYER'S BADGES ON THAT BOARD (kanban #362, PLATFORM-RESEARCH items 13 + 1): the badge seats' awards merged by
 // (d, scope), their icons and words, and the book that asks each player once per board. The page's season view calls it.
 walk(SRC + 'badges-view.js');
+// AND ZAPS AND TIPS (kanban #362, PLATFORM-RESEARCH item 14): a player zapped from the season board, a game's developer tipped
+// from its tile - the player's own NWC wallet paying a Lightning address, each invoice checked first (NIP-57).
+walk(SRC + 'zap.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -274,6 +277,9 @@ out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASO
 // A PLAYER'S BADGES ON THE BOARD (kanban #362): the merge of the badge seats' awards, their words, and the board's book
 out += '         badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,\n';
 out += '         yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,\n';
+// ZAPS AND TIPS (kanban #362 item 14): a zap or a tip from the player's own wallet, the player's address and the zaps they received
+out += '         sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,\n';
+out += '         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
