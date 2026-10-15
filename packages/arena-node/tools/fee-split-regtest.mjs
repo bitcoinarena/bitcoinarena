@@ -23,6 +23,10 @@ import { drivenTape, b32, rand, GENESIS_HASH, playFor, warmPlay, say, secretScal
 import { testGame, attestorSign } from '../test/plugins/sign.js';
 // A MARKET (#206 slice 2): the regtest market the client pins - three outcomes, three test attestors, two to sign
 import { MARKET } from '../test/plugins/market/index.js';
+// THE TEST UP/DOWN MARKET (node 0.5% + donation 0.5%, two outcomes, a 15-minute grid): FRONTEND_BOOK's order book (kanban #362 comment 2295)
+import { UPDOWN, UPDOWN_TERMS, UPDOWN_PERIOD_MS } from '../test/plugins/updown/index.js';
+import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
+import { YES as BOOK_YES, NO as BOOK_NO } from '../../arena-protocol/src/order-book.js';
 import { encodeAttestation } from '../../arena-protocol/src/attested.js';
 import { playerFor } from '../../arena-client/src/join.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
@@ -94,7 +98,8 @@ const TALLY205 = testGame({ name: 'tally', dev: 'tally-205 regtest', cores: TALL
 const held = new Map();
 const memStore = { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
 const lc = await LockClient.join(env.INVITE, fid, toHex(rand(32)), memStore);
-const DEPOSIT = 12n * (STAKE + 200_000n);                    // 4 game entries and 8 market picks
+// 4 game entries and 8 market picks; FRONTEND_BOOK: four 10,000 sat orders (two book rounds of two) and room for the guardians' fees
+const DEPOSIT = env.FRONTEND_BOOK ? 45_000_000n : 12n * (STAKE + 200_000n);
 const rcv = JSON.parse(await lc.receive(String(DEPOSIT), env.GATEWAY));
 const paid = (await lncli('alice', 30107, 'payinvoice', '--force', rcv.invoice)).so.match(/Payment status: [A-Z_]+/)?.[0] || '?';
 out({ step: 'deposit', msat: DEPOSIT, alice: paid, final: await lc.awaitReceive(rcv.operation), balanceMsat: await lc.balanceMsat() });
@@ -114,7 +119,7 @@ for (const t = Date.now(); Date.now() - t < 300000; await wait(5000)) {
  * ONE PLAYER, AS THE PAGE LOCKS: the stake, the fee lock and the donation's payout contracts in ONE transaction
  * (`lockWithDonations`, the donation image the player's own key), then the run played and marked at both signer nodes.
  */
-async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, frontendPk = null }) {
+async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, frontendPk = null, order = null, feeBps = undefined, donationMsat = DONATION }) {
   const session = ed25519.utils.randomSecretKey();
   const preimage = secretScalar();
   const e = rand(32);
@@ -123,17 +128,18 @@ async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, 
   if (!dealt.ok) throw new Error(dealt.why);
   await warmPlay(who, w.randomness);
   const play = playFor(who, w.randomness);
-  const feeMsat = entryFeeMsat(w.c.stakeMsat);
+  // a market's fee lock is its own rate, its donation inside it (FRONTEND_BOOK: 1%, no separate donation outputs)
+  const feeMsat = entryFeeMsat(w.c.stakeMsat, feeBps);
   const gate = feeLockPays({ contract: w.c, fees });
   if (!gate.pays) throw new Error(`the gate mints no fee lock at this stake: ${gate.why}`);
-  const split = splitDonation({ donationMsat: DONATION, recipients: target });
-  const shares = split.shares.filter((s) => s.amountMsat > 0n);
+  const shares = donationMsat > 0n ? splitDonation({ donationMsat, recipients: target }).shares.filter((s) => s.amountMsat > 0n) : [];
   const feeSecret = rand(32);
   const refundPk = refundKeyOf(who.key);
-  const net = netStakeMsat({ stakeMsat: w.c.stakeMsat, feeMsat, donationMsat: DONATION });
+  const net = netStakeMsat({ stakeMsat: w.c.stakeMsat, feeMsat, donationMsat });
   const stakePoint = dealt.handout.commitments[0];
   const all = JSON.parse(await lc.lockWithDonations(toHex(stakePoint), String(net), toHex(sha256(feeSecret)), String(feeMsat),
-    toHex(w.claimPk), toHex(refundPk), 150, JSON.stringify(shares.map((s) => ({ pk: toHex(s.recipientPk), msat: String(s.amountMsat), image: toHex(who.key) })))));
+    // the round's own lock span when it is longer (a market's: lock-expiry.js), else 150 as before
+    toHex(w.claimPk), toHex(refundPk), w.c.stakeExpiryBlocks > 144 ? w.c.stakeExpiryBlocks : 150, JSON.stringify(shares.map((s) => ({ pk: toHex(s.recipientPk), msat: String(s.amountMsat), image: toHex(who.key) })))));
   const stake = lockFromClient(all.stake, { point: stakePoint, claimPk: w.claimPk, refundPk });
   const fee = lockFromClient(all.fee, { hash: sha256(feeSecret), claimPk: w.claimPk, refundPk });
   const donated = all.donations.map((d, i) => {
@@ -142,13 +148,15 @@ async function lockAndPlayReal(w, who, { game = null, target, pick = undefined, 
   });
   const entry = {
     roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session), stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat,
-    feeMsat, donationMsat: DONATION, joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint,
+    feeMsat, donationMsat, joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint,
     feePreimage: feeSecret, stakeLockOutpoint: stake.outpoint, feeLockOutpoint: fee.outpoint, claimKeyAttestationRef: b32(0x9a),
     donationOutpoints: donated.map((d) => d.outpoint),
     // AN ATTESTED ROUND'S ENTRY BACKS AN OUTCOME (#206 slice 2) and plays no run
     ...(pick !== undefined ? { pick } : {}),
     // THE WEBSITE THAT BROUGHT THIS ENTRY (kanban #362 item 7): its payout key, in the entry's signed bytes
     ...(frontendPk ? { frontendPk } : {}),
+    // A MARKET ORDER (kanban #278): its limit price, standing until it fills or the market closes
+    ...(order ? { limitPrice: Number(order.price), orderExpiryMs: 0n } : {}),
   };
   const eid = entryId(entry);
   const hashOf = (hex) => Uint8Array.from(hex.match(/../g).map((x) => parseInt(x, 16)));
@@ -242,14 +250,67 @@ function winnerUnder(key, randomness) {
 
 const facts = { stakeMsat: STAKE, feePerEntry: entryFeeMsat(STAKE), donationPerEntry: DONATION, netPerEntry: netStakeMsat({ stakeMsat: STAKE, feeMsat: entryFeeMsat(STAKE), donationMsat: DONATION }) };
 const NETWORK_ROUND = { donationSetId: donationSetId(NETWORK), federationId: fromHex(fid) };
-const w = await lockRound({ stakeMsat: STAKE, port, serveOpts: { plugins: [NEXTBLOCK, TALLY205, MARKET.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST] }, round: NETWORK_ROUND, endMs: testNow() + 900000 });
+const w = await lockRound({ stakeMsat: STAKE, port, serveOpts: { plugins: [NEXTBLOCK, TALLY205, MARKET.registration, UPDOWN.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST],
+  // FRONTEND_BOOK leads the book's batches itself, as order-locks.test.js does
+  ...(env.FRONTEND_BOOK ? { orderBatchTimer: false } : {}) }, round: NETWORK_ROUND, endMs: testNow() + 900000 });
 // THE ENTRY DOOR OPENS AT THE COMMITTEE TIME: the fixtures' clock goes there, the round's end ~230 s on - room for real locks
 skipTo(Number(w.c.committeeTimeMs) + 100);
 try {
   // ===== FRONTEND=1 (kanban #362 roadmap item 7, RULED path (a)): THE WEBSITE'S SHARE ON THE REAL FEDERATION =====
   // The same tally round twice on the same two seats and federation: once with no website, once at 2026.0.9 with both entries
   // naming a website's payout key. Every line of each settlement transaction, to the msat, and what the federation holds after.
-  if (env.FRONTEND) {
+  if (env.FRONTEND_BOOK) {
+    // ===== FRONTEND_BOOK=1 (kanban #362 comment 2295): THE WEBSITE'S SHARE ON AN ORDER BOOK, ON THE REAL FEDERATION =====
+    // The test Up/Down market, two 10,000 sat orders (YES and NO at 0.50, both filled), Up wins - once with no website, once at
+    // 2026.0.9 with both orders naming one. Every line of each settlement transaction, to the msat.
+    const B = 500;
+    const P = Number(UPDOWN_PERIOD_MS);
+    const STAKE_B = 10_000_000n;
+    const siteSk = schnorr.utils.randomSecretKey();
+    const SITE = new Uint8Array([2, ...schnorr.getPublicKey(siteSk)]);
+    const [UA, UB] = UPDOWN.attestors;
+    const bookRound = async (version, frontendPk) => {
+      const r = await openLockRound(w, { stakeMsat: STAKE_B, endMs: testNow() + 1800000, alignCloseMs: P, stakeExpiryFor: (c) => marketExpiryBlocks(c, UPDOWN_TERMS).blocks,
+        round: { ...NETWORK_ROUND, gameId: UPDOWN.registration.gameId, simCoreHash: b32(0), configHash: b32(0), entryCloseMs: 900000n, ...(version > 1 ? { protocolVersion: version } : {}) } });
+      for (const d of r.nodes) d.orderBook.intervalMs = B;
+      skipTo(Math.max(Number(r.c.committeeTimeMs), Number(r.c.entryCloseMs) - P) + 100);
+      const one = (name, pick) => lockAndPlayReal(r, { name: `${name}-v${version}`, key: playerKey(), worldSecret: b32(0), ticks: 1, words: () => [0, 0, 0, 0, 0] },
+        { pick, order: { price: 50000n }, feeBps: 100, donationMsat: 0n, target: [], frontendPk });
+      const yes = await one('yes', BOOK_YES);
+      const no = await one('no', BOOK_NO);
+      const k = Math.floor(testNow() / B);
+      while (testNow() < (k + 1) * B + 20) await wait(5);
+      const batch = await r.nodes.find((d) => d.orderBook.leads(r.rid, k)).orderBook.lead(r.rid, k);
+      skipTo(Number(r.c.entryCloseMs) + 2 * B + 10);
+      await closeRound(r, { window: false });
+      const body = { roundId: r.rid, outcome: BOOK_YES, observedAtMs: r.c.entryCloseMs + 1n };
+      await Promise.all(r.nodes.map((d) => fetch(`http://127.0.0.1:${d.port}/outcome?round=${toHex(r.rid)}`, { method: 'POST', body: encodeAttestation({ ...body, signatures: [UA, UB].map((a) => attestorSign(a, body)) }) })));
+      const o = await (await fetch(`http://127.0.0.1:${r.nodes[0].port}/outcome?round=${toHex(r.rid)}`)).json();
+      skipTo(Number(o.finalAtMs) + 100);
+      let s;
+      for (const stop = Date.now() + 300000; Date.now() < stop; await wait(2000)) {
+        s = await standing(r.a, r);
+        if (s.state === 'ACCEPTED' || s.state === 'REFUSED') break;
+        await Promise.all(r.nodes.map((d) => d.settlements.settle(r.rid).catch(() => null)));
+      }
+      const raw = (s && s.moved && s.moved.payouts) || [];
+      const msatOf = (p) => BigInt(p.msat ?? p.amountMsat);
+      const of = (kind) => raw.filter((p) => p.kind === kind).map(msatOf);
+      const stored = [];
+      if (s && s.txid) for (let i = 0; i < raw.length; i++) stored.push(!!(await port.status({ txid: fromHex(s.txid), outIdx: BigInt(i) })).stored);
+      return { version, state: s && s.state, why: s && s.why, txid: s && s.txid, batch: { certified: batch.certified, orders: (batch.orderIds || []).length },
+        claims: ((s && s.moved && s.moved.claims) || []).map((c) => [c.kind, String(c.msat ?? c.amountMsat)]),
+        nodes: of('signer node'), website: of('frontend'), donation: of('donation key'), winners: of('qualifier'),
+        lines: raw.map((p) => ({ kind: p.kind, key: String(p.payoutPk || p.key || '').slice(0, 12), msat: msatOf(p), guardianFeeMsat: BigInt(p.feeMsat || 0) })),
+        orders: [yes, no].map((p) => ({ stakeMsat: p.entry.stakeMsat, feeLockMsat: p.entry.feeMsat, donationMsat: p.entry.donationMsat, website: p.entry.frontendPk ? toHex(p.entry.frontendPk).slice(0, 12) : null })),
+        stored };
+    };
+    const plain = await bookRound(1, null);
+    out({ book: 'control: no website', ...plain });
+    const viaSite = await bookRound(FRONTEND_FEE_VERSION, SITE);
+    out({ book: 'both orders name the website (2026.0.9)', ...viaSite });
+    facts.frontendBook = { website: toHex(SITE), plain, viaSite };
+  } else if (env.FRONTEND) {
     const siteSk = schnorr.utils.randomSecretKey();
     const SITE = new Uint8Array([2, ...schnorr.getPublicKey(siteSk)]);
     const play = { adapter: TALLY_CORE.adapter, config: {} };

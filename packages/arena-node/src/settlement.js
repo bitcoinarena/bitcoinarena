@@ -501,7 +501,8 @@ export class LockSettlement {
       const raw = this.round.entry(entryId);
       if (!raw) return refuse(`no lock is claimed: this seat holds no entry ${r.entry.slice(0, 16)}`);
       const e = decodeEntryContract(raw);
-      entries.push({ entryId: r.entry, pubkey: e.playerPubkey });
+      // the website that brought this order (kanban #362 comment 2295): bookLockSettlement pays it 20% of the nodes' part of its fee
+      entries.push({ entryId: r.entry, pubkey: e.playerPubkey, ...(e.frontendPk ? { frontendPk: e.frontendPk } : {}) });
       const lock = this.round.stakeLock(entryId);
       if (lock) {
         const fields = lockFieldsFromJson(lock.fields);
