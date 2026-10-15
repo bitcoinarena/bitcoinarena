@@ -265,6 +265,29 @@ test('a mirrored record that does not stand against the seat\'s own census is no
   assert.deepEqual(o.list(), []);
 });
 
+test('a mirrored record that does not stand against the seat\'s older census stands against the census at its own height (kanban #326)', async () => {
+  const s = seven();
+  for (const seat of s.seats) await seat.gather(FED, inviteFederationId);
+  const me = { secret: new Uint8Array(32).fill(0x57) }; me.pubkey = schnorr.getPublicKey(me.secret);
+  // node 15's case: its own basis (an older census) bonds only 4 of the 7 guardians; the record names its own census height
+  const asked = [];
+  // the basis lists the guardians (so they are asked), but bonds only 4 of them: the record does not stand against it
+  const thin = { ok: true, entries: s.census.entries.map((e, i) => (i < 4 ? e : { ...e, advert: { ...e.advert, guardianOf: [] } })) };
+  const o2 = federationRecords({ round: { pubkey: me.pubkey, identity: { secret: me.secret } },
+    newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: 156036, networkId: NET } }),
+    roster: { censusFor: () => thin }, inviteFor: () => null, networkId: NET,
+    fetcher: async (url) => {
+      const i = s.nodes.findIndex((m) => url.startsWith(m.endpoint.replace('wss:', 'https:')));
+      if (i < 0 || !url.endsWith('/federations')) return new Response('no', { status: 404 });
+      return new Response(JSON.stringify({ federations: s.seats[i].list() }), { status: 200 });
+    },
+    censusAt: async (h) => { asked.push(h); return s.census.entries; } });
+  const got = await o2.gatherAll(inviteFederationId);
+  assert.deepEqual([got[0].ok, got[0].mirrored, got[0].signers], [true, true, 7], got[0].why);
+  assert.ok(asked.length >= 1 && asked.every((h) => h === asked[0]), 'the census asked at the record\'s own height');
+  assert.equal(o2.list().length, 1);
+});
+
 test('2f + 1 guardians\' absence attestations held by the gatherer make the peer ABANDONED in the record every guardian signs (kanban #322)', async () => {
   const { createAbsences, absenceHex } = await import('../src/absences.js');
   const { signAbsence } = await import('../../arena-protocol/src/absence.js');
