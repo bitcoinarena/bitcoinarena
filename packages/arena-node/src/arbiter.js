@@ -31,12 +31,12 @@ import { checkObjectionBundle } from './objection-check.js';
 import { runId } from './verdict.js';
 import { tweakPoint, combine } from './curve.js';
 import { nonceGen, bondSigningContext, bondPartialSign, MusigError } from './musig2.js';
-import { pluginForRound, hostedPlugins } from './plugins.js';
+import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
 /** THE ROUND'S CORE, as a seat's verifier resolves it (verify.js #coreOf): its plugin's, with the round's world rule. */
 export function coreForRound(contract, roundIdBytes, plugins) {
   const found = pluginForRound(contract, hostedPlugins(plugins));
-  return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
+  return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin),
     world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes), sharedWorld: [...found.plugin.sharedWorld] } } : null;
 }
 
