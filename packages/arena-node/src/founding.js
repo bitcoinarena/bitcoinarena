@@ -16,6 +16,10 @@
 //   VOID        "if the window passes without a federation, the founding is void and the next trigger draws again": at beacon +
 //               founding_window with no federation running (the seated guardian's consensus, `setup.done()`, or a peer that says
 //               so), the founding is void - and so is one whose alternates ran out.
+//   SEATED FIRST a succession (§23A.6 step 1, kanban #326) seats the old federation's seated, non-departing guardians first, in
+//               the order given (`seatedFirst`, census entries), and draws only the missing seats (drawGuardians). A seated-first
+//               node is held to the same window and fifth as a drawn one: no code a fifth after the beacon, and the next alternate
+//               takes its position.
 //   DKG         once every seated node's code is held, each seated node adds the others' codes to its guardian and starts the
 //               key generation; its guardian then names the federation (invite) like any other.
 //
@@ -37,9 +41,9 @@ export function setupDigest(id, node, code) {
   return taggedHash('BLWP/v1/FOUNDING_SETUP', Uint8Array.from([...w.finish(), ...c]));
 }
 
-export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), foundingWindow,
+export function createFounding({ seed, triggerHeight, entries, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [], foundingWindow,
   ownKey, sign, verify, setup = null, post = async () => {}, name = 'arena', say = () => {} }) {
-  const draw = drawGuardians({ entries, seed, nominal, bondMinGuardian, guardingOpen });
+  const draw = drawGuardians({ entries, seed, nominal, bondMinGuardian, guardingOpen, seatedFirst });
   const id = foundingId(seed, triggerHeight);
   const own = toHex(ownKey);
   const codes = new Map();                   // node hex -> { code, signature }
@@ -119,7 +123,7 @@ export function createFounding({ seed, triggerHeight, entries, nominal, bondMinG
   }
 
   function state() {
-    return { id: toHex(id), ok: draw.ok, why: draw.ok ? null : draw.why, eligible: draw.eligible, beacon, windowEnd, fifth, foundingWindow,
+    return { id: toHex(id), ok: draw.ok, why: draw.ok ? null : draw.why, eligible: draw.eligible, seatedFirst: draw.seatedFirst || 0, beacon, windowEnd, fifth, foundingWindow,
       seated: seated.map((e, i) => ({ position: i, node: toHex(e.pubkey), code: codes.has(toHex(e.pubkey)), since: seatedSince.get(toHex(e.pubkey)) })),
       alternates: (draw.alternates || []).map((e) => toHex(e.pubkey)), noShows: [...noShows], started, federation, void: !!voided, failed, invite,
       codes: [...codes.entries()].map(([node, c]) => ({ node, code: c.code, signature: c.signature })) };

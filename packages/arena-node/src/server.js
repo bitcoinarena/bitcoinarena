@@ -315,8 +315,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   devClients = null,                           // kanban #358: the dev clients the owner set up on the owner page (dev-clients.js)
   // THIS NODE'S OWN GUARDIAN (§23A.2, RULED 2026-09-26 22:54): `{ apiPort, endpoint }` when the node started one
   // (guardian.js). Its websocket is carried on this server at /guardian, so the guardian's endpoint is the node's own
-  // public address; null for a node that is not a guardian.
+  // public address; null for a node that is not a guardian. Kanban #326: `{ apiPort, endpoint, dataDir, setup }` - setup when it
+  // was started in setup mode (ARENA_FOUNDING=1, no ceremony files yet).
   guardian = null,
+  // ITS GUARDIAN-NEXT (§23A.6 step 1, kanban #326): `{ apiPort, endpoint, dataDir, setup }` when the node runs a second fedimintd for a
+  // successor it is seated first in (node-start.js); carried at /guardian-next. null otherwise.
+  guardianNext = null,
   // THE NODE'S OWNER (kanban #276, owner.js): `{ store }` - where the owner's public key and the claim code are kept
   // (files beside the database, from main.js). Without it the node has no owner area and /owner answers 404.
   owner: ownerFiles = null,
@@ -3172,6 +3176,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // A FOUNDING BY SORTITION (§23A.2, kanban #320), with ARENA_FOUNDING=1: every 10 min the seat reads a trigger off the records it
   // holds (founding-seat.js), the beacon and the census at trigger_height from its chain view, and - while its own guardian waits in
   // Fedimint's setup - takes part through the guardian's own setup API (fedimint-cli, ARENA_FEDIMINT_CLI). GET/POST /founding.
+  // Kanban #326: a guardian in consensus takes part through its guardian-next (node-start.js, ARENA_FOUNDING_NEXT=1); a standing
+  // departure notice this seat holds (POST /departure) triggers a succession; a succession seats the record's remaining guardians
+  // first; the draw leaves out the operators the census names guarding a federation held OPEN (founding-seat.js guardingOpenOf).
   if (process.env.ARENA_FOUNDING === '1' && guardian && guardian.apiPort && guardian.dataDir && typeof chainTip === 'function') {
     const netName = String(chain || '').replace(/^bitcoin-/, '');
     const g = (() => { try { return genesisFor(netName === 'test' ? 'testnet4' : netName); } catch { return null; } })();
@@ -3180,14 +3187,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const password = () => readFileSync(`${guardian.dataDir}/admin-password`, 'utf8').trim();
     const runCli = (args) => new Promise((res, rej) => execFileCb(process.env.ARENA_FEDIMINT_CLI || 'fedimint-cli', args, { timeout: 120000 }, (e, out) => (e ? rej(e) : res(String(out)))));
     const foundingSetup = cliSetup({ run: runCli, apiPort: guardian.apiPort, password: password(), guardianName: toHex(round.pubkey).slice(0, 16) });
+    // THE GUARDIAN-NEXT'S SETUP (kanban #326): a guardian in consensus seated first in a successor takes part through it
+    const nextSetup = guardianNext && guardianNext.apiPort && guardianNext.dataDir
+      ? cliSetup({ run: runCli, apiPort: guardianNext.apiPort, password: readFileSync(`${guardianNext.dataDir}/admin-password`, 'utf8').trim(), guardianName: toHex(round.pubkey).slice(0, 16) })
+      : null;
     foundingSeat = createFoundingSeat({
-      records: () => (fedRecords.list() || []).map((x) => ({ federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null })),
+      // each held record with its body (kanban #326): a DRAINING one seats its seated guardians first; the notices are read against it
+      records: () => (fedRecords.list() || []).map((x) => { const held = fedRecords.recordOf(x.federation);
+        return { federation: x.federation, status: x.status, height: x.height, load: typeof x.load === 'number' ? x.load : null, ...(held && held.record ? { record: held.record } : {}) }; }),
+      notices: () => absences.listDepartures().map((h) => { try { return readDepartureHex(h); } catch { return null; } }).filter(Boolean),
+      next: nextSetup ? { setup: nextSetup, inSetup: async () => nextSetup.inSetup() } : null,
       entriesAt: async (h) => { const v = viewOf(); if (!v) return null; const c = roster.censusAtHeight(v.rid, h); return c.ok ? c.entries : null; },
       beaconAt: async (h) => { const v = viewOf(); if (!v || !v.view || !Array.isArray(v.view.blocks)) return null; const b = v.view.blocks[h - v.view.firstHeight]; return b ? blockHashOf(b.header) : null; },
       tip: async () => Number(await chainTip()),
       guardianInSetup: async () => foundingSetup.inSetup(),
       setup: foundingSetup,
-      guardingOpen: () => new Set(),
+      // guardingOpen: by default the census adverts' guardian_of[] naming a federation held OPEN, other than the one succeeded
       nominal: g && Number.isInteger(g.federationNominal) ? g.federationNominal : 4, bondMinGuardian: BigInt(process.env.ARENA_BOND_MIN_GUARDIAN || 50000),
       clocks: fedClocks, ownKey: round.pubkey, sign: (h) => schnorr.sign(h, round.identity.secret), verify: schnorrVerify,
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
@@ -3674,7 +3689,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // WHETHER THIS NODE IS A GUARDIAN, and the endpoint a phone opens for it (its own public address).
       if (req.method === 'GET' && url.pathname === '/guardian') {
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint } : { guardian: false }));
+        return res.end(JSON.stringify(guardian ? { guardian: true, endpoint: guardian.endpoint, ...(guardianNext ? { next: guardianNext.endpoint } : {}) } : { guardian: false }));
       }
       if (req.method === 'GET' && url.pathname === '/identity') {
         return bytes(res, 200, round.pubkey);
@@ -6744,8 +6759,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   http.on('upgrade', (req, socket, head) => {
     const at = new URL(req.url, 'http://node').pathname;
     if (at === '/play') { wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)); return; }
-    if (at === '/guardian' && guardian && guardian.apiPort) {
-      const up = netConnect({ host: '127.0.0.1', port: guardian.apiPort }, () => {
+    // /guardian-next is the guardian-next's (kanban #326), carried the same way to its own API port
+    const carried = at === '/guardian' ? guardian : at === '/guardian-next' ? guardianNext : null;
+    if (carried && carried.apiPort) {
+      const up = netConnect({ host: '127.0.0.1', port: carried.apiPort }, () => {
         const lines = [`${req.method} / HTTP/${req.httpVersion}`];
         for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
         up.write(lines.join('\r\n') + '\r\n\r\n');

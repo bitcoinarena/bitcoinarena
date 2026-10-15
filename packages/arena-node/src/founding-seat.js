@@ -6,12 +6,64 @@
 //             of its cap for abandon_blocks (load). The seat keeps the census and load history it saw at each tick (kanban #320).
 //   SEED      the beacon: the hash of the block after trigger_height, once it is in the seat's chain.
 //   CENSUS    the bonded census at trigger_height, its entries with their adverts (guardian_capable, guardian_endpoint).
-//   GUARDIAN  a node takes part only while its own guardian waits in Fedimint's setup (its admin status names no federation):
-//             a node already guarding is not eligible anyway (guardingOpen). Its setup calls go through fedimint-cli's
-//             `admin setup` against the guardian's own API socket, with its admin password.
+//   GUARDIAN  a node takes part only while one of its guardians waits in Fedimint's setup (its setup status is not
+//             ConsensusIsRunning): its own guardian (a node with no ceremony files starts it in setup mode with
+//             ARENA_FOUNDING=1, node-start.js), else its second one, the guardian-next (kanban #326: a guardian in consensus
+//             seated first in its federation's successor takes part through a second fedimintd in setup mode beside it).
+//             Its setup calls go through fedimint-cli's `admin setup` against that guardian's own API socket, with its admin
+//             password.
+//   NOTICE    a succession is also triggered by a standing departure notice (§23A.6 "or a departure notice that would make it
+//             DRAINING", kanban #326): the seat's held notices (absences.js, POST /departure) against the held record of an OPEN
+//             federation - or one already DRAINING or CRITICAL - whose seated guardians without the leaving one fall to DRAINING
+//             (CRITICAL at four, §23A.1); trigger_height is the height the notice was posted at.
+//   SEATED    a succession seats the record's seated, non-departing guardians first, in the record's order (node key
+//   FIRST     ascending), and draws the missing seats (drawGuardians). The draw's pool leaves out the operators guarding an OPEN
+//             federation other than the one succeeded (their census adverts' guardian_of[] naming a federation whose held record is
+//             OPEN), and the leaving guardians' operators (the succeeded federation's departing / gone guardians).
 import { foundingTrigger } from '../../arena-protocol/src/guardian-founding.js';
+import { departureStands } from '../../arena-protocol/src/absence.js';
+import { statusFor } from '../../arena-protocol/src/federation-record.js';
 import { createFounding } from './founding.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+
+const opOf = (e) => String((e && e.advert && e.advert.operatorId) || toHex(e.pubkey));
+const lower = (x) => String(x || '').toLowerCase();
+/** A held record's seated guardians - not in its gone[] - in the record's order. */
+export function seatedOf(record) {
+  const gone = new Set((record.gone || []).map((g) => toHex(g.peerKey)));
+  return (record.guardians || []).filter((g) => !gone.has(toHex(g.peerKey)));
+}
+const goneNodes = (record) => { const s = new Set(seatedOf(record).map((g) => toHex(g.nodePubkey))); return (record.guardians || []).map((g) => toHex(g.nodePubkey)).filter((k) => !s.has(k)); };
+
+/**
+ * THE NOTICE TRIGGERS (§23A.6, kanban #326): of `notices` (decoded departure notices), each one that stands against the held record
+ * of its federation (`held`: [{ federation, status, record }], status OPEN, DRAINING or CRITICAL) and leaves that federation's seated
+ * guardians DRAINING or CRITICAL. Answers [{ federation, height: posted_at, wouldBe, seatedFirst, departing }] (node keys hex).
+ */
+export function noticeTriggers({ held = [], notices = [], departureNotice, verify }) {
+  const rows = [];
+  if (!Number.isInteger(departureNotice)) return rows;
+  for (const d of notices || []) {
+    const fid = toHex(d.federationId);
+    const h = (held || []).find((r) => r && r.record && lower(r.federation) === fid);
+    if (!h || !['OPEN', 'DRAINING', 'CRITICAL'].includes(h.status)) continue;
+    if (!departureStands(d, { record: h.record, departureNotice, verify }).ok) continue;
+    const seated = seatedOf(h.record).filter((g) => toHex(g.peerKey) !== toHex(d.peerKey));
+    let wouldBe; try { wouldBe = statusFor({ nominal: h.record.nominal, seated: Math.min(h.record.nominal, seated.length) }).status; } catch { continue; }
+    if (wouldBe !== 'DRAINING' && wouldBe !== 'CRITICAL') continue;
+    rows.push({ federation: fid, height: d.postedAt, wouldBe, seatedFirst: seated.map((g) => toHex(g.nodePubkey)),
+      departing: [...new Set([toHex(d.nodePubkey), ...goneNodes(h.record)])] });
+  }
+  return rows;
+}
+
+/** The operators guarding an OPEN federation other than `except`: census adverts whose guardian_of[] names a federation held OPEN. */
+export function guardingOpenOf({ entries = [], held = [], except = null }) {
+  const open = new Set((held || []).filter((r) => r && r.status === 'OPEN' && lower(r.federation) !== lower(except)).map((r) => lower(r.federation)));
+  const ops = new Set();
+  for (const e of entries || []) for (const g of (e && e.advert && e.advert.guardianOf) || []) if (open.has(toHex(g.federationId))) ops.add(opOf(e));
+  return ops;
+}
 
 /**
  * The guardian's setup, through the stock CLI: `run(args)` runs fedimint-cli and answers its stdout. The code is the
@@ -37,10 +89,13 @@ export function cliSetup({ run, apiPort, password, guardianName }) {
 /**
  * The seat's foundings: `tick()` once in a while. `records()` the held records [{ federation, status, height }]; `entriesAt(h)`
  * the census entries at h (or null while the chain is not read that far); `beaconAt(h)` the block hash at h (32 bytes, or null);
- * `tip()`; `guardianInSetup()` true while the node's guardian waits in setup; `setup` its setup calls; `guardingOpen()` operator
- * ids guarding an OPEN federation; `peers()` the seats' roots, whose GET /founding is read for codes this seat missed.
+ * `tip()`; `guardianInSetup()` true while the node's guardian waits in setup; `setup` its setup calls; `peers()` the seats' roots,
+ * whose GET /founding is read for codes this seat missed. Kanban #326: `records()` rows may carry `record` (the held record,
+ * decoded) - a DRAINING one then seats its seated guardians first, and the notice trigger reads it; `notices()` the departure
+ * notices this seat holds (decoded); `next` { inSetup(), setup } the node's guardian-next, if it runs one; `guardingOpen({ entries,
+ * records, except })` the operators guarding an OPEN federation (by default guardingOpenOf over the census and the held records).
  */
-export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = () => new Set(), nominal,
+export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardianInSetup, setup, guardingOpen = null, notices = () => [], next = null, nominal,
   bondMinGuardian, clocks, ownKey, sign, verify, post = async () => {}, peers = () => [], fetchJson = null, say = () => {}, keep = 4096 }) {
   let current = null;                        // { key, founding }
   // THE HISTORY THE GENESIS AND LOAD TRIGGERS READ (§23A.2, kanban #320), one row per chain height this seat ticked at:
@@ -62,19 +117,32 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
   async function tick() {
     const h0 = await tip();
     const held = await history(h0);
-    const t = foundingTrigger({ records: held, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0 });
+    // a DRAINING record seats its seated guardians first, its gone ones leave; a standing notice triggers as of its posting
+    const rows = held.map((r) => (r && r.record && r.status === 'DRAINING'
+      ? { ...r, seatedFirst: seatedOf(r.record).map((g) => toHex(g.nodePubkey)), departing: goneNodes(r.record) } : r));
+    let notes = [];
+    try { notes = noticeTriggers({ held, notices: (await notices()) || [], departureNotice: clocks.departureNotice, verify }); } catch { notes = []; }
+    const t = foundingTrigger({ records: rows, notices: notes, capable, loads, nominal, abandonBlocks: clocks.abandonBlocks, federationExists: held.length > 0 });
     if (!t.ok) return { ok: false, why: t.why };
-    const key = `${t.kind}:${t.height}`;
+    const key = `${t.kind}:${t.federation || ''}:${t.height}`;
     const h = await tip();
     if (!current || current.key !== key) {
       const seed = await beaconAt(t.height + 1);
       if (!seed) return { ok: false, why: `the beacon after ${t.height} is not in this seat's chain yet (tip ${h})` };
       const entries = await entriesAt(t.height);
       if (!entries) return { ok: false, why: `no census read at ${t.height} yet` };
-      const inSetup = await guardianInSetup();
-      current = { key, trigger: t, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal, bondMinGuardian, guardingOpen: guardingOpen(),
-        foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: inSetup ? setup : null, post, say }) };
-      say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, takesPart: inSetup });
+      const except = t.federation || null;
+      const seatedFirst = (t.seatedFirst || []).map((k) => entries.find((e) => toHex(e.pubkey) === k)).filter(Boolean);
+      const out = new Set(guardingOpen ? guardingOpen({ entries, records: held, except }) : guardingOpenOf({ entries, held, except }));
+      for (const k of t.departing || []) { const e = entries.find((x) => toHex(x.pubkey) === k); if (e) out.add(opOf(e)); }
+      // WHICH GUARDIAN TAKES PART: the node's own while it waits in setup, else its guardian-next while that one does
+      let use = null, via = null;
+      if (await guardianInSetup()) { use = setup; via = 'guardian'; }
+      else if (next && next.setup && typeof next.inSetup === 'function' && await next.inSetup()) { use = next.setup; via = 'guardian-next'; }
+      current = { key, trigger: t, via, founding: createFounding({ seed, triggerHeight: t.height, entries, nominal, bondMinGuardian, guardingOpen: out, seatedFirst,
+        foundingWindow: clocks.foundingWindow, ownKey, sign, verify, setup: use, post, say }) };
+      say({ founding: current.founding.id.slice(0, 16), trigger: t.kind, height: t.height, why: t.why, seatedFirst: seatedFirst.length,
+        leftOut: [...out], takesPart: !!use, via });
     }
     // codes this seat missed, from the others' GET /founding
     if (fetchJson) for (const root of peers()) {
@@ -87,5 +155,5 @@ export function createFoundingSeat({ records, entriesAt, beaconAt, tip, guardian
     return { ok: true, trigger: current.trigger, state: st };
   }
   return { tick, take: (m) => (current ? current.founding.take(m) : { ok: false, status: 404, why: 'no founding runs' }),
-    state: () => (current ? { trigger: current.trigger, ...current.founding.state() } : null) };
+    state: () => (current ? { trigger: current.trigger, via: current.via, ...current.founding.state() } : null) };
 }

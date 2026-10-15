@@ -7,6 +7,8 @@
 // node starts its guardian (guardian.js, everything derived) and serves with it; its GET /guardian then says so. Either
 // missing: no guardian is started and no directory is made - the node answers {guardian: false}. main.js and the
 // launcher start every node through here, so whether a node is a guardian is decided by the node, never by a launcher.
+// Kanban #326: with ARENA_FOUNDING=1 a node without the files starts its guardian in setup mode, so it can be drawn; and a
+// guardian seated first in a successor runs a second one, the guardian-next (guardiansToStart below).
 import { readFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -14,39 +16,73 @@ import { join } from 'node:path';
 import { serve } from './server.js';
 import { startGuardian } from './guardian.js';
 
-/** Whether the node on this store holds a guardian key: both ceremony files beside it, both parsing. */
-export function holdsGuardianKey(storePath) {
+/** Whether the node on this store holds a guardian key: both ceremony files beside it, both parsing (`dir` '.guardian-next' for the second). */
+export function holdsGuardianKey(storePath, dir = '.guardian') {
   if (!storePath || storePath === ':memory:') return false;
-  const dir = `${storePath}.guardian`;
+  const at = `${storePath}${dir}`;
   try {
-    JSON.parse(readFileSync(join(dir, 'private.json'), 'utf8'));
-    JSON.parse(readFileSync(join(dir, 'consensus.json'), 'utf8'));
+    JSON.parse(readFileSync(join(at, 'private.json'), 'utf8'));
+    JSON.parse(readFileSync(join(at, 'consensus.json'), 'utf8'));
     return true;
   } catch { return false; }
 }
 
 /**
- * Start one node on its store: its guardian first when it holds a key, then the node, served with that guardian.
- * `store` is `{ db, path }`; `options` are serve()'s; `chain` is what the guardian reads the chain with -
- * `{ bitcoindUrl, cookiePath, call, env, tailscale, log }`, the node's own settings. The returned node's close() stops
- * both.
+ * WHICH GUARDIANS A NODE STARTS (kanban #326), from its store and its environment:
+ *
+ *   own    its ceremony files held: the guardian, as always. None held and ARENA_FOUNDING=1: the guardian in SETUP MODE (fedimintd on
+ *          an empty <store>.guardian/, same ports, binary and endpoint) - the node can then be drawn in a founding and take part
+ *          through the setup API (founding-seat.js). Once its DKG is done the same fedimintd runs the federation and the files are
+ *          there, so the node serves it at once, and starts it as a keyed guardian from the next start on. Neither: no guardian
+ *          and no directory, as before.
+ *   next   the guardian-next (<store>.guardian-next/, ports +5000..+8000, /guardian-next): only beside a keyed own guardian, and
+ *          only when its own ceremony files are held (a founded successor runs on every start) or ARENA_FOUNDING=1 and
+ *          ARENA_FOUNDING_NEXT=1 (the operator of a guardian seated first in its federation's successor sets it; it waits in setup).
+ */
+export function guardiansToStart(storePath, env = process.env) {
+  const keyed = holdsGuardianKey(storePath);
+  const founding = env.ARENA_FOUNDING === '1' && !!storePath && storePath !== ':memory:';
+  const own = keyed ? 'keyed' : founding ? 'setup' : null;
+  const nextKeyed = keyed && holdsGuardianKey(storePath, '.guardian-next');
+  const next = nextKeyed ? 'keyed' : keyed && founding && env.ARENA_FOUNDING_NEXT === '1' ? 'setup' : null;
+  return { own, next };
+}
+
+/**
+ * Start one node on its store: its guardian first when it holds a key (or in setup mode, guardiansToStart), its guardian-next when
+ * it runs one, then the node, served with them. `store` is `{ db, path }`; `options` are serve()'s; `chain` is what the guardian
+ * reads the chain with - `{ bitcoindUrl, cookiePath, call, env, tailscale, log }`, the node's own settings. The returned node's
+ * close() stops all of them.
  */
 export async function startNode({ db, path }, options = {}, chain = {}) {
-  let guardian = { running: false, stop: async () => {} };
-  if (holdsGuardianKey(path)) {
-    guardian = await startGuardian({ nodePort: options.port, host: options.host || '127.0.0.1', storePath: path,
-      bitcoindUrl: chain.bitcoindUrl, cookiePath: chain.cookiePath, call: chain.call,
-      ...(chain.env ? { env: chain.env } : {}), ...(chain.tailscale !== undefined ? { tailscale: chain.tailscale } : {}),
-      ...(chain.log ? { log: chain.log } : {}) });
+  const none = { running: false, stop: async () => {} };
+  let guardian = none, next = none;
+  const plan = guardiansToStart(path, chain.env || process.env);
+  const start = (slot) => startGuardian({ nodePort: options.port, host: options.host || '127.0.0.1', storePath: path, slot,
+    bitcoindUrl: chain.bitcoindUrl, cookiePath: chain.cookiePath, call: chain.call,
+    ...(chain.env ? { env: chain.env } : {}), ...(chain.tailscale !== undefined ? { tailscale: chain.tailscale } : {}),
+    ...(chain.log ? { log: chain.log } : {}) });
+  if (plan.own) guardian = await start('guardian');
+  if (plan.next && guardian.running) {
+    try { next = await start('next'); } catch (e) { await guardian.stop(); throw e; }
   }
+  const stopBoth = async () => { try { await next.stop(); } finally { await guardian.stop(); } };
+  const as = (g, setup) => ({ apiPort: g.apiPort, endpoint: g.endpoint, dataDir: g.dataDir, ...(setup ? { setup: true } : {}) });
   let node;
   try {
-    node = await serve(db, guardian.running
-      ? { ...options, guardian: { apiPort: guardian.apiPort, endpoint: guardian.endpoint } } : options);
-  } catch (e) { await guardian.stop(); throw e; }
+    node = await serve(db, {
+      ...options,
+      ...(guardian.running ? { guardian: as(guardian, plan.own === 'setup') } : {}),
+      ...(next.running ? { guardianNext: as(next, plan.next === 'setup') } : {}) });
+  } catch (e) { await stopBoth(); throw e; }
   const closeNode = node.close;
-  node.close = async () => { try { await closeNode(); } finally { await guardian.stop(); } };
+  node.close = async () => { try { await closeNode(); } finally { await stopBoth(); } };
   node.guardianRunning = guardian.running;
+  node.guardianSetup = guardian.running && plan.own === 'setup';
+  node.guardianNextRunning = next.running;
+  // what runs beside the node, for a launcher or a rehearsal to name: { pid, apiPort, dataDir, endpoint, setup } of each
+  const seen = (g, setup) => (g.running ? { pid: g.pid || null, apiPort: g.apiPort, dataDir: g.dataDir, endpoint: g.endpoint, setup: !!setup, ...(g.unit ? { unit: g.unit } : {}) } : null);
+  node.guardians = { own: seen(guardian, plan.own === 'setup'), next: seen(next, plan.next === 'setup') };
   return node;
 }
 

@@ -87,3 +87,87 @@ test('a node with no key, or a guardian directory without private.json, starts n
     assert.equal(existsSync(started), false, 'no fedimintd was started for a node without a key');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// KANBAN #326: WHICH GUARDIANS A NODE STARTS. With ARENA_FOUNDING=1 a node with no ceremony files starts its guardian in SETUP MODE (so it
+// can be drawn); a keyed guardian seated first in a successor runs a second, the guardian-next, with ARENA_FOUNDING_NEXT=1 - or whenever
+// the guardian-next's own files are held. Neither flag: as before.
+import { readFileSync } from 'node:fs';
+import { guardiansToStart } from '../src/node-start.js';
+
+function standInSeen(dir) {
+  const bin = join(dir, 'bin'); mkdirSync(bin);
+  const seen = join(dir, 'fedimintd-seen');
+  writeFileSync(join(bin, 'fedimintd'), `#!/bin/sh\necho "$FM_DATA_DIR $FM_BIND_API $FM_BIND_P2P $FM_BIND_METRICS $FM_API_URL" >> ${seen}\nexec sleep 60\n`);
+  chmodSync(join(bin, 'fedimintd'), 0o755);
+  const cookie = join(dir, '.cookie'); writeFileSync(cookie, '__cookie__:sekrit');
+  return { seen, chain: (extra) => ({ bitcoindUrl: 'http://127.0.0.1:48332', cookiePath: cookie, call: async () => ({ chain: 'regtest' }),
+    env: { PATH: `${bin}:/usr/bin:/bin`, ...extra }, tailscale: null, log: () => {} }) };
+}
+const lines = async (f, n) => { for (let t = 0; t < 50; t++) { if (existsSync(f) && readFileSync(f, 'utf8').trim().split('\n').length >= n) break; await new Promise((ok) => setTimeout(ok, 100)); }
+  return existsSync(f) ? readFileSync(f, 'utf8').trim().split('\n').map((l) => l.split(' ')) : []; };
+
+test('guardiansToStart: setup mode only with ARENA_FOUNDING=1; the guardian-next only beside a keyed guardian, by flag or by its own files', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-start-plan-'));
+  try {
+    const bare = join(dir, 'bare.db'), keyed = join(dir, 'keyed.db'), both = join(dir, 'both.db');
+    founded(keyed); founded(both);
+    mkdirSync(`${both}.guardian-next`); writeFileSync(`${both}.guardian-next/private.json`, '{}'); writeFileSync(`${both}.guardian-next/consensus.json`, '{}');
+    const F = { ARENA_FOUNDING: '1' }, FN = { ARENA_FOUNDING: '1', ARENA_FOUNDING_NEXT: '1' };
+    assert.deepEqual(guardiansToStart(bare, {}), { own: null, next: null });
+    assert.deepEqual(guardiansToStart(bare, F), { own: 'setup', next: null });
+    assert.deepEqual(guardiansToStart(bare, FN), { own: 'setup', next: null }, 'no guardian-next beside a setup-mode guardian');
+    assert.deepEqual(guardiansToStart(':memory:', F), { own: null, next: null });
+    assert.deepEqual(guardiansToStart(keyed, {}), { own: 'keyed', next: null });
+    assert.deepEqual(guardiansToStart(keyed, F), { own: 'keyed', next: null });
+    assert.deepEqual(guardiansToStart(keyed, { ARENA_FOUNDING_NEXT: '1' }), { own: 'keyed', next: null }, 'the flag alone is not enough');
+    assert.deepEqual(guardiansToStart(keyed, FN), { own: 'keyed', next: 'setup' });
+    assert.deepEqual(guardiansToStart(both, {}), { own: 'keyed', next: 'keyed' }, 'a founded successor runs on every start');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ARENA_FOUNDING=1, no ceremony files: the node starts its guardian in setup mode on its own data dir and ports, and serves it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-start-setup-'));
+  const { seen, chain } = standInSeen(dir);
+  try {
+    const path = join(dir, 'n.db');
+    const p = await port(23011);
+    const n = await launchNode({ db: openStore(path), path }, { port: p }, chain({ ARENA_FOUNDING: '1' }));
+    try {
+      assert.deepEqual([n.guardianRunning, n.guardianSetup, n.guardianNextRunning], [true, true, false]);
+      assert.deepEqual(await getGuardian(p), { guardian: true, endpoint: `ws://127.0.0.1:${p}/guardian` });
+      const got = await lines(seen, 1);
+      assert.equal(got.length, 1, 'one fedimintd');
+      assert.deepEqual(got[0], [`${path}.guardian`, `127.0.0.1:${p + 1000}`, `127.0.0.1:${p + 2000}`, `127.0.0.1:${p + 4000}`, `ws://127.0.0.1:${p}/guardian`]);
+      assert.ok(existsSync(`${path}.guardian/admin-password`), 'its admin password, for the founding\'s setup calls');
+    } finally { await n.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a keyed guardian with ARENA_FOUNDING=1 and ARENA_FOUNDING_NEXT=1 runs a guardian-next beside it: its own dir, ports +5000..+8000, /guardian-next', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-start-next-'));
+  const { seen, chain } = standInSeen(dir);
+  try {
+    const path = join(dir, 'g.db');
+    founded(path);
+    const p = await port(23111);
+    const n = await launchNode({ db: openStore(path), path }, { port: p }, chain({ ARENA_FOUNDING: '1', ARENA_FOUNDING_NEXT: '1' }));
+    try {
+      assert.deepEqual([n.guardianRunning, n.guardianSetup, n.guardianNextRunning], [true, false, true]);
+      assert.deepEqual(await getGuardian(p), { guardian: true, endpoint: `ws://127.0.0.1:${p}/guardian`, next: `ws://127.0.0.1:${p}/guardian-next` });
+      const got = (await lines(seen, 2)).sort((a, b) => a[0].localeCompare(b[0]));
+      assert.equal(got.length, 2, 'two fedimintd');
+      assert.deepEqual(got[0], [`${path}.guardian`, `127.0.0.1:${p + 1000}`, `127.0.0.1:${p + 2000}`, `127.0.0.1:${p + 4000}`, `ws://127.0.0.1:${p}/guardian`]);
+      assert.deepEqual(got[1], [`${path}.guardian-next`, `127.0.0.1:${p + 5000}`, `127.0.0.1:${p + 6000}`, `127.0.0.1:${p + 8000}`, `ws://127.0.0.1:${p}/guardian-next`]);
+      assert.ok(existsSync(`${path}.guardian-next/admin-password`));
+    } finally { await n.close(); }
+    // without ARENA_FOUNDING_NEXT: the keyed guardian alone, as before
+    const p2 = await port(23211);
+    const before = (await lines(seen, 2)).length;
+    const m = await launchNode({ db: openStore(path), path }, { port: p2 }, chain({ ARENA_FOUNDING: '1' }));
+    try {
+      assert.deepEqual([m.guardianRunning, m.guardianNextRunning], [true, false]);
+      assert.deepEqual(await getGuardian(p2), { guardian: true, endpoint: `ws://127.0.0.1:${p2}/guardian` });
+      assert.equal((await lines(seen, before + 1)).length, before + 1);
+    } finally { await m.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
