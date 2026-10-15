@@ -3150,6 +3150,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const fedEndpointsOf = createEndpointsOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
     inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null) });
   fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf: fedEndpointsOf,
+    // a mirrored record checked against the census at its own height, read off this seat's chain (kanban #326)
+    censusAt: ballot && typeof ballot.censusEntriesAt === 'function' ? (h) => (chainNetworkId() ? ballot.censusEntriesAt(chainNetworkId(), h) : null) : null,
     absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
