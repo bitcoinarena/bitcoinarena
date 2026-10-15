@@ -23,29 +23,47 @@ export function guardianTicket(seed, entry) {
 /**
  * THE FOUNDING DRAW. `entries` census entries ({ pubkey, txid, vout, bondSats, advert: { operatorId, guardianCapable, guardianEndpoint } });
  * `seed` the beacon block hash after trigger_height (32 bytes); `nominal` federation_nominal; `bondMinGuardian`; `guardingOpen` the
- * operator ids already guarding an OPEN federation. Answers { ok, drawn: [entry], alternates: [entry], eligible, why }.
+ * operator ids already guarding an OPEN federation. Answers { ok, drawn: [entry], alternates: [entry], eligible, seatedFirst, why }.
+ *
+ * SEATED FIRST (§23A.6 step 1, kanban #326): `seatedFirst` - census entries, in order - are the old federation's seated, non-departing
+ * guardians: "seated first in the new one - same operators, new key shares ... and only the missing seats up to federation_nominal
+ * are drawn. If they are fewer than f + 1, everything is drawn." They take positions 0.. in their order (position 0 leads the
+ * ceremony), as they are: no capability, bond or guardingOpen test (they guard the federation being succeeded) and no one-ticket
+ * rule among them (they keep the operators they had). The missing seats are drawn from the pool minus their operators (and minus
+ * their nodes), minus `guardingOpen`; then three alternates. `drawn` is the whole seated list, seated-first and drawn alike - the
+ * no-show rule (replaceNoShows) applies to every position.
  */
-export function drawGuardians({ entries, seed, nominal, bondMinGuardian, guardingOpen = new Set() }) {
+export function drawGuardians({ entries, seed, nominal, bondMinGuardian, guardingOpen = new Set(), seatedFirst = [] }) {
   if (!(seed instanceof Uint8Array) || seed.length !== 32) return { ok: false, why: 'a founding is drawn on the beacon after its trigger height' };
   if (typeof bondMinGuardian !== 'bigint' || bondMinGuardian <= 0n) return { ok: false, why: 'bond_min_guardian is a positive floor' };
+  const opOf = (e) => String((e.advert && e.advert.operatorId) || toHex(e.pubkey));
+  const f = Math.floor((nominal - 1) / 3);
+  const offered = seatedFirst || [];
+  const first = offered.length >= f + 1 ? offered.slice(0, nominal) : [];
+  const firstOps = new Set(first.map(opOf)), firstNodes = new Set(first.map((e) => toHex(e.pubkey)));
   const byOp = new Map();
   for (const e of entries || []) {
     const a = e && e.advert;
     if (!a || a.guardianCapable !== true || !a.guardianEndpoint) continue;
     const op = String(a.operatorId || toHex(e.pubkey));
-    if (guardingOpen.has(op)) continue;
+    if (guardingOpen.has(op) || firstOps.has(op) || firstNodes.has(toHex(e.pubkey))) continue;
     const had = byOp.get(op);
     if (!had) { byOp.set(op, { entry: e, bondSats: BigInt(e.bondSats) }); continue; }
     had.bondSats += BigInt(e.bondSats);
     if (outpointOrder(e, had.entry) < 0) had.entry = e;
   }
   const pool = [...byOp.values()].filter((x) => x.bondSats >= bondMinGuardian);
-  if (pool.length < nominal)
-    return { ok: false, eligible: pool.length, why: `${pool.length} guardian-capable operators hold bond_min_guardian and none guards an OPEN federation: a federation of ${nominal} is not founded with fewer` };
+  const missing = nominal - first.length;
+  const allDrawn = offered.length && !first.length ? `, everything drawn: ${offered.length} seated first is fewer than f + 1 = ${f + 1}` : '';
+  if (pool.length < missing)
+    return { ok: false, eligible: pool.length, seatedFirst: first.length, why: first.length
+      ? `${first.length} seated first, and ${pool.length} other guardian-capable operators hold bond_min_guardian and guard no OPEN federation: the ${missing} missing seats of ${nominal} are not filled, a federation is not founded with fewer`
+      : `${pool.length} guardian-capable operators hold bond_min_guardian and none guards an OPEN federation: a federation of ${nominal} is not founded with fewer${allDrawn}` };
   const scored = pool.map((x) => ({ entry: x.entry, ticket: guardianTicket(seed, x.entry), weight: weightOf(x.bondSats, bondMinGuardian) }))
     .sort((a, b) => { const l = a.ticket * b.weight, r = b.ticket * a.weight; return l < r ? -1 : l > r ? 1 : outpointOrder(a.entry, b.entry); });
-  return { ok: true, eligible: pool.length, drawn: scored.slice(0, nominal).map((s) => s.entry), alternates: scored.slice(nominal, nominal + ALTERNATES).map((s) => s.entry),
-    why: `${nominal} drawn of ${pool.length} eligible operators, ${Math.min(ALTERNATES, pool.length - nominal)} alternates in order` };
+  return { ok: true, eligible: pool.length, seatedFirst: first.length, drawn: [...first, ...scored.slice(0, missing).map((s) => s.entry)],
+    alternates: scored.slice(missing, missing + ALTERNATES).map((s) => s.entry),
+    why: `${first.length ? `${first.length} seated first, ` : ''}${missing} drawn of ${pool.length} eligible operators, ${Math.min(ALTERNATES, pool.length - missing)} alternates in order${allDrawn}` };
 }
 
 /**
@@ -74,21 +92,31 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
  *               the network's first federation at the first height with at least `nominal` of them, only while no federation exists
  *               ("a network with six willing operators has no mainnet federation ... and says so rather than opening with six")
  *   succession  `records`: [{ federation, status, height, replace }] - a federation that entered DRAINING, or whose guardians decided
- *               by threshold signature to be replaced (`replace: true`), at that record's height
+ *               by threshold signature to be replaced (`replace: true`), at that record's height; `notices`: [{ federation, height,
+ *               wouldBe }] - a standing departure notice of a guardian of an OPEN federation that would make it DRAINING (or CRITICAL,
+ *               at four: §23A.1), at the height it was posted (§23A.6 "or a departure notice that would make it DRAINING", kanban #326).
+ *               A row's `federation`, `seatedFirst` (node keys hex, in order) and `departing` (node keys hex) are passed through
  *   load        `loads`: [{ height, federations: [{ federation, status, load }] }], ascending - every OPEN federation at or above 80 %
  *               of its exposure cap (load >= 0.8) at every height for `abandonBlocks`; the trigger is the height that completes it
  * Answers { ok, kind, height, why } for the earliest, or { ok: false, why } naming what is missing.
  */
 export const LOAD_TRIGGER = 0.8;
-export function foundingTrigger({ capable = [], records = [], loads = [], nominal, abandonBlocks, federationExists = false }) {
+export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false }) {
   const found = [];
   if (!federationExists && Number.isInteger(nominal)) {
     const g = capable.find((x) => x.operators >= nominal);
     if (g) found.push({ kind: 'genesis', height: g.height, why: `${g.operators} guardian-capable operators at ${g.height}, at least federation_nominal ${nominal}: the first federation is drawn` });
   }
+  const carried = (r) => ({ ...(r.federation !== undefined ? { federation: r.federation } : {}), ...(Array.isArray(r.seatedFirst) ? { seatedFirst: r.seatedFirst } : {}),
+    ...(Array.isArray(r.departing) ? { departing: r.departing } : {}) });
   for (const r of records) {
     if (r.status === 'DRAINING' || r.replace === true)
-      found.push({ kind: 'succession', height: r.height, why: `federation ${String(r.federation).slice(0, 16)} ${r.replace ? 'decided by threshold signature to be replaced' : 'entered DRAINING'} at ${r.height}: its successor is drawn` });
+      found.push({ kind: 'succession', height: r.height, ...carried(r), why: `federation ${String(r.federation).slice(0, 16)} ${r.replace ? 'decided by threshold signature to be replaced' : 'entered DRAINING'} at ${r.height}: its successor is drawn` });
+  }
+  for (const n of notices) {
+    if (!Number.isInteger(n.height)) continue;
+    found.push({ kind: 'succession', notice: true, height: n.height, ...carried(n),
+      why: `a departure notice posted at ${n.height} would make federation ${String(n.federation).slice(0, 16)} ${n.wouldBe || 'DRAINING'}: its successor is drawn now` });
   }
   if (Number.isInteger(abandonBlocks) && abandonBlocks > 0) {
     let since = null;

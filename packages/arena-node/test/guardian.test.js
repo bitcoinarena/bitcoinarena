@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { openStore } from '../src/store.js';
 import { serve } from '../src/server.js';
-import { guardianPorts, guardianEnv, fedimintNetwork, funnelBaseFor, guardianEndpoint, startGuardian } from '../src/guardian.js';
+import { guardianPorts, guardianNextPorts, guardianUnit, guardianEnv, fedimintNetwork, funnelBaseFor, guardianEndpoint, startGuardian } from '../src/guardian.js';
 import { HOSTED } from './plugins/hosted.js';
 
 // Tailscale's own answers, as `tailscale status --json` / `tailscale funnel status --json` give them on the test host
@@ -143,4 +143,52 @@ test('a chain that fails once is asked again, and the node is still a guardian',
     log: () => {}, chainTries: 3, chainWaitMs: 10 });
   assert.equal(dead.running, false);
   assert.match(dead.why, /fetch failed \(asked 3 times\)/);
+});
+
+// THE GUARDIAN-NEXT (kanban #326): its ports, its unit, its endpoint, and the node carrying it at /guardian-next beside /guardian
+test('the guardian-next: ports +5000..+8000 that meet no guardian of the row, its unit, its endpoint under the same public address', async () => {
+  assert.deepEqual(guardianNextPorts(31221), { api: 36221, p2p: 37221, ui: 38221, metrics: 39221 });
+  assert.deepEqual(guardianNextPorts(6221), { api: 11221, p2p: 12221, ui: 13221, metrics: 14221 });
+  assert.throws(() => guardianNextPorts(58000), /no ports can follow/);
+  const own = new Set(); for (let p = 31221; p <= 31291; p += 10) for (const v of Object.values(guardianPorts(p))) own.add(v);
+  for (let p = 31221; p <= 31291; p += 10) for (const v of Object.values(guardianNextPorts(p))) assert.ok(!own.has(v) && v !== p, `${v} is free in the row`);
+  assert.equal(guardianUnit(31221), 'blwp-tn4-guardian-31221');
+  assert.equal(guardianUnit(31221, 'next'), 'blwp-tn4-guardian-next-31221');
+  assert.equal(guardianEndpoint(31231, { tailscale: TS, path: '/guardian-next' }), 'wss://seat.example.com/guardian-2/guardian-next');
+  const dir = mkdtempSync(join(tmpdir(), 'guardian-next-'));
+  const cookie = join(dir, '.cookie'); writeFileSync(cookie, '__cookie__:sekrit');
+  const bin = join(dir, 'bin'); const seen = join(dir, 'seen');
+  const { mkdirSync } = await import('node:fs'); mkdirSync(bin);
+  writeFileSync(join(bin, 'fedimintd'), `#!/bin/sh\nenv | grep '^FM_' > ${seen}\nexec sleep 60\n`); chmodSync(join(bin, 'fedimintd'), 0o755);
+  // a node whose endpoint is named (the test host's fed2 nodes): the guardian-next's is the same base, /guardian-next
+  const g = await startGuardian({ nodePort: 6221, host: '127.0.0.1', storePath: join(dir, 'a.db'), bitcoindUrl: 'http://127.0.0.1:48332', slot: 'next',
+    cookiePath: cookie, call: async () => ({ chain: 'testnet4' }), env: { PATH: `${bin}:/usr/bin:/bin`, ARENA_GUARDIAN_ENDPOINT_6221: 'wss://seat.example.com/fed2-1/guardian' }, tailscale: null, log: () => {} });
+  try {
+    assert.deepEqual([g.running, g.slot, g.apiPort, g.dataDir], [true, 'next', 11221, join(dir, 'a.db.guardian-next')]);
+    assert.equal(g.endpoint, 'wss://seat.example.com/fed2-1/guardian-next');
+    for (let i = 0; i < 50 && !existsSync(seen); i++) await new Promise((r) => setTimeout(r, 100));
+    const env = Object.fromEntries(readFileSync(seen, 'utf8').trim().split('\n').map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+    assert.deepEqual([env.FM_BIND_API, env.FM_BIND_P2P, env.FM_BIND_UI, env.FM_BIND_METRICS, env.FM_P2P_URL, env.FM_DATA_DIR],
+      ['127.0.0.1:11221', '127.0.0.1:12221', '127.0.0.1:13221', '127.0.0.1:14221', 'fedimint://127.0.0.1:12221', join(dir, 'a.db.guardian-next')]);
+  } finally { await g.stop(); }
+});
+
+test('the node carries /guardian and /guardian-next each to its own guardian API', async () => {
+  const echo = (name) => { const api = createServer(); const wss = new WebSocketServer({ server: api }); wss.on('connection', (ws) => ws.on('message', (m) => ws.send(`${name} heard ${m}`)));
+    return new Promise((r) => api.listen(0, '127.0.0.1', () => r({ api, wss }))); };
+  const [a, b] = [await echo('old'), await echo('next')];
+  const node = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, guardian: { apiPort: a.api.address().port, endpoint: 'ws://x/guardian' },
+    guardianNext: { apiPort: b.api.address().port, endpoint: 'ws://x/guardian-next' } });
+  const ask = (path) => new Promise((resolve, reject) => { const ws = new WebSocket(`ws://127.0.0.1:${node.port}${path}`);
+    ws.on('open', () => ws.send('status')); ws.on('message', (m) => { resolve(String(m)); ws.close(); }); ws.on('error', reject); });
+  try {
+    assert.equal(await ask('/guardian'), 'old heard status');
+    assert.equal(await ask('/guardian-next'), 'next heard status');
+    assert.deepEqual(await (await fetch(`http://127.0.0.1:${node.port}/guardian`)).json(), { guardian: true, endpoint: 'ws://x/guardian', next: 'ws://x/guardian-next' });
+  } finally { await node.close(); for (const x of [a, b]) { x.wss.close(); x.api.close(); } }
+  const one = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, guardian: { apiPort: 1, endpoint: 'ws://x/guardian' } });
+  try {
+    const r = await new Promise((resolve) => { const ws = new WebSocket(`ws://127.0.0.1:${one.port}/guardian-next`); ws.on('open', () => resolve('open')); ws.on('error', (e) => resolve(e.message)); });
+    assert.match(r, /400/, 'no guardian-next: /guardian-next is refused as any other path');
+  } finally { await one.close(); }
 });
