@@ -109,5 +109,13 @@ test('a grid series line is taken once per table, funded by its id, written, kep
   try {
     const held = (await (await fetch(`http://127.0.0.1:${again.port}/series`)).json()).series.map((x) => x.series);
     assert.deepEqual(held, [toHex(seriesId(t)), toHex(seriesId(blind)), toHex(seriesId(daylong))]);
+    // ITS TEMPLATE, AS ITS LINE (kanban #362): what a page checks a series round with - the line hashes back to the id asked
+    const tpl = await fetch(`http://127.0.0.1:${again.port}/series-template?id=${toHex(seriesId(t))}`);
+    assert.equal(tpl.status, 200);
+    const got = await tpl.text();
+    assert.equal(got, line);
+    assert.equal(toHex(seriesId(parseSeriesLine(got))), toHex(seriesId(t)));
+    assert.equal((await fetch(`http://127.0.0.1:${again.port}/series-template?id=${'ab'.repeat(32)}`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${again.port}/series-template?id=zz`)).status, 400);
   } finally { await again.close(); }
 });

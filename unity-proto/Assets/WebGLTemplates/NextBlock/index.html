@@ -2535,6 +2535,9 @@
             if (o.attestation || o.gameOutcome) o.check = BLWPCLIENT.checkMarketOutcome ? await BLWPCLIENT.checkMarketOutcome({ outcome: o, market,
               roundIdHex: p.roundIdHex, sourceRoundIdHex: p.sourceRoundIdHex || null, entryCloseMs: p.entryCloseMs,
               verifySchnorr: (sig, msg, key) => window.BLWP_CURVE.verify(sig, msg, key),
+              // a series source round (Tick Tock's): its series' template from the seats, believed once it hashes to the series id
+              sourceSeries: (sid) => BLWPCLIENT.fetchSeriesTemplate({ seriesIdHex: sid, nodes: p.nodes || [], fetcher: (u, o) => fetch(u, o),
+                timeout: (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined) }),
               sourceCommittee: async (sourceHex, source) => {
                 const got = await BLWPCLIENT.clientCommittee(sourceHex, source, p.nodes || [], { curve: window.BLWP_CURVE, compare: false, roles: ['settlement'] });
                 return got && got.ok ? got.committees.settlement.map((k) => BLWPCLIENT.toHex(k)) : null;

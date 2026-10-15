@@ -13,6 +13,8 @@ import { stakeOf } from './join.js';
 import { decodeManifest, gameIdOf, isAttested, isScalar, isGameMarket, RESULT_TYPE } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, isValueAttestationBytes, valueAttestationBodyId, valueAttestationStands } from '../../arena-protocol/src/scalar.js';
 import { gameMarketResolution } from '../../arena-protocol/src/game-market.js';
+import { seriesId as seriesIdOf, seriesRoundCheck } from '../../arena-protocol/src/series.js';
+import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { decodeAttestation, attestationStands, attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
@@ -201,26 +203,34 @@ export async function checkAttestation({ attestationHex, market, roundIdHex, ver
  *   round, against the manifest's attestors - answers the value, and where it is paid (clamped to the bounds);
  * - a market on a game's source result: the source round's RoundResult, signed by ITS settlement committee - which
  *   `sourceCommittee(sourceRoundIdHex, sourceContract)` derives on this page (clientCommittee), never the seats' list - at its
- *   own threshold, mapped by the manifest. A source round of a series is not checked here yet (its id does not hash its
- *   contract, and the page holds no series templates): shown unverified, by name.
+ *   own threshold, mapped by the manifest. A source round of a SERIES (Tick Tock's are) - whose id does not hash its contract -
+ *   is first checked as its series derives it: `sourceSeries(seriesIdHex)` hands the series' template (fetchSeriesTemplate:
+ *   from any seat, believed only once it hashes to that id), and the contract must be its round byte for byte.
  * `{ verified, outcome, label, value, refund, why }`; never throws.
  */
 export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundIdHex = null, entryCloseMs = null,
-  sourceCommittee = null, verify = webCryptoEd25519, verifySchnorr = null }) {
+  sourceCommittee = null, sourceSeries: sourceSeries_ = null, verify = webCryptoEd25519, verifySchnorr = null }) {
   try {
     if (o && o.gameOutcome && market && market.gameSource) {
       const g = o.gameOutcome;
       if (g.void) return { verified: false, why: `the seats hold it VOID: ${g.why || 'its source round refunds it'} (not checked here)` };
       let source;
       try { source = decodeRoundContract(fromHex(String(g.sourceContract))); } catch (e) { return { verified: false, why: `the source contract does not decode: ${e.message}` }; }
-      if (source.seriesId !== undefined && source.seriesId !== null)
-        return { verified: false, why: `its source is round ${source.roundIndex} of a series, which this page does not check yet` };
+      let sourceSeries = null;
+      if (source.seriesId !== undefined && source.seriesId !== null) {
+        const sid = toHex(source.seriesId);
+        const t = typeof sourceSeries_ === 'function' ? await sourceSeries_(sid) : null;
+        if (!t || !t.ok) return { verified: false, why: `its source is round ${source.roundIndex} of series ${sid.slice(0, 8)}, and ${t && t.why ? t.why : 'no series template was found to check it'}` };
+        const sc = seriesRoundCheck(source, [t.template]);
+        if (!sc.ok) return { verified: false, why: `its source round: ${sc.why}` };
+        sourceSeries = [t.template];
+      }
       if (typeof sourceCommittee !== 'function' || typeof verifySchnorr !== 'function') return { verified: false, why: 'this page cannot derive the source round\'s committee' };
       const committee = await sourceCommittee(String(g.source), source);
       if (!committee || !committee.length) return { verified: false, why: 'this page could not derive the source round\'s committee from the chain' };
       const r = gameMarketResolution({ market: { sourceRoundId: fromHex(String(sourceRoundIdHex || g.source)), entryCloseMs: BigInt(entryCloseMs ?? o.entryCloseMs) },
         manifest: market.manifest, source, result: { roundId: fromHex(String(g.source)), openCents: Number(g.openCents), closeCents: Number(g.closeCents) },
-        sigs: g.sigs, committee, verify: verifySchnorr });
+        sigs: g.sigs, committee, verify: verifySchnorr, sourceSeries });
       if (!r.ok) return { verified: false, why: r.why };
       return r.refund ? { verified: true, refund: true, value: r.value, why: r.why }
         : { verified: true, outcome: r.outcome, label: r.label, value: r.value, signers: r.signers, threshold: r.threshold, why: r.why };
@@ -242,6 +252,28 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
     if (o && o.attestation) return await checkAttestation({ attestationHex: o.attestation, market, roundIdHex, verify });
     return { verified: false, why: 'the seats handed no evidence for it' };
   } catch (e) { return { verified: false, why: e.message }; }
+}
+
+/**
+ * A SERIES' TEMPLATE FROM THE SEATS (kanban #362): each of `nodes` asked GET /series-template?id= in turn; a line is believed only
+ * once the template it carries hashes to `seriesIdHex` (series.js seriesId over the template, its period and its count) - so no
+ * seat can hand another series. `{ ok, template, from }` or `{ ok: false, why }`.
+ */
+export async function fetchSeriesTemplate({ seriesIdHex, nodes = [], fetcher = fetch, timeout = null } = {}) {
+  const want = String(seriesIdHex || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(want)) return { ok: false, why: 'that is not a series id' };
+  const refused = [];
+  for (const n of nodes) {
+    const base = String(n).replace(/\/+$/, '');
+    try {
+      const r = await fetcher(`${base}/series-template?id=${want}`, timeout ? { signal: timeout(8000) } : {});
+      if (!r.ok) { refused.push(`${base}: ${r.status}`); continue; }
+      const t = parseSeriesLine(await r.text());
+      if (toHex(seriesIdOf(t)) !== want) { refused.push(`${base}: its template is another series`); continue; }
+      return { ok: true, template: t, from: base };
+    } catch (e) { refused.push(`${base}: ${e.message}`); }
+  }
+  return { ok: false, why: `no seat handed series ${want.slice(0, 8)}'s template (${refused.slice(0, 3).join('; ') || 'no seat to ask'})` };
 }
 
 /** A scalar value in its unit: "8,300,000 USD cents" -> "83,000.00 USD" for cents, else the number and its unit. */
