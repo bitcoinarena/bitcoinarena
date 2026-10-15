@@ -100,6 +100,39 @@ function keepCensus(round, key, census) {
   catch { /* kept in memory only */ }
 }
 
+/**
+ * THE CENSUS A VIEW GIVES FOR A CONTRACT, derived as every census of this node is (5A.2): the view's transactions indexed by
+ * txid once per view, `deriveCensus` with this network's bond set and the BIP-340 check of advertisement updates and
+ * re-affirmations. The roster's `censusFor` calls it for a round; the ballot's tally (ballot-tally.js, via main.js) for the
+ * bonds active at a proposal's publication height (§27A.7.3) - one derivation, so a vote is weighed by the census a round
+ * would draw from. `readFrom`: the part of the view the scan reads (PICK B's slice), the whole view by default.
+ */
+export function censusOfView(view, contract, { network = networkOf(contract.networkId), readFrom = view } = {}) {
+  // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
+  // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
+  // object itself, so a new view is indexed afresh and an old one is let go with it.
+  let byTxid = TXIDS_OF_VIEW.get(view);
+  if (!byTxid) {
+    byTxid = new Map();
+    for (const block of view.blocks) {
+      for (const raw of block.transactions || []) {
+        try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
+      }
+    }
+    TXIDS_OF_VIEW.set(view, byTxid);
+  }
+  return deriveCensus(readFrom, {
+    contract,
+    bond: bondSetFor(network),
+    resolve: (e) => {
+      const raw = byTxid.get(toHex(e.txid));
+      return raw ? { transaction: raw } : null;
+    },
+    // THE NEWEST ADVERTISEMENT UPDATE (§5A.2), each checked against its bond's own node key
+    verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
+  });
+}
+
 export class Roster {
   constructor(round, { chainFor = NO_CHAIN_VIEW, randomnessFor = NO_BEACON, seatedFor = null } = {}) {
     this.round = round;
@@ -366,34 +399,11 @@ export class Roster {
       return stored;
     }
 
-    // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
-    // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
-    // object itself, so a new view is indexed afresh and an old one is let go with it.
-    let byTxid = TXIDS_OF_VIEW.get(view);
-    if (!byTxid) {
-      byTxid = new Map();
-      for (const block of view.blocks) {
-        for (const raw of block.transactions || []) {
-          try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
-        }
-      }
-      TXIDS_OF_VIEW.set(view, byTxid);
-    }
-
     // PICK B (old-series.js): series 3cfbe516's census is read as its publisher read it, from 154152
     const readFrom = isOldTestnet4Id(contract.networkId) && contract.seriesId instanceof Uint8Array && isOldTestnet4Series(contract.seriesId)
       && view.firstHeight < OLD_TESTNET4_SERIES_CENSUS_FROM
       ? { firstHeight: OLD_TESTNET4_SERIES_CENSUS_FROM, blocks: view.blocks.slice(OLD_TESTNET4_SERIES_CENSUS_FROM - view.firstHeight) } : view;
-    const census = deriveCensus(readFrom, {
-      contract,
-      bond: bondSetFor(network),
-      resolve: (e) => {
-        const raw = byTxid.get(toHex(e.txid));
-        return raw ? { transaction: raw } : null;
-      },
-      // THE NEWEST ADVERTISEMENT UPDATE (§5A.2), each checked against its bond's own node key
-      verifyUpdate: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    });
+    const census = censusOfView(view, contract, { network, readFrom });
     if (!census.ok) return census;
 
     // AND IT HAS TO BE THIS ROUND'S CENSUS - when it is being asked for as this round's.

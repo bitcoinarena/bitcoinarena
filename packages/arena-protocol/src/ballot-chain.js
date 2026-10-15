@@ -16,7 +16,7 @@
 import { splitBlock } from './block.js';
 import { parseTransaction, commitmentsOf } from './tx.js';
 import { decodeVote } from './ballot.js';
-import { toHex } from './hash.js';
+import { toHex, fromHex } from './hash.js';
 import { splitDonation, donationSetPaysKeys } from './donation.js';
 
 /** The vote outputs of one raw block at `height`: [{ payload, height, txid }], txid hex in Bitcoin's display order. */
@@ -51,6 +51,67 @@ export function liveConfig({ genesis, passed = [], height }) {
     history.push({ configHash: p.configHash, config: p.config, since: p.activationHeight, by: p.id });
   }
   return { configHash: history[history.length - 1].configHash, history, void: voided };
+}
+
+/**
+ * WHERE THE BALLOT'S CHAIN OF CONFIGS STARTS (§27A.6, §27A.7.8), on every network this build knows. `genesis_config_hash`
+ * (bbae68dc, genesis-ids.js) is where the network's chain of configs began, and it stays that; three rulings (§27A.7.8,
+ * FEDERATION.md "Rulings") then moved the config new rounds name to 2170f250 - the truck's v4 - and §27A.7.8 says the interim
+ * "is replaced by §27A.7 as soon as those are built". So the ballot carries on from the config the rulings left live: it is
+ * history[0], since height 0, by nobody. A choice, named: the configs ruled before it (bbae68dc, dbb49344, f51759b6) have no
+ * ballot record, so no repeal reaches them as ancestors - a repeal goes back only to configs the ballot itself held live.
+ *
+ * WRITTEN OUT, NOT COMPUTED: the bytes are nextblock's encodeGameConfigV4 (nextblock/config/game-config.js), and the engine
+ * imports no game (kanban #203, #328). nextblock/test/ballot-genesis.test.js holds them to that encoder and the hash to the
+ * config every truck round names (TRUCK_CURRENT_CONFIG). While no proposal has passed, this is the only entry of the history,
+ * and every round is served exactly as before (configServesRound below answers `governed` only for configs the ballot named).
+ */
+export const BALLOT_GENESIS = Object.freeze({
+  configHash: fromHex('2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d'),
+  config: fromHex('040140000000220000001600000024000000004000000180000000000103042a3000c800004ccd00003333000080000000385200000708000004b000001c20010000b333000000060101'),
+});
+
+/** The history as spans: each entry live from its `since` up to (not including) the next one's. */
+const spansOf = (history) => (history || []).map((h, i) => ({ ...h, until: i + 1 < history.length ? history[i + 1].since : Infinity }));
+
+/**
+ * MAY A ROUND NAMING `configHash`, CREATED AT `height`, BE SERVED (§27A.7.5)? "A round is bound to the config it was created
+ * under": a config the ballot's history names is served for the rounds created while it was live - the one live now for the
+ * rounds created since its activation, an earlier one for the rounds created before an activation, which keep it to the end -
+ * and for no other round. A config the history never named is not the ballot's (another game's config, a frozen core's pair
+ * kept by ruling, §27A.7.8): answered `governed: false` and left to the doors that served it before.
+ *
+ * `height` is the round's census height: the census is chain state at the round's making (§5A.2), every round names one,
+ * and a series' rounds share their template's - so a series published before an activation keeps its config for all of its
+ * rounds, and "a paid series [changes] only from the next series published" (§27A.7.8). A creator naming an old census height
+ * names the config live at it; the census lookback bounds how old (main.js CENSUS_LOOKBACK).
+ *
+ * `history`: liveConfig's, computed over every passed proposal (with no height cut), so a config that is not live YET is
+ * refused for the rounds created before its activation too.
+ */
+export function configServesRound({ configHash, height, history }) {
+  if (!(configHash instanceof Uint8Array) || configHash.length !== 32) return { ok: false, governed: false, why: 'that round names no 32-byte config' };
+  const want = toHex(configHash);
+  const spans = spansOf(history);
+  const mine = spans.filter((s) => toHex(s.configHash) === want);
+  if (!mine.length) return { ok: true, governed: false };
+  if (mine.some((s) => s.since <= height && height < s.until)) return { ok: true, governed: true };
+  const live = spans.find((s) => s.since <= height && height < s.until);
+  const when = mine.map((s) => (s.until === Infinity ? `from ${s.since}` : `${s.since} to ${s.until - 1}`)).join(', ');
+  return { ok: false, governed: true, live: live ? live.configHash : null,
+    why: `that round, created at census height ${height}, names config ${want.slice(0, 16)}, which the ballot made live for rounds created ${when}; `
+      + `the config live at ${height} is ${live ? toHex(live.configHash).slice(0, 16) : '(none)'} - a round is bound to the config it was created under (27A.7.5)` };
+}
+
+/**
+ * THE CONFIG A ROUND CREATED AT `height` NAMES, for its creator (§27A.7.5): `wanted` when it is served there (a config the
+ * ballot never named stays the creator's choice), else the config the ballot made live at that height - so a round created
+ * after an activation names the new hash, and nobody types it.
+ */
+export function configForNewRound({ wanted, height, history }) {
+  const got = configServesRound({ configHash: wanted, height, history });
+  if (got.ok) return wanted;
+  return got.live || wanted;
 }
 
 /** The P2TR script a deposit share pays: OP_1 PUSH32 the recipient key's x-only form (its 33-byte key without the parity byte). */
