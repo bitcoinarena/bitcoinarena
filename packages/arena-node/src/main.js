@@ -58,6 +58,9 @@ import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { readAdvertUpdate } from '../../arena-protocol/src/advert-update.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { votesInBlock } from '../../arena-protocol/src/ballot-chain.js';
+import { PROTOCOL_VERSION } from '../../arena-protocol/src/constants.js';
+import { censusOfView } from './roster.js';
 import { readSeriesLines } from './series-line.js';
 import { TEST_DONATION_SET_REGTEST, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS } from '../../arena-protocol/src/test-donation-sets.js';
 import { TEST_DONATION_SET_KEYS_REGTEST } from '../../arena-protocol/src/test-donation-set-keys-regtest.js';
@@ -307,6 +310,25 @@ if (url) {
         } catch { return null; }
       },
       lowestBondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000),
+      // AND THE TALLY'S READS OF THIS SEAT'S OWN CHAIN (ballot-tally.js, §27A.7.3): the tip; the vote outputs of one block, read
+      // raw and kept as votes only (the tally asks each height once); and the bonds
+      // active at a proposal's publication height, each with its amount - derived as a round's census is (roster.js censusOfView),
+      // at the version the proposal is written in, every bond at or above the lowest bracket's bond_min, one confirmation deep at
+      // that height. ARENA_BALLOT_EVERY_MS: how often it counts (10 s by default).
+      tipHeight: async () => Number(await call('getblockcount')),
+      votesAt: async (height) => {
+        const raw = fromHex(String(await call('getblock', [await call('getblockhash', [height]), 0])));
+        return votesInBlock(raw, height);
+      },
+      censusAt: async (networkIdHex, height) => {
+        const contract = { networkId: fromHex(networkIdHex), censusHeight: height, censusConfirmations: 1,
+          bondMinSats: BigInt(process.env.ARENA_LOWEST_BOND_MIN_SATS || 50000), protocolVersion: PROTOCOL_VERSION };
+        const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
+        const census = censusOfView(view, contract);
+        if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
+        return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats }));
+      },
+      everyMs: Number(process.env.ARENA_BALLOT_EVERY_MS || 10000),
     },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
     chainTip: async () => Number(await call('getblockcount')),

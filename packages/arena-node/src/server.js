@@ -48,8 +48,10 @@ import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX }
 import { WebSocketServer } from 'ws';
 import { connect as netConnect } from 'node:net';
 import { relayPost, relayMarks } from './relay.js';
-import { CHOICE, voteMessage, encodeVote, SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { CHOICE, voteMessage, encodeVote, SCHEDULES, REPEAL_SCHEDULES } from '../../arena-protocol/src/ballot.js';
+import { configServesRound } from '../../arena-protocol/src/ballot-chain.js';
 import { createProposals } from './proposals.js';
+import { createBallotTally } from './ballot-tally.js';
 import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
@@ -950,6 +952,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
   };
   // THE PROPOSALS THIS SEAT KEEPS (kanban #329, proposals.js): a deposit pays the network's donation set in force at its height
+  // AND THE TALLY ON THIS SEAT'S OWN CHAIN (ballot-tally.js), when the launcher hands the chain to read it with - its tip, the
+  // vote outputs of a block, the census at a height (main.js). Without them the proposals are kept and listed as before, and
+  // no proposal is counted, so no config ever moves on such a seat.
+  const counts = !!(ballot && typeof ballot.tipHeight === 'function' && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function');
+  const isRegtestNet = (net) => { const k = donationKeysForNetworkId(fromHex(net)); return !!k && k.network === 'regtest'; };
+  let ballotTally = null;
   const proposals = givenProposals || (ballot ? createProposals({ confirmedTx: ballot.confirmedTx,
     recipientsFor: (net, height) => {
       const networkId = fromHex(net); const keys = donationKeysForNetworkId(networkId);
@@ -960,11 +968,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     },
     lowestBondMinSatsFor: () => ballot.lowestBondMinSats,
     // regtest votes on its short schedule (1 / 6 / 1); every other network on the genesis one (27A.7.4)
-    scheduleFor: (net) => { const k = donationKeysForNetworkId(fromHex(net)); return k && k.network === 'regtest' ? SCHEDULES.regtest : SCHEDULES.mainnet; },
+    scheduleFor: (net) => (isRegtestNet(net) ? SCHEDULES.regtest : SCHEDULES.mainnet),
+    // AND ITS REPEAL SCHEDULE (27A.7.6), read against the history live at the proposal's publication - the tally's
+    repealScheduleFor: (net) => (isRegtestNet(net) ? REPEAL_SCHEDULES.regtest : REPEAL_SCHEDULES.mainnet),
+    ...(counts ? { historyFor: (net, height) => (ballotTally ? ballotTally.historyAt(net, height) : null) } : {}),
     verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
     store: { read: () => { try { return round.db.prepare('SELECT json FROM ballot_proposals').all().map((r) => JSON.parse(r.json)); } catch { return []; } },
       write: (list) => { round.db.exec('CREATE TABLE IF NOT EXISTS ballot_proposals (id TEXT PRIMARY KEY, json TEXT NOT NULL)');
         const put = round.db.prepare('INSERT OR REPLACE INTO ballot_proposals (id, json) VALUES (?, ?)'); for (const x of list) put.run(x.id, JSON.stringify(x)); } } }) : null);
+  if (counts && proposals) {
+    // A REGTEST OUTCOME IS WRITTEN AS SOON AS THE LAST VOTING BLOCK IS MINED ("two operators can drive a whole governance cycle
+    // through to activation in under a minute", 27A.7.4); every other chain waits for it to be six deep
+    ballotTally = createBallotTally({ proposals, tipHeight: ballot.tipHeight, votesAt: ballot.votesAt, censusAt: ballot.censusAt,
+      verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } },
+      decideDepthFor: (net) => (isRegtestNet(net) ? 1 : 6), log: (l) => console.log(l) });
+  }
+  // A SEAT SERVES A ROUND ONLY UNDER A CONFIG IT RUNS FOR THAT ROUND (27A.7.5): of the configs the ballot named, the one live at
+  // the round's creation - its census height (ballot-chain.js configServesRound). A config the ballot never named is not
+  // governed here and is served as before; with no proposal passed the history holds the genesis alone, and nothing changes.
+  const configRefusal = (contract) => {
+    if (!ballotTally || !contract || !(contract.networkId instanceof Uint8Array)) return null;
+    const got = configServesRound({ configHash: contract.configHash, height: contract.censusHeight, history: ballotTally.spans(toHex(contract.networkId)) });
+    return got.ok ? null : got.why;
+  };
   // WHAT A PLAYER'S DONATION IN THIS ROUND PAYS (§0A.8, kanban #205): half to the network's set - the protocol devs - and
   // half to the round's game's set - its developer's, as its registration carries it, checked against its manifest. A
   // round of a game this node does not host, or with no network set, has no target, and its entries' donations are judged
@@ -2054,6 +2080,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     tick();
   }
   let shuttingDown = false;
+  // THE BALLOT COUNTED EVERY `ballot.everyMs` (10 s by default): one pass at a time, each bounded (ballot-tally.js)
+  const ballotTimer = ballotTally ? setInterval(() => { if (!shuttingDown) ballotTally.pass().catch((e) => console.error(`[ballot] the pass did not run: ${e.message}`)); },
+    Number(ballot.everyMs) > 0 ? Number(ballot.everyMs) : 10000) : null;
+  if (ballotTimer && ballotTimer.unref) ballotTimer.unref();
   function watchFinality(roundIdBytes, closed, money) {
     const row = round.get(roundIdBytes);
     if (!row) return;
@@ -2822,7 +2852,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return refuseFile.ids.has(id) ? `this signer node's operator refuses round ${id.slice(0, 16)} (refuse-rounds file)` : null;
   };
   const offerRefusal = (contract) => seriesRefusal(contract) || droppedRefusal(contract) || donationInForceRefusal(contract)
-    || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null);
+    || drainingRefusal(contract) || fileRefusal(contract) || (typeof refusedFor === 'function' ? refusedFor(contract) : null)
+    // AND A CONFIG THE BALLOT DID NOT MAKE LIVE FOR IT (27A.7.5): not listed, entered or locked here - "it serves nothing"
+    || configRefusal(contract);
   const seriesRefusalOfRound = (rid) => {
     const row = rid ? round.get(rid) : null;
     if (!row) return null;
@@ -3966,9 +3998,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE ROUND'S CENSUS AS EVIDENCE (kanban #296, spec 5A.6): every bond with its merkle branch, update and
       // re-affirmation, for a client that builds the committee itself and checks the set against census_root
       // THE BALLOT'S PROPOSALS (kanban #329, proposals.js): kept when they stand and their deposit is on this seat's chain
+      // AND, ON A SEAT THAT COUNTS (ballot-tally.js), EACH ONE'S PHASE AND TALLY: review, voting (a running count), cooldown,
+      // activated, failed, or void (passed, its parent no longer live at its activation, 27A.7.2)
       if (proposals && url.pathname === '/proposals' && req.method === 'GET') {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ proposals: proposals.list() }));
+        return res.end(JSON.stringify(ballotTally ? { tip: ballotTally.tip, proposals: ballotTally.list() } : { proposals: proposals.list() }));
+      }
+      // THE CONFIG LIVE ON THIS SEAT'S CHAIN (27A.7.5): { configHash, since, by, history } - ?network=<hex>, this seat's chain's by
+      // default. What a round created now names; `history` (genesis first) is what a repeal is read against (27A.7.6).
+      if (url.pathname === '/config' && req.method === 'GET') {
+        if (!ballotTally) return text(res, 404, 'this seat counts no ballot: it reads no chain for it');
+        const net = String(url.searchParams.get('network') || chainNetworkId() || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(net)) return text(res, 400, 'name the network: GET /config?network=<64 hex>');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(ballotTally.live(net)));
       }
       if (proposals && url.pathname === '/proposal' && req.method === 'POST') {
         let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return text(res, 400, 'that is not JSON'); }
@@ -4031,6 +4074,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE RULES IT NAMES, THIS BUILD'S OR REFUSED (§6, kanban #314; rules.js): a round settled under rules this seat does not run is
         // not selectable here - refused by name, nothing of it stored
         { const ru = rulesStand(contract); if (!ru.ok) return text(res, 409, ru.why); }
+        // THE CONFIG IT NAMES, THE ONE THE BALLOT MADE LIVE FOR A ROUND CREATED AT ITS CENSUS HEIGHT (27A.7.5, kanban #329): a round
+        // created after an activation names the new hash, one created before keeps its own - anything else is not selectable here
+        { const why = configRefusal(contract); if (why) return text(res, 409, why); }
         // THE COMMITTEES ITS GENESIS BINDS (§5A.7 / §27A.6, kanban #297): from mainnet's genesis on; a test network's leaves the contract its own
         { const cs = committeesStand(contract, seatGenesis()); if (!cs.ok) return text(res, 409, cs.why); }
         { const bm = bondMinStands(contract, roundIdOf(contract)); if (!bm.ok) return text(res, 409, bm.why); }
@@ -7071,6 +7117,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       shed: () => shed,
       // how many listing rows this node has signed since it started (kanban #232: what a window signs is what was asked)
       listingSignatures: () => listingSigned,
+      // THE BALLOT'S PASS, for a test or a harness that moves the chain itself (ballot-tally.js); null on a seat that counts none
+      ballotPass: ballotTally ? () => ballotTally.pass() : null,
       port: http.address().port,
       // Closed so it actually closes. `http.close` waits for open connections
       // to end, and a play socket does not end on its own - a harness that
@@ -7097,6 +7145,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (endTimer) clearInterval(endTimer);
         if (doorTimer) clearInterval(doorTimer);
         if (seriesTimer) clearInterval(seriesTimer);
+        if (ballotTimer) clearInterval(ballotTimer);
         for (const t of finalityTimers) clearTimeout(t);
         finalityTimers.clear();
         for (const t of rerunTimers) clearTimeout(t);

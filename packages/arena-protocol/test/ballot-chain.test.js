@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { schnorr } from '../../arena-node/node_modules/@noble/curves/secp256k1.js';
-import { votesInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf } from '../src/ballot-chain.js';
+import { votesInBlock, liveConfig, depositOf, depositOutputsExpected, depositScriptOf, configServesRound, configForNewRound, BALLOT_GENESIS } from '../src/ballot-chain.js';
 import { TESTNET4_DONATION_SET } from '../src/testnet4-donation-set.js';
 import { encodeVote, voteMessage, decodeVote, CHOICE, CLASS, proposalStands, proposalBodyId, isRepeal, SCHEDULES, REPEAL_SCHEDULES } from '../src/ballot.js';
 import { splitBlock } from '../src/block.js';
@@ -96,4 +96,37 @@ test('a proposal\'s deposit: its transaction pays each key of the keyed set its 
   assert.match(depositOf({ raw: good, height: 1, proposal, recipients: TESTNET4_DONATION_SET.recipients }).why, /pays LNURLs/);
   assert.match(depositOf({ raw: good, height: null, proposal, recipients: set }).why, /confirmed at a height/);
   assert.equal(depositScriptOf(pk(2)).length, 34);
+});
+
+// GOING LIVE (§27A.7.5, kanban #329): a round is bound to the config live at its creation (its census height)
+test('a round names the config live at its census height: before an activation the old one, after it the new one, and nothing else of the ballot\'s', () => {
+  const genesis = { configHash: H(1), config: Uint8Array.of(1) };
+  const a = { id: H(0xa), parent: H(1), configHash: H(2), config: Uint8Array.of(2), activationHeight: 500 };
+  const back = { id: H(0xb), parent: H(2), configHash: H(1), config: Uint8Array.of(1), activationHeight: 900 };
+  const none = liveConfig({ genesis, passed: [], height: 10 ** 9 }).history;
+  // NO PROPOSAL PASSED: the genesis alone, live everywhere; a config the ballot never named is not governed - today's behaviour
+  assert.deepEqual(configServesRound({ configHash: H(1), height: 7, history: none }), { ok: true, governed: true });
+  assert.deepEqual(configServesRound({ configHash: H(9), height: 7, history: none }), { ok: true, governed: false });
+  const spans = liveConfig({ genesis, passed: [a, back], height: 10 ** 9 }).history;
+  const at = (hash, height) => configServesRound({ configHash: H(hash), height, history: spans });
+  assert.equal(at(1, 499).ok, true, 'created before the activation: keeps the old config to the end');
+  assert.equal(at(2, 499).ok, false, 'the new config is not live yet for a round created before its activation');
+  assert.match(at(2, 499).why, /names config 0202.*live for rounds created 500 to 899; the config live at 499 is 0101/);
+  assert.equal(at(2, 500).ok, true, 'created at the activation: the new config');
+  assert.equal(at(1, 500).ok, false);
+  assert.equal(at(1, 900).ok, true, 'the repeal made the old config live again');
+  assert.equal(at(2, 900).ok, false);
+  assert.equal(at(9, 600).governed, false, 'another config stays outside the ballot');
+  // THE CREATOR'S SIDE: a round created after the activation names the new hash; one the ballot never named stays the creator's
+  assert.equal(configForNewRound({ wanted: H(1), height: 600, history: spans })[0], 2);
+  assert.equal(configForNewRound({ wanted: H(1), height: 499, history: spans })[0], 1);
+  assert.equal(configForNewRound({ wanted: H(9), height: 600, history: spans })[0], 9);
+});
+
+test('the ballot starts at the config the rulings left live (2170f250), with its bytes: a repeal back to it is byte-identical', () => {
+  assert.equal(toHex(BALLOT_GENESIS.configHash), '2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d');
+  assert.equal(BALLOT_GENESIS.config.length, 74);
+  const later = { id: H(0xa), parent: BALLOT_GENESIS.configHash, configHash: H(2), config: Uint8Array.of(2), activationHeight: 50 };
+  const history = liveConfig({ genesis: BALLOT_GENESIS, passed: [later], height: 60 }).history;
+  assert.equal(isRepeal({ config: Uint8Array.from(BALLOT_GENESIS.config) }, history), true);
 });

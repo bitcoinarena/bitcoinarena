@@ -54,7 +54,8 @@ import { operatorFunding, freeOrOperatorFunding } from '../src/funding.js';
 import { startNode } from '../src/node-start.js';
 import { lightningFromEnv } from '../src/node-start.js';
 import { serveDonationRecipients, TEST_RECIPIENT_PORT } from '../src/lnurl-recipients.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { configForNewRound } from '../../arena-protocol/src/ballot-chain.js';
 import { BITCOIN_MAINNET_GENESIS_HEADER, blockHashOf, blockTimeOf } from '../../arena-protocol/src/chain.js';
 import { publicationPayload } from '../../arena-protocol/src/publication.js';
 import { seriesId, seriesRound, seriesLeadIsValid, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
@@ -764,6 +765,22 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // FROM WELL BEFORE THE BONDS: the census is read from here now, and the
     // beacon's view below reaches back past committee_time from the same start.
     censusView = onChain.blocksFrom(Math.max(0, bondFloor - 20), onChain.height());
+  }
+  // THE CONFIG THE BALLOT MADE LIVE AT THIS CENSUS HEIGHT (§27A.7.5, kanban #329): an attached seat that counts the ballot answers
+  // GET /config, and a round created after an activation names the new hash (configForNewRound) - one whose config the ballot
+  // never named keeps the caller's. A seat that counts none answers 404 and nothing changes. The keeper's later rounds keep this
+  // round's census height, so they keep its config too: rounds created under one census are bound to the config live there.
+  if (attach) {
+    try {
+      const r = await fetch(`http://${host}:${portA}/config`);
+      if (r.ok) {
+        const live = await r.json();
+        const history = (live.history || []).map((h) => ({ configHash: fromHex(h.configHash), since: h.since }));
+        const named = configForNewRound({ wanted: configHash, height: censusHeight, history });
+        if (toHex(named) !== toHex(configHash)) console.log(`[config] the ballot made ${toHex(named).slice(0, 16)} live at ${censusHeight}: the round names it, not ${toHex(configHash).slice(0, 16)}`);
+        configHash = named;
+      }
+    } catch (e) { console.error(`[config] GET /config not read (${e.message}): the round names ${toHex(configHash).slice(0, 16)}`); }
   }
   const contract = {
     networkId: NETWORK_ID, configHash, censusConfirmations,
