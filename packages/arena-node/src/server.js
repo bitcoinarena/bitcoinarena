@@ -68,7 +68,7 @@ import { matchOf } from './match.js';
 import { matchProofId, presenceId, PRESENCE_MS } from '../../arena-protocol/src/match.js';
 import { dashboardData, dashboardHtml } from './dashboard.js';
 import { season, seasonWindow, mergeSeasonAccounts, seasonRoundsToJson, seasonRoundsFromJson, SEASON_NETWORK_AGREE,
-  SEASON_NETWORK_UNCHECKED } from '../../arena-protocol/src/season.js';
+  SEASON_NETWORK_UNCHECKED, SEASON_DAYS_MAX, DAY_MS } from '../../arena-protocol/src/season.js';
 import { seasonRounds, seasonRoundOf } from './season-read.js';
 import { createOwner } from './owner.js';
 import { donationReport } from './owner-donations.js';
@@ -850,7 +850,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // key is this seat reached through its own address, not another witness. Every seat's answer is a claim only: what
   // makes a round count is SEASON_NETWORK_AGREE seats agreeing on it byte for byte (season.js). One read per query at a time.
   const seasonNetKept = new Map();               // query -> { at, json } | { reading }
-  const seasonNetwork = async (ids, w) => {
+  // EVERY SEAT'S ACCOUNTS OF A SEASON, unmerged: this seat's own rounds of the window, then each other seat's answer to
+  // GET /season-rounds for the same ids and `days` back from its clock, one label per seat as above. Answers
+  // { bySeat: Map label -> rounds, asked }. With `keyed`, an answer counts only when it says it carries each entry's round
+  // key (`roundKeys: true`): the board badge merges on the round keys too, and a seat on a build from before them hands in
+  // no key at all - read as an account, it would disagree with every seat that sends them, so it is not asked to agree.
+  const seasonAccounts = async (ids, w, { days = w.days, keyed = false } = {}) => {
     const games = new Set(ids);
     const own = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
     const seats = networkSeats();
@@ -860,10 +865,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       while (next < seats.length) {
         const i = next++;
         try {
-          const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${w.days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
+          const r = await seasonFetch(`${seats[i]}/season-rounds?game=${ids.join(',')}&days=${days}`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
           if (!r.ok) continue;
           const j = await r.json();
-          if (!j || !Array.isArray(j.rounds)) continue;
+          if (!j || !Array.isArray(j.rounds) || (keyed && j.roundKeys !== true)) continue;
           const node = typeof j.node === 'string' && /^[0-9a-f]{64}$/i.test(j.node) ? j.node.toLowerCase() : null;
           answers[i] = { seat: seats[i], node, rounds: seasonRoundsFromJson(j.rounds) };
         } catch { /* missing: no answer in time, or none that reads */ }
@@ -876,12 +881,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const label = a.node || a.seat;
       if (!bySeat.has(label)) bySeat.set(label, a.rounds);
     }
+    return { bySeat, asked: seats.length };
+  };
+  const seasonNetwork = async (ids, w) => {
+    const { bySeat, asked: seats } = await seasonAccounts(ids, w);
     const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE });
     if (!m.ok) throw new Error(m.why);
     const s = season(m.rounds, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
     if (!s.ok) throw new Error(s.why);
     return JSON.stringify({ ...seasonBody(s, ids, w, { leftOut: m.excluded.length, unchecked: SEASON_NETWORK_UNCHECKED }),
-      scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: seats.length, answered: bySeat.size - 1 } });
+      scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: seats, answered: bySeat.size - 1 } });
   };
   const seasonNetworkNow = async (ids, w) => {
     const q = `${ids.join(',')}|${w.days}`;
@@ -2534,7 +2543,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // BADGES ON NOSTR (kanban #362, docs/PLATFORM-RESEARCH.md item 13; nostr-badges.js, protocol badges.js). A round is read for
   // its badges as the season board reads it (season-read.js seasonRoundOf: FINAL results, the settlement's amounts, each entry
   // under its identity with its round key beside it), once its settlement is ACCEPTED here - the moment its Nostr result is
-  // built; the weekly board badge reads this seat's own season of each game it hosts (a name with all its versions' ids).
+  // built. The weekly board badge reads THE NETWORK'S season of each game it hosts (a name with all its versions' ids) for
+  // the closed week: this seat's own rounds of the week and every other seat's /season-rounds, merged by the book
+  // (nostr-badges.js) with the same agreement as GET /season?scope=network, the round keys included. A peer is asked for
+  // whole days back from its own clock - the week's start plus a day for clock skew, the rest left out by the week's window.
   const badgeRoundOf = (ridHex) => {
     const rid = fromHex(ridHex);
     const held = round.get(Buffer.from(rid));
@@ -2552,7 +2564,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const badges = nostrBadges({ db: round.db, secret: round.identity.secret, on: nostrBadgesOn, relays: nostrPublish, roundOf: badgeRoundOf,
     settled: (ridHex) => stateOf(round, fromHex(ridHex)) === 'ACCEPTED', games: hostedGames, imageBase: badgeImageBase,
-    seasonOf: (g, w) => seasonRounds(round, { games: new Set(g.ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) }),
+    accountsOf: (g, w) => seasonAccounts(g.ids, w, { keyed: true,
+      days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - w.fromMs) / DAY_MS) + 1) }),
     perMinute: nostrPerMinute, tickMs: nostrBadgesTickMs });
   badges.start();
   if (nostrBadgesOn) console.log(`[badges] awarding NIP-58 badges as ${toHex(round.pubkey).slice(0, 16)}${nostrPublish.length ? `, published to ${nostrPublish.join(', ')}` : ', not published (no ARENA_NOSTR_PUBLISH)'}`);
@@ -4508,7 +4521,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
 
       // A SEASON'S ROUNDS AS THIS SEAT HOLDS THEM (kanban #362): what /season builds its own board from (season-read.js), for
       // another seat's network season to merge - every msat and start time a decimal string. ?game= as /season's, or a comma
-      // list of game ids in hex (a network season asks for exactly the ids it resolved), ?days= as /season's. Public and
+      // list of game ids in hex (a network season asks for exactly the ids it resolved), ?days= as /season's. Each entry
+      // names the round key it joined under (`roundKeys: true` says so): the weekly board badge merges on it. Public and
       // read-only; kept SEASON_KEEP_MS (30 s) per query, so fourteen seats asking at once cost one read of the store.
       if (req.method === 'GET' && url.pathname === '/season-rounds') {
         const asked = seasonQuery(url, { list: true });
@@ -4519,7 +4533,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!kept || Date.now() - kept.at > SEASON_KEEP_MS) {
           const read = seasonRounds(round, { games: new Set(ids), fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
           kept = { at: Date.now(), json: JSON.stringify({ node: toHex(round.pubkey), game: { ids }, days: w.days, fromMs: w.fromMs, toMs: w.toMs,
-            rounds: seasonRoundsToJson(read) }) };
+            roundKeys: true, rounds: seasonRoundsToJson(read) }) };
           keepSeason(q, kept);
         }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });

@@ -14,7 +14,8 @@
 //     award names one player: a `p` per player would tie one player's award to another's evidence.
 //   - ASSUMPTIONS, beyond what NIP-58 says: the content of both is the empty string (NIP-58's own examples carry none); the
 //     award also carries `t` (the game's name), `evidence` (the round ids that earned it) or `window` (a board week, ISO
-//     from and to) with `rank`, and NIP-31's `alt`. Tags NIP-58 does not name are ignored by a client that does not know
+//     from and to) with `rank`, `seats` (how many seats' accounts the board was merged from) and `agree` (how many had to
+//     agree on a round), and NIP-31's `alt`. Tags NIP-58 does not name are ignored by a client that does not know
 //     them, and a relay indexes single-letter tags only, so `evidence` and `window` cost nobody anything.
 //   - THE PLAYER IS A NOSTR KEY. A `p` tag is an x-only secp256k1 key (BIP-340, 32 bytes): an identity that is not a point
 //     on the curve could never be followed or shown, so it is awarded nothing.
@@ -25,9 +26,16 @@
 //     seasonRoundOf: FINAL results, the amounts its settlement paid, each entry under its identity), into a small ledger
 //     (nostr_badge_rounds), and the game's ledger is handed to badgesEarned. The ledger is what keeps that cheap: reading a
 //     round verifies every result signature it holds, and a game's history is read once, never on every settlement.
-//   - THE BOARD BADGE (season top 3) once a whole UTC week has closed and BOARD_GRACE_MS more have passed (a round started at
-//     Sunday 23:59 settles after midnight): this seat's own season of each game it hosts for that week, as /season shows it.
-//     Each game's week is read once (nostr_badge_weeks).
+//   - THE BOARD BADGE (season top 3) once a whole UTC week has closed and BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS more have
+//     passed (a round started at Sunday 23:59 settles after midnight, at every seat of its committee): THE NETWORK'S season
+//     of each game this seat hosts for that week, as GET /season?scope=network builds it - this seat's rounds and every
+//     other seat's, merged by protocol mergeSeasonAccounts (a round counts when SEASON_NETWORK_AGREE seats hand in
+//     byte-identical accounts of it, here with each entry's round key too). One seat's own store holds only the rounds of
+//     the committees it sat on - about half of them on 14 seats - so its own board was a different podium from its
+//     neighbour's; the merged board is the same one on every seat that reads the same agreed rounds. Each game's week is
+//     read once it has been read with enough seats (nostr_badge_weeks); with fewer than SEASON_NETWORK_AGREE seats' accounts
+//     no round could count, so the week is not awarded yet and is asked again every BOARD_RETRY_MS, for BOARD_RETRY_FOR_MS
+//     at most, then given up - each time saying why.
 // Each award - one badge, one player, one scope (a game, or a game's week) - is issued ONCE: the nostr_badges row is its
 // key, so a restart, a second read of the ledger or a later round that would earn the same badge again issues nothing new.
 //
@@ -38,7 +46,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from './nostr-relay.js';
 import { acceptedNotIn, publishPass } from './nostr-results.js';
 import { BADGES, BADGES_VERSION, badgesEarned, checkCatalogue, lastClosedWeek } from '../../arena-protocol/src/badges.js';
-import { seasonRoundsToJson, seasonRoundsFromJson } from '../../arena-protocol/src/season.js';
+import { seasonRoundsToJson, seasonRoundsFromJson, mergeSeasonAccounts, SEASON_NETWORK_AGREE } from '../../arena-protocol/src/season.js';
 
 export const BADGE_DEFINITION_KIND = 30009;
 export const BADGE_AWARD_KIND = 8;
@@ -51,6 +59,16 @@ export const BADGE_AWARD_KIND = 8;
 export const BADGES_AT_S = Math.floor(Date.UTC(2026, 9, 14) / 1000);
 /** How long after a week closes its board is read for the board badge: two hours, for the rounds started at its end to settle. */
 export const BOARD_GRACE_MS = 2 * 3600 * 1000;
+/**
+ * AND A QUARTER OF AN HOUR MORE, for the board read from other seats: a round is settled by its proposer, and the other
+ * seats of its committee take the ACCEPTED settlement on their own clocks (a minute's sweep, a restart's catch-up), so the
+ * last seat to hold a week's last round holds it a little after the first. Reading late costs nobody anything - the award
+ * is for a week already over - and reading early would let one lagging seat drop a round from one seat's board only.
+ */
+export const BOARD_NETWORK_GRACE_MS = 15 * 60 * 1000;
+/** A week read with too few seats answering is asked again every half hour, for two days after it was first due, then given up. */
+export const BOARD_RETRY_MS = 30 * 60 * 1000;
+export const BOARD_RETRY_FOR_MS = 2 * 86400000;
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const hexOf = (b) => Buffer.from(b).toString('hex');
@@ -100,6 +118,8 @@ export function awardTags(award, { issuer, name }) {
   if (award.evidence && award.evidence.window) {
     const w = award.evidence.window;
     tags.push(['window', new Date(w.fromMs).toISOString(), new Date(w.toMs).toISOString()], ['rank', String(award.evidence.rank)]);
+    if (Number.isSafeInteger(award.evidence.seats)) tags.push(['seats', String(award.evidence.seats)]);
+    if (Number.isSafeInteger(award.evidence.agree)) tags.push(['agree', String(award.evidence.agree)]);
   }
   tags.push(['t', String(award.game)], ['alt', `Bitcoin Arena badge awarded: ${name || award.d} (${award.game})`]);
   return tags;
@@ -154,13 +174,16 @@ const ledgerRound = (text) => {
  *   roundOf    hex round id -> { ok: true, game: { name, id }, round } (round: season-read.js seasonRoundOf) | { ok: false, status, why }
  *   settled    hex round id -> whether its settlement stands ACCEPTED (round.settlementState)
  *   games      () -> [{ name, ids }]: the games this seat hosts, a name with its ids
- *   seasonOf   ({ name, ids }, { fromMs, toMs }) -> season rounds of that game in that window (season-read.js seasonRounds)
+ *   accountsOf async ({ name, ids }, { fromMs, toMs }) -> { bySeat, asked }: every seat's account of that game's rounds in
+ *              that window, unmerged - `bySeat` a Map of one label per seat (this one included) to its season rounds, each
+ *              entry with its `roundKey`; `asked` how many other seats were asked (server.js seasonAccounts, keyed)
+ *   agree      the seats that must agree on a round (SEASON_NETWORK_AGREE)
  *   imageBase  the public https base the definitions' images are named under (null: no image tag)
  * Answers { definitions(), awardsOf(player), tick(), start(), stop() }.
  */
-export function nostrBadges({ db, secret, on = false, relays = [], roundOf, settled = () => true, games = () => [], seasonOf = () => [],
-  imageBase = null, catalogue = BADGES, perMinute = 30, tickMs = 60000, timeoutMs = 10000, maxAttempts = 10,
-  lookbackMs = 90 * 86400000, now = () => Date.now(), connect, log = (l) => console.log(l) } = {}) {
+export function nostrBadges({ db, secret, on = false, relays = [], roundOf, settled = () => true, games = () => [],
+  accountsOf = async () => ({ bySeat: new Map(), asked: 0 }), agree = SEASON_NETWORK_AGREE, imageBase = null, catalogue = BADGES,
+  perMinute = 30, tickMs = 60000, timeoutMs = 10000, maxAttempts = 10, lookbackMs = 90 * 86400000, now = () => Date.now(), connect, log = (l) => console.log(l) } = {}) {
   const cat = checkCatalogue(catalogue);
   if (!cat.ok) throw new Error(cat.why);
   db.exec(`CREATE TABLE IF NOT EXISTS nostr_badge_rounds (round_id TEXT PRIMARY KEY, game TEXT, round TEXT, made_ms INTEGER NOT NULL);
@@ -198,6 +221,9 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
   const roundRules = catalogue.filter((b) => b.rule !== 'season-top');
   const boardRules = catalogue.filter((b) => b.rule === 'season-top');
   const sentAt = [];
+  // A WEEK THAT COULD NOT BE READ YET, by `${game}|${week from}`: when it is asked again. In memory: a restart asks once
+  // more at once, and how long a week is asked for at all is counted from the week's end, not from this map.
+  const boardNext = new Map();
   let timer = null, busy = false, stopped = false;
 
   /** Keep each new award, signed: one per (badge, player, scope), the first one kept stands. Answers how many were new. */
@@ -236,20 +262,60 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
     return made;
   };
 
-  /** 2. THE BOARD BADGE: each hosted game's last closed week, read once, BOARD_GRACE_MS after it closed. */
-  const awardBoards = () => {
+  /**
+   * 2. THE BOARD BADGE: each hosted game's last closed week, read from the network once BOARD_GRACE_MS +
+   * BOARD_NETWORK_GRACE_MS have passed since it closed, and once only when enough seats answered. The read is async (other
+   * seats are asked over HTTP) and runs inside the tick, which is never run twice at once - so a slow seat holds back
+   * this seat's next publish by its timeout at most, never the event loop, and never a second read of the same week.
+   */
+  const awardBoards = async () => {
     if (!boardRules.length) return 0;
-    const at = now() - BOARD_GRACE_MS;
-    const week = lastClosedWeek(at);
+    const dueMs = BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS;
+    const week = lastClosedWeek(now() - dueMs);
     if (!week) return 0;
+    const label = new Date(week.fromMs).toISOString().slice(0, 10);
     let made = 0;
     for (const g of games()) {
+      if (stopped) break;
       if (q.week.get(g.name, week.fromMs)) continue;
-      const rounds = seasonOf(g, week);
-      const earned = badgesEarned({ game: { name: g.name, ids: g.ids }, rounds, nowMs: at }, boardRules);
-      const n = earned.ok ? keepAwards(earned.awards) : 0;
+      const key = `${g.name}|${week.fromMs}`;
+      if ((boardNext.get(key) || 0) > now()) continue;
+      let got, why = null;
+      try { got = await accountsOf(g, week); } catch (e) { why = `the seats could not be asked: ${e.message}`; }
+      if (stopped) break;                          // stopped while the seats were asked: the store may be closing
+      // EACH SEAT'S ROUNDS OF THE WEEK ONLY: another seat was asked for whole days back from its own clock, which reaches past
+      // the week at both ends. A round with no readable start is handed on, for the merge to name.
+      const from = BigInt(week.fromMs), to = BigInt(week.toMs);
+      const inWeek = (r) => {
+        const t = !r ? null : typeof r.startMs === 'bigint' ? r.startMs : Number.isSafeInteger(r.startMs) ? BigInt(r.startMs) : null;
+        return t === null || (t >= from && t < to);
+      };
+      const bySeat = new Map([...(got && got.bySeat instanceof Map ? got.bySeat : [])]
+        .map(([seat, rounds]) => [seat, Array.isArray(rounds) ? rounds.filter(inWeek) : []]));
+      const seats = bySeat.size;
+      // TOO FEW SEATS: with fewer than `agree` accounts no round can count, so this week's board would be empty or short on
+      // this seat alone - and awarded once, never mended. Not awarded yet: asked again, until the week is too old to wait for.
+      if (why === null && seats < agree) why = `${seats} seat${seats === 1 ? '' : 's'} answered (this one included, ${got ? got.asked : 0} asked), and a round counts only when ${agree} agree`;
+      const merged = why === null ? mergeSeasonAccounts(bySeat, { agree, keys: true }) : null;
+      if (merged && !merged.ok) why = merged.why;
+      if (why !== null) {
+        if (now() >= week.toMs + dueMs + BOARD_RETRY_FOR_MS) {
+          q.putWeek.run(g.name, week.fromMs, 0, now());
+          boardNext.delete(key);
+          log(`[badges] ${g.name} week of ${label}: given up, no board badge for it - ${why}`);
+        } else {
+          boardNext.set(key, now() + BOARD_RETRY_MS);
+          log(`[badges] ${g.name} week of ${label}: not awarded yet, asked again in ${BOARD_RETRY_MS / 60000} min - ${why}`);
+        }
+        continue;
+      }
+      // THE AGREED ROUNDS, read for the week the window names - its end as the clock, so when this seat read it decides nothing
+      const earned = badgesEarned({ game: { name: g.name, ids: g.ids }, rounds: merged.rounds, nowMs: week.toMs }, boardRules);
+      const n = earned.ok ? keepAwards(earned.awards.map((a) => ({ ...a, evidence: { ...a.evidence, seats, agree } }))) : 0;
       if (!earned.ok) log(`[badges] ${g.name}: ${earned.why}`);
+      else log(`[badges] ${g.name} week of ${label}: ${merged.rounds.length} agreed round${merged.rounds.length === 1 ? '' : 's'} from ${seats} seats (${merged.excluded.length} left out), ${n} award${n === 1 ? '' : 's'}`);
       q.putWeek.run(g.name, week.fromMs, n, now());
+      boardNext.delete(key);
       made += n;
     }
     return made;
@@ -285,7 +351,7 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
     if (!on || busy || stopped) return { awarded: 0, sent: 0 };
     busy = true;
     try {
-      const awarded = awardRounds() + awardBoards();
+      const awarded = awardRounds() + await awardBoards();
       return { awarded, sent: await publish() };
     } catch (e) {
       log(`[badges] ${e.message}`);

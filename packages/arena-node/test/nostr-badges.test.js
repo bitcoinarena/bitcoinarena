@@ -11,7 +11,8 @@ import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { buildDefinitionEvent, buildAwardEvent, nostrBadges, isNostrKey, badgesOn, imageBaseOf, badgeImage,
-  BADGE_DEFINITION_KIND, BADGE_AWARD_KIND, BADGES_AT_S } from '../src/nostr-badges.js';
+  BADGE_DEFINITION_KIND, BADGE_AWARD_KIND, BADGES_AT_S, BOARD_GRACE_MS, BOARD_NETWORK_GRACE_MS, BOARD_RETRY_MS,
+  BOARD_RETRY_FOR_MS } from '../src/nostr-badges.js';
 import { startRelay, eventRefusal, RELAY_KINDS } from '../src/nostr-relay.js';
 import { BADGES, PERFECT_RUN_SCORE, WEEK_MS } from '../../arena-protocol/src/badges.js';
 
@@ -57,11 +58,12 @@ test('the definition (kind 30009) and the award (kind 8): tags exactly as NIP-58
   assert.equal(eventRefusal(a), null);
   // the a tag names the definition this seat signed: kind, the definition's pubkey and its d
   assert.equal(a.tags[0][1], `${def.kind}:${def.pubkey}:${def.tags[0][1]}`);
-  // a board award names its week and rank
+  // a board award names its week and rank, the seats its board was merged from and how many had to agree on a round
   const top = buildAwardEvent({ award: { d: 'arena-season-top-3', player: BOB, game: 'nextblock', scope: 'nextblock@2026-10-05',
-    evidence: { window: { fromMs: Date.UTC(2026, 9, 5), toMs: Date.UTC(2026, 9, 12) }, rank: 2 } }, secret: SECRET, atMs: 1760500000000 });
-  assert.deepEqual(top.tags.slice(0, 4), [['a', `30009:${PUB}:arena-season-top-3`], ['p', BOB],
-    ['window', '2026-10-05T00:00:00.000Z', '2026-10-12T00:00:00.000Z'], ['rank', '2']]);
+    evidence: { window: { fromMs: Date.UTC(2026, 9, 5), toMs: Date.UTC(2026, 9, 12) }, rank: 2, seats: 5, agree: 3 } }, secret: SECRET, atMs: 1760500000000 });
+  assert.deepEqual(top.tags.slice(0, 6), [['a', `30009:${PUB}:arena-season-top-3`], ['p', BOB],
+    ['window', '2026-10-05T00:00:00.000Z', '2026-10-12T00:00:00.000Z'], ['rank', '2'], ['seats', '5'], ['agree', '3']]);
+  assert.equal(eventRefusal(top), null);
   // THE PLAYER IS A NOSTR KEY: 32 bytes x-only, on the curve
   assert.ok(isNostrKey(ALICE));
   for (const no of [h('f'), h('0'), ALICE.slice(2), ALICE.toUpperCase()]) {
@@ -135,7 +137,7 @@ test('the book: a round counts once ACCEPTED; each award is issued once, across 
   const roundOf = (r) => { read.push(r); return rounds.has(r) ? { ok: true, game: { name: 'nextblock', id: GAME }, round: rounds.get(r) } : { ok: false, status: 404 }; };
   const relay = await fakeRelay();
   const make = (more = {}) => nostrBadges({ db, secret: SECRET, on: true, relays: [relay.url], roundOf, timeoutMs: 500, now: () => now, log: () => {},
-    games: () => [{ name: 'nextblock', ids: [GAME] }], seasonOf: () => [], ...more });
+    games: () => [{ name: 'nextblock', ids: [GAME] }], ...more });
   let book = make();
   try {
     // ROUNDS 1-4 ACCEPTED, round 5 still SUBMITTING, a round of a game this seat does not host ACCEPTED
@@ -177,36 +179,164 @@ test('the book: a round counts once ACCEPTED; each award is issued once, across 
   } finally { book.stop(); await relay.close(); }
 });
 
-test('the board badge: read once per closed week, two hours after it closed; off, the book awards nothing', async () => {
-  const MON = Date.UTC(2026, 9, 12);
+// THE WEEKLY BOARD FROM THE NETWORK (kanban #362): a closed week's rounds as several seats hand them in, each entry with its
+// round key - in season-read.js's shape, the week before MON
+const MON = Date.UTC(2026, 9, 12);
+const DUE = MON + BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS;
+const S = 100000n;
+const wr = (n, entries) => ({ roundId: n.toString(16).padStart(2, '0').repeat(32), gameId: GAME, startMs: BigInt(MON - WEEK_MS + n * 3600000), entries });
+const en = (player, n, payout, roundKey = keyOf(0x70 + n)) => ({ player, roundKey, name: null, stakeMsat: S, payoutMsat: payout, outcome: 'DELIVERED', score: n });
+const DAVE = keyOf(0x24), ERIN = keyOf(0x25);
+// ALICE, BOB and CAROL's two rounds of the week, which every honest seat holds
+const WEEK = [wr(1, [en(ALICE, 1, 3n * S), en(BOB, 2, 0n), en(CAROL, 3, 0n)]), wr(2, [en(BOB, 4, 2n * S), en(CAROL, 5, 0n)])];
+const seatsOf = (...accounts) => ({ bySeat: new Map(accounts.map((rounds, i) => [`seat-${i}`, rounds])), asked: 13 });
+const boardBook = (accountsOf, more = {}) => nostrBadges({ db: settlementsDb(), secret: SECRET, on: true, roundOf: () => ({ ok: false }),
+  log: () => {}, games: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf, ...more });
+const podium = (book) => [ALICE, BOB, CAROL, DAVE, ERIN].map((p) => book.awardsOf(p).map((a) => [a.scope, a.evidence.rank]));
+
+test('the board badge: the network\'s week, read once BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS after it closed; off, nothing', async () => {
   let now = MON + 3600000;                       // an hour into the new week: the last week is not read yet
-  const db = settlementsDb();
-  const S = 100000n;
-  const r = (n, entries) => ({ roundId: n.toString(16).padStart(2, '0').repeat(32), gameId: GAME, startMs: BigInt(MON - WEEK_MS + n * 3600000), entries });
-  const en = (player, n, payout) => ({ player, roundKey: keyOf(0x70 + n), name: null, stakeMsat: S, payoutMsat: payout, outcome: 'DELIVERED', score: n });
-  const week = [r(1, [en(ALICE, 1, 3n * S), en(BOB, 2, 0n), en(CAROL, 3, 0n)]), r(2, [en(BOB, 4, 2n * S), en(CAROL, 5, 0n)])];
   const asked = [];
-  const seasonOf = (g, w) => { asked.push([g.name, w.fromMs]); return week; };
-  const book = nostrBadges({ db, secret: SECRET, on: true, roundOf: () => ({ ok: false }), now: () => now, log: () => {},
-    games: () => [{ name: 'nextblock', ids: [GAME] }], seasonOf });
+  const accountsOf = async (g, w) => { asked.push([g.name, w.fromMs, w.toMs]); return seatsOf(WEEK, WEEK, WEEK); };
+  const book = boardBook(accountsOf, { now: () => now });
   const off = nostrBadges({ db: settlementsDb(), secret: SECRET, on: false, roundOf: () => { throw new Error('read'); }, now: () => now, log: () => {},
-    games: () => [{ name: 'nextblock', ids: [GAME] }], seasonOf: () => { throw new Error('read'); } });
+    games: () => [{ name: 'nextblock', ids: [GAME] }], accountsOf: () => { throw new Error('read'); } });
   try {
     assert.equal((await book.tick()).awarded, 0);
-    assert.deepEqual(asked, [['nextblock', MON - 2 * WEEK_MS]], 'within the grace, the week before is the last one read');
+    assert.deepEqual(asked, [['nextblock', MON - 2 * WEEK_MS, MON - WEEK_MS]], 'within the grace, the week before is the last one read');
     asked.length = 0;
-    now = MON + 2 * 3600000;
-    const t = await book.tick();
-    assert.deepEqual(asked, [['nextblock', MON - WEEK_MS]]);
-    assert.equal(t.awarded, 3);
-    assert.deepEqual([ALICE, BOB, CAROL].map((p) => book.awardsOf(p).map((a) => [a.scope, a.evidence.rank])),
-      [[['nextblock@2026-10-05', 1]], [['nextblock@2026-10-05', 2]], [['nextblock@2026-10-05', 3]]]);
+    now = MON + BOARD_GRACE_MS;                  // the rounds have settled, but not every seat need hold them yet
     await book.tick();
-    assert.equal(asked.length, 1, 'a week is read once');
+    assert.deepEqual(asked, []);
+    now = DUE;
+    const t = await book.tick();
+    assert.deepEqual(asked, [['nextblock', MON - WEEK_MS, MON]]);
+    assert.equal(t.awarded, 3);
+    assert.deepEqual(podium(book), [[['nextblock@2026-10-05', 1]], [['nextblock@2026-10-05', 2]], [['nextblock@2026-10-05', 3]], [], []]);
+    assert.deepEqual(book.awardsOf(ALICE)[0].evidence, { window: { fromMs: MON - WEEK_MS, toMs: MON }, rank: 1, seats: 3, agree: 3 });
+    assert.deepEqual(book.awardsOf(ALICE)[0].event.tags.slice(2, 6), [['window', '2026-10-05T00:00:00.000Z', '2026-10-12T00:00:00.000Z'],
+      ['rank', '1'], ['seats', '3'], ['agree', '3']]);
     assert.deepEqual(await off.tick(), { awarded: 0, sent: 0 });
     assert.deepEqual(off.awardsOf(ALICE), []);
     off.start();                                 // off: no clock either
   } finally { book.stop(); off.stop(); }
+});
+
+test('the board badge counts a round only when 3 seats hand in the same account of it, round keys included', async () => {
+  // DAVE's huge win only seat 0 holds, and ERIN's only seats 0 and 1: no podium place for either. Seat 3 hands in round 1
+  // with BOB under his own round key - one seat cannot strike BOB's place by naming him a bare key. Round 3, in which ERIN
+  // beats BOB, is held by three seats: it counts. And seat 4 hands in rounds of the week after, asked for days back from its
+  // clock: not this week's.
+  const solo = wr(3, [en(DAVE, 9, 100n * S), en(ALICE, 1, 0n)]);
+  const pair = wr(4, [en(ERIN, 9, 50n * S), en(CAROL, 1, 0n)]);
+  const three = wr(5, [en(ERIN, 6, 4n * S), en(BOB, 1, 0n)]);
+  const bare = { ...WEEK[0], entries: WEEK[0].entries.map((e) => (e.player === BOB ? { ...e, roundKey: BOB } : e)) };
+  const later = { ...wr(6, [en(DAVE, 9, 100n * S), en(ERIN, 1, 0n)]), startMs: BigInt(MON + 3600000) };
+  const accounts = seatsOf([...WEEK, solo, pair, three], [...WEEK, pair, three], [three, ...WEEK], [bare, WEEK[1]], [later, later]);
+  const book = boardBook(async () => accounts, { now: () => DUE });
+  const lines = [];
+  const loud = boardBook(async () => accounts, { now: () => DUE, log: (l) => lines.push(l) });
+  try {
+    assert.equal((await book.tick()).awarded, 3);
+    // THE AGREED ROUNDS 1, 2 AND 5, as season() ranks them: ERIN +3S net, ALICE +2S, BOB -1S (-1S, +1S, -1S), CAROL -2S
+    const ranks = podium(book).map((x) => (x.length ? x[0][1] : null));
+    assert.deepEqual(ranks, [2, 3, null, null, 1], 'ALICE 2, BOB 3, CAROL 4th (no badge), DAVE none, ERIN 1');
+    assert.equal(ranks[3], null, 'DAVE: a round one seat hands in is no round');
+    assert.equal(ranks[4], 1, 'ERIN: a round three seats agree on counts');
+    assert.equal(ranks[1], 3, 'BOB keeps his place over one seat naming him a bare round key');
+    await loud.tick();
+    assert.ok(lines.some((l) => /week of 2026-10-05: 3 agreed rounds from 5 seats/.test(l)), lines.join('\n'));
+  } finally { book.stop(); loud.stop(); }
+});
+
+test('the board badge: too few seats answer - no award, asked again every 30 min, given up after two days', async () => {
+  let now = DUE;
+  let answering = 1, calls = 0;
+  const lines = [];
+  const accountsOf = async () => { calls++; return seatsOf(...Array.from({ length: answering }, () => WEEK)); };
+  const book = boardBook(accountsOf, { now: () => now, log: (l) => lines.push(l) });
+  try {
+    assert.equal((await book.tick()).awarded, 0);
+    assert.equal(calls, 1);
+    assert.match(lines.at(-1), /week of 2026-10-05: not awarded yet, asked again in 30 min - 1 seat answered \(this one included, 13 asked\), and a round counts only when 3 agree/);
+    answering = 2;
+    now += BOARD_RETRY_MS - 1;
+    await book.tick();
+    assert.equal(calls, 1, 'not before the half hour');
+    now += 1;
+    assert.equal((await book.tick()).awarded, 0);
+    assert.equal(calls, 2);
+    assert.deepEqual(podium(book), [[], [], [], [], []]);
+    // A SEAT THAT CANNOT ASK AT ALL is the same wait
+    const failing = boardBook(async () => { throw new Error('no census'); }, { now: () => now, log: (l) => lines.push(l) });
+    await failing.tick();
+    assert.match(lines.at(-1), /not awarded yet.*the seats could not be asked: no census/);
+    failing.stop();
+    // THREE SEATS: awarded, and the week is never asked again
+    answering = 3;
+    now += BOARD_RETRY_MS;
+    assert.equal((await book.tick()).awarded, 3);
+    assert.equal(calls, 3);
+    now += BOARD_RETRY_MS;
+    await book.tick();
+    assert.equal(calls, 3);
+    // TWO DAYS OF TOO FEW: given up, said, and asked no more
+    let given = 0;
+    const late = [];
+    const lone = boardBook(async () => { given++; return seatsOf(WEEK); }, { now: () => now, log: (l) => late.push(l) });
+    now = DUE + BOARD_RETRY_FOR_MS - 1;
+    await lone.tick();
+    assert.match(late.at(-1), /not awarded yet/);
+    now = DUE + BOARD_RETRY_FOR_MS + BOARD_RETRY_MS;
+    await lone.tick();
+    assert.match(late.at(-1), /week of 2026-10-05: given up, no board badge for it - 1 seat answered/);
+    now += BOARD_RETRY_MS;
+    await lone.tick();
+    assert.equal(given, 2);
+    assert.deepEqual(podium(lone), [[], [], [], [], []]);
+    lone.stop();
+  } finally { book.stop(); }
+});
+
+test('the board badge: two seats handed the same agreed rounds award the same podium, whatever order the seats answered in', async () => {
+  const other = new Uint8Array(32).fill(9);
+  const shuffled = (rounds) => [...rounds].reverse().map((r) => ({ ...r, entries: [...r.entries].reverse() }));
+  const a = boardBook(async () => seatsOf(WEEK, WEEK, WEEK, [WEEK[1]]), { now: () => DUE });
+  const b = boardBook(async () => ({ bySeat: new Map([['x', shuffled(WEEK)], ['y', [WEEK[1]]], ['z', WEEK], ['w', shuffled(WEEK)]]), asked: 4 }),
+    { now: () => DUE + 3 * 3600000, secret: other });
+  try {
+    assert.equal((await a.tick()).awarded, 3);
+    assert.equal((await b.tick()).awarded, 3);
+    const of = (book) => [ALICE, BOB, CAROL].map((p) => book.awardsOf(p).map((x) => [x.d, x.scope, x.evidence]));
+    assert.deepEqual(of(a), of(b), 'the same badge, week, rank and seat count on both');
+    assert.notEqual(a.issuer, b.issuer, 'each signed by its own seat');
+  } finally { a.stop(); b.stop(); }
+});
+
+test('the board badge: a week is fetched once - across ticks and across a restart', async () => {
+  let now = DUE;
+  let calls = 0;
+  const db = settlementsDb();
+  const accountsOf = async () => { calls++; return seatsOf(WEEK, WEEK, WEEK); };
+  const make = () => nostrBadges({ db, secret: SECRET, on: true, roundOf: () => ({ ok: false }), log: () => {}, now: () => now,
+    games: () => [{ name: 'nextblock', ids: [GAME] }, { name: 'rps', ids: [h('b')] }], accountsOf });
+  let book = make();
+  try {
+    // TWO TICKS AT ONCE: the second finds the first still asking, and asks nothing
+    const [x, y] = await Promise.all([book.tick(), book.tick()]);
+    assert.deepEqual([x.awarded, y.awarded], [3, 0]);
+    assert.equal(calls, 2, 'one read per game: nextblock, and rps (whose board is empty: no award, but read)');
+    for (let i = 0; i < 5; i++) { now += 3600000; await book.tick(); }
+    assert.equal(calls, 2);
+    book.stop();
+    book = make();
+    await book.tick();
+    assert.equal(calls, 2, 'the weeks read are kept in nostr_badge_weeks');
+    // THE NEXT WEEK, once it has closed: read once more per game
+    now = DUE + WEEK_MS;
+    await book.tick();
+    assert.equal(calls, 4);
+  } finally { book.stop(); }
 });
 
 // A REAL NODE with badges on: a staked round its settlement holds ACCEPTED, read as the season reads it; the identity its winner's

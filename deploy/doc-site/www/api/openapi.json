@@ -306,7 +306,7 @@
      "Players"
     ],
     "summary": "A player's badges (NIP-58)",
-    "description": "The NIP-58 badges this node awarded to one player identity (kind-8 award events, each with the round ids or the board week that earned it) and their kind-30009 definitions, exactly as signed, so a client checks ids and signatures itself. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).\n\nAccess: none\n\nReturns: 200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 4507.",
+    "description": "The NIP-58 badges this node awarded to one player identity (kind-8 award events, each with the round ids or the board week that earned it - a week's place with the number of nodes its network board was merged from and the 3 that had to agree on a round) and their kind-30009 definitions, exactly as signed, so a client checks ids and signatures itself. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).\n\nAccess: none\n\nReturns: 200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400\n\nSource: `packages/arena-node/src/server.js` line 4507.",
     "operationId": "get_badges",
     "parameters": [
      {
@@ -7076,7 +7076,7 @@
      "Players"
     ],
     "summary": "Season rounds held by this node",
-    "description": "The rounds this node's own season is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network season to merge.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
+    "description": "The rounds this node's own season is built from (FINAL results, amounts its ACCEPTED settlements paid), for another node's network season to merge - and for its weekly top-3 badge, which merges on the round keys too.\n\nAccess: none\n\nReturns: 200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under (cache 30 s); 400/404\n\nSource: `packages/arena-node/src/server.js` line 4440.",
     "operationId": "get_season_rounds",
     "parameters": [
      {
@@ -7102,7 +7102,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{node, game:{ids}, days, fromMs, toMs, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score}]}]} (cache 30 s).",
+      "description": "{node, game:{ids}, days, fromMs, toMs, roundKeys: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}]}]} (cache 30 s).",
       "content": {
        "application/json": {}
       }
