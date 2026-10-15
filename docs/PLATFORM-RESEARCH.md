@@ -80,8 +80,11 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    than 3 seats answering the week waits, asked again every 30 min for up to 2 days; the award names the week, the
    rank, the seats that answered and the 3 that had to agree (`seats`, `agree` tags). `GET /badges?player=`,
    `GET /badge-definitions`; published with the results to ARENA_NOSTR_PUBLISH; the Arena relay takes kinds 30009 and 8.
-   Not yet: badges shown in the page; the round badges (first win, five rounds, perfect run) still read the seat's own
-   rounds.
+   The testnet page shows them on the season board: each row's badges in the shown game as small icons after the name
+   (the seat's `/badge-image/<d>.svg`, else a built-in glyph; the name and what earned it on hover or tap) and "Your
+   badges: N" under the header - the board's seats asked once each which award badges (`on: true`), each player on
+   screen once per badge seat for the board's life, the awards merged by (d, scope) (arena-client `badges-view.js`).
+   Not yet: the round badges (first win, five rounds, perfect run) still read the seat's own rounds.
 
 Rules for every feature: additive, versioned where it changes bytes (§#349 required versions), no change to any existing
 game or market id, tests first, measured live before it is called done.
