@@ -416,6 +416,13 @@
     #arena-games.compact .chip { justify-content: center; min-width: 0; padding: 3px 2px; gap: 3px; font-size: 12.5px; letter-spacing: -.02em; }
     #arena-games.compact .chip .ico { width: 13px; height: 13px; }
     #arena-games.compact .season-go { margin-top: -2px; }
+    /* EVEN ROWS IN THE DETAILS LAYOUT TOO (kanban #371, found at #368's done check on UI 131): the list view kept the wrapping chips -
+       "live rounds" alone on a second line on every card, at 390 px and at 1280 px. Its chips are equal columns in one row that never
+       wraps as well (the rounds chip says "rounds", its title still "live rounds"), and the name keeps two lines' height whether it
+       takes one or two, so every card is the same column and a row's descriptions, chips and links line up. */
+    #arena-games:not(.compact) .stats { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; }
+    #arena-games:not(.compact) .chip { justify-content: center; min-width: 0; padding: 4px 5px; gap: 5px; font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+    #arena-games:not(.compact) .name { min-height: 2.5em; display: flex; align-items: center; }
     /* A CHIP OPENS ITS LIST (kanban #356, the owner 2026-10-14): the nodes with their dashboards, the players by name, the open rounds */
     #arena-games .chip.opens { cursor: pointer; }
     #arena-games .chip.opens:hover, #arena-games .chip.opens:focus-visible { border-color: #f7931a; outline: none; }
@@ -5982,9 +5989,9 @@
               const ICONS = { nodes: '<path d="M8 1.5 14 5v6l-6 3.5L2 11V5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/>',
                 players: '<circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z" fill="currentColor"/>',
                 rounds: '<circle cx="8" cy="8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.4 5.2v5.6L11 8z" fill="currentColor"/>' };
-              const chip = (n, word, kind, idle) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
+              const chip = (n, word, kind, idle, shown = word) => { const c = document.createElement('span'); c.className = 'chip' + (idle ? ' idle' : ''); c.title = n + ' ' + word; c.setAttribute('aria-label', n + ' ' + word);
                 const dot = document.createElement('i'); const ico = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); ico.setAttribute('class', 'ico'); ico.setAttribute('viewBox', '0 0 16 16'); ico.setAttribute('aria-hidden', 'true'); ico.innerHTML = ICONS[kind];
-                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + word; c.append(dot, ico, document.createTextNode(n >= 1000 ? (n >= 10000 ? Math.floor(n / 1000) : Math.floor(n / 100) / 10) + 'k' : String(n)), w);
+                const w = document.createElement('span'); w.className = 'word'; w.textContent = ' ' + shown; c.append(dot, ico, document.createTextNode(n >= 1000 ? (n >= 10000 ? Math.floor(n / 1000) : Math.floor(n / 100) / 10) + 'k' : String(n)), w);
                 // ITS LIST ON A TAP (kanban #356), not the game: the tile's own tap still picks the game
                 c.classList.add('opens'); c.setAttribute('role', 'button'); c.tabIndex = 0;
                 const open = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_CHIP_LIST) window.ARENA_CHIP_LIST(g, kind); };
@@ -5993,7 +6000,7 @@
               const live = g.live || { rounds: 0, players: 0 };
               stats.append(chip(g.nodes.length, 'node' + (g.nodes.length === 1 ? '' : 's'), 'nodes', false),
                 chip(live.players, 'player' + (live.players === 1 ? '' : 's'), 'players', !live.players),
-                chip(live.rounds, 'live round' + (live.rounds === 1 ? '' : 's'), 'rounds', !live.rounds));
+                chip(live.rounds, 'live round' + (live.rounds === 1 ? '' : 's'), 'rounds', !live.rounds, 'round' + (live.rounds === 1 ? '' : 's')));
               // ITS SEASON BOARD (kanban #362): its own tap, as a chip's is - the tile's tap still picks the game
               const season = document.createElement('span'); season.className = 'season-go'; season.setAttribute('role', 'button'); season.tabIndex = 0;
               season.title = 'Leaderboard: ' + (g.title || g.name) + ' over the last days';
