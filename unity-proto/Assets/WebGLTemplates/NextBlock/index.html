@@ -871,7 +871,7 @@
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (kanban #208, the owner 2026-10-08 11:38): the platform page, beside the gear -->
     <a id="arena-platform-go" href="https://docs.bitcoin-arena.io/#why-build" title="Build a game or a market on Bitcoin Arena, or run a node and earn">Build &amp; earn</a>
     <!-- THE SEASON BOARD OF THE CHOSEN GAME (kanban #362), beside the gear once a game is chosen -->
-    <button id="blwp-season-go" type="button" title="Season board: this game's players over the last days" aria-label="Season board"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Season</span></button>
+    <button id="blwp-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -882,7 +882,7 @@
     <span class="wb-bal"><b id="arena-wb-sats">&ndash; sat</b><span id="arena-wb-pending"></span></span>
     <button id="arena-wb-deposit" type="button">Deposit</button>
     <button id="arena-wb-withdraw" type="button">Withdraw</button>
-    <button id="arena-wb-season" type="button" title="Season board" aria-label="Season board"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Season</span></button>
+    <button id="arena-wb-season" type="button" title="Leaderboard" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <button id="arena-wb-gear" type="button" title="Settings">&#9881;</button>
     <div id="arena-wb-why" role="status"></div>
   </div>
@@ -936,7 +936,7 @@
     </section>
     <section class="settings-card" id="arena-set-zaps">
       <h3>Zaps</h3>
-      <div class="muted">Other players can zap you from a season board. Where should their zaps go? Your Lightning address (name@host):</div>
+      <div class="muted">Other players can zap you from a leaderboard. Where should their zaps go? Your Lightning address (name@host):</div>
       <div class="name-row">
         <input id="arena-zap-addr" type="text" autocomplete="off" spellcheck="false" maxlength="120" placeholder="you@your-wallet.example">
         <button id="arena-zap-save" type="button" class="primary">Save</button>
@@ -1438,7 +1438,7 @@
   })();
   </script>
 
-  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Season</div><h2 id="arena-season-title">Season</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
+  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
@@ -5812,7 +5812,7 @@
           // A FAILED ASK KEEPS THE BOARD IT HAD: the rows of 30 s ago are still the season's, and an empty screen is not
           state.className = 'state bad';
           state.textContent = board.children.length ? 'No node answered just now; this is the board from before. Asking again in 30 s.'
-            : 'No node answered the season just now. Asking again in 30 s.';
+            : 'No node answered the leaderboard just now. Asking again in 30 s.';
           return;
         }
         state.className = 'state'; state.textContent = v.empty || '';
@@ -5985,9 +5985,9 @@
                 chip(live.rounds, 'live round' + (live.rounds === 1 ? '' : 's'), 'rounds', !live.rounds));
               // ITS SEASON BOARD (kanban #362): its own tap, as a chip's is - the tile's tap still picks the game
               const season = document.createElement('span'); season.className = 'season-go'; season.setAttribute('role', 'button'); season.tabIndex = 0;
-              season.title = 'Season board: ' + (g.title || g.name) + ' over the last days';
+              season.title = 'Leaderboard: ' + (g.title || g.name) + ' over the last days';
               season.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg>';
-              season.append('Season');
+              season.append('Leaderboard');
               const openSeason = (e) => { e.stopPropagation(); e.preventDefault(); if (window.ARENA_SEASON) window.ARENA_SEASON.open(g); };
               season.addEventListener('click', openSeason); season.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') openSeason(e); });
               b.append(play, head, desc, signed, stats, season);

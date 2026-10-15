@@ -29456,7 +29456,7 @@ function mergeNodes(known, found) {
 }
 
 // ---- arena-client/src/season-view.js
-// THE SEASON BOARD AS THE PAGE SHOWS IT (kanban #362, docs/PLATFORM-RESEARCH.md item 1, presentation): one game's board
+// THE LEADERBOARD (named the season board until kanban #367) AS THE PAGE SHOWS IT (kanban #362, docs/PLATFORM-RESEARCH.md item 1, presentation): one game's board
 // over the last 7, 30 or 90 days, from a seat's GET /season?game=<name>&days=<n>&scope=network.
 //
 // The seat built the board (protocol season.js, merged across seats by mergeSeasonAccounts: a round counts only when 3
@@ -29564,6 +29564,11 @@ function seasonView(answer, { title = null, viewer = [], limit = SEASON_ROWS_SHO
   // THE SEAT'S ORDER, NOT OURS: season.js ranked the rows (net, wins, best score, then the key), and the page keeps that
   // order by rank - sorting again by anything else would be a second ranking beside the seat's
   rows.sort((a, b) => a.rank - b.rank);
+  // ONLY THE PLAYERS AHEAD (kanban #367, the owner 2026-10-15: "only show positive entries"): a row whose net over the window is
+  // 0 or below is not drawn - the viewer's own included. The seat ranks by net first, so the rows left keep ranks 1, 2, 3 ...
+  const ahead = rows.filter((r) => r.sign > 0);
+  const behind = rows.length - ahead.length;
+  rows.length = 0; rows.push(...ahead);
   const cap = Number.isSafeInteger(limit) && limit > 0 ? limit : SEASON_ROWS_SHOWN;
   const shown = rows.slice(0, cap);
   const own = rows.find((r) => r.mine) || null;
@@ -29578,7 +29583,7 @@ function seasonView(answer, { title = null, viewer = [], limit = SEASON_ROWS_SHO
     ? { answered: Math.min(seats.answered, seats.asked) + 1, asked: seats.asked + 1 } : null;
   const last = days === 1 ? 'last day' : `last ${days} days`;
   const from = nodes ? `from ${nodes.answered} of ${nodes.asked} nodes` : 'from one node only';
-  const header = [name, last, seasonCount(rows.length, 'player'), from].join(' \u00b7 ');
+  const header = [name, last, `${seasonCount(rows.length, 'player')} ahead`, from].join(' \u00b7 ');
   const counted = Number.isSafeInteger(answer.rounds) && answer.rounds >= 0 ? answer.rounds : null;
   const leftOut = Number.isSafeInteger(answer.leftOut) && answer.leftOut > 0 ? answer.leftOut : 0;
   const agree = Number.isSafeInteger(answer.agree) && answer.agree > 1 ? answer.agree : null;
@@ -29587,8 +29592,8 @@ function seasonView(answer, { title = null, viewer = [], limit = SEASON_ROWS_SHO
     agree ? `a round counts once ${agree} nodes hold the same account of it` : null].filter(Boolean).join(' \u00b7 ');
   // MORE: the players ranked below the rows drawn, the viewer's own row (drawn below them) not among them
   const more = rows.length - Math.min(rows.length, cap) - (own && rows.indexOf(own) >= cap ? 1 : 0);
-  return { ok: true, title: name, game, days, header, foot, players: rows.length, nodes, rows: shown, mine: own, more,
-    empty: rows.length ? null : `Nobody has a counted round of ${name} in the ${last}.` };
+  return { ok: true, title: name, game, days, header, foot, players: rows.length, behind, nodes, rows: shown, mine: own, more,
+    empty: rows.length ? null : behind ? `Nobody is ahead at ${name} in the ${last}.` : `Nobody has a counted round of ${name} in the ${last}.` };
 }
 
 /**
