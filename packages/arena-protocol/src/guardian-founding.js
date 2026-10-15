@@ -95,7 +95,7 @@ export function replaceNoShows({ drawn, alternates, noShows }) {
  *               by threshold signature to be replaced (`replace: true`), at that record's height; `notices`: [{ federation, height,
  *               wouldBe }] - a standing departure notice of a guardian of an OPEN federation that would make it DRAINING (or CRITICAL,
  *               at four: §23A.1), at the height it was posted (§23A.6 "or a departure notice that would make it DRAINING", kanban #326).
- *               A row's `federation`, `seatedFirst` (node keys hex, in order) and `departing` (node keys hex) are passed through
+ *               A row's `federation`, `nominal`, `seatedFirst` (node keys hex, in order) and `departing` (node keys hex) are passed through
  *   load        `loads`: [{ height, federations: [{ federation, status, load }] }], ascending - every OPEN federation at or above 80 %
  *               of its exposure cap (load >= 0.8) at every height for `abandonBlocks`; the trigger is the height that completes it
  * Answers { ok, kind, height, why } for the earliest, or { ok: false, why } naming what is missing.
@@ -107,7 +107,8 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
     const g = capable.find((x) => x.operators >= nominal);
     if (g) found.push({ kind: 'genesis', height: g.height, why: `${g.operators} guardian-capable operators at ${g.height}, at least federation_nominal ${nominal}: the first federation is drawn` });
   }
-  const carried = (r) => ({ ...(r.federation !== undefined ? { federation: r.federation } : {}), ...(Array.isArray(r.seatedFirst) ? { seatedFirst: r.seatedFirst } : {}),
+  const carried = (r) => ({ ...(r.federation !== undefined ? { federation: r.federation } : {}), ...(Number.isInteger(r.nominal) ? { nominal: r.nominal } : {}),
+    ...(Array.isArray(r.seatedFirst) ? { seatedFirst: r.seatedFirst } : {}),
     ...(Array.isArray(r.departing) ? { departing: r.departing } : {}) });
   for (const r of records) {
     if (r.status === 'DRAINING' || r.replace === true)
