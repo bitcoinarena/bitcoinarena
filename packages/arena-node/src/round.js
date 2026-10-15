@@ -28,7 +28,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION } from '../../arena-protocol/src/constants.js';
 import { readTranscript } from './transcript-read.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
@@ -403,6 +403,10 @@ export class Round {
     // then and offers no entry button; this is the same rule at the door,
     // where it cannot be skipped by a client that does not draw a lobby.
     const asks = decodeRoundContract(new Uint8Array(round.contract));
+    // AN ENTRY NAMING THE WEBSITE THAT BROUGHT IT ONLY ON A ROUND OF 2026.0.9 OR LATER (kanban #362 item 7): its seats are then only
+    // nodes that pay the website its 20% of the nodes' fee; on an older round the key would be a promise nobody keeps
+    if (contract.frontendPk && !(asks.protocolVersion >= FRONTEND_FEE_VERSION))
+      throw new Error(`that entry names the website that brought it, and a round pays a website from protocol version ${FRONTEND_FEE_VERSION} on; this round runs ${asks.protocolVersion}`);
     // AND NOT A ROUND WHOSE OBJECTION WINDOW IS NOT 600 000 ms (§13A, WINDOW-10-SPEC): one opened before the rule is held,
     // never entered.
     const windows = roundWindowsAreValid(asks);

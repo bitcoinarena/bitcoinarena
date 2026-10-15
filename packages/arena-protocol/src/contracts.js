@@ -690,6 +690,15 @@ export function encodeEntryContract(e) {
     w.u8(OPERATOR_MARKER);
     w.bytes32(e.operatorId);
   }
+  // THE WEBSITE THAT BROUGHT THIS ENTRY (2026.0.9, kanban #362 item 7): its 33-byte payout key, paid 20% of the nodes' fee on this
+  // stake at settlement (fee.js frontendShares). In the signed bytes, so no seat can swap it. WRITTEN ONLY WHEN IT NAMES ONE, last
+  // of all, after its own marker: every other entry keeps exactly its bytes and its id.
+  if (e.frontendPk !== undefined && e.frontendPk !== null) {
+    if (!(e.frontendPk instanceof Uint8Array) || e.frontendPk.length !== 33 || (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3))
+      throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
+    w.u8(FRONTEND_MARKER);
+    w.bytes(e.frontendPk, 33);
+  }
   return w.finish();
 }
 
@@ -701,7 +710,9 @@ export const COMMIT_MARKER = 0xa8;
 export const ORDER_MARKER = 0xa9;
 /** The byte before the federation an entry's locks are in (2026.0.3, kanban #348), last. */
 export const FEDERATION_MARKER = 0xaa;
-/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), last of all. */
+/** The byte before the payout key of the website that brought the entry (2026.0.9, kanban #362 item 7), last of all. */
+export const FRONTEND_MARKER = 0xac;
+/** The byte before the operator an entry's player declares it is (§7, §5A.13, kanban #309), before the website's key. */
 export const OPERATOR_MARKER = 0xab;
 
 /** The same compressed point as a Feldman commitment (`handout.js`). */
@@ -738,7 +749,7 @@ export function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -759,10 +770,15 @@ export function decodeEntryContract(bytes) {
     e.federationId = r.bytes32();
     if (e.federationId.every((b) => b === 0)) throw new Error('an entry names its federation in 32 bytes, not zero');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== OPERATOR_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation nor its operator');
+  if (r.at < bytes.length && bytes[r.at] === OPERATOR_MARKER) {
+    r.u8();
     e.operatorId = r.bytes32();
     if (e.operatorId.every((b) => b === 0)) throw new Error('an entry declares its operator in 32 bytes, not zero');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== FRONTEND_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator nor its website');
+    e.frontendPk = r.bytes(33);
+    if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
   }
   r.end();
   return e;
