@@ -11,7 +11,7 @@ import { CORE as F7E21 } from '../frozen/7e2123d1/adapter.js';
 import { CORE as FDE2F } from '../frozen/de2f263d/adapter.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { TRUCK_CURRENT_CONFIG, TRUCK_V3_CONFIG, TRUCK_DE2F_CONFIG, TRUCK_NAME, TRUCK_RUN_TICKS, TRUCK, TRUCK_2069, TRUCK_7E21,
-  TRUCK_DE2F, TRUCK_BEFORE_FORK, NEXTBLOCK_CORES } from '../plugin/truck-cores.js';
+  TRUCK_DE2F, TRUCK_BEFORE_FORK, NEXTBLOCK_CORES, NEXTBLOCK_CORES_V3, TRUCK_F0CC } from '../plugin/truck-cores.js';
 
 test('the written config hashes are the computed ones', () => {
   assert.equal(TRUCK_CURRENT_CONFIG, toHex(computeCurrentConfigHash()));
@@ -32,6 +32,9 @@ test('each core carries the files the sandbox loads, and a native adapter only w
   }
   assert.equal(TRUCK_BEFORE_FORK.sourceHash, TRUCK_2069.hash);
   assert.equal(NEXTBLOCK_CORES.size, 5);
+  assert.equal(NEXTBLOCK_CORES_V3.size, 6, 'version 3: the five and the truck that knows the larger truck (kanban #369)');
+  assert.equal(NEXTBLOCK_CORES_V3.get(TRUCK_F0CC.hash), TRUCK_F0CC);
+  assert.ok(TRUCK_F0CC.root && TRUCK_F0CC.url.startsWith(TRUCK_F0CC.root));
 });
 
 test('importing the registration evaluates no core module', async () => {
