@@ -208,13 +208,14 @@
         <li><b>Login with Nostr</b>: a browser extension (NIP-07, for example Alby or nos2x), a phone signer (NIP-46, for example Amber, by QR code), a <code>bunker://</code> link, or an nsec. You can also create a new Nostr account there. See <a href="#nostr">Nostr</a>.</li>
       </ul>
       <div class="note"><b>Keep your 24 words or your Nostr key safe.</b> They are the only way back into your wallet. Nobody, not even the nodes, can recover it for you.</div></li>
-    <li><b>Play free, or deposit test sats</b>
-      <p>Free rounds need no wallet and no Lightning, and take no fee. For paid rounds, open <b>Deposit</b>, pick an amount and pay the Lightning invoice from any Lightning wallet: scan the QR code, copy it, or pay it from a wallet you connected with Nostr Wallet Connect. On testnet the page links to a test Lightning wallet with a small faucet, run by the project.</p></li>
+    <li><b>Deposit test sats</b>
+      <p>Open <b>Deposit</b>, pick an amount and pay the Lightning invoice from any Lightning wallet: scan the QR code, copy it, or pay it from a wallet you connected with Nostr Wallet Connect. On testnet the page links to a test Lightning wallet with a small faucet, run by the project.</p></li>
     <li><b>Join a round</b>
-      <p>The lobby lists the open rounds: free rows (“free · no wallet, no Lightning”) and paid rows with their stake, their federation and its load. It also shows how many nodes agree on each round. Joining a paid round locks your stake in the federation. Play starts only when the nodes have verified the lock.</p></li>
+      <p>The lobby lists the open rounds with their stake, their federation and its load. It also shows how many nodes agree on each round. Joining a paid round locks your stake in the federation. Play starts only when the nodes have verified the lock.</p></li>
     <li><b>Get paid</b>
       <p>When the round is settled, winnings and refunds go back into your wallet on their own; they show as <i>pending</i> until they are redeemed. <b>Withdraw</b> any time: paste an invoice from your own Lightning wallet, or let a connected NWC wallet make one.</p></li>
   </ol>
+  <div class="note"><b>There are only paid rounds.</b> Free rounds, without a stake, are for development: on a <a href="#devnet">devnet</a>, and to try a newly signed game before its paid rounds open. They are not part of the game.</div>
   <h3 id="settings">Settings</h3>
   <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, and a link to the community on Armada.</p>
 
@@ -272,7 +273,7 @@
     <li><b>Play</b>: load mempool transactions onto your truck, cross the bitcoin price war front (the closer you drive to it, the more points you score) and deliver to the miners' drop-off before time runs out.</li>
     <li><b>Checked by replay</b>: your inputs go to every node of the round as you play. Each node replays them with the game's deterministic core and signs the score it gets. The battlefield's BTC price is a sample the committee signs every 5 seconds: each seat reads Coinbase's exchange ticker (the last trade and its time), a reading older than 5 seconds counts as none, and a seat signs a proposed price only within 0.05 % of its own reading, so no seat can pick the price. A scheme in which every seat signs its own reading and the median is taken is being built for a later protocol version.</li>
     <li><b>Payout</b>: a rank curve. The top quarter of the players who qualified share the losers' stakes, with weights 0.75<sup>rank−1</sup>; qualifiers below them get their stake back.</li>
-    <li><b>Rounds</b>: free and paid rows. A late joiner can still enter while entries are open, but the run ends with the round. On testnet4 the paid rounds run on a grid of 6-hour periods.</li>
+    <li><b>Rounds</b>: a new round starts every 90 seconds. The run lasts 82 seconds. You can join until 45 seconds after the start, but a late run still ends with the round. The rounds overlap, so one is always open.</li>
   </ul>
 
   <h3 id="rps">Rock Paper Scissors</h3>
@@ -303,7 +304,7 @@
     <li>The game page shows only the players <b>ahead</b>: a player whose net over the window is 0 or below is not listed, so the board is the players who won sats. A node's answer still carries every row.</li>
     <li>Each row is one player: rounds played, wins (the round's sole best delivered score, or a payout above the stake), net (paid out less staked, in msat), best score and when they last played.</li>
     <li>Rows are ordered by net, then wins, then best score, then the player's key, never by who arrived first.</li>
-    <li>A result counts once it is final at that node, and an amount once the round's settlement is accepted. Refunds, void rounds and free markets are left out.</li>
+    <li>A result counts once it is final at that node, and an amount once the round's settlement is accepted. Refunds and void rounds are left out.</li>
     <li>A leaderboard computes no payout; it only sums what the settlements paid. Answers are kept 30 seconds.</li>
     <li>A round is held only by the nodes of its committee, so one node's leaderboard misses rounds. Add <code>&amp;scope=network</code> for the whole network's: the node asks every node it knows for its rounds (<code>GET /season-rounds</code>, same game and days) and counts a round only when at least 3 different nodes hand in exactly the same account of it. A finished round is held by at least 5 nodes, so a real one always reaches 3; no single node, nor two, can put a made-up row on the board. The answer says how many nodes were asked and how many answered.</li>
   </ul>
@@ -791,7 +792,7 @@ for (const node of committeeNodes)
     <tr><td>Donation, half</td><td>2.5%</td><td>the game's developer</td></tr>
     <tr><td>Donation, half</td><td>2.5%</td><td>the protocol developers</td></tr>
   </tbody></table></div>
-  <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. Free rounds pay neither. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
+  <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
   <h2 id="faq">FAQ</h2>
   <details><summary>Where are my sats?</summary><p>As Fedimint e-cash in your browser's wallet, under your 24 words or your Nostr key, in one of the federations. No company holds them. While you play, your stake sits in a lock in the federation that only the round's result, or its expiry, can open.</p></details>
   <details><summary>I lost my 24 words. Can anyone recover my wallet?</summary><p>No. Without your words (or the Nostr key you logged in with) the wallet and every lock it would refund are gone. Back up your words in Settings.</p></details>
@@ -799,7 +800,7 @@ for (const node of committeeNodes)
   <details><summary>What is the smallest deposit?</summary><p>5 sat. 1 sat paid is 1 sat credited.</p></details>
   <details><summary>Why does my federation show a load above 1?</summary><p>It holds more bitcoin than its guardians' bonds cover. On testnet4 that is a warning only. On mainnet the page would refuse deposits into it and point you to another federation.</p></details>
   <details><summary>Federation A or B?</summary><p>You do not have to choose: a deposit goes to the open federation with the lower load, and every game can be paid through either. A federation the page does not know is shown with its guardians and must be confirmed by you first.</p></details>
-  <details><summary>What do free rounds cost?</summary><p>Nothing. No wallet, no Lightning, no fee and no donation.</p></details>
+  <details><summary>Are there free rounds?</summary><p>No. There are only paid rounds. Free rounds are for development: on a <a href="#devnet">devnet</a>, and for a newly signed game before its paid rounds open.</p></details>
   <details><summary>What is taken from a paid stake?</summary><p>A 5 % node fee and your donation, 0 to 5 % (5 % by default), split between the game's developer and the protocol developers. Up or Down charges 1 % instead, only on what fills. See <a href="#money">Where the money goes</a>.</p></details>
   <details><summary>What if a node cheats?</summary><p>One node cannot decide anything: 5 of the round's 7 seats must sign the same result, every run is replayed, and anyone can object for 10 minutes. If the committee cannot agree, the entry is void and your stake comes back. See <a href="#cheat">When a node cheats</a>.</p></details>
   <details><summary>What if nobody settles my round?</summary><p>Your lock expires and your own client takes it back with your key. Nobody has to act for you.</p></details>
