@@ -83,6 +83,7 @@ import { federationRecords } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex } from './absences.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture } from './absence-producer.js';
 import { createFoundingSeat, cliSetup } from './founding-seat.js';
+import { createEndpointsOf } from './federation-endpoints.js';
 import { execFile as execFileCb } from 'node:child_process';
 import { createLiquidations } from './liquidations.js';
 import { createHalts, wsSessionCount } from './halts.js';
@@ -463,6 +464,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let seatGenesisKept;
   const seatGenesis = () => { if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
   let ownGuardianSeat = () => null;
+  const guardianWiring = { founding: false, absences: false, spentSet: false };   // which guardian wirings this seat started (kanban #326)
   let foundingSeat = null;                     // founding-seat.js (kanban #320), with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
   // THE ROUNDS THIS NODE REFUSED BECAUSE IT DOES NOT HOST THEIR GAME (kanban #204), by round id, with the game: an entry
   // into one is refused by that game's name. Bounded: the oldest are forgotten past REFUSED_GAME_ROUNDS.
@@ -3138,7 +3140,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     reserveKept.set(fidHex, { at: Date.now(), r });
     return r;
   };
-  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf,
+  // THE GUARDIANS' ADDRESSES FROM EACH FEDERATION'S OWN CONFIGURATION (kanban #326, the endpoint gap): this node's guardians' client.json
+  // (its own and its guardian-next), else the federation's `client_config` at the API URLs its invite names
+  const endpointsOf = createEndpointsOf({ dirs: () => [guardian && guardian.dataDir, guardianNext && guardianNext.dataDir],
+    inviteOf: (fidHex) => inviteOfFed(fidHex) || (fedRecords && fedRecords.inviteOf ? fedRecords.inviteOf(fidHex) : null) });
+  fedRecords = federationRecords({ round, roster, inviteFor: inviteOfFed, networkId: chainNetworkId() ? fromHex(chainNetworkId()) : null, reserveOf, endpointsOf,
     absences, abandonBlocks: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).abandonBlocks,
     departureNotice: (FEDERATION_CLOCKS[String(chain || '').replace(/^bitcoin-/, '')] || FEDERATION_CLOCKS.mainnet).departureNotice,
     leavingAtMs: () => (owner ? owner.leavingAtMs() : null),
@@ -3208,6 +3214,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       post: async (m) => { await Promise.all(networkSeats().map((u) => fetch(`${u}/founding`, { method: 'POST', body: JSON.stringify(m), signal: AbortSignal.timeout(15000) }).catch(() => null))); },
       peers: () => networkSeats(), fetchJson: async (u) => (await fetch(u, { signal: AbortSignal.timeout(15000) })).json(),
       say: (o) => console.log(`[founding] ${JSON.stringify(o)}`) });
+    guardianWiring.founding = true;
     const ft = setInterval(() => { foundingSeat.tick().catch((e) => console.log(`[founding] tick: ${e.message}`)); }, Number(process.env.ARENA_FOUNDING_MS || 600000));
     if (ft.unref) ft.unref();
   }
@@ -3215,6 +3222,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
   // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
   if (guardian && guardian.dataDir && guardian.apiPort && typeof chainTip === 'function') {
+    guardianWiring.absences = true;
     const producers = new Map();               // federation hex -> absence-producer.js
     const stateFile = `${String(guardian.dataDir).replace(/\.guardian$/, '')}.absences.json`;
     let state = {}; try { state = JSON.parse(readFileSync(stateFile, 'utf8')); } catch { state = {}; }
@@ -3246,6 +3254,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // HALTED whose record names this node a guardian, its guardian is asked (the fork's admin endpoint) and the signed copy is offered here
   // and posted to the peers. Only with a fedimint-cli client of that federation named (ARENA_SPENT_SET_CLIENT_DIR).
   if (guardian && guardian.dataDir && process.env.ARENA_SPENT_SET_CLIENT_DIR) {
+    guardianWiring.spentSet = true;
     const publishOwnSpentSets = async () => {
       for (const fid of new Set([...fedRecords.haltedFederations(), ...(halts ? halts.haltedFederations() : [])])) {
         const held = fedRecords.recordOf(fid);
@@ -7140,6 +7149,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       listingSignatures: () => listingSigned,
       // THE BALLOT'S PASS, for a test or a harness that moves the chain itself (ballot-tally.js); null on a seat that counts none
       ballotPass: ballotTally ? () => ballotTally.pass() : null,
+      // which guardian wirings started here (kanban #326): the founding, the absence producer, the spent-set producer
+      guardianWiring: () => ({ ...guardianWiring }),
       port: http.address().port,
       // Closed so it actually closes. `http.close` waits for open connections
       // to end, and a play socket does not end on its own - a harness that

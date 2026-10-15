@@ -171,3 +171,34 @@ test('a keyed guardian with ARENA_FOUNDING=1 and ARENA_FOUNDING_NEXT=1 runs a gu
     } finally { await m.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+// THE GUARDIAN WIRINGS (kanban #326, the owner 2026-10-15 "allow it"): a seat with a keyed guardian hands serve its dataDir - the absence
+// producer starts (and the spent-set producer where ARENA_SPENT_SET_CLIENT_DIR names a client); the founding runs only with ARENA_FOUNDING=1.
+test('a keyed guardian\'s seat starts the absence and spent-set producers; the founding only with ARENA_FOUNDING=1', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'node-start-wiring-'));
+  const { chain } = standInSeen(dir);
+  const was = { f: process.env.ARENA_FOUNDING, s: process.env.ARENA_SPENT_SET_CLIENT_DIR };
+  const put = (k, v) => { if (v === undefined) delete process.env[k]; else process.env[k] = v; };
+  try {
+    const path = join(dir, 'k.db');
+    founded(path);
+    put('ARENA_SPENT_SET_CLIENT_DIR', join(dir, 'client'));
+    put('ARENA_FOUNDING', undefined);
+    const p = await port(23311);
+    const a = await launchNode({ db: openStore(path), path }, { port: p, chainTip: async () => 1000 }, chain({}));
+    try {
+      assert.equal(a.guardians.own.dataDir, `${path}.guardian`);
+      assert.deepEqual(a.guardianWiring(), { founding: false, absences: true, spentSet: true }, 'no ARENA_FOUNDING: no founding');
+    } finally { await a.close(); }
+    put('ARENA_FOUNDING', '1');
+    const p2 = await port(23411);
+    const b = await launchNode({ db: openStore(path), path }, { port: p2, chainTip: async () => 1000 }, chain({ ARENA_FOUNDING: '1' }));
+    try { assert.deepEqual(b.guardianWiring(), { founding: true, absences: true, spentSet: true }); } finally { await b.close(); }
+    // a seat without a guardian: none of them
+    put('ARENA_FOUNDING', undefined);
+    const bare = join(dir, 'bare.db');
+    const p3 = await port(23511);
+    const c = await launchNode({ db: openStore(bare), path: bare }, { port: p3, chainTip: async () => 1000 }, chain({}));
+    try { assert.deepEqual(c.guardianWiring(), { founding: false, absences: false, spentSet: false }); } finally { await c.close(); }
+  } finally { put('ARENA_FOUNDING', was.f); put('ARENA_SPENT_SET_CLIENT_DIR', was.s); rmSync(dir, { recursive: true, force: true }); }
+});
