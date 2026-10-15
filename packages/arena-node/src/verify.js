@@ -52,7 +52,7 @@ import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/s
 import { matchProofId } from '../../arena-protocol/src/match.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { splitSigned as splitSignedMark, decodeCheckpoint, checkpointId, SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
-import { pluginForRound, hostedPlugins } from './plugins.js';
+import { pluginForRound, hostedPlugins, itemUnlocksOf } from './plugins.js';
 
 /** Why an attested round's entry is not closed, gathered or signed as a run (§0A.7a, kanban #206). */
 const ATTESTED_NO_RUN = 'that round\'s game is attested: its result is its attestors\' outcome (GET /outcome), not a run - nothing of it is replayed';
@@ -739,7 +739,7 @@ export class Verifier {
     const contract = decodeRoundContract(new Uint8Array(row.contract));
     const found = pluginForRound(contract, this.plugins);
     // AND THE ROUND'S WORLD RULE (#23): its config hash, census root and id, so the replay derives the world the page did
-    return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks,
+    return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin),
       world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes),
         sharedWorld: [...found.plugin.sharedWorld] } } : null;
   }

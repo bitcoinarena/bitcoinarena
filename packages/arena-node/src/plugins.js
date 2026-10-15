@@ -135,6 +135,17 @@ export function runLengthFits(core, config, blockTicks) {
     : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
 }
 
+
+/**
+ * WHAT A GAME'S ITEMS UNLOCK (kanban #365, #369): its manifest's catalogue as { item id: unlock hash (hex) }, handed to a replay with
+ * the round's core so an entry's items reach the core's start as the unlocks they pay for. A game that sells none answers {}.
+ */
+export function itemUnlocksOf(plugin) {
+  const out = {};
+  for (const it of (plugin && plugin.manifest && plugin.manifest.items) || []) out[it.id] = toHex(it.unlock);
+  return out;
+}
+
 /**
  * THE GAME, CORE AND CONFIG A ROUND IS PLAYED WITH: the game its gameId names among the games this node hosts; the core
  * its simCoreHash names among the cores the node installed for that game; the config its configHash names among that

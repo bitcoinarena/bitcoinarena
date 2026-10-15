@@ -106,6 +106,22 @@ function sandboxOf(core) {
   return s.meta.start ? { ok: true, s } : { ok: false, why: NO_CORE_RULE };
 }
 
+/**
+ * THE UNLOCKS AN ENTRY PLAYS WITH (kanban #365, #369): each item its entry names (protocol 10), as the round's game's catalogue unlocks
+ * it (core.items, plugins.js itemUnlocksOf) - in the entry's order. An entry naming no item answers []; one naming an item the game
+ * does not sell answers why not, and is not replayed. The core's start is handed them only when there are some.
+ */
+export function unlocksOf(entry, core) {
+  const items = (entry && entry.items) || [];
+  const out = [];
+  for (const it of items) {
+    const u = core && core.items ? core.items[it.itemId] : undefined;
+    if (!u) return { ok: false, why: `that entry plays with item "${it.itemId}", which the round's game does not sell` };
+    out.push(u);
+  }
+  return { ok: true, unlocks: out };
+}
+
 /** The run's length: the round's (core.runTicks), else the core's runTicks(config), else its RUN_TICKS. */
 function runTicksIn(core, s) {
   return Number.isInteger(core.runTicks) ? core.runTicks : s.meta.runTicks ? s.call('runTicks', { config: core.config }) : s.meta.RUN_TICKS;
@@ -172,10 +188,12 @@ export function replay(transcript, entry, { core, seedWord, roundRandomness, mar
   // handed the words, the events, the marks and the ticks wanted as one JSON
   // string, and answers one. A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban
   // #130): blockTicks - joinTick ticks, the same as every run for joinTick 0.
+  const unl = unlocksOf(entry, core);
+  if (!unl.ok) return { ok: false, why: unl.why };
   let ran;
   try {
     ran = s.call('replay', {
-      seedWord, config: core.config, runTicks: runTicksForEntry(start, runTicks), start,
+      seedWord, config: core.config, runTicks: runTicksForEntry(start, runTicks), start, ...(unl.unlocks.length ? { items: unl.unlocks } : {}),
       words: ticks.map((t) => t.words),
       events: { liquidations: transcript.liquidations, loads: transcript.loads, samples: transcript.samples, tapes: transcript.tapes },
       marks: marks.map((m) => [m.tick, hex(m.stateHash)]), pictures,
@@ -340,7 +358,10 @@ export class RunInProgress {
     try {
       this.runTicks = runTicksIn(core, this.s);
       // THE RUN IS KEPT IN THE CORE'S SANDBOX (kanban #328); this object holds its number, and lets it go when it is collected
-      this.id = this.s.call('open', { seedWord, config: core.config, runTicks: runTicksForEntry(entry.joinTick, this.runTicks) });
+      const unl = unlocksOf(entry, core);
+      if (!unl.ok) return Object.assign(this, { ok: false, why: unl.why });
+      this.id = this.s.call('open', { seedWord, config: core.config, runTicks: runTicksForEntry(entry.joinTick, this.runTicks),
+        ...(unl.unlocks.length ? { items: unl.unlocks } : {}) });
     } catch (e) { return Object.assign(this, { ok: false, why: e.message }); }
     DROP.register(this, { s: this.s, id: this.id });
     this.endsAt = lastTickOfRun(entry.joinTick, this.runTicks);

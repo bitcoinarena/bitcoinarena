@@ -32,13 +32,17 @@ function meta() {
   };
 }
 
+/** A RUN'S START OPTIONS: its length, and the unlocks of the items its entry plays with only when it names some (kanban #369) - so a
+ * core that sells nothing is started exactly as before. */
+const startOptions = (runTicks, items) => (Array.isArray(items) && items.length ? { runTicks, items } : { runTicks });
+
 /** REPLAY ONE RUN: the loop replay.js describes, here and nowhere else. The node checked the transcript before. */
-function replay({ seedWord, config, runTicks, start, words, events: ev, marks, pictures }) {
+function replay({ seedWord, config, runTicks, items, start, words, events: ev, marks, pictures }) {
   const want = new Map(marks);
   const wanted = new Set(pictures);
   const taken = [];
   const events = A.eventsOf(ev);
-  const st = A.start(seedWord, config, { runTicks });
+  const st = A.start(seedWord, config, startOptions(runTicks, items));
   let checked = 0;
   let divergedAt = null;
   const atStart = want.get(start);
@@ -59,9 +63,9 @@ function replay({ seedWord, config, runTicks, start, words, events: ev, marks, p
 }
 
 /** THE WARM GHOST: a run kept here and stepped forward a slice at a time; the node holds only its number. */
-function open({ seedWord, config, runTicks }) {
+function open({ seedWord, config, runTicks, items }) {
   const id = nextId++;
-  states.set(id, A.start(seedWord, config, { runTicks }));
+  states.set(id, A.start(seedWord, config, startOptions(runTicks, items)));
   return id;
 }
 function pose(id) {
