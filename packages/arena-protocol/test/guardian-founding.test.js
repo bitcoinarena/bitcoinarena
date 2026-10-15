@@ -55,3 +55,61 @@ test('what starts a founding: genesis at the first height with nominal operators
   const both = foundingTrigger({ loads, abandonBlocks: 10, records: [{ federation: 'x', status: 'DRAINING', height: 312 }], federationExists: true });
   assert.deepEqual([both.kind, both.height], ['succession', 312], 'the earliest event wins');
 });
+
+// SEATED FIRST (§23A.6 step 1, kanban #326): the old federation's seated, non-departing guardians first, in order; only the missing seats
+// drawn, from the pool minus their operators and minus operators guarding another OPEN federation; then three alternates.
+test('a succession seats the old guardians first, in their order, and draws only the missing seats', () => {
+  const old = [node(1, 'opA'), node(2, 'opB'), node(3, 'opC')];
+  const entries = [...old, node(4, 'opD'), node(5, 'opE'), node(6, 'opF'), node(7, 'opG'), node(8, 'opH'),
+    node(9, 'opA'),                                     // a second node of a seated-first operator: not drawn into the missing seat
+    node(10, 'busy')];                                  // guards another OPEN federation
+  const d = drawGuardians({ entries, seed: b32(0x77), nominal: 4, bondMinGuardian: 500000n, guardingOpen: new Set(['busy']), seatedFirst: old });
+  assert.equal(d.ok, true, d.why);
+  assert.equal(d.seatedFirst, 3);
+  assert.deepEqual(d.drawn.slice(0, 3).map((e) => e.advert.operatorId), ['opA', 'opB', 'opC'], 'seated first, in the order given');
+  const drawnOp = d.drawn[3].advert.operatorId;
+  assert.ok(['opD', 'opE', 'opF', 'opG', 'opH'].includes(drawnOp), `the missing seat drawn from the others: ${drawnOp}`);
+  assert.equal(d.alternates.length, 3);
+  const ops = [...d.drawn, ...d.alternates].map((e) => e.advert.operatorId);
+  assert.equal(new Set(ops).size, 7, 'one seat per operator');
+  assert.ok(!ops.includes('busy') && ops.filter((o) => o === 'opA').length === 1);
+  assert.equal(d.eligible, 5, 'opD..opH');
+  assert.match(d.why, /3 seated first, 1 drawn of 5 eligible operators, 3 alternates in order/);
+  // the same seed, the same draw; a pool too small for the missing seats founds nothing
+  assert.deepEqual(drawGuardians({ entries, seed: b32(0x77), nominal: 4, bondMinGuardian: 500000n, guardingOpen: new Set(['busy']), seatedFirst: old }).drawn.map((e) => toHex(e.pubkey)), d.drawn.map((e) => toHex(e.pubkey)));
+  const none = drawGuardians({ entries: [...old, node(9, 'opA'), node(10, 'busy')], seed: b32(0x77), nominal: 4, bondMinGuardian: 500000n, guardingOpen: new Set(['busy']), seatedFirst: old });
+  assert.equal(none.ok, false); assert.match(none.why, /3 seated first, and 0 other .* the 1 missing seats of 4 are not filled/);
+});
+
+test('fewer seated first than f + 1: everything is drawn', () => {
+  const entries = Array.from({ length: 10 }, (_, i) => node(i + 1, `op${i + 1}`));
+  const plain = drawGuardians({ entries, seed: b32(0x55), nominal: 7, bondMinGuardian: 500000n });
+  const two = drawGuardians({ entries, seed: b32(0x55), nominal: 7, bondMinGuardian: 500000n, seatedFirst: entries.slice(8, 10) });   // f = 2: 2 < 3
+  assert.equal(two.ok, true); assert.equal(two.seatedFirst, 0);
+  assert.deepEqual(two.drawn.map((e) => toHex(e.pubkey)), plain.drawn.map((e) => toHex(e.pubkey)), 'the plain draw');
+  assert.match(two.why, /everything drawn: 2 seated first is fewer than f \+ 1 = 3/);
+  const three = drawGuardians({ entries, seed: b32(0x55), nominal: 7, bondMinGuardian: 500000n, seatedFirst: entries.slice(7, 10) });
+  assert.equal(three.seatedFirst, 3, 'f + 1 = 3: seated first');
+});
+
+test('federation B, 5 of 7: B1..B6 of one operator seated first though that operator guards OPEN A; the 15th node drawn; nothing else', () => {
+  const B = Array.from({ length: 7 }, (_, i) => node(i + 1, '2of2'));
+  const A = Array.from({ length: 7 }, (_, i) => node(i + 11, '2of2'));
+  const n15 = node(15, 'node15');
+  const d = drawGuardians({ entries: [...A, ...B, n15], seed: b32(0x26), nominal: 7, bondMinGuardian: 50000n, guardingOpen: new Set(['2of2']), seatedFirst: B.slice(0, 6) });
+  assert.equal(d.ok, true, d.why);
+  assert.deepEqual(d.drawn.map((e) => e.pubkey[0]), [1, 2, 3, 4, 5, 6, 15]);
+  assert.deepEqual(d.alternates, [], 'no alternate: a no-show voids the founding');
+  assert.equal(d.eligible, 1);
+});
+
+test('a departure notice that would make a federation DRAINING triggers a succession at its posted height, carrying the seated first', async () => {
+  const { foundingTrigger } = await import('../src/guardian-founding.js');
+  const t = foundingTrigger({ records: [{ federation: 'bb'.repeat(32), status: 'OPEN', height: 900 }],
+    notices: [{ federation: 'bb'.repeat(32), height: 950, wouldBe: 'DRAINING', seatedFirst: ['01', '02'], departing: ['07'] }], federationExists: true });
+  assert.deepEqual([t.ok, t.kind, t.height, t.notice, t.federation], [true, 'succession', 950, true, 'bb'.repeat(32)]);
+  assert.deepEqual([t.seatedFirst, t.departing], [['01', '02'], ['07']]);
+  assert.match(t.why, /departure notice posted at 950 would make federation bbbbbbbbbbbbbbbb DRAINING/);
+  const earlier = foundingTrigger({ records: [{ federation: 'cc'.repeat(32), status: 'DRAINING', height: 940 }], notices: [{ federation: 'bb'.repeat(32), height: 950 }], federationExists: true });
+  assert.deepEqual([earlier.height, earlier.federation, earlier.notice], [940, 'cc'.repeat(32), undefined], 'the earliest event wins');
+});

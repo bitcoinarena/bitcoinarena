@@ -142,3 +142,48 @@ test('the window passes without a federation: void at beacon + founding_window, 
   await m.round(111);
   assert.deepEqual([m.seats[watcher].state().federation, m.seats[watcher].state().void], [true, false]);
 });
+
+// SEATED FIRST (§23A.6 step 1, kanban #326): a succession seats the old guardians n0..n2 first, in order - n0 leads - and draws one of the
+// others; a seated-first node is held to the same fifth as a drawn one: silent, it is replaced by the next alternate in its position.
+function succession({ offline = new Set() } = {}) {
+  const log = [];
+  const seats = [];
+  const first = [entries[0], entries[1], entries[2]];
+  for (let i = 0; i < keys.length; i++) {
+    seats.push(createFounding({ seed, triggerHeight: 100, entries, nominal: 4, bondMinGuardian: 500000n, foundingWindow: 10, seatedFirst: first,
+      guardingOpen: new Set(['op7']), ownKey: keys[i].pub, sign: (h) => schnorr.sign(h, keys[i].secret), verify,
+      setup: { localParams: async ({ leader }) => { log.push(['params', i, leader]); return `code-${i}`; }, addPeer: async (c) => { log.push(['add', i, c]); },
+        startDkg: async () => { log.push(['dkg', i]); }, invite: async () => null, done: async () => log.some((l) => l[0] === 'dkg' && l[1] === i) },
+      post: async (m) => { for (const s of seats) s.take(m); } }));
+  }
+  const round = async (tip) => { for (let i = 0; i < seats.length; i++) if (!offline.has(i)) await seats[i].advance(tip); };
+  return { seats, log, round };
+}
+
+test('a succession: the old guardians are seated first in order, position 0 leads, one seat drawn of the others; the DKG runs on the four', async () => {
+  const n = succession();
+  const st = n.seats[5].state();
+  assert.equal(st.seatedFirst, 3);
+  const seated = st.seated.map((x) => idx(x.node));
+  assert.deepEqual(seated.slice(0, 3), [0, 1, 2]);
+  assert.ok(![0, 1, 2, 7].includes(seated[3]), `drawn from n3..n6 (op7 guards an OPEN federation): ${seated[3]}`);
+  assert.ok(!st.alternates.map(idx).some((i) => [0, 1, 2, 7].includes(i)));
+  await n.round(101); await n.round(102);
+  assert.deepEqual(n.log.filter((l) => l[0] === 'params' && l[2]).map((l) => l[1]), [0], 'the first seated-first node leads');
+  for (const i of seated) assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === i));
+});
+
+test('a seated-first node silent for a fifth of the window is replaced by the first alternate in its position', async () => {
+  const probe = succession().seats[5].state();
+  const alt = idx(probe.alternates[0]);
+  const n = succession({ offline: new Set([1]) });
+  for (const t of [101, 102]) await n.round(t);
+  assert.deepEqual(n.seats[0].state().noShows, []);
+  await n.round(103);
+  const st = n.seats[0].state();
+  assert.deepEqual(st.noShows.map(idx), [1]);
+  assert.deepEqual([idx(st.seated[1].node), st.seated[1].since], [alt, 103], 'the alternate takes position 1');
+  await n.round(104);
+  for (const i of st.seated.map((x) => idx(x.node))) assert.ok(n.log.some((l) => l[0] === 'dkg' && l[1] === i), `seat ${i} started the DKG`);
+  assert.ok(!n.log.some((l) => l[1] === 1));
+});

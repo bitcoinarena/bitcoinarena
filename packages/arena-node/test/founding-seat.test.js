@@ -102,3 +102,85 @@ test('load: every OPEN federation at or above 80 % of its cap for abandon_blocks
   const r = await seat.tick();
   assert.equal(r.ok, true, r.why); assert.deepEqual([r.trigger.kind, r.trigger.height], ['load', 416]);
 });
+
+// THE SUCCESSION BY NOTICE (§23A.6, kanban #326): federation F of four (n0..n3, 3 of 4) is OPEN; n3 posts a departure notice at 500 -
+// three seated is CRITICAL at four - so the seats draw F's successor on the beacon 501: n0..n2 seated first in the record's order, each
+// through its guardian-next (its own guardian runs F), and one seat drawn of the others: not n3's operator (leaving), not the decoy's
+// (it guards G, OPEN). A notice that does not stand, or that leaves the federation OPEN, triggers nothing.
+import { buildFederationRecord, statusFor } from '../../arena-protocol/src/federation-record.js';
+import { signDeparture } from '../../arena-protocol/src/absence.js';
+import { noticeTriggers, guardingOpenOf } from '../src/founding-seat.js';
+
+const F = taggedHash('TEST/fed', Uint8Array.of(1)), G = taggedHash('TEST/fed', Uint8Array.of(2));
+const sKeys = Array.from({ length: 8 }, (_, i) => key(`s${i}`));             // s0..s3 guard F, s4 'node15', s5 op5, s6 op6, s7 the decoy (guards G)
+const peerKeyOf = (i) => Uint8Array.from([2, ...taggedHash('TEST/peer', Uint8Array.of(i))]);
+const sOps = ['op0', 'op1', 'op2', 'op3', 'node15', 'op5', 'op6', 'decoy'];
+const sEntries = sKeys.map((k, i) => ({ pubkey: k.pub, txid: taggedHash('TEST/stx', Uint8Array.of(i)), vout: 0, bondSats: 1000000n,
+  advert: { operatorId: sOps[i], guardianCapable: true, guardianEndpoint: `wss://s${i}/guardian`,
+    guardianOf: i < 4 ? [{ federationId: F, guardianKey: peerKeyOf(i) }] : i === 7 ? [{ federationId: G, guardianKey: peerKeyOf(7) }] : [] } }));
+const recordF = (nominal = 4, n = 4) => buildFederationRecord({ federationId: F, networkId: new Uint8Array(32), invite: 'fed11', nominal, height: 480,
+  guardians: sKeys.slice(0, n).map((k, i) => ({ peerKey: peerKeyOf(i), nodePubkey: k.pub, operatorId: sOps[i], bondTxid: sEntries[i].txid, bondVout: 0, endpoint: `wss://s${i}/guardian`, bondSats: 1000000n })) });
+const notice = (i, { postedAt = 500, leaveAfter = 520 } = {}) => signDeparture({ federationId: F, peerKey: peerKeyOf(i), leaveAfterHeight: leaveAfter, postedAt, nodePubkey: sKeys[i].pub },
+  (h) => schnorr.sign(h, sKeys[i].secret));
+const sClocks = { abandonBlocks: 10, foundingWindow: 10, departureNotice: 10 };
+
+test('the notice trigger: a standing notice that leaves F CRITICAL (four) or DRAINING (seven) - not one too short, not one that leaves it OPEN', () => {
+  const held = [{ federation: toHex(F), status: 'OPEN', height: 480, record: recordF() }];
+  const rows = noticeTriggers({ held, notices: [notice(3)], departureNotice: 10, verify });
+  assert.equal(rows.length, 1);
+  assert.deepEqual([rows[0].federation, rows[0].height, rows[0].wouldBe], [toHex(F), 500, 'CRITICAL']);
+  assert.deepEqual(rows[0].seatedFirst, recordF().guardians.filter((g) => toHex(g.nodePubkey) !== toHex(sKeys[3].pub)).map((g) => toHex(g.nodePubkey)), 'the record\'s order');
+  assert.deepEqual(rows[0].departing, [toHex(sKeys[3].pub)]);
+  assert.equal(noticeTriggers({ held, notices: [notice(3, { leaveAfter: 505 })], departureNotice: 10, verify }).length, 0, 'leave_after short of departure_notice: it does not stand');
+  assert.equal(noticeTriggers({ held: [{ ...held[0], status: 'CLOSED' }], notices: [notice(3)], departureNotice: 10, verify }).length, 0, 'a CLOSED federation is not succeeded');
+  const forged = { ...notice(3), signature: schnorr.sign(new Uint8Array(32), sKeys[0].secret) };
+  assert.equal(noticeTriggers({ held, notices: [forged], departureNotice: 10, verify }).length, 0, 'not signed by the leaving node');
+  // seven: one leaving makes it DRAINING; ten: still OPEN (statusFor), no trigger
+  assert.equal(statusFor({ nominal: 7, seated: 6 }).status, 'DRAINING');
+  assert.equal(statusFor({ nominal: 10, seated: 9 }).status, 'OPEN');
+});
+
+test('guardingOpenOf: operators whose adverts name a federation held OPEN, other than the one succeeded', () => {
+  const held = [{ federation: toHex(F), status: 'OPEN' }, { federation: toHex(G), status: 'OPEN' }];
+  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held, except: toHex(F) })], ['decoy']);
+  assert.deepEqual([...guardingOpenOf({ entries: sEntries, held: [{ federation: toHex(G), status: 'DRAINING' }], except: null })], [], 'a draining federation does not count');
+});
+
+test('a succession by notice: the remaining guardians seated first through their guardian-next, one drawn of the others, the DKG on the four', async () => {
+  const w = { tip: 500, log: [] };
+  const held = [{ federation: toHex(F), status: 'OPEN', height: 480, record: recordF() }, { federation: toHex(G), status: 'OPEN', height: 470 }];
+  const seats = [];
+  const fake = (i, which) => ({ localParams: async ({ leader }) => { w.log.push(['params', i, which, leader]); return `code-${i}`; },
+    addPeer: async (c) => { w.log.push(['add', i, which, c]); }, startDkg: async () => { w.log.push(['dkg', i, which]); }, invite: async () => null });
+  for (let i = 0; i < 8; i++) {
+    const own = i >= 4 && i <= 6;                       // s4..s6 hold no ceremony files: their own guardian waits in setup
+    seats.push(createFoundingSeat({ records: () => held, notices: () => [notice(3)], entriesAt: async (h) => (h === 500 ? sEntries : null),
+      beaconAt: async (h) => (h <= w.tip ? taggedHash('TEST/block', Uint8Array.of(h & 255)) : null), tip: async () => w.tip,
+      guardianInSetup: async () => own, setup: fake(i, 'guardian'),
+      next: i < 3 ? { inSetup: async () => true, setup: fake(i, 'guardian-next') } : null,
+      nominal: 4, bondMinGuardian: 500000n, clocks: sClocks, ownKey: sKeys[i].pub, sign: (h) => schnorr.sign(h, sKeys[i].secret), verify,
+      post: async (m) => { for (const s of seats) s.take(m); },
+      peers: () => [0, 1, 2, 3, 4, 5, 6, 7].filter((j) => j !== i).map((j) => `seat${j}`), fetchJson: async (u) => seats[parseInt(u.slice(4), 10)].state() }));
+  }
+  assert.match((await seats[0].tick()).why, /beacon after 500/);
+  w.tip = 501;
+  for (const s of seats) await s.tick();
+  for (const s of seats) await s.tick();
+  const st = seats[4].state();
+  assert.deepEqual([st.trigger.kind, st.trigger.notice, st.trigger.height, st.trigger.federation], ['succession', true, 500, toHex(F)]);
+  assert.equal(st.seatedFirst, 3);
+  const ix = (hex) => sKeys.findIndex((k) => toHex(k.pub) === hex);
+  const seated = st.seated.map((x) => ix(x.node));
+  assert.deepEqual(seated.slice(0, 3), recordF().guardians.slice(0, 4).map((g) => ix(toHex(g.nodePubkey))).filter((i) => i !== 3), 'seated first in the record\'s order');
+  assert.ok([4, 5, 6].includes(seated[3]), `drawn of s4..s6: ${seated[3]}`);
+  assert.ok(![3, 7].some((i) => [...seated, ...st.alternates.map(ix)].includes(i)), 'neither the leaving operator nor the decoy');
+  for (const i of seated.slice(0, 3)) {
+    assert.equal(seats[i].state().via, 'guardian-next');
+    assert.ok(w.log.some((l) => l[0] === 'dkg' && l[1] === i && l[2] === 'guardian-next'), `s${i} ran its DKG on its guardian-next`);
+    assert.ok(!w.log.some((l) => l[1] === i && l[2] === 'guardian'), `s${i}'s running guardian was not touched`);
+  }
+  assert.equal(seats[seated[3]].state().via, 'guardian');
+  assert.ok(w.log.some((l) => l[0] === 'dkg' && l[1] === seated[3] && l[2] === 'guardian'), 'the drawn node on its own setup-mode guardian');
+  assert.deepEqual(w.log.filter((l) => l[0] === 'params' && l[3]).map((l) => l[1]), [seated[0]], 'the first seated-first node leads');
+  assert.equal(seats[3].state().via, null, 'the leaving node takes no part');
+});
