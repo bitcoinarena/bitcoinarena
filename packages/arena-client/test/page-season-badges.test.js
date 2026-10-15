@@ -24,8 +24,8 @@ const season = (days) => ({ node: key(1), game: { name: 'nextblock', ids: [key(0
   seats: { asked: 12, answered: 12 },
   rows: [
     { rank: 1, player: SAT, name: 'satoshi', rounds: 6, wins: 4, netMsat: '4200', bestScore: 8304450 },
-    { rank: 2, player: ME, name: 'brave-otter-0042', rounds: 5, wins: 1, netMsat: '-3000', bestScore: 120000 },
-    { rank: 3, player: BOB, name: 'bob', rounds: 1, wins: 0, netMsat: '0', bestScore: null },
+    { rank: 2, player: ME, name: 'brave-otter-0042', rounds: 5, wins: 1, netMsat: '3000', bestScore: 120000 },
+    { rank: 3, player: BOB, name: 'bob', rounds: 1, wins: 0, netMsat: '1000', bestScore: null },
   ] });
 const def = (d, name, description, image) => ({ event: { kind: 30009, tags: [['d', d], ['name', name], ['description', description],
   ...(image ? [['image', `https://seat-2.example/badge-image/${d}.svg`]] : []), ['alt', 'a']] }, publishedMs: null });

@@ -22,7 +22,7 @@ export const FINAL_SIG_BYTES = 1 + 2 + 32 + 32 + 32 + 32 + 8;
 export const FINAL_SIG_SIGNATURE_BYTES = 64;
 export const SIGNED_FINAL_SIG_BYTES = FINAL_SIG_BYTES + FINAL_SIG_SIGNATURE_BYTES;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
+const fsIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 export function encodeFinalSig({ roundId, entryId, runId, signerPubkey, signedAtMs }) {
   const w = new Writer();
@@ -100,7 +100,7 @@ export function finalSigFault({ bytes, seenMs }, { roundId, entryId, runId, comm
  * round's threshold for `slots` seats. `records` are `{ bytes, seenMs }`.
  */
 export function finalSigned({ roundId, entryId, runId, records, committee, slots, finalAfterMs, verify } = {}) {
-  if (!is32(roundId) || !is32(entryId) || !is32(runId)) return { ok: false, signed: 0, why: 'FINAL is counted for one round, one entry and one run' };
+  if (!fsIs32(roundId) || !fsIs32(entryId) || !fsIs32(runId)) return { ok: false, signed: 0, why: 'FINAL is counted for one round, one entry and one run' };
   if (typeof verify !== 'function') return { ok: false, signed: 0, why: 'counting FINAL signatures needs a verifier, and none was injected' };
   if (!Array.isArray(committee) || !committee.length) return { ok: false, signed: 0, why: 'this round has no committee to sign FINAL' };
   let needed;

@@ -543,6 +543,36 @@
     #blwp-season-go svg, #arena-wb-season svg { width: 15px; height: 15px; color: #f7931a; }
     @media (max-width: 560px) { #blwp-season-go .word, #arena-wb-season .word { display: none; } }
     body.blwp-clean #arena-season, body.blwp-clean #blwp-season-go, body.blwp-clean #arena-wb-season { display: none !important; }
+    /* THE GAME'S SHOP (kanban #365, #369): beside the Leaderboard once a game that sells items is chosen, and its sheet - each item
+       with its price and Buy, or Owned with "Play with it" */
+    #blwp-shop-go { display: none; }
+    body.arena-game-chosen.arena-game-shop #blwp-shop-go { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
+      background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; font: 600 13px/1 system-ui, sans-serif; }
+    #blwp-shop-go svg { width: 15px; height: 15px; color: #f7931a; }
+    @media (max-width: 560px) { #blwp-shop-go .word { display: none; } }
+    body.blwp-clean #blwp-shop-go, body.blwp-clean #arena-shop { display: none !important; }
+    #arena-shop { position: fixed; inset: 0; z-index: 50; display: none; justify-content: center; overflow-y: auto;
+      background: radial-gradient(1200px 600px at 50% -10%, #1b2230 0%, #0d1014 60%); color: #e6edf3; font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
+      padding: calc(16px + env(safe-area-inset-top, 0px)) 16px calc(32px + env(safe-area-inset-bottom, 0px)); box-sizing: border-box; }
+    #arena-shop.show { display: flex; }
+    #arena-shop .box { width: min(560px, 100%); min-width: 0; }
+    #arena-shop .back { display: inline-block; margin: 0 0 10px; padding: 6px 0; background: none; border: 0; color: #8b949e; cursor: pointer; font: 600 14px/1.2 system-ui, sans-serif; }
+    #arena-shop .back:hover, #arena-shop .back:focus-visible { color: #f7931a; outline: none; }
+    #arena-shop .brand { color: #f7931a; font: 700 12px/1 system-ui, sans-serif; letter-spacing: .18em; text-transform: uppercase; margin: 0 0 6px; }
+    #arena-shop h2 { margin: 0 0 4px; font-size: 24px; font-weight: 750; }
+    #arena-shop .head { color: #8b949e; font-size: 13px; margin: 0 0 14px; }
+    #arena-shop .item { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; padding: 14px; margin: 0 0 10px;
+      background: linear-gradient(180deg, #171d26, #12171e); border: 1px solid #2a313c; border-radius: 14px; }
+    #arena-shop .item .pic { width: 56px; height: 56px; border-radius: 12px; background: #0d1014; border: 1px solid #262c36; display: grid; place-items: center; }
+    #arena-shop .item .pic svg { width: 40px; height: 40px; }
+    #arena-shop .item .name { font: 700 16px/1.25 system-ui, sans-serif; }
+    #arena-shop .item .what { color: #8b949e; font-size: 13px; }
+    #arena-shop .item .buy { padding: 9px 14px; border-radius: 8px; border: 0; background: #f7931a; color: #0d1014; font: 700 14px/1 system-ui, sans-serif; cursor: pointer; white-space: nowrap; }
+    #arena-shop .item .buy[disabled] { opacity: .55; cursor: default; }
+    #arena-shop .item .owned { color: #3fb950; font: 700 14px/1.2 system-ui, sans-serif; text-align: right; white-space: nowrap; }
+    #arena-shop .item .use { display: flex; align-items: center; justify-content: flex-end; gap: 6px; color: #c9d1d9; font-size: 12px; margin-top: 6px; cursor: pointer; }
+    #arena-shop .state { color: #8b949e; font-size: 13px; min-height: 1.4em; overflow-wrap: anywhere; }
+    #arena-shop .state.bad { color: #f0b72f; }
     /* THE PLATFORM PAGE'S LINK ON THE LOADING SCREEN (kanban #208, the owner 2026-10-08 11:38) */
     #arena-platform { margin-top: 10px; font: 13px/1.4 system-ui, sans-serif; text-align: center; padding: 0 16px; }
     #arena-client { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 36; background: #0d1014; }
@@ -890,6 +920,8 @@
     <a id="arena-platform-go" href="https://docs.bitcoin-arena.io/#why-build" title="Build a game or a market on Bitcoin Arena, or run a node and earn">Build &amp; earn</a>
     <!-- THE SEASON BOARD OF THE CHOSEN GAME (kanban #362), beside the gear once a game is chosen -->
     <button id="blwp-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
+    <!-- THE GAME'S SHOP (kanban #365, #369), beside the Leaderboard once a game that sells items is chosen -->
+    <button id="blwp-shop-go" type="button" title="Shop: this game's items, bought once and kept" aria-label="Shop"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 5.5h11l-1 8h-9z"/><path d="M5.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5"/></svg><span class="word">Shop</span></button>
     <button id="blwp-settings-go" type="button" title="Settings">&#9881;</button>
   </div>
   <!-- SETTINGS, ITS OWN SCREEN (the owner 2026-09-25 21:16: "The wallet page belongs in the settings screen. Deposit,
@@ -1457,6 +1489,8 @@
   </script>
 
   <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Leaderboard</div><h2 id="arena-season-title">Leaderboard</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
+  <!-- THE GAME'S SHOP (kanban #365, #369): its items, each bought once with this wallet and kept for good -->
+  <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
@@ -1521,6 +1555,34 @@
       var b = window.unityInstance && window.unityInstance.Module && window.unityInstance.Module.blwp;
       if (b && b.core !== core) { b.core = core; console.log('[blwp] core ' + hex.slice(0, 8) + ' for this round'); }
       return { ok: true, hex: hex };
+    };
+    // A CORE LOADED ONLY WHEN A ROUND NAMES IT (kanban #369): f0cc7b7b - the truck that knows the larger truck, named by manifest
+    // version 3's rounds - is 427 KB that no other round needs, so it is not a script tag every page load pays for. A join on a
+    // round naming it fetches the file, checks it is byte for byte the bundle pinned for nextblock (its sha256, as
+    // known-good-clients.json lists it), runs it in a function of its own so its `var BLWP` is not this page's, and keeps it here
+    // by its core hash for BLWP_USE_CORE. Answers { ok } or { ok: false, why }.
+    window.BLWP_CORE_FILES = { 'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8':
+      { file: 'blwp-core-f0cc7b7b.js', sha256: '319763d01161c46becd18219f6134864338db9bf9f30205b73e6eb13f643333a' } };
+    window.BLWP_LOAD_CORE = function (hash) {
+      var hex = String(hash || '').toLowerCase();
+      if (window.BLWP_CORES[hex]) return Promise.resolve({ ok: true, hex: hex });
+      var f = window.BLWP_CORE_FILES[hex];
+      if (!f) return Promise.resolve({ ok: false, why: 'this page carries no core ' + hex.slice(0, 16) });
+      window.__blwpCoreLoads = window.__blwpCoreLoads || {};
+      return window.__blwpCoreLoads[hex] = window.__blwpCoreLoads[hex] || fetch(f.file, { cache: 'force-cache' })
+        .then(function (r) { if (!r.ok) throw new Error(f.file + ' answered ' + r.status); return r.arrayBuffer(); })
+        .then(function (buf) {
+          return crypto.subtle.digest('SHA-256', buf).then(function (d) {
+            var got = Array.prototype.map.call(new Uint8Array(d), function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+            if (got !== f.sha256) throw new Error(f.file + ' hashes to ' + got.slice(0, 16) + ', not the pinned ' + f.sha256.slice(0, 16));
+            var core = (new Function('var module;\n' + new TextDecoder().decode(buf) + '\nreturn BLWP;'))();
+            if (!core || typeof core.init !== 'function') throw new Error(f.file + ' defines no core');
+            window.BLWP_CORES[hex] = core;
+            console.log('[blwp] core ' + hex.slice(0, 8) + ' loaded for this round (' + buf.byteLength + ' bytes, pinned hash checked)');
+            return { ok: true, hex: hex };
+          });
+        })
+        .catch(function (e) { delete window.__blwpCoreLoads[hex]; return { ok: false, why: 'the core ' + hex.slice(0, 16) + ' did not load: ' + e.message }; });
     };
   </script>
 
@@ -2653,6 +2715,10 @@
         }
       }
 
+      // A CORE LOADED ONLY FOR THE ROUNDS THAT NAME IT (kanban #369: f0cc7b7b, the larger truck's), before the round's core is taken
+      // below - which refuses it by name if it did not load
+      if (window.BLWP_LOAD_CORE && !(window.ARENA_GAME_CHOSEN && window.ARENA_GAME_CHOSEN.name !== 'nextblock'))
+        await window.BLWP_LOAD_CORE(BLWPCLIENT.roundCoreHex(named.round));
       window.BLWP_ROUND = named.round;
       // THE ROUND'S OWN CORE, before anything of the round is made (path A): a round on a core this page does not carry is
       // refused here by name rather than played on the wrong one
@@ -3299,13 +3365,25 @@
           chosen.limitPrice ? { order: { limitPrice: chosen.limitPrice, orderExpiryMs: String(chosen.orderExpiryMs || 0), sessionKeyPkcs8, placedMs: Date.now(), index: Number(chosen.orderIndex) || 0 } } : {}));
         return;
       }
+      // THE ITEMS THIS RUN PLAYS WITH (kanban #365, #369): on a round of version 10 or later whose game sells items, the ones this
+      // player owns (GET /items, by the items key) and plays with (the shop's "Play with it"), each signed for this entry by the
+      // items key; and the unlocks the core starts the run with (the jslib reads BLWP_ITEM_UNLOCKS)
+      const roundManifest = window.ARENA_ITEMS_MANIFEST_OF ? window.ARENA_ITEMS_MANIFEST_OF(named.round) : null;
+      let runItems = [];
+      if (!keptEntry && roundManifest && window.ARENA_ITEMS_FOR_ENTRY) {
+        try { runItems = await window.ARENA_ITEMS_FOR_ENTRY({ round: named.round, roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey,
+          manifest: roundManifest, nodes: named.nodes }); }
+        catch (e) { console.error('[blwp] items for this entry: ' + (e && e.message ? e.message : e)); runItems = []; }
+      }
       if (keptEntry) window.BLWP_ENTRY = keptEntry;
       else window.BLWP_ENTRY = BLWPCLIENT.entryFor(
         Object.assign({}, named.round, { id: BLWPCLIENT.fromHex(named.roundIdHex) }), {
           seed, curve: window.BLWP_CURVE, playerPubkey: player.pubkey, playerOrder: player.order || 0, random, ...(stake ? { stake } : {}),
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
-          donationMsat: donation.donationMsat, joinTick: late.joinTick, frontendPk: pageFrontendPk(),
+          donationMsat: donation.donationMsat, joinTick: late.joinTick, frontendPk: pageFrontendPk(), items: runItems,
         });
+      window.BLWP_ITEM_UNLOCKS = roundManifest ? BLWPCLIENT.entryUnlocks(window.BLWP_ENTRY, roundManifest) : [];
+      if (window.BLWP_ITEM_UNLOCKS.length) console.log('[blwp] this run plays with ' + (window.BLWP_ENTRY.items || []).map((x) => x.itemId).join(', '));
       if (keptEntry) console.log('[blwp] the entry of this round kept from before the reload');
       else if (stakeLock) {
         try {
@@ -5944,6 +6022,8 @@
       if (got.games && got.games.length && window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.BLWP_LEDGER_LOBBY);
       console.log('[arena] games of ' + nodes.length + ' node(s): ' + got.games.map((g) => g.name).join(', ') + ' in ' + (Date.now() - t0) + ' ms');
       window.ARENA_GAMES = got.games.map((g) => ({ id: g.id, name: g.name, title: g.title, known: g.known, attested: g.attested, nodes: g.nodes.length }));
+      // EVERY VERSION'S MANIFEST, for the shop and a round's items (kanban #369)
+      window.ARENA_GAMES_FULL = got.games;
       if (got.refused.length) console.warn('[arena] games refused: ' + got.refused.join(' | '));
       // the link's game, else this site's own (kanban #279: the Rock Paper Scissors site opens on Rock Paper Scissors)
       const named = new URLSearchParams(location.search.replace(/^\?/, '')).get('game') || window.ARENA_SITE_GAME;
@@ -6055,6 +6135,8 @@
       window.ARENA_GAME_CHOSEN = game;
       // THE SEASON BOARD'S WAY IN beside the gear and on the wallet bar: there is a game to show the board of now (kanban #362)
       document.body.classList.add('arena-game-chosen');
+      // THE SHOP BUTTON, only for a game that sells items (kanban #369)
+      document.body.classList.toggle('arena-game-shop', !!(BLWPCLIENT.shopOf && BLWPCLIENT.shopOf(got.games, game.name)));
       // THE CHOSEN GAME'S NAME WHERE THE PAGE NAMED NEXT BLOCK (kanban #350, the owner 2026-10-12 16:44: "Settings shows tick tock
       // Next block even though I am in RPS"): the Settings head and its mark, and the bare root's splash while the game loads
       if (game.name !== 'nextblock') {
@@ -7162,6 +7244,110 @@
         await showTheLobbyIfOneWasNamed();
       } catch (e) { console.error('[blwp] the run is refused, and that lobby cannot be read: ' + e.message); }
     };
+    // THE GAME'S SHOP AND ITS ITEMS IN A RUN (kanban #365, #369; the owner 2026-10-15: "people can buy a larger truck for 500
+    // satoshis"). An item is bought once with the player's wallet (item-buy.js buyItem: 50 % to the nodes that served a round in the
+    // last 24 h, 25 % / 25 % to the protocol and game developers, one federation transaction) under the player's ITEMS KEY - the same
+    // in every round, from the seed - and kept by the seats for good (GET /items). A run of a round of version 10 or later whose game
+    // sells it plays with it when the player chose "Play with it": the entry names it with the items key's proof for that entry,
+    // and the core starts the run with its unlock.
+    const ITEMS_USE = (game) => 'arena.items.use.' + game;
+    const itemsUse = (game) => { try { const v = JSON.parse(localStorage.getItem(ITEMS_USE(game)) || 'null'); return Array.isArray(v) ? v : null; } catch { return null; } };
+    const setItemsUse = (game, ids) => { try { localStorage.setItem(ITEMS_USE(game), JSON.stringify(ids)); } catch { /* not kept */ } };
+    const itemsKey = () => { const seed = walletSeed(); return seed ? BLWPCLIENT.itemsKeyFor(seed, window.BLWP_CURVE) : null; };
+    let ownedCache = null;
+    async function itemsOwnedNow(gameName, seats, { fresh = false } = {}) {
+      const key = itemsKey(); if (!key) return [];
+      const k = gameName + '|' + BLWPCLIENT.toHex(key.pubkey);
+      if (!fresh && ownedCache && ownedCache.k === k && Date.now() - ownedCache.at < 60000) return ownedCache.items;
+      const items = await BLWPCLIENT.ownedItems({ seats, player: key.pubkey, gameName, fetch: (u, o) => fetch(u, Object.assign({ cache: 'no-store' }, o || {})) });
+      ownedCache = { k, at: Date.now(), items };
+      return items;
+    }
+    // THE MANIFEST OF A ROUND'S GAME VERSION, when it sells items (the lobby's games, every version)
+    window.ARENA_ITEMS_MANIFEST_OF = (round) => {
+      const id = round && round.gameId instanceof Uint8Array ? BLWPCLIENT.toHex(round.gameId) : '';
+      const g = (window.ARENA_GAMES_FULL || []).find((x) => x.id === id);
+      return g && g.manifest && (g.manifest.items || []).length ? g.manifest : null;
+    };
+    window.ARENA_ITEMS_FOR_ENTRY = async ({ round, roundId, playerPubkey, manifest, nodes }) => {
+      const key = itemsKey(); if (!key) return [];
+      const owned = await Promise.race([itemsOwnedNow(manifest.gameName, nodes), new Promise((r) => setTimeout(() => r([]), 4000))]);
+      const use = itemsUse(manifest.gameName);
+      return BLWPCLIENT.entryItemsFor({ round, roundId, playerPubkey, owned, use: use || owned.map((o) => o.itemId), manifest, key });
+    };
+    const ITEM_PICTURE = { 'large-truck': '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="3" y="14" width="24" height="12" rx="2" fill="#f7931a"/><rect x="27" y="17" width="9" height="9" rx="2" fill="#c9d1d9"/><circle cx="10" cy="29" r="3.5" fill="#e6edf3"/><circle cx="31" cy="29" r="3.5" fill="#e6edf3"/><path d="M6 12h18" stroke="#3fb950" stroke-width="2" stroke-linecap="round"/></svg>' };
+    const ITEM_WHAT = { 'large-truck': '30 % more cargo room, quicker off the line' };
+    async function openShop() {
+      const sheet = document.getElementById('arena-shop'); if (!sheet) return;
+      const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
+      const list = sheet.querySelector('.items'); const state = sheet.querySelector('.state');
+      const say = (t, bad) => { state.textContent = t || ''; state.classList.toggle('bad', !!bad); };
+      sheet.classList.add('show'); list.textContent = ''; say(shop ? 'Reading what you own …' : 'This game sells nothing.');
+      if (!shop) return;
+      const seats = shop.game.nodes || [];
+      let owned = [];
+      try { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }); say(''); } catch (e) { say('What you own could not be read: ' + e.message, true); }
+      const paint = () => {
+        list.textContent = '';
+        const use = itemsUse(shop.game.name);
+        for (const it of shop.items) {
+          const mine = owned.find((o) => o.itemId === it.id);
+          const row = document.createElement('div'); row.className = 'item'; row.dataset.item = it.id;
+          const pic = document.createElement('div'); pic.className = 'pic'; pic.innerHTML = ITEM_PICTURE[it.id] || '';
+          const mid = document.createElement('div');
+          const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = it.name;
+          const wh = document.createElement('div'); wh.className = 'what'; wh.textContent = (ITEM_WHAT[it.id] ? ITEM_WHAT[it.id] + ' · ' : '') + String(it.priceSat) + ' sat';
+          mid.append(nm, wh);
+          const end = document.createElement('div');
+          if (mine) {
+            const o = document.createElement('div'); o.className = 'owned'; o.textContent = 'Owned ✓'; end.append(o);
+            const lab = document.createElement('label'); lab.className = 'use';
+            const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !use || use.includes(it.id);
+            cb.addEventListener('change', () => { const now = new Set(itemsUse(shop.game.name) || owned.map((x) => x.itemId)); if (cb.checked) now.add(it.id); else now.delete(it.id); setItemsUse(shop.game.name, [...now]); });
+            lab.append(cb, document.createTextNode('Play with it')); end.append(lab);
+          } else {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'buy'; b.textContent = 'Buy · ' + String(it.priceSat) + ' sat';
+            b.addEventListener('click', async () => {
+              b.disabled = true; say('Paying ' + String(it.priceSat) + ' sat …');
+              const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+              if (got.ok) { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }).catch(() => owned); say('Bought: ' + it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'); paint(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }
+              else { b.disabled = false; say('Not bought (' + got.step + '): ' + got.why, true); }
+            });
+            end.append(b);
+          }
+          row.append(pic, mid, end); list.append(row);
+        }
+      };
+      paint();
+    }
+    // A PURCHASE: a federation this wallet holds the price in, the round's two donation sets read from a listed round of the game
+    // (its seats sign them), the served list from every seat - then buyItem pays, signs and hands the record to the seats
+    async function buyShopItem(shop, it) {
+      const key = itemsKey(); if (!key) return { ok: false, step: 'wallet', why: 'open your wallet first' };
+      if (window.BLWP_SUM_BALANCES) await window.BLWP_SUM_BALANCES();
+      const need = BigInt(it.priceSat) * 1000n;
+      let wallet = null, federationId = null;
+      for (const [fid, c] of (window.BLWP_WALLETS || new Map())) {
+        try { if (BigInt(await c.balanceMsat()) >= need) { wallet = c; federationId = fid; break; } } catch { /* the next federation */ }
+      }
+      if (!wallet) return { ok: false, step: 'wallet', why: 'your wallet holds less than ' + String(it.priceSat) + ' sat in any one federation: deposit first' };
+      if (typeof wallet.paySubmit !== 'function') return { ok: false, step: 'wallet', why: 'this page\'s wallet cannot pay an item yet (its lock client has no paySubmit)' };
+      const ids = new Set((window.ARENA_GAMES_FULL || []).filter((g) => g.name === shop.game.name).map((g) => g.id));
+      const row = (window.BLWP_LOBBY || []).map((x) => x.raw).find((r) => r && !r.free && r.contract && ids.has(r.game));
+      if (!row) return { ok: false, step: 'donation', why: 'no paid round of this game is listed to read its donation sets from' };
+      const ds = await BLWPCLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: BLWPCLIENT.fromHex(row.id) }),
+        nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
+      if (!ds.ok || !ds.target) return { ok: false, step: 'donation', why: ds.why || 'the round names no donation sets' };
+      return BLWPCLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId,
+        player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o),
+        verify: (sg, m, k) => window.BLWP_CURVE.verify(sg, m, k) });
+    }
+    {
+      const go = document.getElementById('blwp-shop-go');
+      if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[blwp] shop: ' + e.message)));
+      const back = document.querySelector('#arena-shop .back');
+      if (back) back.addEventListener('click', () => document.getElementById('arena-shop').classList.remove('show'));
+    }
     showTheLobbyIfOneWasNamed()
       .catch((e) => { console.error('[blwp] that lobby cannot be read: ' + e.message); return false; })
       .then((lobby) => (lobby ? null : joinOrBackToTheLobby()))
