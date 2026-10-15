@@ -161,7 +161,7 @@ test('no seat answers: said, the board from before kept, and asked again in 30 s
   q.window.ARENA_SEASON.open(GAME);
   await settle();
   assert.equal(q.asked.length, 3, 'every seat asked once');
-  assert.equal(q.parts['.state'].textContent, 'No node answered the season just now. Asking again in 30 s.');
+  assert.equal(q.parts['.state'].textContent, 'No node answered the leaderboard just now. Asking again in 30 s.');
   assert.equal(q.parts['.state'].className, 'state bad');
   assert.equal(q.parts['.board'].children.length, 0);
   assert.deepEqual([...q.timers.values()].map((t) => t.ms), [30000]);
