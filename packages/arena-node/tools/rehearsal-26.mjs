@@ -34,6 +34,10 @@ import { departureHex, readDepartureHex } from '../src/absences.js';
 import { readInvite } from '../src/invite.js';
 import { openStore } from '../src/store.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { federationRecords } from '../src/federation-records.js';
+import { createEndpointsOf } from '../src/federation-endpoints.js';
+import { createHalts } from '../src/halts.js';
+import { decodeFederationRecord, splitSignedRecord } from '../../arena-protocol/src/federation-record.js';
 
 const P = process.env.P, B = process.env.BITCOIN_CLI, ARGS = (process.env.BTC_ARGS || '').split(' ').filter(Boolean);
 const F = process.env.FEDIMINT_BIN, FH = process.env.FEDIMINT_HOME, BURL = process.env.BITCOIND_URL, COOKIE = process.env.BITCOIND_COOKIE;
@@ -209,6 +213,42 @@ out({ step: 'successor federation', guardians: rows, oneFederation: rows.every((
 const oldRows = [];
 for (const i of [0, 1, 2, 3]) oldRows.push({ node: NAMES[i], session: await session(`ws://127.0.0.1:${PORTS[i]}/guardian`) });
 out({ step: 'old federation still answers', federation: FED1.slice(0, 16), guardians: oldRows });
+// ---- 7. THE RECORDS' GUARDIAN ENDPOINTS FROM EACH FEDERATION'S OWN CONFIGURATION (the endpoint gap): five in-process record seats
+// (src/federation-records.js) over the census that now names both federations, each reading its node's real guardian dirs ----
+const FED2_FULL = readInvite(inviteIn(succDir(seatedIx[0]))).federationId;
+const SUCC_INVITE = inviteIn(succDir(seatedIx[0]));
+const succPeer = (i) => { const c = guardianConfigOf(succDir(i), (f) => readFileSync(f, 'utf8')); return c.peerKeyOf(c.ownPeerId); };
+const census2 = { ok: true, entries: [0, 1, 2, 3, 4].map((i) => entry(i, { operatorId: OPS[i], endpoint: `http://seat-${i}`, guardianCapable: true,
+  guardianEndpoint: `ws://127.0.0.1:${PORTS[i]}/guardian`,                                     // the ONE endpoint a node advertises
+  guardianOf: [...(i < 4 ? [{ federationId: fromHex(FED1), guardianKey: PEER[i] }] : []), ...(seatedIx.includes(i) ? [{ federationId: fromHex(FED2_FULL), guardianKey: succPeer(i) }] : [])] })) };
+const invites = { [FED1]: OLD_INVITE, [FED2_FULL]: SUCC_INVITE };
+const dirsOf = (i) => [nodes[i].guardians.own && nodes[i].guardians.own.dataDir, nodes[i].guardians.next && nodes[i].guardians.next.dataDir];
+const recSeats = [0, 1, 2, 3, 4].map((i) => federationRecords({ round: { pubkey: keys[i].pub, identity: { secret: keys[i].secret } },
+  newest: () => ({ rid: new Uint8Array(32).fill(9), contract: { censusHeight: height(), networkId: new Uint8Array(32) } }), roster: { censusFor: () => census2 },
+  inviteFor: (fid) => invites[fid] || null, networkId: new Uint8Array(32),
+  endpointsOf: createEndpointsOf({ dirs: () => dirsOf(i), inviteOf: (fid) => invites[fid] || null }),
+  fetcher: async (url) => { const u = new URL(url); const j = recSeats[Number(u.hostname.split('-')[1])];
+    const body = await j.mySignature(u.searchParams.get('federation'), null, u.searchParams.get('reserve'));
+    return new Response(JSON.stringify(body), { status: body.ok ? 200 : 404 }); } }));
+const inviteFid = (inv) => fromHex(readInvite(inv).federationId);
+const gOld = await recSeats[0].gather(fromHex(FED1), inviteFid);
+const gNew = await recSeats[0].gather(fromHex(FED2_FULL), inviteFid);
+const endpointsOfRecord = (fid) => { const x = recSeats[0].list().find((r) => r.federation === fid); if (!x) return null;
+  return Object.fromEntries(decodeFederationRecord(splitSignedRecord(fromHex(x.record)).body).guardians.map((g) => [nameOf(toHex(g.nodePubkey)), g.endpoint])); };
+// a seat guarding neither asks the successor itself (stock client_config, at the URL its invite names)
+const outsider = createEndpointsOf({ dirs: () => [], inviteOf: (fid) => invites[fid] || null });
+const asked = await outsider(FED2_FULL);
+out({ step: 'record endpoints', old: { federation: FED1.slice(0, 16), ok: gOld.ok, status: gOld.status, signers: gOld.signers, why: gOld.why || null, endpoints: endpointsOfRecord(FED1) },
+  successor: { federation: FED2_FULL.slice(0, 16), ok: gNew.ok, status: gNew.status, signers: gNew.signers, why: gNew.why || null, endpoints: endpointsOfRecord(FED2_FULL) },
+  advertised: Object.fromEntries(census2.entries.map((e) => [nameOf(toHex(e.pubkey)), e.advert.guardianEndpoint])),
+  outsider: { from: outsider.from(FED2_FULL), endpoints: asked ? [...asked.values()] : null } });
+// THE HALT OBSERVER asks what the records list
+const askedHalt = [];
+const halts = createHalts({ records: recSeats[0], censusSeats: () => [], clocks, verify, sign: (h) => schnorr.sign(h, keys[0].secret), ownKey: keys[0].pub,
+  height: async () => height(), ask: async (e) => { const v = await session(e); askedHalt.push([e, v]); return v; } });
+await halts.observe();
+out({ step: 'halt observer asks', endpoints: Object.fromEntries(askedHalt.map(([e, v]) => [e.replace('ws://127.0.0.1:', ''), v])) });
+
 // BOTH FEDERATIONS RUN: sessions finished by every guardian of each (session_count >= SESSIONS), a block every 10 s, SESSIONS_S at most
 const want = Number(process.env.SESSIONS || 2);
 const tS = Date.now();
