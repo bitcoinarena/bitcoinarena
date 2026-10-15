@@ -97,7 +97,10 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    and what the pick's side got back of its net stake. Node side built: `POST /outcome` takes the value attestation, the seat holds it beside the
    outcome attestations, settles the scalar table after the objection window (a row paid less than its stake has its lock
    claimed and its rest paid back; a row paid more keeps its lock and is paid the excess), and `GET /outcome` serves the
-   bounds, the value and the table. The value-signing attestor is `arena-attestor --mode value` (9c1958a2). Left: scalar templates.
+   bounds, the value and the table. The value-signing attestor is `arena-attestor --mode value` (9c1958a2). Scalar templates (protocol 2026.0.8,
+   2026-10-15): a scalar manifest may be a template (max_outcomes 2); each round names its own question and its own bounds
+   - two i64 inside its question's tail, within the template's range - and is paid between them (`marketOfRound` gives the
+   round's view to the value check, the table and the page); dormant until seats advertise 8.
    **Achievements and badges** (13). State: built (off by default: ARENA_NOSTR_BADGES). Protocol `badges.js` holds a fixed,
    versioned catalogue - first win, five rounds, perfect run (a staked Tick Tock run of 1000 points or more), season top 3
    (a closed Monday-to-Monday UTC week's board, at least 3 players) - and `badgesEarned`, which reads every round through

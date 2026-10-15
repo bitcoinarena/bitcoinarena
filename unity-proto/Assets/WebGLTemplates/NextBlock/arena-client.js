@@ -599,7 +599,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -652,6 +652,12 @@ const GAME_MARKET_VERSION = 6;
 // attested round whose picks are 0 (LONG) and 1 (SHORT); the manifest REQUIRES this version (#349), so its rounds name 7 and the
 // census seats them only on nodes whose advert lists 7. Nothing below 7 reads or writes any of it.
 const SCALAR_VERSION = 7;
+// SCALAR TEMPLATES (2026.0.8, kanban #362, docs/PLATFORM-RESEARCH.md items 5 + 8: "Left: scalar templates"). From version 8 a scalar
+// market may be a template (manifest.js `template` beside `scalar`): anyone opens a numeric question by publishing one round of it,
+// and the round names - inside its own question's tail (contracts.js `event.scalar`) - the bounds it is paid between, low < high,
+// within the manifest's bounds, in the manifest's unit. The bounds are in the round's hashed bytes, so they are its id. Only a
+// version-8 round may carry them and only a version-8 manifest may be a scalar template (#349): nothing below 8 moves.
+const SCALAR_TEMPLATE_VERSION = 8;
 const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
@@ -1911,6 +1917,12 @@ function encodeRoundContract(c) {
     w.str(c.event.question);
     w.vec(c.event.outcomes, (o, ww) => ww.str(o));
     w.u64(c.event.resolveAtMs);
+    // A ROUND OF A SCALAR TEMPLATE NAMES ITS OWN BOUNDS (2026.0.8): two i64 after its resolution time, inside the tail - so its
+    // length and closing marker cover them and every question without them keeps its bytes
+    if (c.event.scalar !== undefined && c.event.scalar !== null) {
+      if (!(version >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
+      w.i64(c.event.scalar.low); w.i64(c.event.scalar.high);
+    }
     w.u16(w.len - start + 3);
     w.u8(EVENT_MARKER);
     return w.finish();
@@ -1950,6 +1962,13 @@ function contractEventFits(ev) {
   if (new Set(ev.outcomes).size !== ev.outcomes.length) return { ok: false, why: 'a round names each of its outcomes once' };
   if (typeof ev.resolveAtMs !== 'bigint' || ev.resolveAtMs < 0n || ev.resolveAtMs > 0xffffffffffffffffn)
     return { ok: false, why: 'a round names its resolution time as BigInt ms' };
+  if (ev.scalar !== undefined && ev.scalar !== null) {
+    const sc = ev.scalar, I64 = 0x7fffffffffffffffn;
+    if (typeof sc.low !== 'bigint' || typeof sc.high !== 'bigint' || sc.low < -I64 - 1n || sc.high > I64)
+      return { ok: false, why: 'a round names its scalar bounds low and high as signed 64-bit BigInt whole numbers' };
+    if (sc.low >= sc.high) return { ok: false, why: `a round's low bound is below its high bound; this one names low ${sc.low} and high ${sc.high}` };
+    if (ev.outcomes.length !== 2) return { ok: false, why: 'a round with scalar bounds names its two sides, long then short' };
+  }
   return { ok: true };
 }
 // Where a contract's trailing fields begin: after its node list (its last field read the same way by every version).
@@ -1981,6 +2000,8 @@ function contractEventTail(bytes, left) {
   try {
     const r = new Reader(bytes.subarray(end - size + 1, end - 3));
     const ev = { question: r.str(), outcomes: r.vec((rr) => rr.str()), resolveAtMs: r.u64() };
+    // a scalar template's round (2026.0.8): its bounds, two i64, are what is left - the decoder holds the version to them
+    if (r.b.length - r.at === 16) ev.scalar = { low: r.i64(), high: r.i64() };
     r.end();
     if (!contractEventFits(ev).ok) return null;
     return { event: ev, size };
@@ -2130,6 +2151,7 @@ function decodeRoundContract(bytes) {
     r.bytes(asked.size);                                      // read whole by contractEventTail
     c.event = asked.event;
     if (!(c.protocolVersion >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.event.scalar && !(c.protocolVersion >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
     if (c.seriesId !== undefined) throw new Error('a round that asks its own question is no round of a series');
   }
   r.end();
@@ -8363,6 +8385,8 @@ const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 6, year: 2026, x: 0 }),
   // scalar markets: an attested number paid linearly between bounds to the LONG and SHORT sides (kanban #362 feature 8)
   Object.freeze({ version: 7, year: 2026, x: 0 }),
+  // scalar templates: a scalar market whose rounds each name their own question and bounds (kanban #362, items 5 + 8)
+  Object.freeze({ version: 8, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
@@ -26632,7 +26656,13 @@ function scalarFits(sc, m) {
   if (outcomes.length !== SCALAR_SIDES.length || outcomes.some((o, i) => o !== SCALAR_SIDES[i]))
     return { ok: false, why: `a scalar market's outcomes are its two sides, ${SCALAR_SIDES.join(' and ')}, in that order` };
   if (!m.marketTerms) return { ok: false, why: 'a scalar market names its market terms: its fees, its question, when its value is read and its attestors\' deadline' };
-  if (m.template !== undefined && m.template !== null) return { ok: false, why: 'a scalar market is no template: its bounds and its question are its manifest\'s' };
+  // A SCALAR TEMPLATE (2026.0.8): each round names its own question and its own bounds inside the manifest's - which are then the
+  // range a round's bounds may take - and its two sides; before 8 a scalar market is no template
+  if (m.template !== undefined && m.template !== null) {
+    if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= SCALAR_TEMPLATE_VERSION))
+      return { ok: false, why: `a scalar market is a template only under protocol version ${protocolVersionName(SCALAR_TEMPLATE_VERSION)} or later (#349): its rounds name their own bounds` };
+    if (m.template.maxOutcomes !== 2) return { ok: false, why: 'a scalar template\'s rounds name its two sides: max_outcomes is 2' };
+  }
   if (m.gameSource !== undefined && m.gameSource !== null) return { ok: false, why: 'a scalar market is no market on a game: its attestors sign its value' };
   if (!(Number.isInteger(m.requiredProtocolVersion) && m.requiredProtocolVersion >= SCALAR_MIN_PROTOCOL_VERSION))
     return { ok: false, why: `a scalar market requires protocol version ${protocolVersionName(SCALAR_MIN_PROTOCOL_VERSION)} or later (#349): its attestors sign a value` };
@@ -27059,6 +27089,12 @@ function eventFitsTemplate(contract, m) {
   const name = `template "${m.gameName}"`;
   const ev = contract && contract.event;
   if (!ev) return { ok: false, why: `${name} is a market template: each round of it asks its own question, outcomes and resolution time, and this one names none` };
+  // A SCALAR TEMPLATE'S ROUND NAMES ITS BOUNDS, inside the template's; any other template's round names none (2026.0.8)
+  if (isScalar(m)) {
+    if (!ev.scalar) return { ok: false, why: `${name} is a scalar template: each round names the bounds it is paid between, and this one names none` };
+    if (ev.scalar.low < m.scalar.low || ev.scalar.high > m.scalar.high)
+      return { ok: false, why: `that round's bounds ${ev.scalar.low}..${ev.scalar.high} ${m.scalar.unit} are outside ${name}'s ${m.scalar.low}..${m.scalar.high}` };
+  } else if (ev.scalar) return { ok: false, why: `${name} is no scalar market: its rounds name no bounds` };
   if (contract.seriesId !== undefined && contract.seriesId !== null)
     return { ok: false, why: `${name}: a round that asks its own question is published on its own, never as a round of a series (a series round's id does not hash its question)` };
   if (!Array.isArray(ev.outcomes) || ev.outcomes.length < 2 || ev.outcomes.length > m.template.maxOutcomes)
@@ -27086,6 +27122,8 @@ function marketOfRound(m, contract) {
   const ev = contract.event;
   return { ...m, outcomes: [...ev.outcomes],
     marketTerms: { ...m.marketTerms, question: ev.question, resolveAfterCloseMs: ev.resolveAtMs - contract.entryCloseMs },
+    // a scalar template's round is paid between ITS bounds, in the template's unit (2026.0.8)
+    ...(isScalar(m) && ev.scalar ? { scalar: { low: ev.scalar.low, high: ev.scalar.high, unit: m.scalar.unit } } : {}),
     event: ev };
 }
 
@@ -28632,7 +28670,9 @@ function marketAsRoundAsks(market, round) {
   if (!market || !round || !round.event) return market;
   const ev = round.event;
   return { ...market, outcomes: [...ev.outcomes], question: ev.question, resolveAtMs: ev.resolveAtMs,
-    terms: market.terms ? { ...market.terms, resolveAfterCloseMs: ev.resolveAtMs - round.entryCloseMs } : market.terms };
+    terms: market.terms ? { ...market.terms, resolveAfterCloseMs: ev.resolveAtMs - round.entryCloseMs } : market.terms,
+    // A ROUND OF A SCALAR TEMPLATE (2026.0.8) is paid between ITS bounds, in the template's unit
+    ...(market.scalar && ev.scalar ? { scalar: { low: ev.scalar.low, high: ev.scalar.high, unit: market.scalar.unit } } : {}) };
 }
 
 /**
@@ -28731,7 +28771,19 @@ function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirmed = fa
   return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
     // a market on a game's round names its source round (kanban #362 feature 6): its outcome is that round's signed result
     ...(round.sourceRoundId instanceof Uint8Array ? { sourceRoundIdHex: toHex(round.sourceRoundId) } : {}),
+    // a template's round asks its own question - and a scalar template's names its own bounds (2026.0.8): kept with the pick, so its
+    // lines say the round's, not the template's
+    ...(round.event ? { event: { question: round.event.question, outcomes: [...round.event.outcomes], resolveAtMs: String(round.event.resolveAtMs),
+      ...(round.event.scalar ? { scalar: { low: String(round.event.scalar.low), high: String(round.event.scalar.high) } } : {}) } } : {}),
     nodes: [...nodes], confirmed: !!confirmed };
+}
+
+/** The round a kept pick names, as marketForRound reads it: its game, its entry close and - for a template's round - its question. */
+function roundOfPick(p) {
+  const ev = p && p.event;
+  return { gameId: fromHex(String(p.gameId)), entryCloseMs: BigInt(p.entryCloseMs),
+    ...(ev ? { event: { question: ev.question, outcomes: [...ev.outcomes], resolveAtMs: BigInt(ev.resolveAtMs),
+      ...(ev.scalar ? { scalar: { low: BigInt(ev.scalar.low), high: BigInt(ev.scalar.high) } } : {}) } } : {}) };
 }
 
 /** Ed25519 through the browser's WebCrypto; null where the browser cannot (the attestation is then shown unverified). */
@@ -28816,7 +28868,8 @@ async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourceRoundI
         if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the value is shown unverified' };
         said.set(`${toHex(x.key)}:${toHex(x.signature)}`, v === true);
       }
-      const st = valueAttestationStands(a, { manifest: market.manifest, roundIdBytes: fromHex(roundIdHex),
+      // clamped to the bounds THIS round is paid between - a scalar template's round names its own (2026.0.8)
+      const st = valueAttestationStands(a, { manifest: { ...market.manifest, scalar: market.scalar }, roundIdBytes: fromHex(roundIdHex),
         verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
       return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
     }
@@ -30095,7 +30148,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          winningsQualify: winningsQualify,
          marketForRound: marketForRound, pickSheet: pickSheet, submitPick: submitPick, checkAttestation: checkAttestation,
          marketLines: marketLines, webCryptoEd25519: webCryptoEd25519, pickRecord: pickRecord,
-         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck,
+         checkMarketOutcome: checkMarketOutcome, scalarValueLine: scalarValueLine, fetchSeriesTemplate: fetchSeriesTemplate, seriesRoundCheck: seriesRoundCheck, roundOfPick: roundOfPick,
          hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealMove: revealMove, revealsOfRound: revealsOfRound,
          seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,
          SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,

@@ -139,7 +139,7 @@ export class StakeSecrets {
           const counted = this.round.entriesOf(roundIdBytes).filter(({ entryId }) => !this.round.stakeSeen || this.round.stakeSeen(entryId))
             .map(({ entryId, entry: e }) => ({ entryId, stakeMsat: e.stakeMsat, feeMsat: e.feeMsat, donationMsat: e.donationMsat, pick: e.pick }));
           let t;
-          try { t = attestedTable(found.plugin.manifest, counted, f); } catch (e) { return { ok: false, why: `no scalar table for that round: ${e.message}` }; }
+          try { t = attestedTable(found.plugin.manifest, counted, f, contract); } catch (e) { return { ok: false, why: `no scalar table for that round: ${e.message}` }; }
           if (t.refunded) return { ok: false, why: `${t.why}: no stake secret is handed out` };
           const mine = t.rows.find((r) => r.entryId === toHex(entryIdBytes));
           if (!mine) return { ok: false, why: 'that entry is not in the round\'s table: its stake was not seen here' };

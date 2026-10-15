@@ -965,11 +965,34 @@ and fee back at once for a one-sided round. `GET /outcome` adds `scalar
 { low, high, unit }`, `value`, `clamped`, the scalar `table`, and
 `valuesNamed` when DISPUTED.
 
-Left: the page's market lines (a value input and the two sides), an attestor
-daemon mode that reads and signs a value (arena-attestor signs Up/Down
-indices only), a scalar template (per-round bounds, which would need a round
-field), and an order book for scalar sides. **Dormant until seats advertise
-7**: a version-7 round draws a committee only from nodes whose advert lists 7.
+Since built: the page's market lines (the value checked against the
+manifest's attestors, its unit, where it pays and what a side got back) and
+the value-signing attestor (`arena-attestor --mode value`). Left: an order
+book for scalar sides. **Dormant until seats advertise 7**: a version-7 round
+draws a committee only from nodes whose advert lists 7.
+
+**Scalar templates** *(AS BUILT 2026-10-15, protocol 2026.0.8)*. From version 8
+a scalar manifest may also be a template (§0A.7c): anyone opens a numeric
+question by publishing one round of it. Its `max_outcomes` is 2, and its
+`scalar` bounds are then the **range** a round's bounds must lie in, in its
+unit. A round names its own bounds inside its question's tail, after its
+resolution time:
+
+```text
+event {                           // as §0A.7c, and on a round of a scalar template:
+  ...                             //   question, outcomes[] (its two sides, long then short), resolve_at_ms
+  low, high                       // i64 each, low < high, inside the template's bounds - version 8 only
+}
+```
+
+They are in the hashed bytes, so they are the round's id; a round below 8
+naming them is refused by its decoder, and every question without them keeps
+its bytes. `roundFitsManifest` holds a scalar template's round to naming
+bounds inside the template's, and every other template's round to naming
+none. The round is paid between **its** bounds: `marketOfRound` gives the
+round's view, which the value check (clamping), the table every settlement,
+stake handout and `GET /outcome` reads (`attestedTable`), and the page read.
+A version-8 manifest; dormant until seats advertise 8.
 
 ## 0A.8 The money: 10% of the gross stake
 

@@ -159,7 +159,7 @@ test('version 6 is spoken: 2026.0.6, markets on games', () => {
   assert.equal(GAME_MARKET_VERSION, 6);
   assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(6));
   assert.equal(speaksVersion(6), true);
-  assert.equal(speaksVersion(8), false, '7 is 2026.0.7, scalar markets (kanban #362 feature 8); 8 is spoken by no build');
+  assert.equal(speaksVersion(9), false, '8 is 2026.0.8, scalar templates (kanban #362); 9 is spoken by no build');
 });
 
 test('a game source rides in its manifest after its own marker: read back whole, after the market terms and before the required version', () => {
@@ -217,10 +217,10 @@ test('a market on a game\'s rules, each refused by name', () => {
   // FLAT may pay an outcome too (a three-way market), and all three may: the mapping is the dev's, the refund one choice of it
   assert.ok(encodeManifestBody({ ...BODY, outcomes: ['BULLS', 'BEARS', 'FLAT'], gameSource: { ...GAME_SOURCE, mapping: [0, 1, 2] } }));
   // and a manifest that requires a version this build does not speak is no game it hosts
-  const tooNew = signed({ ...BODY, requiredProtocolVersion: 8 });
+  const tooNew = signed({ ...BODY, requiredProtocolVersion: 9 });
   const st = manifestStands(tooNew, { verify: verifyEd });
   assert.equal(st.ok, false);
-  assert.match(st.why, /market on a game under protocol version \?\.\?\.8, which this build does not speak/);
+  assert.match(st.why, /market on a game under protocol version \?\.\?\.9, which this build does not speak/);
   console.log('  FACTS (refusals):', JSON.stringify(said));
 });
 
@@ -265,9 +265,9 @@ test('a source round below version 6, on a series, beside a question, or of zero
   const v6 = encodeRoundContract(ROUND);
   const v5 = new Uint8Array(v6); v5[2] = 5;
   assert.throws(() => decodeRoundContract(v5), /trailing bytes/);
-  // and a version 8 contract is no contract of this build (7 is 2026.0.7, scalar markets - kanban #362 feature 8)
-  const v8 = new Uint8Array(v6); v8[2] = 8;
-  assert.throws(() => decodeRoundContract(v8), /protocol version 8/);
+  // and a version 9 contract is no contract of this build (8 is 2026.0.8, scalar templates - kanban #362)
+  const v9 = new Uint8Array(v6); v9[2] = 9;
+  assert.throws(() => decodeRoundContract(v9), /protocol version 9/);
 });
 
 test('which rounds name a source: a market on a game\'s round must (v6 or later), any other game\'s must not - each refused by name', () => {

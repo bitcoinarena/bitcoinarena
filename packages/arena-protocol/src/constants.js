@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -76,6 +76,12 @@ export const GAME_MARKET_VERSION = 6;
 // attested round whose picks are 0 (LONG) and 1 (SHORT); the manifest REQUIRES this version (#349), so its rounds name 7 and the
 // census seats them only on nodes whose advert lists 7. Nothing below 7 reads or writes any of it.
 export const SCALAR_VERSION = 7;
+// SCALAR TEMPLATES (2026.0.8, kanban #362, docs/PLATFORM-RESEARCH.md items 5 + 8: "Left: scalar templates"). From version 8 a scalar
+// market may be a template (manifest.js `template` beside `scalar`): anyone opens a numeric question by publishing one round of it,
+// and the round names - inside its own question's tail (contracts.js `event.scalar`) - the bounds it is paid between, low < high,
+// within the manifest's bounds, in the manifest's unit. The bounds are in the round's hashed bytes, so they are its id. Only a
+// version-8 round may carry them and only a version-8 manifest may be a scalar template (#349): nothing below 8 moves.
+export const SCALAR_TEMPLATE_VERSION = 8;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**

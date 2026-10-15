@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, verify as edVerify, createPublicKey } from 'node:crypto';
-import { marketForRound, checkMarketOutcome, marketLines, scalarValueLine, pickRecord, fetchSeriesTemplate } from '../src/market.js';
+import { marketForRound, checkMarketOutcome, marketLines, scalarValueLine, pickRecord, fetchSeriesTemplate, roundOfPick } from '../src/market.js';
 import { seriesId, seriesRound } from '../../arena-protocol/src/series.js';
 import { seriesLineOf } from '../../arena-protocol/src/series-line.js';
 import { encodeManifest, manifestBodyId, gameIdOf, decodeManifest, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, SOURCE_KIND, GAME_MARKET_REFUND,
@@ -12,7 +12,7 @@ import { encodeManifest, manifestBodyId, gameIdOf, decodeManifest, RESULT_TYPE, 
 import { encodeValueAttestation, valueAttestationBodyId } from '../../arena-protocol/src/scalar.js';
 import { encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { roundResultId } from '../../arena-protocol/src/round-result.js';
-import { GAME_MARKET_VERSION, SCALAR_VERSION } from '../../arena-protocol/src/constants.js';
+import { GAME_MARKET_VERSION, SCALAR_VERSION, SCALAR_TEMPLATE_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { MANIFEST_V2_HEX as NEXTBLOCK_V2_HEX } from '../../nextblock/plugin/nextblock-v2.js';
@@ -141,4 +141,23 @@ test('a market on a game is believed only from its source round\'s result, signe
   assert.match(voided.text, /VOID - the source round ended FLAT, which this market refunds · every stake comes back$/);
   const [unverified] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', check: fromSeries }]]), nowMs: Number(S) });
   assert.match(unverified.text, /'BULLS' - UNVERIFIED \(its source is round 3 of series/);
+});
+
+// ---- A SCALAR TEMPLATE (2026.0.8) ----------------------------------------------------------------------------------------------
+test('a scalar template round\'s pick keeps its question and bounds, and its value is clamped to THEM', async () => {
+  const TPL = signed(DEV, { ...MARKET_BODY, gameName: 'price-at', gameDevPubkey: DEV.pub, outcomes: [...SCALAR_SIDES], attestors: ATTESTORS.map((a) => a.pub),
+    attestThreshold: 2, scalar: { low: 0n, high: 100000000n, unit: 'USD cents' }, template: { category: 'prices', maxOutcomes: 2, resolveWithinMs: 86400000n },
+    requiredProtocolVersion: SCALAR_TEMPLATE_VERSION,
+    marketTerms: { nodeFeeBps: 100, donationBps: 50, question: 'a price', resolveAfterCloseMs: 60000n, deadlineAfterResolveMs: 3600000n, sourceRule: 'median' } });
+  const round = { ...SCALAR_ROUND, protocolVersion: SCALAR_TEMPLATE_VERSION, gameId: gameIdOf(TPL),
+    event: { question: 'BTC at 18:00?', outcomes: ['Higher', 'Lower'], resolveAtMs: SCALAR_ROUND.entryCloseMs + 3600000n, scalar: { low: 8000000n, high: 9000000n } } };
+  const rid = toHex(roundId(round));
+  const record = JSON.parse(JSON.stringify(pickRecord({ roundIdHex: rid, entryIdHex: 'e3'.repeat(32), pick: 0, round, nodes: ['https://s.example'] })));
+  const market = marketForRound(roundOfPick(record), { manifestBytes: encodeManifest(TPL) });
+  assert.deepEqual([market.question, market.outcomes, market.scalar], ['BTC at 18:00?', ['Higher', 'Lower'], { low: 8000000n, high: 9000000n, unit: 'USD cents' }]);
+  const ok = await checkMarketOutcome({ outcome: { attestation: valueAtt(9500000n, ATTESTORS.slice(0, 2), roundId(round)) }, market, roundIdHex: rid, verify: verifyEd });
+  assert.deepEqual([ok.verified, ok.value, ok.clamped], [true, 9500000n, 9000000n], ok.why);
+  const [line] = marketLines({ picks: [{ ...record, market }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'Higher', final: true, check: ok,
+    table: { refunded: false, rows: [{ entryId: 'e3'.repeat(32), netMsat: '98500', payoutMsat: '197000', won: true }] } }]]), nowMs: Number(round.entryCloseMs) + 1 });
+  assert.match(line.text, /value 95,000.00 USD \(paid as 90,000.00 USD\) between 80,000.00 USD and 90,000.00 USD .* 'Higher' gets 197 of your 98.5 sats · \+98.5$/);
 });
