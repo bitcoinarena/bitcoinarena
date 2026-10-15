@@ -699,21 +699,36 @@ export function encodeEntryContract(e) {
     w.u8(FRONTEND_MARKER);
     w.bytes(e.frontendPk, 33);
   }
-  // THE ITEMS THIS ENTRY PLAYS WITH (protocol 10, kanban #365): each an item of the round's game by its id and the purchase that made
-  // the entry's player its owner (purchase.js; the seats check the purchase is kept and the player's). WRITTEN ONLY WHEN IT NAMES
-  // ANY, last of all, after its own marker: every other entry keeps exactly its bytes and its id. Sorted by item id, each once.
+  // THE ITEMS THIS ENTRY PLAYS WITH (protocol 10, kanban #365): each an item of the round's game by its id, the purchase that made its
+  // owner, and the owner's proof (kanban #369) - the BIP340 signature, by the key the purchase names (player-key.js itemsSecretFor),
+  // over entryItemDigest(round, this entry's player key, purchase): the entry's key is fresh per round, the owner's is not, so the
+  // seats check the purchase is kept and that its buyer signed for this entry. WRITTEN ONLY WHEN IT NAMES ANY, last of all, after its
+  // own marker: every other entry keeps exactly its bytes and its id. Sorted by item id, each once.
   if (e.items !== undefined && e.items !== null) {
     if (!Array.isArray(e.items) || e.items.length < 1 || e.items.length > ENTRY_ITEMS_MAX) throw new Error(`an entry plays with 1 to ${ENTRY_ITEMS_MAX} items`);
     for (let i = 0; i < e.items.length; i++) {
       const it = e.items[i];
       if (!it || typeof it.itemId !== 'string' || !/^[a-z0-9][a-z0-9-]{0,31}$/.test(it.itemId) || !(it.purchaseId instanceof Uint8Array) || it.purchaseId.length !== 32)
         throw new Error('an entry names an item by its id and the 32-byte id of the purchase that made it the player\'s');
+      if (!(it.ownerSig instanceof Uint8Array) || it.ownerSig.length !== 64)
+        throw new Error('an entry\'s item carries its owner\'s 64-byte signature (entryItemDigest)');
       if (i > 0 && !(e.items[i - 1].itemId < it.itemId)) throw new Error('an entry\'s items are sorted by id, each once');
     }
     w.u8(ITEMS_ENTRY_MARKER);
-    w.vec(e.items, (it, ww) => { ww.str(it.itemId); ww.bytes32(it.purchaseId); });
+    w.vec(e.items, (it, ww) => { ww.str(it.itemId); ww.bytes32(it.purchaseId); ww.bytes(it.ownerSig, 64); });
   }
   return w.finish();
+}
+
+/**
+ * WHAT AN ITEM'S OWNER SIGNS FOR AN ENTRY (kanban #369): taggedHash("ARENA/v1/EntryItem", round id || the entry's player key ||
+ * purchase id). Bound to the round and to this entry's key, so the proof is no good on any other entry.
+ */
+export function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
+  for (const [n, b] of [['round id', roundId], ['player key', playerPubkey], ['purchase id', purchaseId]])
+    if (!(b instanceof Uint8Array) || b.length !== 32) throw new Error(`an entry item's proof names its ${n} in 32 bytes`);
+  const m = new Uint8Array(96); m.set(roundId, 0); m.set(playerPubkey, 32); m.set(purchaseId, 64);
+  return taggedHash(TAG.entryItem, m);
 }
 
 /** The byte before the items an entry plays with (protocol 10, kanban #365), last of all. */
@@ -800,7 +815,7 @@ export function decodeEntryContract(bytes) {
   }
   if (r.at < bytes.length) {
     if (r.u8() !== ITEMS_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website nor its items');
-    e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32() }));
+    e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32(), ownerSig: rr.bytes(64) }));
     if (!e.items.length) throw new Error('an empty list of items is not written: these bytes are not an entry\'s one encoding');
   }
   r.end();

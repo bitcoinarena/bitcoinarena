@@ -1,5 +1,6 @@
 // AN ENTRY PLAYS ONLY WITH ITEMS ITS PLAYER BOUGHT (protocol 10, kanban #365): round.enter checks each against the purchases this
-// seat keeps - this player's, of this round's game, of an item its manifest sells - and only on a round of version 10 or later.
+// seat keeps - of this round's game, of an item its manifest sells, signed for this entry by its buyer (kanban #369: the owner's key is
+// the same in every round, the entry's is fresh per round) - and only on a round of version 10 or later.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -19,6 +20,7 @@ import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js'
 import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donation-sets.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
 const DEV = testDevKey('items dev');
@@ -27,7 +29,11 @@ const MANIFEST = signManifest({ ...BODY, gameDevPubkey: DEV.pubkey, items: [{ id
   requiredProtocolVersion: ITEMS_VERSION }, DEV);
 const GAME = { ...NEXTBLOCK, manifest: MANIFEST, gameId: gameIdOf(MANIFEST) };
 const peers = Array.from({ length: 6 }, () => schnorr.getPublicKey(ed25519.utils.randomSecretKey()));
-const PLAYER = b32(5);
+const PLAYER = b32(5);                                                     // this entry's per-round key
+// THE OWNER (kanban #369): the stable key that bought the item; it signs that this entry plays with it
+const OWNER_SECRET = b32(0x33), OWNER = schnorr.getPublicKey(OWNER_SECRET);
+const proof = (rid, purchaseId, secret = OWNER_SECRET, player = PLAYER) => schnorr.sign(entryItemDigest({ roundId: rid, playerPubkey: player, purchaseId }), secret);
+const item = (rid, itemId, purchaseId, secret) => ({ itemId, purchaseId, ownerSig: proof(rid, purchaseId, secret) });
 
 const contract = (protocolVersion, gameId = GAME.gameId) => ({
   networkId: b32(0x4e), configHash: TRUCK_V3_CONFIG_HASH, censusConfirmations: 6, gameVerifySlots: 7, settlementSlots: 7, gameId, simCoreHash: TRUCK_CORE_HASH,
@@ -39,7 +45,7 @@ const contract = (protocolVersion, gameId = GAME.gameId) => ({
 const entry = (rid, items) => ({ roundId: rid, playerPubkey: PLAYER, sessionPubkey: ed25519.getPublicKey(ed25519.utils.randomSecretKey()), stakeCommitment: b32(7), stakeMsat: 100000n,
   feeMsat: entryFeeMsat(100000n), donationMsat: 0n, joinTick: 0, worldSecret: new Uint8Array(32), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32),
   stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, claimKeyAttestationRef: new Uint8Array(32), ...(items ? { items } : {}) });
-const keep = (db, { id, player = PLAYER, itemId = 'large-truck', gameDev = DEV.pubkey, gameName = 'nextblock' }) => {
+const keep = (db, { id, player = OWNER, itemId = 'large-truck', gameDev = DEV.pubkey, gameName = 'nextblock' }) => {
   db.exec(ITEM_PURCHASES_SQL);
   db.prepare('INSERT INTO item_purchases (id, player, game_dev, game_name, item_id, txid, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(toHex(id), toHex(player), toHex(gameDev), gameName, itemId, toHex(id).split('').reverse().join(''), Buffer.alloc(1), Buffer.alloc(64), 1);
@@ -52,16 +58,18 @@ const opened = (v, gameId = GAME.gameId) => {
   return { round, rid };
 };
 
-test('an entry with an item its player bought is taken; without the purchase, of another player or another item, it is refused by name', () => {
+test('an entry with an item its owner bought and signed for is taken; without the purchase, its proof, or for another item, refused by name', () => {
   const { round, rid } = opened(ITEMS_VERSION);
   const bought = b32(0xd1);
-  assert.throws(() => round.enter(entry(rid, [{ itemId: 'large-truck', purchaseId: bought }])), /not one this seat keeps for this player: hand it to POST \/item-purchase first/);
-  keep(round.db, { id: b32(0xd2), player: b32(6) });                       // another player's
+  assert.throws(() => round.enter(entry(rid, [item(rid, 'large-truck', bought)])), /not one this seat keeps for this game: hand it to POST \/item-purchase first/);
   keep(round.db, { id: b32(0xd3), itemId: 'gold-truck' });                  // another item's
-  assert.throws(() => round.enter(entry(rid, [{ itemId: 'large-truck', purchaseId: b32(0xd2) }])), /not one this seat keeps for this player/);
-  assert.throws(() => round.enter(entry(rid, [{ itemId: 'gold-truck', purchaseId: b32(0xd3) }])), /sells no item "gold-truck"/);
+  assert.throws(() => round.enter(entry(rid, [item(rid, 'gold-truck', b32(0xd3))])), /sells no item "gold-truck"/);
   keep(round.db, { id: bought });
-  const eid = round.enter(entry(rid, [{ itemId: 'large-truck', purchaseId: bought }]));
+  // someone else's purchase: kept, but its owner did not sign for this entry
+  assert.throws(() => round.enter(entry(rid, [item(rid, 'large-truck', bought, b32(0x44))])), /not signed for this entry by its owner/);
+  // the owner's proof for another entry key, replayed on this one
+  assert.throws(() => round.enter(entry(rid, [{ itemId: 'large-truck', purchaseId: bought, ownerSig: proof(rid, bought, OWNER_SECRET, b32(6)) }])), /not signed for this entry by its owner/);
+  const eid = round.enter(entry(rid, [item(rid, 'large-truck', bought)]));
   assert.equal(eid.length, 32);
   assert.ok(round.enter(entry(rid)).length, 'an entry without items is taken as always');
 });
@@ -70,5 +78,5 @@ test('items only on a round of version 10 or later: a game that sells them runs 
   assert.throws(() => opened(9), /requires protocol version 2026\.0\.10; that round runs 2026\.0\.9/);
   const { round, rid } = opened(9, NEXTBLOCK.gameId);
   keep(round.db, { id: b32(0xd1) });
-  assert.throws(() => round.enter(entry(rid, [{ itemId: 'large-truck', purchaseId: b32(0xd1) }])), /a round takes items from protocol version 10 on; this round runs 9/);
+  assert.throws(() => round.enter(entry(rid, [item(rid, 'large-truck', b32(0xd1))])), /a round takes items from protocol version 10 on; this round runs 9/);
 });

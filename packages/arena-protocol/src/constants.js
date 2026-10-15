@@ -445,6 +445,9 @@ export const TAG = {
   // WHO A TAB IS IN THE LOBBY (M3.3-34): its identity key, from the same seed
   // as every round's player key but under its own tag, so it is never one.
   lobbyIdentity: 'ARENA/v1/LobbyIdentity',
+  // kanban #369: the key a player buys in-game items with, and its proof on an entry that plays with one (contracts.js)
+  itemsKey: 'ARENA/v1/ItemsKey',
+  entryItem: 'ARENA/v1/EntryItem',
   // ONE SIGNER NODE'S SIGNED WORD ABOUT A ROUND IN ITS LOBBY (M3.3-34): the page
   // offers Join only when the round's threshold of its own signer nodes signed it.
   lobbyListing: 'ARENA/v1/LobbyListing',

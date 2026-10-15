@@ -91,7 +91,8 @@ mergeInto(LibraryManager.library, {
     var b = Module.blwp;
     if (!b || !b.core.bedFill) return 0;
     var room = blwpRoomOf(b.core, vsizesPtr ? UTF8ToString(vsizesPtr) : '');
-    return room === null ? 0 : b.core.bedFill(room) | 0;
+    // OF THIS RUN'S BED (kanban #369): the larger truck's, when its item is played, as the core counts the load it is handed
+    return room === null ? 0 : b.core.bedFill(room, (b.st && b.st.truck) ? b.st.truck.bedLength : undefined) | 0;
   },
 
   // A LIVE PRICE SAMPLE (the owner 2026-09-17 16:01: the chart was frozen, nothing ever submitted one), in the tape's unit
@@ -314,6 +315,13 @@ mergeInto(LibraryManager.library, {
     String(list || '').split(',').forEach(function (v) { if (v !== '') room = (room + (core.roomFor(v | 0) | 0)) | 0; });
     return room;
   },
+  // THE UNLOCKS THE RUN PLAYS WITH (kanban #369): the page set them beside the entry it built (index.html BLWP_ITEM_UNLOCKS - the
+  // entry's items as its game's catalogue unlocks them); none, and the core is started exactly as before
+  $blwpWithItems: function (opts) {
+    var u = (typeof window !== 'undefined' && Array.isArray(window.BLWP_ITEM_UNLOCKS)) ? window.BLWP_ITEM_UNLOCKS : [];
+    if (u.length) opts.items = u.slice();
+    return opts;
+  },
   BlwpSubmitLoad__deps: ['$blwpRoomOf'],
   BlwpBedFill__deps: ['$blwpRoomOf'],
   BlwpInit__deps: ['$blwpWorldSeed'],
@@ -333,6 +341,14 @@ mergeInto(LibraryManager.library, {
   BlwpRunTicks: function () {
     var b = Module.blwp;
     return (b && b.st && typeof b.st.runTicks === 'number') ? (b.st.runTicks | 0) : 0;
+  },
+
+  // THE TRUCK THIS RUN DRIVES (kanban #369): its bed's length in Q16.16 when the run plays with an item that names one (the
+  // larger truck, 255590 = 3.9 m), else 0 - the standard truck. Read off the core, which started the run with the entry's unlocks,
+  // so what Unity draws is the truck the signer nodes replay.
+  BlwpTruckBed: function () {
+    var b = Module.blwp;
+    return (b && b.st && b.st.truck && typeof b.st.truck.bedLength === 'number') ? (b.st.truck.bedLength | 0) : 0;
   },
 
   BlwpReliefEpoch: function () {
@@ -735,8 +751,8 @@ mergeInto(LibraryManager.library, {
             net.resuming = true;
             return net.client.resumeAfterReload({ roundId: net.where.roundId, entryId: net.where.entryId, blockTicks: contract.blockTicks | 0 })
               .then(function (r) {
-                b.st = b.core.init(net.seedWord, (net.contract && typeof net.contract.blockTicks === 'number')
-                  ? { runTicks: net.contract.blockTicks } : {});
+                b.st = b.core.init(net.seedWord, blwpWithItems((net.contract && typeof net.contract.blockTicks === 'number')
+                  ? { runTicks: net.contract.blockTicks } : {}));
                 b.reliefEpoch = (b.reliefEpoch | 0) + 1;
                 net.seen = BLWPCLIENT.catchUpCore(b.core, b.st, r.transcript);
                 // what Unity handed over before this is the lobby's market: the run's own tape, load and samples are in
@@ -771,8 +787,8 @@ mergeInto(LibraryManager.library, {
           // A LATE ENTRY'S RUN ENDS WITH THE ROUND'S (kanban #130): the round's run less the ticks before its join tick, and
           // its ticks are counted from that join tick - the HUD's time left is then the round's, and the last tick everybody's.
           var joinTick = (entry && typeof entry.joinTick === 'number' && entry.joinTick > 0) ? (entry.joinTick | 0) : 0;
-          b.st = b.core.init(net.seedWord, (net.contract && typeof net.contract.blockTicks === 'number')
-            ? { runTicks: BLWPCLIENT.runTicksForEntry(joinTick, net.contract.blockTicks) } : {});
+          b.st = b.core.init(net.seedWord, blwpWithItems((net.contract && typeof net.contract.blockTicks === 'number')
+            ? { runTicks: BLWPCLIENT.runTicksForEntry(joinTick, net.contract.blockTicks) } : {}));
           // A NEW WORLD IS A NEW RELIEF: the seed names the hills. Counted here, where C# never
           // hears about it, so the drawn terrain knows to rebuild (BlwpCore.ReliefEpoch).
           b.reliefEpoch = (b.reliefEpoch | 0) + 1;
@@ -1097,7 +1113,7 @@ mergeInto(LibraryManager.library, {
   // helper only when a dependency asks for it; without these the call would be
   // eliminated from the build and fail in the page rather than here.
   BlwpNetNodeUrl__deps: ['$blwpDiscovery'],
-  BlwpNetStart__deps: ['$blwpDiscovery'],
+  BlwpNetStart__deps: ['$blwpDiscovery', '$blwpWithItems'],
   $blwpDiscovery: function () {
     var d = (typeof BLWP_ADVERT !== 'undefined') ? BLWP_ADVERT : null;
     var c = (typeof BLWP_CHAIN !== 'undefined') ? BLWP_CHAIN : null;

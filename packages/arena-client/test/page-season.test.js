@@ -22,7 +22,7 @@ const answerFor = (days) => ({ node: key(1), game: { name: 'nextblock', ids: [ke
   seats: { asked: 12, answered: 12 },
   rows: [
     { rank: 1, player: key(0x11), name: 'satoshi', rounds: 6, wins: 4, netMsat: String(4200 * days), stakedMsat: '6000', paidMsat: '10200', bestScore: 8304450, lastPlayed: '2026-10-14T12:00:00.000Z' },
-    { rank: 2, player: ME, name: 'brave-otter-0042', rounds: 3, wins: 0, netMsat: '-3000', stakedMsat: '3000', paidMsat: '0', bestScore: 120000, lastPlayed: '2026-10-14T13:00:00.000Z' },
+    { rank: 2, player: ME, name: 'brave-otter-0042', rounds: 3, wins: 0, netMsat: '3000', stakedMsat: '3000', paidMsat: '6000', bestScore: 120000, lastPlayed: '2026-10-14T13:00:00.000Z' },
   ] });
 
 /** A fake DOM enough for the season view: elements with children, classes, text, attributes, data and handlers. */
@@ -96,12 +96,12 @@ test('opened from a tile: the game\'s seats in turn, the first that answers, the
   await settle();
   assert.deepEqual(seasonAsks(p.asked), ['https://seat-1.example/season?game=nextblock&days=7&scope=network', 'https://seat-2.example/season?game=nextblock&days=7&scope=network']);
   assert.equal(p.parts.h2.textContent, 'Tick Tock, Next Block');
-  assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 7 days · 2 players · from 13 of 13 nodes');
+  assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 7 days · 2 players ahead · from 13 of 13 nodes');
   const rows = rowsOf(p.parts['.board']);
   console.log('  SEASON:', JSON.stringify(rows));
   assert.deepEqual(rows, [
     { rank: '1', who: 'satoshi', line: '6 rounds · 4 wins · best 83.04450', net: '+29 sat', mine: false, cls: 'net up' },
-    { rank: '2', who: 'brave-otter-0042you', line: '3 rounds · 0 wins · best 1.20000', net: '-3 sat', mine: true, cls: 'net down' },
+    { rank: '2', who: 'brave-otter-0042you', line: '3 rounds · 0 wins · best 1.20000', net: '+3 sat', mine: true, cls: 'net up' },
   ]);
   assert.match(p.parts['.foot'].textContent, /9 rounds counted .* answered by seat-2\.example$/);
   assert.equal(p.window.ARENA_SEASON_LAST.seat, 'https://seat-2.example');
@@ -115,7 +115,7 @@ test('the day switch asks for 30 and 90 days at once, and marks the window it sh
   await settle();
   assert.equal(p.asked.at(-1), 'https://seat-1.example/season?game=nextblock&days=30&scope=network');
   assert.deepEqual(p.days.map((b) => b.getAttribute('aria-pressed')), ['false', 'true', 'false']);
-  assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 30 days · 2 players · from 13 of 13 nodes');
+  assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 30 days · 2 players ahead · from 13 of 13 nodes');
   assert.equal(rowsOf(p.parts['.board'])[0].net, '+126 sat');
   p.days[2].click();
   await settle();
@@ -131,7 +131,7 @@ test('the day switch asks for 30 and 90 days at once, and marks the window it sh
   const [seven, thirty] = p.pending;
   thirty.resolve(); await settle();
   seven.resolve(); await settle();
-  assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 30 days · 2 players · from 13 of 13 nodes', 'the older ask drew over the newer');
+  assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 30 days · 2 players ahead · from 13 of 13 nodes', 'the older ask drew over the newer');
 });
 
 test('asked again every 30 s while open, never while closed; Back and Escape close it', async () => {
