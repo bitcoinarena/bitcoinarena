@@ -18,7 +18,8 @@ test('this build writes its version and reads the versions it lists', () => {
   assert.equal(speaksVersion(6), true, '2026.0.6: markets on games (kanban #362 feature 6)');
   assert.equal(speaksVersion(7), true, '2026.0.7: scalar markets (kanban #362 feature 8)');
   assert.equal(speaksVersion(8), true, '2026.0.8: scalar templates (kanban #362)');
-  assert.equal(speaksVersion(9), false);
+  assert.equal(speaksVersion(9), true, '2026.0.9: the website that brought the entry (kanban #362 item 7)');
+  assert.equal(speaksVersion(10), false);
 });
 
 test('every live manifest keeps its bytes and its game id: none names a required version', () => {
@@ -67,9 +68,10 @@ test('a wire version is named YYYY.x.y (the owner 2026-10-12: x starts at 0, y t
   assert.equal(protocolVersionName(6), '2026.0.6');
   assert.equal(protocolVersionName(7), '2026.0.7');
   assert.equal(protocolVersionName(8), '2026.0.8');
-  assert.equal(protocolVersionName(9), '?.?.9', 'a version this build has no release for is named by its number');
+  assert.equal(protocolVersionName(9), '2026.0.9');
+  assert.equal(protocolVersionName(10), '?.?.10', 'a version this build has no release for is named by its number');
   assert.deepEqual(readProtocolVersionName('2026.0.1'), { ok: true, version: 1, known: true });
-  assert.deepEqual(readProtocolVersionName('2027.0.9'), { ok: true, version: 9, known: false });
+  assert.deepEqual(readProtocolVersionName('2027.0.10'), { ok: true, version: 10, known: false });
   assert.deepEqual(readProtocolVersionName('1'), { ok: true, version: 1, known: true });
   assert.match(readProtocolVersionName('2025.0.1').why, /build 1 is 2026\.0\.1/);
   assert.match(readProtocolVersionName('2026.0').why, /YYYY\.x\.y/);

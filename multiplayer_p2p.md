@@ -1026,6 +1026,20 @@ stake (gross, what leaves the wallet)              100%
   same whoever the recipients are.
 - Free rounds carry no fee and no donation.
 
+**The website that brought the entry** *(RULED the owner 2026-10-15, kanban #362
+roadmap item 7, path (a); AS BUILT, protocol 2026.0.9)*: an entry may name the
+33-byte payout key of the page that brought it (`frontend_pk`, marker `0xac`,
+last of the entry, in its signed bytes - so no seat can swap it). At
+settlement that key is paid **20% of the nodes' fee on the stakes it
+brought** - `fee x 20% x stakes_brought / gross`, floored, of the nodes' fee
+table's own fee and gross - **out of the nodes' 5%**, as one line off the top
+of the nodes' part of the fee locks; the nodes share the rest. **The player
+pays nothing more**: the stake, the fee lock (5%) and the donation are what
+they would be without it. Only on a round of version 9 or later (a seat
+refuses the entry otherwise, by name), so its seats are only nodes that pay it;
+every entry without it keeps its bytes. Order books split their fees on their
+own path and pay no website yet.
+
 ## 0A.9 Protocol version 1, and the move from BLWP
 
 **Every wire tag is renamed (RULED, the owner 2026-10-06), so every id changes.

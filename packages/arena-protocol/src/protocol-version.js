@@ -20,6 +20,8 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 7, year: 2026, x: 0 }),
   // scalar templates: a scalar market whose rounds each name their own question and bounds (kanban #362, items 5 + 8)
   Object.freeze({ version: 8, year: 2026, x: 0 }),
+  // the website that brought the entry: 20% of the nodes' fee on its entries, paid to its key (kanban #362 item 7, path (a))
+  Object.freeze({ version: 9, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
