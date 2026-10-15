@@ -44,31 +44,50 @@ test('the best score in the game\'s unit: Tick Tock\'s 1e-5 points as its result
 
 test('the rows and the header: the seat\'s order and names, the net in sats, the nodes it came from', () => {
   const v = seasonView(answer([
-    row(2, key(0x22), { netMsat: '-1500', wins: 0, bestScore: 8304450 }),
+    row(2, key(0x22), { netMsat: '1500', wins: 0, bestScore: 8304450 }),
     row(1, key(0x11), { name: 'satoshi', rounds: 12, wins: 9, netMsat: '42000', bestScore: 100000000 }),
-    row(3, key(0x33), { name: '', netMsat: '-20000' }),
+    row(3, key(0x33), { name: '', netMsat: '1000' }),
   ]), { title: 'Tick Tock, Next Block' });
   assert.equal(v.ok, true);
-  assert.equal(v.header, 'Tick Tock, Next Block · last 7 days · 3 players · from 13 of 13 nodes');
+  assert.equal(v.header, 'Tick Tock, Next Block · last 7 days · 3 players ahead · from 13 of 13 nodes');
   assert.deepEqual(v.rows.map((r) => [r.rank, r.name, r.rounds, r.wins, r.net, r.sign, r.best]), [
     [1, 'satoshi', 12, 9, '+42 sat', 1, '1000.00000'],
-    [2, 'player-2', 3, 0, '-1 sat', -1, '83.04450'],
-    [3, key(0x33).slice(0, 8), 3, 1, '-20 sat', -1, '–'],      // no name: its key's first 8, as the result card
+    [2, 'player-2', 3, 0, '+1 sat', 1, '83.04450'],
+    [3, key(0x33).slice(0, 8), 3, 1, '+1 sat', 1, '–'],      // no name: its key's first 8, as the result card
   ]);
-  assert.deepEqual(v.rows.map((r) => r.netMsat), ['42000', '-1500', '-20000'], 'the exact msat stays on the row');
+  assert.deepEqual(v.rows.map((r) => r.netMsat), ['42000', '1500', '1000'], 'the exact msat stays on the row');
   assert.equal(v.foot, '41 rounds counted · 2 left out (not final yet, or fewer than 3 nodes agreed) · a round counts once 3 nodes hold the same account of it');
   assert.equal(v.mine, null);
   assert.equal(v.empty, null);
   // a seat that merged fewer seats says so; the game's name when no title is given; one day and one player
-  const w = seasonView(answer([row(1, key(0x11))], { days: 1, seats: { asked: 12, answered: 4 } }));
-  assert.equal(w.header, 'nextblock · last day · 1 player · from 5 of 13 nodes');
+  const w = seasonView(answer([row(1, key(0x11), { netMsat: '5000' })], { days: 1, seats: { asked: 12, answered: 4 } }));
+  assert.equal(w.header, 'nextblock · last day · 1 player ahead · from 5 of 13 nodes');
   // a seat's own board (no scope) is one node's word
-  const own = seasonView(answer([row(1, key(0x11))], { scope: undefined, seats: undefined, days: 30 }), { title: 'Rock Paper Scissors' });
-  assert.equal(own.header, 'Rock Paper Scissors · last 30 days · 1 player · from one node only');
+  const own = seasonView(answer([row(1, key(0x11), { netMsat: '5000' })], { scope: undefined, seats: undefined, days: 30 }), { title: 'Rock Paper Scissors' });
+  assert.equal(own.header, 'Rock Paper Scissors · last 30 days · 1 player ahead · from one node only');
+});
+
+test('only the players ahead are drawn (kanban #367): a net of 0 or below is left out, the viewer\'s own row too', () => {
+  const v = seasonView(answer([
+    row(1, key(0x11), { netMsat: '42000' }),
+    row(2, key(0x22), { netMsat: '1' }),                      // 1 msat ahead is ahead, though it shows as "0 sat"
+    row(3, key(0x33), { netMsat: '0' }),
+    row(4, ME, { netMsat: '-999' }),
+    row(5, key(0x55), { netMsat: '-20000' }),
+  ]), { title: 'T', viewer: ME });
+  assert.deepEqual(v.rows.map((r) => [r.rank, r.netMsat]), [[1, '42000'], [2, '1']]);
+  assert.equal(v.players, 2);
+  assert.equal(v.behind, 3);
+  assert.equal(v.mine, null, 'the viewer behind is not drawn, not even below the top');
+  assert.equal(v.more, 0);
+  assert.equal(v.header, 'T · last 7 days · 2 players ahead · from 13 of 13 nodes');
+  const none = seasonView(answer([row(1, key(0x11), { netMsat: '0' }), row(2, key(0x22), { netMsat: '-5000' })]), { title: 'Up or Down' });
+  assert.deepEqual([none.rows, none.players, none.behind], [[], 0, 2]);
+  assert.equal(none.empty, 'Nobody is ahead at Up or Down in the last 7 days.');
 });
 
 test('the viewer\'s own row is marked, and drawn below the top rows when it ranks further down', () => {
-  const rows = Array.from({ length: 150 }, (_, i) => row(i + 1, key(i + 1)));
+  const rows = Array.from({ length: 150 }, (_, i) => row(i + 1, key(i + 1), { netMsat: String((200 - i) * 1000) }));
   const top = seasonView(answer(rows), { viewer: key(3).toUpperCase() });
   assert.equal(top.rows.length, 100);
   assert.deepEqual(top.rows.filter((r) => r.mine).map((r) => r.rank), [3], 'its key in any case');
@@ -88,7 +107,7 @@ test('an empty board is said in words, not drawn as nothing', () => {
   assert.equal(v.ok, true);
   assert.deepEqual(v.rows, []);
   assert.equal(v.players, 0);
-  assert.equal(v.header, 'Up or Down · last 7 days · 0 players · from 13 of 13 nodes');
+  assert.equal(v.header, 'Up or Down · last 7 days · 0 players ahead · from 13 of 13 nodes');
   assert.equal(v.empty, 'Nobody has a counted round of Up or Down in the last 7 days.');
   assert.equal(v.foot, '0 rounds counted · a round counts once 3 nodes hold the same account of it');
 });
