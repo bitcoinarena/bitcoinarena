@@ -19,6 +19,7 @@ import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
 import { seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
+import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
@@ -4691,6 +4692,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!got.ok) return text(res, got.code, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
+      }
+      // A RANDOM NUMBER FROM A RECENT BITCOIN BLOCK (kanban #366): GET /block-random?height=H&label=L&n=N[&count=K] - from THIS
+      // seat's own chain (ballot.blockHashAt), once block H is buried BLOCK_RANDOM_DEPTH deep; any node or page recomputes it
+      // (protocol block-random.js) and must get the same numbers. 409 with when it will be ready while the block is too recent.
+      if (req.method === 'GET' && url.pathname === '/block-random') {
+        if (!ballot || typeof ballot.blockHashAt !== 'function' || typeof ballot.tipHeight !== 'function') return text(res, 503, 'this node reads no chain to draw from');
+        const height = Number(url.searchParams.get('height'));
+        const label = url.searchParams.get('label') || '';
+        const count = Number(url.searchParams.get('count') || 1);
+        let n; try { n = BigInt(url.searchParams.get('n') || ''); } catch { n = 0n; }
+        if (!Number.isInteger(height) || height < 0) return text(res, 400, 'GET /block-random?height=<block height>&label=<what it is for>&n=<range>[&count=<1..1000>]');
+        let tip; try { tip = Number(await ballot.tipHeight()); } catch (e) { return text(res, 503, `this node could not read its chain: ${e.message}`); }
+        const ready = blockRandomReady({ height, tipHeight: tip });
+        if (!ready.ok) return text(res, 409, ready.why);
+        const hash = await ballot.blockHashAt(height);
+        if (!hash) return text(res, 503, `this node holds no block at ${height}`);
+        let out; try { out = blockRandom({ blockHashDisplay: hash, height, label, n, count }); } catch (e) { return text(res, 400, e.message); }
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), tip, depth: ready.depth, ...out }));
       }
       // A SERIES' TEMPLATE, AS ITS LINE (kanban #362): what a page needs to check a series round it is handed - a market on a game
       // whose source is a Tick Tock round. Served as text; the reader believes it only once it hashes to the id it asked for.
