@@ -6127,7 +6127,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         round.putSeriesPublication(sid, { txid: toHex(pub.tx.txid), feeSats: fee.feeSats });
         const kept = round.seriesPublication(sid);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
-        return res.end(JSON.stringify({ txid: kept.txid, feeSats: String(kept.feeSats), payoutSats: String(publisherPayoutMsat(kept.feeSats) / 1000n) }));
+        // the txid as an explorer prints it (measured 2026-10-15 19:39Z: the answer named 1deaef5f..., the internal byte order of the
+        // publication 9f90fcd4... - right, but not findable); the row keeps the internal order it always had
+        return res.end(JSON.stringify({ txid: toHex(fromHex(kept.txid).reverse()), feeSats: String(kept.feeSats), payoutSats: String(publisherPayoutMsat(kept.feeSats) / 1000n) }));
       }
 
       // A ROUND'S CREATOR SIGNATURE (§6, kanban #313): what rides beside a contract that names its creator, hex - 404 with none
