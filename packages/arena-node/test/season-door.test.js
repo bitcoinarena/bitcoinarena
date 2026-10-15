@@ -16,10 +16,12 @@ import { encodePlayerResult, joinSignedResult, resultId } from '../../arena-prot
 import { encodeLobbyName } from '../../arena-protocol/src/lobby-name.js';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { seasonRoundsToJson } from '../../arena-protocol/src/season.js';
 import { HOSTED, NEXTBLOCK_GAME_ID } from './plugins/hosted.js';
 
 const STAKE = 100000n, FEE = 2000n, DONATION = 2000n, NET = STAKE - FEE - DONATION;
 const HOUR = 3600000;
+const DAY_MS = 24 * HOUR;
 // THE ROUND'S COMMITTEE: two seats whose keys this test holds (gameVerifySlots 2 - a threshold of 2)
 const SECRETS = [b32(0x31), b32(0x32)];
 const SEATS = SECRETS.map((s) => schnorr.getPublicKey(s));
@@ -162,6 +164,10 @@ test('GET /season-rounds: this seat\'s rounds of a season, every msat a decimal 
     assert.deepEqual(flat.find((x) => x[0] === toHex(P2)), [toHex(P2), String(STAKE), '0']);
     assert.deepEqual(flat.find((x) => x[0] === toHex(P4)), [toHex(P4), '0', null], 'no FINAL result: no amount, null not 0');
     assert.deepEqual(flat.find((x) => x[0] === toHex(P5)), [toHex(P5), String(STAKE), null]);
+    // EACH ENTRY'S ROUND KEY, said to be there: the weekly board badge merges on it
+    assert.equal(j.roundKeys, true);
+    assert.deepEqual(j.rounds.flatMap((x) => x.entries.filter((e) => e.player === toHex(I1)).map((e) => e.roundKey)).sort(),
+      [toHex(b32(0x51)), toHex(b32(0x53))], 'the identity\'s two round keys, not the identity');
     // the id, and the list of ids a network season asks with, are the same rounds; a list is not taken as a name on /season
     assert.deepEqual((await (await ask(`?game=${toHex(NEXTBLOCK_GAME_ID)}`)).json()).rounds, j.rounds);
     const two = await (await ask(`?game=${toHex(NEXTBLOCK_GAME_ID)},${toHex(b32(0x77))}&days=7`)).json();
@@ -235,5 +241,65 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
     // without the scope, the seat's own board as ever; an unknown scope refused by name
     assert.deepEqual(await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock`)).json(), local);
     assert.equal((await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=galaxy`)).status, 400);
+  } finally { await d.close(); }
+});
+
+// THE WEEKLY BOARD BADGE READS THE NETWORK (kanban #362): a node with badges on, one free round of the last closed week with
+// three identities in it, and three other seats - two that hand in the same rounds with their round keys, one on a build
+// from before them (no `roundKeys`), which is not counted. Three seats agree (this one and two): the podium is awarded,
+// its evidence naming the week, the place, the 3 seats and the 3 that had to agree.
+test('a real node: the weekly top-3 badge is awarded from the network\'s merged week, a seat without round keys not counted', async () => {
+  const { lastClosedWeek } = await import('../../arena-protocol/src/badges.js');
+  const { BOARD_GRACE_MS, BOARD_NETWORK_GRACE_MS } = await import('../src/nostr-badges.js');
+  const key = (n) => toHex(schnorr.getPublicKey(b32(n)));
+  const base = (x) => `http://127.0.0.1:9/seat-${x}`;
+  const peers = ['a', 'b', 'c'].map(base);
+  const game = toHex(NEXTBLOCK_GAME_ID);
+  const answers = new Map();
+  const asked = [];
+  const seasonFetch = async (u) => {
+    asked.push(u);
+    const at = peers.find((p) => u.startsWith(`${p}/`));
+    const a = answers.get(at);
+    if (!a) throw new Error('no answer');
+    const body = u.includes(`game=${game}&`) ? a : { ...a, rounds: [] };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  // THE STORE WRITTEN BEFORE THE NODE STARTS, and the seats' answers made from it: the book reads the week on its first tick
+  const store = openStore(':memory:');
+  const pre = new Round(store, () => Date.now(), { plugins: HOSTED });
+  const week = lastClosedWeek(Date.now() - BOARD_GRACE_MS - BOARD_NETWORK_GRACE_MS);
+  const ids = [0xc1, 0xc2, 0xc3].map((n) => schnorr.getPublicKey(b32(n)));
+  writeRound(pre, 1, ids.map((identity, i) => ({ key: b32(0x51 + i), outcome: 'DELIVERED', score: 300 - 100 * i, record: { identity, name: `p${i}` } })),
+    { stakeMsat: 0n, startMs: week.fromMs + DAY_MS });
+  const held = seasonRoundsToJson(seasonRounds(pre, { games: new Set([game]), fromMs: week.fromMs, toMs: week.toMs }));
+  assert.equal(held.length, 1);
+  assert.equal(held[0].entries.length, 3);
+  answers.set(base('a'), { node: key(0xa1), roundKeys: true, rounds: held });
+  answers.set(base('b'), { node: key(0xa2), roundKeys: true, rounds: held });
+  answers.set(base('c'), { node: key(0xa3), rounds: held });          // a build from before the round keys: no `roundKeys`
+  const d = await serve(store, { plugins: HOSTED, port: 0, peers, seasonFetch, ...opts, nostrBadgesOn: true, nostrBadgesTickMs: 100 });
+  try {
+    const mine = await (await fetch(`http://127.0.0.1:${d.port}/season-rounds?game=${game}&days=14`)).json();
+    assert.deepEqual(mine.rounds, held, 'what the seats hand in is what this node holds');
+    const of = async (p) => (await (await fetch(`http://127.0.0.1:${d.port}/badges?player=${toHex(p)}`)).json()).awards;
+    let got = [];
+    for (let i = 0; i < 100 && !got.length; i++) { got = await of(ids[0]); if (!got.length) await new Promise((r) => setTimeout(r, 50)); }
+    const label = new Date(week.fromMs).toISOString().slice(0, 10);
+    const places = await Promise.all(ids.map(async (p) => (await of(p)).map((a) => [a.d, a.scope, a.evidence])));
+    assert.deepEqual(places, [1, 2, 3].map((rank) => [['arena-season-top-3', `nextblock@${label}`,
+      { window: { fromMs: week.fromMs, toMs: week.toMs }, rank, seats: 3, agree: 3 }]]), 'seat c (no round keys) is not among the 3');
+    // EVERY SEAT ASKED FOR WHOLE DAYS BACK FROM ITS CLOCK, reaching past the week's start
+    const nb = asked.filter((u) => u.includes(`game=${game}&`));
+    assert.ok(nb.length >= 3);
+    for (const u of nb) {
+      const days = Number(/days=(\d+)$/.exec(u)[1]);
+      assert.ok(days * DAY_MS > Date.now() - week.fromMs && days <= 90, u);
+    }
+    // ONCE: later ticks ask nobody again for that week
+    const n = asked.length;
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(asked.length, n);
+    for (const p of [b32(0x51), b32(0x52)]) assert.deepEqual(await of(p), [], 'a round key holds no place');
   } finally { await d.close(); }
 });

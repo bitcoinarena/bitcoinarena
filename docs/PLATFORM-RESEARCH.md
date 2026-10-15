@@ -49,7 +49,8 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    at least 5 committee seats, and forging one takes 3 colluding seats. The testnet page shows it: a "Season" link on each
    game's tile, a Season button beside the gear and on the wallet bar once a game is chosen; the board of the last 7, 30 or
    90 days from the game's first seat that answers `?scope=network`, the viewer's own row marked, asked again every 30 s
-   while open (arena-client `season-view.js`).
+   while open (arena-client `season-view.js`). `/season-rounds` also names each entry's round key (`roundKeys: true`),
+   which the weekly top-3 badge (13) merges on; the network board does not read it.
 2. **Results and season boards on Nostr** (2) - nodes publish what is already signed; the relay accepts the event kind.
 3. **Top-N prize splits** (3) - a new payout rule; only manifests that pick it are affected, every existing game id unchanged.
 4. **Event-market templates** (5), then **markets on games** (6) - the composability unlocks.
@@ -72,9 +73,15 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    moment its Nostr result is built) and each closed week once, and signs NIP-58 events with its node key: a Badge
    Definition (kind 30009) per badge and a Badge Award (kind 8, `a` = `30009:<seat>:<d>`, `p` = the player's identity,
    `evidence` = the round ids) once per badge, player and game (or week), kept across restarts. Only an identity key (an
-   x-only Nostr key) is awarded, never a bare round key. `GET /badges?player=`, `GET /badge-definitions`; published with
-   the results to ARENA_NOSTR_PUBLISH; the Arena relay takes kinds 30009 and 8. Not yet: a network-wide board badge
-   (mergeSeasonAccounts), badges shown in the page.
+   x-only Nostr key) is awarded, never a bare round key. The season top 3 ranks THE NETWORK'S week, not the seat's own
+   (one seat holds only its committees' rounds, about half): 2 h 15 min after the week closes the seat asks every seat
+   it knows for the week's `/season-rounds` and merges them with protocol `mergeSeasonAccounts` (3 seats agreeing byte
+   for byte, round keys included - `keys`), so seats that read the same agreed rounds award the same podium; with fewer
+   than 3 seats answering the week waits, asked again every 30 min for up to 2 days; the award names the week, the
+   rank, the seats that answered and the 3 that had to agree (`seats`, `agree` tags). `GET /badges?player=`,
+   `GET /badge-definitions`; published with the results to ARENA_NOSTR_PUBLISH; the Arena relay takes kinds 30009 and 8.
+   Not yet: badges shown in the page; the round badges (first win, five rounds, perfect run) still read the seat's own
+   rounds.
 
 Rules for every feature: additive, versioned where it changes bytes (§#349 required versions), no change to any existing
 game or market id, tests first, measured live before it is called done.

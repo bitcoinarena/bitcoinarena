@@ -252,3 +252,34 @@ test('a season\'s rounds on the wire: every msat a decimal string and back, a va
   assert.match(season(bad, win).excluded[0].why, /BigInt msat/);
   assert.deepEqual(seasonRoundsFromJson('x'), []);
 });
+
+test('merge with keys (the weekly board badge): each entry\'s round key is part of the account, and travels on the wire', () => {
+  const K1 = h(0x41), K2 = h(0x42);
+  const keyed = (r, ka, kb) => ({ ...r, entries: [{ ...r.entries[0], roundKey: ka }, { ...r.entries[1], roundKey: kb }] });
+  const r1 = round(1, [e(A, DELIVERED, 500, 192000n), e(B, FAILED, 300, 0n)]);
+  const honest = keyed(r1, K1, K2);
+  const bare = keyed(r1, K1, B);                  // one seat says B joined under its own key
+  // WITHOUT keys, as ever: the round key is not read, the four seats agree, the merged round names none
+  const plain = mergeSeasonAccounts({ a: [honest], b: [honest], c: [honest], d: [bare] });
+  assert.deepEqual(ids(plain), ['11']);
+  assert.ok(plain.rounds[0].entries.every((x) => !('roundKey' in x)));
+  // WITH keys: three seats against one, and the three's round keys handed on, in the entries' one order
+  const m = mergeSeasonAccounts({ a: [honest], b: [honest], c: [honest], d: [bare] }, { keys: true });
+  assert.deepEqual(ids(m), ['11']);
+  assert.deepEqual(m.rounds[0].entries.map((x) => [x.player.slice(0, 2), x.roundKey.slice(0, 2)]), [['0a', '41'], ['0b', '42']]);
+  assert.deepEqual(season(m.rounds, win).rows, season([r1], win).rows, 'the board the keyed merge hands on is the same board');
+  // two against two on a round key alone: the seats disagree, and nothing is chosen
+  assert.deepEqual(whys(mergeSeasonAccounts({ a: [honest], b: [honest], c: [bare], d: [bare] }, { keys: true })),
+    [['11', null, 'the seats disagree on that round, and no account of it is held by 3 seats']]);
+  // a round key that is not one is refused by name; none at all is null, an account of its own
+  assert.deepEqual(whys(mergeSeasonAccounts({ a: [keyed(r1, 'x', K2)] }, { keys: true })),
+    [['11', 'a', 'an entry\'s round key is a 32-byte key in hex, or null']]);
+  assert.deepEqual(ids(mergeSeasonAccounts({ a: [honest], b: [honest], c: [r1] }, { keys: true })), [], 'a seat that names no keys does not agree with two that do');
+  // ON THE WIRE: the round key goes out and comes back; one the caller had none of is null
+  const wire = JSON.parse(JSON.stringify(seasonRoundsToJson([honest, r1])));
+  assert.deepEqual(wire.map((r) => r.entries.map((x) => x.roundKey)), [[K1, K2], [null, null]]);
+  const back = seasonRoundsFromJson(wire);
+  assert.deepEqual(ids(mergeSeasonAccounts({ a: [honest], b: back.slice(0, 1), c: seasonRoundsFromJson(wire).slice(0, 1) }, { keys: true })), ['11']);
+  // season() reads no round key: the keyed copy and the bare one are one round handed in twice
+  assert.deepEqual(season(back, win).rows, season([r1], win).rows);
+});

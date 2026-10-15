@@ -88,7 +88,8 @@ function entriesOf(round, rid, contract, { paid, market }) {
     const record = named.get(key) || null;
     const player = proven ? hex(proven.identity) : record ? record.identity : key;
     // `roundKey` beside the player: the key the entry joined under, so a reader can tell an identity from a bare round key
-    // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds does not send it.
+    // (the badges award only an identity, protocol badges.js). season() reads no such field; /season-rounds sends it, for the
+    // weekly board badge, which merges the seats' accounts on it (mergeSeasonAccounts `keys`).
     const base = { player, roundKey: key, name: record ? record.name : null, stakeMsat: entry.stakeMsat, outcome: null, score: null, payoutMsat: null };
 
     // THE RESULT (not for a market pick, whose round has an attested outcome and no run)
