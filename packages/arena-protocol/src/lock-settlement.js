@@ -36,7 +36,7 @@
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
-import { nodeFeeTable, entryFeeMsat, frontendShares, GAME_VERIFY, SETTLEMENT, GUARDIAN } from './fee.js';
+import { nodeFeeTable, entryFeeMsat, frontendShares, frontendBookShares, GAME_VERIFY, SETTLEMENT, GUARDIAN } from './fee.js';
 import { MIN_PLAYERS_PER_ROUND } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
@@ -678,8 +678,19 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   }
   // THE FEES DUE: the nodes' part of the market's whole rate, the donation the rest
   const total = nodeBps + donationBps;
-  const nodesMsat = total > 0 ? (table.feesDueMsat * BigInt(nodeBps)) / BigInt(total) : 0n;
+  let nodesMsat = total > 0 ? (table.feesDueMsat * BigInt(nodeBps)) / BigInt(total) : 0n;
   const giftMsat = table.feesDueMsat - nodesMsat;
+  // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, kanban #362 comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
+  // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
+  // frontendBookShares). Its lines go before the seats'.
+  const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps });
+  if (sites.totalMsat > nodesMsat) return refuse(`the websites' share ${sites.totalMsat} msat is more than the nodes' part ${nodesMsat}`);
+  for (const [k, msat] of sites.shares) {
+    if (msat <= 0n) continue;
+    const payoutPk = fromHex(k);
+    owed.push({ kind: 'frontend', pubkey: payoutPk.subarray(1), payoutPk, owedMsat: msat });
+  }
+  nodesMsat -= sites.totalMsat;
   const sitting = contract && Array.isArray(contract.nodes) ? [...new Map(contract.nodes.map((k) => [toHex(k), k])).values()] : [];
   if (nodesMsat > 0n) {
     if (!sitting.length) return refuse('the nodes\' fee is paid to the round\'s sitting seats, and no contract names them');
@@ -720,5 +731,5 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
-    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat } };
+    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat } };
 }

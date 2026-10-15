@@ -188,6 +188,27 @@ export function frontendShares({ entries, fee, gross }) {
 }
 
 /**
+ * THE SAME 20% ON AN ORDER BOOK (kanban #362, comment 2295): a book's fees are what each claimed row paid (bookSettlement's
+ * `buyFeeMsat + sellFeeMsat`), of which the nodes' part is `nodeBps / (nodeBps + donationBps)`. For each row whose entry names
+ * a website (`entries`: entry id hex -> { frontendPk }), 20% of that row's nodes' part, floored, goes to the website; the msat a
+ * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
+ * totalMsat }.
+ */
+export function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) {
+  const total = BigInt(nodeBps) + BigInt(donationBps);
+  const byKey = new Map();
+  for (const r of rows || []) {
+    const e = entries.get(r.entry);
+    if (!e || !(e.frontendPk instanceof Uint8Array) || total === 0n) continue;
+    const nodesPart = ((r.buyFeeMsat + r.sellFeeMsat) * BigInt(nodeBps)) / total;
+    const k = hex(e.frontendPk);
+    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * FRONTEND_FEE_PERCENT) / 100n);
+  }
+  const shares = new Map([...byKey.keys()].sort().map((k) => [k, byKey.get(k)]));
+  return { shares, totalMsat: [...shares.values()].reduce((a, b) => a + b, 0n) };
+}
+
+/**
  * What one signer node is owed FOR ONE ROLE, or nothing at all.
  *
  * The role is required: 22A pays the two pools separately and a signer node held in

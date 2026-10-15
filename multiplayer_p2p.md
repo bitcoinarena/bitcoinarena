@@ -1037,8 +1037,12 @@ of the nodes' part of the fee locks; the nodes share the rest. **The player
 pays nothing more**: the stake, the fee lock (5%) and the donation are what
 they would be without it. Only on a round of version 9 or later (a seat
 refuses the entry otherwise, by name), so its seats are only nodes that pay it;
-every entry without it keeps its bytes. Order books split their fees on their
-own path and pay no website yet.
+every entry without it keeps its bytes. **An order book** (kanban #362 comment
+2295) pays the same 20% of the nodes' part of the fees each claimed order paid
+(its buy and sell fees x `node_bps / (node_bps + donation_bps)`), floored per
+order, as a line before the seats' in its settlement (`bookLockSettlement`,
+fee.js `frontendBookShares`); the donation's part and every order's own out
+are unchanged.
 
 ## 0A.9 Protocol version 1, and the move from BLWP
 

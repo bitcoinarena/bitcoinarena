@@ -75,7 +75,8 @@ creators** (any question, liquidity, fees), **node operators** (fees, low effort
    it, the player's stake not increased). An entry names its website's payout key (`frontendPk`, marker 0xac, signed); the
    settlement pays that key 20% of the nodes' fee on the stakes it brought, off the top of the nodes' part of the fee locks
    (fee.js `frontendShares`, lock-settlement.js), and the nodes share the rest; the player's stake, fee lock and donation are
-   unchanged. Only on a version-9 round. Left: the page naming its own website key, and order books (their own fee path).
+   unchanged. Only on a version-9 round. The page names its own key from daily.json `frontend` (5b8ae594). Order books pay
+   it too (comment 2295): 20% of the nodes' part of each claimed order's fees, before the seats' lines (`bookLockSettlement`).
 6. Then 8-16 by demand.
    **Developer devnet** (15). State: built. `node packages/arena-node/tools/devnet.mjs up | status | play | replay | down`, everything
    in one directory (DEVNET_DIR) on ports derived from one base (DEVNET_BASE_PORT, default 24000; all below 32768, none of the
