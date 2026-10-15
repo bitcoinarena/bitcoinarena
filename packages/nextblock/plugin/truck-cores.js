@@ -108,6 +108,25 @@ export const TRUCK_7E21 = withAdapter({
   replayFile: new URL('../dist/blwp-replay-core-7e2123d1.js', import.meta.url),
 }, '../frozen/7e2123d1/adapter.js');
 
+/**
+ * f0cc7b7b, THE TRUCK THAT KNOWS THE LARGER TRUCK (kanban #369, the first in-game item of #365; the owner 2026-10-15), INSTALLED BESIDE
+ * THE TRUCK: the same game with a run's own bed, drive acceleration and top speed, which a run takes when its entry plays with the
+ * larger truck (its unlock, frozen/f0cc7b7b/items.js). Only manifest version 3 (plugin/nextblock-v3.js, protocol 10) names it, so a
+ * round on it is a version-3 round; versions 1 and 2 and the truck above are exactly as they were. Kept like the cores before the
+ * truck - its files in core/frozen/f0cc7b7b, its hash computed from them - until the series' rounds move onto it. The truck's configs.
+ */
+export const TRUCK_F0CC_HASH = 'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8';
+const FROZEN_F0CC = new URL('../frozen/f0cc7b7b', import.meta.url).pathname;
+if (coreHashHex(FROZEN_F0CC) !== TRUCK_F0CC_HASH) throw new Error(`core/frozen/f0cc7b7b hashes to ${coreHashHex(FROZEN_F0CC)}, not the core it keeps`);
+export const TRUCK_F0CC = withAdapter({
+  name: `${TRUCK_NAME} (f0cc7b7b, the larger truck)`,
+  hash: TRUCK_F0CC_HASH,
+  url: new URL('../frozen/f0cc7b7b/adapter.js', import.meta.url).href,
+  root: new URL('../frozen/f0cc7b7b/', import.meta.url).href,
+  configs: new Map([[TRUCK_CURRENT_CONFIG, CURRENT_CONFIG], [TRUCK_V3_CONFIG, {}]]),
+  replayFile: new URL('../dist/blwp-replay-core-f0cc7b7b.js', import.meta.url),
+}, '../frozen/f0cc7b7b/adapter.js');
+
 export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
 const FROZEN_2069 = new URL('../frozen/2069b4c2', import.meta.url).pathname;
 if (coreHashHex(FROZEN_2069) !== TRUCK_2069_HASH) throw new Error(`core/frozen/2069b4c2 hashes to ${coreHashHex(FROZEN_2069)}, not the core it keeps`);
@@ -158,6 +177,8 @@ export function nextblockRoundWarnings(c) {
 /** Every core nextblock's rounds are replayed by, by hash: the truck and the four kept installed beside it. */
 export const NEXTBLOCK_CORES = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, TRUCK_7E21], [DE2F_HASH, TRUCK_DE2F],
   [TRUCK_2069_HASH, TRUCK_2069], [TRUCK_BEFORE_FORK_HASH, TRUCK_BEFORE_FORK]]);
+/** THE CORES MANIFEST VERSION 3 NAMES (kanban #369): every one above, and the truck that knows the larger truck. */
+export const NEXTBLOCK_CORES_V3 = new Map([...NEXTBLOCK_CORES, [TRUCK_F0CC_HASH, TRUCK_F0CC]]);
 
 /**
  * NEXTBLOCK'S MANIFEST BODY, from this registration (§0A.3): every core above with the configs it plays, a run of at
@@ -166,7 +187,7 @@ export const NEXTBLOCK_CORES = new Map([[TRUCK.hash, TRUCK], [TRUCK_7E21_HASH, T
  * round_period: the 90 s grid its series run on (series.js ROUND_PERIOD_MS). The signed manifest (nextblock-manifest.js) is this body
  * signed by the game's developer with the dev client's signer (nextblock/tools/sign-manifest.mjs); nextblock-manifest.test.js holds the two to the same bytes.
  */
-export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetId }) {
+export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetId, cores = NEXTBLOCK_CORES }) {
   const sorted = (hs) => [...hs].sort();
   return {
     gameName: 'nextblock',
@@ -174,7 +195,7 @@ export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetI
     version: 1,
     parentManifestId: NO_PARENT,
     resultType: RESULT_TYPE.REPLAY,
-    cores: sorted([...NEXTBLOCK_CORES.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...NEXTBLOCK_CORES.get(h).configs.keys()]).map(fromHex) })),
+    cores: sorted([...cores.keys()]).map((h) => ({ hash: fromHex(h), configs: sorted([...cores.get(h).configs.keys()]).map(fromHex) })),
     runTicksMax: TRUCK_RUN_TICKS,
     roundPeriodMs: ROUND_PERIOD_MS,
     payoutRule: PAYOUT_RULE.RANK_CURVE,
@@ -185,3 +206,11 @@ export function nextblockManifestBody({ clients, gameDevPubkey, gameDonationSetI
     gameDonationSetId,
   };
 }
+
+/** WHAT NEXTBLOCK SELLS from manifest version 3 (kanban #369, the first in-game item of #365; the owner 2026-10-15: "a larger truck
+ * for 500 satoshis"): the larger truck, by the unlock core f0cc7b7b knows - frozen/f0cc7b7b/items.js LARGE_TRUCK_UNLOCK, written out
+ * here because the registration evaluates no core module (test/large-truck.test.js holds the two equal). */
+export const LARGE_TRUCK_ITEM_UNLOCK = '10dec674eb2f698400bb775c508e727d9c15734a6e7056889d12bb0ebab54d69';
+export const NEXTBLOCK_ITEMS = Object.freeze([
+  Object.freeze({ id: 'large-truck', name: 'Large truck', priceSat: 500n, unlock: fromHex(LARGE_TRUCK_ITEM_UNLOCK) }),
+]);
