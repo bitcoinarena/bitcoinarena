@@ -14,6 +14,7 @@ features."
 | Money | Fedimint stake locks in two federations, Lightning in and out, donations to protocol and game devs, node fee shares |
 | Trust | bonded census, sortition committees (5 of 7), replay objection window, slashing, versioned protocol |
 | Distribution | signed manifests hosted by any node, plugin store, owner area, Nostr login, our relay, NWC |
+| Randomness | the round beacon (a round's committee and seed); a general block random number (kanban #366, `block-random.js`): the block at a NAMED height, used once 6 deep, seed = taggedHash(`ARENA/v1/BlockRandom`, block hash ‖ height ‖ label), numbers in [0, n) by rejection sampling (no modulo bias), any node recomputes it; seats answer `GET /block-random?height=&label=&n=&count=` (409 until 6 deep) |
 | Presentation | a per-round leaderboard derived from signed results (presentation, not authority) |
 
 ## 2. What is missing for an attractive platform
