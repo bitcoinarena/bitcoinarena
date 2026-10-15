@@ -61,7 +61,9 @@ function marketAsRoundAsks(market, round) {
   if (!market || !round || !round.event) return market;
   const ev = round.event;
   return { ...market, outcomes: [...ev.outcomes], question: ev.question, resolveAtMs: ev.resolveAtMs,
-    terms: market.terms ? { ...market.terms, resolveAfterCloseMs: ev.resolveAtMs - round.entryCloseMs } : market.terms };
+    terms: market.terms ? { ...market.terms, resolveAfterCloseMs: ev.resolveAtMs - round.entryCloseMs } : market.terms,
+    // A ROUND OF A SCALAR TEMPLATE (2026.0.8) is paid between ITS bounds, in the template's unit
+    ...(market.scalar && ev.scalar ? { scalar: { low: ev.scalar.low, high: ev.scalar.high, unit: market.scalar.unit } } : {}) };
 }
 
 /**
@@ -160,7 +162,19 @@ export function pickRecord({ roundIdHex, entryIdHex, pick, round, nodes, confirm
   return { roundIdHex, entryIdHex, pick, gameId: toHex(round.gameId), stakeMsat: String(stakeOf(round)), entryCloseMs: String(round.entryCloseMs),
     // a market on a game's round names its source round (kanban #362 feature 6): its outcome is that round's signed result
     ...(round.sourceRoundId instanceof Uint8Array ? { sourceRoundIdHex: toHex(round.sourceRoundId) } : {}),
+    // a template's round asks its own question - and a scalar template's names its own bounds (2026.0.8): kept with the pick, so its
+    // lines say the round's, not the template's
+    ...(round.event ? { event: { question: round.event.question, outcomes: [...round.event.outcomes], resolveAtMs: String(round.event.resolveAtMs),
+      ...(round.event.scalar ? { scalar: { low: String(round.event.scalar.low), high: String(round.event.scalar.high) } } : {}) } } : {}),
     nodes: [...nodes], confirmed: !!confirmed };
+}
+
+/** The round a kept pick names, as marketForRound reads it: its game, its entry close and - for a template's round - its question. */
+export function roundOfPick(p) {
+  const ev = p && p.event;
+  return { gameId: fromHex(String(p.gameId)), entryCloseMs: BigInt(p.entryCloseMs),
+    ...(ev ? { event: { question: ev.question, outcomes: [...ev.outcomes], resolveAtMs: BigInt(ev.resolveAtMs),
+      ...(ev.scalar ? { scalar: { low: BigInt(ev.scalar.low), high: BigInt(ev.scalar.high) } } : {}) } } : {}) };
 }
 
 /** Ed25519 through the browser's WebCrypto; null where the browser cannot (the attestation is then shown unverified). */
@@ -245,7 +259,8 @@ export async function checkMarketOutcome({ outcome: o, market, roundIdHex, sourc
         if (v === null) return { verified: false, unverifiable: true, why: 'this browser cannot check Ed25519 signatures: the value is shown unverified' };
         said.set(`${toHex(x.key)}:${toHex(x.signature)}`, v === true);
       }
-      const st = valueAttestationStands(a, { manifest: market.manifest, roundIdBytes: fromHex(roundIdHex),
+      // clamped to the bounds THIS round is paid between - a scalar template's round names its own (2026.0.8)
+      const st = valueAttestationStands(a, { manifest: { ...market.manifest, scalar: market.scalar }, roundIdBytes: fromHex(roundIdHex),
         verify: (sig, _d, key) => said.get(`${toHex(key)}:${toHex(sig)}`) === true });
       return st.ok ? { verified: true, value: st.value, clamped: st.clamped, why: st.why } : { verified: false, why: st.why };
     }

@@ -18,6 +18,7 @@ import { utf8Encode } from './utf8.js';
 import {
   TAG, PROTOCOL_VERSION, speaksVersion, SUPPORTED_PROTOCOL_VERSIONS, namesNoDraw, takesAnyFederation, TYPE_ROUND_CONTRACT, TYPE_ENTRY_CONTRACT, ROLES,
   GAME_MARKET_VERSION,
+  SCALAR_TEMPLATE_VERSION,
   CUSTODY, custodyByte, custodyName, slashRemainderByte, slashRemainderOf, MIN_ENTRY_WINDOW_MS,
   STAKE_EXPIRY_BLOCKS, START_DEADLINE_TICKS, OBJECTION_WINDOW_MS,
   SCORE_SCALE,
@@ -278,6 +279,12 @@ export function encodeRoundContract(c) {
     w.str(c.event.question);
     w.vec(c.event.outcomes, (o, ww) => ww.str(o));
     w.u64(c.event.resolveAtMs);
+    // A ROUND OF A SCALAR TEMPLATE NAMES ITS OWN BOUNDS (2026.0.8): two i64 after its resolution time, inside the tail - so its
+    // length and closing marker cover them and every question without them keeps its bytes
+    if (c.event.scalar !== undefined && c.event.scalar !== null) {
+      if (!(version >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
+      w.i64(c.event.scalar.low); w.i64(c.event.scalar.high);
+    }
     w.u16(w.len - start + 3);
     w.u8(EVENT_MARKER);
     return w.finish();
@@ -317,6 +324,13 @@ export function contractEventFits(ev) {
   if (new Set(ev.outcomes).size !== ev.outcomes.length) return { ok: false, why: 'a round names each of its outcomes once' };
   if (typeof ev.resolveAtMs !== 'bigint' || ev.resolveAtMs < 0n || ev.resolveAtMs > 0xffffffffffffffffn)
     return { ok: false, why: 'a round names its resolution time as BigInt ms' };
+  if (ev.scalar !== undefined && ev.scalar !== null) {
+    const sc = ev.scalar, I64 = 0x7fffffffffffffffn;
+    if (typeof sc.low !== 'bigint' || typeof sc.high !== 'bigint' || sc.low < -I64 - 1n || sc.high > I64)
+      return { ok: false, why: 'a round names its scalar bounds low and high as signed 64-bit BigInt whole numbers' };
+    if (sc.low >= sc.high) return { ok: false, why: `a round's low bound is below its high bound; this one names low ${sc.low} and high ${sc.high}` };
+    if (ev.outcomes.length !== 2) return { ok: false, why: 'a round with scalar bounds names its two sides, long then short' };
+  }
   return { ok: true };
 }
 // Where a contract's trailing fields begin: after its node list (its last field read the same way by every version).
@@ -348,6 +362,8 @@ export function contractEventTail(bytes, left) {
   try {
     const r = new Reader(bytes.subarray(end - size + 1, end - 3));
     const ev = { question: r.str(), outcomes: r.vec((rr) => rr.str()), resolveAtMs: r.u64() };
+    // a scalar template's round (2026.0.8): its bounds, two i64, are what is left - the decoder holds the version to them
+    if (r.b.length - r.at === 16) ev.scalar = { low: r.i64(), high: r.i64() };
     r.end();
     if (!contractEventFits(ev).ok) return null;
     return { event: ev, size };
@@ -497,6 +513,7 @@ export function decodeRoundContract(bytes) {
     r.bytes(asked.size);                                      // read whole by contractEventTail
     c.event = asked.event;
     if (!(c.protocolVersion >= EVENT_VERSION)) throw new Error(`a round asks its own question from protocol version ${EVENT_VERSION} on`);
+    if (c.event.scalar && !(c.protocolVersion >= SCALAR_TEMPLATE_VERSION)) throw new Error(`a round names its own scalar bounds from protocol version ${SCALAR_TEMPLATE_VERSION} on`);
     if (c.seriesId !== undefined) throw new Error('a round that asks its own question is no round of a series');
   }
   r.end();

@@ -24,7 +24,7 @@
 // NOTHING IS TAKEN ON A SEAT'S WORD: a fetched source contract counts only if it hashes to the id the market names (a series
 // round only as a series this seat holds derives it); a fetched result only by the signatures of the committee drawn here.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
-import { isGameMarket, isScalar, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
+import { isGameMarket, isScalar, marketOfRound, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { gameMarketResolution, gameMarketVoided, gameMarketFitsSource } from '../../arena-protocol/src/game-market.js';
 import { decodeAttestation, marketVoided, marketTimes, roundTermsOf, pariMutuelTable } from '../../arena-protocol/src/attested.js';
 import { decodeValueAttestation, isValueAttestationBytes, scalarPayoutTable } from '../../arena-protocol/src/scalar.js';
@@ -67,8 +67,9 @@ export function heldOutcomes(round, roundIdBytes) {
  * outcome, as before. `standing` is outcomeStanding's or outcomeFinality's answer. One answer for the settlement, the stake-share
  * handout and GET /outcome, so the three never read a round by two rules. Throws as the tables do.
  */
-export function attestedTable(manifest, entries, standing) {
-  if (isScalar(manifest)) return scalarPayoutTable({ entries, value: standing.value, bounds: manifest.scalar });
+export function attestedTable(manifest, entries, standing, contract = null) {
+  // a scalar template's round is paid between its own bounds (manifest.js marketOfRound, 2026.0.8)
+  if (isScalar(manifest)) return scalarPayoutTable({ entries, value: standing.value, bounds: marketOfRound(manifest, contract).scalar });
   return pariMutuelTable({ entries, outcome: standing.outcome });
 }
 

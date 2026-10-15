@@ -590,7 +590,7 @@ export class LockSettlement {
     if (!entries.length) return refuse('an attested round with no counted entry: nothing is claimed');
     // THE TABLE BY THE GAME'S RULE: pari-mutuel on the outcome, or a scalar market's split by its signed value (kanban #362 feature 8)
     let table;
-    try { table = attestedTable(a.plugin.manifest, entries, a.finality); } catch (e) { return refuse(e.message); }
+    try { table = attestedTable(a.plugin.manifest, entries, a.finality, a.contract); } catch (e) { return refuse(e.message); }
     const locks = new Map();
     const lockEntry = new Map();
     const feeLocks = new Map();

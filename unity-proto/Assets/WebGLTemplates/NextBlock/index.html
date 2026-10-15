@@ -2511,7 +2511,8 @@
     }
     // a pick's market: the one this page pins, or the manifest the player confirmed (kept with the pick)
     function marketOfPick(p) {
-      const round = { gameId: BLWPCLIENT.fromHex(p.gameId) };
+      // its round as the pick kept it: a template's round asks its own question and a scalar template's names its bounds (kanban #362)
+      const round = BLWPCLIENT.roundOfPick ? BLWPCLIENT.roundOfPick(p) : { gameId: BLWPCLIENT.fromHex(p.gameId) };
       return BLWPCLIENT.marketForRound(round, p.manifestHex ? { manifestBytes: BLWPCLIENT.fromHex(p.manifestHex) } : {});
     }
     // THE OUTCOMES OF THE TAB'S PICKS, read from the seats every 10 s once a pick's entries have closed, each checked by this

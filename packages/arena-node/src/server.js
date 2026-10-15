@@ -540,13 +540,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       attestors: plugin.manifest.attestors.length, entryCloseMs: String(c.entryCloseMs),
       ...(c.event ? { question: c.event.question, resolveAtMs: String(c.event.resolveAtMs) } : {}),
       // A SCALAR MARKET (kanban #362 feature 8): its bounds and their unit, every number a decimal string
-      ...(isScalar(plugin.manifest) ? { scalar: { low: String(plugin.manifest.scalar.low), high: String(plugin.manifest.scalar.high), unit: plugin.manifest.scalar.unit } } : {}) };
+      ...(isScalar(plugin.manifest) ? { scalar: { low: String(market.scalar.low), high: String(market.scalar.high), unit: market.scalar.unit } } : {}) };
     if (voidHeld) {
       Object.assign(out, { state: 'VOID', why: voidHeld.why, gameOutcome: gameEvidenceOf(voidHeld) });
     } else if (standing.state === 'ATTESTED') {
       // a scalar market's standing is the VALUE its attestors signed, and where it pays - clamped to the bounds (kanban #362 feature 8)
       if (typeof standing.value === 'bigint') {
-        const sc = plugin.manifest.scalar;
+        const sc = market.scalar;
         const clamped = standing.value < sc.low ? sc.low : standing.value > sc.high ? sc.high : standing.value;
         Object.assign(out, { value: String(standing.value), clamped: String(clamped) });
       }
@@ -560,7 +560,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const counted = round.entriesOf(rid).filter(({ entryId }) => c.stakeMsat === 0n || !!round.stakeSeen(entryId))
           .map(({ entryId, entry }) => ({ entryId, stakeMsat: entry.stakeMsat, feeMsat: entry.feeMsat, donationMsat: entry.donationMsat, pick: entry.pick }));
         // by the game's rule: pari-mutuel on the outcome, or a scalar market's split by its value (game-market.js attestedTable)
-        const t = attestedTable(plugin.manifest, counted, standing);
+        const t = attestedTable(plugin.manifest, counted, standing, c);
         out.table = JSON.parse(JSON.stringify(t, (k, v) => (typeof v === 'bigint' ? String(v) : v)));
       }
     } else if (standing.state === 'DISPUTED') {
@@ -5340,7 +5340,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const plugin = attestedOf(c);
         if (!plugin) return text(res, 409, 'that round\'s game is not an attested game this node hosts: its result is a replayed run, not an attestation');
         // A TEMPLATE'S ROUND (kanban #362 feature 5): its attestors name an index into the round's own outcomes, so the round is handed in
-        const stands = valued ? valueAttestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
+        const stands = valued ? valueAttestationStands(a, { manifest: marketOfRound(plugin.manifest, c), roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519 })
           : attestationStands(a, { manifest: plugin.manifest, roundIdBytes: new Uint8Array(roundIdOf(c)), verify: verifyEd25519, round: c });
         if (!stands.ok) return text(res, 409, stands.why);
         // AND NOT BEFORE THE LAST PICK (§0A.7a slice 2): the round's entries closed on this seat's clock, and the outcome seen after
