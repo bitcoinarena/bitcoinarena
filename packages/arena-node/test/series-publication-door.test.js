@@ -55,7 +55,7 @@ test('a series\' publication fee is kept only when its tx is the confirmed publi
     assert.equal(noParent.status, 422); assert.match(noParent.text, /was not handed over/);
     assert.equal(unknown.status, 404);
     assert.equal(good.status, 200, good.text);
-    assert.deepEqual(JSON.parse(good.text), { txid: toHex(parseTransaction(pub).txid), feeSats: '1250', payoutSats: '1250' });
+    assert.deepEqual(JSON.parse(good.text), { txid: toHex(parseTransaction(pub).txid.slice().reverse()), feeSats: '1250', payoutSats: '1250' }, 'the txid as an explorer prints it');
     assert.deepEqual(s.round.seriesPublication(sid), { txid: toHex(parseTransaction(pub).txid), feeSats: 1250n });
   } finally { await s.close(); }
 });
