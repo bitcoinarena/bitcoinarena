@@ -473,6 +473,22 @@
     #arena-season .net.up { color: #3fb950; }
     #arena-season .net.down { color: #f85149; }
     #arena-season .foot { color: #6e7681; font-size: 12px; margin-top: 12px; overflow-wrap: anywhere; }
+    /* A PLAYER'S BADGES (kanban #362, PLATFORM-RESEARCH items 13 + 1; badges-view.js): small icons after the name, never cut -
+       the name is, as "you" never is - each a button whose tooltip is the badge's name and what earned it; on a phone, where
+       nothing hovers, a tap says the same on a line under the row. The seat's own image when its definition names one, else a
+       built-in glyph: the badge's colour and one mark. The viewer's count stands under the header. */
+    #arena-season .who .bdg { display: inline-flex; flex: none; gap: 3px; align-items: center; }
+    #arena-season .who .bdg:empty { display: none; }
+    #arena-season .who .bi { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0; margin: 0;
+      border: 0; border-radius: 5px; background: none; cursor: pointer; overflow: hidden; }
+    #arena-season .who .bi img { width: 18px; height: 18px; display: block; }
+    #arena-season .who .bi.g { border-radius: 50%; background: var(--bc, #8a96a8); color: #07090d; font: 800 11px/1 system-ui, sans-serif; }
+    #arena-season .who .bi.g::after { content: attr(data-mark); }
+    #arena-season .who .bi:focus-visible { outline: 2px solid #f7931a; outline-offset: 1px; }
+    #arena-season .who .bt { color: #c9d1d9; font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+    #arena-season .who .bt:empty { display: none; }
+    #arena-season .mybadges { color: #f7a64a; font: 600 13px/1.4 system-ui, sans-serif; margin: -8px 0 12px; }
+    #arena-season .mybadges:empty { display: none; }
     @media (min-width: 560px) { #arena-season { padding-top: calc(28px + env(safe-area-inset-top, 0px)); } #arena-season .row { padding: 12px 16px; } }
     /* ITS WAY IN ON A TILE: a quiet link under the counts, its own tap - never the game's */
     #arena-games .season-go { display: inline-flex; align-items: center; gap: 5px; color: #8b949e; font: 600 12px/1.4 system-ui, sans-serif; cursor: pointer;
@@ -1388,7 +1404,7 @@
   })();
   </script>
 
-  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Season</div><h2 id="arena-season-title">Season</h2><div class="head"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
+  <div id="arena-season" role="dialog" aria-modal="true" aria-labelledby="arena-season-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Season</div><h2 id="arena-season-title">Season</h2><div class="head"></div><div class="mybadges"></div><div class="days" role="group" aria-label="days"><button type="button" data-days="7" aria-pressed="true">7 days</button><button type="button" data-days="30" aria-pressed="false">30 days</button><button type="button" data-days="90" aria-pressed="false">90 days</button></div><div class="state" role="status"></div><ol class="board"></ol><div class="foot"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
@@ -5531,6 +5547,14 @@
     // and a closed board has nobody to show it to. A day switch asks at once; an answer that comes back after a newer ask
     // or after the close is dropped. window.ARENA_SEASON opens it (the tile's link, the strip, the wallet bar); its last
     // answer is window.ARENA_SEASON_LAST, for a probe.
+    //
+    // AND EACH PLAYER'S BADGES (kanban #362, PLATFORM-RESEARCH items 13 + 1; the bundle's badges-view.js): the NIP-58 badges
+    // the badge-awarding seats issued to the row's identity in this game, as icons after the name, and "Your badges: N"
+    // under the header. THE ROWS FIRST, THE ICONS AFTER: nothing about badges is asked before a board is drawn, so the board
+    // never waits on them. One book of badges per open board (BLWPCLIENT.badgeBook): the board's seats asked once each which
+    // of them award badges, then each player ON SCREEN (an IntersectionObserver on the scrolling view; every drawn row where
+    // there is none) and the viewer asked once per badge seat - for the board's life, through the 30 s re-asks and the day
+    // switch - a few at a time. Closed, the book is dropped: nothing is asked, and an answer still on its way is not drawn.
     (function seasonBoard() {
       const box = document.getElementById('arena-season');
       if (!box || !BLWPCLIENT.fetchSeason) return;
@@ -5538,8 +5562,11 @@
       const board = box.querySelector('.board'), foot = box.querySelector('.foot');
       const dayButtons = Array.from(box.querySelectorAll('.days button'));
       const POLL_MS = BLWPCLIENT.SEASON_POLL_MS || 30000;
-      const s = { open: false, game: null, days: 7, timer: null, ask: 0 };
+      const s = { open: false, game: null, days: 7, timer: null, ask: 0, book: null, seen: null };
       const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text !== undefined) x.textContent = text; return x; };
+      const myBadges = box.querySelector('.mybadges');
+      // THE ROWS DRAWN NOW, by player: where each one's icons go (.bdg) and its tapped badge's words (.bt)
+      let slots = new Map();
       // WHO IS LOOKING: the tab's identity key - the one a round's lobby record names, which is who a season counts a round
       // under. Before the lobby has made it (the choice of games comes first) it is made here from the tab's seed, only when
       // the tab has one already: a board is never the reason a seed is minted.
@@ -5554,6 +5581,61 @@
         return [];
       };
       const via = (u) => (window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(u) : u);
+      // A BADGE'S GLYPH: its colour and its mark (drawn by CSS from data-mark, so the row's text stays the name and "you")
+      const glyph = (i, b) => { i.textContent = ''; i.classList.add('g'); i.setAttribute('data-mark', b.glyph.mark); i.setAttribute('style', '--bc:' + b.glyph.colour); };
+      const drawBadges = (slot, merged) => {
+        slot.icons.textContent = '';
+        for (const b of merged.badges) {
+          const i = el('button', 'bi');
+          i.type = 'button'; i.title = b.title; i.setAttribute('aria-label', b.title);
+          // THE SEAT'S IMAGE when its definition names one, from the seat by its route; one that does not load is the glyph
+          if (b.image) { const img = el('img'); img.alt = ''; img.width = 18; img.height = 18; img.src = via(b.image); img.addEventListener('error', () => glyph(i, b)); i.append(img); }
+          else glyph(i, b);
+          // A TAP SAYS IT (a phone hovers nothing); the same badge tapped again hides it
+          i.addEventListener('click', (e) => { e.stopPropagation(); slot.say.textContent = slot.say.textContent === b.title ? '' : b.title; });
+          slot.icons.append(i);
+        }
+      };
+      const sayMine = () => {
+        const me = viewer()[0];
+        const merged = me && s.book ? s.book.get(me) : null;
+        if (myBadges) myBadges.textContent = (BLWPCLIENT.yourBadgesLine && BLWPCLIENT.yourBadgesLine(merged)) || '';
+      };
+      const dropBook = () => {
+        if (s.book) s.book.close();
+        if (s.seen) s.seen.disconnect();
+        s.book = null; s.seen = null;
+        if (myBadges) myBadges.textContent = '';
+      };
+      // THE BOOK OF THIS BOARD'S LIFE, made at its first drawn board: its answers fill the rows drawn at the time they come in
+      const bookOf = () => {
+        if (s.book || !BLWPCLIENT.badgeBook || !s.game) return s.book;
+        const g = s.game;
+        const book = BLWPCLIENT.badgeBook({ nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, fetch: (u, o) => fetch(u, o), via,
+          timeout: (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined),
+          onBadges: (player, merged) => {
+            if (book !== s.book) return;           // a closed board's late answer
+            for (const slot of slots.get(player) || []) drawBadges(slot, merged);
+            if (player === viewer()[0]) sayMine();
+          } });
+        s.book = book;
+        return book;
+      };
+      // WHICH PLAYERS TO ASK: the rows the viewer can see (with a margin, so a short scroll finds them filled), each once
+      const askBadges = (rows) => {
+        const book = bookOf();
+        if (!book) return;
+        const me = viewer()[0];
+        if (me) book.want(me);
+        if (s.seen) s.seen.disconnect();
+        s.seen = null;
+        if (typeof IntersectionObserver === 'function') {
+          s.seen = new IntersectionObserver((seen, watch) => {
+            for (const x of seen) if (x.isIntersecting) { book.want(x.target.dataset.player); watch.unobserve(x.target); }
+          }, { root: box, rootMargin: '200px 0px' });
+          for (const li of rows) s.seen.observe(li);
+        } else for (const li of rows) book.want(li.dataset.player);
+      };
       const pressDays = () => { for (const b of dayButtons) b.setAttribute('aria-pressed', String(Number(b.dataset.days) === s.days)); };
       const draw = (v) => {
         window.ARENA_SEASON_LAST = v;
@@ -5568,20 +5650,33 @@
         h2.textContent = v.title;
         head.textContent = v.header;
         board.textContent = '';
+        slots = new Map();
+        const drawn = [];
         v.rows.forEach((r, i) => {
           const li = el('li', 'row' + (r.mine ? ' mine' : '') + (i > 0 && r.rank !== v.rows[i - 1].rank + 1 ? ' gap' : ''));
+          li.dataset.player = r.player;
           const who = el('div', 'who');
           const n = el('div', 'n');
-          n.append(el('span', 'nm', r.name));
+          // THE BADGES AFTER THE NAME, before "you": filled now when the book has them, else when they come in
+          const slot = { icons: el('span', 'bdg'), say: el('div', 'bt') };
+          n.append(el('span', 'nm', r.name), slot.icons);
           if (r.mine) n.append(el('span', 'you', 'you'));
-          who.append(n, el('div', 's', [r.rounds + ' round' + (r.rounds === 1 ? '' : 's'), r.wins + ' win' + (r.wins === 1 ? '' : 's'), 'best ' + r.best].join(' \u00b7 ')));
+          who.append(n, el('div', 's', [r.rounds + ' round' + (r.rounds === 1 ? '' : 's'), r.wins + ' win' + (r.wins === 1 ? '' : 's'), 'best ' + r.best].join(' \u00b7 ')), slot.say);
           const net = el('b', 'net' + (r.sign > 0 ? ' up' : r.sign < 0 ? ' down' : ''), r.net);
           net.title = r.netMsat + ' msat';
           li.append(el('span', 'rank', String(r.rank)), who, net);
           board.append(li);
+          if (!slots.has(r.player)) slots.set(r.player, []);
+          slots.get(r.player).push(slot);
+          const had = s.book && s.book.get(r.player);
+          if (had) drawBadges(slot, had);
+          drawn.push(li);
         });
         foot.textContent = [v.more ? v.more + ' more player' + (v.more === 1 ? '' : 's') + ' below' : null, v.foot,
           v.seat ? 'answered by ' + v.seat.replace(/^https?:\/\//, '') : null].filter(Boolean).join(' \u00b7 ');
+        // THE BOARD IS DRAWN: now its badges are asked for (and the viewer's line said again from what the book holds)
+        sayMine();
+        askBadges(drawn);
       };
       const schedule = () => { clearTimeout(s.timer); s.timer = s.open ? setTimeout(load, POLL_MS) : null; };
       async function load() {
@@ -5597,6 +5692,7 @@
       }
       const close = () => {
         s.open = false; s.ask++; clearTimeout(s.timer); s.timer = null;
+        dropBook();
         box.classList.remove('show');
       };
       const open = (g, days) => {
@@ -5605,7 +5701,7 @@
         s.game = g; s.open = true;
         if (days) s.days = Number(days);
         pressDays();
-        if (!same) { board.textContent = ''; foot.textContent = ''; head.textContent = ''; }
+        if (!same) { board.textContent = ''; foot.textContent = ''; head.textContent = ''; slots = new Map(); dropBook(); }
         h2.textContent = g.title || g.name;
         state.className = 'state'; state.textContent = 'Asking the nodes \u2026';
         box.classList.add('show');
@@ -5625,7 +5721,8 @@
         const b = document.getElementById(id);
         if (b) b.addEventListener('click', () => open(window.ARENA_GAME_CHOSEN));
       }
-      window.ARENA_SEASON = { open, close, isOpen: () => s.open, days: () => s.days, polling: () => s.timer !== null };
+      window.ARENA_SEASON = { open, close, isOpen: () => s.open, days: () => s.days, polling: () => s.timer !== null,
+        badgesAsked: () => (s.book ? s.book.asked : null) };
     })();
     async function chooseTheGame(nodes) {
       if (!BLWPCLIENT.fetchGames) return null;

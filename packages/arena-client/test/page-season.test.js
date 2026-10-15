@@ -81,6 +81,8 @@ function liftSeason({ seats = {} } = {}) {
   return { ...dom, window, asked, timers, fire, pending, holdBack, seats };
 }
 const settle = () => new Promise((r) => setImmediate(r));
+// THE SEASON'S OWN ASKS: a drawn board then asks its seats which of them award badges (page-season-badges.test.js)
+const seasonAsks = (asked) => asked.filter((u) => new URL(u).pathname === '/season');
 const rowsOf = (board) => board.children.map((li) => ({ rank: li.children[0].textContent, who: li.children[1].children[0].textContent,
   line: li.children[1].children[1].textContent, net: li.children[2].textContent, mine: li.className.split(' ').includes('mine'),
   cls: li.children[2].className }));
@@ -92,7 +94,7 @@ test('opened from a tile: the game\'s seats in turn, the first that answers, the
   assert.equal(p.box.classList.contains('show'), true);
   assert.equal(p.parts['.state'].textContent, 'Asking the nodes …');
   await settle();
-  assert.deepEqual(p.asked, ['https://seat-1.example/season?game=nextblock&days=7&scope=network', 'https://seat-2.example/season?game=nextblock&days=7&scope=network']);
+  assert.deepEqual(seasonAsks(p.asked), ['https://seat-1.example/season?game=nextblock&days=7&scope=network', 'https://seat-2.example/season?game=nextblock&days=7&scope=network']);
   assert.equal(p.parts.h2.textContent, 'Tick Tock, Next Block');
   assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 7 days · 2 players · from 13 of 13 nodes');
   const rows = rowsOf(p.parts['.board']);
@@ -138,7 +140,7 @@ test('asked again every 30 s while open, never while closed; Back and Escape clo
   await settle();
   assert.deepEqual([...p.timers.values()].map((t) => t.ms), [30000], 'one ask pending, in 30 s');
   await p.fire();
-  assert.equal(p.asked.length, 2);
+  assert.equal(seasonAsks(p.asked).length, 2);
   assert.deepEqual([...p.timers.values()].map((t) => t.ms), [30000], 'and the next one, never two');
   p.parts['.back'].click();
   assert.equal(p.box.classList.contains('show'), false);

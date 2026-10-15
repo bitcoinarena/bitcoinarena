@@ -89,6 +89,9 @@ walk(SRC + 'node-discovery.js');
 // AND A GAME'S SEASON BOARD (kanban #362, PLATFORM-RESEARCH item 1): the rows the page draws from a seat's GET /season, and
 // the ask that falls through the game's seats. Nothing in the client imports it; the page's season view calls it.
 walk(SRC + 'season-view.js');
+// AND A PLAYER'S BADGES ON THAT BOARD (kanban #362, PLATFORM-RESEARCH items 13 + 1): the badge seats' awards merged by
+// (d, scope), their icons and words, and the book that asks each player once per board. The page's season view calls it.
+walk(SRC + 'badges-view.js');
 
 // One scope, so a name declared twice would collide. EVERY top-level name is
 // checked, not only the exported ones: two files with a private helper of the
@@ -268,6 +271,9 @@ out += '         hiddenMove: hiddenMove, moveCommitment: moveCommitment, revealM
 // THE SEASON BOARD (kanban #362): its lines from a /season answer, and the ask of the game's seats in turn
 out += '         seasonView: seasonView, fetchSeason: fetchSeason, seasonPath: seasonPath, seasonSats: seasonSats, seasonScore: seasonScore,\n';
 out += '         SEASON_DAYS_CHOICES: SEASON_DAYS_CHOICES, SEASON_POLL_MS: SEASON_POLL_MS,\n';
+// A PLAYER'S BADGES ON THE BOARD (kanban #362): the merge of the badge seats' awards, their words, and the board's book
+out += '         badgeBook: badgeBook, mergeBadgeAwards: mergeBadgeAwards, readBadgeDefinition: readBadgeDefinition, badgeTitle: badgeTitle,\n';
+out += '         yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
