@@ -2797,8 +2797,8 @@
     "tags": [
      "Builders"
     ],
-    "summary": "[signed] Check a market-on-a-game outcome",
-    "description": "Checks a market on a game (protocol 2026.0.6): its outcome from its source round's signed result. Answered, not held.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\nAccess: the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7)\n\nReturns: 200 JSON {round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5125.",
+    "summary": "[signed] Hand in a market-on-a-game outcome",
+    "description": "Hands a seat a market on a game's outcome (protocol 2026.0.6): its source round's signed result, checked and held where an attestation is held; the market then settles as an attested one (pari-mutuel). A refund (Tick Tock FLAT) or a source that can never fit is held as VOID at once. Seats also fetch the result themselves.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the source round's settlement committee (as this node draws it) must have signed the result, at its threshold (5 of 7); a source round this node does not hold is fetched from other seats and checked against its id\n\nReturns: 201/200 JSON {round, held, fresh, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5226.",
     "operationId": "post_game_outcome",
     "parameters": [
      {
@@ -2821,8 +2821,14 @@
      }
     },
     "responses": {
+     "201": {
+      "description": "{round, held, fresh, outcome?, label?, refund?, void?, signers, threshold, source, voided, why, state, ...}: held now - an outcome, or VOID.",
+      "content": {
+       "application/json": {}
+      }
+     },
      "200": {
-      "description": "{round, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why}: the verified resolution, or VOID.",
+      "description": "Held already.",
       "content": {
        "application/json": {}
       }
@@ -2834,18 +2840,19 @@
       }
      },
      "404": {
-      "description": "No such round, or its source round is not held here.",
+      "description": "No such round, or no seat answered its source round as the round the market names.",
       "content": {
        "text/plain": {}
       }
      },
      "409": {
-      "description": "Not a market on a game, no committee drawn, or the result does not stand.",
+      "description": "Not a market on a game, the source round has not ended, no committee drawn, or the result does not stand.",
       "content": {
        "text/plain": {}
       }
      }
-    }
+    },
+    "x-changes-state": true
    }
   },
   "/games": {
@@ -4022,7 +4029,7 @@
      "Builders"
     ],
     "summary": "[signed] Submit an outcome attestation",
-    "description": "Submits an attested (oracle/market) round outcome; a conflicting one marks the round DISPUTED.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close\n\nReturns: 201/200 JSON {held, fresh, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 4985.",
+    "description": "Submits an attested (oracle/market) round outcome; a conflicting one marks the round DISPUTED.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: attestation must carry the game manifest's threshold of distinct Ed25519 attestor signatures and be after entry close\n\nReturns: 201/200 JSON {held, fresh, why, state, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5193.",
     "operationId": "post_outcome",
     "parameters": [
      {
@@ -4086,7 +4093,7 @@
      "Builders"
     ],
     "summary": "Outcome of an attested round",
-    "description": "Current outcome of an attested round, with the round's own question and labels when it asks one.\n\nAccess: none\n\nReturns: 200 JSON {round, state OPEN|ATTESTED|DISPUTED, outcomes (the round's own labels for a template round), question?, resolveAtMs?, outcome?, label?, table?, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5010.",
+    "description": "Current outcome of an attested round, with the round's own question and labels when it asks one; for a market on a game, its held source result (gameOutcome: RoundResult, signatures, source contract) in place of an attestation, VOID at once on a refund.\n\nAccess: none\n\nReturns: 200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}; 400/404/409\n\nSource: `packages/arena-node/src/server.js` line 5242.",
     "operationId": "get_outcome",
     "parameters": [
      {
@@ -4101,7 +4108,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{round, state OPEN|ATTESTED|DISPUTED, outcomes, question?, resolveAtMs?, outcome?, label?, table?, ...}.",
+      "description": "{round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes, question?, resolveAtMs?, outcome?, label?, attestation? | gameOutcome?, table?, ...}.",
       "content": {
        "application/json": {}
       }

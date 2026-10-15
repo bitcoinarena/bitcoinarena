@@ -625,10 +625,14 @@ export class Roster {
    * seed misses and is assigned again; a refusal is never kept; and the chain check behind the seed still runs when the
    * view grows, so nothing is verified less often than before.
    */
-  committeeFor(roundIdBytes, role) {
+  // `posted`: THE CONTRACT OF A ROUND THIS SEAT DOES NOT HOLD, already checked against its id by the caller - a market on a
+  // game's source round fetched from its seats (game-market.js, kanban #362 feature 6). The draw is the same: the census at the
+  // contract's height (its root checked against the chain), the beacon's seed. A round the seat holds is drawn on its own copy.
+  committeeFor(roundIdBytes, role, { posted = null } = {}) {
     const row = this.round.get(roundIdBytes);
-    const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : null;
-    const census = contract ? this.censusFor(roundIdBytes) : null;
+    const contract = row ? decodeRoundContract(new Uint8Array(row.contract)) : posted;
+    const given = row ? null : posted;
+    const census = contract ? this.censusFor(roundIdBytes, null, given ? { posted: given } : {}) : null;
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
     // AND TAKE THE TABLE'S SEATING (kanban #293 pick (c)): the certificate of the table's first round seats every round of it
     const anchor = contract ? tableAnchorOf(contract) : null;
@@ -637,7 +641,7 @@ export class Roster {
       ? `${toHex(roundIdBytes)}:${role}:${toHex(census.root)}:${toHex(seeded.seed)}:${seated ? seated.join(',') : '-'}` : null;
     if (kept && this.committees.has(kept)) return this.committees.get(kept);
     const answer = timed(`committee assigned ${toHex(roundIdBytes).slice(0, 8)}`,
-      () => this.#committeeFor(roundIdBytes, role, seated), { over: 20 });
+      () => this.#committeeFor(roundIdBytes, role, seated, given), { over: 20 });
     if (kept && answer.ok) {
       this.committees.set(kept, answer);
       if (this.committees.size > Roster.PER_ROUND_KEPT) this.committees.delete(this.committees.keys().next().value);
@@ -645,12 +649,11 @@ export class Roster {
     return answer;
   }
 
-  #committeeFor(roundIdBytes, role, seated = null) {
-    const census = this.censusFor(roundIdBytes);
+  #committeeFor(roundIdBytes, role, seated = null, posted = null) {
+    const census = this.censusFor(roundIdBytes, null, posted ? { posted } : {});
     if (!census.ok) return census;
 
-    const row = this.round.get(roundIdBytes);
-    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const contract = posted || decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
 
     // THE LOTTERY IS DRAWN ON THE BEACON'S SEED. Not on `contract.committeeSeed`:
     // that field is the author's claim about it, and 34 offline tries were

@@ -734,8 +734,8 @@ for (const node of committeeNodes)
   <ul>
     <li>The manifest names the source game, the kind of result it reads (a Tick Tock round's result: BULLS, BEARS or FLAT) and which outcome each result pays, or a refund. It names no attestors, and no attestation is taken for it.</li>
     <li>Each round of the market names the one source round it is on. Its entries must close before that round starts, and the source round must end by the market's resolution time; otherwise the market is void and every stake goes back.</li>
-    <li>FLAT (or any result the manifest maps to a refund), and no signed result by the deadline, also give every stake back.</li>
-    <li>A node checks a result at <code>POST /game-outcome</code> against the source round it holds and the committee it draws for it. Rock Paper Scissors is not a source yet: it signs each player's result, not a table winner.</li>
+    <li>FLAT (or any result the manifest maps to a refund) gives every stake back at once; so does no signed result by the deadline.</li>
+    <li>The nodes of a market round fetch the source round's signed result themselves once it has ended, check it against the committee they draw for it, and keep it as the market's outcome: the market then settles like any other (pari-mutuel), after the objection window. A node that does not hold the source round fetches its contract from other nodes and checks it against the round's id. Anybody can also hand a node the result at <code>POST /game-outcome</code>; <code>GET /outcome</code> shows it with its signatures. Rock Paper Scissors is not a source yet: it signs each player's result, not a table winner.</li>
   </ul>
 
   </div></details>
