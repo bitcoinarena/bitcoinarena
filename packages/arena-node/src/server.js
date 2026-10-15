@@ -4692,6 +4692,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
       }
+      // A SERIES' TEMPLATE, AS ITS LINE (kanban #362): what a page needs to check a series round it is handed - a market on a game
+      // whose source is a Tick Tock round. Served as text; the reader believes it only once it hashes to the id it asked for.
+      if (req.method === 'GET' && url.pathname === '/series-template') {
+        const want = String(url.searchParams.get('id') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(want)) return text(res, 400, 'GET /series-template?id=<the series id, 64 hex>');
+        const t = series.find((x) => { try { return toHex(seriesId(x)) === want; } catch { return false; } });
+        if (!t) return text(res, 404, 'this node holds no such series');
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=3600', ...CORS });
+        return res.end(seriesLineOf(t, encodeRoundContract));
+      }
       if (req.method === 'GET' && url.pathname === '/series') {
         const nowMs = round.now();
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });

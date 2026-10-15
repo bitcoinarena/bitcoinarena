@@ -4,7 +4,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign, verify as edVerify, createPublicKey } from 'node:crypto';
-import { marketForRound, checkMarketOutcome, marketLines, scalarValueLine, pickRecord } from '../src/market.js';
+import { marketForRound, checkMarketOutcome, marketLines, scalarValueLine, pickRecord, fetchSeriesTemplate } from '../src/market.js';
+import { seriesId, seriesRound } from '../../arena-protocol/src/series.js';
+import { seriesLineOf } from '../../arena-protocol/src/series-line.js';
 import { encodeManifest, manifestBodyId, gameIdOf, decodeManifest, RESULT_TYPE, PAYOUT_RULE, NO_PARENT, SOURCE_KIND, GAME_MARKET_REFUND,
   SCALAR_SIDES } from '../../arena-protocol/src/manifest.js';
 import { encodeValueAttestation, valueAttestationBodyId } from '../../arena-protocol/src/scalar.js';
@@ -104,9 +106,29 @@ test('a market on a game is believed only from its source round\'s result, signe
   assert.equal(forged.verified, false);
   const noDerive = await checkMarketOutcome({ ...args, outcome: { gameOutcome: evidence(8300000, 8310000, COMMITTEE) }, sourceCommittee: async () => null });
   assert.match(noDerive.why, /could not derive the source round's committee/);
-  const series = { ...SOURCE, seriesId: b32(0x5e), roundIndex: 3 };
-  const fromSeries = await checkMarketOutcome({ ...args, outcome: { gameOutcome: evidence(8300000, 8310000, COMMITTEE, series) }, sourceCommittee: derived });
-  assert.match(fromSeries.why, /round 3 of a series, which this page does not check yet/);
+  // A SOURCE ROUND OF A SERIES (Tick Tock's): checked as its series derives it, from a template the seats hand and the id checks
+  const TEMPLATE = { ...SOURCE, startTimeMs: S - 3n * 90000n, entryCloseMs: S - 3n * 90000n, committeeTimeMs: S - 13n * 3600000n };
+  const series = seriesRound(TEMPLATE, 3);
+  assert.equal(series.startTimeMs, S, 'round 3 starts where the plain source did');
+  const sid = toHex(seriesId(TEMPLATE));
+  const seats = (lines) => async (url) => { const l = lines[new URL(url).host]; return l ? new Response(l) : new Response('no', { status: 404 }); };
+  const other = { ...TEMPLATE, stakeMsat: 1n };
+  const fetched = await fetchSeriesTemplate({ seriesIdHex: sid, nodes: ['https://a.example', 'https://b.example', 'https://c.example'],
+    fetcher: seats({ 'b.example': seriesLineOf(other), 'c.example': seriesLineOf(TEMPLATE) }) });
+  assert.deepEqual([fetched.ok, fetched.from], [true, 'https://c.example'], 'a seat handing another series is passed over');
+  const none = await fetchSeriesTemplate({ seriesIdHex: sid, nodes: ['https://b.example'], fetcher: seats({ 'b.example': seriesLineOf(other) }) });
+  assert.match(none.why, /its template is another series/);
+  const sArgs = { ...args, sourceRoundIdHex: toHex(roundId(series)) };
+  const viaSeries = await checkMarketOutcome({ ...sArgs, outcome: { gameOutcome: evidence(8300000, 8310000, COMMITTEE.slice(0, 5), series) }, sourceCommittee: derived,
+    sourceSeries: async () => fetched });
+  assert.deepEqual([viaSeries.verified, viaSeries.label], [true, 'BULLS'], viaSeries.why);
+  const moved = { ...series, entryCloseMs: series.entryCloseMs + 1n };
+  const movedCheck = await checkMarketOutcome({ ...sArgs, outcome: { gameOutcome: evidence(8300000, 8310000, COMMITTEE.slice(0, 5), moved) }, sourceCommittee: derived,
+    sourceSeries: async () => fetched });
+  assert.match(movedCheck.why, /its source round: round 3 of series .* opens and closes its entry/);
+  const fromSeries = await checkMarketOutcome({ ...sArgs, outcome: { gameOutcome: evidence(8300000, 8310000, COMMITTEE, series) }, sourceCommittee: derived,
+    sourceSeries: async () => none });
+  assert.match(fromSeries.why, /its source is round 3 of series .*, and no seat handed series .*'s template/);
 
   const pick = { ...record, market };
   const rid = record.roundIdHex;
@@ -118,5 +140,5 @@ test('a market on a game is believed only from its source round\'s result, signe
   const [voided] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'VOID', why: 'the source round ended FLAT, which this market refunds' }]]), nowMs: Number(S) });
   assert.match(voided.text, /VOID - the source round ended FLAT, which this market refunds · every stake comes back$/);
   const [unverified] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', check: fromSeries }]]), nowMs: Number(S) });
-  assert.match(unverified.text, /'BULLS' - UNVERIFIED \(its source is round 3 of a series/);
+  assert.match(unverified.text, /'BULLS' - UNVERIFIED \(its source is round 3 of series/);
 });
