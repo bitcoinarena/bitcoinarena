@@ -301,6 +301,14 @@ namespace Blwp
             ? $"PLAY joins round {ShortId(r.id)} - {r.agree} signer {(r.agree == 1 ? "node agrees" : "nodes agree")} ({r.needed} needed)"
             : listed > 0 ? "PLAY waits for a round whose signer nodes agree" : "PLAY waits for an open round";
 
+        /// <summary>
+        /// THE SAME LINE, LONGEST FIRST, FOR A PHONE (kanban #8, measured on UI 134 at 360 px: "ʼLAY joins round 9efb418b - 6 signer
+        /// nodes agree (5 needed" - cut at both ends): the full line, then the numbers in fewer words, then the round alone.
+        /// </summary>
+        public static string[] HintWordings(LobbyRow r, int listed) => r != null
+            ? new[] { HintWords(r, listed), $"PLAY joins {ShortId(r.id)} - {r.agree} agree ({r.needed} needed)", $"PLAY joins round {ShortId(r.id)}" }
+            : new[] { HintWords(r, listed), listed > 0 ? "PLAY waits for agreement" : "PLAY waits for a round" };
+
         public static string ShortId(string id) => string.IsNullOrEmpty(id) ? "" : (id.Length > 8 ? id.Substring(0, 8) : id);
 
         /// <summary>What a round is: FREE, or PAID and what it costs (the owner 2026-09-15 16:08: "PAID · 100 sats").</summary>

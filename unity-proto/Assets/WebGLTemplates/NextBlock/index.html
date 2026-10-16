@@ -3902,7 +3902,11 @@
       } else if (balEl) balEl.style.display = 'none';
       const st = backupStore(); const seed = walletSeed();
       const line = (st && seed) ? BLWPCLIENT.backupLine(st, seed) : BLWPCLIENT.NO_BACKUP_LINE;
-      document.getElementById('blwp-backup-notice').textContent = line;
+      // A PHONE GETS THE SHORT WORDS (kanban #8, measured at 360 px: the ten-line warning covered the game's title); the button
+      // beside it and Settings say the rest, the full sentence is its title
+      const notice = document.getElementById('blwp-backup-notice');
+      notice.textContent = line && window.innerWidth <= 560 ? 'No backup' : line;
+      notice.title = line || '';
       const warn = document.getElementById('blwp-backup-warn');
       if (warn) warn.style.display = line && overLobby ? 'flex' : 'none';
       document.getElementById('blwp-settings-backup').textContent = line || 'This wallet is backed up.';
