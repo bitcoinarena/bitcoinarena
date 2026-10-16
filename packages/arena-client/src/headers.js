@@ -254,3 +254,23 @@ export async function agreedChain(providers, { least = 2, timeoutMs = 10000, ask
     refused: bad.map((b) => `provider ${b.at}: ${b.why}`),
   };
 }
+
+/**
+ * THE CHAIN FROM A FEW SOURCES, NOT FROM EVERY SEAT (kanban #376, the owner 2026-10-16 ~10:58Z: "Lower the amount of concurrent
+ * connections and network load"; measured 11:29Z on preview UI 153, Unity's PLAY tapped: "no chain: only 0 of 14 providers gave a
+ * chain ... provider 0: no answer in 10000 ms" two seconds before the round's start). Every PLAY read /headers from all 14 seats at
+ * once - 218800 bytes each, about 3 MB; curl from the test host took 1.6-5.3 s for the fourteen together, and a busy tab took more
+ * than 10 s for every one; and building a round's committee read them again from every seat (committee.js: "0 of 14 providers
+ * gave a chain", measured on preview UI 159). HEADER_SOURCES_ASKED distinct sources, picked at random so no seat carries every page: two must agree
+ * (PROVIDERS_NEEDED), and two may be slow.
+ */
+export const HEADER_SOURCES_ASKED = 4;
+// one source per seat: the origin and the first path segment (join.js sourceKey) - the seats behind one public host differ by path
+const headerSourceKey = (u) => { try { const x = new URL(u); const head = x.pathname.split('/').filter(Boolean)[0] || ''; return head ? `${x.origin}/${head}` : x.origin; } catch { return null; } };
+export function headerSources(urls, { n = HEADER_SOURCES_ASKED, random = Math.random } = {}) {
+  const bySource = new Map();
+  for (const u of urls || []) { const k = headerSourceKey(u); if (k && !bySource.has(k)) bySource.set(k, u); }
+  const all = [...bySource.values()];
+  for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
+  return all.slice(0, Math.max(2, n));
+}
