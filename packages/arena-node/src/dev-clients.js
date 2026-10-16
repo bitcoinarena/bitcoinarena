@@ -179,6 +179,19 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
       return { ok: true, kept };
     },
 
+    /** Every client's record rows and the seats its donor.json names (kanban #382: the rounds whose game the node must look up). */
+    rowsAndSeats() {
+      const rows = []; const seats = new Set();
+      for (const slug of readdirSync(root).filter(isClient)) {
+        const dir = dirOf(slug);
+        const cfg = readJson(join(dir, 'donor.json'), {}) || {};
+        for (const u of cfg.seats || []) seats.add(String(u));
+        if (!existsSync(join(dir, 'donations.jsonl'))) continue;
+        for (const l of readFileSync(join(dir, 'donations.jsonl'), 'utf8').split('\n')) { if (!l.trim()) continue; try { rows.push(JSON.parse(l)); } catch { /* a torn line */ } }
+      }
+      return { rows, seats: [...seats] };
+    },
+
     /** Every client: its snapshot, whether it runs, what the owner's withdrawals answered; `attribute(rows, recipientPk)` adds the split. */
     list({ attribute = null } = {}) {
       return readdirSync(root).filter(isClient).sort().map((slug) => {
