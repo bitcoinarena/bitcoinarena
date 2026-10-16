@@ -61,6 +61,17 @@ import { createOperatorTokens, operatorUri } from './operator-tokens.js';
 import { decodeRoundContract, encodeRoundContract, contractWarnings, decodeEntryContract, publicationRelaysAreValid, custodyFieldsAreValid, roundId as roundIdOf, entryFederation } from '../../arena-protocol/src/contracts.js';
 import { revealStands } from '../../arena-protocol/src/head-to-head.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { advertInTransaction } from '../../arena-protocol/src/census.js';
+
+/**
+ * WHOSE BOND A PROOF IS (kanban #376): the node key of the advertisement a bond proof's transaction commits to, hex - or null when
+ * it commits to none this build reads (a carried bond's ancestor advertisement, a proof without a transaction).
+ */
+export function bondNamesWhom(proof) {
+  if (!proof || typeof proof.hex !== 'string') return null;
+  const advert = advertInTransaction(fromHex(proof.hex));
+  return advert && advert.nodePubkey instanceof Uint8Array ? toHex(advert.nodePubkey) : null;
+}
 import { lobbyListingId } from '../../arena-protocol/src/lobby-listing.js';
 import { listingSigner } from './listing-sign.js';
 import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
@@ -448,6 +459,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // results to ARENA_NOSTR_PUBLISH. Their images are named under ARENA_BADGE_IMAGE_BASE, else the first stable public address.
   nostrBadgesOn = badgesOn(), badgeImageBase = imageBaseOf(process.env.ARENA_BADGE_IMAGE_BASE) || replayPublic[0] || null,
   nostrBadgesTickMs = 60000 } = {}) {
+  let bondWarned = false;   // kanban #376: a foreign bond proof is said once
   // THE GAMES THIS NODE HOSTS (kanban #202; M3 R1), made once: the round store opens only rounds of them, and the door,
   // the replay and the ghosts resolve each round's game and core through the same registry.
   const hosted = hostedPlugins(plugins);
@@ -4042,6 +4054,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const bp = typeof bondProof === 'function' ? bondProof() : bondProof;
         if (!bp)
           return text(res, 404, 'this node was given no bond proof to serve');
+        // ONLY ITS OWN BOND (kanban #376, measured 2026-10-16 06:2xZ: the seven second-host seats shared one proof directory and served the
+        // same transaction 74a47b5e, no seat's bond - a page proving a seat's endpoint was handed somebody else's): a bond whose
+        // advertisement names another node is refused here, by name, rather than handed to a player's door
+        const named = bondNamesWhom(bp);
+        if (named && named !== toHex(round.pubkey)) {
+          if (!bondWarned) { bondWarned = true; console.error(`[bond] the bond proof given to this node (${String(bp.hex).length / 2} bytes) is node ${named.slice(0, 16)}'s, not this node's ${toHex(round.pubkey).slice(0, 16)}: not served`); }
+          return text(res, 409, `the bond proof this node was given is node ${named}'s, not this node's`);
+        }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(bp));
       }

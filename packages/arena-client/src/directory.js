@@ -31,6 +31,7 @@ import {
   acceptAdvert, mostWork, chainWork, blockHashOf, BITCOIN_MAINNET_GENESIS, TESTNET4_ANCHOR,
 } from '../../arena-protocol/src/chain.js';
 import { NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
+import { networkOf } from '../../arena-protocol/src/constants.js';
 import { agreedChain } from './headers.js';
 import { askForBond } from './bond.js';
 
@@ -358,7 +359,12 @@ export async function discover({
   }
   if (!bond.ok) return { ok: false, why: `no bond: ${bond.why}`, refused: bond.refused };
 
+  // THE ROUND'S NETWORK'S MARKER (kanban #376, the owner 2026-10-16 06:24Z on his phone: "Not joined ... no proven endpoint: that
+  // transaction has no dust output to BOND_MARKER"): acceptAdvert looks for the regtest marker unless it is told the network, and
+  // this door never told it - every seat bonded on testnet4 itself (bond template 2, 580d64fc) was refused at the player's PLAY
+  const network = networkOf(networkId);
   const seen = reach({
+    ...(network ? { network } : {}),
     chain: chain.headers,
     transaction: bond.transaction,
     branch: bond.branch,
