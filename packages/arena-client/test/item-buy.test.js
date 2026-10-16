@@ -50,6 +50,24 @@ test('bought: the split paid in one transaction, the signed record handed to a s
   assert.deepEqual((await ownedItems({ seats: ['https://s1'], player: player.pubkey, fetch })).map((i) => i.itemId), ['large-truck']);
 });
 
+// THE BUYER'S DEVELOPERS' SHARE (kanban #377, the owner 2026-10-16: "if the ingame donations are zero the price is 250 Sats instead of 500
+// sats. Node fees are never optional."): at 0 % the three nodes alone are paid, 250 sat, and the record a seat gets stands
+test('bought at 0 %: the nodes\' half alone, 250 sat, the record version 11 standing at the seat; a share not offered is refused', async () => {
+  const { fetch, posted } = seatsWith();
+  const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
+    player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, devsPct: 0 });
+  assert.equal(r.ok, true, r.why);
+  assert.deepEqual([r.priceSat, r.paidSat, r.devsPct, r.outputs], [500n, 250n, 0, 3]);
+  const p = { ...decodePurchase(fromHex(posted[0].purchase)), signature: fromHex(posted[0].signature) };
+  assert.equal(p.devsPct, 0);
+  assert.equal(p.outputs.reduce((t, o) => t + o.msat, 0n), 249999n, '3 x 83333 msat: the nodes\' half, floored per node');
+  const served = { fromMs: p.servedFromMs, toMs: p.servedToMs, nodes: NODE_KEYS.map((k) => ({ key: toHex(k), rounds: 1 })).sort((a, b) => (a.key < b.key ? -1 : 1)), root: toHex(p.servedRoot) };
+  assert.equal(purchaseStands(p, { manifest: MANIFEST, networkSet: NET, gameSet: NET, served, verify }).ok, true);
+  const odd = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
+    player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, devsPct: 25 });
+  assert.deepEqual([odd.ok, odd.step], [false, 'share']);
+});
+
 test('refused by step: an item not sold, a payment that fails, a record no seat keeps (paid, kept for a retry)', async () => {
   const { fetch } = seatsWith();
   const base = { manifest: MANIFEST, networkSet: NET, gameSet: NET, federationId: 'fe'.repeat(32), player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW };
