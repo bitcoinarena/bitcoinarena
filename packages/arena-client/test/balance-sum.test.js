@@ -30,6 +30,26 @@ test('the balance is every held federation\'s sum, a wallet opened for each held
   assert.deepEqual(opened, ['bb'], 'B opened (held, invite verified); C held but no verified invite: not opened; A already kept');
 });
 
+// A SUM ASKED BEFORE ANY WALLET IS OPEN IS NOT THE LAST ONE (kanban #376, measured on preview UI 150, pinned seed 6b360bd8 restored
+// in a fresh profile: the lock client held 4000000 msat and the page said 0 sat for 512 s and on - the first sum met no await, its
+// own finally cleared `summing` before the assignment kept the finished promise, and every later call answered that one)
+test('a sum asked before the wallet opens does not stop every later sum; notes still arriving are said and read again', async () => {
+  const A = 'aa'.repeat(32);
+  const window = { ARENA_FED_LOADS: new Map(), BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), BLWP_PENDING_SATS: 0 };
+  const BLWPCLIENT = { ledgerFederations: () => [], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')), openPlayerWallet: async () => null,
+    issuingMsat: async (c) => BigInt(await c.issuingMsat()) };
+  const sum = new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', 'setTimeout', src + '\nreturn window.BLWP_SUM_BALANCES;')(window, BLWPCLIENT, () => null, () => ({}), () => 0);
+  await sum();                                   // the restore's first sum: no wallet yet
+  assert.equal(window.BLWP_WALLET_BALANCE, undefined);
+  const w = { held: 3000000n, issuing: 1000000n, balanceMsat: async () => String(w.held), issuingMsat: async () => String(w.issuing) };
+  window.BLWP_KEEP_WALLET(A, w);                 // the wallet opens
+  await sum();
+  assert.deepEqual([window.BLWP_WALLET_BALANCE.sats, window.BLWP_WALLET_BALANCE.arriving], [3000, 1000], 'summed, and the arriving notes said');
+  w.held = 4000000n; w.issuing = 0n;             // the notes land
+  await sum();
+  assert.deepEqual([window.BLWP_WALLET_BALANCE.sats, window.BLWP_WALLET_BALANCE.arriving], [4000, 0]);
+});
+
 test('a tap on any balance opens the split: each federation\'s sats, its status and load, and the total', () => {
   const a2 = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
   const src2 = HTML.slice(a2, HTML.indexOf('      // OUT OF A DRAINING FEDERATION, BY ITSELF'));

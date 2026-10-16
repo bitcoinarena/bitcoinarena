@@ -6551,6 +6551,11 @@
       window.BLWP_WALLETS = window.BLWP_WALLETS || new Map();
       window.BLWP_KEEP_WALLET = (fid, client) => { if (fid && client) window.BLWP_WALLETS.set(String(fid).toLowerCase(), client); };
       let summing = null;
+      // ONE SUM AT A TIME, AND NEVER A STALE ONE (kanban #376, measured on preview UI 150 in the test host's Chrome, pinned seed
+      // 6b360bd8 restored in a fresh profile: the lock client held 4000000 msat and the page said 0 sat for 512 s and on): asked
+      // before any wallet was open, the body met no await, so its own `finally` cleared `summing` BEFORE the assignment stored
+      // the finished promise - and every later call answered that one, summing nothing again. `summing` is cleared by the
+      // promise's .finally, which always runs after the assignment.
       window.BLWP_SUM_BALANCES = () => summing || (summing = (async () => {
         try {
           const seed = walletSeed();
@@ -6581,8 +6586,8 @@
             if (arriving > 0n) { console.log('[blwp] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.BLWP_SUM_BALANCES(), 3000); }
             if (parts.length > 1) console.log('[blwp] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
           }
-        } finally { window.BLWP_BALANCE_TRIED = true; summing = null; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
-      })());
+        } finally { window.BLWP_BALANCE_TRIED = true; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
+      })().finally(() => { summing = null; }));
       // WHERE THE MONEY SITS, ON A TAP (the owner 2026-10-13: "Die UI muss auch anzeigen wenn ich auf die balances klicke wieviel
       // Geld in welcher Federation gespeichert ist"): every balance on the page - the wallet bar, the lobby's chips, Settings -
       // opens the split: each federation's sats, its status and load from the record this page verified, and the sum
