@@ -195,6 +195,8 @@ import { Dkg } from './dkg.js';
 import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
+import { createFundingBook } from './funding-book.js';
+import { FUNDING_SCHEDULES, activeNodesBefore, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
@@ -447,6 +449,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // WHERE THIS NODE'S OWN CHAIN IS (M3.3-30): a height, asked of its own
   // bitcoind. Given none, the pool's chain call answers it when there is one.
   chainTip = null,
+  // THE CHAIN'S MEDIAN TIME AT A HEIGHT, in ms (kanban #397 slice 6: a funding signal's 432-block active window), as the launcher reads it
+  blockTimeAt = null,
   expiry = {},
   // WHERE EVERY CORE A STORED ROUND NAMES IS KEPT FOR ITS REPLAY (the owner 2026-09-26 13:28: "the copied replay link must
   // keep working. Always ... Keep every core a stored round names, and serve it. Do not drop it when HEAD moves"): a
@@ -1309,6 +1313,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   if (process.env.ARENA_RESERVE_DKG !== '0') { const t = setInterval(() => { reservePeerRound().catch(() => {}); }, RESERVE_DKG_MS); if (t.unref) t.unref(); setTimeout(() => reservePeerRound().catch(() => {}), 45000).unref?.(); }
+
+  // PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, funding-book.js): proposals by bonded nodes,
+  // comments by anyone, signals by nodes - kept here and handed on to every seat once. A signal is decided once its 1008 blocks are
+  // over, on the nodes that served a round (signed FINALs, this seat's and every other's) in the 432 blocks before its end, on the
+  // chain's median time (`blockTimeAt`). ARENA_FUNDING_SCHEDULE=short runs a live proof's 1-block signal.
+  const fundingSchedule = process.env.ARENA_FUNDING_SCHEDULE === 'short' ? FUNDING_SCHEDULES.short : FUNDING_SCHEDULES.spec;
+  const servedRoundsBetween = async (from, to) => {
+    const held = [round.finalSigsBetween(from, to).map((r) => ({ ...r, committee: round.signerNodes(r.roundId) }))];
+    let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+    await Promise.all(seats.map(async (s) => {
+      try {
+        const r = await seasonFetch(`${s}/served?to=${to}&from=${from}&finals=1`, { signal: AbortSignal.timeout(SEASON_PEER_TIMEOUT_MS) });
+        if (!r.ok) return;
+        const a = await r.json();
+        held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+      } catch { /* a seat that does not answer adds nothing */ }
+    }));
+    return mergeServedRounds(held).rounds;
+  };
+  const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
+    verify: (sg, m, k) => schnorr.verify(sg, m, k),
+    isBonded: (nodeHex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; if (!now.ok) return null; return (now.entries || []).some((e) => toHex(e.pubkey) === nodeHex); },
+    tip: async () => (typeof chainTip === 'function' ? Number(await chainTip()) : null),
+    activeAt: async (end) => {
+      if (typeof blockTimeAt !== 'function') return { ok: false, why: 'this seat reads no block times' };
+      const w = fundingSchedule.activeWindow;
+      const [fromMs, toMs] = await Promise.all([blockTimeAt(end - w), blockTimeAt(end)]);
+      const times = new Map([[end - w, fromMs], [end, toMs]]);
+      const a = activeNodesBefore({ rounds: await servedRoundsBetween(fromMs, toMs), endHeight: end, timeOf: (h) => times.get(h), verify: (sg, m, k) => schnorr.verify(sg, m, k), windowBlocks: w });
+      return { ok: true, nodes: a.nodes.map((n) => n.key), fromHeight: a.fromHeight, rounds: a.rounds };
+    } }) : null;
+  const forwardFunding = (kind, hex) => {
+    let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+    for (const base of seats) fetch(`${base}/funding`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-forwarded': '1' },
+      body: JSON.stringify({ kind, hex }), signal: AbortSignal.timeout(8000) }).catch(() => {});
+  };
+  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().catch(() => {}); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
@@ -4080,6 +4121,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           try { const t = operatorTokens.mint(args.scopes); return answer(200, { ok: true, id: t.id, scopes: t.scopes, uri: operatorUri({ endpoint: operatorFiles.endpoint, token: t.token }) }); }
           catch (e) { return answer(400, { ok: false, why: e.message }); }
         }
+        // A FUNDING PROPOSAL, A SIGNAL, A COMMENT BY THIS NODE (§27A.9.3, kanban #397 slice 6): signed by the owner, written and signed
+        // here with the node's own key - the bonded author a proposal names, the node a signal counts - kept and handed on
+        if (url.pathname === '/owner/funding-propose' || url.pathname === '/owner/funding-signal' || url.pathname === '/owner/funding-comment') {
+          if (!fundingBook) return answer(404, { ok: false, why: 'this node keeps no funding proposals' });
+          const action = url.pathname.split('/').pop();
+          const a = owner.authorize(body, action);
+          if (!a.ok) return answer(a.status, a);
+          const args = body.args || {};
+          let height; try { height = Number(await chainTip()); } catch { return answer(503, { ok: false, why: 'this node reads no chain height' }); }
+          const sign = (id) => schnorr.sign(id, round.identity.secret);
+          let kind, bytes;
+          try {
+            if (action === 'funding-propose') {
+              const net = chainNetworkId(); if (!net) return answer(503, { ok: false, why: 'this node knows no network id' });
+              const p = { networkId: fromHex(net), author: round.pubkey, publishedHeight: height, amountSats: BigInt(String(args.amountSats || '0')), lnurl: String(args.lnurl || ''), purpose: String(args.purpose || '') };
+              kind = 'proposal'; bytes = Uint8Array.from([...encodeFundingProposal(p), ...sign(fundingProposalId(p))]);
+            } else if (action === 'funding-signal') {
+              const s = { proposalId: fromHex(String(args.proposal || '')), node: round.pubkey, atHeight: height };
+              kind = 'signal'; bytes = Uint8Array.from([...encodeFundingSignal(s), ...sign(fundingSignalId(s))]);
+            } else {
+              const c = { proposalId: fromHex(String(args.proposal || '')), parentId: args.parent ? fromHex(String(args.parent)) : null, author: round.pubkey, atHeight: height, text: String(args.text || '') };
+              kind = 'comment'; bytes = Uint8Array.from([...encodeFundingComment(c), ...sign(fundingCommentId(c))]);
+            }
+          } catch (e) { return answer(400, { ok: false, why: e.message }); }
+          const r = await fundingBook.add(kind, toHex(bytes));
+          if (r.ok && r.fresh) forwardFunding(kind, toHex(bytes));
+          return answer(r.ok ? 200 : (r.status || 400), { ...r, kind });
+        }
         // LEAVE AND STAY (kanban #276 step 2): signed by the owner; the status is GET /owner/leave
         if (url.pathname === '/owner/leave') {
           const r = owner.leave(body);
@@ -6594,6 +6663,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return ans(200, { ballots: donationBallots ? donationBallots.list() : [], approved: approvedSets().map((x) => ({ serial: String(x.serial), validFrom: x.validFrom,
           setId: toHex(donationSetId(x.recipients)), approvedBy: toHex(x.approvedBy) })) });
       }
+      // PROJECT FUNDING PROPOSALS (§27A.9.3, kanban #397 slice 6): every proposal with its signal, comments and signals; a new
+      // proposal, comment or signal is checked, kept and handed on to every seat once (a forwarded one is not forwarded again)
+      if (req.method === 'GET' && url.pathname === '/funding') {
+        const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
+        return ans(200, { tip: height, schedule: fundingBook ? fundingBook.schedule : null, signalPct: 15, proposals: fundingBook ? fundingBook.list(height) : [] });
+      }
+      if (req.method === 'POST' && url.pathname === '/funding') {
+        const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        if (!fundingBook) return ans(501, { ok: false, why: 'this node keeps no funding proposals' });
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
+        const r = await fundingBook.add(b.kind, b.hex);
+        if (r.ok && r.fresh && !req.headers['x-arena-forwarded']) forwardFunding(b.kind, b.hex);
+        return ans(r.ok ? 200 : (r.status || 400), r);
+      }
       if (req.method === 'POST' && url.pathname === '/donation-ballot') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (!donationBallots) return ans(501, { ok: false, why: 'this node keeps no ballots' });
@@ -7582,6 +7666,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       dkg, settlements, winnings, orderBook,
       // the protocol reserves' keys (kanban #397): make one with given members and peers, and the DKG of a federation
       reserves: { make: makeReserveKey, dkgOf: reserveDkgOf, round: reserveRound, peerRound: reservePeerRound },
+      funding: fundingBook,
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,
