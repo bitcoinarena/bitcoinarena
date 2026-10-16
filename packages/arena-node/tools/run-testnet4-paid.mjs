@@ -405,9 +405,12 @@ if (env.PAID_NB90_GRID === '1') {
     rotations: [], height: round.contract.censusHeight,
     verify: (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } } });
   if (!forced.ok) throw new Error(`no donation set in force at census height ${round.contract.censusHeight}: ${forced.why}`);
-  say({ nb90: 'asked', federation: fed.slice(0, 16), committeeTime: new Date(committee).toISOString(), firstStart: new Date(firstStart).toISOString(),
+  say({ nb90: 'asked', federation: fed.slice(0, 16), game: env.NB90_V3 === '1' ? toHex(NEXTBLOCK_V3.gameId).slice(0, 16) : 'the runner\'s', committeeTime: new Date(committee).toISOString(), firstStart: new Date(firstStart).toISOString(),
     until: new Date(until).toISOString(), slots });
-  const got = await round.openGrid({ ...CREATOR, fields: { donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fed) }, stakeMsat },
+  // NB90_V3=1 (kanban #369): the grid is Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b, beside the
+  // duty's day of version 2 (versions run parallel); it needs ARENA_PROTOCOL_VERSION=10 and seats whose census adverts name its game id
+  const V3 = env.NB90_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
+  const got = await round.openGrid({ ...CREATOR, fields: { ...V3, donationSetId: idOfDonationSet(forced.recipients), federationId: fromHex(fed) }, stakeMsat },
     { slots, tables: 1, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(firstStart + 45000), committeeTimeMs: BigInt(committee),
       feeRate: Number(env.NB90_FEE_RATE || 1), maxFeeRate: Number(env.NB90_MAX_FEE_RATE || 4),
       onPublished: ({ contracts, ...p }) => { writeFileSync(join(home, 'paid', `nb90-grid-${p.txid}.json`), JSON.stringify({ ...p, contracts }) + '\n'); say({ nb90: 'published', ...p }); },
