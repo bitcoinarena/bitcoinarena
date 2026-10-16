@@ -429,6 +429,25 @@ export function stakeSeenNeeded(contract) {
  * `committed` is a label for the page: it gates nothing. Each node still
  * refuses its own receipt until it has seen the stake.
  */
+/**
+ * WHO ANSWERS AT A URL, ASKED ONCE A FEW MINUTES (the owner 2026-10-16: "Lower the amount of concurrent connections and network
+ * load"; measured on live UI 154: GET /identity 434 times in a 60 s window of one run - every settlement and stake look asked
+ * every node who it is, each time). A node's key does not change behind its URL; a kept answer is used for IDENTITY_KEEP_MS,
+ * and only an answer is kept - a node that failed is asked again the next time.
+ */
+export const IDENTITY_KEEP_MS = 300000;
+const IDENTITIES = new Map();
+export const forgetIdentities = () => IDENTITIES.clear();
+export async function identityAt(fetcher, base, { now = Date.now() } = {}) {
+  const kept = IDENTITIES.get(base);
+  if (kept && now - kept.at < IDENTITY_KEEP_MS) return kept.key;
+  const r = await readWithOneRetry(fetcher, base + '/identity');
+  if (!r.ok) throw new Error(`identity answered ${r.status}`);
+  const key = toHex(new Uint8Array(await r.arrayBuffer()));
+  IDENTITIES.set(base, { key, at: now });
+  return key;
+}
+
 export async function stakeSeenBy({ entryId, signerNodes, nodes, contract, fetcher = fetch } = {}) {
   const want = new Set((signerNodes || []).map((k) => toHex(k)));
   const eid = typeof entryId === 'string' ? entryId : toHex(entryId);
@@ -438,11 +457,7 @@ export async function stakeSeenBy({ entryId, signerNodes, nodes, contract, fetch
   for (const node of nodes || []) {
     const base = String(node).replace(/\/+$/, '');
     let key;
-    try {
-      const r = await readWithOneRetry(fetcher, base + '/identity');
-      if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
-      key = toHex(new Uint8Array(await r.arrayBuffer()));
-    } catch (e) { per.push({ node, why: e.message }); continue; }
+    try { key = await identityAt(fetcher, base); } catch (e) { per.push({ node, why: e.message }); continue; }
     if (!want.has(key) || answered.has(key)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${base}/stake?entry=${eid}`);
@@ -496,11 +511,7 @@ export async function settlementBy({ entryId, signerNodes, nodes, fetcher = fetc
   for (const node of nodes || []) {
     const base = String(node).replace(/\/+$/, '');
     let key;
-    try {
-      const r = await readWithOneRetry(fetcher, base + '/identity');
-      if (!r.ok) { per.push({ node, why: `identity answered ${r.status}` }); continue; }
-      key = toHex(new Uint8Array(await r.arrayBuffer()));
-    } catch (e) { per.push({ node, why: e.message }); continue; }
+    try { key = await identityAt(fetcher, base); } catch (e) { per.push({ node, why: e.message }); continue; }
     if (!want.has(key) || answered.has(key)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${base}/settlement?entry=${eid}`);
