@@ -411,6 +411,9 @@ public class LoadoutPanel : MonoBehaviour
         var count = new GUIStyle(_small) { alignment = TextAnchor.MiddleRight };
         string ramp = yard.Captions().Count + " on the ramp";
         float countW = count.CalcSize(new GUIContent(ramp)).x;
+        // the add-ons button stands where the count did (kanban #374): the title keeps clear of it as of the count
+        if (AddonsPanel.Instance != null && AddonsPanel.Instance.ShopAvailable)
+            countW = new GUIStyle(_small) { fontStyle = FontStyle.Bold, wordWrap = false }.CalcSize(new GUIContent(AddonsLabel)).x + 20f;
 
         // THE TITLE BETWEEN THE PILL AND THE COUNT, NEVER UNDER EITHER (the owner 2026-09-29 21:48, CARGO-BTC-2148: on his
         // phone "LIVE MEMPOOL" lay over "CHOOSE YOUR MEMPOOL CARGO", read "LIVE MEMPOOL C" / "HOOSE ..."). Centred, with
@@ -429,8 +432,24 @@ public class LoadoutPanel : MonoBehaviour
                       feed != null && feed.Fresh ? "● LIVE MEMPOOL" : "○ CONNECTING",
                       feed != null && feed.Fresh ? PanelSkin.Cyan : new Color(1f, 1f, 1f, 0.5f), tag);
 
-        count.normal.textColor = new Color(1f, 1f, 1f, 0.55f);
-        GUI.Label(new Rect(bar.x, bar.y, bar.width - 16f, bar.height), ramp, count);
+        // BUY ADD-ONS WHERE THE PARCELS ARE LOADED (kanban #374, the owner 2026-10-16): in the count's place when this game sells
+        // something - the add-ons panel over the cargo screen
+        var addons = AddonsPanel.Instance;
+        if (addons != null && addons.ShopAvailable)
+        {
+            var abtn = new GUIStyle(_small) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold, wordWrap = false };
+            abtn.normal.textColor = new Color(0.07f, 0.07f, 0.07f);
+            var ar = AddonsButtonRect(bar, abtn);
+            GUI.color = new Color(0.97f, 0.58f, 0.10f);
+            GUI.DrawTexture(ar, Texture2D.whiteTexture);
+            GUI.color = Color.white;
+            if (GUI.Button(ar, AddonsLabel, abtn)) addons.OpenAddons();
+        }
+        else
+        {
+            count.normal.textColor = new Color(1f, 1f, 1f, 0.55f);
+            GUI.Label(new Rect(bar.x, bar.y, bar.width - 16f, bar.height), ramp, count);
+        }
 
         var hint = new GUIStyle(GUI.skin.label)
         {
@@ -704,6 +723,16 @@ public class LoadoutPanel : MonoBehaviour
         var goStyle = new GUIStyle(btn); DriveHud.FitLine(goStyle, go, bw - 12f, 10);
         if (GUI.Button(new Rect(panel.x + inner * 2f + gaugeW, by, bw, bh), go, goStyle)) Confirm();
         GUI.enabled = true;
+    }
+
+    public const string AddonsLabel = "BUY ADD-ONS";
+
+    /// <summary>The cargo screen's BUY ADD-ONS (kanban #374): at the title bar's right end, its words' width, 60 % of the bar high.</summary>
+    public static Rect AddonsButtonRect(Rect bar, GUIStyle style)
+    {
+        float tw = style.CalcSize(new GUIContent(AddonsLabel)).x + 20f;
+        float bh = bar.height * 0.60f;
+        return new Rect(bar.xMax - 14f - tw, bar.y + (bar.height - bh) * 0.5f, tw, bh);
     }
 
     /// <summary>The panel's LOAD number: the core's C (S_CARGO on the 1e-5 grid), to the five decimals the card prints.</summary>

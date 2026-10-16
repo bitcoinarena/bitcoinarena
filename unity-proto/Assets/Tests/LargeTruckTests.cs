@@ -13,7 +13,7 @@ using UnityEngine.TestTools;
 /// </summary>
 public class LargeTruckTests
 {
-    [TearDown] public void ClearTheWorld() { Blwp.BlwpCore.TruckBedOverride = 0; TestWorld.TearDown(); }
+    [TearDown] public void ClearTheWorld() { Blwp.BlwpCore.TruckBedOverride = 0; LargeTruckView.MorphInEditor = false; TestWorld.TearDown(); }
     [SetUp] public void PracticeOff() => Blwp.PracticeMode.On = false;
 
     const int LargeBedQ16 = 255590;   // frozen/f0cc7b7b/items.js LARGE_TRUCK.bedLength
@@ -149,5 +149,65 @@ public class LargeTruckTests
         var span2 = BodySpan();
         Assert.AreEqual(span0.rear, span2.rear, 1e-3f, "the original body again");
         Assert.AreEqual(fit0, CratesThatFit());
+    }
+
+    /// <summary>
+    /// THE MORPH (kanban #374, the owner 2026-10-16: "While the round is active there is an effect that the truck morphes from old to
+    /// new"): in a live round the bay takes the core's new bed at once, and the body grows from the standard truck to the larger one
+    /// over LargeTruckView.MorphS - past its new length and back - with the pulse light on, then rests at 3.9 m with the light off.
+    /// The editor has no core, so MorphInEditor stands in for the live round. Shots at the start, mid-way and the end.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator InALiveRoundTheTruckMorphsFromOldToNew()
+    {
+        Blwp.BlwpCore.TruckBedOverride = 0;
+        yield return null;
+        var span0 = BodySpan();
+        LargeTruckView.MorphInEditor = true;
+        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;
+        float bed = LargeBedQ16 / 65536f, t0 = Time.unscaledTime;
+        yield return null;
+        Assert.IsTrue(_view.Morphing, "the change in a live round starts a morph");
+        Assert.AreEqual(bed, _bay.bedLength, 1e-5f, "the bay takes the core's bed at once");
+        Assert.Less(_view.AppliedBed, 3.2f, "the body starts at the old truck");
+        // no picture while it is timed: a 1280x720 shot takes longer than the morph in batch mode
+        float peak = 0f; var seen = new List<float>(); bool lit = false;
+        while (_view.Morphing && Time.unscaledTime - t0 < LargeTruckView.MorphS + 1f)
+        {
+            peak = Mathf.Max(peak, _view.AppliedBed); seen.Add(_view.AppliedBed);
+            var pulse = _truck.Find("MorphPulse");
+            if (pulse != null && pulse.GetComponent<Light>().enabled && pulse.GetComponent<Light>().intensity > 1f) lit = true;
+            yield return null;
+        }
+        Assert.IsFalse(_view.Morphing, "the morph ends");
+        Assert.LessOrEqual(Time.unscaledTime - t0, LargeTruckView.MorphS + 0.5f, "in about MorphS");
+        Assert.Greater(seen.Count, 5, "drawn over many frames, not at once");
+        Assert.Greater(peak, bed + 0.03f, $"the bed reached past {bed:0.000} m (peak {peak:0.000})");
+        Assert.IsTrue(lit, "the pulse light shone over the bed");
+        Assert.AreEqual(bed, _view.AppliedBed, 1e-4f, "it rests at the core's bed");
+        var span1 = BodySpan();
+        Assert.AreEqual(span0.rear - (bed - 3.0f), span1.rear, 2e-3f, "the body is the larger truck's at the end");
+        var light = _truck.Find("MorphPulse");
+        Assert.IsTrue(light == null || !light.GetComponent<Light>().enabled, "the light off again");
+        Debug.Log($"[LargeTruckTests] FACTS morph {seen.Count} frames, peak {peak:0.000} m, rest {_view.AppliedBed:0.000} m, {Time.unscaledTime - t0:0.00} s");
+
+        // THE PICTURES, from a second morph: back to the standard truck, then old -> new again, shot at its start, a third in, the end
+        Blwp.BlwpCore.TruckBedOverride = 0;
+        for (int i = 0; i < 400 && (_view.Morphing || _view.AppliedBed > 3.001f); i++) yield return null;
+        Blwp.BlwpCore.TruckBedOverride = LargeBedQ16;
+        yield return null;
+        Shot("truck-morph-start");
+        float t1 = Time.unscaledTime;
+        while (_view.Morphing && Time.unscaledTime - t1 < LargeTruckView.MorphS * 0.3f) yield return null;
+        var tinted = new MaterialPropertyBlock();
+        foreach (var r in (_truck.Find("Body") ?? _truck.Find("BodyProxy")).GetComponentsInChildren<Renderer>(true))
+            if (r.HasPropertyBlock()) { r.GetPropertyBlock(tinted, 0); break; }
+        Assert.IsFalse(tinted.isEmpty, "the body glows while it morphs");
+        Shot("truck-morph-mid");
+        Debug.Log($"[LargeTruckTests] FACTS mid shot at bed {_view.AppliedBed:0.000} m");
+        for (int i = 0; i < 400 && _view.Morphing; i++) yield return null;
+        foreach (var r in (_truck.Find("Body") ?? _truck.Find("BodyProxy")).GetComponentsInChildren<Renderer>(true))
+            Assert.IsFalse(r.HasPropertyBlock(), $"{r.name}: the glow is gone once the morph ends");
+        Shot("truck-morph-end");
     }
 }

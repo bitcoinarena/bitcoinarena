@@ -18,6 +18,11 @@ using UnityEngine;
 ///
 /// Back to the standard truck, every mesh is its original again. A body swapped in later (the model streaming in) is measured
 /// and stretched afresh.
+///
+/// THE MORPH (kanban #374, the owner 2026-10-16: "While the round is active there is an effect that the truck morphes from old to new"):
+/// when the core's bed changes in a live round - the run that plays with the larger truck starting - the bay takes the new bed at
+/// once (the core decides what fits), and the body grows from the old length to the new one over <see cref="MorphS"/> with a little
+/// overshoot, an orange light pulsing over the bed as it does. In the lobby, and in the editor's tests, it is drawn at once as before.
 /// </summary>
 [RequireComponent(typeof(CargoBay))]
 public class LargeTruckView : MonoBehaviour
@@ -25,14 +30,43 @@ public class LargeTruckView : MonoBehaviour
     /// <summary>The standard bed (CargoBay.bedLength, the core's BED_LENGTH 196608 / 65536).</summary>
     public const float StandardBed = 3.0f;
 
+    /// <summary>How long the body takes to grow from the old truck to the new one, in seconds (kanban #374).</summary>
+    public const float MorphS = 1.6f;
+    /// <summary>A test's switch: morph in the editor too, where no core runs.</summary>
+    public static bool MorphInEditor;
+
     CargoBay _bay;
     Vector3 _floor0;
     Transform _body;
-    readonly List<(MeshFilter mf, Mesh original)> _meshes = new List<(MeshFilter, Mesh)>();
-    float _applied = StandardBed;
+    readonly List<(MeshFilter mf, Mesh original, Mesh work)> _meshes = new List<(MeshFilter, Mesh, Mesh)>();
+    float _applied = StandardBed;   // the body's bed drawn now
+    float _target = StandardBed;    // the core's bed
+    float _from = StandardBed;
+    float _morphAt = -1f;
+    Light _pulse;
+    SplashScreen _splash;
+    MaterialPropertyBlock _tint;
+    static readonly Color MorphGlow = new Color(1f, 0.55f, 0.12f);
 
     /// <summary>The bed length drawn now, in metres.</summary>
     public float AppliedBed => _applied;
+    /// <summary>True while the body grows from the old truck to the new.</summary>
+    public bool Morphing => _morphAt >= 0f;
+
+    /// <summary>
+    /// The morph's progress at `t` (0..1 of <see cref="MorphS"/>): an ease-out with an overshoot of about 10 % that settles on 1 -
+    /// the bed reaches past its new length and springs back.
+    /// </summary>
+    public static float MorphCurve(float t)
+    {
+        t = Mathf.Clamp01(t);
+        const float c1 = 1.70158f, c3 = c1 + 1f;
+        float u = t - 1f;
+        return 1f + c3 * u * u * u + c1 * u * u;
+    }
+
+    /// <summary>The orange pulse over the bed while it morphs: up fast, down slow, 0 at both ends.</summary>
+    public static float PulseAt(float t) => t <= 0f || t >= 1f ? 0f : Mathf.Sin(Mathf.PI * Mathf.Pow(t, 0.6f)) * 6f;
 
     void Awake()
     {
@@ -45,22 +79,59 @@ public class LargeTruckView : MonoBehaviour
         float want = Blwp.BlwpCore.TruckBedMeters;
         if (want <= 0f) want = StandardBed;
         var body = transform.Find("Body") ?? transform.Find("BodyProxy");   // the model, or the box before it streams in
-        if (body != _body) { Restore(); _body = body; _meshes.Clear(); _applied = StandardBed; }
-        if (Mathf.Abs(want - _applied) > 0.0005f) Apply(want);
+        if (body != _body) { Restore(); _body = body; _meshes.Clear(); _applied = StandardBed; _target = StandardBed; _morphAt = -1f; }
+        if (Mathf.Abs(want - _target) > 0.0005f)
+        {
+            if (_splash == null) _splash = FindFirstObjectByType<SplashScreen>();
+            bool live = MorphInEditor || (Blwp.BlwpCore.Available && _splash != null && !_splash.Showing);
+            if (live && Mathf.Abs(want - _applied) > 0.05f && _body != null) StartMorph(want);
+            else Apply(want);
+        }
+        if (_morphAt >= 0f)
+        {
+            float t = (Time.unscaledTime - _morphAt) / MorphS;
+            if (t >= 1f) { ApplyBody(_target); _morphAt = -1f; SetPulse(0f); Tint(0f); Debug.Log($"[LargeTruckView] morph done: bed {_target:0.000} m"); }
+            else { ApplyBody(Mathf.LerpUnclamped(_from, _target, MorphCurve(t))); SetPulse(PulseAt(t)); Tint(PulseAt(t) / 6f * 0.75f); }
+        }
     }
 
-    /// <summary>Draw a bed `bed` metres long (the core's), the front where the standard one starts.</summary>
+    /// <summary>Draw a bed `bed` metres long (the core's), the front where the standard one starts - at once.</summary>
     public void Apply(float bed)
     {
-        float front = _floor0.z + StandardBed * 0.5f, rear = _floor0.z - StandardBed * 0.5f;
-        float extra = bed - StandardBed;
+        if (_morphAt >= 0f) Tint(0f);
+        _morphAt = -1f; SetPulse(0f);
+        ApplyBay(bed);
+        ApplyBody(bed);
+        Debug.Log($"[LargeTruckView] bed {bed:0.000} m drawn ({(bed > StandardBed + 0.0005f ? "the larger truck" : "the standard truck")})");
+    }
 
-        // THE BAY: same front, the core's length; its crates repacked over it
+    /// <summary>The morph to the core's new bed: the bay at once, the body from the length drawn now (kanban #374).</summary>
+    void StartMorph(float bed)
+    {
+        ApplyBay(bed);
+        _from = _applied;
+        _morphAt = Time.unscaledTime;
+        Debug.Log($"[LargeTruckView] morph: bed {_from:0.000} -> {bed:0.000} m over {MorphS:0.0} s");
+    }
+
+    /// <summary>THE BAY: same front, the core's length; its crates repacked over it.</summary>
+    void ApplyBay(float bed)
+    {
+        float front = _floor0.z + StandardBed * 0.5f;
         _bay.bedLength = bed;
         _bay.bedFloor = new Vector3(_floor0.x, _floor0.y, front - bed * 0.5f);
         _bay.ReflowForNewBed();
+        _target = bed;
+    }
 
-        // THE BODY: its bed section spread over the new length, the tail moved back - from the original vertices every time
+    /// <summary>
+    /// THE BODY: its bed section spread over `bed` metres, the tail moved back - from the original vertices every time, into one
+    /// working mesh per part (a morph draws it every frame).
+    /// </summary>
+    void ApplyBody(float bed)
+    {
+        float front = _floor0.z + StandardBed * 0.5f, rear = _floor0.z - StandardBed * 0.5f;
+        float extra = bed - StandardBed;
         if (_body != null)
         {
             if (_meshes.Count == 0)
@@ -69,11 +140,12 @@ public class LargeTruckView : MonoBehaviour
                     if (mf.sharedMesh == null) continue;
                     // the model's mesh is imported Read/Write (SmallTruck_1.FBX.meta isReadable), else it cannot be stretched
                     if (!mf.sharedMesh.isReadable) { Debug.LogWarning($"[LargeTruckView] mesh {mf.sharedMesh.name} is not readable: its bed is not drawn longer"); continue; }
-                    _meshes.Add((mf, mf.sharedMesh));
+                    _meshes.Add((mf, mf.sharedMesh, null));
                 }
             float k = bed / StandardBed;
-            foreach (var (mf, original) in _meshes)
+            for (int j = 0; j < _meshes.Count; j++)
             {
+                var (mf, original, work) = _meshes[j];
                 if (mf == null) continue;
                 if (Mathf.Abs(extra) < 0.0005f) { mf.sharedMesh = original; continue; }
                 var src = original.vertices;
@@ -88,20 +160,57 @@ public class LargeTruckView : MonoBehaviour
                     else if (p.z < rear) p.z -= extra;
                     dst[i] = toMesh.MultiplyPoint3x4(p);
                 }
-                var m = Instantiate(original);
-                m.name = original.name + " (larger truck)";
-                m.vertices = dst;
-                m.RecalculateBounds();
-                mf.sharedMesh = m;
+                if (work == null) { work = Instantiate(original); work.name = original.name + " (larger truck)"; _meshes[j] = (mf, original, work); }
+                work.vertices = dst;
+                work.RecalculateBounds();
+                mf.sharedMesh = work;
             }
         }
         _applied = bed;
-        Debug.Log($"[LargeTruckView] bed {bed:0.000} m drawn ({(bed > StandardBed + 0.0005f ? "the larger truck" : "the standard truck")})");
+    }
+
+    /// <summary>
+    /// THE BODY GLOWS ORANGE WHILE IT MORPHS (a light alone was lost in daylight, measured on the editor's shots): each material's
+    /// own base colour toward orange by `k` (0..1), through a property block - 0 hands the materials back untouched.
+    /// </summary>
+    void Tint(float k)
+    {
+        if (_body == null) return;
+        if (_tint == null) _tint = new MaterialPropertyBlock();
+        foreach (var r in _body.GetComponentsInChildren<Renderer>(true))
+        {
+            var mats = r.sharedMaterials;
+            for (int i = 0; i < mats.Length; i++)
+            {
+                if (k <= 0f || mats[i] == null || !mats[i].HasProperty("_BaseColor")) { r.SetPropertyBlock(null, i); continue; }
+                _tint.Clear();
+                _tint.SetColor("_BaseColor", Color.Lerp(mats[i].GetColor("_BaseColor"), MorphGlow, Mathf.Clamp01(k)));
+                r.SetPropertyBlock(_tint, i);
+            }
+        }
+    }
+
+    /// <summary>The orange light over the bed while it morphs (intensity 0 switches it off).</summary>
+    void SetPulse(float intensity)
+    {
+        if (intensity <= 0f) { if (_pulse != null) _pulse.enabled = false; return; }
+        if (_pulse == null)
+        {
+            var go = new GameObject("MorphPulse");
+            go.transform.SetParent(transform, false);
+            _pulse = go.AddComponent<Light>();
+            _pulse.type = LightType.Point;
+            _pulse.color = new Color(1f, 0.58f, 0.10f);
+            _pulse.range = 9f;
+        }
+        _pulse.transform.localPosition = new Vector3(_floor0.x, _floor0.y + 2.2f, _floor0.z - (_target - StandardBed) * 0.5f);
+        _pulse.enabled = true;
+        _pulse.intensity = intensity;
     }
 
     void Restore()
     {
-        foreach (var (mf, original) in _meshes) if (mf != null) mf.sharedMesh = original;
+        foreach (var (mf, original, _) in _meshes) if (mf != null) mf.sharedMesh = original;
         if (_bay != null) { _bay.bedLength = StandardBed; _bay.bedFloor = _floor0; }
     }
 }

@@ -785,6 +785,9 @@
     @media (orientation: portrait) and (pointer: coarse) { #blwp-next { bottom: max(18%, calc(45.25vw + 10px)); } }
     #blwp-next-exit { flex: none; font: inherit; padding: 9px 14px; cursor: pointer; background: #1e2833; color: #e8eaed;
       border: 1px solid #3a4a5c; border-radius: 6px; }
+    #blwp-next-addons { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #f7931a; color: #111;
+      border: 1px solid #f7931a; border-radius: 6px; }
+    @media (orientation: landscape) and (max-height: 460px) { #blwp-next-addons { padding: 5px 10px; } }
     body.blwp-clean #blwp-next { display: none !important; }
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
     #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
@@ -937,7 +940,7 @@
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
-  <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-exit" type="button">exit game</button></div>
+  <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons</button><button id="blwp-next-exit" type="button">exit game</button></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (the owner 2026-09-29): placed over the row Unity reports as `balance`, where
        NAME and KEY stood, above the rounds. -->
   <div id="blwp-lobby-balance" style="display:none">
@@ -2460,6 +2463,9 @@
         if (v.show === 'countdown') {
           document.getElementById('blwp-next-say').textContent = v.line;
           document.getElementById('blwp-next-exit').textContent = v.exit;
+          // AND BUY ADD-ONS while the countdown runs (kanban #374): Unity's add-ons panel, when this game sells something
+          const ad = document.getElementById('blwp-next-addons');
+          if (ad) ad.style.display = window.ARENA_ADDONS_VIEW && window.ARENA_ADDONS_VIEW().shop && window.unityInstance ? '' : 'none';
         }
       }
       window.BLWP_NEXT_VIEW = v;
@@ -2498,6 +2504,9 @@
       }
       return show(offer);
     };
+    document.getElementById('blwp-next-addons').addEventListener('click', () => {
+      try { window.unityInstance.SendMessage('Bootstrap', 'OpenAddons'); } catch (e) { console.error('[blwp] add-ons: ' + e.message); }
+    });
     document.getElementById('blwp-next-exit').addEventListener('click', () => {
       // EXIT GAME: no next round. A join still being made, or held for its start, is dropped; a stake a paying round
       // already locked refunds by the lock's own expiry (§23.1) - nothing new is sent. PLAY from the lobby continues again.
@@ -3396,6 +3405,7 @@
           ...(claimKey ? { claimKey } : {}), ...(stakeLock ? { stakeLock } : {}),
           donationMsat: donation.donationMsat, joinTick: late.joinTick, frontendPk: pageFrontendPk(), items: runItems,
         });
+      window.BLWP_ENTRY_ROUND = named.roundIdHex;   // whose entry this is (kanban #374: an add-on bought after it counts from the round after)
       window.BLWP_ITEM_UNLOCKS = roundManifest ? BLWPCLIENT.entryUnlocks(window.BLWP_ENTRY, roundManifest) : [];
       if (window.BLWP_ITEM_UNLOCKS.length) console.log('[blwp] this run plays with ' + (window.BLWP_ENTRY.items || []).map((x) => x.itemId).join(', '));
       if (keptEntry) console.log('[blwp] the entry of this round kept from before the reload');
@@ -7414,6 +7424,55 @@
         player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o),
         verify: (sg, m, k) => window.BLWP_CURVE.verify(sg, m, k) });
     }
+    // ADD-ONS INSIDE UNITY (kanban #374, the owner 2026-10-16: "The buy feature must also be inside unity on the loading screen as 'buy
+    // addons' where you load the packages, and when the round has closed and the countdown is showing there is also the option to buy
+    // items. There is a visual confirmation in unity when the game is active and an item has been purchased."). Unity draws the panel
+    // from ARENA_ADDONS_VIEW and buys through ARENA_ADDONS_BUY - the same purchase as the shop sheet (buyShopItem). A purchase counts
+    // from the next entry this page builds: an entry already made (the run going, or the next round's join held to its start) keeps
+    // what it named, since every node replays the run from it - `from` says which.
+    const addons = { owned: null, ownedFor: '', busy: '', said: '', bad: false, seq: 0, bought: null };
+    const addonsShop = () => { const chosen = window.ARENA_GAME_CHOSEN; return chosen && BLWPCLIENT.shopOf ? BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name) : null; };
+    // 'after-next' when the round this page is joining - not started yet - already has its entry, else 'next': the next entry it builds
+    window.ARENA_ADDONS_FROM = (join, entryRound) => (join && join.state === 'joining' && join.round && entryRound === join.round ? 'after-next' : 'next');
+    async function addonsRead() {
+      const shop = addonsShop(); if (!shop) return;
+      try { addons.owned = await itemsOwnedNow(shop.game.name, shop.game.nodes || [], { fresh: true }); addons.ownedFor = shop.game.name; if (!addons.busy) { addons.said = ''; addons.bad = false; } }
+      catch (e) { addons.said = 'What you own could not be read: ' + e.message; addons.bad = true; }
+    }
+    window.ARENA_ADDONS_OPEN = () => { addonsRead(); return 1; };
+    window.ARENA_ADDONS_VIEW = () => {
+      const shop = addonsShop();
+      if (!shop) return { shop: false };
+      const use = itemsUse(shop.game.name);
+      const owned = addons.ownedFor === shop.game.name ? (addons.owned || []) : [];
+      return { shop: true, game: shop.game.name, read: addons.owned !== null, busy: addons.busy, said: addons.said, bad: addons.bad, seq: addons.seq,
+        bought: addons.bought, items: shop.items.map((it) => ({ id: it.id, name: it.name, what: ITEM_WHAT[it.id] || '', priceSat: Number(it.priceSat),
+          owned: owned.some((o) => o.itemId === it.id), use: !use || use.includes(it.id) })) };
+    };
+    window.ARENA_ADDONS_BUY = (itemId) => {
+      const shop = addonsShop(); const it = shop && shop.items.find((x) => x.id === itemId);
+      if (!it || addons.busy) return 0;
+      addons.busy = itemId; addons.said = 'Paying ' + String(it.priceSat) + ' sat …'; addons.bad = false;
+      (async () => {
+        const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+        if (got.ok) {
+          const from = window.ARENA_ADDONS_FROM(window.BLWP_JOIN, window.BLWP_ENTRY_ROUND);
+          addons.seq += 1; addons.bought = { seq: addons.seq, id: it.id, name: it.name, txid: String(got.txid || ''), from };
+          addons.said = it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'; addons.bad = false;
+          console.log('[blwp] add-on bought in Unity: ' + it.id + ', tx ' + String(got.txid).slice(0, 16) + ', plays from ' + from);
+          await addonsRead();
+          if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE().catch(() => {});
+        } else { addons.said = 'Not bought (' + got.step + '): ' + got.why; addons.bad = true; }
+        addons.busy = '';
+      })();
+      return 1;
+    };
+    window.ARENA_ADDONS_USE = (itemId, on) => {
+      const shop = addonsShop(); if (!shop) return 0;
+      const now = new Set(itemsUse(shop.game.name) || (addons.owned || []).map((x) => x.itemId));
+      if (on) now.add(itemId); else now.delete(itemId);
+      setItemsUse(shop.game.name, [...now]); return 1;
+    };
     {
       const go = document.getElementById('blwp-shop-go');
       if (go) go.addEventListener('click', () => openShop().catch((e) => console.error('[blwp] shop: ' + e.message)));
