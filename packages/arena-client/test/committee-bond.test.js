@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { committeeBond } from '../src/join.js';
+import { committeeBond, committeeBonds, bondProvider } from '../src/join.js';
 import { bondTransaction } from '../../arena-protocol/tools/bond.js';
 import { advertId } from '../../arena-protocol/src/advert.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -36,4 +36,20 @@ test('no seat answers for the committee: the named bond, as before (its refusal 
   assert.equal(await committeeBond({ bond: 'https://s1.example/bond', nodes, committee: [b32(0x55)], fetcher }), 'https://s1.example/bond');
   const down = async () => { throw new Error('offline'); };
   assert.equal(await committeeBond({ bond: 'https://s1.example/bond', nodes, committee: [SEAT2], fetcher: down }), 'https://s1.example/bond');
+});
+
+// THE BOND ALREADY READ IS NOT READ AGAIN, AND ONE SEAT IS NOT THE ONLY ONE (kanban #376, measured 2026-10-16 11:20:47Z on preview
+// UI 151 after Unity's PLAY: the entry made, then "no bond: no provider proved that bond into the chain (provider 0: no answer in
+// 10000 ms)" - one provider, reading again the /bond the committee search had just read)
+test('every committee seat is found, each with the /bond it answered, in the candidates\' order', async () => {
+  const found = await committeeBonds({ bond: 'https://s1.example/bond', nodes, committee: [SEAT3, SEAT2], fetcher });
+  assert.deepEqual(found.map((f) => f.where), ['https://s2.example/bond', 'https://s3.example/bond']);
+  assert.equal(found[0].body.hex, served['https://s2.example/bond'].hex);
+});
+test('a bond provider handed the answer proves from it, with no second read', async () => {
+  const never = async () => { throw new Error('read again'); };
+  const p = bondProvider('https://s2.example/bond', { fetcher: never, body: served['https://s2.example/bond'] });
+  const got = await p(null, {});
+  assert.equal(toHex(got.transaction), served['https://s2.example/bond'].hex);
+  assert.deepEqual([got.branch.length, got.position], [0, 0]);
 });
