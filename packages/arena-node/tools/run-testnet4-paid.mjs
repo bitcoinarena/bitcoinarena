@@ -37,6 +37,8 @@ import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
 // PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
+import { GAME as NEXTBLOCK_V3 } from '../../nextblock/plugin/nextblock-v3.js';
+import { TRUCK_F0CC_HASH } from '../../nextblock/plugin/truck-cores.js';
 import { MARKET } from '../test/plugins/market/index.js';
 import { bitcoindRpc } from '../src/chain-rpc.js';
 import { stakeLockPort } from '../src/stake-lock-port.js';
@@ -315,8 +317,11 @@ if (env.PAID_DUTY_DAILY === '1') {
     const ds = donationSet();
     const common = { feeRate, maxFeeRate, committeeTimeMs: committee, extraOutputs: [dutyMarkerOutput(slot, item)], waitBeacon: false };
     const per = (extra) => feds.map((f) => ({ donationSetId: ds, federationId: fromHex(f), ...extra }));
+    // DUTY_NEXTBLOCK_V3=1 (kanban #369): Tick Tock's version 3 - the game that sells the larger truck - on its core f0cc7b7b; its rounds
+    // need protocol 10 (ARENA_PROTOCOL_VERSION=10) and seats whose census advertisements name its game id
+    const NB_FIELDS = env.DUTY_NEXTBLOCK_V3 === '1' ? { gameId: NEXTBLOCK_V3.gameId, simCoreHash: fromHex(TRUCK_F0CC_HASH) } : {};
     const got = game === 'nextblock'
-      ? await round.openGrid({ ...CREATOR, fields: {}, tableFields: per({}), stakeMsat },
+      ? await round.openGrid({ ...CREATOR, fields: NB_FIELDS, tableFields: per({}), stakeMsat },
         { ...common, slots: (endMs - startMs) / 90000, windowMs: 90000n, entryAfterStartMs: 45000n, firstCloseMs: BigInt(startMs + 45000) })
       : game === 'rps'
       ? await round.openGrid({ ...CREATOR, fields: { ...RPS_ROUND_FIELDS }, tableFields: [...per({}), ...per({})], stakeMsat },
