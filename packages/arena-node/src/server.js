@@ -156,7 +156,7 @@ import { seatingAgent } from './seating-agent.js';
 import { decodeSeatingCertificate, encodeSeatingCertificate } from '../../arena-protocol/src/seating.js';
 import { receiptsNeeded as roundThreshold, donationKeysForNetworkId } from '../../arena-protocol/src/genesis.js';
 import { authorityAt, donationSetSignedBy, donationSetInForce, encodeDonationSetBody, encodeAuthorityRotation, donationSetBodyId, authorityRotationId } from '../../arena-protocol/src/authority.js';
-import { donationSetId, donationOutputsExpected, encodeDonationSet } from '../../arena-protocol/src/donation.js';
+import { donationSetId, donationOutputsExpected, encodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { timed, watchLoop } from './slow.js';
 import { resultFinality, finalSignatureNow } from './finality.js';
@@ -1038,7 +1038,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!keys) return null;
       const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
         rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
-      return forced.ok ? forced.recipients : null;
+      return forced.ok ? vestedShares(forced.recipients, height) : null;
     },
     lowestBondMinSatsFor: () => ballot.lowestBondMinSats,
     // regtest votes on its short schedule (1 / 6 / 1); every other network on the genesis one (27A.7.4)
@@ -1078,7 +1078,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!ds.ok) return ds;
     const game = contract.gameId instanceof Uint8Array ? hosted.get(toHex(contract.gameId)) : null;
     if (!game || !Array.isArray(game.donationSet)) return { ok: false, why: 'this node holds no donation set of that round\'s game' };
-    return { ok: true, set: ds.set, target: { network: ds.set.recipients, game: game.donationSet } };
+    // A SET THAT VESTS (§27A.4.1, kanban #382) pays its shares at the round's census height
+    return { ok: true, set: ds.set, target: { network: vestedShares(ds.set.recipients, contract.censusHeight), game: game.donationSet } };
   };
   // A PAYING ROUND THAT NAMES A SET OTHER THAN THE ONE IN FORCE, AS A REFUSAL (kanban #191, the owner 2026-10-06: series
   // d37c1ef1 named serial 2 where serial 3 was in force; its rounds were written and listed 7 of 7, a page locked a stake into
@@ -4084,7 +4085,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (!parent) return answer(409, { ok: false, why: 'this dev key is not a recipient of the protocol developers\' set in force, so it cannot propose' });
             let recipients;
             try {
-              recipients = (args.recipients || []).map((r) => ({ recipientPk: fromHex(String(r.key)), shareBps: Number(r.shareBps), label: String(r.label || '').slice(0, 48) }));
+              // VESTING (§27A.4.1): a row may vest to vestBps over vestDays days, from this node's chain tip on
+              let tip = 0; try { tip = typeof chainTip === 'function' ? Number(await chainTip()) : 0; } catch { tip = 0; }
+              recipients = (args.recipients || []).map((r) => ({ recipientPk: fromHex(String(r.key)), shareBps: Number(r.shareBps), label: String(r.label || '').slice(0, 48),
+                ...(r.vestDays ? { vesting: { targetBps: Number(r.vestBps), startHeight: tip, days: Number(r.vestDays) } } : {}) }));
+              if (recipients.some((r) => r.vesting) && !tip) return answer(503, { ok: false, why: 'this node cannot read its chain tip, and a vesting starts there' });
               const p = { networkId: parent.networkId, serial: parent.serial + 1n, parentSetId: donationSetId(parent.recipients), proposer: me, recipients };
               hex = toHex(encodeDonationProposal(p)) + toHex(secp256k1.sign(donationProposalId(p), secret));
             } catch (e) { return answer(400, { ok: false, why: `that split does not stand: ${e.message}` }); }
@@ -4851,7 +4856,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           } catch { /* a seat that does not answer adds nothing */ }
         }));
         const merged = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
-        const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: forced.recipients, gameSet: game.donationSet,
+        const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         if (!got.ok) return text(res, got.status || 422, got.why);

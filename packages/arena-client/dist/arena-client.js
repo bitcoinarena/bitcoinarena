@@ -919,6 +919,8 @@ const TYPE_VALUE_ATTESTATION = 0x2a;
 // THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a proposed donation set and a recipient's approval of it
 const TYPE_DONATION_PROPOSAL = 0x2b;
 const TYPE_DONATION_APPROVAL = 0x2c;
+// A SET OF KEYS WHOSE ENTRIES MAY VEST (§27A.4.1, kanban #382): a set without vesting keeps TYPE_DONATION_SET_KEYS and its id
+const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -12994,9 +12996,23 @@ function keySetStands(recipients) {
     if (seen.has(key)) return { ok: false, why: `key ${key.slice(0, 16)}… is listed twice, which is one party with two shares` };
     seen.add(key);
     sum += r.shareBps;
+    if (r.vesting !== undefined && r.vesting !== null) {
+      const v = r.vesting;
+      if (!Number.isInteger(v.targetBps) || v.targetBps < 0 || v.targetBps > DONATION_BPS_TOTAL) return { ok: false, why: `recipient ${at} vests to no share in basis points` };
+      if (!Number.isInteger(v.startHeight) || v.startHeight < 0) return { ok: false, why: `recipient ${at} vests from no block height` };
+      if (!Number.isInteger(v.days) || v.days < 1 || v.days > 65535) return { ok: false, why: `recipient ${at} vests over no whole number of days (1-65535)` };
+    }
   }
   if (sum !== DONATION_BPS_TOTAL)
     return { ok: false, why: `those shares sum to ${sum} basis points and 22A says exactly ${DONATION_BPS_TOTAL}` };
+  // AT FULL VESTING THE REST STILL HOLD SOMETHING TO GIVE (§27A.4.1): the vesting entries' targets, the others' shares scaled into the rest
+  const vesting = recipients.filter((r) => r.vesting);
+  if (vesting.length) {
+    const target = vesting.reduce((t, r) => t + r.vesting.targetBps, 0);
+    const others = recipients.filter((r) => !r.vesting).reduce((t, r) => t + r.shareBps, 0);
+    if (target > DONATION_BPS_TOTAL) return { ok: false, why: `the vesting targets sum to ${target} basis points, more than ${DONATION_BPS_TOTAL}` };
+    if (target < DONATION_BPS_TOTAL && others === 0) return { ok: false, why: 'the vesting targets leave a rest and no other recipient holds a share to scale into it' };
+  }
   return { ok: true, why: `${recipients.length} keys sharing exactly ${sum} basis points` };
 }
 
@@ -13188,6 +13204,16 @@ const donatedMsat = (entries) =>
 function encodeDonationSet(recipients) {
   const stands = donationSetStands(recipients);
   if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+  if (donationSetPaysKeys(recipients) && recipients.some((r) => r.vesting)) {
+    // A SET OF KEYS THAT VESTS (§27A.4.1, kanban #382): each entry's key, share now, label, and - when it vests - its target, its
+    // first block and its length in days; a set without vesting keeps the plain encoding below, and so its id
+    const w = new Writer();
+    w.u8(TYPE_DONATION_SET_KEYS_VESTING);
+    w.u16(PROTOCOL_VERSION);
+    w.vec(recipients, (r, ww) => { ww.bytes(r.recipientPk, RECIPIENT_KEY_BYTES); ww.u16(r.shareBps); ww.str(r.label);
+      if (r.vesting) { ww.u8(1); ww.u16(r.vesting.targetBps); ww.u32(r.vesting.startHeight); ww.u16(r.vesting.days); } else ww.u8(0); });
+    return w.finish();
+  }
   if (donationSetPaysKeys(recipients)) {
     // A SET OF KEYS: the key, the share, the label - in the order published (the remainder rule reads it)
     const w = new Writer();
@@ -13219,6 +13245,21 @@ function decodeDonationSet(bytes) {
     if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
     const recipients = r.vec((rr) => ({ recipientPk: rr.bytes(RECIPIENT_KEY_BYTES), shareBps: rr.u16(), label: rr.str() }));
     if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+    const stands = donationSetStands(recipients);
+    if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
+    return recipients;
+  }
+  if (type === TYPE_DONATION_SET_KEYS_VESTING) {
+    if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+    const recipients = r.vec((rr) => {
+      const x = { recipientPk: rr.bytes(RECIPIENT_KEY_BYTES), shareBps: rr.u16(), label: rr.str() };
+      const has = rr.u8();
+      if (has > 1) throw new Error('a vesting flag is 0 or 1');
+      if (has) x.vesting = { targetBps: rr.u16(), startHeight: rr.u32(), days: rr.u16() };
+      return x;
+    });
+    if (r.at !== bytes.length) throw new Error('trailing bytes after the donation set');
+    if (!recipients.some((x) => x.vesting)) throw new Error('a vesting set names no vesting entry: it is the plain set');
     const stands = donationSetStands(recipients);
     if (!stands.ok) throw new Error(`that set does not stand: ${stands.why}`);
     return recipients;
@@ -13289,6 +13330,34 @@ function donationSetMatchesRound(contract, recipients) {
       why: 'that set is not the one this round named, and 22A says it cannot '
         + 'change after entry',
     };
+}
+
+/** A day of vesting, in blocks (§27A.4.1: "vesting is daily", the owner 2026-10-16). */
+const VESTING_DAY_BLOCKS = 144;
+/**
+ * THE SHARES A VESTING SET PAYS AT A HEIGHT (§27A.4.1, kanban #382): each vesting entry has moved from its share towards its target
+ * by one day's step per VESTING_DAY_BLOCKS since its start (floored to whole basis points, at most its target); every other entry
+ * holds its share scaled into what the vesting entries leave, floored, the rest of a basis point to the first of them as
+ * published. A set without vesting is answered as it is. The answer is a plain set: keys, labels, shares summing to 10000.
+ */
+function vestedShares(recipients, height) {
+  if (!Array.isArray(recipients) || !recipients.some((r) => r && r.vesting)) return recipients;
+  const h = Number(height) || 0;
+  const now = recipients.map((r) => {
+    if (!r.vesting) return null;
+    const { targetBps, startHeight, days } = r.vesting;
+    const elapsed = h < startHeight ? 0 : Math.min(days, Math.floor((h - startHeight) / VESTING_DAY_BLOCKS));
+    return r.shareBps + Math.trunc(((targetBps - r.shareBps) * elapsed) / days);
+  });
+  const vested = now.reduce((t, x) => t + (x === null ? 0 : x), 0);
+  const othersBase = recipients.reduce((t, r) => t + (r.vesting ? 0 : r.shareBps), 0);
+  const rest = DONATION_BPS_TOTAL - vested;
+  const out = recipients.map((r, i) => ({ recipientPk: r.recipientPk, label: r.label,
+    shareBps: r.vesting ? now[i] : (othersBase > 0 ? Math.floor((r.shareBps * rest) / othersBase) : 0) }));
+  const short = DONATION_BPS_TOTAL - out.reduce((t, x) => t + x.shareBps, 0);
+  const first = recipients.findIndex((r) => !r.vesting);
+  if (short && first >= 0) out[first].shareBps += short;
+  return out;
 }
 
 // ---- arena-protocol/src/lock-settlement.js
@@ -20577,7 +20646,8 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
   if (toHex(donationSetId(gameSet)) !== wantGame)
     return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
   if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
-  return { ok: true, set, gameSet, target: { network: set.recipients, game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
+  // A SET THAT VESTS (§27A.4.1, kanban #382) pays its shares at the round's census height, as the seats split it
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 

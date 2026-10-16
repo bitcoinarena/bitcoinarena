@@ -28,7 +28,7 @@ import {
   decodeDonationSetBody, donationSetBodyId, decodeAuthorityRotation, authorityRotationId, authorityAt, donationSetInForce,
   DONATION_SIGNATURE_BYTES,
 } from '../../arena-protocol/src/authority.js';
-import { donationSetMatchesRound, donationSetId, decodeDonationSet } from '../../arena-protocol/src/donation.js';
+import { donationSetMatchesRound, donationSetId, decodeDonationSet, vestedShares } from '../../arena-protocol/src/donation.js';
 import { decodeDonationProposal, decodeDonationApproval, approvedDonationSets } from '../../arena-protocol/src/donation-vote.js';
 import { gameDonationSetIdOf } from '../../arena-protocol/src/known-game.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
@@ -320,6 +320,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (toHex(donationSetId(gameSet)) !== wantGame)
     return { ok: false, why: `the game donation set served (${toHex(donationSetId(gameSet)).slice(0, 16)}) is not the one the game's manifest names (${wantGame.slice(0, 16)})` };
   if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, answers);
-  return { ok: true, set, gameSet, target: { network: set.recipients, game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
+  // A SET THAT VESTS (§27A.4.1, kanban #382) pays its shares at the round's census height, as the seats split it
+  return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight), game: gameSet }, signerNodes: answers.length, rotated: inForce.rotated,
     why: `${answers.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
