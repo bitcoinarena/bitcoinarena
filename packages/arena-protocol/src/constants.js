@@ -351,6 +351,10 @@ export const TYPE_DONATION_PROPOSAL = 0x2b;
 export const TYPE_DONATION_APPROVAL = 0x2c;
 // A SET OF KEYS WHOSE ENTRIES MAY VEST (§27A.4.1, kanban #382): a set without vesting keeps TYPE_DONATION_SET_KEYS and its id
 export const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
+/** PROJECT FUNDING PROPOSALS (§27A.9.3, kanban #397 slice 6): a proposal signed by a bonded node, a comment signed by anyone, a node's signal. */
+export const TYPE_FUNDING_PROPOSAL = 0x2e;
+export const TYPE_FUNDING_COMMENT = 0x2f;
+export const TYPE_FUNDING_SIGNAL = 0x30;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -423,6 +427,9 @@ export const TAG = {
   // §27A.4.1 (kanban #382): what a developer proposes and what each recipient signs
   donationProposal: 'ARENA/v1/DonationProposal',
   donationApproval: 'ARENA/v1/DonationApproval',
+  fundingProposal: 'ARENA/v1/FundingProposal',
+  fundingComment: 'ARENA/v1/FundingComment',
+  fundingSignal: 'ARENA/v1/FundingSignal',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
