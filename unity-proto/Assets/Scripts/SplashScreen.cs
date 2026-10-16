@@ -854,6 +854,15 @@ public class SplashScreen : MonoBehaviour
         return Blwp.DailyLobby.HintWords(k >= 0 ? _lobby.rows[k] : null, _lobby.rows.Length);
     }
 
+    /// <summary>The line under the rows, longest first: shorter wordings of the round PLAY joins for a phone (kanban #8).</summary>
+    string[] LobbyHintWordings()
+    {
+        string full = LobbyHint();
+        int k = Blwp.DailyLobby.Keep(_lobby.rows, _pickId);
+        var r = k >= 0 ? _lobby.rows[k] : null;
+        return full == Blwp.DailyLobby.HintWords(r, _lobby.rows.Length) ? Blwp.DailyLobby.HintWordings(r, _lobby.rows.Length) : new[] { full };
+    }
+
     void JoinPicked()
     {
         WakeAudio();
@@ -946,6 +955,7 @@ public class SplashScreen : MonoBehaviour
     public const string PlayLabel = "▶  PLAY";
     public const string SpectateLabel = "SPECTATE";
     public const string BenchmarkLabel = "BENCHMARK";
+    public const string BenchmarkShort = "BENCH";
 
     const string Standfirst = "HAUL REAL MEMPOOL FREIGHT THROUGH A LIVE BATTLEFIELD";
     const string Footnote = "One Bitcoin block is one round - and every fee, block and " +
@@ -1027,8 +1037,8 @@ public class SplashScreen : MonoBehaviour
             // A REFUSED JOIN IS AN ERROR AND READS AS ONE: red and bold on the line above PLAY, not the hint's grey (2026-09-17,
             // "the tiny grey fetch line is not enough").
             if (RefusalHere) { hint.normal.textColor = new Color(1f, 0.50f, 0.46f); hint.fontStyle = FontStyle.Bold; }
-            _lastHint = LobbyHint();
-            GUI.Label(f.hint, Fit(hint, _lastHint, f.hint.width), hint);
+            _lastHint = FitWords(hint, LobbyHintWordings(), f.hint.width);   // the longest that fits (kanban #8)
+            GUI.Label(f.hint, _lastHint, hint);
         }
         else GUI.Label(f.hint, Hint, _sub);
 
@@ -1069,8 +1079,11 @@ public class SplashScreen : MonoBehaviour
         PanelSkin.Border(f.benchmark, new Color(0.55f, 0.75f, 1f, 0.75f));
         var bench = new GUIStyle(_btn);
         bench.normal.textColor = new Color(0.70f, 0.85f, 1f);
+        // ONE LINE, OR THE SHORT WORD (kanban #8, measured at 360 px: "BENCHMAR" / "K")
+        bench.wordWrap = false;
         Shrink(bench, BenchmarkLabel, f.benchmark);
-        if (GUI.Button(f.benchmark, BenchmarkLabel, bench)) Benchmark();
+        string benchLabel = FitWords(bench, new[] { BenchmarkLabel, BenchmarkShort }, f.benchmark.width - 10f);
+        if (GUI.Button(f.benchmark, benchLabel, bench)) Benchmark();
     }
 
     /// <summary>SPECTATE, and the page's frame-rate test once the camera has settled (kanban #266).</summary>
