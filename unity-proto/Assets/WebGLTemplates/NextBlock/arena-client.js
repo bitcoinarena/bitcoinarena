@@ -20529,6 +20529,9 @@ const MARK_INPUT_WAIT_MS = 10000;
  * send - is byte for byte what it was.
  */
 const FEED_WINDOW = 32;
+/** A peer that refused the entry is asked again after ENTRY_BACKOFF_MS, then twice as long each time, at most ENTRY_BACKOFF_MAX_MS. */
+const ENTRY_BACKOFF_MS = 2000;
+const ENTRY_BACKOFF_MAX_MS = 60000;
 
 /**
  * THE WORD FOR NO CONNECTION, distinct from every word a node says.
@@ -21014,6 +21017,9 @@ class Client {
     for (const base of this.peers) this.#feed(base);
   }
 
+  /** The clock the peer feeds read (a test sets its own). */
+  now() { return Date.now(); }
+
   peerFeed(base) {
     let f = this.peerFeeds.get(base);
     if (!f) {
@@ -21027,6 +21033,10 @@ class Client {
   #feed(base) {
     const f = this.peerFeed(base);
     if (f.running) { f.again = true; return f.running; }
+    // A PEER THAT REFUSED THE ENTRY IS LEFT ALONE UNTIL ITS BACKOFF IS OVER (kanban #376; the owner 2026-10-16: "Lower the amount of
+    // concurrent connections and network load"): measured on live UI 154, three peers that answer the entry 400 were sent every
+    // batch and the entry again at each one - a refused POST /entry every 1-2 s for the whole round
+    if (f.entryBackoffUntil && this.now() < f.entryBackoffUntil) return Promise.resolve();
     f.running = (async () => {
       do {
         f.again = false;
@@ -21035,7 +21045,8 @@ class Client {
           // answers are read in the order they were asked for, which is the order the node takes them in.
           // A steady run has one batch to send and this is one frame, as before; a peer that is behind
           // stops costing a round trip per batch of it.
-          const window = this.published.slice(f.next, f.next + FEED_WINDOW);
+          // ONE FRAME to a peer that refused the entry: its answer says whether it holds it now; the window once it does
+          const window = this.published.slice(f.next, f.next + (f.entryRefused && f.entryBackoffUntil ? 1 : FEED_WINDOW));
           const asked = window.map((one) => ({ one, said: this.sendPeer(base, one.bytes) }));
           // EVERY ANSWER IS READ, INCLUDING THE ONES AFTER A REFUSAL. They are already on the wire, and a
           // promise nobody reads would leave `sendPeer`'s queue matching the next batch to this one's
@@ -21076,7 +21087,17 @@ class Client {
             this.#wakeMarks();
           }
           // A NODE THAT LOST THE SIGNER NODE IS GIVEN IT AGAIN; the next feed retries.
-          if (stop === 'no entry' && this.joinedEntry) await this.joinOn(base);
+          if (stop === 'no entry' && this.joinedEntry) {
+            const j = await this.joinOn(base);
+            if (j.ok) { f.entryBackoffMs = 0; f.entryBackoffUntil = 0; }
+            else {
+              // refused: asked again after 2 s, then twice as long each time, at most ENTRY_BACKOFF_MAX_MS
+              f.entryBackoffMs = Math.min(ENTRY_BACKOFF_MAX_MS, f.entryBackoffMs ? f.entryBackoffMs * 2 : ENTRY_BACKOFF_MS);
+              f.entryBackoffUntil = this.now() + f.entryBackoffMs;
+              f.entryRefused = (f.entryRefused || 0) + 1;
+              f.why = `the entry refused: ${j.why}`;
+            }
+          }
           if (stop) return;
         }
       } while (f.again);
