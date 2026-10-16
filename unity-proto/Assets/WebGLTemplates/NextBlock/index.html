@@ -902,6 +902,15 @@
     #arena-wallet-start input, #arena-wallet-start textarea { width: 100%; box-sizing: border-box; font: 15px ui-monospace, monospace; padding: 11px;
       border-radius: 10px; border: 1px solid #3a4655; background: #0b0f14; color: #e8eaed; margin: 0 0 10px; }
     #arena-wallet-start textarea { min-height: 96px; }
+    /* SOMETHING IS HAPPENING, AND FOR HOW LONG (kanban #381, the owner 2026-10-16: "it took very long (more than 5s) to create a nostr
+       account ... there should be an indicator or spinner"): a turning ring (a transform - it turns while the page is busy) and the
+       seconds so far, beside the step that runs, and the same ring in the button that was pressed */
+    #arena-wallet-start .ws-spin { display: inline-block; width: 15px; height: 15px; box-sizing: border-box; border: 2px solid #3a4655;
+      border-top-color: #f7931a; border-radius: 50%; animation: ws-spin 0.8s linear infinite; vertical-align: -2px; margin-right: 8px; flex: none; }
+    @keyframes ws-spin { to { transform: rotate(360deg); } }
+    #arena-wallet-start #ws-busy.on { display: flex !important; align-items: center; justify-content: center; color: #e8eaed; font-size: 15px;
+      font-weight: 600; padding: 10px 0; }
+    #arena-wallet-start #ws-busy .ws-secs { color: #8b949e; font-weight: 500; margin-left: 6px; font-variant-numeric: tabular-nums; }
     #arena-wallet-start .ws-why { color: #ff8a80; min-height: 1.3em; font-size: 14px; margin: 0 0 8px; }
     #arena-wallet-start .ws-note { color: #a9b3c1; font-size: 13px; margin: 0 0 10px; }
     #arena-wallet-start .ws-warn { border-left: 3px solid #f7931a; background: rgba(247,147,26,.08); padding: 9px 11px; border-radius: 0 9px 9px 0;
@@ -7673,7 +7682,19 @@
       if (already) return;
       box.style.display = 'flex';
       const panes = (which) => { for (const id of ['ws-main', 'ws-restore-pane', 'ws-nostr-pane', 'ws-newacct-pane']) $(id).style.display = id === which ? '' : 'none'; };
-      const busy = (text) => { $('ws-busy').style.display = text ? '' : 'none'; $('ws-busy').textContent = text || ''; };
+      // a step that runs (its text ends in "…"): the ring and the seconds since the first step of this wait (kanban #381)
+      let busySince = 0, busyTick = null;
+      const busy = (text) => {
+        const el = $('ws-busy'); const wait = !!text && text.endsWith('\u2026');
+        el.style.display = text ? '' : 'none'; el.classList.toggle('on', wait);
+        if (!wait) { el.textContent = text || ''; clearInterval(busyTick); busyTick = null; busySince = 0; return; }
+        if (!busySince) busySince = Date.now();
+        el.innerHTML = '<span class="ws-spin" aria-hidden="true"></span><span class="ws-step"></span><span class="ws-secs"></span>';
+        el.querySelector('.ws-step').textContent = text;
+        const secs = () => { const s = Math.floor((Date.now() - busySince) / 1000); const at = el.querySelector('.ws-secs'); if (at) at.textContent = s ? s + ' s' : ''; };
+        secs(); if (!busyTick) busyTick = setInterval(secs, 500);
+      };
+      window.ARENA_WALLET_BUSY = () => ({ text: $('ws-busy').textContent, ring: !!$('ws-busy').querySelector('.ws-spin') });
       const done = () => { box.style.display = 'none'; window.ARENA_WALLET_SCREEN.done = true; };
       // CREATE: the seed made here, and straight into the game (kanban #340, the owner 2026-10-11: "showing the seed and forcing a
       // check interrupts the flow. Put the seed display and the mandatory check in settings, as a backup") - its 24 words and
@@ -7697,15 +7718,17 @@
       const why = (e) => { busy(''); $('ws-nostr-why').textContent = e && e.message ? e.message : String(e); };
       const buttons = (on) => { for (const b of $('ws-nostr-pane').querySelectorAll('button')) b.disabled = !on; };
       // THE ACCOUNT'S SEED, made this tab's: the page reloads with it (BLWP_RESTORE_SEED)
-      async function login(signer, how) {
-        busy('Reading your wallet from Nostr…');
-        const got = await N.seedFor(signer);
+      // A NEW ACCOUNT (kanban #381): its seed is made without asking the relays for one, and its name is the one just typed
+      async function login(signer, how, made = null) {
+        busy(made ? 'Making your wallet and keeping it on Nostr\u2026' : 'Reading your wallet from Nostr\u2026');
+        const got = await N.seedFor(signer, { fresh: !!made });
         const hex = Array.from(got.seed, (b) => b.toString(16).padStart(2, '0')).join('');
-        let profile = null; try { profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
+        let profile = made ? { name: made.name || null } : null;
+        if (!made) try { busy('Reading your Nostr profile\u2026'); profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
         try { localStorage.setItem('arena.nostr', JSON.stringify({ npub: N.npubOf(signer.pubkey), how, name: profile && profile.name || null, at: Date.now() })); } catch { /* shown once */ }
         window.ARENA_WALLET_SCREEN.nostr = { how, created: got.created, from: got.from, relays: got.relays, npub: N.npubOf(signer.pubkey) };
         try { await signer.close(); } catch { /* gone */ }
-        busy(got.created ? 'Your wallet is made and kept on Nostr - opening it' : 'Your wallet is back - opening it');
+        busy(got.created ? 'Your wallet is made and kept on Nostr - opening it\u2026' : 'Your wallet is back - opening it\u2026');
         const r = window.BLWP_RESTORE_SEED ? window.BLWP_RESTORE_SEED(hex) : { ok: false, why: 'the page is still loading' };
         if (!r.ok) why(new Error(r.why));
       }
@@ -7744,12 +7767,14 @@
       $('ws-newacct-copy').onclick = () => { navigator.clipboard.writeText(fresh.nsec).then(() => { $('ws-newacct-copy').textContent = 'Copied ✓'; }, () => {}); };
       $('ws-newacct-back').onclick = () => { fresh = null; panes('ws-nostr-pane'); };
       $('ws-newacct-go').onclick = async () => {
-        $('ws-newacct-why').textContent = ''; $('ws-newacct-go').disabled = true;
+        const go = $('ws-newacct-go'); const label = go.textContent;
+        $('ws-newacct-why').textContent = ''; go.disabled = true;
+        go.innerHTML = '<span class="ws-spin" aria-hidden="true"></span>Creating your account\u2026';   // at once, on the press (#381)
         try {
           const name = $('ws-newacct-name').value.trim();
-          if (name) await N.publishProfile(fresh.signer, name);
-          await login(fresh.signer, 'new');
-        } catch (e) { $('ws-newacct-why').textContent = e.message; $('ws-newacct-go').disabled = false; busy(''); }
+          if (name) { busy('Creating your Nostr account\u2026'); await N.publishProfile(fresh.signer, name); }
+          await login(fresh.signer, 'new', { name });
+        } catch (e) { $('ws-newacct-why').textContent = e.message; go.textContent = label; go.disabled = false; busy(''); }
       };
     })();
   </script>
