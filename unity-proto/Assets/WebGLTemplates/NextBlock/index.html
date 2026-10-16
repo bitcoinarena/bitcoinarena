@@ -5533,6 +5533,11 @@
     // AND A GAME LINK (kanban #293 step 6): ?game=<name or id> picks the game the lobby opens on (chooseTheGame) - it names no
     // nodes, so the seats still come from daily.json (it skipped it, and a game link opened an empty lobby)
     const VIEW_ONLY_PARAMS = ['rps-demo', 'game'];
+    // THE GAME STAYS IN THE ADDRESS (kanban #372, measured on live UI 136: PLAY on a Tick Tock round ahead wrote the round's link
+    // without game=, and a reload held the join to its start on the bare path - the game chooser came up, Unity not loaded): an
+    // address that names a round, and the lobby's own address behind it, keep the game= the page is on.
+    function gameOnly() { const g = new URLSearchParams(location.search.replace(/^\?/, '')).get('game'); return g ? '?game=' + encodeURIComponent(g) : ''; }
+    function withGame(search) { const g = gameOnly(); return !g || /(^|[?&])game=/.test(search) ? search : search + (search ? '&' : '?') + g.slice(1); }
     async function dailySearch() {
       // a parameter only a game's client reads (#291: ?rps-demo=all) leaves the root bare: it names no lobby
       const named = new URLSearchParams(location.search); for (const k of VIEW_ONLY_PARAMS) named.delete(k);
@@ -6996,7 +7001,7 @@
           }
           const back = location.search;
           window.BLWP_LOBBY_BACK = back;         // where the address goes back to once the run is over
-          history.replaceState(null, '', location.pathname + r.join + '&play=1');
+          history.replaceState(null, '', location.pathname + withGame(r.join + '&play=1'));
           window.BLWP_JOIN_REFUSED = null;
           const join = window.BLWP_JOIN = { state: 'joining', why: '', stage: '', round: id, kindKnown: true, free: !!r.free,
             stakeSats: Number(r.stakeSats) || 0, next: !!next };
@@ -7217,10 +7222,11 @@
         } catch { /* the next node */ }
       }
       if (!(startMs - Date.now() > 5000)) return false;
+      window.BLWP_LINK_AUTOPLAY = false;   // kanban #372: held - Unity, loaded after this, does not drive on the address's play=1
       console.log(`[blwp] round link ${id.slice(0, 16)} starts at ${new Date(startMs).toISOString()}: joined from the lobby, held to its start`);
       const was = location.search;
-      history.replaceState(null, '', location.pathname);
-      if (!(await showTheLobbyIfOneWasNamed())) { history.replaceState(null, '', location.pathname + was); return false; }
+      history.replaceState(null, '', location.pathname + gameOnly());
+      if (!(await showTheLobbyIfOneWasNamed())) { history.replaceState(null, '', location.pathname + was); window.BLWP_LINK_AUTOPLAY = null; return false; }
       for (let i = 0; i < 40; i++) {
         if (window.BLWP_LOBBY_ACT && (window.BLWP_LOBBY_ROWS || []).some((x) => x.id === id && x.joinable)) break;
         await new Promise((r) => setTimeout(r, 500));
@@ -7235,8 +7241,14 @@
       }
       return true;
     }
+    // UNITY DRIVES ON A ROUND LINK'S play=1 ONLY ON THE PAGE'S WORD (kanban #372, measured on preview UI 137: a reload during a join
+    // held to its start came up driving 29 s before the start with no stake - the held join, made from the lobby, writes play=1 into
+    // the address again, and Unity, loaded after it, read that and drove). null: not decided yet; false: held to the start; true: drive.
+    window.BLWP_LINK_AUTOPLAY = /(^|[?&])round=/.test(location.search) && /(^|[?&])play=1(&|$)/.test(location.search) ? null : true;
     const joinOrBackToTheLobby = async () => {
-      if (await heldRoundLink().catch((e) => { console.error('[blwp] round link not held: ' + e.message); return false; })) return;
+      const held = await heldRoundLink().catch((e) => { console.error('[blwp] round link not held: ' + e.message); return false; });
+      window.BLWP_LINK_AUTOPLAY = !held;
+      if (held) return;
       const onARound = /(^|[?&])round=/.test(location.search);
       try {
         await joinTheRoundIfOneWasNamed();
@@ -7252,7 +7264,7 @@
         q.delete('round'); q.delete('play');
         history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
         if (await showTheLobbyIfOneWasNamed()) return;
-        history.replaceState(null, '', location.pathname);
+        history.replaceState(null, '', location.pathname + gameOnly());
         if (await showTheLobbyIfOneWasNamed()) return;
         throw e;
       }
@@ -7275,7 +7287,7 @@
       history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : ''));
       try {
         if (await showTheLobbyIfOneWasNamed()) return;
-        history.replaceState(null, '', location.pathname);
+        history.replaceState(null, '', location.pathname + gameOnly());
         await showTheLobbyIfOneWasNamed();
       } catch (e) { console.error('[blwp] the run is refused, and that lobby cannot be read: ' + e.message); }
     };

@@ -34,3 +34,22 @@ public class LobbyErrorWordsTests
         Assert.AreEqual("Not joined round 1234abcd: the deposit was closed.", DailyLobby.RefusedLine(join, "the deposit was closed"), "other refusals as before");
     }
 }
+
+/// <summary>
+/// A ROUND LINK HELD TO ITS START DOES NOT DRIVE (kanban #372, measured on preview UI 137: a reload during a held join came up driving
+/// 29 s before the start, with no stake): the address's play=1 waits for the page's word, "no" when held, and drives on any other word.
+/// </summary>
+public class LinkAutoPlayTests
+{
+    [Test]
+    public void HeldNeverDrives_UndecidedWaits_ThenDrives_AnOlderPageDrivesAsBefore()
+    {
+        Assert.AreEqual("no", DailyLobby.LinkAutoPlayStep(0, 0f));
+        Assert.AreEqual("no", DailyLobby.LinkAutoPlayStep(0, 100f), "held stays held, however long");
+        Assert.AreEqual("wait", DailyLobby.LinkAutoPlayStep(-1, 0f));
+        Assert.AreEqual("wait", DailyLobby.LinkAutoPlayStep(-1, DailyLobby.LinkWaitS - 0.01f));
+        Assert.AreEqual("play", DailyLobby.LinkAutoPlayStep(-1, DailyLobby.LinkWaitS), "no word in time: as before");
+        Assert.AreEqual("play", DailyLobby.LinkAutoPlayStep(1, 0f));
+        Assert.AreEqual("play", DailyLobby.LinkAutoPlayStep(2, 0f), "an older page that says nothing");
+    }
+}

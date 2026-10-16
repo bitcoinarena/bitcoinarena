@@ -127,6 +127,7 @@ namespace Blwp
         [DllImport("__Internal")] static extern void BlwpHudClean(int on);
         [DllImport("__Internal")] static extern int BlwpQueryParam(IntPtr name, IntPtr outp, int cap);
         [DllImport("__Internal")] static extern float BlwpUiScale();
+        [DllImport("__Internal")] static extern int BlwpLinkAutoPlay();
         public const bool Compiled = true;
 #else
         static float BlwpUiScale() => 1f;
@@ -138,6 +139,7 @@ namespace Blwp
         static void BlwpAssaultShown(string json) { }
         static void BlwpHudClean(int on) { }
         static int BlwpQueryParam(IntPtr name, IntPtr outp, int cap) => 0;
+        static int BlwpLinkAutoPlay() => 2;
         public const bool Compiled = false;
 #endif
 
@@ -424,6 +426,17 @@ namespace Blwp
 
         /// <summary>True when the page was sent here by PLAY in the lobby: the round starts without a second PLAY.</summary>
         public static bool AutoPlay() => Query("play") == "1";
+
+        /// <summary>The page's word on the address's play=1 (kanban #372): -1 not decided, 0 held to the round's start, 1 drive, 2 none.</summary>
+        public static int LinkAutoPlay() => BlwpLinkAutoPlay();
+
+        /// <summary>
+        /// WHAT THE ADDRESS'S play=1 DOES NOW (kanban #372, measured on preview UI 137: a reload during a join held to its start drove
+        /// 29 s before the start with no stake): "wait" while the page has not decided (at most LinkWaitS), "no" when it holds the join
+        /// to the round's start (the lobby shows it, the start begins the run), "play" otherwise - an older page that says nothing too.
+        /// </summary>
+        public const float LinkWaitS = 30f;
+        public static string LinkAutoPlayStep(int word, float waitedS) => word == 0 ? "no" : word == -1 && waitedS < LinkWaitS ? "wait" : "play";
 
         static string Query(string name)
         {
