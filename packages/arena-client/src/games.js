@@ -100,7 +100,12 @@ export const rowsOfGame = (rows, gameIdHex) => (rows || []).filter((r) => String
 export async function gameClientFile({ game, url, digest, fetcher = fetch }) {
   if (!game || !game.manifest) throw new Error('a client is loaded for a game whose manifest is held');
   if (typeof digest !== 'function') throw new Error('a client file is checked against its hash, and no digest was injected');
-  const pinned = new Set((game.manifest.clients || []).map((h) => toHex(h)));
+  // EVERY VERSION OF THE GAME ON ITS TILE (kanban #388): a version is a new manifest under the same developer key and name
+  // (oneTilePerGame groups only those), so a client file any of them pins is the developer's; the tile may show version 2
+  // while the page holds version 3's newer file
+  const pinned = new Set([game, ...(Array.isArray(game.older) ? game.older : [])]
+    .filter((g) => g && g.manifest && (g === game || (g.name === game.name && toHex(g.manifest.gameDevPubkey || new Uint8Array()) === toHex(game.manifest.gameDevPubkey || new Uint8Array()))))
+    .flatMap((g) => (g.manifest.clients || []).map((h) => toHex(h))));
   if (!pinned.size) return { ok: false, why: `${game.name}'s manifest names no client` };
   let r;
   try { r = await fetcher(url, { cache: 'no-store' }); } catch (e) { return { ok: false, why: `${url}: ${e.message}` }; }
