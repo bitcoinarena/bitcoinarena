@@ -13,6 +13,7 @@ import { committeeFromChain } from '../../arena-protocol/src/client-committee.js
 import { blockHashOf, TESTNET4_ANCHOR_HEIGHT } from '../../arena-protocol/src/chain.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
+import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
@@ -98,11 +99,17 @@ async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Se
  */
 // `anchorAt` ({ hash, height }) is for a test's own chain only: a page never passes it, and takes the network's compiled-in one.
 export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = fetch, least = 2, compare = true, nowMs = Date.now(),
-  roles = ['game', 'settlement'], anchorAt = null, explorer = null } = {}) {
+  roles = ['game', 'settlement'], anchorAt = null, explorer = null, genesis = null } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'no node to ask for the chain and the census' };
   if (!curve || typeof curve.bondTweakPoint !== 'function' || typeof curve.bondCombine !== 'function' || typeof curve.verify !== 'function')
     return { ok: false, why: 'this page brings no curve to rebuild the bonds with' };
   const network = networkOf(contract.networkId);
+  // A CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.6, kanban #32 slice 3, the owner 2026-10-16: "the client refuses to join and names the
+  // mismatched parameter, at join time"): where the network's genesis binds (mainnet; a binding test genesis passed as `genesis`), a
+  // contract naming other committee slots, threshold or census confirmations is refused by that parameter's name, as the seat refuses
+  // it at POST /round. testnet4's genesis does not bind (2026-10-14 ruling): its contracts keep their own values.
+  const binds = committeesStand(contract, genesis || (network ? genesisFor(network) : null));
+  if (!binds.ok) return { ok: false, why: `the round is refused: ${binds.why}`, genesisOff: binds.off };
   if (!network) return { ok: false, why: 'that round names a network this client has no genesis for' };
   const g = BOND_TERMS[network];
   if (!g) return { ok: false, why: `this client carries no bond terms for ${network}` };

@@ -314,6 +314,8 @@ export function playerBalance({ entry, best, won, settled, nobodyWon, minScore }
 }
 
 export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FUNDED, seatingOn = null,
+  // THE GENESIS THIS SEAT BINDS CONTRACTS TO, for a test (kanban #32 slice 3): none given, the chain's own (genesisFor)
+  genesis: givenGenesis = null,
   // WSS FROM THE NODE ITSELF (spec §25.3, kanban #335: "Node software SHOULD make certificate provisioning a first-class setup
   // step"): { cert, key } PEM - the same doors and sockets over https/wss on the same port; none, plain http as ever
   tls = null,
@@ -482,7 +484,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   let halts = null;                            // halts.js (kanban #323): the seats' halt observations and proof
   // THIS SEAT'S NETWORK'S GENESIS (kanban #297), read once: null where this build names none
   let seatGenesisKept;
-  const seatGenesis = () => { if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
+  const seatGenesis = () => { if (givenGenesis) return givenGenesis; if (seatGenesisKept === undefined) { const n = String(chain || '').replace(/^bitcoin-/, ''); try { seatGenesisKept = genesisFor(n === 'test' ? 'testnet4' : n); } catch { seatGenesisKept = null; } } return seatGenesisKept; };
   let ownGuardianSeat = () => null;
   const guardianWiring = { founding: false, absences: false, spentSet: false };   // which guardian wirings this seat started (kanban #326)
   let foundingSeat = null;                     // founding-seat.js (kanban #320), with ARENA_FOUNDING=1            // { federation, peerKey } of the record naming this node a guardian, once records are held
