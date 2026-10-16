@@ -52,3 +52,29 @@ test('the page: a round refused for a seat\'s committee or seating is kept out o
   const body = html.slice(at, html.indexOf('\n          };\n', at));
   assert.match(body, /if \(\/the round is refused: \/\.test\(join\.why\)\) \(window\.BLWP_CLOSED_ROUNDS = window\.BLWP_CLOSED_ROUNDS \|\| new Set\(\)\)\.add\(id\);/);
 });
+
+// GENESIS-BOUND PARAMETERS AT JOIN TIME (kanban #32 slice 3, the owner 2026-10-16: "On a test genesis that binds, a deviating contract is
+// refused by the seat and by the client, by parameter name"). The binding genesis here is mainnet's shape built from stand-in launch
+// inputs inside the test - no mainnet genesis exists in this build. testnet4's own genesis does not bind: its contracts keep their values.
+test('a binding genesis: the join refuses a contract by the parameter it names otherwise, before asking any seat', async () => {
+  const { mainnetGenesis, genesisFor } = await import('../../arena-protocol/src/genesis.js');
+  const { NETWORK_ID_TESTNET4 } = await import('../../arena-protocol/src/genesis-ids.js');
+  const { pageCurve } = await import('../src/page-curve.js');
+  const { clientCommittee, clientSettlementSignerNodes } = await import('../src/committee.js');
+  const b = (n) => new Uint8Array(32).fill(n);
+  const { genesis } = mainnetGenesis({ bondMarker: b(1), arbitrationKeys: [2, 3, 4, 5, 6, 7, 8].map(b), authorityPubkey: b(9), recoveryPubkey: b(10),
+    genesisSeriesStartMs: 1800000000000n, bondMinGuardianSats: 1_000_000n });
+  const asked = [];
+  const fetcher = async (u) => { asked.push(u); throw new Error('no seat should be asked'); };
+  const contract = { networkId: NETWORK_ID_TESTNET4, gameVerifySlots: 7, settlementSlots: 7, censusConfirmations: 2, censusRoot: b(4) };
+  const got = await clientCommittee('ab'.repeat(32), contract, ['https://s1'], { curve: pageCurve, fetcher, genesis });
+  assert.equal(got.ok, false);
+  assert.equal(got.why, 'the round is refused: this network\'s genesis binds the contract, and it names census_confirmations 2, the genesis binds 6');
+  await assert.rejects(clientSettlementSignerNodes('ab'.repeat(32), { ...contract, gameVerifySlots: 3, censusConfirmations: 6 }, ['https://s1'], { curve: pageCurve, fetcher, genesis }),
+    /could not build the round's committee itself: the round is refused: .* game_verify_slots 3, the genesis binds 7/);
+  assert.deepEqual(asked, [], 'refused before any seat was asked');
+  // testnet4's own genesis does not bind: the same deviating contract is not refused for it (it goes on to ask the seats)
+  assert.equal(!!genesisFor('testnet4').committeesBind, false, 'testnet4 does not bind');
+  const live = await clientCommittee('ab'.repeat(32), contract, ['https://s1'], { curve: pageCurve, fetcher });
+  assert.doesNotMatch(String(live.why), /genesis binds/);
+});

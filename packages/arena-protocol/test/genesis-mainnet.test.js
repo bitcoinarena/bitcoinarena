@@ -47,8 +47,20 @@ test('mainnet genesis is built only from what a launch names: no invented marker
 
 test('mainnet binds every contract to committees of 7, threshold 5', () => {
   const { genesis } = mainnetGenesis(parts());
-  assert.deepEqual(committeesStand({ gameVerifySlots: 7, settlementSlots: 7 }, genesis), { ok: true, bound: true });
+  assert.deepEqual(committeesStand({ gameVerifySlots: 7, settlementSlots: 7, censusConfirmations: 6 }, genesis), { ok: true, bound: true });
   const two = committeesStand({ gameVerifySlots: 2, settlementSlots: 2 }, genesis);
-  assert.equal(two.ok, false); assert.match(two.why, /binds committees of 7 and 7 slots; the contract names 2 and 2/);
+  assert.equal(two.ok, false); assert.match(two.why, /names game_verify_slots 2, the genesis binds 7; settlement_slots 2, the genesis binds 7/);
   assert.equal(committeesStand({ gameVerifySlots: 7, settlementSlots: 9 }, genesis).ok, false);
+});
+
+// KANBAN #32 SLICE 3 (the owner 2026-10-16: "On a test genesis that binds, a deviating contract is refused by the seat and by the client, by
+// parameter name"): every bound parameter named - a contract naming mainnet's committees but another confirmation depth is refused for that
+test('a binding genesis names each mismatched parameter: slots per role, and census confirmations', () => {
+  const { genesis } = mainnetGenesis(parts());
+  const conf = committeesStand({ gameVerifySlots: 7, settlementSlots: 7, censusConfirmations: 2 }, genesis);
+  assert.deepEqual([conf.ok, conf.off], [false, ['census_confirmations 2, the genesis binds 6']]);
+  const game = committeesStand({ gameVerifySlots: 3, settlementSlots: 7, censusConfirmations: 6 }, genesis);
+  assert.deepEqual(game.off, ['game_verify_slots 3, the genesis binds 7']);
+  assert.match(committeesStand({ gameVerifySlots: 7, settlementSlots: 5, censusConfirmations: 1 }, genesis).why,
+    /settlement_slots 5, the genesis binds 7; census_confirmations 1, the genesis binds 6/);
 });

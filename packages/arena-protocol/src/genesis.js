@@ -138,17 +138,26 @@ export function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityP
 }
 
 /**
- * EVERY CONTRACT BOUND TO ITS GENESIS'S COMMITTEES (§5A.7 / §27A.6, kanban #297): where the genesis says its committees bind, a
- * Round Contract names exactly its slots per role, and the threshold of those slots (threshold.js) is the genesis's. A genesis that
- * does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its own slot count.
+ * EVERY CONTRACT BOUND TO ITS GENESIS (§5A.7 / §27A.6, kanban #297; kanban #32 slice 3, the owner 2026-10-16: "the client refuses to join
+ * and names the mismatched parameter"): where the genesis says its committees bind, a Round Contract names exactly its slots per role,
+ * the threshold of those slots (threshold.js) is the genesis's, and its census confirmations are the genesis's. Each mismatch is named
+ * by its parameter. A genesis that does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its
+ * own values. The seat (POST /round) and the client (the join) ask this one function.
  */
 export function committeesStand(contract, genesis) {
   if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
+  const off = [];
   const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
-  if (g !== genesis.gameVerifySlots || st !== genesis.settlementSlots)
-    return { ok: false, why: `this network's genesis binds committees of ${genesis.gameVerifySlots} and ${genesis.settlementSlots} slots; the contract names ${g} and ${st}` };
-  if (receiptsNeeded(g) !== genesis.gameVerifyThreshold || receiptsNeeded(st) !== genesis.settlementThreshold)
-    return { ok: false, why: 'the threshold of those slots is not the genesis threshold' };
+  if (g !== genesis.gameVerifySlots) off.push(`game_verify_slots ${g}, the genesis binds ${genesis.gameVerifySlots}`);
+  if (st !== genesis.settlementSlots) off.push(`settlement_slots ${st}, the genesis binds ${genesis.settlementSlots}`);
+  if (g === genesis.gameVerifySlots && receiptsNeeded(g) !== genesis.gameVerifyThreshold)
+    off.push(`game_verify_threshold ${receiptsNeeded(g)}, the genesis binds ${genesis.gameVerifyThreshold}`);
+  if (st === genesis.settlementSlots && receiptsNeeded(st) !== genesis.settlementThreshold)
+    off.push(`settlement_threshold ${receiptsNeeded(st)}, the genesis binds ${genesis.settlementThreshold}`);
+  const conf = contract && contract.censusConfirmations;
+  if (conf !== undefined && conf !== null && Number(conf) !== genesis.censusConfirmations)
+    off.push(`census_confirmations ${Number(conf)}, the genesis binds ${genesis.censusConfirmations}`);
+  if (off.length) return { ok: false, off, why: `this network's genesis binds the contract, and it names ${off.join('; ')}` };
   return { ok: true, bound: true };
 }
 
