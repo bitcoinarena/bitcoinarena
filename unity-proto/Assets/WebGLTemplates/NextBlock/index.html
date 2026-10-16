@@ -5268,10 +5268,15 @@
     // quick tunnel's name never has, so both nodes read "..." for as long as the page ran.
     const nodeLetter = (i) => (i === 0 ? 'A' : i === 1 ? 'B' : String(i + 1));
     const pageNodes = () => (new URLSearchParams(location.search).get('node') || '').split(',').map((s) => s.trim()).filter(Boolean);
+    // ONLY THE TWO THE STRIP SHOWS, EVERY 30 S, ONE PROBE AT A TIME (the owner 2026-10-16: "Lower the amount of concurrent
+    // connections and network load"; measured on preview UI 156 during one run: 1036 of 1050 GET /identity came from here -
+    // every node= of the page's address, 14 seats in a round, every 2 s, for a line that names A and B only)
     async function probeNodes() {
+      if (probeNodes.busy) return;
+      probeNodes.busy = true;
       const nodes = (new URLSearchParams(location.search).get('node') || '')
-        .split(',').map((s) => s.trim()).filter(Boolean);
-      await Promise.all(nodes.map(async (u, i) => {
+        .split(',').map((s) => s.trim()).filter(Boolean).slice(0, 2);
+      try { await Promise.all(nodes.map(async (u, i) => {
         const name = nodeLetter(i);
         try {
           const r = await fetch(u.replace(/\/+$/, '') + '/identity');
@@ -5279,7 +5284,7 @@
         } catch (e) {
           nodeHealth[name] = 'down';
         }
-      }));
+      })); } finally { probeNodes.busy = false; }
     }
     function playLine(net) {
       if (!net) return 'play · not started';
@@ -5512,7 +5517,7 @@
     }
     setInterval(lookThePending, 2000);
     probeNodes();
-    setInterval(probeNodes, 2000);
+    setInterval(probeNodes, 30000);
     paintPlayers();
 
     const script = document.createElement('script');
