@@ -672,7 +672,9 @@ export function bondProvider(where, { fetcher = fetch, body = null } = {}) {
       ...(o.reaffirm && o.reaffirm.hex ? { reaffirm: proof(o.reaffirm) } : {}),
     };
   };
-  get.tag = origin(where);
+  // ITS SOURCE AS THE HEADER PROVIDERS NAME ONE (sourceKey): the seats behind one public host differ by path, and tagged by origin
+  // alone two of them were "one server listed twice" (kanban #376, measured on preview UI 152: every join refused so)
+  get.tag = sourceKey(where);
   return get;
 }
 
