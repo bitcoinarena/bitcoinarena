@@ -53,3 +53,9 @@ test('a bond provider handed the answer proves from it, with no second read', as
   assert.equal(toHex(got.transaction), served['https://s2.example/bond'].hex);
   assert.deepEqual([got.branch.length, got.position], [0, 0]);
 });
+test('two seats behind one public host are two bond sources, as two header sources are', () => {
+  const a = bondProvider('https://tn4.example/guardian-2/bond', { body: served['https://s2.example/bond'] });
+  const b = bondProvider('https://tn4.example/guardian-5/bond', { body: served['https://s3.example/bond'] });
+  assert.notEqual(a.tag, b.tag);
+  assert.deepEqual([a.tag, b.tag], ['https://tn4.example/guardian-2', 'https://tn4.example/guardian-5']);
+});
