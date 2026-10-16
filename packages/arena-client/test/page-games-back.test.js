@@ -17,7 +17,7 @@ test('the strip holds "← Games", shown for a chosen game, never over a game\'s
 });
 
 test('a click opens the choice of games: the address without game, round and play', () => {
-  const from = HTML.indexOf("      document.getElementById('arena-games-back').addEventListener('click', () => {");
+  const from = HTML.indexOf("      const back = document.getElementById('arena-games-back');");
   assert.ok(from > 0, 'the button has a click handler');
   const src = HTML.slice(from, HTML.indexOf('\n      });\n', from) + 11);
   let click = null;

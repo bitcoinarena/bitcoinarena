@@ -6179,15 +6179,18 @@
         const b = document.getElementById(id);
         if (b) b.addEventListener('click', () => open(window.ARENA_GAME_CHOSEN));
       }
-      // BACK TO THE GAMES (kanban #383): as a game's own client does (ARENA_GAME.back) - the address without the game, its round
-      // and play, so the page opens on the choice of games
-      document.getElementById('arena-games-back').addEventListener('click', () => {
-        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
-        location.search = q.toString();
-      });
       window.ARENA_SEASON = { open, close, isOpen: () => s.open, days: () => s.days, polling: () => s.timer !== null,
         badgesAsked: () => (s.book ? s.book.asked : null) };
     })();
+    // BACK TO THE GAMES (kanban #383): as a game's own client does (ARENA_GAME.back) - the address without the game, its round
+    // and play, so the page opens on the choice of games. Its own block: the season board's tests lift that block alone.
+    {
+      const back = document.getElementById('arena-games-back');
+      if (back) back.addEventListener('click', () => {
+        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
+        location.search = q.toString();
+      });
+    }
     async function chooseTheGame(nodes) {
       if (!BLWPCLIENT.fetchGames) return null;
       let got;
