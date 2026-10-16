@@ -6036,6 +6036,31 @@ The damage is bounded in every row: donations are voluntary, capped by
 `donation_bps_max`, and every recipient is displayed before wallet approval
 (§22A). A player who has donations switched off is unaffected by all of it.
 
+### 27A.4.1 The developers' own ballot (kanban #382, the owner 2026-10-16)
+
+The developers paid by a donation set may replace it themselves, without the admin key and without
+a new network id:
+
+- **Proposal.** Any recipient of the set in force signs `DonationProposal { network_id, serial,
+  parent_set_id, entries[] }`: the new entries (share_bps summing to 10000, each optionally vesting,
+  below), `serial` above the parent's, `parent_set_id` the id of the set in force it replaces.
+- **Approval.** Each recipient of the parent set may sign `DonationApproval { proposal_id,
+  at_height, accept }` with its recipient key; `at_height` is the signer's chain tip.
+- **Threshold.** Accepting approvals are ordered by `at_height` (then key). The proposal is
+  **approved** at the first approval after which the accepting recipients hold **more than half**
+  of the parent's share_bps (> 5000, "50.01 %"). It is refused once the denying recipients hold
+  5000 or more.
+- **In force.** An approved proposal is a donation set with `valid_from = at_height + 1` of the
+  approval that crossed the threshold, ordered against the admin key's sets by serial as any other
+  set (§27A.4: the highest serial in force wins). A round names the set in force at its census
+  height, so rounds already published keep theirs and every new round takes the new one; nodes
+  take it as soon as they hold the approvals. The network id does not change.
+- **Vesting.** An entry may vest: `vesting { target_bps, start_height, days }`. Its share grows
+  every day (144 blocks) by `(target_bps - share_bps) / days` from `start_height` until it reaches
+  `target_bps`; until then the part not yet vested is paid to the other entries in their own
+  proportions. A newcomer starts at share_bps 0; an existing developer's share can vest upward the
+  same way. A later approved proposal ends any vesting by replacing the set.
+
 ## 27A.5 Discrete changes: rough consensus
  *(changes that break replay are §27A.8.)*
 
@@ -6293,8 +6318,9 @@ diff, or a set of independently addressable fields. It is one object.
 **Out of scope, permanently.** A proposal cannot touch `genesis_parameters`
 (§27A.6) - committee shape, thresholds, network identity - because changing
 those *is* creating a different network, and no vote can move you to another
-network. It cannot touch the donation set, which is the admin key's one job
-and nothing else's (§27A.4). And it cannot change protocol rules or message
+network. Its operator vote cannot touch the donation set: that set changes by
+the admin key (§27A.4) or by the developers it pays, through their own ballot
+(§27A.4.1, kanban #382, the owner 2026-10-16) - never by the nodes. And it cannot change protocol rules or message
 formats, which ship as software and are adopted by being run (§27A.5).
 
 ### 27A.7.2 The proposal
