@@ -1264,6 +1264,28 @@ mergeInto(LibraryManager.library, {
     return p;
   },
 
+  // ADD-ONS INSIDE UNITY (kanban #374): the page's add-ons view as JSON, a purchase, "Play with it", and a fresh read of what is owned
+  BlwpAddonsState: function () {
+    var s = '';
+    try { if (typeof window.ARENA_ADDONS_VIEW === 'function') s = JSON.stringify(window.ARENA_ADDONS_VIEW()); } catch (e) { s = ''; }
+    var n = lengthBytesUTF8(s) + 1;
+    var p = _malloc(n);
+    stringToUTF8(s, p, n);
+    return p;
+  },
+
+  BlwpAddonsBuy: function (idPtr) {
+    try { return typeof window.ARENA_ADDONS_BUY === 'function' ? (window.ARENA_ADDONS_BUY(UTF8ToString(idPtr)) | 0) : 0; } catch (e) { return 0; }
+  },
+
+  BlwpAddonsUse: function (idPtr, on) {
+    try { return typeof window.ARENA_ADDONS_USE === 'function' ? (window.ARENA_ADDONS_USE(UTF8ToString(idPtr), !!on) | 0) : 0; } catch (e) { return 0; }
+  },
+
+  BlwpAddonsOpen: function () {
+    try { return typeof window.ARENA_ADDONS_OPEN === 'function' ? (window.ARENA_ADDONS_OPEN() | 0) : 0; } catch (e) { return 0; }
+  },
+
   BlwpLobbyJoin: function (idPtr) {
     try { return (window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(UTF8ToString(idPtr))) ? 1 : 0; } catch (e) { return 0; }
   },

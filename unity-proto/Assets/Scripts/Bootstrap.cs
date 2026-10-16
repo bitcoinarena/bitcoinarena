@@ -426,6 +426,8 @@ public class Bootstrap : MonoBehaviour
         yardGo.SetActive(true);
 
         var loadout = gameObject.AddComponent<LoadoutPanel>();
+        // BUY ADD-ONS (kanban #374): the panel the cargo screen and the next round's countdown open, and the purchase banner
+        gameObject.AddComponent<AddonsPanel>();
         loadout.feed = feed;
         loadout.bay = bay;
         loadout.yard = yard;
