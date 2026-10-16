@@ -15,7 +15,7 @@ import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
-import { agreedChain, httpProvider } from './headers.js';
+import { agreedChain, httpProvider, headerSources } from './headers.js';
 import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
@@ -49,7 +49,8 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   const had = keptChains.get(key);
   if (had && nowMs - had.at < CHAIN_KEPT_MS) return had;
   const anchor = anchorAt ? anchorAt.hash : chainAnchorFor(contract.networkId);
-  const providers = nodes.map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
+  // A FEW SEATS, NOT EVERY ONE (headers.js headerSources, kanban #378): two must agree, two may be slow
+  const providers = headerSources(nodes).map((u) => httpProvider(baseOf(u) + '/headers', { tag: originOf(u), fetcher }));
   const chain = await agreedChain(providers, { least: Math.min(least, providers.length), anchor });
   if (!chain.ok) return { ok: false, why: `no agreed headers: ${chain.why}` };
   const at = chain.headers.findIndex((h) => toHex(blockHashOf(h)) === toHex(anchor));
