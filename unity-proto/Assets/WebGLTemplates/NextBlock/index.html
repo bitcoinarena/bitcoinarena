@@ -3981,9 +3981,10 @@
     // the vault hands back the tab's own and the flag lasts the session instead of vanishing. The flag
     // is bound to the seed's digest either way, so a different wallet never reads another's mark.
     const backupStore = () => { try { return vault(); } catch { return null; } };
+    const seedBroughtIn = () => { try { return sessionStorage.getItem('arena.player.seed.from') === 'imported'; } catch { return false; } };
     const isBackedUp = () => {
       const st = backupStore(); const seed = walletSeed();
-      return !!(st && seed && BLWPCLIENT.isVerified(st, seed));
+      return !!(st && seed && (BLWPCLIENT.isVerified(st, seed) || seedBroughtIn()));
     };
     /** Driving hides the money entirely - §24B: never in the game. */
     const drivingNow = () => !!(window.BLWP_ROUND && window.BLWP_STARTED);
@@ -4008,7 +4009,11 @@
           width: `${row[2] * kx}px`, height: `${row[3] * ky}px` });
       } else if (balEl) balEl.style.display = 'none';
       const st = backupStore(); const seed = walletSeed();
-      const line = (st && seed) ? BLWPCLIENT.backupLine(st, seed) : BLWPCLIENT.NO_BACKUP_LINE;
+      // A WALLET THE PLAYER BROUGHT IN IS BACKED UP (kanban #387, the owner 2026-10-16 20:34, screenshot: "i have a backup and the
+      // reminder is still there"). Measured on live UI 178: a seed restored from its 24 words or opened from a Nostr account
+      // ('imported') still showed "This wallet has no backup" - only a phrase typed back in Settings counted. Whoever typed the
+      // words or holds the Nostr key has the backup.
+      const line = (st && seed) ? (seedBroughtIn() ? '' : BLWPCLIENT.backupLine(st, seed)) : BLWPCLIENT.NO_BACKUP_LINE;
       // A PHONE GETS THE SHORT WORDS (kanban #8, measured at 360 px: the ten-line warning covered the game's title); the button
       // beside it and Settings say the rest, the full sentence is its title
       const notice = document.getElementById('blwp-backup-notice');
