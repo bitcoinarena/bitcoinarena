@@ -146,6 +146,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
   const unanswered = [];                                    // signer nodes that did not answer within answerMs
+  const failed = [];                                        // signer nodes whose read failed outright (kanban #6): none answered = none reached
   const said = new Map();                                   // id -> [{ node, key, ... }]
   const ask = answerWithin(fetcher, answerMs);
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
@@ -159,7 +160,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     try {
       const { r, e } = answers[k];
       if (e) throw e;
-      if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
+      if (!r.ok) { refused.push(`${node}: answered ${r.status}`); failed.push(String(node)); continue; }
       const body = await r.json();
       const nodeKey = String(body && body.node).toLowerCase();
       const at = Number(body && body.nowMs);
@@ -177,7 +178,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
           // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
           committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
-    } catch (e) { refused.push(`${node}: ${e.message}`); if (e && e.silent) unanswered.push(String(node)); }
+    } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [];
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
@@ -248,7 +249,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
-  return { rows, refused, unanswered };
+  return { rows, refused, unanswered, failed, asked: unique.length };
 }
 
 /**

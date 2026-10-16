@@ -88,6 +88,9 @@ namespace Blwp
         /// <summary>The signer nodes, by address, that did not answer the page's last lobby read within `answerS` seconds.</summary>
         public string[] unanswered = new string[0];
         public int answerS = 10;
+        /// <summary>The seats the lobby read asked, and those whose read failed outright (kanban #6): all failed is "none reached".</summary>
+        public int asked;
+        public int failed;
         /// <summary>The page is taking the player to the next round (SPECTATE-2158): no lobby until exit game or its start.</summary>
         public bool continuing;
         /// <summary>
@@ -201,6 +204,18 @@ namespace Blwp
         /// join. The page now gives each signer node `answerS` seconds; this is what the player reads when one did not.
         /// "" when every signer node answered.
         /// </summary>
+        /// <summary>
+        /// THE EMPTY LIST'S LINE (kanban #6, MF 18: with every seat unreachable the lobby said "No round is open for entry right now"):
+        /// when every seat the lobby asked failed, that it reached none; else that no round is open.
+        /// </summary>
+        public static string EmptyListLine(LobbyState s)
+        {
+            if (s != null && s.asked > 0 && s.failed >= s.asked)
+                return $"No signer node answered ({s.asked} asked) \u2013 the rounds cannot be read. Asked again every 5 seconds.";
+            return "No round is open for entry right now. The signer nodes are asked again every 5 seconds."
+                + (s != null && s.refused != null && s.refused.Length > 0 ? $"\nNot listed: {s.refused.Length}" : "");
+        }
+
         public static string UnansweredLine(LobbyState s)
         {
             if (s == null || s.unanswered == null || s.unanswered.Length == 0) return "";
@@ -233,6 +248,8 @@ namespace Blwp
             if (string.IsNullOrEmpty(id)) return $"Not joined: {why}.";
             string name = (join.kindKnown ? Kind(join.free, join.stakeSats) + " " : "") + $"round {ShortId(id)}";
             if (Closed(why)) return $"Not joined: {name} is closed - the node refused its entry.";
+            // A ROUND WHOSE ENTRY IS NOT OPEN YET says when it opens, as the page words it (kanban #6) - the round is named in it
+            if (why != null && why.StartsWith("Round ") && why.Contains("opens for entry")) return why;
             return $"Not joined {name}: {why}.";
         }
 
