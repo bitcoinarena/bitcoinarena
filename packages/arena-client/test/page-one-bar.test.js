@@ -25,9 +25,13 @@ test('the track is marked creeping from 90 % until 100 %, as the creep runs', ()
   const classes = (id) => { const s = new Set(); return { add: (c) => s.add(c), remove: (c) => s.delete(c), has: (c) => s.has(c) }; };
   const els = { creep: { classList: classes() }, track: { classList: classes() }, pctwrap: { classList: classes() } };
   const document = { getElementById: (id) => els[id] || null };
-  const step = pageFunction(PAGE, ['document', 'pct', 'clamped'], src, 'return 0;');
+  const later = [];
+  const step = pageFunction(PAGE, ['document', 'pct', 'clamped', 'setTimeout'], src, 'return 0;');
   const pct = { dataset: {} };
-  step(document, pct, 0.5); assert.equal(els.track.classList.has('creeping'), false);
-  step(document, pct, 0.9); assert.equal(els.track.classList.has('creeping'), true); assert.equal(els.creep.classList.has('on'), true);
-  step(document, pct, 1); assert.equal(els.track.classList.has('creeping'), false); assert.equal(els.creep.classList.has('on'), false);
+  const at = (c) => step(document, pct, c, (fn, ms) => later.push([fn, ms]));
+  at(0.5); assert.equal(els.track.classList.has('creeping'), false);
+  at(0.9); assert.equal(els.track.classList.has('creeping'), true); assert.equal(els.creep.classList.has('on'), true);
+  at(1); assert.equal(els.creep.classList.has('on'), true, 'the creep stays while the bar slides to 100 % (#386)');
+  assert.deepEqual(later.map(([, ms]) => ms), [250], 'and goes when the bar\'s 0.25 s move has ended');
+  later[0][0](); assert.equal(els.track.classList.has('creeping'), false); assert.equal(els.creep.classList.has('on'), false);
 });

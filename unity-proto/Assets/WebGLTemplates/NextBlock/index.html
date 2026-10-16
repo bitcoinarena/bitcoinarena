@@ -172,7 +172,7 @@
     #creep { position: absolute; left: 90%; top: 0; height: 100%; width: 10%; transform-origin: left center; transform: scaleX(0);
       background: linear-gradient(90deg, #ffc46b, #ffd08a); border-radius: 0 99px 99px 0; }
     #track.creeping #bar { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-    #creep.on { animation: creep90 6s cubic-bezier(0.15, 0.7, 0.3, 1) forwards; }
+    #creep.on { animation: creep90 6s cubic-bezier(0.15, 0.7, 0.3, 1) 0.25s forwards; }
     /* AND THE NUMBER (kanban #266, measured: inside Unity's one-piece start the text cannot repaint - the screencast showed
        "90 %" for all 2.2 s at 10x CPU while the creep bar moved): "91 %" ... "99 %" are drawn in advance and shown one after
        another by OPACITY animations, which the compositor runs while the main thread is busy; 99 % holds until Unity says 100. */
@@ -187,8 +187,14 @@
     @keyframes pctstep { 0% { opacity: 1; } 96% { opacity: 1; } 100% { opacity: 0; } }
     @keyframes pctlast { 0% { opacity: 1; } 100% { opacity: 1; } }
     @keyframes creep90 { from { transform: scaleX(0); } to { transform: scaleX(0.9); } }
-    #bar { height: 100%; width: 0; border-radius: 99px; background: linear-gradient(90deg, #f7931a, #ffc46b);
-           transition: width .25s ease; }
+    /* THE BAR MOVES ON THE COMPOSITOR TOO (kanban #386, the owner 2026-10-16: "after a few seconds, it gets also filled from around
+       where the 90% progress would be ... the 100% progress is now reached at around half of the progress bar"). Measured by
+       screencast at 10x CPU on live UI 167: the bar's WIDTH transition runs on the main thread and froze at 75 % (then 87 %)
+       while Unity held it, and the creep (a transform) ran from 90 % beside it - two amber bars with a gap. The bar is now the
+       track's full width, shifted left by what is still to load (a transform the compositor finishes), and the creep starts
+       when the bar's 0.25 s move to 90 % has ended. */
+    #bar { height: 100%; width: 100%; border-radius: 99px; background: linear-gradient(90deg, #f7931a, #ffc46b);
+           transform: translateX(-100%); transition: transform .25s ease; will-change: transform; }
 
     /* THE OWNER'S HOW-TO ON THE LOADING SCREEN (2026-09-14 07:55): four panels,
        each whole and never stretched, white knocked out for this dark ground -
@@ -2076,7 +2082,7 @@
     }
     function show(p) {
       const clamped = Math.max(0, Math.min(1, p));
-      bar.style.width = (clamped * 100).toFixed(1) + '%';
+      bar.style.transform = 'translateX(' + (clamped * 100 - 100).toFixed(1) + '%)';
       // a sub-step already says more than Unity's 0.9 does: it keeps the line until 100 %
       if (clamped < 1 && subStep >= 91) return;
       // megabytes as well as percent: a percentage alone says nothing about
@@ -2095,9 +2101,11 @@
         const tr = document.getElementById('track'); if (tr) tr.classList.add('creeping');
         const pw = document.getElementById('pctwrap'); if (pw) pw.classList.add('on');
       }
-      if (clamped >= 1) { pct.dataset.unity = '100'; const creep = document.getElementById('creep'); if (creep) creep.classList.remove('on');
-        const tr = document.getElementById('track'); if (tr) tr.classList.remove('creeping');
-        const pw = document.getElementById('pctwrap'); if (pw) pw.classList.remove('on'); }
+      // the creep goes once the bar's own 0.25 s move to 100 % has covered it (#386, measured: removed at once, the screen fell
+      // back from 99 % to the bar's 90 % for a frame before the bar slid on)
+      if (clamped >= 1) { pct.dataset.unity = '100'; const pw = document.getElementById('pctwrap'); if (pw) pw.classList.remove('on');
+        setTimeout(() => { const creep = document.getElementById('creep'); if (creep) creep.classList.remove('on');
+          const tr = document.getElementById('track'); if (tr) tr.classList.remove('creeping'); }, 250); }
     }
 
     // A DONATION THAT LEFT THE WALLET IS SHOWN EVEN WHEN THE ROUND CANNOT BE
