@@ -13,9 +13,14 @@
   body { background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,sans-serif; display:flex; flex-direction:column;
     padding:max(10px,env(safe-area-inset-top)) 12px 10px; gap:8px; overflow:hidden; }
   button { font:inherit; color:inherit; cursor:pointer; }
-  header { display:flex; align-items:center; gap:8px; }
-  header .back { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:6px 10px; font-weight:600; font-size:14px; }
-  header h1 { font:800 17px system-ui; margin:0; flex:1; } .chip { font:700 11px system-ui; letter-spacing:.06em; padding:4px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  /* THE WAY BACK ON ITS OWN ROW, THE TITLE ON ITS OWN LINE (kanban #388, the owner 2026-10-16: Rock Paper Scissors' "is easier to
+     recognize and the game title looks much nicer and is separated from the navigation button ... make is consistent") */
+  button.back { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; background:var(--card); border:1px solid var(--line);
+    border-radius:8px; padding:6px 12px; font:600 13px system-ui; color:var(--dim); cursor:pointer; }
+  button.back:hover { color:#f7931a; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:10px 0 12px; }
+  header h1 { font:800 22px/1.15 system-ui; letter-spacing:-0.01em; margin:0; flex:1; }
+  header h1 .arrows { margin-left:8px; font-size:18px; } header h1 .up { color:#3fb950; } header h1 .down { color:#f85149; } .chip { font:700 11px system-ui; letter-spacing:.06em; padding:4px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px 12px; }
   .q { font:700 16px system-ui; } .sub { color:var(--dim); font-size:13px; }
   .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px; text-align:center; }
@@ -48,7 +53,8 @@
   .r button { background:none; border:1px solid var(--line); border-radius:8px; padding:2px 8px; font-size:12px; }
   a { color:#7cc4ff; } .none { color:var(--dim); text-align:center; padding:30px 10px; } [hidden] { display:none !important; }
 </style></head><body>
-<header><button class="back" id="back">← Games</button><h1>Bitcoin Up or Down</h1><span class="chip" id="kind">…</span></header>
+<button class="back" type="button" id="back">&larr; Games</button>
+<header><h1>Bitcoin Up or Down<span class="arrows" aria-hidden="true"><span class="up">&#9650;</span><span class="down">&#9660;</span></span></h1><span class="chip" id="kind">…</span></header>
 <div id="view" style="display:contents"></div>
 <script>
 const A = window.parent && window.parent.ARENA_GAME;
