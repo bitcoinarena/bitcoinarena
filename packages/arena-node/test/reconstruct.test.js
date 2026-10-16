@@ -58,6 +58,7 @@ import { init, step } from '../../nextblock/src/sim.js';
 import { hash as stateHash } from '../../nextblock/src/state.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
+import { windowsOf } from '../../arena-protocol/src/window.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { GENESIS } from '../../arena-protocol/src/transcript.js';
 import { toHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -122,6 +123,22 @@ const postedBy = (who, rid, result) => {
   const p = { roundId: rid, playerPubkey: result.playerPubkey, transcriptHash: result.transcriptHash, signerNodePubkey: who.round.pubkey,
     blockHash: CLOCK.tipAt(Date.now()) };   // the block it sits in (§13A, RULED 2026-09-24)
   return joinSignedPosting(encodeTranscriptPosting(p), schnorr.sign(transcriptPostingId(p), who.round.identity.secret));
+};
+
+/**
+ * HELD IN THE RESULT WINDOW (§13A, kanban #26 "posted within the window"; kanban #36): a seat counts only the results and postings
+ * it held before the round's final_after (end + 600 s + 5 s), by its own clock. This fixture's round ended in 1970 and its seats
+ * run on today's clock, so everything they hold arrived "after the window" and every run went VOID - on every machine, not only
+ * the test host (measured 2026-10-16: "0 of 5 postings held in time"). What this file tests is reconstruction, not the window
+ * (objection-window.test.js pins that), so the fixture holds its round's results and postings one second inside it.
+ */
+const heldInWindow = (nodes, rid, c) => {
+  const at = Number(windowsOf(c).finalAfterMs) - 1000;
+  for (const n of nodes) {
+    for (const t of ['results', 'postings']) n.round.db.prepare(`UPDATE ${t} SET seen_ms = ? WHERE round_id = ?`).run(at, rid);
+    // and the no-quorum decision a seat wrote while its records still carried today's time - the decision those times made
+    try { n.round.db.prepare('DELETE FROM no_quorum WHERE round_id = ?').run(rid); } catch { /* no decision written */ }
+  }
 };
 
 /** Until the fixtures' chain has a block after the one of now (a window of 1 ms ends there). */
@@ -251,9 +268,20 @@ async function everyoneReplays(nodes, stake) {
   for (const node of nodes) posted.push(...node.round.postings(rid, out.eid));
   for (const node of nodes)
     for (const p of posted) node.round.putPosting(rid, out.eid, p.signerNodePubkey, p.bytes);
+  heldInWindow(nodes, rid, c);
   // THE WINDOW ENDS AT A BLOCK (RULED 2026-09-24): even this fixture's 1 ms window closes only at the next block of the
   // chain, a second away on the fixtures' block clock - waited for here, as a node waits for it.
   await untilNextBlock();
+  // AND EVERY SEAT SIGNS IT FINAL TO EVERY SEAT (WINDOW-10-SPEC, as the two rounds below are signed): the round ended in 1970, so its
+  // window closed long ago - what a seat's own FINAL loop does live, done here at once (kanban #36: waited for, it was never in 8 s)
+  const agreed = resultFinality(nodes[0].round, rid, out.eid);
+  if (agreed.runId) {
+    for (const holder of nodes) for (const who of nodes) {
+      const x = { roundId: rid, entryId: out.eid, runId: fromHex(agreed.runId), signerPubkey: who.round.pubkey, signedAtMs: BigInt(holder.round.now()) };
+      await fetch(`http://127.0.0.1:${holder.port}/final-sig?round=${toHex(rid)}&entry=${toHex(out.eid)}`,
+        { method: 'POST', body: signFinalSig(x, (d) => schnorr.sign(d, who.round.identity.secret)) });
+    }
+  }
 
   const outcome = decodePlayerResult(splitSignedResult(
     nodes[0].round.results(rid, out.eid)[0].bytes).body).outcome;
@@ -406,6 +434,7 @@ test('a delivered run never gives up its preimage, and neither does one that is 
         joinSignedResult(encodePlayerResult(delivered), schnorr.sign(id, who.round.identity.secret)));
       holder.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, delivered));
     }
+    heldInWindow([holder], orid, other);
     await untilNextBlock();
     // AND EVERY SEAT SIGNS IT FINAL (WINDOW-10-SPEC): the round ended in 1970, so its window closed long ago.
     const agreedRun = fromHex(resultFinality(holder.round, orid, wid).runId);
@@ -510,6 +539,7 @@ test('a signer node that never replayed the run hands over nothing', async () =>
         joinSignedResult(encodePlayerResult(failed), schnorr.sign(id, who.round.identity.secret)));
       quiet.round.putPosting(orid, wid, who.round.pubkey, postedBy(who, orid, failed));
     }
+    heldInWindow([quiet], orid, c);
     await untilNextBlock();
     // AND THE SIX SIGN IT FINAL (WINDOW-10-SPEC): the round ended in 1970, so its window closed long ago.
     const agreedRun = fromHex(resultFinality(quiet.round, orid, wid).runId);
