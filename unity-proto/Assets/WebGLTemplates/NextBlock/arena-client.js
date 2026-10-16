@@ -12000,6 +12000,16 @@ const lockAmountMsat = (round, donationMsat = 0n) => {
 };
 
 /**
+ * WHAT ONE ENTRY'S STAKE IS MADE OF (§22A's transparency list; kanban #8, MF 17: "nowhere does the phone page split the 100 sat
+ * into stake, fee and donation"): the round's stake, the node fee and the player's donation out of it, and what the lock holds.
+ */
+const entryBreakdown = (round, donationMsat = 0n) => {
+  const stakeMsat = stakeOf(round);
+  const feeMsat = entryFeeMsat(stakeMsat, feeBpsForRound(round));
+  return { stakeMsat, feeMsat, donationMsat: BigInt(donationMsat), lockMsat: netStakeMsat({ stakeMsat, feeMsat, donationMsat: BigInt(donationMsat) }) };
+};
+
+/**
  * THE PLAYER WALLET'S SECRET (§24A.1, v4.6.3; RULED the owner 2026-09-25): one e-cash wallet per player seed and
  * FEDERATION, kept in the browser, that stakes are spent from. A function of the seed and the federation id only -
  * never of a round: the per-round wallet (`lockSecretFor`) funded each stake with its own Lightning invoice, which is
@@ -30904,6 +30914,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
          shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
+         entryBreakdown: entryBreakdown,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;

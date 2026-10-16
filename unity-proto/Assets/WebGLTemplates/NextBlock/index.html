@@ -4196,9 +4196,18 @@
     function depositWhyLine(stake, oneRound) {
       if (stake === null || stake === undefined || oneRound === null || oneRound === undefined) return '';
       const st = BigInt(stake), one = BigInt(oneRound);
-      if (st <= 0n || one === st) return '';
       const sats = (msat) => { const w = (msat / 1000n).toLocaleString('en-US'); const f = msat % 1000n;
         return `${f ? `${w}.${String(f).padStart(3, '0').replace(/0+$/, '')}` : w} sat`; };
+      // WHAT THE ROUND'S STAKE IS MADE OF, always (kanban #8, MF 17: "nowhere does the phone page split the 100 sat into stake,
+      // fee and donation") - the fee and the donation come out of the stake, so a round's deposit is usually the stake itself
+      let made = null;
+      try {
+        if (window.BLWP_ROUND && BLWPCLIENT.entryBreakdown) {
+          const b = BLWPCLIENT.entryBreakdown(window.BLWP_ROUND, BigInt((window.BLWP_DONATION || {}).donationMsat || 0));
+          if (b.stakeMsat === st) made = `A round's ${sats(st)}: ${sats(b.lockMsat)} locked as your stake, ${sats(b.feeMsat)} node fee, ${sats(b.donationMsat)} donation.`;
+        }
+      } catch { made = null; }
+      if (st <= 0n || one === st) return made || '';
       return `A round costs ${sats(st)}. You deposit ${sats(one)} per round: the stake, plus the round's node fee and donation, rounded up to a whole sat. Whatever a round does not use stays in your wallet.`;
     }
     function showDepositOffer(offer, { message = '', title = 'Deposit', overSettings = false } = {}) {
@@ -5060,6 +5069,14 @@
           if (top + bh > padTop - gap && btnLeft < padRight) right = W - padLeft + c.m * 0.5 * sx;
           go.style.top = Math.round(top) + 'px';
           go.style.right = Math.round(right) + 'px';
+          go.style.left = '';
+          // A PHONE'S LOBBY (kanban #8, MF 17: "the Console button sits on the title"; measured at 360 px on UI 134: on the
+          // lobby panel's top-right corner): the strip between the top bar and the panel, at the left, clear of both
+          const Lb = window.BLWP_UNITY_LOBBY, bar = document.getElementById('blwp-money');
+          if (W <= 560 && Lb && Lb.showing && bar) {
+            top = bar.getBoundingClientRect().bottom + 6;
+            go.style.top = Math.round(top) + 'px'; go.style.right = 'auto'; go.style.left = '8px';
+          }
           geo = { btnBottom: top + bh, right: W - (r.left + c.right * sx), pads: c.pads !== 0, padTop, m: c.m * sy,
             floor: r.top + (Number.isFinite(c.floor) ? c.floor : c.h) * sy, bayUp: Number.isFinite(c.floor) && c.floor < c.h };
         } else {

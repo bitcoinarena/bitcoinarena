@@ -303,6 +303,8 @@ out += '         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_C
 // THE GAME'S ITEMS (kanban #365, #369): the shop, the purchase, what the player owns, the items an entry plays with and their unlocks
 out += '         shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,\n';
 out += '         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,\n';
+// WHAT AN ENTRY'S STAKE IS MADE OF (kanban #8): the deposit request says it
+out += '         entryBreakdown: entryBreakdown,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
