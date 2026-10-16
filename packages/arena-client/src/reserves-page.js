@@ -33,3 +33,29 @@ export function reservesDonation(stakeMsat) {
 
 /** The same for a round as the page holds it (its stake as the join reads it, stakeOf). */
 export const reservesDonationForRound = (round) => reservesDonation(stakeOf(round));
+
+/**
+ * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2, kanban #397 slice 4: "testnet.bitcoin-arena.io shows the total and the latest
+ * payments in"): GET /reserves on the network's nodes; a total is shown only when at least `needed` of them answer the same one,
+ * and its payments in are those nodes' own list, newest first. Answers { ok, totalMsat, entries, paidIn, agreeing, asked } or why not.
+ */
+export async function fetchReservesTotal({ nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
+  const by = new Map();
+  await Promise.all(asked.map(async (base) => {
+    try {
+      const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (!/^\d+$/.test(String(j.totalMsat ?? ''))) return;
+      const k = String(j.totalMsat);
+      const had = by.get(k) || { n: 0, answer: j };
+      had.n++; by.set(k, had);
+    } catch { /* a node that does not answer names nothing */ }
+  }));
+  const best = [...by.entries()].sort((a, b) => b[1].n - a[1].n || (BigInt(b[0]) > BigInt(a[0]) ? 1 : -1))[0];
+  if (!best) return { ok: false, why: `none of ${asked.length} nodes answered the reserves`, asked: asked.length };
+  if (best[1].n < needed) return { ok: false, why: `only ${best[1].n} of ${asked.length} nodes name the same reserves, and ${needed} must`, asked: asked.length };
+  const a = best[1].answer;
+  return { ok: true, totalMsat: BigInt(best[0]), entries: Number(a.entries) || 0, paidIn: Array.isArray(a.paidIn) ? a.paidIn : [], agreeing: best[1].n, asked: asked.length };
+}

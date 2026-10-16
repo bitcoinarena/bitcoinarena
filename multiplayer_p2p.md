@@ -6830,6 +6830,18 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
 - Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,
   and every payout with the proposal that decided it - all from its own store, as `/donations` is.
 - testnet.bitcoin-arena.io shows the total and the latest payments in and out.
+- **As built** *(kanban #397 slice 4)*:
+  - `GET /reserves` answers `totalMsat` and `entries` over all federations, the newest 50 payments in (`paidIn`), and per
+    federation its `reserveKey`, `heldMsat`, `entries` and `paidIn`. With `?all=1` it lists every payment in.
+  - `payouts` stays `[]` until payouts are built.
+  - The figures are the seat's own rows under the federation's reserve key: those it kept at a lock (slice 3), and those it
+    took from other seats. A row from another seat is kept only after this seat's own port into the federation holds that
+    payout contract to the reserve key for exactly that amount. This is the same check `/lock` makes, done every 2 min,
+    in `arena-node/src/reserve-book.js`.
+  - So every seat that reaches the federation comes to the same total.
+  - The node dashboard's round list has a Reserves column: what each round paid in.
+  - The Arena page's games screen shows "Protocol reserves: X sat · N payments in" once five nodes name the same total.
+    A tap lists the latest payments in.
 
 ### 27A.9.3 Project funding proposals
 

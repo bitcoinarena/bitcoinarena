@@ -53,5 +53,27 @@ test('seven guardian seats make a 5-of-7 reserve key: five sign, four do not, al
     // GET /reserves on every seat: the same key, 5 needed, 7 public shares
     const served = await Promise.all(nodes.map(async (n) => (await (await fetch(`http://127.0.0.1:${n.port}/reserves`)).json()).federations.find((f) => f.federationId === toHex(FED))));
     assert.ok(served.every((f) => f && f.key === toHex(key) && f.needed === 5 && Object.keys(f.publicShares).length === 7), JSON.stringify(served[0]).slice(0, 300));
+
+    // SLICE 4: WHAT IS HELD (kanban #397): seat 0 verified a 2,000 msat reserve output at a lock and kept it; its /reserves
+    // counts it, the others hold nothing yet - then each takes it from seat 0 once ITS federation port holds that contract
+    const OUT = { txid: new Uint8Array(32).fill(0x44), outIdx: 4n };
+    const outHex = `${toHex(OUT.txid)}:4`;
+    nodes[0].round.putDonationOutputs([{ outpoint: OUT, entryId: new Uint8Array(32).fill(0x55), roundId: new Uint8Array(32).fill(0x66), federationId: FED,
+      recipientPk: key, amountMsat: 2000n, contractId: 'held', senderOnContract: false }]);
+    const figures = async (n, q = '') => (await (await fetch(`http://127.0.0.1:${n.port}/reserves${q}`)).json());
+    const f0 = await figures(nodes[0]);
+    assert.deepEqual([f0.totalMsat, f0.entries, f0.federations[0].heldMsat, f0.paidIn.map((p) => [p.outpoint, p.amountMsat, p.federationId])],
+      ['2000', 1, '2000', [[outHex, '2000', toHex(FED)]]]);
+    assert.equal((await figures(nodes[1])).totalMsat, '0');
+    const idOf = (f) => [toHex(f.paymentImage.bytes), f.amountMsat, toHex(f.claimPk)].join('|');
+    const { donationContractFields } = await import('../src/stake-lock-signer-node.js');
+    const port = (holds) => ({ async status(o) { return { stored: holds && toHex(o.txid) === toHex(OUT.txid) ? { contractId: idOf(donationContractFields({ recipientPk: key, amountMsat: 2000n })) } : null }; },
+      async contractId(f) { return idOf(f); } });
+    const g = { [toHex(FED)]: { members, peers: [`http://127.0.0.1:${nodes[0].port}`] } };
+    for (const [i, n] of nodes.slice(1).entries())
+      await n.reserves.peerRound({ guardians: g, keyFor: async () => key, portOf: async () => port(i !== 5) });
+    const totals = await Promise.all(nodes.map(async (n) => (await figures(n)).totalMsat));
+    assert.deepEqual(totals, ['2000', '2000', '2000', '2000', '2000', '2000', '0'], 'six take it; the seat whose federation does not hold it keeps nothing');
+    assert.equal((await figures(nodes[3], '?all=1')).federations[0].paidIn.length, 1);
   } finally { await Promise.all(nodes.map((n) => n.close())); delete process.env.ARENA_RESERVE_DKG; }
 });

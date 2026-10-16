@@ -194,6 +194,7 @@ import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-se
 import { Dkg } from './dkg.js';
 import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
+import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
@@ -1267,6 +1268,45 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
   };
   if (process.env.ARENA_RESERVE_DKG !== '0') { const t = setInterval(() => { reserveRound().catch(() => {}); }, RESERVE_DKG_MS); if (t.unref) t.unref(); setTimeout(() => reserveRound().catch(() => {}), 20000).unref?.(); }
+  // THE RESERVES' FIGURES OF ONE FEDERATION (kanban #397 slice 4): its reserve rows in this seat's store, under its reserve key
+  const gameOfRound = (roundHex) => {
+    try { const row = round.get(fromHex(roundHex)); if (!row) return null;
+      const c = decodeRoundContract(new Uint8Array(row.contract)); const id = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null;
+      const h = id && hosted instanceof Map ? hosted.get(id) : null; return h ? h.name : id ? id.slice(0, 8) : null; } catch { return null; }
+  };
+  const reserveFiguresOf = (fedHex, key, last) => reserveFigures(key ? round.donationsFor(toHex(key)) : [], { federationId: fedHex, last, gameOf: gameOfRound });
+  // THE ROWS OTHER SEATS KEPT, CHECKED HERE (kanban #397 slice 4): a reserve output is kept only by the signer nodes its lock was
+  // handed to; every 2 min this seat reads the others' rows and keeps each its own federation port confirms (reserve-book.js)
+  const RESERVE_PEER_CHECKS = Number(process.env.ARENA_RESERVE_PEER_CHECKS || 200);
+  // (a test hands in the guardians, the key and the port; a seat reads its census and its own ports)
+  const reservePeerRound = async ({ guardians = reserveGuardians(), keyFor = reserveKeyFor, portOf = (f) => portOfFederation(fromHex(f)) } = {}) => {
+    const g = guardians;
+    const seats = [...new Set(Object.values(g).flatMap((x) => x.peers))];
+    let checks = 0;
+    for (const fedHex of Object.keys(g)) {
+      const key = await keyFor(fedHex);
+      const port = key ? await portOf(fedHex) : null;
+      if (!key || !port) continue;
+      const seen = new Set();
+      for (const u of seats) {
+        let listed = [];
+        try { const r = await (await fetch(`${u}/reserves?all=1`, { signal: AbortSignal.timeout(8000) })).json();
+          const f = (r.federations || []).find((x) => x.federationId === fedHex); listed = f && Array.isArray(f.paidIn) ? f.paidIn : []; }
+        catch { continue; }
+        for (const row of listed) {
+          if (!row || seen.has(row.outpoint) || checks >= RESERVE_PEER_CHECKS) continue;
+          seen.add(row.outpoint);
+          const [tx, idx] = String(row.outpoint).split(':');
+          try { if (round.donationOutputAt({ txid: fromHex(tx), outIdx: idx })) continue; } catch { continue; }
+          checks++;
+          const v = await verifyPeerReserveRow({ row, port, reserveKey: key, federationId: fromHex(fedHex) }).catch((e) => ({ ok: false, why: e.message }));
+          if (v.ok) { round.putDonationOutputs([v.row]); console.log(`[reserves] ${fedHex.slice(0, 8)}: kept ${row.amountMsat} msat at ${row.outpoint.slice(0, 16)}… from ${u}`); }
+          else console.log(`[reserves] ${fedHex.slice(0, 8)}: not kept ${String(row.outpoint).slice(0, 16)}… from ${u}: ${v.why}`);
+        }
+      }
+    }
+  };
+  if (process.env.ARENA_RESERVE_DKG !== '0') { const t = setInterval(() => { reservePeerRound().catch(() => {}); }, RESERVE_DKG_MS); if (t.unref) t.unref(); setTimeout(() => reservePeerRound().catch(() => {}), 45000).unref?.(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
@@ -4185,7 +4225,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'GET' && url.pathname === '/dashboard.json') {
         const nowMs = Date.now();
-        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, games: hosted, matchFor: (rid) => matchOf(round, hosted, rid) })) };
+        if (!dashboardKept || nowMs - dashboardKept.at > 30000) dashboardKept = { at: nowMs, body: JSON.stringify(dashboardData(round, { nowMs, poolsFor: dashboardPools, hosts: hosts ? hosts.snapshot() : null, devClient: devClientSnapshot(devClientDir), devClients: devClients ? devClients.list({ attribute: devAttribute }) : null, games: hosted, matchFor: (rid) => matchOf(round, hosted, rid), reserveKeys: [...reserveKeys.values()].map(toHex) })) };
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(dashboardKept.body);
       }
@@ -6508,20 +6548,29 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/reserves') {
         const g = reserveGuardians();
         const feds = [...new Set([...Object.keys(g), ...reserveDkgs.keys()])].sort();
+        // WHAT IS HELD AND WHAT CAME IN (kanban #397 slice 4): per federation from this seat's own rows under its reserve key -
+        // its own when it guards the federation, else the one its guardian seats agreed on (kept by reserveKeyFor; never asked
+        // from here, or two seats' /reserves would ask each other); ?all=1 lists every payment in
+        const all = url.searchParams.get('all') === '1';
+        const keyOf = new Map(feds.map((f) => [f, reserveKeys.get(f) || null]));
         const federations = feds.map((fedHex) => {
           const nodes = g[fedHex] ? sortedKeys(g[fedHex].members) : (reserveState.get(fedHex) ? reserveState.get(fedHex).members.map(fromHex) : []);
           const needed = reserveNeeded(nodes.length);
           const held = nodes.length && needed !== null ? reserveDkgOf(fedHex).signerNodeFor(nodes) : { ok: false };
           const pub = held.ok ? reserveDkgOf(fedHex).publicSharesFor(nodes) : null;
+          if (held.ok && !keyOf.get(fedHex)) keyOf.set(fedHex, held.pool.groupPublicKey);
           const st = reserveState.get(fedHex) || null;
           return { federationId: fedHex, members: nodes.map(toHex), needed, ...(needed === null ? { why: `no reserve key for ${nodes.length} guardian seats: the threshold rule knows 7 (5) and 2 (2)` } : {}),
             key: held.ok ? toHex(held.pool.groupPublicKey) : null, mine: held.ok ? held.signerNode.id : null,
             publicShares: pub && pub.ok ? Object.fromEntries([...pub.shares].map(([j, P]) => [j, toHex(P)])) : null,
             epoch: nodes.length ? toHex(reserveEpochId(fromHex(fedHex), nodes)) : null,
-            last: st ? { at: new Date(st.at).toISOString(), ok: st.ok, why: st.why, told: st.told, got: st.got } : null };
+            last: st ? { at: new Date(st.at).toISOString(), ok: st.ok, why: st.why, told: st.told, got: st.got } : null,
+            reserveKey: keyOf.get(fedHex) ? toHex(keyOf.get(fedHex)) : null, ...reserveFiguresOf(fedHex, keyOf.get(fedHex), all ? Infinity : RESERVES_LAST) };
         });
+        const totalMsat = String(federations.reduce((t, f) => t + BigInt(f.heldMsat), 0n));
+        const paidIn = federations.flatMap((f) => f.paidIn.map((p) => ({ ...p, federationId: f.federationId }))).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, RESERVES_LAST);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations, paidIn: [], payouts: [] }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat, entries: federations.reduce((t, f) => t + f.entries, 0), federations, paidIn, payouts: [] }));
       }
       if (req.method === 'GET' && url.pathname === '/donation-ballots') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
@@ -7515,7 +7564,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
       dkg, settlements, winnings, orderBook,
       // the protocol reserves' keys (kanban #397): make one with given members and peers, and the DKG of a federation
-      reserves: { make: makeReserveKey, dkgOf: reserveDkgOf, round: reserveRound },
+      reserves: { make: makeReserveKey, dkgOf: reserveDkgOf, round: reserveRound, peerRound: reservePeerRound },
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

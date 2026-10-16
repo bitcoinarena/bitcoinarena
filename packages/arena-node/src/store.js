@@ -1168,6 +1168,10 @@ export function openStore(path = ':memory:') {
   // image is the entry's player key. A row from before carries the zero image.
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'sender_on_contract'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN sender_on_contract INTEGER NOT NULL DEFAULT 0');
+  // AND THAT KEY ITSELF FOR A ROW TAKEN FROM ANOTHER SEAT (kanban #397 slice 4): a reserve row learned from a peer has no entry
+  // stored here to read the player key from, so the image the federation's contract carries is kept beside it
+  if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'image'))
+    db.exec('ALTER TABLE donation_outputs ADD COLUMN image TEXT');
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))
