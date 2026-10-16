@@ -1215,6 +1215,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return reserveDkgs.get(fedHex);
   };
   const reserveState = new Map();   // federation hex -> { members, at, ok, why, told, got }
+  const reservePubKept = new Map(); // federation hex -> { tag: epoch:key, pub } (GET /reserves' public shares, made once per key)
   const sortedKeys = (ks) => [...ks].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
   /** Make (or finish) a federation's reserve key with `members` (node keys) reached at `peers`. */
   const makeReserveKey = async (fedHex, members, peersOf) => {
@@ -6564,7 +6565,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const nodes = g[fedHex] ? sortedKeys(g[fedHex].members) : (reserveState.get(fedHex) ? reserveState.get(fedHex).members.map(fromHex) : []);
           const needed = reserveNeeded(nodes.length);
           const held = nodes.length && needed !== null ? reserveDkgOf(fedHex).signerNodeFor(nodes) : { ok: false };
-          const pub = held.ok ? reserveDkgOf(fedHex).publicSharesFor(nodes) : null;
+          // KEPT PER EPOCH AND KEY (kanban #397): the seven public shares are 245 point multiplications - 0.8 s on the loop each
+          // time (measured on test host seat 2, 23:0xZ), and since slice 4 every seat asks every other one every 2 min; they change
+          // only with a new reserve key
+          let pub = null;
+          if (held.ok) {
+            const tag = `${toHex(reserveEpochId(fromHex(fedHex), nodes))}:${toHex(held.pool.groupPublicKey)}`;
+            const was = reservePubKept.get(fedHex);
+            if (was && was.tag === tag) pub = was.pub;
+            else { pub = reserveDkgOf(fedHex).publicSharesFor(nodes); if (pub && pub.ok) reservePubKept.set(fedHex, { tag, pub }); }
+          }
           if (held.ok && !keyOf.get(fedHex)) keyOf.set(fedHex, held.pool.groupPublicKey);
           const st = reserveState.get(fedHex) || null;
           return { federationId: fedHex, members: nodes.map(toHex), needed, ...(needed === null ? { why: `no reserve key for ${nodes.length} guardian seats: the threshold rule knows 7 (5) and 2 (2)` } : {}),
