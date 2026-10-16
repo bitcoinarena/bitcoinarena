@@ -12,7 +12,7 @@ public class LobbyErrorWordsTests
     public void EverySeatFailed_SaysNoneAnswered_WithHowManyWereAsked()
     {
         var s = new LobbyState { asked = 14, failed = 14, refused = new[] { "a", "b" } };
-        Assert.AreEqual("No signer node answered (14 asked) – the rounds cannot be read. Asked again every 5 seconds.", DailyLobby.EmptyListLine(s));
+        Assert.AreEqual("No signer node answered (14 asked) - the rounds cannot be read. Asked again every 5 seconds.", DailyLobby.EmptyListLine(s));
     }
 
     [Test]
@@ -29,8 +29,8 @@ public class LobbyErrorWordsTests
     public void ARoundNotOpenYet_TheRedBoxSaysWhenItOpens()
     {
         var join = new LobbyJoin { round = "1234abcd99", kindKnown = false };
-        Assert.AreEqual("Round 1234abcd opens for entry at 06:00 UTC – PLAY it then",
-            DailyLobby.RefusedLine(join, "Round 1234abcd opens for entry at 06:00 UTC – PLAY it then"));
+        Assert.AreEqual("Round 1234abcd opens for entry at 06:00 UTC - PLAY it then",
+            DailyLobby.RefusedLine(join, "Round 1234abcd opens for entry at 06:00 UTC - PLAY it then"));
         Assert.AreEqual("Not joined round 1234abcd: the deposit was closed.", DailyLobby.RefusedLine(join, "the deposit was closed"), "other refusals as before");
     }
 }

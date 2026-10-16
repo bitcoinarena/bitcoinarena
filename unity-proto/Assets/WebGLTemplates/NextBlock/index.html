@@ -7231,7 +7231,7 @@
       // says when its entry opens, in the lobby's red box
       if (!took && committeeMs > Date.now()) {
         const at = new Date(committeeMs).toISOString().slice(11, 16);
-        window.BLWP_JOIN = { state: 'refused', why: `Round ${id.slice(0, 8)} opens for entry at ${at} UTC \u2013 PLAY it then`, stage: '', round: id, kindKnown: false, free: false, stakeSats: 0, next: false };
+        window.BLWP_JOIN = { state: 'refused', why: `Round ${id.slice(0, 8)} opens for entry at ${at} UTC - PLAY it then`, stage: '', round: id, kindKnown: false, free: false, stakeSats: 0, next: false };
       }
       return true;
     }
