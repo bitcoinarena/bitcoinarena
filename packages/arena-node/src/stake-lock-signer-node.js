@@ -28,6 +28,7 @@ import { decodeEntryContract, decodeRoundContract, entryFederation } from '../..
 import { lockMatchesEntry, lockFieldsFromJson, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { donationOutputsExpected } from '../../arena-protocol/src/donation.js';
+import { reservesEntryExpected, paysReserves } from '../../arena-protocol/src/reserves.js';
 
 /**
  * WHETHER THIS ROUND'S GATE MINTS FEE LOCKS (Pick b), by the federation's own fee rule
@@ -126,7 +127,26 @@ export async function verifyDonationOutputs({ round, port, entry, entryIdBytes, 
   return { ok: true, rows };
 }
 
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null }) {
+/**
+ * WHAT AN ENTRY GIVES BESIDE ITS STAKE, CHECKED WITH THE FEDERATION: its donation outputs - and ON PROTOCOL 11 (§27A.9.2, kanban
+ * #397) the developers' 4 % as any donation plus the reserves' 2 %, one output to the entry's federation's reserve key, checked
+ * the same way (a payout contract to that key for exactly that amount) and kept beside them as a row for that key.
+ */
+export async function verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients, reserveKey = null, federationId }) {
+  if (!(paysReserves(contract) && entry.reserveOutpoint !== undefined))
+    return verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients, federationId });
+  const want = reservesEntryExpected({ entry, recipients, reserveKey });
+  if (!want.ok) return { ok: false, why: `reserves: ${want.why}` };
+  const devs = await verifyDonationOutputs({ round, port, entry: { ...entry, donationMsat: entry.donationMsat - want.reserve.amountMsat },
+    entryIdBytes, recipients, federationId });
+  if (!devs.ok) return devs;
+  const res = await verifyDonationOutputs({ round, port, entry: { ...entry, donationMsat: want.reserve.amountMsat, donationOutpoints: [want.reserve.outpoint] },
+    entryIdBytes, recipients: [{ recipientPk: reserveKey, shareBps: 10000, label: 'protocol reserves' }], federationId });
+  if (!res.ok) return { ok: false, why: res.why.replace(/^donation:/, 'reserves:') };
+  return { ok: true, rows: [...devs.rows, ...res.rows.map((r) => ({ ...r, reserve: true }))] };
+}
+
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -161,7 +181,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (the owner 2026-10-03): a stake whose donation outputs are wrong or missing is
   // not counted - nothing is kept for it, and the lock may be handed over again.
-  const donated = await verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients: donationRecipients, federationId: fed.federationId });
+  const donated = await verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients: donationRecipients, reserveKey, federationId: fed.federationId });
   if (!donated.ok) return donated;
   if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
 

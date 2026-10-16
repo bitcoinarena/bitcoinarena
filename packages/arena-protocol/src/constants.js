@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -95,8 +95,8 @@ export const FRONTEND_FEE_VERSION = 9;
 export const ITEMS_VERSION = 10;
 /**
  * THE PROTOCOL RESERVES' VERSION (§27A.9, kanban #397): a paid round's 10 % split mandatory as nodes 4 %, developers 4 % (2 + 2),
- * reserves 2 %; items 40 % nodes, 20 % reserves, the developers' share 40/30/20/10/0 %. Slice 1 only computes the split
- * (reserves.js): this version is NOT in SUPPORTED_PROTOCOL_VERSIONS until rounds of it can be paid and settled.
+ * reserves 2 %; items 40 % nodes, 20 % reserves, the developers' share 40/30/20/10/0 %. Spoken since slice 3: an entry locks the
+ * reserves' part to its federation's reserve key (reserves.js reservesEntryExpected), and the seats check it.
  */
 export const RESERVES_VERSION = 11;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
