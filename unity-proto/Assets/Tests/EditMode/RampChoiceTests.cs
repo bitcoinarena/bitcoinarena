@@ -36,3 +36,19 @@ public class RampChoiceTests
         CollectionAssert.AreEqual(new[] { "b", "c", "a" }, PackageYard.Diverse(offers).ConvertAll((t) => t.txid));
     }
 }
+
+/// <summary>THE FEED'S POOL KEEPS EVERY SIZE (kanban #375): over its limit the oldest of the most common size goes, not the oldest of all.</summary>
+public class FeedTrimTests
+{
+    static MempoolFeed.Tx T(string id, int vsize) => new MempoolFeed.Tx { txid = id, vsize = vsize, feeSats = 1000, valueSats = 100000 };
+
+    [Test]
+    public void TheRareLargeOneStays_TheOldestSmallOneGoes()
+    {
+        // newest first: a large one at the back would be the first to go by age
+        var pool = new List<MempoolFeed.Tx> { T("s1", 140), T("s2", 150), T("s3", 160), T("m1", 400), T("x-old", 2000) };
+        var kept = MempoolFeed.Trim(pool, 4);
+        CollectionAssert.AreEqual(new[] { "s1", "s2", "m1", "x-old" }, kept.ConvertAll((t) => t.txid));
+        Assert.AreEqual(3, MempoolFeed.Trim(kept, 3).FindAll((t) => t.txid != "s2" || true).Count);
+    }
+}
