@@ -98,10 +98,12 @@ async function reachable(pool, relays, ms) {
  * signer - encrypted to the account's own key, signed and published. Answers { seed (32 bytes), created, from ('relays' |
  * 'derived' | 'random'), relays: [those that took it] }.
  */
-export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_RELAYS, random = (n) => crypto.getRandomValues(new Uint8Array(n)), maxWait = 5000 } = {}) {
+// FRESH: a key made on this page a moment ago (newAccount) has no seed event anywhere - the relays are not asked for one (kanban
+// #381: the ask waited up to maxWait for every relay's answer before a new account's seed was made)
+export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_RELAYS, random = (n) => crypto.getRandomValues(new Uint8Array(n)), maxWait = 5000, fresh = false } = {}) {
   const up = await reachable(pool, relays, maxWait);
   if (!up.length) throw new Error('no Nostr relay answered: try again in a moment (your wallet is not made offline, so it cannot become a second one)');
-  const found = (await pool.querySync(up, { kinds: [SEED_KIND], authors: [signer.pubkey], '#d': [SEED_D] }, { maxWait }))
+  const found = fresh ? null : (await pool.querySync(up, { kinds: [SEED_KIND], authors: [signer.pubkey], '#d': [SEED_D] }, { maxWait }))
     .filter((e) => verifyEvent(e)).sort((a, b) => b.created_at - a.created_at)[0];
   if (found) {
     let plain;
