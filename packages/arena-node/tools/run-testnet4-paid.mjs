@@ -45,7 +45,9 @@ import { stakeLockPort } from '../src/stake-lock-port.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { openingFederation } from '../src/opening-federation.js';
 import { ed25519 } from '@noble/curves/ed25519.js';
-import { donationSetInForce } from '../../arena-protocol/src/authority.js';
+import { donationSetInForce as signedSetInForce } from '../../arena-protocol/src/authority.js';
+import { createApprovedSets } from '../src/approved-sets.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
 import { donationSetId as idOfDonationSet } from '../../arena-protocol/src/donation.js';
 import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-donation-set-keys.js';
@@ -119,6 +121,14 @@ const guardianOf = ports.map((_, i) => {
 });
 
 const [pa, pb, pc, ...more] = ports;
+// THE SETS THE DEVELOPERS APPROVED (§27A.4.1, kanban #382): every round names the set in force at its census height - an approved
+// one too, read from the attached seat's ballots and tallied here; refreshed every 2 min, and once before anything is published
+const APPROVED = createApprovedSets({ seatUrl: `http://${env.ARENA_BIND || '127.0.0.1'}:${pa}`,
+  known: [TESTNET4_DONATION_SET_KEYS, TESTNET4_DONATION_SET, TEST_DONATION_SET_TESTNET4, TEST_DONATION_SET_TESTNET4_BEFORE_SERIES_GENESIS],
+  verifySecp256k1: (sg, d, k) => { try { return secp256k1.verify(sg, d, k); } catch { return false; } }, log: (l) => console.log(l) });
+setInterval(() => { APPROVED.refresh().catch(() => {}); }, 120000).unref?.();
+const donationSetInForce = (args) => signedSetInForce({ ...args, approved: APPROVED.sets() });
+await APPROVED.refresh();
 // THE NODES' OWN ADDRESS (kanban #348): attached to nodes that listen on ARENA_BIND - federation B's seven on the test host bind
 // its tailnet address - the runner reached for 127.0.0.1 and failed at once (ECONNREFUSED 127.0.0.1:6221, 13:20:45Z)
 const NODE_HOST = env.ARENA_BIND || '127.0.0.1';
