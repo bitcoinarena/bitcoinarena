@@ -5,7 +5,7 @@
 // source before this file.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stakeSeenBy, settlementBy, roundCoreHex, stakeSeenNeeded } from '../src/join.js';
+import { stakeSeenBy, settlementBy, roundCoreHex, stakeSeenNeeded, forgetIdentities, identityAt, IDENTITY_KEEP_MS } from '../src/join.js';
 import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -15,7 +15,9 @@ const EID = b32(0xee);
 const SEVEN = { settlementSlots: 7, nodes: KEYS };
 const urls = KEYS.map((_, i) => `http://node-${i}.example/`);
 // a node: who it is, and what it says about /stake and /settlement
-const nodes = (behave) => async (url) => {
+// each fake network is another set of nodes behind the same URLs: the identities kept for the last one are forgotten
+const nodes = (behave) => { forgetIdentities(); return nodesKept(behave); };
+const nodesKept = (behave) => async (url) => {
   const m = /^http:\/\/node-(\d+)\.example\/(\w+)/.exec(String(url));
   const i = Number(m[1]), path = m[2];
   const b = behave(i, path);
@@ -95,4 +97,21 @@ test('roundCoreHex: the 32-byte core a round names, as hex; anything else is emp
   assert.equal(roundCoreHex({ gameId: NEXTBLOCK_GAME_ID, simCoreHash: 'ab'.repeat(32) }), '');
   assert.equal(roundCoreHex(null), '');
   assert.equal(roundCoreHex(undefined), '');
+});
+
+// WHO ANSWERS AT A URL IS ASKED ONCE A FEW MINUTES (the owner 2026-10-16: "Lower the amount of concurrent connections and network
+// load"; measured on live UI 154: GET /identity 434 times in 60 s of one run)
+test('a node\'s identity is asked once per IDENTITY_KEEP_MS, a failed one again at once', async () => {
+  forgetIdentities();
+  let asked = 0, fail = true;
+  const f = async (u) => { asked++; if (fail) return { ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) }; return { ok: true, status: 200, arrayBuffer: async () => new Uint8Array(32).fill(7).buffer }; };
+  await assert.rejects(identityAt(f, 'https://n.example', { now: 0 }), /identity answered 503/);
+  fail = false;
+  const asks = asked;
+  const k = await identityAt(f, 'https://n.example', { now: 1 });
+  assert.equal(k, '07'.repeat(32));
+  for (let i = 0; i < 50; i++) await identityAt(f, 'https://n.example', { now: 2 + i * 1000 });
+  assert.equal(asked - asks, 1, 'asked once for 50 looks within the keep');
+  await identityAt(f, 'https://n.example', { now: 1 + IDENTITY_KEEP_MS });
+  assert.equal(asked - asks, 2, 'asked again after IDENTITY_KEEP_MS');
 });

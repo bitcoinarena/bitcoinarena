@@ -5452,7 +5452,15 @@
     // signed - not when the window closes - with the window's close in UTC, "provisional" while other results still
     // arrive; a result that becomes invalid (FORFEIT, an upheld objection, a re-run) takes the line away; once the
     // money is collected into the wallet (lookThePayout) the note goes and the balance shows it. It only looks.
+    // ONE LOOK AT A TIME, AND A SETTLED ROUND LESS OFTEN (the owner 2026-10-16: "Lower the amount of concurrent connections and
+    // network load"; measured on live UI 154: GET /standing 266 times in a 60 s window of one run - every staked round, every
+    // signer node, every 2 s, and a slow look overlapped the next). A round whose answer is not provisional is asked again
+    // after 30 s; its last answer counts meanwhile. The state lives on the function (st: busy, seen = note key -> { at, said }).
     async function lookThePending() {
+      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000 });
+      if (st.busy) return;
+      st.busy = true;
+      try {
       let notes = [];
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('arena.pending.')) notes.push(k); } } catch { notes = []; }
       try { const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
@@ -5461,8 +5469,12 @@
       for (const k of notes) {
         let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
         if (!n || done.has(n.roundIdHex)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
-        const said = await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
-          .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+        const last = st.seen.get(k);
+        const said = last && Date.now() - last.at < st.settledMs && last.said.some((x) => x) && !last.said.some((x) => x && x.provisional)
+          ? last.said
+          : await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+        if (said !== (last && last.said)) st.seen.set(k, { at: Date.now(), said });
         // WINNINGS MORE THAN HALF THE ANSWERING SEATS SAY (WINDOW-LIVE-1155, the owner 2026-10-02: "If the payment becomes
         // invalid, the pending line disappears"): every seat that answers votes - one with no figure, or with a refund (a
         // VOID run's stake coming back, not winnings), votes for none. Measured before: four seats VOID, three still
@@ -5496,6 +5508,7 @@
       const whenEl = document.getElementById('blwp-bal-pending-when'); if (whenEl) whenEl.textContent = when;
       const chip = document.getElementById('blwp-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
       paintMoney();
+      } finally { st.busy = false; }
     }
     setInterval(lookThePending, 2000);
     probeNodes();

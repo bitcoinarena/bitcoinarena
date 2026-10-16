@@ -7,13 +7,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { pendingWindowLine, savedLockExpiration } from '../src/page-lock.js';
 import { pageFunction } from './page-script.js';
 
 const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 40)}`); const b = HTML.indexOf(end, a); return HTML.slice(a, b + end.length); };
 const PAYOUT = cut('    let payoutAskingSince = 0;', '\n      payoutAsking = false; payoutAskingSince = 0;\n      paintWallet();\n    }\n');
-const PENDING = cut('    async function lookThePending() {', '\n      paintMoney();\n    }\n');
+const PENDING = cut('    async function lookThePending() {', '\n      paintMoney();\n      } finally { st.busy = false; }\n    }\n');
 
 const RID = 'e4'.repeat(32);
 const look = (o = {}) => ({ payout: { state: 'none' }, stake: { state: 'owed', how: 'forfeit', msat: 98000n }, payoutMsat: 0n, stakeMsat: 98000n, refundMsat: 0n,
@@ -29,7 +30,7 @@ function page({ record, theLook, collect }) {
   const BLWPCLIENT = {
     savedCollects: () => [record], roundLocks: () => true, owedToLine: () => 'line', toHex: () => '00'.repeat(32),
     markCollectDone: (v, rid) => { marked.push(rid); record.done = { payout: 'line' }; },
-    collectIntoPlayerWallet: collect,
+    collectIntoPlayerWallet: collect, pendingWindowLine, savedLockExpiration,
   };
   const lookRound = async () => ({ look: theLook, held: true, LockClient: 'LC' });
   // since #153 the collect walks every kept phrase's records (keptRecords) and runs each under its phrase (withRecordPhrase);

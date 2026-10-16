@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { pendingWindowLine, savedLockExpiration } from '../src/page-lock.js';
 import { pageFunction } from './page-script.js';
 
 const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
@@ -16,7 +17,8 @@ function page({ answers, done = [] }) {
   const els = { 'blwp-bal-pending-when': { textContent: '' }, 'blwp-lobby-pending': { parentNode: { title: '' } } };
   const window = { BLWP_WALLET_BALANCE: { sats: 10, pending: 0 } };
   const fetch = async (u) => { const a = answers[new URL(u).host]; return a ? { ok: true, json: async () => a } : { ok: false }; };
-  const BLWPCLIENT = { savedCollects: () => done.map((r) => ({ roundIdHex: r, done: { payout: 'x' } })) };
+  // the page's own line functions (3f1e2674 had the page call them; this stub lacked them since)
+  const BLWPCLIENT = { savedCollects: () => done.map((r) => ({ roundIdHex: r, done: { payout: 'x' } })), pendingWindowLine, savedLockExpiration };
   const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
   return { go: () => run(() => store, BLWPCLIENT, fetch, { getElementById: (id) => els[id] || null }, window, () => {}), window, els, kept };
 }
@@ -32,11 +34,17 @@ test('signed: the majority figure is pending at once, with the window close in U
 });
 
 test('past the close the line says the window closed and the payout is on its way (playtest d917975d)', async () => {
-  const closed = signed('192000', { windowCloseMs: String(Date.UTC(2026, 9, 3, 6, 43, 21)) });
+  const closeMs = Math.floor((Date.now() - 60000) / 1000) * 1000;   // a minute ago: within the 10 min the payout is on its way
+  const closed = signed('192000', { windowCloseMs: String(closeMs) });
   const p = page({ answers: { a: closed, b: closed } });
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 192);
-  assert.equal(p.els['blwp-bal-pending-when'].textContent, 'window closed 06:43:21 UTC \u00b7 paying out');
+  assert.equal(p.els['blwp-bal-pending-when'].textContent, `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`);
+  // AND NOT "PAYING OUT" FOREVER (kanban #6, MF 18, 3f1e2674): long past the close it is "not paid yet"
+  const old = signed('192000', { windowCloseMs: String(Date.UTC(2026, 9, 3, 6, 43, 21)) });
+  const q = page({ answers: { a: old, b: old } });
+  await q.go();
+  assert.match(q.els['blwp-bal-pending-when'].textContent, /^window closed 06:43:21 UTC \u00b7 not paid yet/);
 });
 
 test('while other results still arrive the figure is marked provisional', async () => {
@@ -93,7 +101,7 @@ test('two entries of one round in one browser: each tab asks only about its own 
     const session = new Map(mine ? [['arena.pending.mine', JSON.stringify(mine)]] : []);
     const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: (k) => session.get(k) ?? null } };
     const run = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending();');
-    return run(() => store, { savedCollects: () => [] }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.BLWP_PENDING_SATS);
+    return run(() => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {}).then(() => window.BLWP_PENDING_SATS);
   };
   const winner = await tab(['arena.pending.r1.e1']);
   const winnerAsked = asked.splice(0);
@@ -121,4 +129,28 @@ test('four seats VOID with a refund, three still PROVISIONALLY_FINAL with winnin
   await p.go();
   assert.equal(p.window.BLWP_PENDING_SATS, 0, 'a refund or a minority figure was shown as pending winnings');
   assert.equal(p.els['blwp-bal-pending-when'].textContent, '');
+});
+
+// ONE LOOK AT A TIME, AND A SETTLED ROUND LESS OFTEN (the owner 2026-10-16: "Lower the amount of concurrent connections and network
+// load"; measured on live UI 154: GET /standing 266 times in 60 s of one run)
+test('a settled answer is asked again only after 30 s, a provisional one at every look, and looks never overlap', async () => {
+  const kept = new Map([['arena.pending.r1.e1', JSON.stringify({ roundIdHex: 'r1', entryIdHex: 'e1', nodes: ['http://a', 'http://b'] })]]);
+  const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
+  const run = (provisional) => {
+    const counted = { asked: 0 };
+    const fetch = async () => { counted.asked++; await new Promise((r) => setTimeout(r, 20)); return { ok: true, json: async () => signed('192000', { provisional }) }; };
+    const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
+    const look = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending;')(
+      () => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {});
+    return { look, counted, window };
+  };
+  const settled = run(false);
+  await Promise.all([settled.look(), settled.look()]);                  // two looks at once: the second does nothing
+  assert.equal(settled.counted.asked, 2, 'one look, both signer nodes asked once');
+  await settled.look(); await settled.look();
+  assert.equal(settled.counted.asked, 2, 'a settled answer is not asked again within 30 s');
+  assert.equal(settled.window.BLWP_PENDING_SATS, 192, 'its last answer still counts');
+  const moving = run(true);
+  await moving.look(); await moving.look(); await moving.look();
+  assert.equal(moving.counted.asked, 6, 'a provisional answer is asked at every look');
 });
