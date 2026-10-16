@@ -11975,6 +11975,34 @@ function unkeptLockStore() {
   return { entries: () => JSON.stringify([...held]), put: (k, v) => { held.set(k, v); }, remove: (k) => { held.delete(k); } };
 }
 
+/** THE FEDERATION BLOCK FROM WHICH A ROUND'S SAVED LOCK COMES BACK TO THE PLAYER'S KEY (kanban #6), or null when none is kept. */
+function savedLockExpiration(storage, roundIdHex) {
+  const prefix = `arena.lock.saved.${String(roundIdHex || '').toLowerCase()}.`;
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const k = storage.key(i);
+      if (!k || !k.startsWith(prefix)) continue;
+      const r = JSON.parse(storage.getItem(k));
+      const e = Number(r && r.fields && r.fields.expiration);
+      if (Number.isInteger(e) && e > 0) return e;
+    }
+  } catch { /* nothing kept */ }
+  return null;
+}
+
+/**
+ * THE PENDING LINE'S WORDS (WINDOW-10-SPEC; kanban #6, MF 18: "window closed … · paying out" forever when no payout came): before
+ * the window's close its time; for 10 min after it "paying out"; from then "not paid yet", and when the lock comes back.
+ */
+const PAYOUT_GRACE_MS = 600000;
+function pendingWindowLine({ closeMs, provisional = false, nowMs = Date.now(), expiration = null }) {
+  if (!closeMs) return '';
+  const t = new Date(Number(closeMs)).toISOString().slice(11, 19);
+  if (nowMs < closeMs) return `window closes ${t} UTC${provisional ? ' \u00b7 provisional' : ''}`;
+  if (nowMs < Number(closeMs) + PAYOUT_GRACE_MS) return `window closed ${t} UTC \u00b7 paying out`;
+  return `window closed ${t} UTC \u00b7 not paid yet \u2013 the lock returns to your key ${Number.isInteger(expiration) ? `from block ${expiration}` : 'when it expires'}`;
+}
+
 /**
  * THE LOCK, AS THE PLAYER IS SHOWN IT: how much, where, and when the contract
  * lets it come back to their own key if nobody settles it. The refund itself is
@@ -12611,7 +12639,7 @@ function restOfFeesMsat(shortMsat) {
 /** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
 const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
 async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
-  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {} } = {}) {
+  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
   const deposits = [];
@@ -12633,7 +12661,16 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
       if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
-      const d = await offer.claimed;
+      // NOT PAST THE ROUND'S ENTRY (kanban #6, MF 18: a deposit left open was still waiting 30 s and 151 s past the close, the round's
+      // clock at 0:00 behind it, no error): at the round's last entry instant the request is closed with the reason - the join is
+      // refused by name. Its invoice is still followed: paid later, it lands in the player wallet, for the next round.
+      let closeTimer = null;
+      if (entryClosesMs !== null && entryClosesMs !== undefined && Number.isFinite(Number(entryClosesMs))) {
+        const why = `the round's entry closed at ${new Date(Number(entryClosesMs)).toISOString().slice(11, 19)} UTC before the deposit arrived: nothing was taken for this round`;
+        const left = Number(entryClosesMs) - Date.now();
+        if (left <= 0) offer.close(why); else closeTimer = setTimeout(() => offer.close(why), left);
+      }
+      const d = await offer.claimed.finally(() => { if (closeTimer) clearTimeout(closeTimer); });
       deposits.push(d);
       depositRow(storage, round, d);
       prev = offer;
@@ -25939,6 +25976,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
   const refused = [];
   const unanswered = [];                                    // signer nodes that did not answer within answerMs
+  const failed = [];                                        // signer nodes whose read failed outright (kanban #6): none answered = none reached
   const said = new Map();                                   // id -> [{ node, key, ... }]
   const ask = answerWithin(fetcher, answerMs);
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
@@ -25952,7 +25990,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     try {
       const { r, e } = answers[k];
       if (e) throw e;
-      if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
+      if (!r.ok) { refused.push(`${node}: answered ${r.status}`); failed.push(String(node)); continue; }
       const body = await r.json();
       const nodeKey = String(body && body.node).toLowerCase();
       const at = Number(body && body.nowMs);
@@ -25970,7 +26008,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
           // RESERVE SEATS (§5A.7, kanban #301): the seat's word on who is seated - the join checks the certificate itself
           committee: x.committee && typeof x.committee === 'object' ? x.committee : null });
       }
-    } catch (e) { refused.push(`${node}: ${e.message}`); if (e && e.silent) unanswered.push(String(node)); }
+    } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
   const rows = [];
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
@@ -26041,7 +26079,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
-  return { rows, refused, unanswered };
+  return { rows, refused, unanswered, failed, asked: unique.length };
 }
 
 /**
@@ -30914,7 +30952,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
          shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
-         entryBreakdown: entryBreakdown,
+         entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,
          toHex: toHex, fromHex: fromHex };
 })();
 if (typeof module !== "undefined") module.exports = BLWPCLIENT;

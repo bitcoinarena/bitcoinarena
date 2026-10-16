@@ -3019,6 +3019,8 @@
           await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
             askDeposit: (offer) => window.BLWP_ASK_JOIN_DEPOSIT(offer, (o) => showDepositOffer(o, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT })),
+            // NOT PAST THE ROUND'S ENTRY (kanban #6, MF 18): the request ends at the round's last entry instant, by name
+            entryClosesMs: BLWPCLIENT.entryOpenUntilMs ? Number(BLWPCLIENT.entryOpenUntilMs(named.round)) : null,
             onDeposit: (d) => {
               window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) };
               console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice);
@@ -5419,7 +5421,7 @@
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('arena.pending.')) notes.push(k); } } catch { notes = []; }
       try { const mine = JSON.parse(window.sessionStorage.getItem('arena.pending.mine') || 'null'); if (Array.isArray(mine)) notes = notes.filter((k) => mine.includes(k)); } catch { /* every note */ }
       const done = new Set((BLWPCLIENT.savedCollects ? BLWPCLIENT.savedCollects(vault(), { seed: typeof collectSeed === "function" ? collectSeed() : null }) : []).filter((r) => r.done).map((r) => r.roundIdHex));
-      let total = 0n; let closeMs = null; let provisional = false;
+      let total = 0n; let closeMs = null; let provisional = false; let closeRound = null;
       for (const k of notes) {
         let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
         if (!n || done.has(n.roundIdHex)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
@@ -5442,7 +5444,7 @@
         if (!best || best[0] === null || best[0] === '0' || best[1] * 2 <= answered.length) continue;
         total += BigInt(best[0]);
         const one = said.find((x) => x && x.pendingMsat === best[0]);
-        if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) closeMs = Number(one.windowCloseMs);
+        if (one && one.windowCloseMs && (closeMs === null || Number(one.windowCloseMs) > closeMs)) { closeMs = Number(one.windowCloseMs); closeRound = n.roundIdHex; }
         if (one && one.provisional) provisional = true;
       }
       // AND A STAKE OWED BACK ON A ROUND NOT DONE whose collect has not gone through (kanban #106, comment 583): on no other chip
@@ -5451,9 +5453,10 @@
       if (window.BLWP_WALLET_BALANCE) window.BLWP_WALLET_BALANCE.pending = window.BLWP_PENDING_SATS;
       // PAST THE CLOSE THE LINE SAYS WHAT HAPPENS NOW (the owner 2026-10-03, playtest d917975d: "window closes 06:43:21 UTC"
       // still shown after 06:43:21 - the signer nodes settle 13-23 s after the close, and the page collects after that)
-      const when = total > 0n && closeMs ? (Date.now() < closeMs
-        ? `window closes ${new Date(closeMs).toISOString().slice(11, 19)} UTC${provisional ? ' \u00b7 provisional' : ''}`
-        : `window closed ${new Date(closeMs).toISOString().slice(11, 19)} UTC \u00b7 paying out`) : '';
+      // AND NOT "PAYING OUT" FOREVER (kanban #6, MF 18: a payout that never came read "paying out" 54 s on and on): from 10 min past
+      // the close "not paid yet", and the federation block from which the round's lock comes back to the player's key
+      const when = total > 0n && closeMs ? BLWPCLIENT.pendingWindowLine({ closeMs, provisional,
+        expiration: BLWPCLIENT.savedLockExpiration ? BLWPCLIENT.savedLockExpiration(vault(), closeRound) : null }) : '';
       const whenEl = document.getElementById('blwp-bal-pending-when'); if (whenEl) whenEl.textContent = when;
       const chip = document.getElementById('blwp-lobby-pending'); if (chip && chip.parentNode) chip.parentNode.title = when || 'pending';
       paintMoney();
@@ -6651,6 +6654,7 @@
       who();
       let refused = [];
       let unanswered = [];
+      let askedNodes = 0, failedNodes = 0;   // kanban #6: every seat asked failed = none reached, said so
       // A ROUND THE NODE CALLED CLOSED IS NOT A CHOICE (the owner 2026-09-26 16:56, phone: "The lobby still offers the closed
       // round. The refusal only covers it."): its id is kept here, its row is never drawn again, and the refusal names it.
       const closedRounds = window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set();
@@ -6688,7 +6692,7 @@
         // when the round's threshold of its own signer nodes say open and assigned.
         const read = (nodes) => BLWPCLIENT.fetchLobby({ nodes,
           verify: (s, m, k) => !!(window.BLWP_CURVE && window.BLWP_CURVE.verify && window.BLWP_CURVE.verify(s, m, k)) })
-          .catch((e) => ({ rows: [], refused: [e.message], unanswered: [] }));
+          .catch((e) => ({ rows: [], refused: [e.message], unanswered: [], failed: (nodes || []).map(String), asked: (nodes || []).length }));
         // EACH SIDE DRAWN AS SOON AS IT ANSWERS (the owner 2026-10-01: both rows, always): measured on the live page, a paint
         // waited for both sides, so slow testnet4 nodes held the free row back until its entry had closed. A side not in
         // yet is `pending`, and keeps the rows it last had.
@@ -6731,6 +6735,8 @@
         lobbyNow();
         refused = [...(got.refused || []), ...((got2 && got2.refused) || [])];
         unanswered = [...(got.unanswered || []), ...((got2 && got2.unanswered) || [])];
+        askedNodes = (got.asked || 0) + ((got2 && got2.asked) || 0);
+        failedNodes = (got.failed || []).length + ((got2 && got2.failed) || []).length;
         window.BLWP_LOBBY_NAMED_FOR_WALLET = testnet ? testnet.named : named;
         warmPlayerWallet(testnet ? testnet.named : named, [...(window.BLWP_LOBBY || []), ...[moneyRound()].filter(Boolean)]);
         for (const r of (window.BLWP_LOBBY || [])) {
@@ -6879,6 +6885,8 @@
         refused: refused.map(String), nodes: named.nodes.length,
         // THE SIGNER NODES THAT DID NOT ANSWER the last read within the limit, by address, for the lobby to say so on screen.
         unanswered: unanswered.map(String), answerS: Math.round((BLWPCLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
+        // HOW MANY SEATS WERE ASKED, AND HOW MANY FAILED OUTRIGHT (kanban #6): none reached is not "no round open"
+        asked: askedNodes, failed: failedNodes,
         // WHICH ROUND the join was for, by id and kind, so a refusal names the round rather than "the round"
         join: window.BLWP_JOIN ? { state: window.BLWP_JOIN.state, why: String(window.BLWP_JOIN.why || ''), stage: String(window.BLWP_JOIN.stage || ''),
           round: String(window.BLWP_JOIN.round || ''), kindKnown: !!window.BLWP_JOIN.kindKnown, free: !!window.BLWP_JOIN.free,
@@ -7200,12 +7208,12 @@
       const bare = new URLSearchParams(q); bare.delete('round'); bare.delete('play');
       let named = null; try { named = BLWPCLIENT.lobbyQuery('?' + bare.toString()); } catch { named = null; }
       if (!named || !named.nodes || !named.nodes.length) return false;
-      let startMs = NaN;
+      let startMs = NaN, committeeMs = NaN;
       for (const n of named.nodes.slice(0, 3)) {
         try {
           const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds?next=12', { cache: 'no-store', signal: AbortSignal.timeout(6000) });
           const d = await r.json(); const x = (d.rounds || d).find((y) => y && y.id === id);
-          if (x) { startMs = Number(x.startTimeMs); break; }
+          if (x) { startMs = Number(x.startTimeMs); committeeMs = Number(x.committeeTimeMs); break; }
         } catch { /* the next node */ }
       }
       if (!(startMs - Date.now() > 5000)) return false;
@@ -7219,6 +7227,12 @@
       }
       const took = !!(window.BLWP_LOBBY_ACT && window.BLWP_LOBBY_ACT.join(id, { holdUntilMs: startMs, next: true, link: true }));
       console.log(`[blwp] round link ${id.slice(0, 16)}: ${took ? 'joined, held to its start' : 'not joinable from the lobby - PLAY it there'}`);
+      // ON SCREEN, NOT ONLY IN THE CONSOLE (kanban #6, MF 18: "committee pending: silent"): a round whose committee has not formed
+      // says when its entry opens, in the lobby's red box
+      if (!took && committeeMs > Date.now()) {
+        const at = new Date(committeeMs).toISOString().slice(11, 16);
+        window.BLWP_JOIN = { state: 'refused', why: `Round ${id.slice(0, 8)} opens for entry at ${at} UTC \u2013 PLAY it then`, stage: '', round: id, kindKnown: false, free: false, stakeSats: 0, next: false };
+      }
       return true;
     }
     const joinOrBackToTheLobby = async () => {

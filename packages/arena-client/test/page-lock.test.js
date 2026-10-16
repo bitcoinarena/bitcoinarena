@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
+import { pendingWindowLine, savedLockExpiration, PAYOUT_GRACE_MS } from '../src/page-lock.js';
 import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, redeemSlashPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
@@ -1496,6 +1497,40 @@ test('the donation is paid by the player (the owner 2026-10-01): an N rounds dep
     }
     assert.ok(BigInt(await client.balanceMsat()) >= 0n);
   }
+});
+
+// KANBAN #6 (MF 18): a deposit left open no longer waits past the round's entry - it ends at the close, by name
+test('a deposit that never arrives ends at the round\'s entry close, with the reason; one paid before it is taken as ever', async () => {
+  const { LockClient } = noteClient();
+  const closes = Date.now() + 2000;
+  const t0 = Date.now();
+  const hhmmss = new Date(closes).toISOString().slice(11, 19);
+  let shown = null;
+  await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed: b32(0x54), LockClient, storage: tabStorage(), entryClosesMs: closes,
+    askDeposit: (offer) => { shown = offer; } }),
+  (e) => e.message === `the round's entry closed at ${hhmmss} UTC before the deposit arrived: nothing was taken for this round`);
+  const took = Date.now() - t0;
+  assert.ok(shown, 'the deposit was asked');
+  assert.ok(took >= 1800 && took < 6000, `ended at the close, ${took} ms after the ask began`);
+  // a close already past: refused at once, by the same words
+  await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed: b32(0x55), LockClient, storage: tabStorage(), entryClosesMs: Date.now() - 1000,
+    askDeposit: () => {} }), /the round's entry closed at .* UTC before the deposit arrived: nothing was taken for this round/);
+});
+
+test('the pending line: the window\'s close, then paying out for 10 min, then not paid yet and the block the lock comes back from', () => {
+  const close = Date.UTC(2026, 9, 16, 5, 43, 33);
+  assert.equal(pendingWindowLine({ closeMs: close, provisional: true, nowMs: close - 1000 }), 'window closes 05:43:33 UTC \u00b7 provisional');
+  assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + 1000 }), 'window closed 05:43:33 UTC \u00b7 paying out');
+  assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS - 1 }), 'window closed 05:43:33 UTC \u00b7 paying out');
+  assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS, expiration: 156900 }),
+    'window closed 05:43:33 UTC \u00b7 not paid yet \u2013 the lock returns to your key from block 156900');
+  assert.equal(pendingWindowLine({ closeMs: close, nowMs: close + PAYOUT_GRACE_MS + 5 }), 'window closed 05:43:33 UTC \u00b7 not paid yet \u2013 the lock returns to your key when it expires');
+  assert.equal(pendingWindowLine({ closeMs: null }), '');
+  // the block, from the round's saved lock
+  const st = tabStorage(); const rid = 'ab'.repeat(32);
+  st.setItem(`arena.lock.saved.${rid}.0011223344556677`, JSON.stringify({ fields: { expiration: 156900 } }));
+  assert.equal(savedLockExpiration(st, rid), 156900);
+  assert.equal(savedLockExpiration(st, 'cd'.repeat(32)), null);
 });
 
 test('a close refuses the deposit', async () => {

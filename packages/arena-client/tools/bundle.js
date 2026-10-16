@@ -304,7 +304,7 @@ out += '         zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_C
 out += '         shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,\n';
 out += '         entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,\n';
 // WHAT AN ENTRY'S STAKE IS MADE OF (kanban #8): the deposit request says it
-out += '         entryBreakdown: entryBreakdown,\n';
+out += '         entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,\n';
 out += '         toHex: toHex, fromHex: fromHex };\n})();\n';
 out += 'if (typeof module !== "undefined") module.exports = BLWPCLIENT;\n';
 
