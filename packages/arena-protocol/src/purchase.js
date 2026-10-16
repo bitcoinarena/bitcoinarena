@@ -16,7 +16,7 @@
 // (no record names a second owner), the same across the game's versions while the item's id stays in its catalogue.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex, fromHex } from './hash.js';
-import { itemOf, itemSplit } from './items.js';
+import { itemOf, itemSplit, itemDevShareOk, ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT } from './items.js';
 import { splitTwoSets } from './donation.js';
 import { refundKeyOf } from './stake-lock.js';
 import { ITEMS_VERSION } from './constants.js';
@@ -25,6 +25,12 @@ import { SERVED_WINDOW_MS } from './served-nodes.js';
 export const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
 export const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
 export const PURCHASE_OUTPUTS_MAX = 255;
+/**
+ * A RECORD WITH THE BUYER'S DEVELOPERS' SHARE (kanban #377): written as version PURCHASE_SHARE_VERSION, the share (a u8 percent, one of
+ * ITEM_DEV_SHARES) after the price. A purchase at the full 50 % is written as before (ITEMS_VERSION, no share byte) - the same bytes
+ * and id a seat that has not rolled yet reads - and a version-10 record reads as 50 %.
+ */
+export const PURCHASE_SHARE_VERSION = 11;
 /** How far before the purchase its served window may end: the buyer's client merges the seats' lists just before it pays. */
 export const PURCHASE_WINDOW_SLACK_MS = 3600000;
 const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -37,9 +43,12 @@ export function encodePurchase(p) {
   if (!Array.isArray(p.outputs) || p.outputs.length < 1 || p.outputs.length > PURCHASE_OUTPUTS_MAX) throw new Error(`a purchase pays 1 to ${PURCHASE_OUTPUTS_MAX} outputs`);
   for (const o of p.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !pIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
     throw new Error('an output names its index, its payee\'s 33-byte key and its msat');
+  const share = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
+  if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const w = new Writer();
-  w.u8(TYPE_ITEM_PURCHASE); w.u16(ITEMS_VERSION);
+  w.u8(TYPE_ITEM_PURCHASE); w.u16(share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
   w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
+  if (share !== ITEM_DEV_SHARE_DEFAULT) w.u8(share);
   w.bytes32(p.playerPubkey); w.bytes32(p.federationId); w.bytes32(p.txid);
   w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs)); w.bytes32(p.servedRoot);
   w.vec(p.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
@@ -51,8 +60,12 @@ export function decodePurchase(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
   const version = r.u16();
-  if (version !== ITEMS_VERSION) throw new Error(`an item purchase of version ${version}`);
-  const p = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64(), playerPubkey: r.bytes32(), federationId: r.bytes32(),
+  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION) throw new Error(`an item purchase of version ${version}`);
+  const head = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64() };
+  const devsPct = version === PURCHASE_SHARE_VERSION ? r.u8() : ITEM_DEV_SHARE_DEFAULT;
+  if (version === PURCHASE_SHARE_VERSION && (devsPct === ITEM_DEV_SHARE_DEFAULT || !itemDevShareOk(devsPct)))
+    throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
+  const p = { ...head, devsPct, playerPubkey: r.bytes32(), federationId: r.bytes32(),
     txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
     outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
   r.end();
@@ -67,8 +80,8 @@ export const purchaseId = (p) => taggedHash(TAG_ITEM_PURCHASE, encodePurchase(p)
  * is paid once, the sum), none of 0 msat. `servedKeys` the served nodes' keys in hex; `networkSet` / `gameSet` the two donation
  * sets' recipients (they must pay keys).
  */
-export function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet }) {
-  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys });
+export function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
+  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys, devsPct });
   const devs = splitTwoSets({ donationMsat: split.devsMsat, networkSet, gameSet });
   if (!devs.owed) throw new Error(`the developers' half cannot be paid: ${devs.why}`);
   const by = new Map();
@@ -99,7 +112,10 @@ export function purchaseStands(p, { manifest, networkSet, gameSet, served, verif
     return no('the served window ends at most an hour before the purchase, and not after it');
   if (!served || BigInt(served.fromMs) !== BigInt(p.servedFromMs) || BigInt(served.toMs) !== BigInt(p.servedToMs) || served.root !== toHex(p.servedRoot))
     return no(`the purchase paid the served list ${toHex(p.servedRoot).slice(0, 16)}, and the one read here is ${served && served.root ? served.root.slice(0, 16) : 'none'}`);
-  let want; try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet }).outputs; }
+  // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is
+  const devsPct = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
+  if (!itemDevShareOk(devsPct)) return no(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %, and the purchase names ${p.devsPct}`);
+  let want; try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct }).outputs; }
   catch (e) { return no(e.message); }
   const got = [...p.outputs].map((o) => ({ pk: toHex(o.pk), msat: o.msat })).sort((a, b) => (a.pk < b.pk ? -1 : 1));
   const line = (o) => `${typeof o.pk === 'string' ? o.pk : toHex(o.pk)}:${o.msat}`;

@@ -63,3 +63,20 @@ test('refused by name: outputs the federation does not hold, or holds otherwise;
   const noFed = await keepItemPurchase({ ...base, p: bought(b32(0x7c)), port: null });
   assert.deepEqual([noFed.ok, noFed.status], [false, 503]);
 });
+
+// THE BUYER'S DEVELOPERS' SHARE (kanban #377, the owner 2026-10-16: "fully optional ... Node fees are never optional"): a 0 % purchase pays
+// the seven nodes alone - 250 sat - and a seat keeps it as the buyer's, the record handed as the page sends it (decoded from its bytes)
+test('a purchase at 0 % - the nodes alone, 250 sat - is kept as the buyer\'s, read back from its bytes as the door reads it', async () => {
+  const { decodePurchase, encodePurchase } = await import('../../arena-protocol/src/purchase.js');
+  const db = openStore(':memory:');
+  const { outputs } = purchaseOutputs({ priceSat: 500n, servedKeys: NODES.map((n) => n.key), networkSet: NET, gameSet: NET, devsPct: 0 });
+  assert.equal(outputs.length, 7);
+  assert.equal(outputs.reduce((t, o) => t + o.msat, 0n), 249998n, '7 x 35714 msat');
+  const rec = { gameDevPubkey: MANIFEST.gameDevPubkey, gameName: 'nextblock', itemId: 'large-truck', priceSat: 500n, devsPct: 0, playerPubkey: BUYER, federationId: b32(0xfe),
+    txid: b32(0x7d), servedFromMs: FROM, servedToMs: TO, servedRoot: b32(0xab), outputs: outputs.map((o, i) => ({ outIdx: i, pk: o.pk, msat: o.msat })), boughtAtMs: TO + 60000n };
+  const signature = schnorr.sign(purchaseId(rec), SECRET);
+  const p = { ...decodePurchase(encodePurchase(rec)), signature };
+  const a = await keepItemPurchase({ p, manifest: MANIFEST, networkSet: NET, gameSet: NET, served: SERVED, port: fedWith(heldFor(p)), db, verify });
+  assert.deepEqual([a.ok, a.kept], [true, 'new'], a.why);
+  assert.deepEqual(itemsOwned(db, { player: toHex(BUYER) }).map((o) => o.itemId), ['large-truck']);
+});

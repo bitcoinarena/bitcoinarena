@@ -56,19 +56,39 @@ export function readItems(r) {
 export const itemOf = (m, id) => (m && Array.isArray(m.items) ? m.items.find((it) => it.id === id) || null : null);
 
 /**
- * THE SPLIT OF ONE PURCHASE, in msat. `priceMsat` a BigInt; `nodes` the served nodes' keys (hex, any order; each once - the served
- * list's keys). Answers { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat },
- * or throws on a price below 1 msat or no served node (a purchase with nobody to pay half to is refused before any money moves).
+ * THE DEVELOPERS' SHARE IS THE BUYER'S CHOICE (kanban #377, the owner 2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game
+ * devs (25/25) but are fully optional ... 50% 40% 30% 20% 10% 0% ... if the ingame donations are zero the price is 250 Sats instead of
+ * 500 sats. Node fees are never optional."). A share is a percent of the item's list price, one of ITEM_DEV_SHARES; the nodes' half
+ * is always paid. 50 is the list price itself, the split as it was.
  */
-export function itemSplit({ priceMsat, nodes }) {
+export const ITEM_DEV_SHARES = Object.freeze([50, 40, 30, 20, 10, 0]);
+export const ITEM_DEV_SHARE_DEFAULT = 50;
+export const itemDevShareOk = (pct) => ITEM_DEV_SHARES.includes(Number(pct));
+/** What a buyer pays for an item of `priceSat` at a developers' share of `devsPct` %: the nodes' half and the share, in sat. */
+export const itemPriceFor = (priceSat, devsPct = ITEM_DEV_SHARE_DEFAULT) => {
+  if (!itemDevShareOk(devsPct)) throw new Error(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
+  const list = BigInt(priceSat);
+  return list / 2n + (list * BigInt(devsPct)) / 100n;
+};
+
+/**
+ * THE SPLIT OF ONE PURCHASE, in msat. `priceMsat` a BigInt (the list price); `nodes` the served nodes' keys (hex, any order; each
+ * once - the served list's keys); `devsPct` the developers' share (ITEM_DEV_SHARES, default 50). Answers { protocolMsat, gameMsat,
+ * devsMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat }, or throws on a price below 1 msat, a share
+ * that is not one of ITEM_DEV_SHARES, or no served node (a purchase with nobody to pay half to is refused before any money moves).
+ * At 50 % the developers take the list price less the node shares' floors, as always; at a lower share that part scaled by
+ * devsPct / 50, floored.
+ */
+export function itemSplit({ priceMsat, nodes, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
   const price = BigInt(priceMsat);
   if (price < 1n) throw new Error('an item costs at least 1 msat');
+  if (!itemDevShareOk(devsPct)) throw new Error(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const keys = [...new Set((nodes || []).map((k) => String(k).toLowerCase()))].sort();
   if (!keys.length) throw new Error('no node served a round in the window: an item\'s half for the nodes has nobody to go to');
   if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
   const perNodeMsat = (price / 2n) / BigInt(keys.length);
   const nodesMsat = perNodeMsat * BigInt(keys.length);
-  const devsMsat = price - nodesMsat;                          // the developers' half and the node shares' floors
+  const devsMsat = ((price - nodesMsat) * BigInt(devsPct)) / 50n;   // the developers' half and the node shares' floors, at the share
   const protocolMsat = devsMsat / 2n;                          // as splitTwoSets: the protocol devs' half floored,
   const gameMsat = devsMsat - protocolMsat;                    // the game dev's the rest
   return { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: keys.map((key) => ({ key, msat: perNodeMsat })), sumMsat: protocolMsat + gameMsat + nodesMsat };
