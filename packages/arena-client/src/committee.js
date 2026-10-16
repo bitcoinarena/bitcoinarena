@@ -165,7 +165,10 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
     }
-    got.seating[role] = found ? found : spoke ? { missing: true, refused } : null;
+    // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (kanban #32, measured 2026-10-16 on live testnet4: guardian-1 handing a
+    // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
+    // went unnamed); settlementSignerNodesFrom refuses the round on it
+    got.seating[role] = found ? { ...found, refused } : spoke ? { missing: true, refused } : null;
     if (found) got.committees[role] = found.seated;
   }
   // EVERY SEAT'S ANSWER FOR EVERY ROLE, against this client's own (kanban #32: the settlement role alone was compared). A seat agrees

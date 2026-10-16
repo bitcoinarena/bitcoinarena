@@ -44,3 +44,11 @@ test('a derivation that failed, or no seating yet, refuses as before', () => {
   assert.throws(() => settlementSignerNodesFrom({ ok: false, why: 'no agreed headers: only 1 of 4 providers gave a chain' }), /could not build the round's committee itself: no agreed headers/);
   assert.throws(() => settlementSignerNodesFrom(derived({ seating: { game: { missing: true, refused: [] }, settlement: null } })), /no signer nodes yet/);
 });
+
+test('the page: a round refused for a seat\'s committee or seating is kept out of the lobby, as a closed round is', async () => {
+  const { readFileSync } = await import('node:fs');
+  const html = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+  const at = html.indexOf('          const refuse = (why) => {');
+  const body = html.slice(at, html.indexOf('\n          };\n', at));
+  assert.match(body, /if \(\/the round is refused: \/\.test\(join\.why\)\) \(window\.BLWP_CLOSED_ROUNDS = window\.BLWP_CLOSED_ROUNDS \|\| new Set\(\)\)\.add\(id\);/);
+});
