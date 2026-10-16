@@ -6818,6 +6818,8 @@ carry no weight in any count.
 - The votes are Bitcoin transactions, as §27A.7.3's: `OP_RETURN`, signed by the bond key, YES / NO /
   ABSTAIN, the last one by height counts.
 - Eligible: the bonds active at the start of the vote (snapshot, so no one bonds in reaction).
+- **Passes at 60 %** *(RULED the owner 2026-10-16: "Voting threshold is 60%")*: YES holds at least 60 % of
+  the bond weight that voted YES or NO (ABSTAIN counts for turnout only).
 - Comments continue.
 
 **Payout.**
@@ -6828,9 +6830,8 @@ carry no weight in any count.
 
 ### 27A.9.4 Open (the owner to decide)
 
-1. **The pass rule of stage 2.** The ticket says "Threshold to activate the payout ... is 2 weeks".
-   That is a period, not a threshold. Proposed: §27A.7.4's MONEY class - turnout ≥ 40 % of the
-   bonded capital, approval ≥ 66 % of the non-abstaining weight.
+1. **A turnout floor for stage 2?** The 60 % is ruled. Without a floor, a few bonds voting alone could
+   pass a payout. Proposed: §27A.7.4's MONEY turnout - at least 40 % of the bonded capital votes.
 2. **Is the developers' 4 % still a donation the player may lower (0-4 %)?** Today the 5 % is.
    Are the nodes' 4 % and the reserves' 2 % mandatory?
 3. **Items: does 40 / 40 / 20 replace the player's choice of the developers' share (#377, 50-0 %)?**
