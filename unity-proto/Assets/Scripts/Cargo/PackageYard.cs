@@ -76,6 +76,7 @@ public class PackageYard : MonoBehaviour
         public float reach;          // half its diagonal, plus the bob
         public Vector3 axis;         // what it turns about
         public float spin, bob, phase, size;
+        public Rect label;           // its caption's place in its cell, in GUI pixels (kanban #375)
     }
 
     readonly List<Yarded> _yard = new List<Yarded>();
@@ -157,6 +158,65 @@ public class PackageYard : MonoBehaviour
         _stacked = true;
     }
 
+    /// <summary>The smallest cell a crate and its two caption lines read in, in css pixels (kanban #375).</summary>
+    public const float MinCellCssW = 88f, MinCellCssH = 62f;
+
+    /// <summary>
+    /// THE GRID THE PANEL HOLDS (kanban #375, the owner 2026-10-16 on his phone: "The labels for the cargo items must be gleichmäßig
+    /// and fit the dialog" - seven columns at 390 px gave each label 50 css px, and "FILLS 13%" with its BTC line overlapped its
+    /// neighbours and ran out of the panel): as many columns as cells of MinCellCssW fit across, 3 to perRow, and as many rows as
+    /// fit down, 2 to 4 - in css pixels, so a phone and a desktop read the same size.
+    /// </summary>
+    public (int cols, int rows) Grid(int w, int h)
+    {
+        var area = WorkArea(w, h);
+        float css = Mathf.Max(1f, Blwp.DailyLobby.UiScale());
+        int cols = Mathf.Clamp(Mathf.FloorToInt(area.width / css / MinCellCssW), 3, Mathf.Max(3, perRow));
+        int rows = Mathf.Clamp(Mathf.FloorToInt(area.height / css / MinCellCssH), 2, 4);
+        return (cols, rows);
+    }
+
+    /// <summary>How many stand on the ramp at this screen: what the grid holds, at most <see cref="show"/>.</summary>
+    public int ShowNow { get { var g = Grid(Screen.width, Screen.height); return Mathf.Min(show, g.cols * g.rows); } }
+
+    /// <summary>The columns of the grid at this screen.</summary>
+    public int Cols => Mathf.Min(Grid(Screen.width, Screen.height).cols, Mathf.Max(1, _yard.Count));
+
+    /// <summary>
+    /// THE ORDER ON THE RAMP (kanban #375, the owner 2026-10-16: "be more diverse but largest first"): the biggest parcel first -
+    /// the bed share it buys - and among the same size the best paying.
+    /// </summary>
+    public static int RampOrder(MempoolFeed.Tx a, MempoolFeed.Tx b)
+    {
+        int bySize = CargoBay.RoomFor(b).CompareTo(CargoBay.RoomFor(a));
+        return bySize != 0 ? bySize : b.feeSats.CompareTo(a.feeSats);
+    }
+
+    /// <summary>
+    /// A DIVERSE CHOICE (kanban #375: "it must not be all of the same so no 9% 9% 9%"): the offers grouped by the room they take,
+    /// each group best paying first, and taken one from each group in turn, the largest group first - so the ramp spreads over
+    /// every size the mempool has before it repeats one. The whole list comes back in that turn order; the ramp takes the head.
+    /// </summary>
+    public static List<MempoolFeed.Tx> Diverse(IEnumerable<MempoolFeed.Tx> offers)
+    {
+        var groups = new SortedDictionary<float, List<MempoolFeed.Tx>>(Comparer<float>.Create((a, b) => b.CompareTo(a)));
+        foreach (var tx in offers)
+        {
+            float room = CargoBay.RoomFor(tx);
+            if (!groups.TryGetValue(room, out var g)) groups[room] = g = new List<MempoolFeed.Tx>();
+            g.Add(tx);
+        }
+        foreach (var g in groups.Values) g.Sort((a, b) => b.feeSats.CompareTo(a.feeSats));
+        var turn = new List<MempoolFeed.Tx>();
+        for (int i = 0; ; i++)
+        {
+            bool any = false;
+            foreach (var g in groups.Values) if (i < g.Count) { turn.Add(g[i]); any = true; }
+            if (!any) break;
+        }
+        return turn;
+    }
+
     public void Open(IEnumerable<MempoolFeed.Tx> offers)
     {
         Close();
@@ -164,18 +224,18 @@ public class PackageYard : MonoBehaviour
         _open = true;
         _showing = Signature(offers);
 
-        // Best PAYING first. The fee is what the run banks, so that is the
-        // number the ramp is ordered by - sorting by the value being moved
-        // ranked packages by something the player is never paid for.
-        var sorted = new List<MempoolFeed.Tx>(offers);
-        sorted.Sort((a, b) => b.feeSats.CompareTo(a.feeSats));
+        // A SPREAD OF SIZES, LARGEST FIRST (kanban #375; before: the best paying 21, almost all the small transactions that pay
+        // the most per byte - "FILLS 9%" across the ramp). The fee still decides within a size.
+        var sorted = Diverse(offers);
+        int take = ShowNow;
 
         _reserve.Clear();
-        if (sorted.Count > show)
+        if (sorted.Count > take)
         {
-            _reserve.AddRange(sorted.GetRange(show, sorted.Count - show));
-            sorted.RemoveRange(show, sorted.Count - show);
+            _reserve.AddRange(sorted.GetRange(take, sorted.Count - take));
+            sorted.RemoveRange(take, sorted.Count - take);
         }
+        sorted.Sort(RampOrder);
 
         foreach (var tx in sorted) _yard.Add(Build(tx));
         Recolour();
@@ -305,6 +365,14 @@ public class PackageYard : MonoBehaviour
         return new Rect(x, h * panelTop, w - x * 2f, h * (panelBottom - panelTop));
     }
 
+    /// <summary>The working area: inside the frame, below the title.</summary>
+    public Rect WorkArea(int w, int h)
+    {
+        var panel = PanelRect(w, h);
+        float titleH = panel.height * titleBar;
+        return new Rect(panel.x + panel.width * 0.02f, panel.y + titleH, panel.width * 0.96f, panel.height - titleH - panel.height * 0.04f);
+    }
+
     /// <summary>The bar across the top of the panel, where the title goes.</summary>
     public Rect TitleRect(int w, int h)
     {
@@ -331,16 +399,11 @@ public class PackageYard : MonoBehaviour
 
         int sw = Screen.width, sh = Screen.height;
         var panel = PanelRect(sw, sh);
-        float titleH = panel.height * titleBar;
+        var area = WorkArea(sw, sh);
 
-        // the working area: inside the frame, below the title
-        var area = new Rect(panel.x + panel.width * 0.02f,
-                            panel.y + titleH,
-                            panel.width * 0.96f,
-                            panel.height - titleH - panel.height * 0.04f);
-
-        int cols = Mathf.Min(perRow, _yard.Count);
-        int rows = Mathf.CeilToInt(_yard.Count / (float)cols);
+        // THE GRID FOR THIS SCREEN (kanban #375): its columns, and every row the same height whether full or not
+        int cols = Mathf.Min(Grid(sw, sh).cols, _yard.Count);
+        int rows = Mathf.Max(Mathf.CeilToInt(_yard.Count / (float)cols), Mathf.Min(Grid(sw, sh).rows, Mathf.CeilToInt(ShowNow / (float)cols)));
 
         float cellW = area.width / cols;
         float cellH = area.height / rows;
@@ -388,6 +451,10 @@ public class PackageYard : MonoBehaviour
             float rowTop = areaTopWorld - row * cellWorldH;
             float wy = rowTop - reach - cellWorldH * 0.04f;
 
+            // THE CAPTION'S PLACE: the bottom of its own cell, the cell's width - one baseline a row, never past the next cell
+            float cellTop = area.y + row * cellH;
+            _yard[i].label = new Rect(px - cellW * 0.48f, cellTop + cellH * (1f - captionShare), cellW * 0.96f, cellH * captionShare);
+
             var resting = FromScreen(px, 0f, depth);
             _yard[i].resting = new Vector3(resting.x, wy, depth);
             _yard[i].crate.transform.localPosition = _yard[i].resting;
@@ -422,6 +489,7 @@ public class PackageYard : MonoBehaviour
         public Vector2 screen;      // centre of the crate, in screen pixels
         public float radius;        // roughly half its drawn size, in pixels
         public bool loaded;
+        public Rect label;          // where its words go: the bottom of its own cell, the cell's width (kanban #375)
     }
 
     /// <summary>
@@ -454,6 +522,7 @@ public class PackageYard : MonoBehaviour
                 screen = new Vector2(p.x, Screen.height - p.y),
                 radius = Mathf.Abs(edge.y - p.y),
                 loaded = loaded,
+                label = y.label,
             });
         }
         return list;
@@ -522,7 +591,7 @@ public class PackageYard : MonoBehaviour
     /// <summary>Put one back on the ramp, making room if it is full.</summary>
     void Return(MempoolFeed.Tx tx)
     {
-        if (_yard.Count >= show)
+        if (_yard.Count >= ShowNow)
         {
             // the least valuable one on the ramp steps back into the queue
             int worst = 0;
@@ -540,7 +609,7 @@ public class PackageYard : MonoBehaviour
 
     void Refill()
     {
-        while (_yard.Count < show && _reserve.Count > 0)
+        while (_yard.Count < ShowNow && _reserve.Count > 0)
         {
             var next = _reserve[0];
             _reserve.RemoveAt(0);
@@ -590,8 +659,8 @@ public class PackageYard : MonoBehaviour
         Layout();
     }
 
-    /// <summary>Highest value first, so the ramp always reads the same way.</summary>
-    void Sort() => _yard.Sort((a, b) => b.tx.feeSats.CompareTo(a.tx.feeSats));
+    /// <summary>Largest first, the best paying within a size (RampOrder), so the ramp always reads the same way.</summary>
+    void Sort() => _yard.Sort((a, b) => RampOrder(a.tx, b.tx));
 
     public List<MempoolFeed.Tx> Remaining()
     {
