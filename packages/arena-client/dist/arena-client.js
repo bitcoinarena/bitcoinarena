@@ -4941,6 +4941,249 @@ function withinTolerance(signedAtMs, atMs) {
   return (d < 0n ? -d : d) <= FINAL_TOLERANCE_MS;
 }
 
+// ---- arena-protocol/src/tx.js
+// A Bitcoin transaction, read far enough to find an endpoint in it.
+//
+// Section 25.1 puts discovery in the funding transaction itself: the body of
+// the advertisement rides in the witness, and the bond output commits to
+// `H(NodeAdvertisement)`. That is what makes discovery need no directory - but
+// only if the commitment is READ OUT OF THE TRANSACTION. Handed in beside it,
+// a commitment is worth nothing: whoever hands over the advertisement hands
+// over the hash of the advertisement they wanted, and every check passes.
+//
+// So the txid is COMPUTED here, never accepted. It is the double hash of the
+// transaction without its marker, flag and witness - the one number a page
+// cannot choose without changing the bytes it is derived from - and it is what
+// the merkle proof must then be about.
+//
+// NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
+// checked, no amount is summed. It parses a serialization and answers two
+// questions: what is this transaction called, and what does it commit to.
+
+/** Bitcoin hashes twice, everywhere. */
+const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
+
+/** OP_RETURN: the opcode that makes an output a commitment rather than money. */
+const OP_RETURN = 0x6a;
+
+function need(bytes, at, n, what) {
+  if (at + n > bytes.length)
+    throw new Error(`the transaction ends inside its ${what}`);
+  return at + n;
+}
+
+/**
+ * Bitcoin's variable-length integer.
+ *
+ * Refuses the long forms of a short number. A parser that accepted `fd0100`
+ * for 1 would give two byte strings the same meaning, and the txid is a hash
+ * OF the bytes - two spellings would be two names for one transaction.
+ */
+function readVarint(bytes, at) {
+  need(bytes, at, 1, 'length');
+  const first = bytes[at];
+  if (first < 0xfd) return { value: first, next: at + 1 };
+  if (first === 0xfd) {
+    need(bytes, at, 3, 'length');
+    const v = bytes[at + 1] | (bytes[at + 2] << 8);
+    if (v < 0xfd) throw new Error('a length is written longer than it needs to be');
+    return { value: v, next: at + 3 };
+  }
+  if (first === 0xfe) {
+    need(bytes, at, 5, 'length');
+    const v = (bytes[at + 1] | (bytes[at + 2] << 8) | (bytes[at + 3] << 16)
+      | (bytes[at + 4] << 24)) >>> 0;
+    if (v <= 0xffff) throw new Error('a length is written longer than it needs to be');
+    return { value: v, next: at + 5 };
+  }
+  // 0xff is eight bytes. A transaction that large does not exist and a length
+  // past what an array can hold is refused rather than truncated.
+  throw new Error('a length larger than this parser will read');
+}
+
+function readSlice(bytes, at, what) {
+  const { value, next } = readVarint(bytes, at);
+  const end = need(bytes, next, value, what);
+  return { bytes: bytes.slice(next, end), next: end };
+}
+
+/**
+ * Parses a transaction and computes its txid.
+ *
+ * The txid covers version, inputs, outputs and locktime and NOT the witness -
+ * that is what segwit is - so a body carried in the witness is not committed
+ * to by the name of the transaction. It is committed to by an output, and
+ * `commitmentsOf` is where that is read. Both halves are needed and neither is
+ * enough: the witness says what the advertisement is, the output says that
+ * this transaction meant it.
+ */
+function parseTransaction(raw) {
+  if (!(raw instanceof Uint8Array) || raw.length < 10)
+    throw new Error(`a transaction is more than ${raw && raw.length} bytes`);
+
+  let at = need(raw, 0, 4, 'version');
+  const version = (raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24)) >>> 0;
+
+  const segwit = raw[4] === 0x00 && raw[5] === 0x01;
+  if (segwit) at += 2;
+  const bodyFrom = at;
+
+  const ins = readVarint(raw, at);
+  if (ins.value === 0) throw new Error('a transaction with no inputs');
+  at = ins.next;
+  const inputs = [];
+  for (let i = 0; i < ins.value; i++) {
+    const end = need(raw, at, 36, 'outpoint');
+    const previousTxid = raw.slice(at, at + 32);
+    const previousVout = (raw[at + 32] | (raw[at + 33] << 8)
+      | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
+    const script = readSlice(raw, end, 'input script');
+    at = need(raw, script.next, 4, 'sequence');
+    inputs.push({ previousTxid, previousVout, script: script.bytes });
+  }
+
+  const outs = readVarint(raw, at);
+  at = outs.next;
+  const outputs = [];
+  for (let i = 0; i < outs.value; i++) {
+    const end = need(raw, at, 8, 'value');
+    let value = 0n;
+    for (let b = 7; b >= 0; b--) value = (value << 8n) | BigInt(raw[at + b]);
+    const script = readSlice(raw, end, 'output script');
+    at = script.next;
+    outputs.push({ value, script: script.bytes });
+  }
+  const bodyTo = at;
+
+  const witnesses = [];
+  if (segwit) {
+    for (let i = 0; i < inputs.length; i++) {
+      const items = readVarint(raw, at);
+      at = items.next;
+      const stack = [];
+      for (let k = 0; k < items.value; k++) {
+        const item = readSlice(raw, at, 'witness item');
+        at = item.next;
+        stack.push(item.bytes);
+      }
+      witnesses.push(stack);
+    }
+  }
+
+  const end = need(raw, at, 4, 'locktime');
+  const locktime = (raw[at] | (raw[at + 1] << 8) | (raw[at + 2] << 16)
+    | (raw[at + 3] << 24)) >>> 0;
+  if (end !== raw.length)
+    throw new Error(`${raw.length - end} bytes left over after the transaction`);
+
+  // The name of the transaction: the same bytes with the witness taken out.
+  const stripped = new Uint8Array(4 + (bodyTo - bodyFrom) + 4);
+  stripped.set(raw.subarray(0, 4), 0);
+  stripped.set(raw.subarray(bodyFrom, bodyTo), 4);
+  stripped.set(raw.subarray(at, at + 4), 4 + (bodyTo - bodyFrom));
+
+  return {
+    version, segwit, inputs, outputs, witnesses, locktime,
+    txid: hash256(stripped),
+  };
+}
+
+/**
+ * What the outputs commit to: the data push of every `OP_RETURN`.
+ *
+ * A bond output commits to `H(NodeAdvertisement)` "either in an OP_RETURN
+ * output of the funding transaction or in the taproot script path" (5A.2).
+ * Only the first form is readable from the transaction alone - a taproot
+ * script path is invisible until it is spent - so that is the one discovery
+ * can use, and a bond whose commitment is only in the script path is not
+ * findable by this. It is not refused here; it is simply not present.
+ */
+function commitmentsOf(tx) {
+  const out = [];
+  for (const o of tx.outputs) {
+    const s = o.script;
+    if (s.length < 2 || s[0] !== OP_RETURN) continue;
+    const op = s[1];
+    let from = 2;
+    let n = 0;
+    if (op >= 1 && op <= 75) n = op;
+    else if (op === 0x4c && s.length >= 3) { n = s[2]; from = 3; }
+    else if (op === 0x4d && s.length >= 4) { n = s[2] | (s[3] << 8); from = 4; }
+    else continue;
+    if (from + n !== s.length) continue;     // a push that does not fill the script
+    out.push(s.slice(from, from + n));
+  }
+  return out;
+}
+
+/** Every witness item of every input, flattened - a place to look, not a claim. */
+function witnessItemsOf(tx) {
+  const out = [];
+  for (const stack of tx.witnesses) for (const item of stack) out.push(item);
+  return out;
+}
+
+/**
+ * EVERY WITNESS ITEM, AND EVERY RUN OF CONSECUTIVE ITEMS IN ONE STACK, JOINED.
+ *
+ * A signed advertisement is 266 bytes (`arena-protocol/tools/advert-layout.mjs`) and Bitcoin Core holds a
+ * tapscript witness stack item to 80 - measured on a real node, the bond was refused
+ * `bad-witness-nonstandard` with the stack [64 sig, 266 body, 35 script, 33 control]. So §5A.2's body
+ * travels in pieces of at most 80 bytes with an `OP_DROP` each, and a reader that only looked at single
+ * items would see four fragments and no advertisement at all.
+ *
+ * Single items come FIRST, so a one-item body - every bond posted before this - is found exactly as it
+ * was and at the same cost. The runs are tried after, and a run is believed only if its bytes decode AND
+ * its `advertId` matches a commitment in the transaction's own outputs, so joining bytes that were never
+ * one body cannot invent an advertisement.
+ */
+function witnessRunsOf(tx) {
+  const out = witnessItemsOf(tx);
+  for (const stack of tx.witnesses) {
+    for (let i = 0; i < stack.length; i++) {
+      let length = stack[i].length;
+      for (let j = i + 1; j < stack.length; j++) {
+        length += stack[j].length;
+        const run = new Uint8Array(length);
+        let at = 0;
+        for (let k = i; k <= j; k++) { run.set(stack[k], at); at += stack[k].length; }
+        out.push(run);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * THE MERKLE ROOT OF A BLOCK'S TRANSACTIONS, Bitcoin's way.
+ *
+ * An odd level DUPLICATES the last hash here, which is exactly the rule the
+ * census refuses to use - `merkleRoot` in `census.js` promotes instead, and
+ * says why: duplication is CVE-2012-2459 and lets two leaf sets share a root.
+ *
+ * This one has no such freedom. It is not a construction of ours, it is a
+ * question about a block that already exists, and the only useful answer is
+ * the one Bitcoin's own header agrees with. Getting it "right" here would
+ * simply fail to match every real block.
+ */
+function blockMerkleRoot(txids) {
+  if (!txids.length) throw new Error('a block has at least a coinbase');
+  let level = txids;
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = i + 1 < level.length ? level[i + 1] : level[i];
+      const pair = new Uint8Array(64);
+      pair.set(left, 0);
+      pair.set(right, 32);
+      next.push(hash256(pair));
+    }
+    level = next;
+  }
+  return level[0];
+}
+
 // ---- arena-protocol/src/advert.js
 // A node advertisement: who a node is, and where to reach it.
 //
@@ -5745,249 +5988,6 @@ function bondOutputKeyMatches(onChain, inputs, { tweakPoint, combine } = {}) {
   return { ok: true, ...built };
 }
 
-// ---- arena-protocol/src/tx.js
-// A Bitcoin transaction, read far enough to find an endpoint in it.
-//
-// Section 25.1 puts discovery in the funding transaction itself: the body of
-// the advertisement rides in the witness, and the bond output commits to
-// `H(NodeAdvertisement)`. That is what makes discovery need no directory - but
-// only if the commitment is READ OUT OF THE TRANSACTION. Handed in beside it,
-// a commitment is worth nothing: whoever hands over the advertisement hands
-// over the hash of the advertisement they wanted, and every check passes.
-//
-// So the txid is COMPUTED here, never accepted. It is the double hash of the
-// transaction without its marker, flag and witness - the one number a page
-// cannot choose without changing the bytes it is derived from - and it is what
-// the merkle proof must then be about.
-//
-// NOTHING HERE IS BITCOIN CONSENSUS. No script is executed, no signature is
-// checked, no amount is summed. It parses a serialization and answers two
-// questions: what is this transaction called, and what does it commit to.
-
-/** Bitcoin hashes twice, everywhere. */
-const hash256 = (bytes) => sha256bytes(sha256bytes(bytes));
-
-/** OP_RETURN: the opcode that makes an output a commitment rather than money. */
-const OP_RETURN = 0x6a;
-
-function need(bytes, at, n, what) {
-  if (at + n > bytes.length)
-    throw new Error(`the transaction ends inside its ${what}`);
-  return at + n;
-}
-
-/**
- * Bitcoin's variable-length integer.
- *
- * Refuses the long forms of a short number. A parser that accepted `fd0100`
- * for 1 would give two byte strings the same meaning, and the txid is a hash
- * OF the bytes - two spellings would be two names for one transaction.
- */
-function readVarint(bytes, at) {
-  need(bytes, at, 1, 'length');
-  const first = bytes[at];
-  if (first < 0xfd) return { value: first, next: at + 1 };
-  if (first === 0xfd) {
-    need(bytes, at, 3, 'length');
-    const v = bytes[at + 1] | (bytes[at + 2] << 8);
-    if (v < 0xfd) throw new Error('a length is written longer than it needs to be');
-    return { value: v, next: at + 3 };
-  }
-  if (first === 0xfe) {
-    need(bytes, at, 5, 'length');
-    const v = (bytes[at + 1] | (bytes[at + 2] << 8) | (bytes[at + 3] << 16)
-      | (bytes[at + 4] << 24)) >>> 0;
-    if (v <= 0xffff) throw new Error('a length is written longer than it needs to be');
-    return { value: v, next: at + 5 };
-  }
-  // 0xff is eight bytes. A transaction that large does not exist and a length
-  // past what an array can hold is refused rather than truncated.
-  throw new Error('a length larger than this parser will read');
-}
-
-function readSlice(bytes, at, what) {
-  const { value, next } = readVarint(bytes, at);
-  const end = need(bytes, next, value, what);
-  return { bytes: bytes.slice(next, end), next: end };
-}
-
-/**
- * Parses a transaction and computes its txid.
- *
- * The txid covers version, inputs, outputs and locktime and NOT the witness -
- * that is what segwit is - so a body carried in the witness is not committed
- * to by the name of the transaction. It is committed to by an output, and
- * `commitmentsOf` is where that is read. Both halves are needed and neither is
- * enough: the witness says what the advertisement is, the output says that
- * this transaction meant it.
- */
-function parseTransaction(raw) {
-  if (!(raw instanceof Uint8Array) || raw.length < 10)
-    throw new Error(`a transaction is more than ${raw && raw.length} bytes`);
-
-  let at = need(raw, 0, 4, 'version');
-  const version = (raw[0] | (raw[1] << 8) | (raw[2] << 16) | (raw[3] << 24)) >>> 0;
-
-  const segwit = raw[4] === 0x00 && raw[5] === 0x01;
-  if (segwit) at += 2;
-  const bodyFrom = at;
-
-  const ins = readVarint(raw, at);
-  if (ins.value === 0) throw new Error('a transaction with no inputs');
-  at = ins.next;
-  const inputs = [];
-  for (let i = 0; i < ins.value; i++) {
-    const end = need(raw, at, 36, 'outpoint');
-    const previousTxid = raw.slice(at, at + 32);
-    const previousVout = (raw[at + 32] | (raw[at + 33] << 8)
-      | (raw[at + 34] << 16) | (raw[at + 35] << 24)) >>> 0;
-    const script = readSlice(raw, end, 'input script');
-    at = need(raw, script.next, 4, 'sequence');
-    inputs.push({ previousTxid, previousVout, script: script.bytes });
-  }
-
-  const outs = readVarint(raw, at);
-  at = outs.next;
-  const outputs = [];
-  for (let i = 0; i < outs.value; i++) {
-    const end = need(raw, at, 8, 'value');
-    let value = 0n;
-    for (let b = 7; b >= 0; b--) value = (value << 8n) | BigInt(raw[at + b]);
-    const script = readSlice(raw, end, 'output script');
-    at = script.next;
-    outputs.push({ value, script: script.bytes });
-  }
-  const bodyTo = at;
-
-  const witnesses = [];
-  if (segwit) {
-    for (let i = 0; i < inputs.length; i++) {
-      const items = readVarint(raw, at);
-      at = items.next;
-      const stack = [];
-      for (let k = 0; k < items.value; k++) {
-        const item = readSlice(raw, at, 'witness item');
-        at = item.next;
-        stack.push(item.bytes);
-      }
-      witnesses.push(stack);
-    }
-  }
-
-  const end = need(raw, at, 4, 'locktime');
-  const locktime = (raw[at] | (raw[at + 1] << 8) | (raw[at + 2] << 16)
-    | (raw[at + 3] << 24)) >>> 0;
-  if (end !== raw.length)
-    throw new Error(`${raw.length - end} bytes left over after the transaction`);
-
-  // The name of the transaction: the same bytes with the witness taken out.
-  const stripped = new Uint8Array(4 + (bodyTo - bodyFrom) + 4);
-  stripped.set(raw.subarray(0, 4), 0);
-  stripped.set(raw.subarray(bodyFrom, bodyTo), 4);
-  stripped.set(raw.subarray(at, at + 4), 4 + (bodyTo - bodyFrom));
-
-  return {
-    version, segwit, inputs, outputs, witnesses, locktime,
-    txid: hash256(stripped),
-  };
-}
-
-/**
- * What the outputs commit to: the data push of every `OP_RETURN`.
- *
- * A bond output commits to `H(NodeAdvertisement)` "either in an OP_RETURN
- * output of the funding transaction or in the taproot script path" (5A.2).
- * Only the first form is readable from the transaction alone - a taproot
- * script path is invisible until it is spent - so that is the one discovery
- * can use, and a bond whose commitment is only in the script path is not
- * findable by this. It is not refused here; it is simply not present.
- */
-function commitmentsOf(tx) {
-  const out = [];
-  for (const o of tx.outputs) {
-    const s = o.script;
-    if (s.length < 2 || s[0] !== OP_RETURN) continue;
-    const op = s[1];
-    let from = 2;
-    let n = 0;
-    if (op >= 1 && op <= 75) n = op;
-    else if (op === 0x4c && s.length >= 3) { n = s[2]; from = 3; }
-    else if (op === 0x4d && s.length >= 4) { n = s[2] | (s[3] << 8); from = 4; }
-    else continue;
-    if (from + n !== s.length) continue;     // a push that does not fill the script
-    out.push(s.slice(from, from + n));
-  }
-  return out;
-}
-
-/** Every witness item of every input, flattened - a place to look, not a claim. */
-function witnessItemsOf(tx) {
-  const out = [];
-  for (const stack of tx.witnesses) for (const item of stack) out.push(item);
-  return out;
-}
-
-/**
- * EVERY WITNESS ITEM, AND EVERY RUN OF CONSECUTIVE ITEMS IN ONE STACK, JOINED.
- *
- * A signed advertisement is 266 bytes (`arena-protocol/tools/advert-layout.mjs`) and Bitcoin Core holds a
- * tapscript witness stack item to 80 - measured on a real node, the bond was refused
- * `bad-witness-nonstandard` with the stack [64 sig, 266 body, 35 script, 33 control]. So §5A.2's body
- * travels in pieces of at most 80 bytes with an `OP_DROP` each, and a reader that only looked at single
- * items would see four fragments and no advertisement at all.
- *
- * Single items come FIRST, so a one-item body - every bond posted before this - is found exactly as it
- * was and at the same cost. The runs are tried after, and a run is believed only if its bytes decode AND
- * its `advertId` matches a commitment in the transaction's own outputs, so joining bytes that were never
- * one body cannot invent an advertisement.
- */
-function witnessRunsOf(tx) {
-  const out = witnessItemsOf(tx);
-  for (const stack of tx.witnesses) {
-    for (let i = 0; i < stack.length; i++) {
-      let length = stack[i].length;
-      for (let j = i + 1; j < stack.length; j++) {
-        length += stack[j].length;
-        const run = new Uint8Array(length);
-        let at = 0;
-        for (let k = i; k <= j; k++) { run.set(stack[k], at); at += stack[k].length; }
-        out.push(run);
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * THE MERKLE ROOT OF A BLOCK'S TRANSACTIONS, Bitcoin's way.
- *
- * An odd level DUPLICATES the last hash here, which is exactly the rule the
- * census refuses to use - `merkleRoot` in `census.js` promotes instead, and
- * says why: duplication is CVE-2012-2459 and lets two leaf sets share a root.
- *
- * This one has no such freedom. It is not a construction of ours, it is a
- * question about a block that already exists, and the only useful answer is
- * the one Bitcoin's own header agrees with. Getting it "right" here would
- * simply fail to match every real block.
- */
-function blockMerkleRoot(txids) {
-  if (!txids.length) throw new Error('a block has at least a coinbase');
-  let level = txids;
-  while (level.length > 1) {
-    const next = [];
-    for (let i = 0; i < level.length; i += 2) {
-      const left = level[i];
-      const right = i + 1 < level.length ? level[i + 1] : level[i];
-      const pair = new Uint8Array(64);
-      pair.set(left, 0);
-      pair.set(right, 32);
-      next.push(hash256(pair));
-    }
-    level = next;
-  }
-  return level[0];
-}
-
 // ---- arena-protocol/src/chain.js
 // Reading Bitcoin without trusting whoever handed it to you.
 //
@@ -6538,6 +6538,2585 @@ function acceptAdvert({
     bondSats: seen.valueSats,
     unchecked: seen.unchecked,
     advert: taken.advert,
+  };
+}
+
+// ---- arena-protocol/src/advert-update.js
+// AN ADVERTISEMENT UPDATE, NOT A NEW BOND (multiplayer_p2p.md §5A.2; the owner 2026-09-28: "Advertisement updates, not new
+// bonds. Spec 5A.2 is the path. Bond 0c82db59 stays the bond").
+//
+// "A new advertisement is an update, not a new bond. The bond commits, at its creation, to the node's first
+// advertisement. Every later one is an advertisement update: one small transaction that pays the BOND_MARKER dust (so
+// it is findable, as a bond is), carries OP_RETURN "ARN" ADV bond_outpoint H(NodeAdvertisement), carries the body in
+// its witness (§25.1), and is signed by node_pubkey. It spends no bond and starts no maturity clock. The census reads,
+// for each unspent bond, the newest valid update confirmed at or below census_height, else the advertisement the bond
+// committed to at creation. An update whose node_pubkey is not the bond's is not an update of that bond."
+//
+// THE KIND BYTE IS OURS, as ROUND's 'R' and SERIES' 'S' are: ADV is 0x41, 'A'. The payload is 72 bytes:
+//   "ARN" 'A' || bond txid (32, the byte order parseTransaction computes) || bond vout (u32 LE) || H(advertisement)
+// The signed body travels in the witness exactly as a bond's does, in pieces the carrier script drops.
+//
+// WHAT THIS FILE DOES NOT DO: check the signature. The protocol package carries no curve; every reader passes its own
+// BIP-340 verify, as the census's advertisement check does, and an update nobody verified is never applied.
+
+
+
+const ADVERT_UPDATE_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x41]);     // "ARN" 'A'
+const ADVERT_UPDATE_BYTES = 4 + 32 + 4 + 32;
+
+const sameUpdateBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/** The 72 bytes an update's OP_RETURN carries. */
+function advertUpdatePayload({ bondTxid, bondVout, advertIdBytes }) {
+  if (!(bondTxid instanceof Uint8Array) || bondTxid.length !== 32) throw new TypeError('an update names a 32-byte bond txid');
+  if (!Number.isInteger(bondVout) || bondVout < 0) throw new TypeError('an update names the bond output index');
+  if (!(advertIdBytes instanceof Uint8Array) || advertIdBytes.length !== 32) throw new TypeError('an update commits to a 32-byte advertisement id');
+  const out = new Uint8Array(ADVERT_UPDATE_BYTES);
+  out.set(ADVERT_UPDATE_MAGIC, 0);
+  out.set(bondTxid, 4);
+  new DataView(out.buffer).setUint32(36, bondVout, true);
+  out.set(advertIdBytes, 40);
+  return out;
+}
+
+/** The payload's fields, or null for any other commitment. */
+function readAdvertUpdatePayload(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== ADVERT_UPDATE_BYTES || !sameUpdateBytes(bytes.subarray(0, 4), ADVERT_UPDATE_MAGIC)) return null;
+  return { bondTxid: bytes.slice(4, 36), bondVout: new DataView(bytes.buffer, bytes.byteOffset).getUint32(36, true), advertId: bytes.slice(40, 72) };
+}
+
+/**
+ * What an update transaction says: the bond it updates, the advertisement it commits to, its signature and txid - or
+ * why it is not an update. It must pay the network's marker, carry exactly the payload, and carry in its witness the
+ * signed body whose id the payload names. The signature is the caller's to check.
+ */
+function readAdvertUpdate(transaction, { network = 'regtest' } = {}) {
+  let tx;
+  try { tx = typeof transaction === 'object' && transaction.outputs ? transaction : parseTransaction(transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+  const payloads = commitmentsOf(tx).map(readAdvertUpdatePayload).filter(Boolean);
+  if (payloads.length !== 1) return { ok: false, why: payloads.length ? 'that transaction names more than one update' : 'that transaction carries no advertisement update' };
+  if (!paysBondMarker(tx, network)) return { ok: false, why: 'an update pays the bond marker, and that transaction does not' };
+  const p = payloads[0];
+  let taken = null;
+  for (const item of witnessRunsOf(tx)) {
+    try {
+      const { body, signature } = splitSignedAdvert(item);
+      const advert = decodeAdvert(body);
+      if (sameUpdateBytes(advertId(advert), p.advertId)) { taken = { advert, signature }; break; }
+    } catch { /* not a signed body */ }
+  }
+  if (!taken) return { ok: false, why: 'the update commits to an advertisement its witness does not carry' };
+  return { ok: true, txid: tx.txid, bondTxid: p.bondTxid, bondVout: p.bondVout, advert: taken.advert,
+    advertId: p.advertId, signature: taken.signature, nodePubkey: taken.advert.nodePubkey };
+}
+
+/**
+ * An update, proved into a header, for the bond `{ txid, vout, nodePubkey }`, signed by that key (`verify(sig, msg,
+ * key)`). The answer carries the update; the caller keeps the newest by height and position.
+ */
+async function acceptAdvertUpdate({ transaction, header, branch, position, network, bond, verify }) {
+  const read = readAdvertUpdate(transaction, { network });
+  if (!read.ok) return read;
+  if (header && !provesTransaction(header, read.txid, branch, position)) return { ok: false, why: 'the update is not in that block' };
+  return checkAgainstBond(read, bond, verify);
+}
+
+/** The rule every reader applies to a read update: it names this bond, by this bond's key, signed by that key. */
+async function checkAgainstBond(read, bond, verify) {
+  // A MISSING OR MALFORMED BOND IS REFUSED BY NAME: measured before, no bond threw "Cannot read properties of undefined
+  // (reading 'txid')" here and in acceptAdvertUpdate.
+  if (!bond || !(bond.txid instanceof Uint8Array) || bond.txid.length !== 32 || !Number.isInteger(bond.vout) || bond.vout < 0
+      || !(bond.nodePubkey instanceof Uint8Array) || bond.nodePubkey.length !== 32)
+    return { ok: false, why: 'no bond { txid, vout, nodePubkey } was given, so the update is an update of nothing' };
+  if (!sameUpdateBytes(read.bondTxid, bond.txid) || read.bondVout !== bond.vout) return { ok: false, why: 'the update names another bond' };
+  if (!sameUpdateBytes(read.nodePubkey, bond.nodePubkey)) return { ok: false, why: 'an update whose node key is not the bond\'s is not an update of that bond' };
+  if (typeof verify !== 'function') return { ok: false, why: 'no signature check was given, so no update is applied' };
+  if (!await verify(read.signature, read.advertId, read.nodePubkey)) return { ok: false, why: 'the update is not signed by the bond\'s node key' };
+  return { ok: true, ...read };
+}
+
+/**
+ * THE NEWEST VALID UPDATE PER BOND, from blocks (a chain view: { blocks: [{ transactions }], firstHeight }), at or
+ * below `atHeight`, for the census's entries ({ txid, vout, pubkey }). `verify` is synchronous here, as the census is.
+ * Answers Map(outpoint key -> { advert, advertId, txid, height, position }).
+ */
+function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } = {}) {
+  const found = new Map();
+  // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
+  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
+  const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
+  view.blocks.forEach((block, i) => {
+    const height = view.firstHeight + i;
+    if (height > atHeight) return;
+    (block.transactions || []).forEach((raw, position) => {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { return; }
+      if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;
+      const read = readAdvertUpdate(tx, { network });
+      if (!read.ok) return;
+      const key = `${Array.from(read.bondTxid).join(',')}:${read.bondVout}`;
+      const e = want.get(key);
+      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) return;
+      let signed = false;
+      try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
+      if (!signed) return;
+      const had = found.get(key);
+      if (!had || height > had.height || (height === had.height && position > had.position))
+        found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });
+    });
+  });
+  return found;
+}
+
+// ---- arena-protocol/src/reaffirm.js
+// A BOND OF THE ANCESTOR, RE-AFFIRMED FOR THIS NETWORK (multiplayer_p2p.md §27A.8.3, spec 0A.9; kanban #209).
+//
+// "A bond created under an ancestor is valid in the census of network n+1 when its operator publishes a
+// re-affirmation: OP_RETURN "ARN" FORK network_id(n+1)[0:8] schnorr_sig(bond key). One small transaction, the same shape as
+// a vote (§27A.7.3). It moves no capital, spends no bond, and starts no new maturity clock." Opt-in, per operator.
+//
+// THE KIND BYTE IS OURS, as ROUND's 'R', SERIES' 'S' and ADV's 'A' are: FORK is 0x46, 'F'. The payload is 76 bytes:
+//   "ARN" 'F' || network_id[0:8] || BIP-340 signature (64)
+// The signature is by the bond's node key (the node_pubkey its advertisement names, as an update's and a vote's are) over
+//   taggedHash(ARENA/v1/Reaffirmation, network_id (32) || bond txid (32, parseTransaction's order) || bond vout (u32, the
+//   protocol encoding's big-endian))
+// so a signature names one bond of one network: an operator with two bonds re-affirms each, and the bytes carry no
+// outpoint - a verifier tries them against the ancestor bonds it found, as a vote's tally does.
+//
+// WHAT THIS FILE DOES NOT DO: check a signature. The protocol package carries no curve; the census is handed the same
+// BIP-340 verify it checks updates with, and an unchecked re-affirmation carries nothing.
+
+
+
+
+const REAFFIRM_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x46]);     // "ARN" 'F'
+const REAFFIRM_BYTES = 4 + 8 + 64;
+
+const sameReaffirmBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+const bytes32 = (x, what) => { if (!(x instanceof Uint8Array) || x.length !== 32) throw new TypeError(`${what} is 32 bytes`); };
+
+/** What the bond's node key signs: this network, this bond. */
+function reaffirmationMessage({ networkId, bondTxid, bondVout }) {
+  bytes32(networkId, 'a network id'); bytes32(bondTxid, 'a bond txid');
+  if (!Number.isInteger(bondVout) || bondVout < 0) throw new TypeError('a re-affirmation names the bond output index');
+  const w = new Writer();
+  w.bytes32(networkId); w.bytes32(bondTxid); w.u32(bondVout);
+  return taggedHash(TAG.reaffirmation, w.finish());
+}
+
+/** The 76 bytes a re-affirmation's OP_RETURN carries. */
+function reaffirmationPayload({ networkId, signature }) {
+  bytes32(networkId, 'a network id');
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new TypeError('a re-affirmation carries a 64-byte signature');
+  const out = new Uint8Array(REAFFIRM_BYTES);
+  out.set(REAFFIRM_MAGIC, 0);
+  out.set(networkId.subarray(0, 8), 4);
+  out.set(signature, 12);
+  return out;
+}
+
+/** The payload's fields, or null for any other commitment. */
+function readReaffirmationPayload(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== REAFFIRM_BYTES || !sameReaffirmBytes(bytes.subarray(0, 4), REAFFIRM_MAGIC)) return null;
+  return { networkPrefix: bytes.slice(4, 12), signature: bytes.slice(12, 76) };
+}
+
+/**
+ * WHICH ANCESTOR BONDS ARE RE-AFFIRMED FOR `networkId`, from a chain view's blocks at or below `atHeight`: for each entry
+ * ({ txid, vout, pubkey, height }), the first re-affirmation at or above the bond's own height whose signature `verify`
+ * (BIP-340: verify(sig, msg, key)) accepts under the entry's node key for this network and this bond.
+ * Answers Map(outpoint key "txid bytes joined by ','" + ":" + vout -> { txid, height, position }).
+ */
+function reaffirmedBonds(view, entries, { atHeight, networkId, verify } = {}) {
+  const found = new Map();
+  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries) || !entries.length) return found;
+  bytes32(networkId, 'a network id');
+  const prefix = networkId.subarray(0, 8);
+  const keyOf = (e) => `${Array.from(e.txid).join(',')}:${e.vout}`;
+  view.blocks.forEach((block, i) => {
+    const height = view.firstHeight + i;
+    if (height > atHeight) return;
+    (block.transactions || []).forEach((raw, position) => {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { return; }
+      for (const c of commitmentsOf(tx)) {
+        const p = readReaffirmationPayload(c);
+        if (!p || !sameReaffirmBytes(p.networkPrefix, prefix)) continue;
+        for (const e of entries) {
+          const key = keyOf(e);
+          if (found.has(key) || height < e.height) continue;
+          let ok = false;
+          try { ok = !!verify(p.signature, reaffirmationMessage({ networkId, bondTxid: e.txid, bondVout: e.vout }), e.pubkey); } catch { ok = false; }
+          if (ok) found.set(key, { txid: tx.txid, height, position });
+        }
+      }
+    });
+  });
+  return found;
+}
+
+// ---- arena-protocol/src/protocol-version.js
+// A PROTOCOL VERSION'S NAME (kanban #349, the owner 2026-10-12 ~15:05Z): "the version template is YYYY.x.y" - YYYY the year it was
+// released, y the build number, and x starts at 0 for now ("0.0.1 is the newest version").
+//
+// THE WIRE KEEPS ITS u16: what a contract, an advert and a manifest carry is y alone, and y only ever grows, so "at or above"
+// is a comparison of y and no byte moves. YYYY and x are not on the wire; they come from this table of releases, which a
+// build extends when it ships a version. A y this build has no release for is named by its number alone ("?.?.y").
+const PROTOCOL_RELEASES = Object.freeze([
+  Object.freeze({ version: 1, year: 2026, x: 0 }),
+  // the round contract that does not name its draw (kanban #348, RULED the owner 2026-10-13)
+  Object.freeze({ version: 2, year: 2026, x: 0 }),
+  // every game through every federation: a round that names no single federation, each entry its own (kanban #348)
+  Object.freeze({ version: 3, year: 2026, x: 0 }),
+  // top-N prize splits: a replayed game's manifest may pay fixed shares over its top places (kanban #362)
+  Object.freeze({ version: 4, year: 2026, x: 0 }),
+  // the median of signed readings: each seat signs the price it read, a price sample is the median of five (kanban #312)
+  Object.freeze({ version: 5, year: 2026, x: 0 }),
+  // markets on games: a market whose outcome is a game round's own signed result, no attestors (kanban #362 feature 6)
+  Object.freeze({ version: 6, year: 2026, x: 0 }),
+  // scalar markets: an attested number paid linearly between bounds to the LONG and SHORT sides (kanban #362 feature 8)
+  Object.freeze({ version: 7, year: 2026, x: 0 }),
+  // scalar templates: a scalar market whose rounds each name their own question and bounds (kanban #362, items 5 + 8)
+  Object.freeze({ version: 8, year: 2026, x: 0 }),
+  // the website that brought the entry: 20% of the nodes' fee on its entries, paid to its key (kanban #362 item 7, path (a))
+  Object.freeze({ version: 9, year: 2026, x: 0 }),
+  // in-game items: a game sells items for sat (25 % protocol devs, 25 % game dev, 50 % the nodes that served), an entry plays with
+  // the items its player bought (kanban #365)
+  Object.freeze({ version: 10, year: 2026, x: 0 }),
+]);
+
+const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
+
+/** The YYYY.x.y name of wire version `v`. */
+function protocolVersionName(v) {
+  if (!Number.isInteger(v) || v < 0 || v > 0xffff) return String(v);
+  const r = byVersion.get(v);
+  return r ? `${r.year}.${r.x}.${v}` : `?.?.${v}`;
+}
+
+/**
+ * The wire version a YYYY.x.y name stands for: y, once the name is well formed - and, for a version this build has a
+ * release for, only if YYYY and x are that release's. A plain number is taken as y. Answers { ok, version, known } or why not.
+ */
+function readProtocolVersionName(name) {
+  const s = String(name ?? '').trim();
+  if (/^\d+$/.test(s)) { const v = Number(s); return v >= 1 && v <= 0xffff ? { ok: true, version: v, known: byVersion.has(v) } : { ok: false, why: `${s} is not a protocol version (1..65535)` }; }
+  const m = /^(\d{4})\.(\d+)\.(\d+)$/.exec(s);
+  if (!m) return { ok: false, why: `${s || 'nothing'} is not a version of the form YYYY.x.y` };
+  const [year, x, v] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (v < 1 || v > 0xffff) return { ok: false, why: `${s}: the build number is 1..65535` };
+  const r = byVersion.get(v);
+  if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${protocolVersionName(v)}` };
+  return { ok: true, version: v, known: !!r };
+}
+
+// ---- arena-protocol/src/fee.js
+// 22A: WHAT EACH NODE IS OWED, AND THE FACT THAT SOMEBODY COMPUTES IT.
+//
+// The fee was the one number in this protocol nobody recomputed. 5A.3 row 6
+// decides WHETHER a node qualifies for a share; until this file, nothing said
+// what the share IS - so a qualifying node could claim any amount and no
+// predicate contradicted it. That is the shape row 3 had before
+// `computePayoutTable` was wired into it.
+//
+// 22A gives the whole of it and leaves nothing to taste:
+//
+//   gross_round_volume = sum of stake of every financially activated entry
+//   node_fee = 2.00% of gross_round_volume
+//   1.00% -> GAME/VERIFY pool (7 slots)
+//   1.00% -> SETTLEMENT pool (7 slots)
+//   ...unearned shares are redistributed pro rata among the other eligible
+//   nodes in the same role pool, keeping the total at 2%.
+//   Remainders. Calculate in millisatoshis, floor each base share, and
+//   distribute the remaining msat in ascending H(round_id || node_pubkey).
+//
+// MILLISATOSHI BIGINT THROUGHOUT, like every other money path here. The
+// percentages are basis points and integer division; nothing is a float, and
+// the remainder a floor leaves behind is handed out rather than kept.
+
+// `fromHex` from hash.js and not a private copy. There was one here - the
+// same loop without the odd-length check - and two of one decoder is two
+// places for it to differ. It also made this file unbundleable beside
+// hash.js, which is how it was found.
+
+
+
+
+/**
+ * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED the owner 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
+ * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (kanban #205,
+ * the owner 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
+ */
+const NODE_FEE_BPS = 500;
+const POOL_BPS = 250;
+
+/** The pools 22A pays, and the roles that sit in each. */
+const GAME_VERIFY = 'gameVerify';
+const SETTLEMENT = 'settlement';
+// THE GUARDIAN POOL (§22A v4.6.4, RULED the owner 2026-09-21 and 2026-10-01 15:44: "2/3 % to the game/verify pool, 2/3 % to
+// the settlement pool ... and 2/3 % to the guardian pool, the seated guardians of the federation the round names"): the
+// third pool, divided evenly among those guardians. A round whose guardians are not named keeps the two-pool table.
+const GUARDIAN = 'guardian';
+const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN];
+
+/**
+ * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
+ *
+ * 22A: "An operator selected for BOTH roles earns BOTH shares, because it
+ * performs both services." So the two shares are separate money and a signer node
+ * held in each is owed each - a table keyed by pubkey alone merges them, and a
+ * claim in one role is then measured against the sum of both, which is an
+ * over-claim nobody can see. Measured while writing this: a settlement claim
+ * from a node that sat on game/verify was judged against the game/verify
+ * share and passed.
+ *
+ * `relay` is not paid by 22A: the fee is named for the two committees.
+ */
+const POOL_OF_ROLE = { game: GAME_VERIFY, verify: GAME_VERIFY, settlement: SETTLEMENT };
+const poolOfRole = (role) => POOL_OF_ROLE[role] || null;
+
+/** Signer nodes are keyed by pool AND key, because the two shares are separate money. */
+const signerNodeKey = (pool, pubkey) => `${pool}:${hex(pubkey)}`;
+
+/**
+ * THE FEE BASE, 22A: "gross_round_volume = sum of stake of every financially
+ * activated entry", and "ENTRY_VOID and VOID entries are excluded".
+ *
+ * The same set `computePayoutTable` calls `activated`, and deliberately the
+ * same predicate rather than a second one: a refunded entry is money that
+ * never moved, and charging a fee on it would be charging for a round the
+ * player was refunded out of.
+ */
+function grossVolumeMsat(entries) {
+  for (const e of entries)
+    if (typeof e.stakeMsat !== 'bigint')
+      throw new Error('stakes must be BigInt millisatoshi');
+  return entries
+    .filter((e) => !isRefund(e.outcome))
+    .reduce((sum, e) => sum + e.stakeMsat, 0n);
+}
+
+/**
+ * WHAT EVERY SIGNER NODE IS OWED, AND WHAT NOBODY IS.
+ *
+ * `pools` names the signer nodes of each pool - the committee, as selected - and
+ * `eligible` is who among them qualified under 22A's availability rule, which
+ * is 5A.3 row 6's question and is answered elsewhere.
+ *
+ * THE TWO POOLS SUM TO EXACTLY THE FEE. The second is the remainder of the
+ * first rather than a second division, so a gross that does not divide by
+ * 10000 cannot lose a millisatoshi between them.
+ *
+ * AN EMPTY POOL IS UNALLOCATED, NOT THE OPERATOR'S. 22A keeps the total at 2%
+ * by redistributing inside a role pool, and with nobody eligible in one there
+ * is no inside to redistribute to. The spec does not hand it anywhere, and the
+ * one direction that cannot quietly become the operator's income is nowhere -
+ * so it is returned named, and the caller may not mistake it for a share.
+ *
+ * `roundId` comes off the CONTRACT rather than being passed, so the order the
+ * remainders go out in belongs to the round and not to whoever asks.
+ */
+// `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
+// was checked against at the door; the network's 5 % if none is named
+function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS }) {
+  const gross = grossVolumeMsat(entries);
+  const fee = (gross * BigInt(feeBps)) / 10000n;
+  // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
+  // what is left (two floors of the same ragged number can lose a millisatoshi between them). With no guardian named, the
+  // two-pool table exactly as before - 1% and the rest.
+  const guardians = ((pools && pools[GUARDIAN]) || []).filter((k) => eligible.has(hex(k)));
+  let shareOf;
+  if (guardians.length) {
+    const third = fee / 3n;
+    shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
+  } else {
+    // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
+    const first = fee / 2n;
+    shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
+  }
+
+  const id = roundId(contract);
+  const signerNodes = new Map();
+  let unallocated = 0n;
+  let cursor = 0;   // where the leftover order stopped (three pools)
+
+  for (const pool of POOLS) {
+    const amount = shareOf[pool];
+    if (amount === 0n) continue;
+    const inPool = (pools && pools[pool]) || [];
+    const earning = inPool.filter((k) => eligible.has(hex(k)));
+
+    if (!earning.length) { unallocated += amount; continue; }
+
+    // Floor the base share, then hand the leftover out one millisatoshi at a
+    // time in the round's own order - 22A's rule, and the one `payout.js`
+    // already uses for the pool so there is one implementation of it.
+    const each = amount / BigInt(earning.length);
+    let left = amount - each * BigInt(earning.length);
+    for (const k of earning) signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + each);
+    // WITH THREE POOLS THE LEFTOVER MSATS TAKE TURNS ACROSS THEM: the order goes on where the pool before stopped, so
+    // a node does not take the extra millisatoshi of every third (measured: 4000 msat over two nodes, 2001 and 1999).
+    // The two-pool table keeps its own order, exactly as before.
+    const order = remainderOrder(id, earning.map((pubkey) => ({ pubkey })));
+    const from = guardians.length ? cursor % order.length : 0;
+    for (const e of [...order.slice(from), ...order.slice(0, from)]) {
+      if (left <= 0n) break;
+      signerNodes.set(signerNodeKey(pool, e.pubkey), signerNodes.get(signerNodeKey(pool, e.pubkey)) + 1n);
+      left -= 1n;
+      cursor++;
+    }
+  }
+
+  const paid = [...signerNodes.values()].reduce((a, b) => a + b, 0n);
+  if (paid + unallocated !== fee)
+    throw new Error(`fee table broken: ${paid} paid and ${unallocated} unallocated of ${fee}`);
+
+  return { gross, fee, pools: shareOf, signerNodes, unallocated };
+}
+
+/**
+ * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, kanban #362 roadmap item 7; RULED the owner
+ * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
+ * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
+ * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
+ * { shares: Map key -> msat (keys in ascending order), totalMsat }.
+ */
+const FRONTEND_FEE_PERCENT = 20n;
+function frontendShares({ entries, fee, gross }) {
+  const brought = new Map();
+  for (const e of entries || []) {
+    if (isRefund(e.outcome) || !(e.frontendPk instanceof Uint8Array)) continue;
+    const k = hex(e.frontendPk);
+    brought.set(k, (brought.get(k) || 0n) + e.stakeMsat);
+  }
+  const shares = new Map();
+  let totalMsat = 0n;
+  for (const k of [...brought.keys()].sort()) {
+    const msat = gross > 0n ? (fee * FRONTEND_FEE_PERCENT * brought.get(k)) / (100n * gross) : 0n;
+    shares.set(k, msat); totalMsat += msat;
+  }
+  if (totalMsat > (fee * FRONTEND_FEE_PERCENT) / 100n) throw new Error('the websites\' shares exceed 20% of the nodes\' fee');
+  return { shares, totalMsat };
+}
+
+/**
+ * THE SAME 20% ON AN ORDER BOOK (kanban #362, comment 2295): a book's fees are what each claimed row paid (bookSettlement's
+ * `buyFeeMsat + sellFeeMsat`), of which the nodes' part is `nodeBps / (nodeBps + donationBps)`. For each row whose entry names
+ * a website (`entries`: entry id hex -> { frontendPk }), 20% of that row's nodes' part, floored, goes to the website; the msat a
+ * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
+ * totalMsat }.
+ */
+function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) {
+  const total = BigInt(nodeBps) + BigInt(donationBps);
+  const byKey = new Map();
+  for (const r of rows || []) {
+    const e = entries.get(r.entry);
+    if (!e || !(e.frontendPk instanceof Uint8Array) || total === 0n) continue;
+    const nodesPart = ((r.buyFeeMsat + r.sellFeeMsat) * BigInt(nodeBps)) / total;
+    const k = hex(e.frontendPk);
+    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * FRONTEND_FEE_PERCENT) / 100n);
+  }
+  const shares = new Map([...byKey.keys()].sort().map((k) => [k, byKey.get(k)]));
+  return { shares, totalMsat: [...shares.values()].reduce((a, b) => a + b, 0n) };
+}
+
+/**
+ * What one signer node is owed FOR ONE ROLE, or nothing at all.
+ *
+ * The role is required: 22A pays the two pools separately and a signer node held in
+ * both earns both, so "what is this node owed" has no single answer.
+ */
+const feeOwed = (table, nodePubkey, role) => {
+  const pool = poolOfRole(role);
+  return pool ? (table.signerNodes.get(signerNodeKey(pool, nodePubkey)) || 0n) : 0n;
+};
+
+const hex = (bytes) => {
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+};
+
+/**
+ * THE TABLE AS ONE HASH, so a proof can be bound to it.
+ *
+ * 5A.3B step 4 rests on a stranger being able to re-derive a proof later and
+ * check it. An over-claim is measured against a table, so the proof has to
+ * name WHICH table - otherwise the accuser recomputes from an eligibility set
+ * that suits them and every honest claim is an over-claim.
+ *
+ * The gross and the fee are in it as well as the rows: a table that agreed on
+ * every signer node while disagreeing about what the round was worth would be a
+ * different table with the same fingerprint.
+ */
+function feeTableId(table) {
+  const w = new Writer();
+  w.u8(TYPE_FEE_CLAIM);
+  w.u16(PROTOCOL_VERSION);
+  w.u64(table.gross);
+  w.u64(table.fee);
+  w.u64(table.unallocated);
+  const rows = [...table.signerNodes.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  w.vec(rows, (row, ww) => {
+    // `pool:key`, so the same node's two shares are two rows and a table that
+    // moved money between the pools is a different table.
+    const [pool, key] = row[0].split(':');
+    ww.u8(POOLS.indexOf(pool));
+    ww.bytes32(fromHex(key));
+    ww.u64(row[1]);
+  });
+  return taggedHash(TAG.feeTable, w.finish());
+}
+
+/**
+ * WHAT ONE ENTRY OWES IN FEE: 2% OF THE WALLET COMMITMENT, TAKEN OUT OF IT.
+ *
+ * 22A, "Collection: inclusive in the stake (changed)": "'Play for 100' now
+ * means 100 leaves the wallet, and the wallet dialog agrees with the button
+ * that was pressed." `stakeMsat` is that commitment, the fee is 2% of it, and
+ * `netStakeMsat` is what is left for the pool once the fee and the donation
+ * have come out.
+ *
+ * RETRACTED (6e). This comment used to call Collection "the error" and charge
+ * 18's older "on top of the stake", on the ground that the net reading turns
+ * 22A's 61 x 100 example into 117.12 sat. It does not. 22A's fee base is
+ * `gross_round_volume`, "(61 x 100, the wallet commitments)", so the fee is 2%
+ * of 6,100 = 122 sat and it is the POOL that is net: 6,100 - 122 - 122 =
+ * 5,856. 117.12 was 2% of the net stake, a base 22A never uses. Measured in
+ * `inclusive.test.js`.
+ *
+ * THE RATE IS A CONSTANT AND NOT A CONTRACT FIELD. 22A calls it "2%,
+ * identical for everyone", so one rate covers every entry of every round; a
+ * field would let an operator price its own round's fee, which is the fault
+ * contract fields exist to prevent rather than one to import.
+ *
+ * The same integer floor the table uses, so one rate is applied one way.
+ */
+// A MARKET'S OWN NODE FEE (kanban #235, the owner 2026-10-09: "per market in manifest"): `bps`, its manifest's
+// marketTerms.nodeFeeBps (0 to NODE_FEE_BPS) - the rate is still never the operator's or the round's to choose, only the
+// signed manifest's, within the network's. Without one, the network's.
+// A MARKET'S ENTRY FEE CARRIES ITS DONATION TOO (entryFeeBpsOf), so the bound is the markets' 10 % together, not the
+// network's 5 %; a game's rate is still the network's constant.
+const ENTRY_FEE_BPS_MAX = 1000;
+const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
+  if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
+  if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
+  if (!Number.isInteger(bps) || bps < 0 || bps > ENTRY_FEE_BPS_MAX) throw new Error(`an entry fee is 0 to ${ENTRY_FEE_BPS_MAX} bps`);
+  return (stakeMsat * BigInt(bps)) / 10000n;
+};
+
+/**
+ * A MARKET'S DEFAULT FEE (the owner 2026-10-09: "market default fees are 1%, 0.5 + 0.5, per default"): an attested market that
+ * names no fee of its own charges 0.5 % to the nodes and 0.5 % donation; a game, the network's 5 % (+ its donation choice).
+ */
+const MARKET_DEFAULT_NODE_FEE_BPS = 50;
+const MARKET_DEFAULT_DONATION_BPS = 50;
+const isMarket = (m) => !!m && m.resultType === 2;                       // RESULT_TYPE.ATTESTED (manifest.js)
+
+/** The node fee a round's game charges: its market terms' rate, a market's default 0.5 %, or the network's. */
+const feeBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.nodeFeeBps)
+  ? manifest.marketTerms.nodeFeeBps : isMarket(manifest) ? MARKET_DEFAULT_NODE_FEE_BPS : NODE_FEE_BPS);
+
+/** A market's donation: its terms' rate, or the market default 0.5 %; null for a game (the player's donation choice). */
+const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.donationBps)
+  ? manifest.marketTerms.donationBps : isMarket(manifest) ? MARKET_DEFAULT_DONATION_BPS : null);
+
+/**
+ * A MARKET'S FEES ARE DUE AT RESOLUTION, ITS DONATION TOO (kanban #235/#278, the owner 2026-10-09: "the fees are due at the
+ * close, when you win or lose ... until then orders can be cancelled for free"): a market entry pays nothing at entry - its
+ * fee lock holds the node fee AND the donation (1 % by default), claimed only when the market resolves, from winners and
+ * losers alike, and returned whole on a cancel, a VOID or a market nobody picked right. So a market entry's `feeMsat` is
+ * that whole rate of its stake and its `donationMsat` is 0 (no donation outputs beside the stake); the settlement splits
+ * the claimed fee locks into the node table (feeBpsOf) and the donation set (the rest). A game: its node fee alone.
+ */
+const entryFeeBpsOf = (manifest) => (isMarket(manifest) ? feeBpsOf(manifest) + donationBpsOf(manifest) : feeBpsOf(manifest));
+const donationInFee = (manifest) => isMarket(manifest);
+
+/**
+ * DOES THIS ENTRY'S FEE STAND?
+ *
+ * An entry whose `feeMsat` is not 2% of its own `stakeMsat` does not, and it
+ * matters in both directions. Too little and the round collected less than the
+ * table will owe its nodes. TOO MUCH AND THE EXCESS IS INCOME: the fee table
+ * computes from the stakes, so a millisatoshi over is a millisatoshi the table
+ * never allocates to anybody and that stays with whoever collected it.
+ *
+ * Answered rather than thrown for a malformed entry, like every other decision
+ * in this package: a caller that asked whether an entry stands should be told,
+ * not made to catch.
+ */
+// `donationInFee`: a market's entry (entryFeeBpsOf) - its donation rides in the fee lock, so its own donation field is 0
+function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = false } = {}) {
+  // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
+  // bytes, so its amounts are BigInt - a free round is three zeros, not three
+  // missing fields. Coercing a Number or a missing amount here would have
+  // hidden the wiring fault that refused the Daily's free round at 11:15 (the
+  // door not yet passing the donation) instead of naming it.
+  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
+    return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
+  if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
+    return { ok: false, why: 'a stake and a fee cannot be negative' };
+
+  if (inFee && entry.donationMsat !== 0n)
+    return { ok: false, why: `a market's donation is in its fee lock, due at resolution: that entry names a donation of ${entry.donationMsat} msat beside it` };
+  const owed = entryFeeMsat(entry.stakeMsat, feeBps);
+  const pct = `${feeBps / 100}%`;
+  if (entry.feeMsat !== owed)
+    return {
+      ok: false,
+      owed,
+      why: entry.feeMsat > owed
+        ? `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}: `
+          + `the ${entry.feeMsat - owed} over is money no fee table allocates`
+        : `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}`,
+    };
+
+  // AND THE DONATION COMES OUT OF THE SAME COMMITMENT, so together they cannot
+  // come to more than it. Measured before 6e: a donation of 200000 msat on a
+  // 100000 stake stood here, because nothing looked at the donation at all -
+  // an entry promising the donation set twice what the player put up.
+  let net;
+  try { net = netStakeMsat(entry); }
+  catch (e) { return { ok: false, owed, why: e.message }; }
+  return { ok: true, owed, net, why: `${owed} is ${pct} of ${entry.stakeMsat}, and ${net} of it is staked` };
+}
+
+// ---- arena-protocol/src/federation-slash.js
+// WHAT A FEDERATION'S BONDS COVER, AND WHERE A SLASHED ONE GOES.
+//
+// §23A.3 and §23A.5, as rules a caller can run rather than paragraphs somebody has to remember. Three
+// numbers live here and each has a way of being got wrong that this file exists to refuse:
+//
+//   the exposure cap      is (f + 1) x the SMALLEST seated bond, not the sum of the bonds. `f + 1` gone
+//                         is the smallest set that halts the federation, and their bonds are what a
+//                         liquidation pays players from - so the reserve may never exceed what the
+//                         cheapest possible set of leavers forfeits. Summing all ten would let a
+//                         federation hold cover it can only produce if EVERY guardian is slashed.
+//   a slashed bond        never goes straight to anybody: it waits in the federation's liquidation
+//                         escrow under the arbitration keys, and spends only when the federation is
+//                         CLOSED (nothing was lost: 75% census nodes, 25% developers) or HALTED. On a
+//                         HALT the ORDER is the whole of it - every unspent note is paid at face value
+//                         FIRST, and only what no player claimed is split 75/25. The people who run the
+//                         network are never paid out of money a player could still have claimed.
+//   the abandonment proof needs `2f + 1` attestations normally, and on a halt cannot have them: the
+//                         federation no longer has that many guardians. Then it is whoever is left,
+//                         plus the halt itself, which anyone can see.
+//
+// Amounts are msat as BigInt, like every other money number in this protocol.
+
+/** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
+
+const haltsAt = (f) => f + 1;
+
+/**
+ * §23A.3: `exposure_cap = (f + 1) x the smallest bond among its seated guardians`.
+ *
+ * At ten guardians and 7 of 10, `f = 3`, so four of the smallest bond - NOT the sum of all ten.
+ */
+function exposureCap({ bonds, f }) {
+  if (!Array.isArray(bonds) || !bonds.length) return { ok: false, why: 'a federation has seated guardians' };
+  if (!bonds.every((b) => typeof b === 'bigint' && b > 0n))
+    return { ok: false, why: 'every bond is a positive number of msat' };
+  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
+  const smallest = bonds.reduce((a, b) => (b < a ? b : a));
+  return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
+}
+
+/** Is a reserve within what the bonds actually cover? */
+function reserveFits({ reserve, bonds, f }) {
+  const capped = exposureCap({ bonds, f });
+  if (!capped.ok) return capped;
+  if (typeof reserve !== 'bigint' || reserve < 0n)
+    return { ok: false, why: 'a reserve is a number of msat' };
+  return { ok: true, fits: reserve <= capped.cap, cap: capped.cap, reserve,
+    over: reserve > capped.cap ? reserve - capped.cap : 0n };
+}
+
+/**
+ * §23A.5: where a slashed guardian bond goes.
+ *
+ * `halted` is the whole of the difference. A federation that kept running pays the census and the
+ * developers; one that froze pays its note holders at face value FIRST and splits only what is left
+ * over the same way. Nothing is burned on either road - `burned` stays in the answer at 0n so a burn
+ * cannot come back unnoticed.
+ */
+function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
+  if (typeof amountMsat !== 'bigint' || amountMsat < 0n)
+    return { ok: false, why: 'a slashed bond is a number of msat' };
+  if (!halted) {
+    // The running case, unchanged: 75% to the active census nodes, 25% to the donation set.
+    const { nodes, developers } = splitNodesDevelopers(amountMsat);
+    return { ok: true, halted: false, notes: 0n, nodes, developers, burned: 0n };
+  }
+  if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
+    return { ok: false, why: 'the notes owed are a number of msat' };
+  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the
+  // remainder - what no player claimed inside the window - is split 75/25. A short escrow pays the notes
+  // pro rata and leaves nothing over, so nobody who runs the network is paid at all.
+  const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
+  const rest = amountMsat - notes;
+  const { nodes, developers } = splitNodesDevelopers(rest);
+  return { ok: true, halted: true, notes, nodes, developers, burned: 0n,
+    proRata: notesOwedMsat > amountMsat };
+}
+
+/**
+ * §23A.4 / §23A.5: what an abandonment proof needs.
+ *
+ * Normally `2f + 1` guardian attestations. On a halt the federation no longer has that many, so the
+ * proof is whoever is still seated plus the halt itself - no consensus session for `abandon_blocks`,
+ * which anyone can observe at every guardian's endpoint.
+ */
+function abandonmentProofNeeds({ f, halted = false, seated = null }) {
+  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
+  if (!halted) return { ok: true, attestations: 2 * f + 1, needsHaltFact: false };
+  const left = Number.isInteger(seated) && seated >= 0 ? seated : 0;
+  return { ok: true, attestations: left, needsHaltFact: true };
+}
+
+/**
+ * §23A.1's clocks, in blocks, as numbers a caller can run rather than a table somebody has to remember.
+ *
+ * Everything in that chapter that waits, waits in BLOCKS - a wall clock is not a thing a chain agrees on.
+ * The 36 h claim window is the owner's; the others are the spec's, matched to it.
+ *
+ *   abandon_blocks     absence that is abandonment; halt before liquidation; load before a founding
+ *   departure_notice   notice a guardian gives before leaving
+ *   founding_window    time a drawn set has to finish its DKG
+ *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
+ *   claim_blocks       the liquidation claim window the arbitration set opens
+ */
+const MAINNET_CLOCKS = Object.freeze({
+  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+});
+
+/**
+ * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (the owner 2026-09-21: much shorter), so a whole
+ * federation lifetime can be watched in a day instead of a month: 2 h / 3 h / 3 h / 24 h / 1.5 h.
+ * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
+ */
+const TESTNET_CLOCKS = Object.freeze({
+  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
+});
+const REGTEST_CLOCKS = Object.freeze({
+  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
+});
+const CLOCKS = Object.freeze({
+  mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
+});
+
+/** The clocks a network runs, refused rather than guessed for a network nobody pinned. */
+function clocksFor(network) {
+  const said = CLOCKS[network];
+  return said ? { ok: true, network, clocks: said }
+    : { ok: false, why: `${network} has no pinned federation clocks` };
+}
+
+/**
+ * HOW LONG A GUARDIAN LEAVING COSTS THE NETWORK, END TO END.
+ *
+ * Abandonment has to be proven before a succession can be drawn, and §23A.5 starts the succession AT the
+ * departure when the federation would otherwise be DRAINING - so the founding runs inside the drain
+ * rather than after it. Both are reported: the serial path for a guardian who simply vanishes, and the
+ * overlapped one for a departure with notice.
+ */
+function lifecycleBlocks(clocks) {
+  const serial = clocks.abandonBlocks + clocks.foundingWindow + clocks.drainBlocks;
+  const overlapped = clocks.abandonBlocks + Math.max(clocks.foundingWindow, clocks.drainBlocks);
+  return { serial, overlapped };
+}
+
+/**
+ * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
+ *
+ * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
+ * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
+ * weekend is not the one the deadline is for. Only the remainder after THAT is split 75/25, and nothing
+ * a player could still have claimed is ever destroyed.
+ */
+function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
+  if (!Number.isInteger(haltHeight) || haltHeight < 0)
+    return { ok: false, why: 'a halt happens at a block height' };
+  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
+  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
+  // claim_blocks before (kanban #323, found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
+  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
+  return {
+    ok: true,
+    claimWindowOpens: haltHeight + clocks.abandonBlocks,
+    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
+    lateClaimsUntil: haltHeight + clocks.drainBlocks,
+    remainderSplitsAt: haltHeight + clocks.drainBlocks,
+  };
+}
+
+/** May the remainder be split yet? Never before the late-claim tail has run out. */
+function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (!Number.isInteger(atHeight)) return { ok: false, why: 'ask at a block height' };
+  return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
+}
+
+/**
+ * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4, kanban #323). `claims`: notes presented
+ * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
+ * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
+ *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
+ *      after drain_blocks
+ *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
+ *      shows it)
+ *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
+ *      while it lasts
+ *   4. only then the remainder, 75 % / 25 % (slashSplit), and only once remainderMaySplit says so at `atHeight`
+ */
+function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
+  const when = liquidationSchedule({ haltHeight, clocks });
+  if (!when.ok) return when;
+  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
+  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
+  const seen = new Set();
+  const refused = []; const inWindow = []; const late = [];
+  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
+  for (const c of ordered) {
+    const nonce = String(c.nonce).toLowerCase();
+    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
+    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
+    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
+    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
+    seen.add(nonce);
+    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
+  }
+  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
+  const short = owed > escrowMsat;
+  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
+  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
+  for (const c of late) {
+    const msat = c.amountMsat <= left ? c.amountMsat : left;
+    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
+  }
+  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
+  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
+  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
+    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
+    remainderSplitsAt: when.remainderSplitsAt };
+}
+
+const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
+
+/**
+ * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
+ * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
+ * the owner 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
+ * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
+ * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
+ */
+function guardianSlashStands({ proof, departure = null }) {
+  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
+  if (departure && departure.ok) {
+    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
+    if (proof.sinceHeight >= departure.leaveAfterHeight)
+      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
+    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
+  }
+  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
+}
+
+/**
+ * WHO A SLASHED GUARDIAN'S BOND PAYS once its federation is CLOSED with nothing lost (§23A.5, FEDERATION.md rehearsal 14):
+ * 75 % evenly to the census nodes active at the slash height LESS EVERY GUARDIAN OF THAT FEDERATION (they guarded the federation
+ * that lost one), 25 % to the donation set (splitNodesDevelopers). Amounts in sat, BigInt; the nodes' division's leftover
+ * satoshi go to the first node in key order, so the outputs sum to the amount. Answers { ok, nodes: [{ key, sats }], developers }.
+ */
+function guardianSlashPayees({ amountSats, censusNodes, record }) {
+  if (typeof amountSats !== 'bigint' || amountSats <= 0n) return { ok: false, why: 'a slashed bond is a positive number of sat' };
+  const guardians = new Set((record && record.guardians || []).map((g) => hexKey(g.nodePubkey)));
+  const keys = [...new Set((censusNodes || []).map(hexKey))].filter((k) => k && !guardians.has(k)).sort();
+  if (!keys.length) return { ok: false, why: 'no census node outside the federation\'s guardians to pay' };
+  const { nodes, developers } = splitNodesDevelopers(amountSats);
+  const each = nodes / BigInt(keys.length);
+  const out = keys.map((key) => ({ key, sats: each }));
+  out[0].sats += nodes - each * BigInt(keys.length);
+  return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
+}
+
+/**
+ * A LIQUIDATION'S REMAINDER, BY NAME (§23A.5: "only the remainder then, 75% / 25% as above" - "75% evenly to every active census
+ * node at that height ... minus the slashed nodes and minus every guardian of the federation concerned; 25% to the donation set
+ * of §22A - the developers - by share_bps"). `msat` BigInt; `censusNodes` keys at the spending height; `slashed` keys; `record`
+ * the federation's; `donation` the donation set in force, recipients with `recipientPk` (x-only, hex or bytes) and `shareBps`.
+ * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
+ * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
+ */
+function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
+  if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
+  const out = new Set((slashed || []).map(hexKey));
+  const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
+  if (!nodes.ok) return nodes;
+  const keyed = (donation || []).filter((r) => r && r.recipientPk !== undefined && Number.isInteger(r.shareBps) && r.shareBps > 0)
+    .map((r) => ({ key: hexKey(r.recipientPk), bps: BigInt(r.shareBps) })).sort((a, b) => (a.key < b.key ? -1 : 1));
+  const bps = keyed.reduce((a, r) => a + r.bps, 0n);
+  if (!keyed.length || bps !== 10000n) return { ok: false, why: 'the donation set in force names no key recipients whose shares make 10000 bps' };
+  const dev = keyed.map((r) => ({ key: r.key, msat: (nodes.developers * r.bps) / 10000n, part: 'donation' }));
+  dev[0].msat += nodes.developers - dev.reduce((a, r) => a + r.msat, 0n);
+  return { ok: true, payees: [...nodes.nodes.map((n) => ({ key: n.key, msat: n.sats, part: 'node' })), ...dev] };
+}
+
+// ---- arena-protocol/src/threshold.js
+/**
+ * THE COMMITTEE THRESHOLD, the one rule the door, the settle, the verdict and
+ * the page all read: 2 slots -> 2-of-2 (this build), 7 slots -> 5-of-7.
+ *
+ * Its own module so the client bundle can carry it without genesis.js, which
+ * reaches into the engine. `genesis.js` re-exports it for the node.
+ */
+function receiptsNeeded(slots) {
+  if (slots === 2) return 2;
+  if (slots === 7) return 5;
+  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats, kanban #301): 9 drawn for 7 seats, 3 for 2 - the threshold is the
+  // seats', never more of the drawn than the seats need
+  if (slots === 9) return 5;
+  if (slots === 3) return 2;
+  throw new Error(`no committee threshold for ${slots} slots`);
+}
+
+// ---- arena-protocol/src/genesis.js
+// Canonical genesis_parameters and the network_id they produce.
+//
+// 27A.6: genesis is a block, not a word. 27A.4: network_id is the tagged hash
+// of that block plus the donation authority and recovery pubkeys. Changing any
+// of it later is a different network.
+
+
+
+
+
+
+// THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
+// hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
+// founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
+// 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
+// core's own rules are named by its core hash, which every round carries beside this config.
+// THE GAME'S CONFIGS ARE THE GAME'S (kanban #203): nextblock's config encoders v1-v4 and their hashes moved to
+// packages/nextblock/config/game-config.js. The genesis parameters name the founding config only by its hash, the fixed
+// GENESIS_CONFIG_HASH (genesis-ids.js); nextblock/test/engine-shared.test.js holds the founding config to it.
+const TAG_GENESIS = 'ARENA/v1/GenesisParameters';
+const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
+
+/**
+ * Randomness nobody in this protocol can grind: the Bitcoin block hash at a
+ * height after committee_time. Entry closes before that height is known.
+ */
+const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
+
+function encodeGenesisParameters(p) {
+  const w = new Writer();
+  w.str(p.chain);
+  w.u8(p.gameVerifySlots);
+  w.u8(p.gameVerifyThreshold);
+  w.u8(p.settlementSlots);
+  w.u8(p.settlementThreshold);
+  w.u16(p.censusMinNodes);
+  w.u32(p.censusConfirmations);
+  w.u32(p.bondMaturity);
+  // §27A.6's federation parameters, hashed here since v4.6.5 so the network id commits to them.
+  w.u16(p.federationNominal);
+  w.u32(p.abandonBlocks);
+  w.u32(p.departureNotice);
+  w.u32(p.foundingWindow);
+  w.u32(p.drainBlocks);
+  w.u32(p.claimBlocks);
+
+  // WHO CAN SLASH, AND HOW MANY OF THEM. 5A.3B's script path B is
+  // "<k-of-m arbitration keys> CHECKMULTISIG - the arbitration quorum, any
+  // time before maturity", and the two numbers decide what the bond output
+  // key even is: the leaf hashes them, the tapbranch hashes the leaf, and the
+  // output key is the tweak of that. A round that disagreed about k or m
+  // would compute a different output key for the same node and refuse a bond
+  // that is perfectly good.
+  //
+  // They are genesis and not contract, the same class as `bondMaturity`: a
+  // per-round k is a per-round arbitration set, and the set is what the
+  // residual in 5A.3B is about. Five of seven, matching every other committee
+  // in this protocol.
+  w.u8(p.arbitrationK);
+  w.u8(p.arbitrationM);
+
+  // AND WHICH KEYS THEY ARE. k and m alone say how many signatures a slash
+  // needs; they do not say whose. The slash leaf hashes the keys themselves,
+  // so a bond's output key is a function of this set - and a poster free to
+  // name their own would name themselves and hold a bond nobody could slash.
+  // Sorted, because a set is a set: two nodes listing them differently must
+  // not compute two different networks.
+  if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
+    throw new Error(`genesis names ${p.arbitrationM} arbitration signer nodes and lists a different number`);
+  w.vec([...p.arbitrationKeys].sort(compareGenesis32), (k, ww) => ww.bytes32(k), { sortedBy: compareGenesis32 });
+  w.u32(p.noticePeriod);
+  w.bytes32(p.bondMarker);
+  w.str(p.randomnessSource);
+  w.bytes32(p.genesisConfigHash);
+  if (!Array.isArray(p.brackets) || p.brackets.length < 1 || p.brackets.length > 255)
+    throw new Error('genesis needs 1..255 stake brackets');
+  w.u8(p.brackets.length);
+  for (const b of p.brackets) {
+    w.u64(b.minSats);
+    w.u64(b.maxSats);
+  }
+  // WHEN SERIES 0 STARTS (ALL-BUT-MIN-1727; multiplayer_p2p.md "The series is a function of the clock":
+  // series_start(k) = genesis_series_start + k * series_max). A genesis parameter, so the network id commits to it
+  // and no series names its own start.
+  if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
+  w.u64(p.genesisSeriesStartMs);
+  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (kanban #297 / #298, RULED the owner 2026-10-14 ~13:20Z: "Fix it but no new series
+  // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
+  // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
+  // stay as they were and no series moves to a new network.
+  if (p.federationMin !== undefined) {
+    if (!Number.isInteger(p.federationMin) || p.federationMin < 1 || p.federationMin > p.federationNominal)
+      throw new Error('federation_min is 1..federation_nominal');
+    if (typeof p.bondMinGuardianSats !== 'bigint' || p.bondMinGuardianSats <= 0n) throw new Error('genesis names a guardian\'s bond floor in sats');
+    const sched = p.governanceSchedule;
+    if (!sched || !['design', 'money', 'upgrade'].every((k) => sched[k] && ['review', 'voting', 'cooldown'].every((x) => Number.isInteger(sched[k][x]) && sched[k][x] >= 0)))
+      throw new Error('genesis names the governance schedule: review, voting and cooldown blocks for design, money and upgrade');
+    w.u16(p.federationMin);
+    w.u64(p.bondMinGuardianSats);
+    for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
+    w.u8(p.committeesBind ? 1 : 0);
+  }
+  return w.finish();
+}
+
+/**
+ * MAINNET'S GENESIS (§27A.6, the "Three networks" table; kanban #297 / #298), built from the parts only a launch can name: the
+ * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
+ * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
+ * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
+ * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
+ * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
+ */
+function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats } = {}) {
+  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
+  if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
+  if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
+  if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
+  if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
+  if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
+  const genesis = {
+    chain: 'bitcoin-mainnet', genesisSeriesStartMs,
+    federationNominal: 10, federationMin: 7, bondMinGuardianSats,
+    abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
+    gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
+    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320,
+    arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
+    bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
+    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
+    governanceSchedule: { design: { review: 1008, voting: 1440, cooldown: 2016 }, money: { review: 1008, voting: 1440, cooldown: 2016 },
+      upgrade: { review: 2016, voting: 2016, cooldown: 4320 } },
+  };
+  return { genesis, networkId: computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) };
+}
+
+/**
+ * EVERY CONTRACT BOUND TO ITS GENESIS'S COMMITTEES (§5A.7 / §27A.6, kanban #297): where the genesis says its committees bind, a
+ * Round Contract names exactly its slots per role, and the threshold of those slots (threshold.js) is the genesis's. A genesis that
+ * does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its own slot count.
+ */
+function committeesStand(contract, genesis) {
+  if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
+  const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
+  if (g !== genesis.gameVerifySlots || st !== genesis.settlementSlots)
+    return { ok: false, why: `this network's genesis binds committees of ${genesis.gameVerifySlots} and ${genesis.settlementSlots} slots; the contract names ${g} and ${st}` };
+  if (receiptsNeeded(g) !== genesis.gameVerifyThreshold || receiptsNeeded(st) !== genesis.settlementThreshold)
+    return { ok: false, why: 'the threshold of those slots is not the genesis threshold' };
+  return { ok: true, bound: true };
+}
+
+/**
+ * WHEN EACH NETWORK'S SERIES 0 STARTS, midnight UTC (ALL-BUT-MIN-1727). The spec names the parameter and not its value;
+ * these are this build's: regtest 2026-01-01, testnet4 2026-10-01. Series k starts 24 h * k after it.
+ */
+const GENESIS_SERIES_START_MS = Object.freeze({ regtest: 1767225600000n, testnet4: 1790812800000n });
+
+function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesStartMs) {
+  return {
+    chain,
+    genesisSeriesStartMs,
+    // THE FEDERATION'S OWN PARAMETERS ARE GENESIS PARAMETERS (§27A.6), so they are hashed into the
+    // network id like every other rule a player is held to. Without them two networks could share an id
+    // while one drains a federation in 24 h and the other in 28 d, and a contract naming that id would
+    // not say how long its holder's money can be frozen or how long he has to claim it.
+    federationNominal: federation.federationNominal,
+    abandonBlocks: federation.abandonBlocks,
+    departureNotice: federation.departureNotice,
+    foundingWindow: federation.foundingWindow,
+    drainBlocks: federation.drainBlocks,
+    claimBlocks: federation.claimBlocks,
+    gameVerifySlots: 2,
+    gameVerifyThreshold: 2,
+    settlementSlots: 2,
+    settlementThreshold: 2,
+    censusMinNodes: 2,
+    censusConfirmations: 1,
+    bondMaturity: 100,
+    arbitrationK: 5,
+    arbitrationM: 7,
+    arbitrationKeys,
+    noticePeriod: 144,
+    bondMarker: marker,
+    randomnessSource: RANDOMNESS_SOURCE,
+    genesisConfigHash: GENESIS_CONFIG_HASH,
+    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
+  };
+}
+
+/** Two 32-byte keys in byte order, so a set is a set and not an arrangement. */
+function compareGenesis32(a, b) {
+  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
+  return 0;
+}
+
+const concat = (...parts) => {
+  const n = parts.reduce((s, p) => s + p.length, 0);
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+};
+
+const zeros32 = () => new Uint8Array(32);
+
+function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
+  if (!(authorityPubkey instanceof Uint8Array) || authorityPubkey.length !== 32)
+    throw new Error('donation authority pubkey is 32 bytes');
+  if (!(recoveryPubkey instanceof Uint8Array) || recoveryPubkey.length !== 32)
+    throw new Error('donation recovery pubkey is 32 bytes');
+  const body = encodeGenesisParameters(genesis);
+  return taggedHash(
+    TAG_NETWORK_ID,
+    concat(body, authorityPubkey, recoveryPubkey, zeros32(), zeros32()),
+  );
+}
+
+/** 2 slots → 2-of-2 (this build). 7 slots → 5-of-7. One rule: threshold.js. */
+
+function genesisFor(network) {
+  if (network === 'regtest')
+    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
+      { federationNominal: 4, ...REGTEST_CLOCKS }, GENESIS_SERIES_START_MS.regtest);
+  if (network === 'testnet4' || network === 'testnet')
+    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
+      { federationNominal: 4, ...TESTNET_CLOCKS }, GENESIS_SERIES_START_MS.testnet4);
+  throw new Error('no genesis for ' + network);
+}
+
+/**
+ * THE TWO KEYS 27A.4 PUTS IN THE NETWORK'S NAME, looked up by network.
+ *
+ * They have been generated, written into `genesis-ids.js` and hashed into
+ * `network_id` by `computeNetworkId` since letter 24 - and until `authority.js`
+ * nothing read them. A key that decides where donations go and that no code
+ * consults is not a control; it is a comment.
+ *
+ * The authority is what a published donation set is checked against, and the
+ * recovery key is what a rotation is checked against - never the other way
+ * round. 27A.4's table is exhaustive: the authority signs sets and nothing
+ * else, the recovery key names a new authority and nothing else.
+ *
+ * the owner 2026-09-08: these are test keys on disk for regtest and testnet4.
+ * A mainnet recovery key belongs in a safe, and this build has no mainnet.
+ */
+function donationKeysFor(network) {
+  if (network === 'regtest')
+    return { authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
+  if (network === 'testnet4' || network === 'testnet')
+    return { authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
+  throw new Error('no donation authority has been generated for ' + network);
+}
+
+// THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
+
+// ---- arena-protocol/src/census.js
+// The census: which bonds exist at a height, canonicalised and Merkle-rooted.
+//
+// Two decisions here are load-bearing and both look like details.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/**
+ * One census entry, encoded.
+ *
+ * The outpoint leads because it is what the entry is sorted and identified by.
+ *
+ * `pubkey` IS THE ADVERTISEMENT'S DECLARED KEY, not a candidate's claim about
+ * it. RESOLVE overwrites the field with `advert.nodePubkey` before anything
+ * hashes it, for the same reason it overwrites `roles`: the body is what the
+ * bond committed to, and the row beside it is somebody's transcription. A leaf
+ * over the transcription would let a publisher put a key that never bonded
+ * into the census, and the committee seed, the receipts and the payout all
+ * read that key.
+ */
+// Recognition lives in `chain.js` now: it answers about an OUTPUT, and both
+// this file and `acceptAdvert` need it, so it cannot sit in either one of
+// them and be imported by the other. Re-exported here because the census is
+// where most callers meet it.
+
+function encodeEntry(e) {
+  const w = new Writer();
+  w.bytes32(e.txid);
+  w.u32(e.vout);
+  w.bytes32(e.pubkey);
+  w.u64(e.bondSats);
+  w.u32(e.height);
+  w.vec([...e.roles].sort(), (r, ww) => ww.u8(ROLES.indexOf(r)),
+        { sortedBy: (a, b) => (a < b ? -1 : a > b ? 1 : 0) });
+  // AND THE GAMES IT HOSTS (§0A.4, kanban #204), for the reason `roles` is here: the game/verify draw reads them, so the
+  // root commits to them. Taken off the advertisement by RESOLVE, as the roles are.
+  if (!Array.isArray(e.hostedGames)) throw new Error('a census entry names the games its node hosts ([] for none)');
+  w.vec(e.hostedGames, (g, ww) => ww.bytes32(g));
+  return w.finish();
+}
+
+const leafHash = (e) => taggedHash(TAG.censusLeaf, encodeEntry(e));
+
+/**
+ * Compare two entries by (txid, vout).
+ *
+ * NOT by H(pubkey), which earlier drafts specified and which looks equivalent.
+ * It is not: a node can grind a pubkey until its hash lands wherever it likes,
+ * and the census order feeds the committee seed. A txid cannot be chosen after
+ * the funding transaction is confirmed.
+ */
+/**
+ * HOW MANY BONDED NODES A ROUND OF THIS NETWORK NEEDS, and where that comes
+ * from.
+ *
+ * `census_min_nodes` is a GENESIS parameter - "everything above that a network
+ * cannot change about itself lives in one block, fixed when the network is
+ * created and committed in `network_id`" - and the three networks name 10, 3
+ * and 2. Measured before this: it was written into the network id and read by
+ * nothing. Not one file in any `src/` and not one test consulted it, so the
+ * one number that says whether a round can be held at all was decoration.
+ *
+ * A caller does not get to pass it. That is the same discipline the
+ * arbitration set needed in 24 and the confirmation depth needed in 25: a
+ * number a caller picks is a number the operator picks, and an operator who
+ * can lower the minimum can hold a round on a census of one.
+ *
+ * PER ROLE, WITH ONE FIELD. The spec writes `census_min_nodes per role`; this
+ * build carries a single `u16`, so the one number is applied to each role
+ * separately - which is stricter than splitting it and does not move a single
+ * network id. The gap is written down in TASKBOOK rather than closed by
+ * inventing a second genesis field.
+ */
+function censusMinimumFor(contract) {
+  if (!contract || !contract.networkId)
+    throw new Error('that round names no network, so nothing says how small a census is too small');
+  const network = networkOf(contract.networkId);
+  if (network === null)
+    throw new Error('that round names a network this build has no genesis for');
+  const minimum = genesisFor(network).censusMinNodes;
+  if (!Number.isInteger(minimum) || minimum <= 0)
+    throw new Error(`${network} names no minimum census, so no round of it can be held`);
+  return { network, minimum };
+}
+
+/**
+ * IS THIS CENSUS BIG ENOUGH TO HOLD A ROUND FOR THAT ROLE?
+ *
+ * Answered by name, because "false" tells a node nothing it can act on and
+ * nothing it can show a player. The count is of entries DECLARING THE ROLE,
+ * which is what 5A.3 makes eligibility mean - a settlement node is not a game
+ * node that happens to be bonded.
+ */
+/**
+ * MAY THIS ENTRY SERVE THIS ROUND IN THIS ROLE: it declares the role, and for the game/verify pool (game, verify) it hosts
+ * the round's game (§0A.4, kanban #204). Settlement and relay are game-agnostic: they sign payout tables and hold
+ * custody, never replay, so they are drawn from the whole census.
+ */
+function eligibleFor(e, contract, role) {
+  if (!(e.roles || []).includes(role)) return false;
+  if (poolOfRole(role) !== GAME_VERIFY) return true;
+  return hostsGame(e, contract && contract.gameId);
+}
+
+function meetsCensusMinimum(entries, contract, role) {
+  const { network, minimum } = censusMinimumFor(contract);
+  const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
+  // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4, kanban #204): a game too few nodes host has no
+  // paying rounds, and says why
+  if (have < minimum && poolOfRole(role) === GAME_VERIFY)
+    return {
+      ok: false, have, need: minimum, network,
+      why: `that census carries ${have} ${role} node${have === 1 ? '' : 's'} where ${network} was born needing ${minimum}, counting only `
+        + `the nodes that host game ${contract.gameId instanceof Uint8Array ? toHex(contract.gameId).slice(0, 16) : '(none)'} (§0A.4): no round of it is drawn`,
+    };
+  if (have < minimum)
+    return {
+      ok: false, have, need: minimum, network,
+      why: `that census carries ${have} ${role} node${have === 1 ? '' : 's'} where `
+        + `${network} was born needing ${minimum}`,
+    };
+  return { ok: true, have, need: minimum, network };
+}
+
+function compareEntries(a, b) {
+  for (let i = 0; i < 32; i++) {
+    if (a.txid[i] !== b.txid[i]) return a.txid[i] < b.txid[i] ? -1 : 1;
+  }
+  return a.vout === b.vout ? 0 : a.vout < b.vout ? -1 : 1;
+}
+
+/**
+ * Merkle root over the sorted leaves.
+ *
+ * An odd node is PROMOTED, not duplicated. Duplicating the last leaf is what
+ * Bitcoin does and it is why CVE-2012-2459 exists: two different leaf sets can
+ * produce one root. Promotion has no such pair.
+ */
+function merkleRoot(leaves) {
+  if (leaves.length === 0) return new Uint8Array(32);
+  let level = leaves;
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      if (i + 1 === level.length) { next.push(level[i]); continue; }
+      const pair = new Uint8Array(64);
+      pair.set(level[i], 0);
+      pair.set(level[i + 1], 32);
+      next.push(taggedHash(TAG.censusBranch, pair));
+    }
+    level = next;
+  }
+  return level[0];
+}
+
+/**
+ * THE HEIGHT AND THE DEPTH, BOTH OFF THE CONTRACT.
+ *
+ * 5A.11: "The Round Contract contains: `census_height, census_confirmations`."
+ * The height was taken from the contract already and the depth beside it was
+ * still an argument, so a caller could recompute an honest census at a depth
+ * nobody signed up to - and a census is what picks the committee.
+ *
+ * AND THE TIP IS THE CHAIN'S. It used to be a caller's integer, and the old
+ * comment here said that was fine because "the tip is OBSERVED chain state,
+ * not a rule". Observed from what? There was no chain in this file to observe
+ * it from, so it was asserted: a high tip matured a shallow bond and a low one
+ * emptied the census. It is now the last height of the view the census was
+ * read from, which is what makes that sentence true.
+ */
+function depthRuleOf(contract, view) {
+  if (!contract || !Number.isInteger(contract.censusHeight))
+    throw new Error('that round names no census height');
+  if (!Number.isInteger(contract.censusConfirmations))
+    throw new Error('that round names no confirmation depth');
+
+  // A TIP BELOW THE CENSUS HEIGHT IS NOT A SHALLOW CHAIN, IT IS THE WRONG
+  // QUESTION. The census is the chain up to `census_height`, so a view that
+  // ends before it has not reached the census yet - and the arithmetic said so
+  // by printing "-979 confirmations deep", which is not a depth and not an
+  // answer.
+  if (view.tipHeight < contract.censusHeight)
+    throw new Error(
+      `that chain ends at height ${view.tipHeight}, before this round's census `
+      + `height ${contract.censusHeight}`);
+
+  // AND A VIEW THAT BEGINS AFTER IT CARRIES NO BLOCK THE CENSUS IS ABOUT.
+  // Measured: it returned ok, an empty census, and the reason "no such outpoint
+  // between height 900001 and 900000" - a range that runs backwards, from a
+  // view that had not seen a single block at or before the census height. The
+  // mirror of the rule above: one end of the window has to be on each side of
+  // `census_height` or the view is not looking at this census at all.
+  if (view.firstHeight > contract.censusHeight)
+    throw new Error(
+      `that chain begins at height ${view.firstHeight}, after this round's census `
+      + `height ${contract.censusHeight}`);
+
+  return {
+    censusHeight: contract.censusHeight,
+    censusConfirmations: contract.censusConfirmations,
+    tipHeight: view.tipHeight,
+  };
+}
+
+/**
+ * 5A.4 STEPS 4 AND 5: sort by outpoint, hash the leaves, root them.
+ *
+ * Immutable per height by construction - the same inputs give the same root,
+ * which is what lets a node compute it once and cache it forever.
+ *
+ * NO ROOT OVER AN UNRESOLVED ENTRY. Every entry must carry the id of the
+ * advertisement it resolved to, and RESOLVE is the only thing that puts one
+ * there. This is not a flag: `advertId` is the hash the bond output committed
+ * to, the thing step 2 exists to find. Without the guard the natural way to
+ * use this package - scan, then root - skipped steps 2 and 3 in silence and
+ * produced a root over nodes nobody had checked.
+ *
+ * 5A.4 wants that hash IN the leaf ("outpoint || advertisement hash || ..."),
+ * where this leaf still carries a pubkey. That divergence is recorded and not
+ * fixed here because it moves every census root; requiring the hash to be
+ * KNOWN costs nothing and moves nothing.
+ *
+ * The height, depth and spend filters are re-applied rather than trusted from
+ * upstream. SCAN read them off the chain; repeating them here means a set that
+ * reaches this function by some other road cannot smuggle a late or spent
+ * output into a root.
+ */
+function commitCensus(entries, { contract, view }) {
+  const { censusHeight, censusConfirmations } = depthRuleOf(contract, viewOrThrow(view));
+  return censusRootOf(entries, { censusHeight, censusConfirmations });
+}
+
+/**
+ * THE ROOT OF A SET OF RESOLVED ENTRIES AT A HEIGHT AND DEPTH, with no chain view (kanban #296, spec 5A.6): the same
+ * filters, sort and tree `commitCensus` applies - it calls this - so a client that verified each entry against headers
+ * it agreed itself computes byte for byte the root a seat derives from blocks, and compares it with the round's.
+ */
+function censusRootOf(entries, { censusHeight, censusConfirmations }) {
+  for (const e of entries)
+    if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
+      throw new Error('that entry has not been resolved: no advertisement stands behind it');
+
+  const eligible = entries
+    .filter((e) => e.height <= censusHeight)
+    // DEPTH AT THE CENSUS HEIGHT, as SCAN measures it (5A.4 step 1, "unspent AT census_height with >= census_confirmations
+    // depth"): measured against the tip, a bond shallow at the census became deep once the chain grew, and the root a
+    // node committed to depended on when it asked (TASKBOOK 23145; the spec audit of 2026-10-04 found these two left).
+    .filter((e) => censusHeight - e.height + 1 >= censusConfirmations)
+    .filter((e) => !e.spent)
+    .sort(compareEntries);
+
+  for (let i = 1; i < eligible.length; i++)
+    if (compareEntries(eligible[i - 1], eligible[i]) === 0)
+      throw new Error('duplicate outpoint in census');
+
+  const leaves = eligible.map(leafHash);
+  return { entries: eligible, leaves, root: merkleRoot(leaves) };
+}
+
+/**
+ * THE ENTRIES A ROOT WAS TAKEN OVER, AS ONE HASH.
+ *
+ * 5A.4 makes the root a function of a set and a height: "census_root[role] =
+ * Merkle root over their canonical serialization". So a check that a contract
+ * names the right root is a comparison against a SET, and a set an accuser
+ * chooses is no check at all - hand in a different list and any honest
+ * contract looks wrong.
+ *
+ * The same discipline `payoutInputsId` needed for row 3 of 5A.3, and for the
+ * same reason: whoever presents the accusation must be bound to the inputs
+ * before the arithmetic is worth anything.
+ *
+ * SORTED THE CENSUS'S OWN WAY, by outpoint, not by a second rule invented
+ * here. 5A.4 is explicit that sorting by `H(node_pubkey)` is grindable - "a
+ * node can mine a pubkey to sit anywhere it likes" - and the census already
+ * sorts by `(funding_txid, vout)`, which cannot be chosen after the fact.
+ */
+function censusInputsId({ contract, view, entries }) {
+  const chain = viewOrThrow(view);
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
+  const firstHeight = chain.firstHeight;
+  const w = new Writer();
+  w.u8(TYPE_CENSUS_LEAF);
+  w.u16(PROTOCOL_VERSION);
+  w.u32(censusHeight);
+  w.u32(censusConfirmations);
+  w.u32(tipHeight);
+
+  // AND WHERE THE CHAIN THE ROOT WAS TAKEN OVER STARTED. Measured: a view
+  // beginning after a bond's funding block reports that bond as "no such
+  // outpoint" and derives a DIFFERENT root, ok and all - so two parties with
+  // the same chain but different windows agreed on nothing and were told
+  // nothing. 5A.2 says the eligible set is "a pure function of the chain up to
+  // census_height", and a window is not the chain. Committing the start does
+  // not make a short window correct; it makes it a different set of inputs,
+  // which is what `boundTo` is for.
+  w.u32(firstHeight);
+  w.vec([...entries].sort(compareEntries), (e, ww) => {
+    ww.bytes(encodeEntry(e), encodeEntry(e).length);
+    ww.u8(e.spent ? 1 : 0);
+  });
+  return taggedHash(TAG.censusInputs, w.finish());
+}
+
+/**
+ * DOES THIS ROUND NAME THE ROOT ITS OWN CENSUS DERIVES TO?
+ *
+ * 5A.4: "The Round Contract names `census_height` and both roots. Any
+ * participant recomputes them; A CONTRACT WHOSE ROOTS DO NOT MATCH THE CHAIN
+ * IS INVALID and no honest node will issue receipts against it."
+ *
+ * Until this, `censusRoot` was named by every contract and read by no code at
+ * all - measured with a grep before the check was written. A round could name
+ * any thirty-two bytes and be played, which makes the committee whatever the
+ * round's author said it was.
+ *
+ * THE HEIGHT IS THE CONTRACT'S, not the caller's. Recomputing at another
+ * height is recomputing a different census, and a caller who could choose it
+ * could make an honest contract look wrong.
+ *
+ * Answered rather than thrown, like every other decision in this package: a
+ * malformed census is a refusal with a reason, not an exception handed to
+ * whoever asked whether a round may be played.
+ */
+function censusRootMatchesRound(contract, { entries, view, boundTo }) {
+  if (!contract || !(contract.censusRoot instanceof Uint8Array)
+      || contract.censusRoot.length !== 32)
+    return { ok: false, why: 'that round names no census root' };
+  if (!Number.isInteger(contract.censusHeight))
+    return { ok: false, why: 'that round names no census height' };
+  if (!Number.isInteger(contract.censusConfirmations))
+    return { ok: false, why: 'that round names no confirmation depth' };
+  if (!Array.isArray(entries))
+    return { ok: false, why: 'no census entries to derive a root from' };
+
+  // AND THE ENTRIES ARE THE PUBLISHED ONES, not whichever set the asker
+  // brought. A root is a function of a SET and a height, so a caller free to
+  // choose the set can make any honest contract look wrong by handing in a
+  // different list - the same free variable row 3 of 5A.3 had before its
+  // inputs were bound, and the same fix: whoever presents the question is
+  // bound to the inputs before the arithmetic means anything.
+  if (!(boundTo instanceof Uint8Array) || boundTo.length !== 32)
+    return { ok: false, why: 'no committed census inputs to check those entries against' };
+
+  let bound;
+  try { bound = censusInputsId({ contract, view, entries }); }
+  catch (e) { return { ok: false, why: `those census inputs cannot be committed to: ${e.message}` }; }
+  if (!bound.every((b, i) => b === boundTo[i]))
+    return {
+      ok: false,
+      why: 'those are not the census entries that were published: the set, the '
+        + 'height or the depth rule differs from what was committed to',
+    };
+
+  let census;
+  try {
+    census = commitCensus(entries, { contract, view });
+  } catch (e) {
+    return { ok: false, why: `that census cannot be built: ${e.message}` };
+  }
+
+  const same = census.root.every((b, i) => b === contract.censusRoot[i]);
+  return same
+    ? { ok: true, root: census.root, entries: census.entries.length, why: 'the censusRoot is the one those entries derive to' }
+    : {
+      ok: false,
+      root: census.root,
+      entries: census.entries.length,
+      why: 'the censusRoot this round names is not the one its entries derive '
+        + `to at height ${contract.censusHeight}`,
+    };
+}
+
+/**
+ * Only `chainViewOf` can stamp a view as checked, and the stamp PINS the
+ * numbers a caller could otherwise override. A symbol alone was not enough:
+ * `{ ...verified, tipHeight: 999999 }` copies symbol-keyed properties too, so
+ * a caller holding an honest view could have spread it and named any tip.
+ */
+const VERIFIED = Symbol('a chain view this module checked itself');
+const stampOf = (v) => `${v.firstHeight}:${v.blocks.length}:${v.tipHeight}`;
+
+/**
+ * THE CHAIN A CENSUS IS READ FROM, AND THE PROOF THAT IT IS ONE.
+ *
+ * 5A.2: "The eligible set is therefore a pure function of THE CHAIN up to
+ * `census_height`. Two parties with the same chain compute the same census."
+ * That sentence has a load-bearing word in it, and until this the census took
+ * a bag of `{height, transactions}` - no header, no work, no link - so two
+ * chains that disagreed about Bitcoin both derived cleanly, to different
+ * roots, and nothing in the package could say which was the chain.
+ *
+ * A VIEW IS `{ blocks, firstHeight }`, each block `{ header, transactions }`,
+ * and four things are checked, none of them optional:
+ *
+ *   mined      every header's hash meets the target it claims. `chainWork`
+ *              adds a header's work only after that, "because a header nobody
+ *              mined contributes whatever difficulty its author felt like
+ *              writing down".
+ *   linked     each header names the one before it. A list that does not link
+ *              is not a chain however long it is.
+ *   contained  each block's transactions hash to the merkle root ITS OWN
+ *              header commits to. Without this the headers are decoration: a
+ *              real mined header with a fabricated transaction list would
+ *              pass, which is precisely the forgery 25.1 says a provider must
+ *              not be able to commit ("a list provider can then OMIT but not
+ *              FORGE").
+ *   placed     heights are positional from `firstHeight`, so nobody asserts
+ *              one, and the TIP is the last block's height rather than a
+ *              number a caller chose.
+ *
+ * The work is returned so competing views can be compared, which is 25.1's
+ * rule: "block headers from several independent sources, MOST WORK WINS".
+ */
+function chainViewOf(view) {
+  if (!view || !Array.isArray(view.blocks) || !view.blocks.length)
+    return { ok: false, why: 'a chain view is at least one block' };
+  if (!Number.isInteger(view.firstHeight))
+    return { ok: false, why: 'a chain view says which height it starts at' };
+
+  const headers = [];
+  for (const block of view.blocks) {
+    if (!block || !(block.header instanceof Uint8Array))
+      return { ok: false, why: 'every block in a chain view carries its header' };
+    if (!Array.isArray(block.transactions))
+      return { ok: false, why: 'every block in a chain view carries its transactions' };
+    headers.push(block.header);
+  }
+
+  const linked = chainWork(headers);
+  if (!linked.ok)
+    return { ok: false, why: `that is not a chain: ${linked.why}`, at: linked.at };
+
+  const blocks = [];
+  for (let i = 0; i < view.blocks.length; i++) {
+    const height = view.firstHeight + i;
+    let ids;
+    try { ids = view.blocks[i].transactions.map((raw) => parseTransaction(raw).txid); }
+    catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
+
+    const claimed = merkleRootOf(view.blocks[i].header);
+    if (ids.length) {
+      const root = blockMerkleRoot(ids);
+      if (!root.every((b, k) => b === claimed[k]))
+        return {
+          ok: false,
+          why: `block ${height} does not contain the transactions offered with it`,
+        };
+    } else if (!claimed.every((b) => b === 0)) {
+      // AND A BLOCK CANNOT BE EMPTIED BY OFFERING NOTHING FOR IT. Measured: a
+      // real header committing to a real merkle root, handed over with its
+      // transaction list stripped, was accepted as a chain and the bond in it
+      // simply vanished from the census. 25.1 allows a provider to OMIT, and
+      // the answer to omission is asking another - but a view that CONTRADICTS
+      // ITS OWN HEADER is not omitting, it is claiming a block Bitcoin does
+      // not have. Every real block has at least a coinbase, so the only
+      // transaction list consistent with no transactions is a root of zero.
+      return {
+        ok: false,
+        why: `block ${height} is offered with no transactions, and its header `
+          + 'commits to some',
+      };
+    }
+    blocks.push({ height, header: view.blocks[i].header, transactions: view.blocks[i].transactions });
+  }
+
+  const checked = {
+    ok: true,
+    blocks,
+    work: linked.work,
+    firstHeight: view.firstHeight,
+    tipHeight: view.firstHeight + view.blocks.length - 1,
+  };
+  checked[VERIFIED] = stampOf(checked);
+  return checked;
+}
+
+/**
+ * A view, verified, or the reason it is not one - as a throw, because the
+ * functions below it are the ones that already throw on a malformed round.
+ *
+ * THE `ok` FLAG IS NOT TAKEN ON TRUST. An earlier draft short-circuited on
+ * `view.ok === true`, and the vector generator promptly handed in
+ * `{ ok: true, blocks: [], tipHeight: 900100 }` - a "chain" with no blocks
+ * asserting any tip it liked, which is exactly the hole this letter closed
+ * wearing a different hat. The stamp below is a module-private symbol, so only
+ * `chainViewOf` can put it there.
+ */
+function viewOrThrow(view) {
+  if (view && view[VERIFIED] && view[VERIFIED] === stampOf(view)) return view;
+  const seen = chainViewOf(view);
+  if (!seen.ok) throw new Error(seen.why);
+  return seen;
+}
+
+/**
+ * MOST WORK WINS, and it is Bitcoin's rule rather than a vote.
+ *
+ * 25.1: "block headers from several independent sources, most work wins... A
+ * list provider can then OMIT but not FORGE, and omission is answered by
+ * asking a second one." A view that is not a chain is not in the running - it
+ * is not a competing answer, it is a bad source.
+ *
+ * A TIE IS BROKEN BY THE TIP HASH, NOT BY WHICHEVER ARRIVED FIRST.
+ *
+ * `mostWork` takes the first of an equal pair, which is right for a NODE
+ * choosing its own tip - that is Bitcoin's first-seen rule, and a node is
+ * allowed to have been somewhere when a block arrived. A CENSUS is not allowed
+ * that: 5A.2 says "two parties with the same chain compute the same census",
+ * and measured before this, two equal-work chains gave eligible 1 offered one
+ * way round and eligible 0 the other, from the same two inputs.
+ *
+ * The tip hash is the intrinsic value to break it on: it is the work itself,
+ * so nobody can pick it after the fact, and both parties compute the same
+ * comparison from the same two chains. Lower hash wins, arbitrarily but
+ * fixed - what matters is that it is the same everywhere.
+ */
+function bestChainView(views) {
+  const offered = Array.isArray(views) ? views : [views];
+  const checked = offered.map(chainViewOf);
+  const running = checked.filter((v) => v.ok);
+  if (!running.length)
+    return { ok: false, why: checked.length ? checked[0].why : 'no chain to read the census from' };
+
+  const tipOf = (v) => blockHashOf(v.blocks[v.blocks.length - 1].header);
+  let best = running[0];
+  for (const v of running) {
+    if (v.work > best.work) { best = v; continue; }
+    if (v.work < best.work) continue;
+    const a = tipOf(v);
+    const b = tipOf(best);
+    for (let i = 0; i < 32; i++) {
+      if (a[i] === b[i]) continue;
+      if (a[i] < b[i]) best = v;
+      break;
+    }
+  }
+  return { ...best, refused: checked.filter((v) => !v.ok).map((v) => v.why) };
+}
+
+/**
+ * 5A.4 STEP 1, SCAN: the chain says where an output was and whether it is
+ * still there. Not the party handing the census over.
+ *
+ * "SCAN all outputs created at or before census_height whose script matches
+ * the bond template (5A.3B) and that are unspent at census_height with >=
+ * census_confirmations depth."
+ *
+ * WHAT THIS DOES AND WHAT IT CANNOT. Three of those four conjuncts are read
+ * off the blocks here: WHERE an outpoint was created, WHETHER it was spent at
+ * or before the census height, and HOW DEEP it is. `commitCensus` applies all
+ * three too - to fields the caller supplied. That is the difference: a
+ * census used to be a bag of entries someone asserted heights and spends for,
+ * and this derives both from the chain, so a publisher who lies about either
+ * is caught by anyone holding the same blocks.
+ *
+ * THE FOURTH CONJUNCT IS NOT HERE AND IS NOT FAKED. Finding which outputs are
+ * bonds at all needs `BOND_MARKER` - 25.1's single dust address that puts every
+ * bond in the compact filters - and `BOND_MARKER` is `null` in this protocol
+ * by a decision recorded in `constants.js`: it is a genesis parameter, fixed
+ * once before the first bond exists, and writing a plausible address into a
+ * source tree would settle it by accident. `bondMarker()` throws for exactly
+ * that reason. So the candidate outpoints come IN - from the advertisements a
+ * node already holds, which name `bondTxid` and `bondVout` - and enumerating
+ * them from the chain alone waits on that parameter, not on a daemon.
+ *
+ * A BLOCK IS `{ height, transactions }`, transactions being raw bytes. Nothing
+ * here fetches: the caller brings the blocks, and two callers holding the same
+ * blocks get the same census or neither does.
+ */
+/**
+ * WHEN EACH OUTPOINT APPEARED AND WHETHER IT WAS SPENT, read off the blocks.
+ *
+ * One reader, used by SCAN and by RESOLVE, because two readers of the same
+ * chain are two answers waiting to differ. 5A.2 makes the census "a pure
+ * function of the chain up to census_height", so nothing after that height is
+ * looked at: a block later than the census is a block the census did not see,
+ * and reading it would make the answer depend on when a node happened to ask.
+ */
+function chainFactsAt(blocks, censusHeight) {
+  const createdAt = new Map();
+  const spentAt = new Map();
+  // AND THE OUTPUT ITSELF, for a caller that wants the script without going
+  // back to the blocks. RESOLVE does not need it: a resolved transaction is
+  // pinned to the entry's txid, and a transaction with that txid cannot have
+  // different outputs - the txid IS the hash of them. Reading the script here
+  // and comparing it there would be a check that can never fail, which is a
+  // worse thing to have than no check at all.
+  const outputAt = new Map();
+
+  for (const block of blocks) {
+    if (block.height > censusHeight) continue;
+
+    for (const raw of block.transactions) {
+      const tx = parseTransaction(raw);
+      const txid = toHex(tx.txid);
+      for (let vout = 0; vout < tx.outputs.length; vout++) {
+        const key = `${txid}:${vout}`;
+        if (createdAt.has(key)) continue;
+        createdAt.set(key, block.height);
+        outputAt.set(key, tx.outputs[vout]);
+      }
+      for (const input of tx.inputs)
+        spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
+    }
+  }
+  return { createdAt, spentAt, outputAt };
+}
+
+/**
+ * WHICH ADVERTISEMENT DOES THIS TRANSACTION COMMIT TO?
+ *
+ * 5A.2: the bond output "commits to H(NodeAdvertisement)... the body itself
+ * travels in the witness of the same transaction, so it is retrievable by
+ * anyone with the chain and there is nothing to serve and nothing to keep
+ * running". So a transaction answers this about itself, and SCAN and RESOLVE
+ * ask it the same way rather than two ways.
+ */
+/** The advertisement a bond transaction commits to (raw bytes or parsed), or null - as SCAN reads it. */
+function advertInTransaction(raw) {
+  try { return committedAdvertIn(raw instanceof Uint8Array ? parseTransaction(raw) : raw); } catch { return null; }
+}
+
+/** The ancestor advertisement a BLWP-era bond transaction commits to (ancestor.js), or null. */
+function committedAncestorAdvertIn(tx) {
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length) return null;
+  for (const item of witnessRunsOf(tx)) {
+    try {
+      const { body } = splitSignedAdvert(item);
+      const id = ancestorAdvertId(body);
+      if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) return decodeAncestorAdvert(body);
+    } catch { /* not a signed body */ }
+  }
+  return null;
+}
+
+function committedAdvertIn(tx) {
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length) return null;
+  for (const item of witnessRunsOf(tx)) {
+    try {
+      const { body } = splitSignedAdvert(item);
+      const advert = decodeAdvert(body);
+      const id = advertId(advert);
+      if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) return advert;
+    } catch { /* not a signed body; most witness items are not */ }
+  }
+  return null;
+}
+
+/**
+ * FINDING THE BONDS WITHOUT BEING TOLD WHERE THEY ARE, 5A.4 step 1.
+ *
+ * Until now SCAN threw unless a caller handed it the outpoints, so every
+ * census in this tree was a census of a list somebody else made - and 25.1
+ * answers "which nodes count?" with "Bitcoin: bond outputs", not "whatever you
+ * were given". A census that has to be told what to look for is a directory
+ * with extra steps.
+ *
+ * The rule is 5A.2's own findability: a funding transaction MUST pay a dust
+ * output to this network's BOND_MARKER, "without it the census is unfindable
+ * in practice". So a marked transaction is one to read, and the body it
+ * commits to says which of its outputs is the bond.
+ *
+ * WHAT IS *NOT* DONE HERE. The output is not recomputed against the template
+ * and the advertisement's signature is not checked - both belong to RESOLVE
+ * and both already happen there. A scan that quietly dropped a marked
+ * transaction whose output does not recompute would turn an exclusion anybody
+ * can audit into a silence nobody can: the entry is FOUND here and refused by
+ * name later.
+ */
+function candidatesIn(blocks, censusHeight, network) {
+  const found = [];
+  for (const block of blocks) {
+    if (block.height > censusHeight) continue;
+    for (const raw of block.transactions) {
+      let tx;
+      try { tx = parseTransaction(raw); } catch { continue; }
+      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9, kanban #209): a bond the BLWP
+      // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
+      // operator re-affirmed it for this network (deriveCensus)
+      let ancestor = false;
+      if (!paysBondMarker(tx, network)) {
+        if (!paysMarkerProgram(tx, ancestorMarker(network))) continue;
+        ancestor = true;
+      }
+
+      const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
+      if (!advert) continue;
+      // THE BODY NAMES THE OUTPOINT, and a body that names an output this
+      // transaction does not have has named no outpoint at all - there is
+      // nothing for RESOLVE to read and nothing to exclude by name.
+      if (!tx.outputs[advert.bondVout]) continue;
+
+      // NO AMOUNT. The scan used to copy the output's value in beside the
+      // outpoint, and measured, nothing ever read it: RESOLVE takes
+      // `output.valueSats` off the funding transaction itself and overwrites
+      // the field before the floor is applied or a leaf is hashed. A number
+      // carried along that no rule consults is one a later caller can start
+      // trusting, so the scan stops writing one.
+      found.push({
+        txid: tx.txid,
+        vout: advert.bondVout,
+        pubkey: advert.nodePubkey,
+        roles: advert.roles,
+        hostedGames: advert.hostedGames,
+        ...(ancestor ? { ancestor: true } : {}),
+      });
+    }
+  }
+  return found;
+}
+
+function scanCensus(view, { contract, candidates }) {
+  const chain = viewOrThrow(view);
+  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
+  const blocks = chain.blocks;
+  const firstHeight = chain.firstHeight;
+
+  const { createdAt, spentAt } = chainFactsAt(blocks, censusHeight);
+
+  // GIVEN A LIST, THIS IS WHAT IT ALWAYS WAS. Absent one, the chain is asked -
+  // which is what 5A.4 step 1 says a participant does, and what makes the
+  // census a function of Bitcoin rather than of whoever answered first.
+  // A ROUND THAT NAMES NO NETWORK IS NOT A ROUND TO SCAN FOR. This used to
+  // fall back to regtest - `network || 'regtest'` - so a contract that simply
+  // had no `networkId` was answered with regtest's marker and told nothing.
+  // 5A.2 makes the marker the whole of findability, and which marker is the
+  // round's own network's, so a census that cannot say where to look cannot
+  // say a bond is findable. It is refused, on both paths: the marker decides
+  // eligibility whether the outpoints were scanned or handed in.
+  if (!contract || !contract.networkId)
+    throw new Error('that round names no network, so there is nowhere to look for its bonds');
+  const network = networkOf(contract.networkId);
+  if (network === null)
+    throw new Error('that round names a network this build has no genesis for');
+  // A LIST THAT IS NOT A LIST IS STILL A MISTAKE. Omitting it means "ask the
+  // chain"; handing something that is not an array means a caller built one
+  // and got it wrong, and scanning the chain instead would bury that.
+  if (candidates !== undefined && !Array.isArray(candidates))
+    throw new Error('scan takes the outpoints as a list, or none at all and reads the chain');
+  const looking = candidates === undefined
+    ? candidatesIn(blocks, censusHeight, network)
+    : candidates;
+
+  const found = [];
+  const excluded = [];
+  for (const c of looking) {
+    const key = `${toHex(c.txid)}:${c.vout}`;
+    const height = createdAt.get(key);
+
+    // AN OUTPOINT THE CHAIN DOES NOT CARRY IS NOT AN ENTRY. It is named rather
+    // than silently dropped: a census that quietly lost a bond and one that
+    // never had it look identical from the root alone.
+    //
+    // AND THE REASON SAYS WHAT THIS VIEW ACTUALLY KNOWS. A window that begins
+    // after a bond's funding block cannot tell "not in the chain" from "below
+    // where I start", and it used to claim the first. It still excludes the
+    // entry - there is nothing else it could do with an outpoint it cannot see
+    // - but it no longer asserts something it has not looked at.
+    if (height === undefined) {
+      excluded.push({
+        ...c,
+        why: firstHeight > 0
+          ? `no such outpoint between height ${firstHeight} and ${censusHeight}, `
+            + 'and this chain view does not reach further back'
+          : 'no such outpoint at or before that height',
+      });
+      continue;
+    }
+
+    const entry = { ...c, height, spent: spentAt.has(key) };
+
+    // SCAN APPLIES ITS OWN CONJUNCTS. It used to hand its findings to the
+    // commit step and let that do the filtering, which made SCAN a lookup and
+    // the root the only place the rules lived. 5A.4 puts "unspent at
+    // census_height with >= census_confirmations depth" in step 1, so step 1
+    // decides it, and says which rule dropped whom.
+    if (entry.spent) {
+      excluded.push({ ...entry, why: 'that output was already spent at the census height' });
+      continue;
+    }
+    // DEPTH IS MEASURED AT THE CENSUS HEIGHT, NOT AT THE TIP.
+    //
+    // Found by a mutant that survived: swapping `tipHeight` for `censusHeight`
+    // here broke nothing, because every fixture had the two close enough
+    // together not to matter. They are not the same rule. 5A.4 step 1 is
+    // "unspent AT CENSUS_HEIGHT with >= census_confirmations depth", and the
+    // whole point of "given census_height, EVERY PARTICIPANT RUNS THE SAME
+    // FIVE STEPS" is that the answer cannot depend on when it is asked.
+    //
+    // Measured against the tip it did: a bond two blocks under census_height
+    // was shallow to a node whose view ended at the census and deep to a node
+    // ten blocks later, so two honest participants deriving the same round
+    // would get different committees - the divergence 5A.2 exists to remove.
+    // `depthRuleOf` already refuses a view that ends before census_height, so
+    // this number is always the one the census asks about.
+    const depth = censusHeight - height + 1;
+    if (depth < censusConfirmations) {
+      excluded.push({
+        ...entry,
+        why: `that output is ${depth} confirmations deep where this round needs ${censusConfirmations}`,
+      });
+      continue;
+    }
+
+    found.push(entry);
+  }
+
+  // NO `census` FIELD. It used to return one, and it was a root taken before
+  // RESOLVE and FILTER had run - the most natural way to use this package gave
+  // back a census over nodes whose advertisements nobody had read. A premature
+  // root is not a return value; `deriveCensus` is where a root comes from.
+  return { entries: found, excluded };
+}
+
+/**
+ * 5A.4 STEP 2 (RESOLVE) AND THE 5A.3 FILTERS THAT NEED NOTHING PARKED.
+ *
+ * "RESOLVE: for each, read the committed H(advertisement) and retrieve the
+ * body from the node, a mirror, or any peer. Hash must match. UNRETRIEVABLE
+ * BODY -> EXCLUDED (identically for everyone: the hash is public, the content
+ * is missing for all)."
+ *
+ * That parenthesis is the whole reason this can be a rule at all. A missing
+ * body is missing for every participant, so excluding it keeps the census
+ * canonical instead of making it depend on who could reach what. An entry
+ * nobody can resolve is OUT, and it is out the same way everywhere.
+ *
+ * THREE OF 5A.3's SIX CRITERIA ARE APPLIED HERE, and they are the three that
+ * wait on nothing parked:
+ *
+ *   - the committed advertisement body is retrievable and hash-matching
+ *   - `bond_amount >= bond_min(role)`, the floor the ROUND names: "bond_min
+ *     (role) is named in the Round Contract, not global"
+ *   - the advertisement declares the role and a supported protocol version
+ *
+ * THE OTHER THREE ARE NOT WORKED AROUND. The bond script template cannot be
+ * read off a taproot output - 5A.3B is explicit that the paths nobody uses are
+ * never revealed - which is the same wall `BOND_MARKER` stands behind. And the
+ * advertisement signature needs a curve this package does not carry, exactly
+ * as `provesEquivocation` needs one from its caller. Both are named in the
+ * answer rather than silently passed.
+ *
+ * `resolve` is injected. It is handed an entry and returns the transaction
+ * that funded it, or nothing: retrieval is a fetch, and this package fetches
+ * nothing. A resolver that throws is a resolver that failed, and a body that
+ * cannot be had is excluded rather than allowed to break the census.
+ */
+/**
+ * The body an output commits to, or why there is none.
+ *
+ * The same reading `acceptAdvert` does, without its inclusion proof: bodies
+ * ride in the witness, an output commits to one by its tagged id, and the one
+ * taken is the one committed to. Order decides nothing - a transaction
+ * committing to two bodies would be one operator advertising twice, not an
+ * ambiguity to settle here.
+ */
+function resolveBody(seen, entry, verifyAdvert) {
+  // an ancestor's bond (scan found it by the ancestor's marker) is read by the ancestor's layout and id (ancestor.js)
+  const ancestor = !!entry.ancestor;
+  let tx;
+  try { tx = parseTransaction(seen.transaction); }
+  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
+
+  // IT HAS TO BE THIS ENTRY'S OWN TRANSACTION. 5A.4 resolves the body "for
+  // each" output, and a body is only that output's if the transaction is the
+  // one the outpoint names. Found by a test that failed honestly: handing back
+  // ANOTHER node's bond resolved happily, because a coherent transaction
+  // commits to its own body - so an entry at one outpoint could be resolved
+  // with an advertisement from somewhere else entirely, endpoint and all.
+  if (!entry.txid.every((b, i) => b === tx.txid[i]))
+    return { ok: false, why: 'that is a different transaction than the entry names' };
+
+  const commitments = commitmentsOf(tx);
+  if (!commitments.length)
+    return { ok: false, why: 'no output of that transaction commits to anything' };
+
+  // THE SIGNATURE IS KEPT WITH THE BODY, not dropped on the way past. It used
+  // to be discarded here - `const { body } = split...` and the other half
+  // thrown away - so a census entry was built from a body nobody had shown was
+  // its author's, and the gap was named in `unchecked` instead. Naming a gap
+  // is right when nothing can close it; it is not right once a caller can.
+  const offered = [];
+  const read = (bytes) => {
+    try {
+      const { body, signature } = splitSignedAdvert(bytes);
+      const advert = ancestor ? decodeAncestorAdvert(body) : decodeAdvert(body);
+      offered.push({ advert, signature, id: ancestor ? ancestorAdvertId(body) : advertId(advert) });
+    } catch { /* not a signed body; most witness items are not */ }
+  };
+  for (const item of witnessRunsOf(tx)) read(item);
+  if (seen.signedAdvert) read(seen.signedAdvert);
+
+  const taken = offered.find((o) =>
+    commitments.some((c) => c.length === 32 && o.id.every((b, i) => b === c[i])));
+  if (!taken)
+    return { ok: false, why: 'the bond output commits to a different advertisement' };
+
+  // AND IF THE CALLER BROUGHT A CURVE, THE SIGNATURE IS CHECKED HERE.
+  //
+  // This package carries none and must not: it is the one every other package
+  // reads, and a hash that pins money should not gain a dependency whose
+  // version could change its answer. So `verifyAdvert` is injected the way
+  // `provesEquivocation` takes one - and when it is absent the gap is named in
+  // `unchecked` exactly as before, rather than a body being called signed
+  // because nobody looked.
+  //
+  // A KEY OF NOTHING AND A SIGNATURE OF NOTHING VERIFY EACH OTHER on ed25519,
+  // measured: zero decodes to a point of small order and the equation closes
+  // trivially. That is refused here whatever the caller's curve says, because
+  // no census entry should rest on a key nobody holds.
+  if (verifyAdvert) {
+    const zero = (b) => b.every((v) => v === 0);
+    if (zero(taken.advert.nodePubkey))
+      return { ok: false, why: 'that advertisement names the zero key, which nobody holds' };
+    if (zero(taken.signature))
+      return { ok: false, why: 'that advertisement carries an empty signature' };
+    if (!verifyAdvert(taken.signature, taken.id, taken.advert.nodePubkey))
+      return { ok: false, why: 'that advertisement is not signed by the node it names' };
+  }
+
+  return {
+    ok: true, advert: taken.advert, advertId: taken.id, tx,
+    signatureChecked: !!verifyAdvert,
+  };
+}
+
+function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, versionAfterUpdates = false }) {
+  if (!contract || typeof contract.bondMinSats !== 'bigint')
+    return { ok: false, why: 'that round names no bond floor to measure against' };
+
+  // THE VERSION IS THE ROUND'S. It used to be an argument with a default, so
+  // whoever called this decided which nodes were selectable - and a version
+  // the caller picks is a version the OPERATOR picks, the same fault that
+  // moved the objection window and the minimum service into the contract.
+  // 27A.7.5 puts it on the round: a node "simply stops being selectable for
+  // rounds naming the new hash, exactly as with protocol versions".
+  if (!Number.isInteger(contract.protocolVersion))
+    return { ok: false, why: 'that round names no protocol version' };
+  if (typeof resolve !== 'function')
+    return { ok: false, why: 'no way to retrieve an advertisement body' };
+
+  // THE CHAIN'S OWN ANSWER ABOUT EACH OUTPOINT, when a caller brings the view.
+  //
+  // 5A.2: "a node is in the census if and only if it has a bond output on
+  // Bitcoin, CONFIRMED AND UNSPENT at census_height". Until now this function
+  // re-applied that RULE to values the entry carried - `e.height`, `e.spent` -
+  // so whoever composed the entries decided whether a bond was live. A node
+  // resolving a census from somebody else's list could be told a spent bond
+  // was unspent, on the single criterion the whole of eligibility rests on.
+  //
+  // Re-applying a rule to a claimed fact is not verification. With a view the
+  // facts are READ, the claims are compared against them, and a disagreement
+  // excludes the entry by name rather than being quietly overwritten - a list
+  // that lies about the chain is a list to distrust, not to correct.
+  // WHICH NETWORK THIS ROUND IS FOR, off its own contract. A contract naming a
+  // network this build has no genesis for is refused rather than checked
+  // against a guess: `networkOf` answers null, and a census that cannot say
+  // where to look for a bond cannot say a bond is findable.
+  // AND THE SAME REFUSAL HERE, for the same reason: `recognizeBond` defaults
+  // to regtest, so a round with no `networkId` was checked against regtest's
+  // marker on every chain rather than being refused.
+  if (!contract.networkId)
+    return { ok: false, why: 'that round names no network, so its bond marker cannot be checked' };
+  const network = networkOf(contract.networkId);
+  if (network === null)
+    return { ok: false, why: 'that round names a network this build has no genesis for' };
+
+  // AND A SET IS THIS NETWORK'S SET, OR IT IS NOT A SET. The template check
+  // rebuilds the output key from the arbitration keys, the threshold and the
+  // maturity, so a caller passing its own - an empty list, a shorter one, its
+  // own maturity - would not be checking the 5A.3B template at all: every
+  // honest bond would fail the recompute and be excluded by name, which reads
+  // like a chain full of liars rather than like a caller holding the wrong
+  // set. These are genesis facts (letter 24's ruling), so they are compared
+  // against genesis and a mismatch is refused before any entry is judged.
+  if (bond) {
+    const g = genesisFor(network);
+    const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
+      && a.length === b.length && a.every((x, i) => x === b[i]);
+    const keys = bond.arbitrationKeys;
+    if (!Array.isArray(keys) || keys.length !== g.arbitrationKeys.length
+        || !keys.every((k, i) => same(k, g.arbitrationKeys[i])))
+      return { ok: false, why: `that is not the arbitration set ${network} was born with` };
+    if (bond.arbitrationK !== g.arbitrationK || bond.bondMaturity !== g.bondMaturity)
+      return {
+        ok: false,
+        why: `that names ${bond.arbitrationK}-of-${keys.length} at maturity `
+          + `${bond.bondMaturity} where ${network} was born `
+          + `${g.arbitrationK}-of-${g.arbitrationKeys.length} at ${g.bondMaturity}`,
+      };
+    if (typeof bond.tweakPoint !== 'function' || typeof bond.combine !== 'function')
+      return { ok: false, why: 'a template check needs both curve operations, and one is missing' };
+  }
+
+  let facts = null;
+  let depth = null;
+  if (view) {
+    const chain = viewOrThrow(view);
+    depth = depthRuleOf(contract, chain);
+    facts = chainFactsAt(chain.blocks, depth.censusHeight);
+  }
+
+  const eligible = [];
+  const excluded = [];
+
+  for (const e of entries) {
+    let seen = null;
+    try { seen = resolve(e); }
+    catch { seen = null; }
+
+    if (!seen || !seen.transaction) {
+      excluded.push({ ...e, why: 'the committed advertisement body could not be retrieved' });
+      continue;
+    }
+
+    // INCLUSION IS NOT RE-PROVED HERE, and that is deliberate. `acceptAdvert`
+    // bundles a merkle proof with the resolution because it is used where
+    // nothing has established the transaction is in the chain. SCAN has: it
+    // read the blocks. Demanding a header and a branch again would make
+    // RESOLVE ask for what step 1 already answered, and 5A.4 asks something
+    // narrower of it - read the committed hash, retrieve the body, match.
+    const read = resolveBody(seen, e, verifyAdvert);
+    if (!read.ok) { excluded.push({ ...e, why: read.why }); continue; }
+
+    // AND THE OUTPUT ITSELF HAS TO LOOK LIKE A BOND. Until this, the census
+    // checked the transaction and the commitment and never the output, so an
+    // entry could name any vout of a real bond transaction - the OP_RETURN
+    // included - and be counted.
+    // AND WITH THE NETWORK'S OWN SET AND A CURVE, THE OUTPUT KEY TOO. A door
+    // nobody walks through is not a door: `recognizeBond` learned to rebuild
+    // the key a node's own keys produce, and the census is where that has to
+    // be asked, because this is what decides who may hold a round. Without the
+    // set the census counts what it always counted and still lists the gap.
+    // THE MARKER IS CHECKED ON THE CONTRACT'S OWN NETWORK. `recognizeBond`
+    // defaults to regtest, and the census held the round's `networkId` and
+    // never passed it - so a testnet4 census would have looked for the regtest
+    // marker, which is a different address, and accepted a bond posted on
+    // another chain. 5A.2 makes that dust output the whole of findability.
+    const output = recognizeBond(read.tx, e.vout, read.advert, {
+      ...(bond ? { bond } : {}),
+      ...(network ? { network } : {}),
+      ...(e.ancestor ? { ancestor: true } : {}),
+    });
+    if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
+
+    let chainSays = null;
+    if (facts) {
+      const key = `${toHex(e.txid)}:${e.vout}`;
+      const height = facts.createdAt.get(key);
+      if (height === undefined) {
+        excluded.push({ ...e, why: 'the chain does not carry that outpoint at or before the census height' });
+        continue;
+      }
+      if (Number.isInteger(e.height) && e.height !== height) {
+        excluded.push({
+          ...e,
+          why: `that entry claims height ${e.height} and the chain says ${height}`,
+        });
+        continue;
+      }
+      if (facts.spentAt.has(key)) {
+        excluded.push({
+          ...e,
+          why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
+        });
+        continue;
+      }
+      const deep = depth.censusHeight - height + 1;   // at the census height, as SCAN and COMMIT measure it
+      if (deep < depth.censusConfirmations) {
+        excluded.push({
+          ...e,
+          why: `that bond is ${deep} block(s) deep and this round asks for `
+            + `${depth.censusConfirmations}`,
+        });
+        continue;
+      }
+      // The chain's own numbers replace the claimed ones from here on: an
+      // entry that agreed is an entry whose height came from the blocks.
+      chainSays = { height, spent: false };
+    }
+
+    // A TEMPLATE-2 BOND MATURES AT ITS OWN HEIGHT, AND THAT HEIGHT IS AT LEAST ITS CONFIRMATION PLUS THE NETWORK'S
+    // OFFSET (kanban #295, 5A.3B). The key above was rebuilt with the advertisement's height, so the leaf on chain
+    // carries it; this asks whether it is far enough from the block the bond confirmed in - read off the chain when a
+    // view was brought, else the entry's own height. One block short is a bond its node could take back before the
+    // network's maturity, and it is excluded by name.
+    const confirmed = chainSays ? chainSays.height : e.height;
+    const matures = maturityStands(read.advert, confirmed, network);
+    if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
+
+    // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
+    // an output worth 60000 sats, an entry claiming 100000000000, accepted -
+    // and carrying weight 2000000 into `selectCommittee` instead of weight 1.
+    //
+    // 5A.3 says why that is not a detail: "The bond is what makes identity
+    // expensive. Without it, a Sybil attacker creates arbitrarily many nodes
+    // for free and buys arbitrarily many selection chances - the flaw that
+    // made v4.4 unsafe." A bond that is asserted rather than observed costs
+    // nothing, so believing the claim reinstates exactly that flaw. The leaf
+    // hashes this number too, so the lie went into the census root.
+    const bondSats = output.valueSats;
+
+    // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
+    // Contract, not global... a node is eligible for THAT ROUND or not."
+    if (bondSats < contract.bondMinSats) {
+      excluded.push({
+        ...e,
+        bondSats,
+        why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}`,
+      });
+      continue;
+    }
+
+    // AND THE ADVERTISEMENT HAS TO DECLARE WHAT IT IS. A body that names no
+    // role this census is for, or speaks no version this software does, is a
+    // node that has not said it can serve the round it is being counted into.
+    const roles = read.advert.roles || [];
+    if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
+    // STEPPED OUT (§5A.3 "advertisement declares serving = true", kanban #302): with updates to come, the newest one decides below
+    if (!versionAfterUpdates && read.advert.serving === false) {
+      excluded.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+      continue;
+    }
+
+    // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #348, measured 2026-10-13 05:20Z: the first v2 grid's
+    // census came out EMPTY - every node announced version 2 in an advertisement update confirmed at 156338, and this pass
+    // refused each one on the version its bond committed to at creation, before deriveCensus applied the update). With
+    // updates to come (`versionAfterUpdates`), deriveCensus asks the version of the newest advertisement instead.
+    const versions = read.advert.protocolVersions || [];
+    if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
+      excluded.push({
+        ...e,
+        // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): a node left out for the version it speaks, as the page shows it
+        tooOld: true, speaks: versions,
+        why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
+          + `round runs ${protocolVersionName(contract.protocolVersion)}`,
+      });
+      continue;
+    }
+
+    // THE RESOLVED BODY REPLACES WHATEVER THE ENTRY CLAIMED - the roles, and
+    // the key. The body is what the bond committed to; the entry beside it is
+    // somebody's summary. The key mattered more than the roles and was missed
+    // the first time: the leaf hashes `pubkey`, so a census over transcriptions
+    // would name a key that never bonded, and the committee seed, the receipts
+    // and the payout table all read that key afterwards.
+    eligible.push({
+      ...e,
+      // The chain's height and spend state where a view gave them, so what
+      // goes into a root is what the blocks said and not what a list claimed.
+      ...(chainSays || {}),
+      bondSats,
+      pubkey: read.advert.nodePubkey,
+      roles,
+      hostedGames: read.advert.hostedGames,
+      advert: read.advert,
+      advertId: read.advertId,
+    });
+  }
+
+  return {
+    ok: true,
+    eligible,
+    excluded,
+    // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
+    // the signature as unchecked after checking it would be as wrong as not
+    // checking it: the list is what a reader is asked to take on trust.
+    // WHAT IS STILL UNCHECKED SHRINKS AS CALLERS BRING WHAT IT TAKES: the
+    // signature needs a curve, the script template needs the network's set and
+    // a curve. Reporting either as unchecked after checking it would be as
+    // wrong as not checking it.
+    chainChecked: !!view,
+    unchecked: [
+      ...BOND_UNCHECKED.filter((u) => {
+        if (verifyAdvert && /advertisement signature/.test(u)) return false;
+        if (bond && /script template/.test(u)) return false;
+        return true;
+      }),
+      // AND THE ONE THIS FUNCTION ITSELF CANNOT ANSWER WITHOUT A CHAIN. Named
+      // rather than silently taken from the entry, because "the list said so"
+      // is not a check and a reader deserves to know which it got.
+      ...(view ? [] : ['whether the output is unspent and deep enough at '
+        + 'census_height (no chain view was given, so the entry was believed)']),
+    ],
+  };
+}
+
+/**
+ * 5A.4, ALL FIVE STEPS, AND THE ONLY PLACE A CENSUS ROOT COMES FROM.
+ *
+ * "Given `census_height`, EVERY PARTICIPANT RUNS THE SAME FIVE STEPS." Five
+ * steps that only join when a caller remembers to join them are not a
+ * derivation, they are parts - and the parts were reachable in the wrong
+ * order. `scanCensus` handed back a root of its own with steps 2 and 3
+ * unrun, so the shortest path through this package produced a census over
+ * nodes whose advertisements nobody had read. That is the defect this closes:
+ *
+ *   1. SCAN     the blocks say where each candidate outpoint was created,
+ *               whether it was spent by the census height, and how deep it is.
+ *   2. RESOLVE  the committed advertisement body, retrieved and hash-matched.
+ *   3. FILTER   5A.3's objective criteria, the three that wait on nothing.
+ *   4. SORT     ascending by (funding_txid, vout), which cannot be ground.
+ *   5. COMMIT   the tagged leaves, Merkle-rooted, promotion on an odd level.
+ *
+ * Steps 1 and 2-3 are still separately callable, because a node wants to know
+ * WHY somebody was dropped and at which step. Neither of them returns a root.
+ *
+ * Every exclusion comes back, from either step, carrying the step that made it
+ * and the reason. A census that quietly lost a bond and one that never had it
+ * look identical from the root alone, and a node accused of publishing the
+ * wrong census needs to be able to point at the rule that removed a name.
+ *
+ * The two 5A.3 criteria this cannot apply come back in `unchecked` as they do
+ * from RESOLVE: the bond script template is unreadable until the output is
+ * spent, and the advertisement signature needs a curve this package does not
+ * carry. Neither is skipped quietly.
+ */
+function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate }) {
+  // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
+  // about Bitcoin are not two censuses: one of them is the chain.
+  const chain = bestChainView(views);
+  if (!chain.ok) return { ok: false, why: `that census cannot be scanned: ${chain.why}` };
+
+  // A ROOT IS NOT PUBLISHED WITH THE TEMPLATE UNCHECKED.
+  //
+  // 5A.3's criterion is that the output is "a bond output built to the 5A.3B
+  // template", and rebuilding that key is a point addition this package
+  // cannot do: it carries no curve on purpose, because every other package
+  // reads it. So `resolveCensus` has always been able to run without one and
+  // say so - the template sits in `unchecked` and the entry is counted.
+  //
+  // That is honest for a STEP and wrong for a CENSUS. This is the composed
+  // five steps, the thing a node publishes a root from, and a root computed
+  // without the template check is a census over outputs nobody proved were
+  // bonds - a stranger's taproot key among them is indistinguishable, and 5A.3
+  // says exactly why that matters: "the bond is what makes identity
+  // expensive". A door nobody walks through is not a door. So the composed
+  // census refuses, by name, and the caller brings a curve.
+  //
+  // `commitCensus` is deliberately NOT given this rule. It takes entries a
+  // caller assembled and already believes about `advertId`; a stamp checked
+  // there would be a check on the caller's own word rather than on the chain.
+  // The guarantee lives on the only path that runs all five steps.
+  const network = contract && contract.networkId ? networkOf(contract.networkId) : null;
+  if (network !== null) {
+    const set = genesisFor(network).arbitrationKeys;
+    if (set && set.length && !bond)
+      return {
+        ok: false,
+        why: `that census would be a root with the bond script template unchecked: `
+          + `${network} names an arbitration set and no curve was injected`,
+      };
+  }
+
+  let scanned;
+  try {
+    scanned = scanCensus(chain, { contract, candidates });
+  } catch (e) {
+    return { ok: false, why: `that census cannot be scanned: ${e.message}` };
+  }
+
+  // THE CHAIN GOES DOWN WITH THEM. Derive holds the view it just scanned, so
+  // resolving from entries whose height and spend state it could re-read and
+  // did not would be the door-nobody-walks-through fault one function deeper.
+  const resolved = resolveCensus(scanned.entries, {
+    contract, resolve, verifyAdvert, bond, view: chain, versionAfterUpdates: typeof verifyUpdate === 'function',
+  });
+  if (!resolved.ok) return resolved;
+
+  // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; the owner 2026-09-28): for each resolved bond, the newest valid
+  // update confirmed at or below census_height - signed by the bond's own node key (`verifyUpdate`) - replaces the
+  // advertisement the bond committed to at creation. The census's own filters then read the updated body: an update
+  // that declares no role, or not this round's version, takes the node out of this census. With no `verifyUpdate`
+  // nothing is applied: an update nobody checked is not an update.
+  // A BOND OF THE ANCESTOR COUNTS ONLY ONCE ITS OPERATOR RE-AFFIRMED IT FOR THIS NETWORK (§27A.8.3, spec 0A.9; kanban
+  // #209): a re-affirmation at or below census_height, at or above the bond, signed by the bond's node key for this
+  // network id and this bond - checked with the same BIP-340 verify an update is (`verifyUpdate`). Opt-in per operator:
+  // a bond nobody re-affirmed stays the ancestor's, and is named here, not counted.
+  const reaffirmOut = [];
+  let carried = resolved.eligible;
+  const ancestors = resolved.eligible.filter((e) => e.ancestor);
+  if (ancestors.length) {
+    const said = typeof verifyUpdate === 'function'
+      ? reaffirmedBonds(chain, ancestors, { atHeight: contract.censusHeight, networkId: contract.networkId, verify: verifyUpdate })
+      : new Map();
+    carried = [];
+    for (const e of resolved.eligible) {
+      if (!e.ancestor) { carried.push(e); continue; }
+      const r = said.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+      if (!r) {
+        reaffirmOut.push({ ...e, why: typeof verifyUpdate === 'function'
+          ? 'a bond of the ancestor network that its operator has not re-affirmed for this network'
+          : 'a bond of the ancestor network, and no signature check was given to read a re-affirmation with' });
+        continue;
+      }
+      carried.push({ ...e, reaffirmedBy: r });
+    }
+  }
+
+  let eligible = carried;
+  const updatedOut = [];
+  if (typeof verifyUpdate === 'function') {
+    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
+    const before = eligible;
+    eligible = [];
+    for (const e of before) {
+      const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
+      if (!u) {
+        if (e.advert && e.advert.serving === false) {
+          updatedOut.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
+          continue;
+        }
+        // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
+        const own = (e.advert && e.advert.protocolVersions) || [];
+        if (!own.includes(contract.protocolVersion)) {
+          updatedOut.push({ ...e, tooOld: true, speaks: own, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
+            + `round runs ${protocolVersionName(contract.protocolVersion)}` });
+          continue;
+        }
+        eligible.push(e); continue;
+      }
+      const roles = u.advert.roles || [];
+      const versions = u.advert.protocolVersions || [];
+      if (!roles.length) {
+        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
+        continue;
+      }
+      // STEPPED OUT (§5A.3, kanban #302): "From the first series whose census_height is at or above that update's block, the node is
+      // not in the census and is never drawn"; an update with serving = true brings it back the same way
+      if (u.advert.serving === false) {
+        updatedOut.push({ ...e, notServing: true, why: `its newest advertisement update (block ${u.height}) says serving = false: its node stepped out of the census, its bond untouched` });
+        continue;
+      }
+      if (!versions.includes(contract.protocolVersion)) {
+        updatedOut.push({ ...e, tooOld: true, speaks: versions, why: `its newest advertisement update speaks `
+          + `${versions.map(protocolVersionName).join(', ') || 'no version'} and this round runs ${protocolVersionName(contract.protocolVersion)}` });
+        continue;
+      }
+      // the update's games replace the bond's first advertisement's (kanban #204: a hosted-games change is an update)
+      eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
+        updatedBy: { txid: u.txid, height: u.height, position: u.position } });
+    }
+  }
+
+  let census;
+  try {
+    census = commitCensus(eligible, { contract, view: chain });
+  } catch (e) {
+    return { ok: false, why: `that census cannot be committed: ${e.message}` };
+  }
+
+  return {
+    ok: true,
+    entries: census.entries,
+    leaves: census.leaves,
+    root: census.root,
+    work: chain.work,
+    tipHeight: chain.tipHeight,
+    refusedChains: chain.refused || [],
+    excluded: [
+      ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
+      ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
+      ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
+      ...updatedOut.map((e) => ({ ...e, step: 'update' })),
+    ],
+    unchecked: resolved.unchecked,
+    chainChecked: resolved.chainChecked,
   };
 }
 
@@ -8467,61 +11046,6 @@ const KNOWN_GOOD_GAMES = Object.freeze({
   }),
 });
 
-// ---- arena-protocol/src/protocol-version.js
-// A PROTOCOL VERSION'S NAME (kanban #349, the owner 2026-10-12 ~15:05Z): "the version template is YYYY.x.y" - YYYY the year it was
-// released, y the build number, and x starts at 0 for now ("0.0.1 is the newest version").
-//
-// THE WIRE KEEPS ITS u16: what a contract, an advert and a manifest carry is y alone, and y only ever grows, so "at or above"
-// is a comparison of y and no byte moves. YYYY and x are not on the wire; they come from this table of releases, which a
-// build extends when it ships a version. A y this build has no release for is named by its number alone ("?.?.y").
-const PROTOCOL_RELEASES = Object.freeze([
-  Object.freeze({ version: 1, year: 2026, x: 0 }),
-  // the round contract that does not name its draw (kanban #348, RULED the owner 2026-10-13)
-  Object.freeze({ version: 2, year: 2026, x: 0 }),
-  // every game through every federation: a round that names no single federation, each entry its own (kanban #348)
-  Object.freeze({ version: 3, year: 2026, x: 0 }),
-  // top-N prize splits: a replayed game's manifest may pay fixed shares over its top places (kanban #362)
-  Object.freeze({ version: 4, year: 2026, x: 0 }),
-  // the median of signed readings: each seat signs the price it read, a price sample is the median of five (kanban #312)
-  Object.freeze({ version: 5, year: 2026, x: 0 }),
-  // markets on games: a market whose outcome is a game round's own signed result, no attestors (kanban #362 feature 6)
-  Object.freeze({ version: 6, year: 2026, x: 0 }),
-  // scalar markets: an attested number paid linearly between bounds to the LONG and SHORT sides (kanban #362 feature 8)
-  Object.freeze({ version: 7, year: 2026, x: 0 }),
-  // scalar templates: a scalar market whose rounds each name their own question and bounds (kanban #362, items 5 + 8)
-  Object.freeze({ version: 8, year: 2026, x: 0 }),
-  // the website that brought the entry: 20% of the nodes' fee on its entries, paid to its key (kanban #362 item 7, path (a))
-  Object.freeze({ version: 9, year: 2026, x: 0 }),
-  // in-game items: a game sells items for sat (25 % protocol devs, 25 % game dev, 50 % the nodes that served), an entry plays with
-  // the items its player bought (kanban #365)
-  Object.freeze({ version: 10, year: 2026, x: 0 }),
-]);
-
-const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
-
-/** The YYYY.x.y name of wire version `v`. */
-function protocolVersionName(v) {
-  if (!Number.isInteger(v) || v < 0 || v > 0xffff) return String(v);
-  const r = byVersion.get(v);
-  return r ? `${r.year}.${r.x}.${v}` : `?.?.${v}`;
-}
-
-/**
- * The wire version a YYYY.x.y name stands for: y, once the name is well formed - and, for a version this build has a
- * release for, only if YYYY and x are that release's. A plain number is taken as y. Answers { ok, version, known } or why not.
- */
-function readProtocolVersionName(name) {
-  const s = String(name ?? '').trim();
-  if (/^\d+$/.test(s)) { const v = Number(s); return v >= 1 && v <= 0xffff ? { ok: true, version: v, known: byVersion.has(v) } : { ok: false, why: `${s} is not a protocol version (1..65535)` }; }
-  const m = /^(\d{4})\.(\d+)\.(\d+)$/.exec(s);
-  if (!m) return { ok: false, why: `${s || 'nothing'} is not a version of the form YYYY.x.y` };
-  const [year, x, v] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  if (v < 1 || v > 0xffff) return { ok: false, why: `${s}: the build number is 1..65535` };
-  const r = byVersion.get(v);
-  if (r && (r.year !== year || r.x !== x)) return { ok: false, why: `${s}: build ${v} is ${protocolVersionName(v)}` };
-  return { ok: true, version: v, known: !!r };
-}
-
 // ---- arena-protocol/src/known-game.js
 // A PAYING ROUND PLAYS A GAME THIS CLIENT KNOWS, ON A CORE AND CONFIG THAT GAME LISTS, OR IT IS REFUSED (§5, §0A.6;
 // kanban #202).
@@ -8645,395 +11169,6 @@ function tableAnchorOf(contract) {
   if (!known || known.seatsPerTable !== true) return null;
   const body = new Uint8Array(36); body.set(contract.seriesId, 0);      // round 0's id: H(series_id || 0), as contracts.js roundId
   return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
-}
-
-// ---- arena-protocol/src/fee.js
-// 22A: WHAT EACH NODE IS OWED, AND THE FACT THAT SOMEBODY COMPUTES IT.
-//
-// The fee was the one number in this protocol nobody recomputed. 5A.3 row 6
-// decides WHETHER a node qualifies for a share; until this file, nothing said
-// what the share IS - so a qualifying node could claim any amount and no
-// predicate contradicted it. That is the shape row 3 had before
-// `computePayoutTable` was wired into it.
-//
-// 22A gives the whole of it and leaves nothing to taste:
-//
-//   gross_round_volume = sum of stake of every financially activated entry
-//   node_fee = 2.00% of gross_round_volume
-//   1.00% -> GAME/VERIFY pool (7 slots)
-//   1.00% -> SETTLEMENT pool (7 slots)
-//   ...unearned shares are redistributed pro rata among the other eligible
-//   nodes in the same role pool, keeping the total at 2%.
-//   Remainders. Calculate in millisatoshis, floor each base share, and
-//   distribute the remaining msat in ascending H(round_id || node_pubkey).
-//
-// MILLISATOSHI BIGINT THROUGHOUT, like every other money path here. The
-// percentages are basis points and integer division; nothing is a float, and
-// the remainder a floor leaves behind is handed out rather than kept.
-
-// `fromHex` from hash.js and not a private copy. There was one here - the
-// same loop without the odd-length check - and two of one decoder is two
-// places for it to differ. It also made this file unbundleable beside
-// hash.js, which is how it was found.
-
-
-
-
-/**
- * 5.00% (Bitcoin Arena, §0A.8 and §22A, RULED the owner 2026-10-06; BLWP's was 2.00%), mandatory, and what each pool takes
- * of it: three equal pools of 5/3 % when the round's guardians are named, else two halves of 2.50% (kanban #205,
- * the owner 2026-10-07: the 2% table's 1% + 1%, scaled up - no guardian third is left unallocated).
- */
-const NODE_FEE_BPS = 500;
-const POOL_BPS = 250;
-
-/** The pools 22A pays, and the roles that sit in each. */
-const GAME_VERIFY = 'gameVerify';
-const SETTLEMENT = 'settlement';
-// THE GUARDIAN POOL (§22A v4.6.4, RULED the owner 2026-09-21 and 2026-10-01 15:44: "2/3 % to the game/verify pool, 2/3 % to
-// the settlement pool ... and 2/3 % to the guardian pool, the seated guardians of the federation the round names"): the
-// third pool, divided evenly among those guardians. A round whose guardians are not named keeps the two-pool table.
-const GUARDIAN = 'guardian';
-const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN];
-
-/**
- * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
- *
- * 22A: "An operator selected for BOTH roles earns BOTH shares, because it
- * performs both services." So the two shares are separate money and a signer node
- * held in each is owed each - a table keyed by pubkey alone merges them, and a
- * claim in one role is then measured against the sum of both, which is an
- * over-claim nobody can see. Measured while writing this: a settlement claim
- * from a node that sat on game/verify was judged against the game/verify
- * share and passed.
- *
- * `relay` is not paid by 22A: the fee is named for the two committees.
- */
-const POOL_OF_ROLE = { game: GAME_VERIFY, verify: GAME_VERIFY, settlement: SETTLEMENT };
-const poolOfRole = (role) => POOL_OF_ROLE[role] || null;
-
-/** Signer nodes are keyed by pool AND key, because the two shares are separate money. */
-const signerNodeKey = (pool, pubkey) => `${pool}:${hex(pubkey)}`;
-
-/**
- * THE FEE BASE, 22A: "gross_round_volume = sum of stake of every financially
- * activated entry", and "ENTRY_VOID and VOID entries are excluded".
- *
- * The same set `computePayoutTable` calls `activated`, and deliberately the
- * same predicate rather than a second one: a refunded entry is money that
- * never moved, and charging a fee on it would be charging for a round the
- * player was refunded out of.
- */
-function grossVolumeMsat(entries) {
-  for (const e of entries)
-    if (typeof e.stakeMsat !== 'bigint')
-      throw new Error('stakes must be BigInt millisatoshi');
-  return entries
-    .filter((e) => !isRefund(e.outcome))
-    .reduce((sum, e) => sum + e.stakeMsat, 0n);
-}
-
-/**
- * WHAT EVERY SIGNER NODE IS OWED, AND WHAT NOBODY IS.
- *
- * `pools` names the signer nodes of each pool - the committee, as selected - and
- * `eligible` is who among them qualified under 22A's availability rule, which
- * is 5A.3 row 6's question and is answered elsewhere.
- *
- * THE TWO POOLS SUM TO EXACTLY THE FEE. The second is the remainder of the
- * first rather than a second division, so a gross that does not divide by
- * 10000 cannot lose a millisatoshi between them.
- *
- * AN EMPTY POOL IS UNALLOCATED, NOT THE OPERATOR'S. 22A keeps the total at 2%
- * by redistributing inside a role pool, and with nobody eligible in one there
- * is no inside to redistribute to. The spec does not hand it anywhere, and the
- * one direction that cannot quietly become the operator's income is nowhere -
- * so it is returned named, and the caller may not mistake it for a share.
- *
- * `roundId` comes off the CONTRACT rather than being passed, so the order the
- * remainders go out in belongs to the round and not to whoever asks.
- */
-// `feeBps`: the round's game's node fee (feeBpsOf - a market's own, 0.5 % by default; kanban #235), the rate every entry's fee
-// was checked against at the door; the network's 5 % if none is named
-function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BPS }) {
-  const gross = grossVolumeMsat(entries);
-  const fee = (gross * BigInt(feeBps)) / 10000n;
-  // THREE EQUAL THIRDS WHEN THE ROUND'S GUARDIANS ARE NAMED AND ONE IS ELIGIBLE: the first two floored, the guardian pool
-  // what is left (two floors of the same ragged number can lose a millisatoshi between them). With no guardian named, the
-  // two-pool table exactly as before - 1% and the rest.
-  const guardians = ((pools && pools[GUARDIAN]) || []).filter((k) => eligible.has(hex(k)));
-  let shareOf;
-  if (guardians.length) {
-    const third = fee / 3n;
-    shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
-  } else {
-    // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
-    const first = fee / 2n;
-    shareOf = { [GAME_VERIFY]: first, [SETTLEMENT]: fee - first, [GUARDIAN]: 0n };
-  }
-
-  const id = roundId(contract);
-  const signerNodes = new Map();
-  let unallocated = 0n;
-  let cursor = 0;   // where the leftover order stopped (three pools)
-
-  for (const pool of POOLS) {
-    const amount = shareOf[pool];
-    if (amount === 0n) continue;
-    const inPool = (pools && pools[pool]) || [];
-    const earning = inPool.filter((k) => eligible.has(hex(k)));
-
-    if (!earning.length) { unallocated += amount; continue; }
-
-    // Floor the base share, then hand the leftover out one millisatoshi at a
-    // time in the round's own order - 22A's rule, and the one `payout.js`
-    // already uses for the pool so there is one implementation of it.
-    const each = amount / BigInt(earning.length);
-    let left = amount - each * BigInt(earning.length);
-    for (const k of earning) signerNodes.set(signerNodeKey(pool, k), (signerNodes.get(signerNodeKey(pool, k)) || 0n) + each);
-    // WITH THREE POOLS THE LEFTOVER MSATS TAKE TURNS ACROSS THEM: the order goes on where the pool before stopped, so
-    // a node does not take the extra millisatoshi of every third (measured: 4000 msat over two nodes, 2001 and 1999).
-    // The two-pool table keeps its own order, exactly as before.
-    const order = remainderOrder(id, earning.map((pubkey) => ({ pubkey })));
-    const from = guardians.length ? cursor % order.length : 0;
-    for (const e of [...order.slice(from), ...order.slice(0, from)]) {
-      if (left <= 0n) break;
-      signerNodes.set(signerNodeKey(pool, e.pubkey), signerNodes.get(signerNodeKey(pool, e.pubkey)) + 1n);
-      left -= 1n;
-      cursor++;
-    }
-  }
-
-  const paid = [...signerNodes.values()].reduce((a, b) => a + b, 0n);
-  if (paid + unallocated !== fee)
-    throw new Error(`fee table broken: ${paid} paid and ${unallocated} unallocated of ${fee}`);
-
-  return { gross, fee, pools: shareOf, signerNodes, unallocated };
-}
-
-/**
- * THE WEBSITE THAT BROUGHT AN ENTRY IS PAID 20% OF THE NODES' FEE ON IT (2026.0.9, kanban #362 roadmap item 7; RULED the owner
- * 2026-10-15, path (a): "Take it out of the nodes' 5% fee, 20% of that fee, so nodes earn less ... The player's stake is not increased
- * by this fee"). Per website payout key (hex, 33 bytes): `fee` x 20% x the stakes it brought / `gross` - the nodes' fee table's own
- * fee and gross - floored; the nodes share what is left of their fee. Refunded entries bring nothing. Answers
- * { shares: Map key -> msat (keys in ascending order), totalMsat }.
- */
-const FRONTEND_FEE_PERCENT = 20n;
-function frontendShares({ entries, fee, gross }) {
-  const brought = new Map();
-  for (const e of entries || []) {
-    if (isRefund(e.outcome) || !(e.frontendPk instanceof Uint8Array)) continue;
-    const k = hex(e.frontendPk);
-    brought.set(k, (brought.get(k) || 0n) + e.stakeMsat);
-  }
-  const shares = new Map();
-  let totalMsat = 0n;
-  for (const k of [...brought.keys()].sort()) {
-    const msat = gross > 0n ? (fee * FRONTEND_FEE_PERCENT * brought.get(k)) / (100n * gross) : 0n;
-    shares.set(k, msat); totalMsat += msat;
-  }
-  if (totalMsat > (fee * FRONTEND_FEE_PERCENT) / 100n) throw new Error('the websites\' shares exceed 20% of the nodes\' fee');
-  return { shares, totalMsat };
-}
-
-/**
- * THE SAME 20% ON AN ORDER BOOK (kanban #362, comment 2295): a book's fees are what each claimed row paid (bookSettlement's
- * `buyFeeMsat + sellFeeMsat`), of which the nodes' part is `nodeBps / (nodeBps + donationBps)`. For each row whose entry names
- * a website (`entries`: entry id hex -> { frontendPk }), 20% of that row's nodes' part, floored, goes to the website; the msat a
- * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
- * totalMsat }.
- */
-function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) {
-  const total = BigInt(nodeBps) + BigInt(donationBps);
-  const byKey = new Map();
-  for (const r of rows || []) {
-    const e = entries.get(r.entry);
-    if (!e || !(e.frontendPk instanceof Uint8Array) || total === 0n) continue;
-    const nodesPart = ((r.buyFeeMsat + r.sellFeeMsat) * BigInt(nodeBps)) / total;
-    const k = hex(e.frontendPk);
-    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * FRONTEND_FEE_PERCENT) / 100n);
-  }
-  const shares = new Map([...byKey.keys()].sort().map((k) => [k, byKey.get(k)]));
-  return { shares, totalMsat: [...shares.values()].reduce((a, b) => a + b, 0n) };
-}
-
-/**
- * What one signer node is owed FOR ONE ROLE, or nothing at all.
- *
- * The role is required: 22A pays the two pools separately and a signer node held in
- * both earns both, so "what is this node owed" has no single answer.
- */
-const feeOwed = (table, nodePubkey, role) => {
-  const pool = poolOfRole(role);
-  return pool ? (table.signerNodes.get(signerNodeKey(pool, nodePubkey)) || 0n) : 0n;
-};
-
-const hex = (bytes) => {
-  let out = '';
-  for (const b of bytes) out += b.toString(16).padStart(2, '0');
-  return out;
-};
-
-/**
- * THE TABLE AS ONE HASH, so a proof can be bound to it.
- *
- * 5A.3B step 4 rests on a stranger being able to re-derive a proof later and
- * check it. An over-claim is measured against a table, so the proof has to
- * name WHICH table - otherwise the accuser recomputes from an eligibility set
- * that suits them and every honest claim is an over-claim.
- *
- * The gross and the fee are in it as well as the rows: a table that agreed on
- * every signer node while disagreeing about what the round was worth would be a
- * different table with the same fingerprint.
- */
-function feeTableId(table) {
-  const w = new Writer();
-  w.u8(TYPE_FEE_CLAIM);
-  w.u16(PROTOCOL_VERSION);
-  w.u64(table.gross);
-  w.u64(table.fee);
-  w.u64(table.unallocated);
-  const rows = [...table.signerNodes.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  w.vec(rows, (row, ww) => {
-    // `pool:key`, so the same node's two shares are two rows and a table that
-    // moved money between the pools is a different table.
-    const [pool, key] = row[0].split(':');
-    ww.u8(POOLS.indexOf(pool));
-    ww.bytes32(fromHex(key));
-    ww.u64(row[1]);
-  });
-  return taggedHash(TAG.feeTable, w.finish());
-}
-
-/**
- * WHAT ONE ENTRY OWES IN FEE: 2% OF THE WALLET COMMITMENT, TAKEN OUT OF IT.
- *
- * 22A, "Collection: inclusive in the stake (changed)": "'Play for 100' now
- * means 100 leaves the wallet, and the wallet dialog agrees with the button
- * that was pressed." `stakeMsat` is that commitment, the fee is 2% of it, and
- * `netStakeMsat` is what is left for the pool once the fee and the donation
- * have come out.
- *
- * RETRACTED (6e). This comment used to call Collection "the error" and charge
- * 18's older "on top of the stake", on the ground that the net reading turns
- * 22A's 61 x 100 example into 117.12 sat. It does not. 22A's fee base is
- * `gross_round_volume`, "(61 x 100, the wallet commitments)", so the fee is 2%
- * of 6,100 = 122 sat and it is the POOL that is net: 6,100 - 122 - 122 =
- * 5,856. 117.12 was 2% of the net stake, a base 22A never uses. Measured in
- * `inclusive.test.js`.
- *
- * THE RATE IS A CONSTANT AND NOT A CONTRACT FIELD. 22A calls it "2%,
- * identical for everyone", so one rate covers every entry of every round; a
- * field would let an operator price its own round's fee, which is the fault
- * contract fields exist to prevent rather than one to import.
- *
- * The same integer floor the table uses, so one rate is applied one way.
- */
-// A MARKET'S OWN NODE FEE (kanban #235, the owner 2026-10-09: "per market in manifest"): `bps`, its manifest's
-// marketTerms.nodeFeeBps (0 to NODE_FEE_BPS) - the rate is still never the operator's or the round's to choose, only the
-// signed manifest's, within the network's. Without one, the network's.
-// A MARKET'S ENTRY FEE CARRIES ITS DONATION TOO (entryFeeBpsOf), so the bound is the markets' 10 % together, not the
-// network's 5 %; a game's rate is still the network's constant.
-const ENTRY_FEE_BPS_MAX = 1000;
-const entryFeeMsat = (stakeMsat, bps = NODE_FEE_BPS) => {
-  if (typeof stakeMsat !== 'bigint') throw new Error('a stake is BigInt millisatoshi');
-  if (stakeMsat < 0n) throw new Error('a stake cannot be negative');
-  if (!Number.isInteger(bps) || bps < 0 || bps > ENTRY_FEE_BPS_MAX) throw new Error(`an entry fee is 0 to ${ENTRY_FEE_BPS_MAX} bps`);
-  return (stakeMsat * BigInt(bps)) / 10000n;
-};
-
-/**
- * A MARKET'S DEFAULT FEE (the owner 2026-10-09: "market default fees are 1%, 0.5 + 0.5, per default"): an attested market that
- * names no fee of its own charges 0.5 % to the nodes and 0.5 % donation; a game, the network's 5 % (+ its donation choice).
- */
-const MARKET_DEFAULT_NODE_FEE_BPS = 50;
-const MARKET_DEFAULT_DONATION_BPS = 50;
-const isMarket = (m) => !!m && m.resultType === 2;                       // RESULT_TYPE.ATTESTED (manifest.js)
-
-/** The node fee a round's game charges: its market terms' rate, a market's default 0.5 %, or the network's. */
-const feeBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.nodeFeeBps)
-  ? manifest.marketTerms.nodeFeeBps : isMarket(manifest) ? MARKET_DEFAULT_NODE_FEE_BPS : NODE_FEE_BPS);
-
-/** A market's donation: its terms' rate, or the market default 0.5 %; null for a game (the player's donation choice). */
-const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.donationBps)
-  ? manifest.marketTerms.donationBps : isMarket(manifest) ? MARKET_DEFAULT_DONATION_BPS : null);
-
-/**
- * A MARKET'S FEES ARE DUE AT RESOLUTION, ITS DONATION TOO (kanban #235/#278, the owner 2026-10-09: "the fees are due at the
- * close, when you win or lose ... until then orders can be cancelled for free"): a market entry pays nothing at entry - its
- * fee lock holds the node fee AND the donation (1 % by default), claimed only when the market resolves, from winners and
- * losers alike, and returned whole on a cancel, a VOID or a market nobody picked right. So a market entry's `feeMsat` is
- * that whole rate of its stake and its `donationMsat` is 0 (no donation outputs beside the stake); the settlement splits
- * the claimed fee locks into the node table (feeBpsOf) and the donation set (the rest). A game: its node fee alone.
- */
-const entryFeeBpsOf = (manifest) => (isMarket(manifest) ? feeBpsOf(manifest) + donationBpsOf(manifest) : feeBpsOf(manifest));
-const donationInFee = (manifest) => isMarket(manifest);
-
-/**
- * DOES THIS ENTRY'S FEE STAND?
- *
- * An entry whose `feeMsat` is not 2% of its own `stakeMsat` does not, and it
- * matters in both directions. Too little and the round collected less than the
- * table will owe its nodes. TOO MUCH AND THE EXCESS IS INCOME: the fee table
- * computes from the stakes, so a millisatoshi over is a millisatoshi the table
- * never allocates to anybody and that stays with whoever collected it.
- *
- * Answered rather than thrown for a malformed entry, like every other decision
- * in this package: a caller that asked whether an entry stands should be told,
- * not made to catch.
- */
-// `donationInFee`: a market's entry (entryFeeBpsOf) - its donation rides in the fee lock, so its own donation field is 0
-function feeMatchesEntry(entry, { feeBps = NODE_FEE_BPS, donationInFee: inFee = false } = {}) {
-  // STRICT, AND ON PURPOSE. Every entry the door judges is decoded from signed
-  // bytes, so its amounts are BigInt - a free round is three zeros, not three
-  // missing fields. Coercing a Number or a missing amount here would have
-  // hidden the wiring fault that refused the Daily's free round at 11:15 (the
-  // door not yet passing the donation) instead of naming it.
-  if (!entry || typeof entry.stakeMsat !== 'bigint' || typeof entry.feeMsat !== 'bigint')
-    return { ok: false, why: 'an entry carries a BigInt millisatoshi stake and fee' };
-  if (entry.stakeMsat < 0n || entry.feeMsat < 0n)
-    return { ok: false, why: 'a stake and a fee cannot be negative' };
-
-  if (inFee && entry.donationMsat !== 0n)
-    return { ok: false, why: `a market's donation is in its fee lock, due at resolution: that entry names a donation of ${entry.donationMsat} msat beside it` };
-  const owed = entryFeeMsat(entry.stakeMsat, feeBps);
-  const pct = `${feeBps / 100}%`;
-  if (entry.feeMsat !== owed)
-    return {
-      ok: false,
-      owed,
-      why: entry.feeMsat > owed
-        ? `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}: `
-          + `the ${entry.feeMsat - owed} over is money no fee table allocates`
-        : `that entry was charged ${entry.feeMsat} where ${pct} of ${entry.stakeMsat} is ${owed}`,
-    };
-
-  // AND THE DONATION COMES OUT OF THE SAME COMMITMENT, so together they cannot
-  // come to more than it. Measured before 6e: a donation of 200000 msat on a
-  // 100000 stake stood here, because nothing looked at the donation at all -
-  // an entry promising the donation set twice what the player put up.
-  let net;
-  try { net = netStakeMsat(entry); }
-  catch (e) { return { ok: false, owed, why: e.message }; }
-  return { ok: true, owed, net, why: `${owed} is ${pct} of ${entry.stakeMsat}, and ${net} of it is staked` };
-}
-
-// ---- arena-protocol/src/threshold.js
-/**
- * THE COMMITTEE THRESHOLD, the one rule the door, the settle, the verdict and
- * the page all read: 2 slots -> 2-of-2 (this build), 7 slots -> 5-of-7.
- *
- * Its own module so the client bundle can carry it without genesis.js, which
- * reaches into the engine. `genesis.js` re-exports it for the node.
- */
-function receiptsNeeded(slots) {
-  if (slots === 2) return 2;
-  if (slots === 7) return 5;
-  // A CONTRACT THAT NAMES ITS DRAW (§5A.7 reserve seats, kanban #301): 9 drawn for 7 seats, 3 for 2 - the threshold is the
-  // seats', never more of the drawn than the seats need
-  if (slots === 9) return 5;
-  if (slots === 3) return 2;
-  throw new Error(`no committee threshold for ${slots} slots`);
 }
 
 // ---- arena-protocol/src/claim-key.js
@@ -9167,6 +11302,7 @@ function claimKeyIsAttested({ roundId, claimPk, signatures, signerNodes, settlem
 // first server felt like returning - a different stake, a different committee,
 // a different core hash - which is precisely the substitution the round id
 // exists to prevent. Same rule as the entry a resuming client re-hashes.
+
 
 
 
@@ -9766,6 +11902,28 @@ async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } =
  * protocol speaks Bitcoin's own bytes, and translating whatever an operator
  * serves into them is deliberately outside everything that decides.
  */
+/**
+ * THE BOND OF A SEAT ON THIS ROUND'S COMMITTEE (kanban #376, measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint: the
+ * advertisement is for 2fca1090..., which is not on this round's committee"). daily.json names ONE bond - seat 1's - and a round's
+ * committee is 7 of 14 seats, so about half the rounds could not be joined at all. The bond named first if its node is on the
+ * committee, else the first of the round's seats whose own /bond names a committee member; the named one when none answers.
+ */
+async function committeeBond({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000 } = {}) {
+  const keys = new Set((committee || []).map((k) => toHex(k)));
+  const candidates = [...new Set([bond, ...(nodes || []).map((n) => `${String(n).replace(/\/+$/, '')}/bond`)].filter(Boolean))];
+  const whose = async (u) => {
+    try {
+      const r = await fetcher(u, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) return null;
+      const o = await r.json();
+      const a = o && typeof o.hex === 'string' ? advertInTransaction(fromHex(o.hex)) : null;
+      return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? u : null;
+    } catch { return null; }
+  };
+  const answers = await Promise.all(candidates.map(whose));
+  return answers.find(Boolean) || bond;
+}
+
 function bondProvider(where, { fetcher = fetch } = {}) {
   const get = async (ask, opts) => {
     const r = await readWithOneRetry(fetcher, where, opts);
@@ -9819,7 +11977,7 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
     federation: named.federation,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
-      bonds: [bondProvider(named.bond, { fetcher })],
+      bonds: [bondProvider(await committeeBond({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher }), { fetcher })],
     },
     advert: { signedAdvert: advert },
   };
@@ -16793,221 +18951,6 @@ async function askForBond(providers, { chain, ask, timeoutMs = 10000 } = {}) {
   };
 }
 
-// ---- arena-protocol/src/advert-update.js
-// AN ADVERTISEMENT UPDATE, NOT A NEW BOND (multiplayer_p2p.md §5A.2; the owner 2026-09-28: "Advertisement updates, not new
-// bonds. Spec 5A.2 is the path. Bond 0c82db59 stays the bond").
-//
-// "A new advertisement is an update, not a new bond. The bond commits, at its creation, to the node's first
-// advertisement. Every later one is an advertisement update: one small transaction that pays the BOND_MARKER dust (so
-// it is findable, as a bond is), carries OP_RETURN "ARN" ADV bond_outpoint H(NodeAdvertisement), carries the body in
-// its witness (§25.1), and is signed by node_pubkey. It spends no bond and starts no maturity clock. The census reads,
-// for each unspent bond, the newest valid update confirmed at or below census_height, else the advertisement the bond
-// committed to at creation. An update whose node_pubkey is not the bond's is not an update of that bond."
-//
-// THE KIND BYTE IS OURS, as ROUND's 'R' and SERIES' 'S' are: ADV is 0x41, 'A'. The payload is 72 bytes:
-//   "ARN" 'A' || bond txid (32, the byte order parseTransaction computes) || bond vout (u32 LE) || H(advertisement)
-// The signed body travels in the witness exactly as a bond's does, in pieces the carrier script drops.
-//
-// WHAT THIS FILE DOES NOT DO: check the signature. The protocol package carries no curve; every reader passes its own
-// BIP-340 verify, as the census's advertisement check does, and an update nobody verified is never applied.
-
-
-
-const ADVERT_UPDATE_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x41]);     // "ARN" 'A'
-const ADVERT_UPDATE_BYTES = 4 + 32 + 4 + 32;
-
-const sameUpdateBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-
-/** The 72 bytes an update's OP_RETURN carries. */
-function advertUpdatePayload({ bondTxid, bondVout, advertIdBytes }) {
-  if (!(bondTxid instanceof Uint8Array) || bondTxid.length !== 32) throw new TypeError('an update names a 32-byte bond txid');
-  if (!Number.isInteger(bondVout) || bondVout < 0) throw new TypeError('an update names the bond output index');
-  if (!(advertIdBytes instanceof Uint8Array) || advertIdBytes.length !== 32) throw new TypeError('an update commits to a 32-byte advertisement id');
-  const out = new Uint8Array(ADVERT_UPDATE_BYTES);
-  out.set(ADVERT_UPDATE_MAGIC, 0);
-  out.set(bondTxid, 4);
-  new DataView(out.buffer).setUint32(36, bondVout, true);
-  out.set(advertIdBytes, 40);
-  return out;
-}
-
-/** The payload's fields, or null for any other commitment. */
-function readAdvertUpdatePayload(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== ADVERT_UPDATE_BYTES || !sameUpdateBytes(bytes.subarray(0, 4), ADVERT_UPDATE_MAGIC)) return null;
-  return { bondTxid: bytes.slice(4, 36), bondVout: new DataView(bytes.buffer, bytes.byteOffset).getUint32(36, true), advertId: bytes.slice(40, 72) };
-}
-
-/**
- * What an update transaction says: the bond it updates, the advertisement it commits to, its signature and txid - or
- * why it is not an update. It must pay the network's marker, carry exactly the payload, and carry in its witness the
- * signed body whose id the payload names. The signature is the caller's to check.
- */
-function readAdvertUpdate(transaction, { network = 'regtest' } = {}) {
-  let tx;
-  try { tx = typeof transaction === 'object' && transaction.outputs ? transaction : parseTransaction(transaction); }
-  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
-  const payloads = commitmentsOf(tx).map(readAdvertUpdatePayload).filter(Boolean);
-  if (payloads.length !== 1) return { ok: false, why: payloads.length ? 'that transaction names more than one update' : 'that transaction carries no advertisement update' };
-  if (!paysBondMarker(tx, network)) return { ok: false, why: 'an update pays the bond marker, and that transaction does not' };
-  const p = payloads[0];
-  let taken = null;
-  for (const item of witnessRunsOf(tx)) {
-    try {
-      const { body, signature } = splitSignedAdvert(item);
-      const advert = decodeAdvert(body);
-      if (sameUpdateBytes(advertId(advert), p.advertId)) { taken = { advert, signature }; break; }
-    } catch { /* not a signed body */ }
-  }
-  if (!taken) return { ok: false, why: 'the update commits to an advertisement its witness does not carry' };
-  return { ok: true, txid: tx.txid, bondTxid: p.bondTxid, bondVout: p.bondVout, advert: taken.advert,
-    advertId: p.advertId, signature: taken.signature, nodePubkey: taken.advert.nodePubkey };
-}
-
-/**
- * An update, proved into a header, for the bond `{ txid, vout, nodePubkey }`, signed by that key (`verify(sig, msg,
- * key)`). The answer carries the update; the caller keeps the newest by height and position.
- */
-async function acceptAdvertUpdate({ transaction, header, branch, position, network, bond, verify }) {
-  const read = readAdvertUpdate(transaction, { network });
-  if (!read.ok) return read;
-  if (header && !provesTransaction(header, read.txid, branch, position)) return { ok: false, why: 'the update is not in that block' };
-  return checkAgainstBond(read, bond, verify);
-}
-
-/** The rule every reader applies to a read update: it names this bond, by this bond's key, signed by that key. */
-async function checkAgainstBond(read, bond, verify) {
-  // A MISSING OR MALFORMED BOND IS REFUSED BY NAME: measured before, no bond threw "Cannot read properties of undefined
-  // (reading 'txid')" here and in acceptAdvertUpdate.
-  if (!bond || !(bond.txid instanceof Uint8Array) || bond.txid.length !== 32 || !Number.isInteger(bond.vout) || bond.vout < 0
-      || !(bond.nodePubkey instanceof Uint8Array) || bond.nodePubkey.length !== 32)
-    return { ok: false, why: 'no bond { txid, vout, nodePubkey } was given, so the update is an update of nothing' };
-  if (!sameUpdateBytes(read.bondTxid, bond.txid) || read.bondVout !== bond.vout) return { ok: false, why: 'the update names another bond' };
-  if (!sameUpdateBytes(read.nodePubkey, bond.nodePubkey)) return { ok: false, why: 'an update whose node key is not the bond\'s is not an update of that bond' };
-  if (typeof verify !== 'function') return { ok: false, why: 'no signature check was given, so no update is applied' };
-  if (!await verify(read.signature, read.advertId, read.nodePubkey)) return { ok: false, why: 'the update is not signed by the bond\'s node key' };
-  return { ok: true, ...read };
-}
-
-/**
- * THE NEWEST VALID UPDATE PER BOND, from blocks (a chain view: { blocks: [{ transactions }], firstHeight }), at or
- * below `atHeight`, for the census's entries ({ txid, vout, pubkey }). `verify` is synchronous here, as the census is.
- * Answers Map(outpoint key -> { advert, advertId, txid, height, position }).
- */
-function newestUpdates(view, entries, { atHeight, network = 'regtest', verify } = {}) {
-  const found = new Map();
-  // NO LIST OF BONDS, NOTHING TO UPDATE: measured before, a missing list threw on entries.map.
-  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries)) return found;
-  const want = new Map(entries.map((e) => [`${Array.from(e.txid).join(',')}:${e.vout}`, e]));
-  view.blocks.forEach((block, i) => {
-    const height = view.firstHeight + i;
-    if (height > atHeight) return;
-    (block.transactions || []).forEach((raw, position) => {
-      let tx;
-      try { tx = parseTransaction(raw); } catch { return; }
-      if (!commitmentsOf(tx).some((c) => readAdvertUpdatePayload(c))) return;
-      const read = readAdvertUpdate(tx, { network });
-      if (!read.ok) return;
-      const key = `${Array.from(read.bondTxid).join(',')}:${read.bondVout}`;
-      const e = want.get(key);
-      if (!e || !sameUpdateBytes(read.nodePubkey, e.pubkey) || height < e.height) return;
-      let signed = false;
-      try { signed = !!verify(read.signature, read.advertId, read.nodePubkey); } catch { signed = false; }
-      if (!signed) return;
-      const had = found.get(key);
-      if (!had || height > had.height || (height === had.height && position > had.position))
-        found.set(key, { advert: read.advert, advertId: read.advertId, txid: read.txid, height, position, raw });
-    });
-  });
-  return found;
-}
-
-// ---- arena-protocol/src/reaffirm.js
-// A BOND OF THE ANCESTOR, RE-AFFIRMED FOR THIS NETWORK (multiplayer_p2p.md §27A.8.3, spec 0A.9; kanban #209).
-//
-// "A bond created under an ancestor is valid in the census of network n+1 when its operator publishes a
-// re-affirmation: OP_RETURN "ARN" FORK network_id(n+1)[0:8] schnorr_sig(bond key). One small transaction, the same shape as
-// a vote (§27A.7.3). It moves no capital, spends no bond, and starts no new maturity clock." Opt-in, per operator.
-//
-// THE KIND BYTE IS OURS, as ROUND's 'R', SERIES' 'S' and ADV's 'A' are: FORK is 0x46, 'F'. The payload is 76 bytes:
-//   "ARN" 'F' || network_id[0:8] || BIP-340 signature (64)
-// The signature is by the bond's node key (the node_pubkey its advertisement names, as an update's and a vote's are) over
-//   taggedHash(ARENA/v1/Reaffirmation, network_id (32) || bond txid (32, parseTransaction's order) || bond vout (u32, the
-//   protocol encoding's big-endian))
-// so a signature names one bond of one network: an operator with two bonds re-affirms each, and the bytes carry no
-// outpoint - a verifier tries them against the ancestor bonds it found, as a vote's tally does.
-//
-// WHAT THIS FILE DOES NOT DO: check a signature. The protocol package carries no curve; the census is handed the same
-// BIP-340 verify it checks updates with, and an unchecked re-affirmation carries nothing.
-
-
-
-
-const REAFFIRM_MAGIC = Uint8Array.from([0x41, 0x52, 0x4e, 0x46]);     // "ARN" 'F'
-const REAFFIRM_BYTES = 4 + 8 + 64;
-
-const sameReaffirmBytes = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
-const bytes32 = (x, what) => { if (!(x instanceof Uint8Array) || x.length !== 32) throw new TypeError(`${what} is 32 bytes`); };
-
-/** What the bond's node key signs: this network, this bond. */
-function reaffirmationMessage({ networkId, bondTxid, bondVout }) {
-  bytes32(networkId, 'a network id'); bytes32(bondTxid, 'a bond txid');
-  if (!Number.isInteger(bondVout) || bondVout < 0) throw new TypeError('a re-affirmation names the bond output index');
-  const w = new Writer();
-  w.bytes32(networkId); w.bytes32(bondTxid); w.u32(bondVout);
-  return taggedHash(TAG.reaffirmation, w.finish());
-}
-
-/** The 76 bytes a re-affirmation's OP_RETURN carries. */
-function reaffirmationPayload({ networkId, signature }) {
-  bytes32(networkId, 'a network id');
-  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new TypeError('a re-affirmation carries a 64-byte signature');
-  const out = new Uint8Array(REAFFIRM_BYTES);
-  out.set(REAFFIRM_MAGIC, 0);
-  out.set(networkId.subarray(0, 8), 4);
-  out.set(signature, 12);
-  return out;
-}
-
-/** The payload's fields, or null for any other commitment. */
-function readReaffirmationPayload(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== REAFFIRM_BYTES || !sameReaffirmBytes(bytes.subarray(0, 4), REAFFIRM_MAGIC)) return null;
-  return { networkPrefix: bytes.slice(4, 12), signature: bytes.slice(12, 76) };
-}
-
-/**
- * WHICH ANCESTOR BONDS ARE RE-AFFIRMED FOR `networkId`, from a chain view's blocks at or below `atHeight`: for each entry
- * ({ txid, vout, pubkey, height }), the first re-affirmation at or above the bond's own height whose signature `verify`
- * (BIP-340: verify(sig, msg, key)) accepts under the entry's node key for this network and this bond.
- * Answers Map(outpoint key "txid bytes joined by ','" + ":" + vout -> { txid, height, position }).
- */
-function reaffirmedBonds(view, entries, { atHeight, networkId, verify } = {}) {
-  const found = new Map();
-  if (typeof verify !== 'function' || !view || !Array.isArray(view.blocks) || !Array.isArray(entries) || !entries.length) return found;
-  bytes32(networkId, 'a network id');
-  const prefix = networkId.subarray(0, 8);
-  const keyOf = (e) => `${Array.from(e.txid).join(',')}:${e.vout}`;
-  view.blocks.forEach((block, i) => {
-    const height = view.firstHeight + i;
-    if (height > atHeight) return;
-    (block.transactions || []).forEach((raw, position) => {
-      let tx;
-      try { tx = parseTransaction(raw); } catch { return; }
-      for (const c of commitmentsOf(tx)) {
-        const p = readReaffirmationPayload(c);
-        if (!p || !sameReaffirmBytes(p.networkPrefix, prefix)) continue;
-        for (const e of entries) {
-          const key = keyOf(e);
-          if (found.has(key) || height < e.height) continue;
-          let ok = false;
-          try { ok = !!verify(p.signature, reaffirmationMessage({ networkId, bondTxid: e.txid, bondVout: e.vout }), e.pubkey); } catch { ok = false; }
-          if (ok) found.set(key, { txid: tx.txid, height, position });
-        }
-      }
-    });
-  });
-  return found;
-}
-
 // ---- arena-protocol/src/ancestor-endpoint.js
 // THE ENDPOINT OF A CARRIED BOND (kanban #209, measured 2026-10-10 05:35Z: a paid join on testnet4 was refused at the
 // session - "no proven endpoint: the bond output commits to a different advertisement").
@@ -21510,1926 +23453,6 @@ function seatingEquivocation(a, b, check) {
   const both = x.seating.seated.filter((k) => inB.has(toHex(k)));
   if (!both.length) return { ok: false, why: 'those seatings share no signer' };
   return { ok: true, signers: both, roundId: x.seating.roundId, role: x.seating.role };
-}
-
-// ---- arena-protocol/src/federation-slash.js
-// WHAT A FEDERATION'S BONDS COVER, AND WHERE A SLASHED ONE GOES.
-//
-// §23A.3 and §23A.5, as rules a caller can run rather than paragraphs somebody has to remember. Three
-// numbers live here and each has a way of being got wrong that this file exists to refuse:
-//
-//   the exposure cap      is (f + 1) x the SMALLEST seated bond, not the sum of the bonds. `f + 1` gone
-//                         is the smallest set that halts the federation, and their bonds are what a
-//                         liquidation pays players from - so the reserve may never exceed what the
-//                         cheapest possible set of leavers forfeits. Summing all ten would let a
-//                         federation hold cover it can only produce if EVERY guardian is slashed.
-//   a slashed bond        never goes straight to anybody: it waits in the federation's liquidation
-//                         escrow under the arbitration keys, and spends only when the federation is
-//                         CLOSED (nothing was lost: 75% census nodes, 25% developers) or HALTED. On a
-//                         HALT the ORDER is the whole of it - every unspent note is paid at face value
-//                         FIRST, and only what no player claimed is split 75/25. The people who run the
-//                         network are never paid out of money a player could still have claimed.
-//   the abandonment proof needs `2f + 1` attestations normally, and on a halt cannot have them: the
-//                         federation no longer has that many guardians. Then it is whoever is left,
-//                         plus the halt itself, which anyone can see.
-//
-// Amounts are msat as BigInt, like every other money number in this protocol.
-
-/** The smallest number of guardians whose loss halts a federation of `nominal` with threshold `2f + 1`. */
-
-const haltsAt = (f) => f + 1;
-
-/**
- * §23A.3: `exposure_cap = (f + 1) x the smallest bond among its seated guardians`.
- *
- * At ten guardians and 7 of 10, `f = 3`, so four of the smallest bond - NOT the sum of all ten.
- */
-function exposureCap({ bonds, f }) {
-  if (!Array.isArray(bonds) || !bonds.length) return { ok: false, why: 'a federation has seated guardians' };
-  if (!bonds.every((b) => typeof b === 'bigint' && b > 0n))
-    return { ok: false, why: 'every bond is a positive number of msat' };
-  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
-  const smallest = bonds.reduce((a, b) => (b < a ? b : a));
-  return { ok: true, cap: BigInt(haltsAt(f)) * smallest, smallest, halts: haltsAt(f) };
-}
-
-/** Is a reserve within what the bonds actually cover? */
-function reserveFits({ reserve, bonds, f }) {
-  const capped = exposureCap({ bonds, f });
-  if (!capped.ok) return capped;
-  if (typeof reserve !== 'bigint' || reserve < 0n)
-    return { ok: false, why: 'a reserve is a number of msat' };
-  return { ok: true, fits: reserve <= capped.cap, cap: capped.cap, reserve,
-    over: reserve > capped.cap ? reserve - capped.cap : 0n };
-}
-
-/**
- * §23A.5: where a slashed guardian bond goes.
- *
- * `halted` is the whole of the difference. A federation that kept running pays the census and the
- * developers; one that froze pays its note holders at face value FIRST and splits only what is left
- * over the same way. Nothing is burned on either road - `burned` stays in the answer at 0n so a burn
- * cannot come back unnoticed.
- */
-function slashSplit({ amountMsat, halted = false, notesOwedMsat = 0n }) {
-  if (typeof amountMsat !== 'bigint' || amountMsat < 0n)
-    return { ok: false, why: 'a slashed bond is a number of msat' };
-  if (!halted) {
-    // The running case, unchanged: 75% to the active census nodes, 25% to the donation set.
-    const { nodes, developers } = splitNodesDevelopers(amountMsat);
-    return { ok: true, halted: false, notes: 0n, nodes, developers, burned: 0n };
-  }
-  if (typeof notesOwedMsat !== 'bigint' || notesOwedMsat < 0n)
-    return { ok: false, why: 'the notes owed are a number of msat' };
-  // THE HALT CASE, AND THE ORDER IS THE RULE. Every unspent note is paid at face value first; only the
-  // remainder - what no player claimed inside the window - is split 75/25. A short escrow pays the notes
-  // pro rata and leaves nothing over, so nobody who runs the network is paid at all.
-  const notes = notesOwedMsat < amountMsat ? notesOwedMsat : amountMsat;
-  const rest = amountMsat - notes;
-  const { nodes, developers } = splitNodesDevelopers(rest);
-  return { ok: true, halted: true, notes, nodes, developers, burned: 0n,
-    proRata: notesOwedMsat > amountMsat };
-}
-
-/**
- * §23A.4 / §23A.5: what an abandonment proof needs.
- *
- * Normally `2f + 1` guardian attestations. On a halt the federation no longer has that many, so the
- * proof is whoever is still seated plus the halt itself - no consensus session for `abandon_blocks`,
- * which anyone can observe at every guardian's endpoint.
- */
-function abandonmentProofNeeds({ f, halted = false, seated = null }) {
-  if (!Number.isInteger(f) || f < 0) return { ok: false, why: 'f is how many faults the threshold tolerates' };
-  if (!halted) return { ok: true, attestations: 2 * f + 1, needsHaltFact: false };
-  const left = Number.isInteger(seated) && seated >= 0 ? seated : 0;
-  return { ok: true, attestations: left, needsHaltFact: true };
-}
-
-/**
- * §23A.1's clocks, in blocks, as numbers a caller can run rather than a table somebody has to remember.
- *
- * Everything in that chapter that waits, waits in BLOCKS - a wall clock is not a thing a chain agrees on.
- * The 36 h claim window is the owner's; the others are the spec's, matched to it.
- *
- *   abandon_blocks     absence that is abandonment; halt before liquidation; load before a founding
- *   departure_notice   notice a guardian gives before leaving
- *   founding_window    time a drawn set has to finish its DKG
- *   drain_blocks       how long a draining federation serves, AND the late-claim tail (four weeks)
- *   claim_blocks       the liquidation claim window the arbitration set opens
- */
-const MAINNET_CLOCKS = Object.freeze({
-  abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
-});
-
-/**
- * TESTNET RUNS THE SAME CLOCKS AT ABOUT A TWENTIETH (the owner 2026-09-21: much shorter), so a whole
- * federation lifetime can be watched in a day instead of a month: 2 h / 3 h / 3 h / 24 h / 1.5 h.
- * Regtest counts in tens of blocks, because its blocks come when somebody presses a button.
- */
-const TESTNET_CLOCKS = Object.freeze({
-  abandonBlocks: 12, departureNotice: 18, foundingWindow: 18, drainBlocks: 144, claimBlocks: 9,
-});
-const REGTEST_CLOCKS = Object.freeze({
-  abandonBlocks: 10, departureNotice: 10, foundingWindow: 10, drainBlocks: 100, claimBlocks: 10,
-});
-const CLOCKS = Object.freeze({
-  mainnet: MAINNET_CLOCKS, testnet4: TESTNET_CLOCKS, testnet: TESTNET_CLOCKS, regtest: REGTEST_CLOCKS,
-});
-
-/** The clocks a network runs, refused rather than guessed for a network nobody pinned. */
-function clocksFor(network) {
-  const said = CLOCKS[network];
-  return said ? { ok: true, network, clocks: said }
-    : { ok: false, why: `${network} has no pinned federation clocks` };
-}
-
-/**
- * HOW LONG A GUARDIAN LEAVING COSTS THE NETWORK, END TO END.
- *
- * Abandonment has to be proven before a succession can be drawn, and §23A.5 starts the succession AT the
- * departure when the federation would otherwise be DRAINING - so the founding runs inside the drain
- * rather than after it. Both are reported: the serial path for a guardian who simply vanishes, and the
- * overlapped one for a departure with notice.
- */
-function lifecycleBlocks(clocks) {
-  const serial = clocks.abandonBlocks + clocks.foundingWindow + clocks.drainBlocks;
-  const overlapped = clocks.abandonBlocks + Math.max(clocks.foundingWindow, clocks.drainBlocks);
-  return { serial, overlapped };
-}
-
-/**
- * WHEN A HALTED FEDERATION'S REMAINDER MAY BE SPLIT, and not one block sooner.
- *
- * The claim window closes at `claim_blocks` and every valid claim filed in it is paid. A note shown LATE
- * is still paid from what is left until `drain_blocks` after the halt - the player who was offline for a
- * weekend is not the one the deadline is for. Only the remainder after THAT is split 75/25, and nothing
- * a player could still have claimed is ever destroyed.
- */
-function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
-  if (!Number.isInteger(haltHeight) || haltHeight < 0)
-    return { ok: false, why: 'a halt happens at a block height' };
-  // THE WINDOW OPENS WHEN THE LIQUIDATION DOES (§23A.5: "A federation that has been HALTED for abandon_blocks ... is liquidated
-  // ... 2. The arbitration set opens a claim window of claim_blocks"), and runs claim_blocks from there. It closed at halt +
-  // claim_blocks before (kanban #323, found by the claim book's test): on mainnet 72 blocks BEFORE it opened at halt + 288, and
-  // a seat listed liquidatesAt 892 beside claimWindowCloses 889.
-  return {
-    ok: true,
-    claimWindowOpens: haltHeight + clocks.abandonBlocks,
-    claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
-    lateClaimsUntil: haltHeight + clocks.drainBlocks,
-    remainderSplitsAt: haltHeight + clocks.drainBlocks,
-  };
-}
-
-/** May the remainder be split yet? Never before the late-claim tail has run out. */
-function remainderMaySplit({ haltHeight, atHeight, clocks = MAINNET_CLOCKS }) {
-  const when = liquidationSchedule({ haltHeight, clocks });
-  if (!when.ok) return when;
-  if (!Number.isInteger(atHeight)) return { ok: false, why: 'ask at a block height' };
-  return { ok: true, may: atHeight >= when.remainderSplitsAt, notBefore: when.remainderSplitsAt };
-}
-
-/**
- * THE CLAIMS ON A HALTED FEDERATION'S ESCROW, SETTLED (spec §23A.5 liquidation steps 3-4, kanban #323). `claims`: notes presented
- * as [{ nonce (hex), amountMsat, height }], each checked by the injected `noteSigned(claim)` (the federation's signature on the
- * note); `spentNonces`: the published spent-note set (hex), or null when no seated guardian published one. In this order:
- *   1. refused by name: not the federation's note, already spent, claimed before (the first presentation counts), or presented
- *      after drain_blocks
- *   2. the claims inside the window: at face value, or pro rata when the escrow is short (the rate is answered, the client
- *      shows it)
- *   3. the late ones, up to drain_blocks after the halt: from what is left, in order of height then nonce, each at face value
- *      while it lasts
- *   4. only then the remainder, 75 % / 25 % (slashSplit), and only once remainderMaySplit says so at `atHeight`
- */
-function settleClaims({ escrowMsat, claims = [], spentNonces = null, haltHeight, atHeight, clocks = MAINNET_CLOCKS, noteSigned }) {
-  const when = liquidationSchedule({ haltHeight, clocks });
-  if (!when.ok) return when;
-  if (typeof escrowMsat !== 'bigint' || escrowMsat < 0n) return { ok: false, why: 'the escrow is a number of msat' };
-  const spent = new Set((spentNonces || []).map((n) => String(n).toLowerCase()));
-  const seen = new Set();
-  const refused = []; const inWindow = []; const late = [];
-  const ordered = [...claims].sort((a, b) => (a.height - b.height) || (String(a.nonce) < String(b.nonce) ? -1 : 1));
-  for (const c of ordered) {
-    const nonce = String(c.nonce).toLowerCase();
-    if (typeof noteSigned !== 'function' || !noteSigned(c)) { refused.push({ nonce, why: 'that note does not carry the federation\'s signature' }); continue; }
-    if (spent.has(nonce)) { refused.push({ nonce, why: 'that note\'s nonce is in the published spent set' }); continue; }
-    if (seen.has(nonce)) { refused.push({ nonce, why: 'that note was claimed before' }); continue; }
-    if (c.height > when.lateClaimsUntil) { refused.push({ nonce, why: `presented at ${c.height}, after drain_blocks (until ${when.lateClaimsUntil}): the holder's loss` }); continue; }
-    seen.add(nonce);
-    (c.height <= when.claimWindowCloses ? inWindow : late).push({ nonce, amountMsat: BigInt(c.amountMsat), height: c.height });
-  }
-  const owed = inWindow.reduce((a, c) => a + c.amountMsat, 0n);
-  const short = owed > escrowMsat;
-  const paid = inWindow.map((c) => ({ nonce: c.nonce, msat: short ? (c.amountMsat * escrowMsat) / owed : c.amountMsat, late: false }));
-  let left = escrowMsat - paid.reduce((a, p) => a + p.msat, 0n);
-  for (const c of late) {
-    const msat = c.amountMsat <= left ? c.amountMsat : left;
-    paid.push({ nonce: c.nonce, msat, late: true }); left -= msat;
-  }
-  const may = remainderMaySplit({ haltHeight, atHeight, clocks });
-  const split = may.ok && may.may ? slashSplit({ amountMsat: left }) : null;
-  return { ok: true, paid, refused, proRata: short, rate: short ? Number((escrowMsat * 10000n) / owed) / 10000 : 1,
-    spentSetPublished: spentNonces !== null, remainderMsat: left, split: split ? { nodes: split.nodes, developers: split.developers } : null,
-    remainderSplitsAt: when.remainderSplitsAt };
-}
-
-const hexKey = (k) => (k instanceof Uint8Array ? Array.from(k, (b) => b.toString(16).padStart(2, '0')).join('') : String(k || '')).toLowerCase();
-
-/**
- * MAY A GONE GUARDIAN'S BOND BE SLASHED (§23A.5's table, FEDERATION.md rehearsal 14). `proof`: abandonmentProof's answer for the
- * peer (absence.js); `departure`: departureStands' answer for the same peer's notice, or null. "Leaving is legitimate" (RULED,
- * the owner 2026-09-21): an absence that begins at or after a standing notice's leave_after is the departure - DEPARTED, the bond
- * untouched. "A departure that stops serving before its leave_after" is abandonment, and so is an absence with no notice.
- * Answers { ok, slash, kind: 'ABANDONED' | 'DEPARTED', why }.
- */
-function guardianSlashStands({ proof, departure = null }) {
-  if (!proof || !proof.ok) return { ok: false, slash: false, why: `no abandonment proof stands${proof && proof.why ? `: ${proof.why}` : ''}` };
-  if (departure && departure.ok) {
-    if (hexKey(departure.peerKey) !== hexKey(proof.peerKey)) return { ok: false, slash: false, why: 'the notice and the proof name different peers' };
-    if (proof.sinceHeight >= departure.leaveAfterHeight)
-      return { ok: true, slash: false, kind: 'DEPARTED', why: `gone since ${proof.sinceHeight}, at or after the notice's leave_after ${departure.leaveAfterHeight}: departed with notice, the bond untouched (§23A.5)` };
-    return { ok: true, slash: true, kind: 'ABANDONED', why: `stopped at ${proof.sinceHeight}, before the notice's leave_after ${departure.leaveAfterHeight}: a departure that stops serving early is abandonment (§23A.5)` };
-  }
-  return { ok: true, slash: true, kind: 'ABANDONED', why: `absent since ${proof.sinceHeight}, attested by ${proof.signers}: abandonment (§23A.4)` };
-}
-
-/**
- * WHO A SLASHED GUARDIAN'S BOND PAYS once its federation is CLOSED with nothing lost (§23A.5, FEDERATION.md rehearsal 14):
- * 75 % evenly to the census nodes active at the slash height LESS EVERY GUARDIAN OF THAT FEDERATION (they guarded the federation
- * that lost one), 25 % to the donation set (splitNodesDevelopers). Amounts in sat, BigInt; the nodes' division's leftover
- * satoshi go to the first node in key order, so the outputs sum to the amount. Answers { ok, nodes: [{ key, sats }], developers }.
- */
-function guardianSlashPayees({ amountSats, censusNodes, record }) {
-  if (typeof amountSats !== 'bigint' || amountSats <= 0n) return { ok: false, why: 'a slashed bond is a positive number of sat' };
-  const guardians = new Set((record && record.guardians || []).map((g) => hexKey(g.nodePubkey)));
-  const keys = [...new Set((censusNodes || []).map(hexKey))].filter((k) => k && !guardians.has(k)).sort();
-  if (!keys.length) return { ok: false, why: 'no census node outside the federation\'s guardians to pay' };
-  const { nodes, developers } = splitNodesDevelopers(amountSats);
-  const each = nodes / BigInt(keys.length);
-  const out = keys.map((key) => ({ key, sats: each }));
-  out[0].sats += nodes - each * BigInt(keys.length);
-  return { ok: true, nodes: out, developers, guardiansLeftOut: guardians.size };
-}
-
-/**
- * A LIQUIDATION'S REMAINDER, BY NAME (§23A.5: "only the remainder then, 75% / 25% as above" - "75% evenly to every active census
- * node at that height ... minus the slashed nodes and minus every guardian of the federation concerned; 25% to the donation set
- * of §22A - the developers - by share_bps"). `msat` BigInt; `censusNodes` keys at the spending height; `slashed` keys; `record`
- * the federation's; `donation` the donation set in force, recipients with `recipientPk` (x-only, hex or bytes) and `shareBps`.
- * The division's leftover goes to the first payee of each part in key order, so the payees sum to `msat`. Answers
- * { ok, payees: [{ key, msat, part: 'node' | 'donation' }] } or why not.
- */
-function liquidationRemainderPayees({ msat, censusNodes, slashed = [], record, donation }) {
-  if (typeof msat !== 'bigint' || msat <= 0n) return { ok: false, why: 'a remainder is a positive number of msat' };
-  const out = new Set((slashed || []).map(hexKey));
-  const nodes = guardianSlashPayees({ amountSats: msat, censusNodes: (censusNodes || []).filter((k) => !out.has(hexKey(k))), record });
-  if (!nodes.ok) return nodes;
-  const keyed = (donation || []).filter((r) => r && r.recipientPk !== undefined && Number.isInteger(r.shareBps) && r.shareBps > 0)
-    .map((r) => ({ key: hexKey(r.recipientPk), bps: BigInt(r.shareBps) })).sort((a, b) => (a.key < b.key ? -1 : 1));
-  const bps = keyed.reduce((a, r) => a + r.bps, 0n);
-  if (!keyed.length || bps !== 10000n) return { ok: false, why: 'the donation set in force names no key recipients whose shares make 10000 bps' };
-  const dev = keyed.map((r) => ({ key: r.key, msat: (nodes.developers * r.bps) / 10000n, part: 'donation' }));
-  dev[0].msat += nodes.developers - dev.reduce((a, r) => a + r.msat, 0n);
-  return { ok: true, payees: [...nodes.nodes.map((n) => ({ key: n.key, msat: n.sats, part: 'node' })), ...dev] };
-}
-
-// ---- arena-protocol/src/genesis.js
-// Canonical genesis_parameters and the network_id they produce.
-//
-// 27A.6: genesis is a block, not a word. 27A.4: network_id is the tagged hash
-// of that block plus the donation authority and recovery pubkeys. Changing any
-// of it later is a different network.
-
-
-
-
-
-
-// THE GAME CONFIG THE NETWORK WAS FOUNDED ON, NOT THE LIVE CORE'S (2026-10-04): the network id commits to this config's
-// hash, and every contract, bond and donation set is signed under that id - so it is read from the core the network was
-// founded on, kept frozen in core/frozen/2069b4c2, and does not follow a later core. When par moved from 3900 ticks to
-// 1800 (T sinks from 20 s, the owner 09:17) the live core's constants would have moved the network id: a refound. A later
-// core's own rules are named by its core hash, which every round carries beside this config.
-// THE GAME'S CONFIGS ARE THE GAME'S (kanban #203): nextblock's config encoders v1-v4 and their hashes moved to
-// packages/nextblock/config/game-config.js. The genesis parameters name the founding config only by its hash, the fixed
-// GENESIS_CONFIG_HASH (genesis-ids.js); nextblock/test/engine-shared.test.js holds the founding config to it.
-const TAG_GENESIS = 'ARENA/v1/GenesisParameters';
-const TAG_NETWORK_ID = 'ARENA/v1/NetworkId';
-
-/**
- * Randomness nobody in this protocol can grind: the Bitcoin block hash at a
- * height after committee_time. Entry closes before that height is known.
- */
-const RANDOMNESS_SOURCE = 'bitcoin-block-hash';
-
-function encodeGenesisParameters(p) {
-  const w = new Writer();
-  w.str(p.chain);
-  w.u8(p.gameVerifySlots);
-  w.u8(p.gameVerifyThreshold);
-  w.u8(p.settlementSlots);
-  w.u8(p.settlementThreshold);
-  w.u16(p.censusMinNodes);
-  w.u32(p.censusConfirmations);
-  w.u32(p.bondMaturity);
-  // §27A.6's federation parameters, hashed here since v4.6.5 so the network id commits to them.
-  w.u16(p.federationNominal);
-  w.u32(p.abandonBlocks);
-  w.u32(p.departureNotice);
-  w.u32(p.foundingWindow);
-  w.u32(p.drainBlocks);
-  w.u32(p.claimBlocks);
-
-  // WHO CAN SLASH, AND HOW MANY OF THEM. 5A.3B's script path B is
-  // "<k-of-m arbitration keys> CHECKMULTISIG - the arbitration quorum, any
-  // time before maturity", and the two numbers decide what the bond output
-  // key even is: the leaf hashes them, the tapbranch hashes the leaf, and the
-  // output key is the tweak of that. A round that disagreed about k or m
-  // would compute a different output key for the same node and refuse a bond
-  // that is perfectly good.
-  //
-  // They are genesis and not contract, the same class as `bondMaturity`: a
-  // per-round k is a per-round arbitration set, and the set is what the
-  // residual in 5A.3B is about. Five of seven, matching every other committee
-  // in this protocol.
-  w.u8(p.arbitrationK);
-  w.u8(p.arbitrationM);
-
-  // AND WHICH KEYS THEY ARE. k and m alone say how many signatures a slash
-  // needs; they do not say whose. The slash leaf hashes the keys themselves,
-  // so a bond's output key is a function of this set - and a poster free to
-  // name their own would name themselves and hold a bond nobody could slash.
-  // Sorted, because a set is a set: two nodes listing them differently must
-  // not compute two different networks.
-  if (!Array.isArray(p.arbitrationKeys) || p.arbitrationKeys.length !== p.arbitrationM)
-    throw new Error(`genesis names ${p.arbitrationM} arbitration signer nodes and lists a different number`);
-  w.vec([...p.arbitrationKeys].sort(compareGenesis32), (k, ww) => ww.bytes32(k), { sortedBy: compareGenesis32 });
-  w.u32(p.noticePeriod);
-  w.bytes32(p.bondMarker);
-  w.str(p.randomnessSource);
-  w.bytes32(p.genesisConfigHash);
-  if (!Array.isArray(p.brackets) || p.brackets.length < 1 || p.brackets.length > 255)
-    throw new Error('genesis needs 1..255 stake brackets');
-  w.u8(p.brackets.length);
-  for (const b of p.brackets) {
-    w.u64(b.minSats);
-    w.u64(b.maxSats);
-  }
-  // WHEN SERIES 0 STARTS (ALL-BUT-MIN-1727; multiplayer_p2p.md "The series is a function of the clock":
-  // series_start(k) = genesis_series_start + k * series_max). A genesis parameter, so the network id commits to it
-  // and no series names its own start.
-  if (typeof p.genesisSeriesStartMs !== 'bigint' || p.genesisSeriesStartMs < 0n) throw new Error('genesis names when series 0 starts');
-  w.u64(p.genesisSeriesStartMs);
-  // THE REST OF §27A.6, FROM MAINNET'S GENESIS ON (kanban #297 / #298, RULED the owner 2026-10-14 ~13:20Z: "Fix it but no new series
-  // or delays because of it"): federation_min, bond_min_guardian, the governance schedule, and whether the committees bind every
-  // contract. Written only by a genesis that names them - testnet4's and regtest's do not, so their bytes and their network ids
-  // stay as they were and no series moves to a new network.
-  if (p.federationMin !== undefined) {
-    if (!Number.isInteger(p.federationMin) || p.federationMin < 1 || p.federationMin > p.federationNominal)
-      throw new Error('federation_min is 1..federation_nominal');
-    if (typeof p.bondMinGuardianSats !== 'bigint' || p.bondMinGuardianSats <= 0n) throw new Error('genesis names a guardian\'s bond floor in sats');
-    const sched = p.governanceSchedule;
-    if (!sched || !['design', 'money', 'upgrade'].every((k) => sched[k] && ['review', 'voting', 'cooldown'].every((x) => Number.isInteger(sched[k][x]) && sched[k][x] >= 0)))
-      throw new Error('genesis names the governance schedule: review, voting and cooldown blocks for design, money and upgrade');
-    w.u16(p.federationMin);
-    w.u64(p.bondMinGuardianSats);
-    for (const k of ['design', 'money', 'upgrade']) { w.u32(sched[k].review); w.u32(sched[k].voting); w.u32(sched[k].cooldown); }
-    w.u8(p.committeesBind ? 1 : 0);
-  }
-  return w.finish();
-}
-
-/**
- * MAINNET'S GENESIS (§27A.6, the "Three networks" table; kanban #297 / #298), built from the parts only a launch can name: the
- * bond marker (§25.1), the seven arbitration keys, the donation authority and the cold recovery key (§27A.4 - the recovery key
- * belongs in a safe), and when series 0 starts. Nothing here invents them: without each one it throws, and this build runs no
- * mainnet. The rest is the table's: committees of 7 slots, threshold 5 for both roles, binding every contract; a census of 10;
- * 6 confirmations; federations of 10 with federation_min 7; the fast clocks the owner set; ~30 days of bond maturity and notice;
- * governance 1008 / 1440 / 2016 (upgrades 2016 / 2016 / 4320, ballot.js).
- */
-function mainnetGenesis({ bondMarker: marker, arbitrationKeys, authorityPubkey, recoveryPubkey, genesisSeriesStartMs, bondMinGuardianSats } = {}) {
-  const is32 = (x) => x instanceof Uint8Array && x.length === 32;
-  if (!is32(marker)) throw new Error('mainnet genesis needs its bond marker (32 bytes, §25.1): it has not been chosen');
-  if (!Array.isArray(arbitrationKeys) || arbitrationKeys.length !== 7 || !arbitrationKeys.every(is32)) throw new Error('mainnet genesis needs its 7 arbitration keys');
-  if (!is32(authorityPubkey) || !is32(recoveryPubkey)) throw new Error('mainnet genesis needs the donation authority and the cold recovery key (§27A.4)');
-  if (typeof genesisSeriesStartMs !== 'bigint') throw new Error('mainnet genesis names when series 0 starts');
-  if (typeof bondMinGuardianSats !== 'bigint' || bondMinGuardianSats <= 0n) throw new Error('mainnet genesis names a guardian\'s bond floor');
-  const genesis = {
-    chain: 'bitcoin-mainnet', genesisSeriesStartMs,
-    federationNominal: 10, federationMin: 7, bondMinGuardianSats,
-    abandonBlocks: 288, departureNotice: 432, foundingWindow: 432, drainBlocks: 4032, claimBlocks: 216,
-    gameVerifySlots: 7, gameVerifyThreshold: 5, settlementSlots: 7, settlementThreshold: 5, committeesBind: true,
-    censusMinNodes: 10, censusConfirmations: 6, bondMaturity: 4320,
-    arbitrationK: 5, arbitrationM: 7, arbitrationKeys, noticePeriod: 4320,
-    bondMarker: marker, randomnessSource: RANDOMNESS_SOURCE, genesisConfigHash: GENESIS_CONFIG_HASH,
-    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
-    governanceSchedule: { design: { review: 1008, voting: 1440, cooldown: 2016 }, money: { review: 1008, voting: 1440, cooldown: 2016 },
-      upgrade: { review: 2016, voting: 2016, cooldown: 4320 } },
-  };
-  return { genesis, networkId: computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) };
-}
-
-/**
- * EVERY CONTRACT BOUND TO ITS GENESIS'S COMMITTEES (§5A.7 / §27A.6, kanban #297): where the genesis says its committees bind, a
- * Round Contract names exactly its slots per role, and the threshold of those slots (threshold.js) is the genesis's. A genesis that
- * does not bind (testnet4, regtest - per the 2026-10-14 ruling, no new series) leaves each contract its own slot count.
- */
-function committeesStand(contract, genesis) {
-  if (!genesis || !genesis.committeesBind) return { ok: true, bound: false };
-  const g = Number(contract && contract.gameVerifySlots), st = Number(contract && contract.settlementSlots);
-  if (g !== genesis.gameVerifySlots || st !== genesis.settlementSlots)
-    return { ok: false, why: `this network's genesis binds committees of ${genesis.gameVerifySlots} and ${genesis.settlementSlots} slots; the contract names ${g} and ${st}` };
-  if (receiptsNeeded(g) !== genesis.gameVerifyThreshold || receiptsNeeded(st) !== genesis.settlementThreshold)
-    return { ok: false, why: 'the threshold of those slots is not the genesis threshold' };
-  return { ok: true, bound: true };
-}
-
-/**
- * WHEN EACH NETWORK'S SERIES 0 STARTS, midnight UTC (ALL-BUT-MIN-1727). The spec names the parameter and not its value;
- * these are this build's: regtest 2026-01-01, testnet4 2026-10-01. Series k starts 24 h * k after it.
- */
-const GENESIS_SERIES_START_MS = Object.freeze({ regtest: 1767225600000n, testnet4: 1790812800000n });
-
-function testnetShape(chain, marker, arbitrationKeys, federation, genesisSeriesStartMs) {
-  return {
-    chain,
-    genesisSeriesStartMs,
-    // THE FEDERATION'S OWN PARAMETERS ARE GENESIS PARAMETERS (§27A.6), so they are hashed into the
-    // network id like every other rule a player is held to. Without them two networks could share an id
-    // while one drains a federation in 24 h and the other in 28 d, and a contract naming that id would
-    // not say how long its holder's money can be frozen or how long he has to claim it.
-    federationNominal: federation.federationNominal,
-    abandonBlocks: federation.abandonBlocks,
-    departureNotice: federation.departureNotice,
-    foundingWindow: federation.foundingWindow,
-    drainBlocks: federation.drainBlocks,
-    claimBlocks: federation.claimBlocks,
-    gameVerifySlots: 2,
-    gameVerifyThreshold: 2,
-    settlementSlots: 2,
-    settlementThreshold: 2,
-    censusMinNodes: 2,
-    censusConfirmations: 1,
-    bondMaturity: 100,
-    arbitrationK: 5,
-    arbitrationM: 7,
-    arbitrationKeys,
-    noticePeriod: 144,
-    bondMarker: marker,
-    randomnessSource: RANDOMNESS_SOURCE,
-    genesisConfigHash: GENESIS_CONFIG_HASH,
-    brackets: [{ minSats: 1000n, maxSats: 10_000_000n }],
-  };
-}
-
-/** Two 32-byte keys in byte order, so a set is a set and not an arrangement. */
-function compareGenesis32(a, b) {
-  for (let i = 0; i < 32; i++) if (a[i] !== b[i]) return a[i] - b[i];
-  return 0;
-}
-
-const concat = (...parts) => {
-  const n = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(n);
-  let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.length; }
-  return out;
-};
-
-const zeros32 = () => new Uint8Array(32);
-
-function computeNetworkId({ genesis, authorityPubkey, recoveryPubkey }) {
-  if (!(authorityPubkey instanceof Uint8Array) || authorityPubkey.length !== 32)
-    throw new Error('donation authority pubkey is 32 bytes');
-  if (!(recoveryPubkey instanceof Uint8Array) || recoveryPubkey.length !== 32)
-    throw new Error('donation recovery pubkey is 32 bytes');
-  const body = encodeGenesisParameters(genesis);
-  return taggedHash(
-    TAG_NETWORK_ID,
-    concat(body, authorityPubkey, recoveryPubkey, zeros32(), zeros32()),
-  );
-}
-
-/** 2 slots → 2-of-2 (this build). 7 slots → 5-of-7. One rule: threshold.js. */
-
-function genesisFor(network) {
-  if (network === 'regtest')
-    return testnetShape('bitcoin-regtest', bondMarker('regtest'), ARBITRATION_KEYS_REGTEST,
-      { federationNominal: 4, ...REGTEST_CLOCKS }, GENESIS_SERIES_START_MS.regtest);
-  if (network === 'testnet4' || network === 'testnet')
-    return testnetShape('bitcoin-testnet4', bondMarker('testnet'), ARBITRATION_KEYS_TESTNET4,
-      { federationNominal: 4, ...TESTNET_CLOCKS }, GENESIS_SERIES_START_MS.testnet4);
-  throw new Error('no genesis for ' + network);
-}
-
-/**
- * THE TWO KEYS 27A.4 PUTS IN THE NETWORK'S NAME, looked up by network.
- *
- * They have been generated, written into `genesis-ids.js` and hashed into
- * `network_id` by `computeNetworkId` since letter 24 - and until `authority.js`
- * nothing read them. A key that decides where donations go and that no code
- * consults is not a control; it is a comment.
- *
- * The authority is what a published donation set is checked against, and the
- * recovery key is what a rotation is checked against - never the other way
- * round. 27A.4's table is exhaustive: the authority signs sets and nothing
- * else, the recovery key names a new authority and nothing else.
- *
- * the owner 2026-09-08: these are test keys on disk for regtest and testnet4.
- * A mainnet recovery key belongs in a safe, and this build has no mainnet.
- */
-function donationKeysFor(network) {
-  if (network === 'regtest')
-    return { authority: AUTHORITY_PUBKEY_REGTEST, recovery: RECOVERY_PUBKEY_REGTEST };
-  if (network === 'testnet4' || network === 'testnet')
-    return { authority: AUTHORITY_PUBKEY_TESTNET4, recovery: RECOVERY_PUBKEY_TESTNET4 };
-  throw new Error('no donation authority has been generated for ' + network);
-}
-
-// THE SAME TWO KEYS BY NETWORK ID: donation-keys.js, re-exported (M3.2 6e).
-
-// ---- arena-protocol/src/census.js
-// The census: which bonds exist at a height, canonicalised and Merkle-rooted.
-//
-// Two decisions here are load-bearing and both look like details.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/**
- * One census entry, encoded.
- *
- * The outpoint leads because it is what the entry is sorted and identified by.
- *
- * `pubkey` IS THE ADVERTISEMENT'S DECLARED KEY, not a candidate's claim about
- * it. RESOLVE overwrites the field with `advert.nodePubkey` before anything
- * hashes it, for the same reason it overwrites `roles`: the body is what the
- * bond committed to, and the row beside it is somebody's transcription. A leaf
- * over the transcription would let a publisher put a key that never bonded
- * into the census, and the committee seed, the receipts and the payout all
- * read that key.
- */
-// Recognition lives in `chain.js` now: it answers about an OUTPUT, and both
-// this file and `acceptAdvert` need it, so it cannot sit in either one of
-// them and be imported by the other. Re-exported here because the census is
-// where most callers meet it.
-
-function encodeEntry(e) {
-  const w = new Writer();
-  w.bytes32(e.txid);
-  w.u32(e.vout);
-  w.bytes32(e.pubkey);
-  w.u64(e.bondSats);
-  w.u32(e.height);
-  w.vec([...e.roles].sort(), (r, ww) => ww.u8(ROLES.indexOf(r)),
-        { sortedBy: (a, b) => (a < b ? -1 : a > b ? 1 : 0) });
-  // AND THE GAMES IT HOSTS (§0A.4, kanban #204), for the reason `roles` is here: the game/verify draw reads them, so the
-  // root commits to them. Taken off the advertisement by RESOLVE, as the roles are.
-  if (!Array.isArray(e.hostedGames)) throw new Error('a census entry names the games its node hosts ([] for none)');
-  w.vec(e.hostedGames, (g, ww) => ww.bytes32(g));
-  return w.finish();
-}
-
-const leafHash = (e) => taggedHash(TAG.censusLeaf, encodeEntry(e));
-
-/**
- * Compare two entries by (txid, vout).
- *
- * NOT by H(pubkey), which earlier drafts specified and which looks equivalent.
- * It is not: a node can grind a pubkey until its hash lands wherever it likes,
- * and the census order feeds the committee seed. A txid cannot be chosen after
- * the funding transaction is confirmed.
- */
-/**
- * HOW MANY BONDED NODES A ROUND OF THIS NETWORK NEEDS, and where that comes
- * from.
- *
- * `census_min_nodes` is a GENESIS parameter - "everything above that a network
- * cannot change about itself lives in one block, fixed when the network is
- * created and committed in `network_id`" - and the three networks name 10, 3
- * and 2. Measured before this: it was written into the network id and read by
- * nothing. Not one file in any `src/` and not one test consulted it, so the
- * one number that says whether a round can be held at all was decoration.
- *
- * A caller does not get to pass it. That is the same discipline the
- * arbitration set needed in 24 and the confirmation depth needed in 25: a
- * number a caller picks is a number the operator picks, and an operator who
- * can lower the minimum can hold a round on a census of one.
- *
- * PER ROLE, WITH ONE FIELD. The spec writes `census_min_nodes per role`; this
- * build carries a single `u16`, so the one number is applied to each role
- * separately - which is stricter than splitting it and does not move a single
- * network id. The gap is written down in TASKBOOK rather than closed by
- * inventing a second genesis field.
- */
-function censusMinimumFor(contract) {
-  if (!contract || !contract.networkId)
-    throw new Error('that round names no network, so nothing says how small a census is too small');
-  const network = networkOf(contract.networkId);
-  if (network === null)
-    throw new Error('that round names a network this build has no genesis for');
-  const minimum = genesisFor(network).censusMinNodes;
-  if (!Number.isInteger(minimum) || minimum <= 0)
-    throw new Error(`${network} names no minimum census, so no round of it can be held`);
-  return { network, minimum };
-}
-
-/**
- * IS THIS CENSUS BIG ENOUGH TO HOLD A ROUND FOR THAT ROLE?
- *
- * Answered by name, because "false" tells a node nothing it can act on and
- * nothing it can show a player. The count is of entries DECLARING THE ROLE,
- * which is what 5A.3 makes eligibility mean - a settlement node is not a game
- * node that happens to be bonded.
- */
-/**
- * MAY THIS ENTRY SERVE THIS ROUND IN THIS ROLE: it declares the role, and for the game/verify pool (game, verify) it hosts
- * the round's game (§0A.4, kanban #204). Settlement and relay are game-agnostic: they sign payout tables and hold
- * custody, never replay, so they are drawn from the whole census.
- */
-function eligibleFor(e, contract, role) {
-  if (!(e.roles || []).includes(role)) return false;
-  if (poolOfRole(role) !== GAME_VERIFY) return true;
-  return hostsGame(e, contract && contract.gameId);
-}
-
-function meetsCensusMinimum(entries, contract, role) {
-  const { network, minimum } = censusMinimumFor(contract);
-  const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
-  // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4, kanban #204): a game too few nodes host has no
-  // paying rounds, and says why
-  if (have < minimum && poolOfRole(role) === GAME_VERIFY)
-    return {
-      ok: false, have, need: minimum, network,
-      why: `that census carries ${have} ${role} node${have === 1 ? '' : 's'} where ${network} was born needing ${minimum}, counting only `
-        + `the nodes that host game ${contract.gameId instanceof Uint8Array ? toHex(contract.gameId).slice(0, 16) : '(none)'} (§0A.4): no round of it is drawn`,
-    };
-  if (have < minimum)
-    return {
-      ok: false, have, need: minimum, network,
-      why: `that census carries ${have} ${role} node${have === 1 ? '' : 's'} where `
-        + `${network} was born needing ${minimum}`,
-    };
-  return { ok: true, have, need: minimum, network };
-}
-
-function compareEntries(a, b) {
-  for (let i = 0; i < 32; i++) {
-    if (a.txid[i] !== b.txid[i]) return a.txid[i] < b.txid[i] ? -1 : 1;
-  }
-  return a.vout === b.vout ? 0 : a.vout < b.vout ? -1 : 1;
-}
-
-/**
- * Merkle root over the sorted leaves.
- *
- * An odd node is PROMOTED, not duplicated. Duplicating the last leaf is what
- * Bitcoin does and it is why CVE-2012-2459 exists: two different leaf sets can
- * produce one root. Promotion has no such pair.
- */
-function merkleRoot(leaves) {
-  if (leaves.length === 0) return new Uint8Array(32);
-  let level = leaves;
-  while (level.length > 1) {
-    const next = [];
-    for (let i = 0; i < level.length; i += 2) {
-      if (i + 1 === level.length) { next.push(level[i]); continue; }
-      const pair = new Uint8Array(64);
-      pair.set(level[i], 0);
-      pair.set(level[i + 1], 32);
-      next.push(taggedHash(TAG.censusBranch, pair));
-    }
-    level = next;
-  }
-  return level[0];
-}
-
-/**
- * THE HEIGHT AND THE DEPTH, BOTH OFF THE CONTRACT.
- *
- * 5A.11: "The Round Contract contains: `census_height, census_confirmations`."
- * The height was taken from the contract already and the depth beside it was
- * still an argument, so a caller could recompute an honest census at a depth
- * nobody signed up to - and a census is what picks the committee.
- *
- * AND THE TIP IS THE CHAIN'S. It used to be a caller's integer, and the old
- * comment here said that was fine because "the tip is OBSERVED chain state,
- * not a rule". Observed from what? There was no chain in this file to observe
- * it from, so it was asserted: a high tip matured a shallow bond and a low one
- * emptied the census. It is now the last height of the view the census was
- * read from, which is what makes that sentence true.
- */
-function depthRuleOf(contract, view) {
-  if (!contract || !Number.isInteger(contract.censusHeight))
-    throw new Error('that round names no census height');
-  if (!Number.isInteger(contract.censusConfirmations))
-    throw new Error('that round names no confirmation depth');
-
-  // A TIP BELOW THE CENSUS HEIGHT IS NOT A SHALLOW CHAIN, IT IS THE WRONG
-  // QUESTION. The census is the chain up to `census_height`, so a view that
-  // ends before it has not reached the census yet - and the arithmetic said so
-  // by printing "-979 confirmations deep", which is not a depth and not an
-  // answer.
-  if (view.tipHeight < contract.censusHeight)
-    throw new Error(
-      `that chain ends at height ${view.tipHeight}, before this round's census `
-      + `height ${contract.censusHeight}`);
-
-  // AND A VIEW THAT BEGINS AFTER IT CARRIES NO BLOCK THE CENSUS IS ABOUT.
-  // Measured: it returned ok, an empty census, and the reason "no such outpoint
-  // between height 900001 and 900000" - a range that runs backwards, from a
-  // view that had not seen a single block at or before the census height. The
-  // mirror of the rule above: one end of the window has to be on each side of
-  // `census_height` or the view is not looking at this census at all.
-  if (view.firstHeight > contract.censusHeight)
-    throw new Error(
-      `that chain begins at height ${view.firstHeight}, after this round's census `
-      + `height ${contract.censusHeight}`);
-
-  return {
-    censusHeight: contract.censusHeight,
-    censusConfirmations: contract.censusConfirmations,
-    tipHeight: view.tipHeight,
-  };
-}
-
-/**
- * 5A.4 STEPS 4 AND 5: sort by outpoint, hash the leaves, root them.
- *
- * Immutable per height by construction - the same inputs give the same root,
- * which is what lets a node compute it once and cache it forever.
- *
- * NO ROOT OVER AN UNRESOLVED ENTRY. Every entry must carry the id of the
- * advertisement it resolved to, and RESOLVE is the only thing that puts one
- * there. This is not a flag: `advertId` is the hash the bond output committed
- * to, the thing step 2 exists to find. Without the guard the natural way to
- * use this package - scan, then root - skipped steps 2 and 3 in silence and
- * produced a root over nodes nobody had checked.
- *
- * 5A.4 wants that hash IN the leaf ("outpoint || advertisement hash || ..."),
- * where this leaf still carries a pubkey. That divergence is recorded and not
- * fixed here because it moves every census root; requiring the hash to be
- * KNOWN costs nothing and moves nothing.
- *
- * The height, depth and spend filters are re-applied rather than trusted from
- * upstream. SCAN read them off the chain; repeating them here means a set that
- * reaches this function by some other road cannot smuggle a late or spent
- * output into a root.
- */
-function commitCensus(entries, { contract, view }) {
-  const { censusHeight, censusConfirmations } = depthRuleOf(contract, viewOrThrow(view));
-  return censusRootOf(entries, { censusHeight, censusConfirmations });
-}
-
-/**
- * THE ROOT OF A SET OF RESOLVED ENTRIES AT A HEIGHT AND DEPTH, with no chain view (kanban #296, spec 5A.6): the same
- * filters, sort and tree `commitCensus` applies - it calls this - so a client that verified each entry against headers
- * it agreed itself computes byte for byte the root a seat derives from blocks, and compares it with the round's.
- */
-function censusRootOf(entries, { censusHeight, censusConfirmations }) {
-  for (const e of entries)
-    if (!(e.advertId instanceof Uint8Array) || e.advertId.length !== 32)
-      throw new Error('that entry has not been resolved: no advertisement stands behind it');
-
-  const eligible = entries
-    .filter((e) => e.height <= censusHeight)
-    // DEPTH AT THE CENSUS HEIGHT, as SCAN measures it (5A.4 step 1, "unspent AT census_height with >= census_confirmations
-    // depth"): measured against the tip, a bond shallow at the census became deep once the chain grew, and the root a
-    // node committed to depended on when it asked (TASKBOOK 23145; the spec audit of 2026-10-04 found these two left).
-    .filter((e) => censusHeight - e.height + 1 >= censusConfirmations)
-    .filter((e) => !e.spent)
-    .sort(compareEntries);
-
-  for (let i = 1; i < eligible.length; i++)
-    if (compareEntries(eligible[i - 1], eligible[i]) === 0)
-      throw new Error('duplicate outpoint in census');
-
-  const leaves = eligible.map(leafHash);
-  return { entries: eligible, leaves, root: merkleRoot(leaves) };
-}
-
-/**
- * THE ENTRIES A ROOT WAS TAKEN OVER, AS ONE HASH.
- *
- * 5A.4 makes the root a function of a set and a height: "census_root[role] =
- * Merkle root over their canonical serialization". So a check that a contract
- * names the right root is a comparison against a SET, and a set an accuser
- * chooses is no check at all - hand in a different list and any honest
- * contract looks wrong.
- *
- * The same discipline `payoutInputsId` needed for row 3 of 5A.3, and for the
- * same reason: whoever presents the accusation must be bound to the inputs
- * before the arithmetic is worth anything.
- *
- * SORTED THE CENSUS'S OWN WAY, by outpoint, not by a second rule invented
- * here. 5A.4 is explicit that sorting by `H(node_pubkey)` is grindable - "a
- * node can mine a pubkey to sit anywhere it likes" - and the census already
- * sorts by `(funding_txid, vout)`, which cannot be chosen after the fact.
- */
-function censusInputsId({ contract, view, entries }) {
-  const chain = viewOrThrow(view);
-  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
-  const firstHeight = chain.firstHeight;
-  const w = new Writer();
-  w.u8(TYPE_CENSUS_LEAF);
-  w.u16(PROTOCOL_VERSION);
-  w.u32(censusHeight);
-  w.u32(censusConfirmations);
-  w.u32(tipHeight);
-
-  // AND WHERE THE CHAIN THE ROOT WAS TAKEN OVER STARTED. Measured: a view
-  // beginning after a bond's funding block reports that bond as "no such
-  // outpoint" and derives a DIFFERENT root, ok and all - so two parties with
-  // the same chain but different windows agreed on nothing and were told
-  // nothing. 5A.2 says the eligible set is "a pure function of the chain up to
-  // census_height", and a window is not the chain. Committing the start does
-  // not make a short window correct; it makes it a different set of inputs,
-  // which is what `boundTo` is for.
-  w.u32(firstHeight);
-  w.vec([...entries].sort(compareEntries), (e, ww) => {
-    ww.bytes(encodeEntry(e), encodeEntry(e).length);
-    ww.u8(e.spent ? 1 : 0);
-  });
-  return taggedHash(TAG.censusInputs, w.finish());
-}
-
-/**
- * DOES THIS ROUND NAME THE ROOT ITS OWN CENSUS DERIVES TO?
- *
- * 5A.4: "The Round Contract names `census_height` and both roots. Any
- * participant recomputes them; A CONTRACT WHOSE ROOTS DO NOT MATCH THE CHAIN
- * IS INVALID and no honest node will issue receipts against it."
- *
- * Until this, `censusRoot` was named by every contract and read by no code at
- * all - measured with a grep before the check was written. A round could name
- * any thirty-two bytes and be played, which makes the committee whatever the
- * round's author said it was.
- *
- * THE HEIGHT IS THE CONTRACT'S, not the caller's. Recomputing at another
- * height is recomputing a different census, and a caller who could choose it
- * could make an honest contract look wrong.
- *
- * Answered rather than thrown, like every other decision in this package: a
- * malformed census is a refusal with a reason, not an exception handed to
- * whoever asked whether a round may be played.
- */
-function censusRootMatchesRound(contract, { entries, view, boundTo }) {
-  if (!contract || !(contract.censusRoot instanceof Uint8Array)
-      || contract.censusRoot.length !== 32)
-    return { ok: false, why: 'that round names no census root' };
-  if (!Number.isInteger(contract.censusHeight))
-    return { ok: false, why: 'that round names no census height' };
-  if (!Number.isInteger(contract.censusConfirmations))
-    return { ok: false, why: 'that round names no confirmation depth' };
-  if (!Array.isArray(entries))
-    return { ok: false, why: 'no census entries to derive a root from' };
-
-  // AND THE ENTRIES ARE THE PUBLISHED ONES, not whichever set the asker
-  // brought. A root is a function of a SET and a height, so a caller free to
-  // choose the set can make any honest contract look wrong by handing in a
-  // different list - the same free variable row 3 of 5A.3 had before its
-  // inputs were bound, and the same fix: whoever presents the question is
-  // bound to the inputs before the arithmetic means anything.
-  if (!(boundTo instanceof Uint8Array) || boundTo.length !== 32)
-    return { ok: false, why: 'no committed census inputs to check those entries against' };
-
-  let bound;
-  try { bound = censusInputsId({ contract, view, entries }); }
-  catch (e) { return { ok: false, why: `those census inputs cannot be committed to: ${e.message}` }; }
-  if (!bound.every((b, i) => b === boundTo[i]))
-    return {
-      ok: false,
-      why: 'those are not the census entries that were published: the set, the '
-        + 'height or the depth rule differs from what was committed to',
-    };
-
-  let census;
-  try {
-    census = commitCensus(entries, { contract, view });
-  } catch (e) {
-    return { ok: false, why: `that census cannot be built: ${e.message}` };
-  }
-
-  const same = census.root.every((b, i) => b === contract.censusRoot[i]);
-  return same
-    ? { ok: true, root: census.root, entries: census.entries.length, why: 'the censusRoot is the one those entries derive to' }
-    : {
-      ok: false,
-      root: census.root,
-      entries: census.entries.length,
-      why: 'the censusRoot this round names is not the one its entries derive '
-        + `to at height ${contract.censusHeight}`,
-    };
-}
-
-/**
- * Only `chainViewOf` can stamp a view as checked, and the stamp PINS the
- * numbers a caller could otherwise override. A symbol alone was not enough:
- * `{ ...verified, tipHeight: 999999 }` copies symbol-keyed properties too, so
- * a caller holding an honest view could have spread it and named any tip.
- */
-const VERIFIED = Symbol('a chain view this module checked itself');
-const stampOf = (v) => `${v.firstHeight}:${v.blocks.length}:${v.tipHeight}`;
-
-/**
- * THE CHAIN A CENSUS IS READ FROM, AND THE PROOF THAT IT IS ONE.
- *
- * 5A.2: "The eligible set is therefore a pure function of THE CHAIN up to
- * `census_height`. Two parties with the same chain compute the same census."
- * That sentence has a load-bearing word in it, and until this the census took
- * a bag of `{height, transactions}` - no header, no work, no link - so two
- * chains that disagreed about Bitcoin both derived cleanly, to different
- * roots, and nothing in the package could say which was the chain.
- *
- * A VIEW IS `{ blocks, firstHeight }`, each block `{ header, transactions }`,
- * and four things are checked, none of them optional:
- *
- *   mined      every header's hash meets the target it claims. `chainWork`
- *              adds a header's work only after that, "because a header nobody
- *              mined contributes whatever difficulty its author felt like
- *              writing down".
- *   linked     each header names the one before it. A list that does not link
- *              is not a chain however long it is.
- *   contained  each block's transactions hash to the merkle root ITS OWN
- *              header commits to. Without this the headers are decoration: a
- *              real mined header with a fabricated transaction list would
- *              pass, which is precisely the forgery 25.1 says a provider must
- *              not be able to commit ("a list provider can then OMIT but not
- *              FORGE").
- *   placed     heights are positional from `firstHeight`, so nobody asserts
- *              one, and the TIP is the last block's height rather than a
- *              number a caller chose.
- *
- * The work is returned so competing views can be compared, which is 25.1's
- * rule: "block headers from several independent sources, MOST WORK WINS".
- */
-function chainViewOf(view) {
-  if (!view || !Array.isArray(view.blocks) || !view.blocks.length)
-    return { ok: false, why: 'a chain view is at least one block' };
-  if (!Number.isInteger(view.firstHeight))
-    return { ok: false, why: 'a chain view says which height it starts at' };
-
-  const headers = [];
-  for (const block of view.blocks) {
-    if (!block || !(block.header instanceof Uint8Array))
-      return { ok: false, why: 'every block in a chain view carries its header' };
-    if (!Array.isArray(block.transactions))
-      return { ok: false, why: 'every block in a chain view carries its transactions' };
-    headers.push(block.header);
-  }
-
-  const linked = chainWork(headers);
-  if (!linked.ok)
-    return { ok: false, why: `that is not a chain: ${linked.why}`, at: linked.at };
-
-  const blocks = [];
-  for (let i = 0; i < view.blocks.length; i++) {
-    const height = view.firstHeight + i;
-    let ids;
-    try { ids = view.blocks[i].transactions.map((raw) => parseTransaction(raw).txid); }
-    catch (e) { return { ok: false, why: `block ${height} carries something that is not a transaction: ${e.message}` }; }
-
-    const claimed = merkleRootOf(view.blocks[i].header);
-    if (ids.length) {
-      const root = blockMerkleRoot(ids);
-      if (!root.every((b, k) => b === claimed[k]))
-        return {
-          ok: false,
-          why: `block ${height} does not contain the transactions offered with it`,
-        };
-    } else if (!claimed.every((b) => b === 0)) {
-      // AND A BLOCK CANNOT BE EMPTIED BY OFFERING NOTHING FOR IT. Measured: a
-      // real header committing to a real merkle root, handed over with its
-      // transaction list stripped, was accepted as a chain and the bond in it
-      // simply vanished from the census. 25.1 allows a provider to OMIT, and
-      // the answer to omission is asking another - but a view that CONTRADICTS
-      // ITS OWN HEADER is not omitting, it is claiming a block Bitcoin does
-      // not have. Every real block has at least a coinbase, so the only
-      // transaction list consistent with no transactions is a root of zero.
-      return {
-        ok: false,
-        why: `block ${height} is offered with no transactions, and its header `
-          + 'commits to some',
-      };
-    }
-    blocks.push({ height, header: view.blocks[i].header, transactions: view.blocks[i].transactions });
-  }
-
-  const checked = {
-    ok: true,
-    blocks,
-    work: linked.work,
-    firstHeight: view.firstHeight,
-    tipHeight: view.firstHeight + view.blocks.length - 1,
-  };
-  checked[VERIFIED] = stampOf(checked);
-  return checked;
-}
-
-/**
- * A view, verified, or the reason it is not one - as a throw, because the
- * functions below it are the ones that already throw on a malformed round.
- *
- * THE `ok` FLAG IS NOT TAKEN ON TRUST. An earlier draft short-circuited on
- * `view.ok === true`, and the vector generator promptly handed in
- * `{ ok: true, blocks: [], tipHeight: 900100 }` - a "chain" with no blocks
- * asserting any tip it liked, which is exactly the hole this letter closed
- * wearing a different hat. The stamp below is a module-private symbol, so only
- * `chainViewOf` can put it there.
- */
-function viewOrThrow(view) {
-  if (view && view[VERIFIED] && view[VERIFIED] === stampOf(view)) return view;
-  const seen = chainViewOf(view);
-  if (!seen.ok) throw new Error(seen.why);
-  return seen;
-}
-
-/**
- * MOST WORK WINS, and it is Bitcoin's rule rather than a vote.
- *
- * 25.1: "block headers from several independent sources, most work wins... A
- * list provider can then OMIT but not FORGE, and omission is answered by
- * asking a second one." A view that is not a chain is not in the running - it
- * is not a competing answer, it is a bad source.
- *
- * A TIE IS BROKEN BY THE TIP HASH, NOT BY WHICHEVER ARRIVED FIRST.
- *
- * `mostWork` takes the first of an equal pair, which is right for a NODE
- * choosing its own tip - that is Bitcoin's first-seen rule, and a node is
- * allowed to have been somewhere when a block arrived. A CENSUS is not allowed
- * that: 5A.2 says "two parties with the same chain compute the same census",
- * and measured before this, two equal-work chains gave eligible 1 offered one
- * way round and eligible 0 the other, from the same two inputs.
- *
- * The tip hash is the intrinsic value to break it on: it is the work itself,
- * so nobody can pick it after the fact, and both parties compute the same
- * comparison from the same two chains. Lower hash wins, arbitrarily but
- * fixed - what matters is that it is the same everywhere.
- */
-function bestChainView(views) {
-  const offered = Array.isArray(views) ? views : [views];
-  const checked = offered.map(chainViewOf);
-  const running = checked.filter((v) => v.ok);
-  if (!running.length)
-    return { ok: false, why: checked.length ? checked[0].why : 'no chain to read the census from' };
-
-  const tipOf = (v) => blockHashOf(v.blocks[v.blocks.length - 1].header);
-  let best = running[0];
-  for (const v of running) {
-    if (v.work > best.work) { best = v; continue; }
-    if (v.work < best.work) continue;
-    const a = tipOf(v);
-    const b = tipOf(best);
-    for (let i = 0; i < 32; i++) {
-      if (a[i] === b[i]) continue;
-      if (a[i] < b[i]) best = v;
-      break;
-    }
-  }
-  return { ...best, refused: checked.filter((v) => !v.ok).map((v) => v.why) };
-}
-
-/**
- * 5A.4 STEP 1, SCAN: the chain says where an output was and whether it is
- * still there. Not the party handing the census over.
- *
- * "SCAN all outputs created at or before census_height whose script matches
- * the bond template (5A.3B) and that are unspent at census_height with >=
- * census_confirmations depth."
- *
- * WHAT THIS DOES AND WHAT IT CANNOT. Three of those four conjuncts are read
- * off the blocks here: WHERE an outpoint was created, WHETHER it was spent at
- * or before the census height, and HOW DEEP it is. `commitCensus` applies all
- * three too - to fields the caller supplied. That is the difference: a
- * census used to be a bag of entries someone asserted heights and spends for,
- * and this derives both from the chain, so a publisher who lies about either
- * is caught by anyone holding the same blocks.
- *
- * THE FOURTH CONJUNCT IS NOT HERE AND IS NOT FAKED. Finding which outputs are
- * bonds at all needs `BOND_MARKER` - 25.1's single dust address that puts every
- * bond in the compact filters - and `BOND_MARKER` is `null` in this protocol
- * by a decision recorded in `constants.js`: it is a genesis parameter, fixed
- * once before the first bond exists, and writing a plausible address into a
- * source tree would settle it by accident. `bondMarker()` throws for exactly
- * that reason. So the candidate outpoints come IN - from the advertisements a
- * node already holds, which name `bondTxid` and `bondVout` - and enumerating
- * them from the chain alone waits on that parameter, not on a daemon.
- *
- * A BLOCK IS `{ height, transactions }`, transactions being raw bytes. Nothing
- * here fetches: the caller brings the blocks, and two callers holding the same
- * blocks get the same census or neither does.
- */
-/**
- * WHEN EACH OUTPOINT APPEARED AND WHETHER IT WAS SPENT, read off the blocks.
- *
- * One reader, used by SCAN and by RESOLVE, because two readers of the same
- * chain are two answers waiting to differ. 5A.2 makes the census "a pure
- * function of the chain up to census_height", so nothing after that height is
- * looked at: a block later than the census is a block the census did not see,
- * and reading it would make the answer depend on when a node happened to ask.
- */
-function chainFactsAt(blocks, censusHeight) {
-  const createdAt = new Map();
-  const spentAt = new Map();
-  // AND THE OUTPUT ITSELF, for a caller that wants the script without going
-  // back to the blocks. RESOLVE does not need it: a resolved transaction is
-  // pinned to the entry's txid, and a transaction with that txid cannot have
-  // different outputs - the txid IS the hash of them. Reading the script here
-  // and comparing it there would be a check that can never fail, which is a
-  // worse thing to have than no check at all.
-  const outputAt = new Map();
-
-  for (const block of blocks) {
-    if (block.height > censusHeight) continue;
-
-    for (const raw of block.transactions) {
-      const tx = parseTransaction(raw);
-      const txid = toHex(tx.txid);
-      for (let vout = 0; vout < tx.outputs.length; vout++) {
-        const key = `${txid}:${vout}`;
-        if (createdAt.has(key)) continue;
-        createdAt.set(key, block.height);
-        outputAt.set(key, tx.outputs[vout]);
-      }
-      for (const input of tx.inputs)
-        spentAt.set(`${toHex(input.previousTxid)}:${input.previousVout}`, block.height);
-    }
-  }
-  return { createdAt, spentAt, outputAt };
-}
-
-/**
- * WHICH ADVERTISEMENT DOES THIS TRANSACTION COMMIT TO?
- *
- * 5A.2: the bond output "commits to H(NodeAdvertisement)... the body itself
- * travels in the witness of the same transaction, so it is retrievable by
- * anyone with the chain and there is nothing to serve and nothing to keep
- * running". So a transaction answers this about itself, and SCAN and RESOLVE
- * ask it the same way rather than two ways.
- */
-/** The advertisement a bond transaction commits to (raw bytes or parsed), or null - as SCAN reads it. */
-function advertInTransaction(raw) {
-  try { return committedAdvertIn(raw instanceof Uint8Array ? parseTransaction(raw) : raw); } catch { return null; }
-}
-
-/** The ancestor advertisement a BLWP-era bond transaction commits to (ancestor.js), or null. */
-function committedAncestorAdvertIn(tx) {
-  const commitments = commitmentsOf(tx);
-  if (!commitments.length) return null;
-  for (const item of witnessRunsOf(tx)) {
-    try {
-      const { body } = splitSignedAdvert(item);
-      const id = ancestorAdvertId(body);
-      if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) return decodeAncestorAdvert(body);
-    } catch { /* not a signed body */ }
-  }
-  return null;
-}
-
-function committedAdvertIn(tx) {
-  const commitments = commitmentsOf(tx);
-  if (!commitments.length) return null;
-  for (const item of witnessRunsOf(tx)) {
-    try {
-      const { body } = splitSignedAdvert(item);
-      const advert = decodeAdvert(body);
-      const id = advertId(advert);
-      if (commitments.some((c) => c.length === 32 && id.every((b, i) => b === c[i]))) return advert;
-    } catch { /* not a signed body; most witness items are not */ }
-  }
-  return null;
-}
-
-/**
- * FINDING THE BONDS WITHOUT BEING TOLD WHERE THEY ARE, 5A.4 step 1.
- *
- * Until now SCAN threw unless a caller handed it the outpoints, so every
- * census in this tree was a census of a list somebody else made - and 25.1
- * answers "which nodes count?" with "Bitcoin: bond outputs", not "whatever you
- * were given". A census that has to be told what to look for is a directory
- * with extra steps.
- *
- * The rule is 5A.2's own findability: a funding transaction MUST pay a dust
- * output to this network's BOND_MARKER, "without it the census is unfindable
- * in practice". So a marked transaction is one to read, and the body it
- * commits to says which of its outputs is the bond.
- *
- * WHAT IS *NOT* DONE HERE. The output is not recomputed against the template
- * and the advertisement's signature is not checked - both belong to RESOLVE
- * and both already happen there. A scan that quietly dropped a marked
- * transaction whose output does not recompute would turn an exclusion anybody
- * can audit into a silence nobody can: the entry is FOUND here and refused by
- * name later.
- */
-function candidatesIn(blocks, censusHeight, network) {
-  const found = [];
-  for (const block of blocks) {
-    if (block.height > censusHeight) continue;
-    for (const raw of block.transactions) {
-      let tx;
-      try { tx = parseTransaction(raw); } catch { continue; }
-      // THIS NETWORK'S BONDS BY ITS MARKER, AND THE ANCESTOR'S BY ITS OWN (spec 0A.9, kanban #209): a bond the BLWP
-      // network's operators posted is found, read by the ancestor's layout and id, and counts here only once its
-      // operator re-affirmed it for this network (deriveCensus)
-      let ancestor = false;
-      if (!paysBondMarker(tx, network)) {
-        if (!paysMarkerProgram(tx, ancestorMarker(network))) continue;
-        ancestor = true;
-      }
-
-      const advert = ancestor ? committedAncestorAdvertIn(tx) : committedAdvertIn(tx);
-      if (!advert) continue;
-      // THE BODY NAMES THE OUTPOINT, and a body that names an output this
-      // transaction does not have has named no outpoint at all - there is
-      // nothing for RESOLVE to read and nothing to exclude by name.
-      if (!tx.outputs[advert.bondVout]) continue;
-
-      // NO AMOUNT. The scan used to copy the output's value in beside the
-      // outpoint, and measured, nothing ever read it: RESOLVE takes
-      // `output.valueSats` off the funding transaction itself and overwrites
-      // the field before the floor is applied or a leaf is hashed. A number
-      // carried along that no rule consults is one a later caller can start
-      // trusting, so the scan stops writing one.
-      found.push({
-        txid: tx.txid,
-        vout: advert.bondVout,
-        pubkey: advert.nodePubkey,
-        roles: advert.roles,
-        hostedGames: advert.hostedGames,
-        ...(ancestor ? { ancestor: true } : {}),
-      });
-    }
-  }
-  return found;
-}
-
-function scanCensus(view, { contract, candidates }) {
-  const chain = viewOrThrow(view);
-  const { censusHeight, censusConfirmations, tipHeight } = depthRuleOf(contract, chain);
-  const blocks = chain.blocks;
-  const firstHeight = chain.firstHeight;
-
-  const { createdAt, spentAt } = chainFactsAt(blocks, censusHeight);
-
-  // GIVEN A LIST, THIS IS WHAT IT ALWAYS WAS. Absent one, the chain is asked -
-  // which is what 5A.4 step 1 says a participant does, and what makes the
-  // census a function of Bitcoin rather than of whoever answered first.
-  // A ROUND THAT NAMES NO NETWORK IS NOT A ROUND TO SCAN FOR. This used to
-  // fall back to regtest - `network || 'regtest'` - so a contract that simply
-  // had no `networkId` was answered with regtest's marker and told nothing.
-  // 5A.2 makes the marker the whole of findability, and which marker is the
-  // round's own network's, so a census that cannot say where to look cannot
-  // say a bond is findable. It is refused, on both paths: the marker decides
-  // eligibility whether the outpoints were scanned or handed in.
-  if (!contract || !contract.networkId)
-    throw new Error('that round names no network, so there is nowhere to look for its bonds');
-  const network = networkOf(contract.networkId);
-  if (network === null)
-    throw new Error('that round names a network this build has no genesis for');
-  // A LIST THAT IS NOT A LIST IS STILL A MISTAKE. Omitting it means "ask the
-  // chain"; handing something that is not an array means a caller built one
-  // and got it wrong, and scanning the chain instead would bury that.
-  if (candidates !== undefined && !Array.isArray(candidates))
-    throw new Error('scan takes the outpoints as a list, or none at all and reads the chain');
-  const looking = candidates === undefined
-    ? candidatesIn(blocks, censusHeight, network)
-    : candidates;
-
-  const found = [];
-  const excluded = [];
-  for (const c of looking) {
-    const key = `${toHex(c.txid)}:${c.vout}`;
-    const height = createdAt.get(key);
-
-    // AN OUTPOINT THE CHAIN DOES NOT CARRY IS NOT AN ENTRY. It is named rather
-    // than silently dropped: a census that quietly lost a bond and one that
-    // never had it look identical from the root alone.
-    //
-    // AND THE REASON SAYS WHAT THIS VIEW ACTUALLY KNOWS. A window that begins
-    // after a bond's funding block cannot tell "not in the chain" from "below
-    // where I start", and it used to claim the first. It still excludes the
-    // entry - there is nothing else it could do with an outpoint it cannot see
-    // - but it no longer asserts something it has not looked at.
-    if (height === undefined) {
-      excluded.push({
-        ...c,
-        why: firstHeight > 0
-          ? `no such outpoint between height ${firstHeight} and ${censusHeight}, `
-            + 'and this chain view does not reach further back'
-          : 'no such outpoint at or before that height',
-      });
-      continue;
-    }
-
-    const entry = { ...c, height, spent: spentAt.has(key) };
-
-    // SCAN APPLIES ITS OWN CONJUNCTS. It used to hand its findings to the
-    // commit step and let that do the filtering, which made SCAN a lookup and
-    // the root the only place the rules lived. 5A.4 puts "unspent at
-    // census_height with >= census_confirmations depth" in step 1, so step 1
-    // decides it, and says which rule dropped whom.
-    if (entry.spent) {
-      excluded.push({ ...entry, why: 'that output was already spent at the census height' });
-      continue;
-    }
-    // DEPTH IS MEASURED AT THE CENSUS HEIGHT, NOT AT THE TIP.
-    //
-    // Found by a mutant that survived: swapping `tipHeight` for `censusHeight`
-    // here broke nothing, because every fixture had the two close enough
-    // together not to matter. They are not the same rule. 5A.4 step 1 is
-    // "unspent AT CENSUS_HEIGHT with >= census_confirmations depth", and the
-    // whole point of "given census_height, EVERY PARTICIPANT RUNS THE SAME
-    // FIVE STEPS" is that the answer cannot depend on when it is asked.
-    //
-    // Measured against the tip it did: a bond two blocks under census_height
-    // was shallow to a node whose view ended at the census and deep to a node
-    // ten blocks later, so two honest participants deriving the same round
-    // would get different committees - the divergence 5A.2 exists to remove.
-    // `depthRuleOf` already refuses a view that ends before census_height, so
-    // this number is always the one the census asks about.
-    const depth = censusHeight - height + 1;
-    if (depth < censusConfirmations) {
-      excluded.push({
-        ...entry,
-        why: `that output is ${depth} confirmations deep where this round needs ${censusConfirmations}`,
-      });
-      continue;
-    }
-
-    found.push(entry);
-  }
-
-  // NO `census` FIELD. It used to return one, and it was a root taken before
-  // RESOLVE and FILTER had run - the most natural way to use this package gave
-  // back a census over nodes whose advertisements nobody had read. A premature
-  // root is not a return value; `deriveCensus` is where a root comes from.
-  return { entries: found, excluded };
-}
-
-/**
- * 5A.4 STEP 2 (RESOLVE) AND THE 5A.3 FILTERS THAT NEED NOTHING PARKED.
- *
- * "RESOLVE: for each, read the committed H(advertisement) and retrieve the
- * body from the node, a mirror, or any peer. Hash must match. UNRETRIEVABLE
- * BODY -> EXCLUDED (identically for everyone: the hash is public, the content
- * is missing for all)."
- *
- * That parenthesis is the whole reason this can be a rule at all. A missing
- * body is missing for every participant, so excluding it keeps the census
- * canonical instead of making it depend on who could reach what. An entry
- * nobody can resolve is OUT, and it is out the same way everywhere.
- *
- * THREE OF 5A.3's SIX CRITERIA ARE APPLIED HERE, and they are the three that
- * wait on nothing parked:
- *
- *   - the committed advertisement body is retrievable and hash-matching
- *   - `bond_amount >= bond_min(role)`, the floor the ROUND names: "bond_min
- *     (role) is named in the Round Contract, not global"
- *   - the advertisement declares the role and a supported protocol version
- *
- * THE OTHER THREE ARE NOT WORKED AROUND. The bond script template cannot be
- * read off a taproot output - 5A.3B is explicit that the paths nobody uses are
- * never revealed - which is the same wall `BOND_MARKER` stands behind. And the
- * advertisement signature needs a curve this package does not carry, exactly
- * as `provesEquivocation` needs one from its caller. Both are named in the
- * answer rather than silently passed.
- *
- * `resolve` is injected. It is handed an entry and returns the transaction
- * that funded it, or nothing: retrieval is a fetch, and this package fetches
- * nothing. A resolver that throws is a resolver that failed, and a body that
- * cannot be had is excluded rather than allowed to break the census.
- */
-/**
- * The body an output commits to, or why there is none.
- *
- * The same reading `acceptAdvert` does, without its inclusion proof: bodies
- * ride in the witness, an output commits to one by its tagged id, and the one
- * taken is the one committed to. Order decides nothing - a transaction
- * committing to two bodies would be one operator advertising twice, not an
- * ambiguity to settle here.
- */
-function resolveBody(seen, entry, verifyAdvert) {
-  // an ancestor's bond (scan found it by the ancestor's marker) is read by the ancestor's layout and id (ancestor.js)
-  const ancestor = !!entry.ancestor;
-  let tx;
-  try { tx = parseTransaction(seen.transaction); }
-  catch (e) { return { ok: false, why: `that is not a transaction: ${e.message}` }; }
-
-  // IT HAS TO BE THIS ENTRY'S OWN TRANSACTION. 5A.4 resolves the body "for
-  // each" output, and a body is only that output's if the transaction is the
-  // one the outpoint names. Found by a test that failed honestly: handing back
-  // ANOTHER node's bond resolved happily, because a coherent transaction
-  // commits to its own body - so an entry at one outpoint could be resolved
-  // with an advertisement from somewhere else entirely, endpoint and all.
-  if (!entry.txid.every((b, i) => b === tx.txid[i]))
-    return { ok: false, why: 'that is a different transaction than the entry names' };
-
-  const commitments = commitmentsOf(tx);
-  if (!commitments.length)
-    return { ok: false, why: 'no output of that transaction commits to anything' };
-
-  // THE SIGNATURE IS KEPT WITH THE BODY, not dropped on the way past. It used
-  // to be discarded here - `const { body } = split...` and the other half
-  // thrown away - so a census entry was built from a body nobody had shown was
-  // its author's, and the gap was named in `unchecked` instead. Naming a gap
-  // is right when nothing can close it; it is not right once a caller can.
-  const offered = [];
-  const read = (bytes) => {
-    try {
-      const { body, signature } = splitSignedAdvert(bytes);
-      const advert = ancestor ? decodeAncestorAdvert(body) : decodeAdvert(body);
-      offered.push({ advert, signature, id: ancestor ? ancestorAdvertId(body) : advertId(advert) });
-    } catch { /* not a signed body; most witness items are not */ }
-  };
-  for (const item of witnessRunsOf(tx)) read(item);
-  if (seen.signedAdvert) read(seen.signedAdvert);
-
-  const taken = offered.find((o) =>
-    commitments.some((c) => c.length === 32 && o.id.every((b, i) => b === c[i])));
-  if (!taken)
-    return { ok: false, why: 'the bond output commits to a different advertisement' };
-
-  // AND IF THE CALLER BROUGHT A CURVE, THE SIGNATURE IS CHECKED HERE.
-  //
-  // This package carries none and must not: it is the one every other package
-  // reads, and a hash that pins money should not gain a dependency whose
-  // version could change its answer. So `verifyAdvert` is injected the way
-  // `provesEquivocation` takes one - and when it is absent the gap is named in
-  // `unchecked` exactly as before, rather than a body being called signed
-  // because nobody looked.
-  //
-  // A KEY OF NOTHING AND A SIGNATURE OF NOTHING VERIFY EACH OTHER on ed25519,
-  // measured: zero decodes to a point of small order and the equation closes
-  // trivially. That is refused here whatever the caller's curve says, because
-  // no census entry should rest on a key nobody holds.
-  if (verifyAdvert) {
-    const zero = (b) => b.every((v) => v === 0);
-    if (zero(taken.advert.nodePubkey))
-      return { ok: false, why: 'that advertisement names the zero key, which nobody holds' };
-    if (zero(taken.signature))
-      return { ok: false, why: 'that advertisement carries an empty signature' };
-    if (!verifyAdvert(taken.signature, taken.id, taken.advert.nodePubkey))
-      return { ok: false, why: 'that advertisement is not signed by the node it names' };
-  }
-
-  return {
-    ok: true, advert: taken.advert, advertId: taken.id, tx,
-    signatureChecked: !!verifyAdvert,
-  };
-}
-
-function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, versionAfterUpdates = false }) {
-  if (!contract || typeof contract.bondMinSats !== 'bigint')
-    return { ok: false, why: 'that round names no bond floor to measure against' };
-
-  // THE VERSION IS THE ROUND'S. It used to be an argument with a default, so
-  // whoever called this decided which nodes were selectable - and a version
-  // the caller picks is a version the OPERATOR picks, the same fault that
-  // moved the objection window and the minimum service into the contract.
-  // 27A.7.5 puts it on the round: a node "simply stops being selectable for
-  // rounds naming the new hash, exactly as with protocol versions".
-  if (!Number.isInteger(contract.protocolVersion))
-    return { ok: false, why: 'that round names no protocol version' };
-  if (typeof resolve !== 'function')
-    return { ok: false, why: 'no way to retrieve an advertisement body' };
-
-  // THE CHAIN'S OWN ANSWER ABOUT EACH OUTPOINT, when a caller brings the view.
-  //
-  // 5A.2: "a node is in the census if and only if it has a bond output on
-  // Bitcoin, CONFIRMED AND UNSPENT at census_height". Until now this function
-  // re-applied that RULE to values the entry carried - `e.height`, `e.spent` -
-  // so whoever composed the entries decided whether a bond was live. A node
-  // resolving a census from somebody else's list could be told a spent bond
-  // was unspent, on the single criterion the whole of eligibility rests on.
-  //
-  // Re-applying a rule to a claimed fact is not verification. With a view the
-  // facts are READ, the claims are compared against them, and a disagreement
-  // excludes the entry by name rather than being quietly overwritten - a list
-  // that lies about the chain is a list to distrust, not to correct.
-  // WHICH NETWORK THIS ROUND IS FOR, off its own contract. A contract naming a
-  // network this build has no genesis for is refused rather than checked
-  // against a guess: `networkOf` answers null, and a census that cannot say
-  // where to look for a bond cannot say a bond is findable.
-  // AND THE SAME REFUSAL HERE, for the same reason: `recognizeBond` defaults
-  // to regtest, so a round with no `networkId` was checked against regtest's
-  // marker on every chain rather than being refused.
-  if (!contract.networkId)
-    return { ok: false, why: 'that round names no network, so its bond marker cannot be checked' };
-  const network = networkOf(contract.networkId);
-  if (network === null)
-    return { ok: false, why: 'that round names a network this build has no genesis for' };
-
-  // AND A SET IS THIS NETWORK'S SET, OR IT IS NOT A SET. The template check
-  // rebuilds the output key from the arbitration keys, the threshold and the
-  // maturity, so a caller passing its own - an empty list, a shorter one, its
-  // own maturity - would not be checking the 5A.3B template at all: every
-  // honest bond would fail the recompute and be excluded by name, which reads
-  // like a chain full of liars rather than like a caller holding the wrong
-  // set. These are genesis facts (letter 24's ruling), so they are compared
-  // against genesis and a mismatch is refused before any entry is judged.
-  if (bond) {
-    const g = genesisFor(network);
-    const same = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array
-      && a.length === b.length && a.every((x, i) => x === b[i]);
-    const keys = bond.arbitrationKeys;
-    if (!Array.isArray(keys) || keys.length !== g.arbitrationKeys.length
-        || !keys.every((k, i) => same(k, g.arbitrationKeys[i])))
-      return { ok: false, why: `that is not the arbitration set ${network} was born with` };
-    if (bond.arbitrationK !== g.arbitrationK || bond.bondMaturity !== g.bondMaturity)
-      return {
-        ok: false,
-        why: `that names ${bond.arbitrationK}-of-${keys.length} at maturity `
-          + `${bond.bondMaturity} where ${network} was born `
-          + `${g.arbitrationK}-of-${g.arbitrationKeys.length} at ${g.bondMaturity}`,
-      };
-    if (typeof bond.tweakPoint !== 'function' || typeof bond.combine !== 'function')
-      return { ok: false, why: 'a template check needs both curve operations, and one is missing' };
-  }
-
-  let facts = null;
-  let depth = null;
-  if (view) {
-    const chain = viewOrThrow(view);
-    depth = depthRuleOf(contract, chain);
-    facts = chainFactsAt(chain.blocks, depth.censusHeight);
-  }
-
-  const eligible = [];
-  const excluded = [];
-
-  for (const e of entries) {
-    let seen = null;
-    try { seen = resolve(e); }
-    catch { seen = null; }
-
-    if (!seen || !seen.transaction) {
-      excluded.push({ ...e, why: 'the committed advertisement body could not be retrieved' });
-      continue;
-    }
-
-    // INCLUSION IS NOT RE-PROVED HERE, and that is deliberate. `acceptAdvert`
-    // bundles a merkle proof with the resolution because it is used where
-    // nothing has established the transaction is in the chain. SCAN has: it
-    // read the blocks. Demanding a header and a branch again would make
-    // RESOLVE ask for what step 1 already answered, and 5A.4 asks something
-    // narrower of it - read the committed hash, retrieve the body, match.
-    const read = resolveBody(seen, e, verifyAdvert);
-    if (!read.ok) { excluded.push({ ...e, why: read.why }); continue; }
-
-    // AND THE OUTPUT ITSELF HAS TO LOOK LIKE A BOND. Until this, the census
-    // checked the transaction and the commitment and never the output, so an
-    // entry could name any vout of a real bond transaction - the OP_RETURN
-    // included - and be counted.
-    // AND WITH THE NETWORK'S OWN SET AND A CURVE, THE OUTPUT KEY TOO. A door
-    // nobody walks through is not a door: `recognizeBond` learned to rebuild
-    // the key a node's own keys produce, and the census is where that has to
-    // be asked, because this is what decides who may hold a round. Without the
-    // set the census counts what it always counted and still lists the gap.
-    // THE MARKER IS CHECKED ON THE CONTRACT'S OWN NETWORK. `recognizeBond`
-    // defaults to regtest, and the census held the round's `networkId` and
-    // never passed it - so a testnet4 census would have looked for the regtest
-    // marker, which is a different address, and accepted a bond posted on
-    // another chain. 5A.2 makes that dust output the whole of findability.
-    const output = recognizeBond(read.tx, e.vout, read.advert, {
-      ...(bond ? { bond } : {}),
-      ...(network ? { network } : {}),
-      ...(e.ancestor ? { ancestor: true } : {}),
-    });
-    if (!output.ok) { excluded.push({ ...e, why: output.why }); continue; }
-
-    let chainSays = null;
-    if (facts) {
-      const key = `${toHex(e.txid)}:${e.vout}`;
-      const height = facts.createdAt.get(key);
-      if (height === undefined) {
-        excluded.push({ ...e, why: 'the chain does not carry that outpoint at or before the census height' });
-        continue;
-      }
-      if (Number.isInteger(e.height) && e.height !== height) {
-        excluded.push({
-          ...e,
-          why: `that entry claims height ${e.height} and the chain says ${height}`,
-        });
-        continue;
-      }
-      if (facts.spentAt.has(key)) {
-        excluded.push({
-          ...e,
-          why: `that bond was spent at height ${facts.spentAt.get(key)}, so nothing is at stake`,
-        });
-        continue;
-      }
-      const deep = depth.censusHeight - height + 1;   // at the census height, as SCAN and COMMIT measure it
-      if (deep < depth.censusConfirmations) {
-        excluded.push({
-          ...e,
-          why: `that bond is ${deep} block(s) deep and this round asks for `
-            + `${depth.censusConfirmations}`,
-        });
-        continue;
-      }
-      // The chain's own numbers replace the claimed ones from here on: an
-      // entry that agreed is an entry whose height came from the blocks.
-      chainSays = { height, spent: false };
-    }
-
-    // A TEMPLATE-2 BOND MATURES AT ITS OWN HEIGHT, AND THAT HEIGHT IS AT LEAST ITS CONFIRMATION PLUS THE NETWORK'S
-    // OFFSET (kanban #295, 5A.3B). The key above was rebuilt with the advertisement's height, so the leaf on chain
-    // carries it; this asks whether it is far enough from the block the bond confirmed in - read off the chain when a
-    // view was brought, else the entry's own height. One block short is a bond its node could take back before the
-    // network's maturity, and it is excluded by name.
-    const confirmed = chainSays ? chainSays.height : e.height;
-    const matures = maturityStands(read.advert, confirmed, network);
-    if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
-
-    // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
-    // an output worth 60000 sats, an entry claiming 100000000000, accepted -
-    // and carrying weight 2000000 into `selectCommittee` instead of weight 1.
-    //
-    // 5A.3 says why that is not a detail: "The bond is what makes identity
-    // expensive. Without it, a Sybil attacker creates arbitrarily many nodes
-    // for free and buys arbitrarily many selection chances - the flaw that
-    // made v4.4 unsafe." A bond that is asserted rather than observed costs
-    // nothing, so believing the claim reinstates exactly that flaw. The leaf
-    // hashes this number too, so the lie went into the census root.
-    const bondSats = output.valueSats;
-
-    // THE FLOOR IS THE ROUND'S. 5A.3: "bond_min(role) is named in the Round
-    // Contract, not global... a node is eligible for THAT ROUND or not."
-    if (bondSats < contract.bondMinSats) {
-      excluded.push({
-        ...e,
-        bondSats,
-        why: `that bond is ${bondSats} where this round's floor is ${contract.bondMinSats}`,
-      });
-      continue;
-    }
-
-    // AND THE ADVERTISEMENT HAS TO DECLARE WHAT IT IS. A body that names no
-    // role this census is for, or speaks no version this software does, is a
-    // node that has not said it can serve the round it is being counted into.
-    const roles = read.advert.roles || [];
-    if (!roles.length) { excluded.push({ ...e, why: 'that advertisement declares no role' }); continue; }
-    // STEPPED OUT (§5A.3 "advertisement declares serving = true", kanban #302): with updates to come, the newest one decides below
-    if (!versionAfterUpdates && read.advert.serving === false) {
-      excluded.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
-      continue;
-    }
-
-    // THE VERSION IS READ OFF THE NEWEST ADVERTISEMENT (2026.0.2, kanban #348, measured 2026-10-13 05:20Z: the first v2 grid's
-    // census came out EMPTY - every node announced version 2 in an advertisement update confirmed at 156338, and this pass
-    // refused each one on the version its bond committed to at creation, before deriveCensus applied the update). With
-    // updates to come (`versionAfterUpdates`), deriveCensus asks the version of the newest advertisement instead.
-    const versions = read.advert.protocolVersions || [];
-    if (!versionAfterUpdates && !versions.includes(contract.protocolVersion)) {
-      excluded.push({
-        ...e,
-        // PROTOCOL TOO OLD, BY NAME (kanban #349 scope 3): a node left out for the version it speaks, as the page shows it
-        tooOld: true, speaks: versions,
-        why: `that advertisement speaks ${versions.map(protocolVersionName).join(', ') || 'no version'} and this `
-          + `round runs ${protocolVersionName(contract.protocolVersion)}`,
-      });
-      continue;
-    }
-
-    // THE RESOLVED BODY REPLACES WHATEVER THE ENTRY CLAIMED - the roles, and
-    // the key. The body is what the bond committed to; the entry beside it is
-    // somebody's summary. The key mattered more than the roles and was missed
-    // the first time: the leaf hashes `pubkey`, so a census over transcriptions
-    // would name a key that never bonded, and the committee seed, the receipts
-    // and the payout table all read that key afterwards.
-    eligible.push({
-      ...e,
-      // The chain's height and spend state where a view gave them, so what
-      // goes into a root is what the blocks said and not what a list claimed.
-      ...(chainSays || {}),
-      bondSats,
-      pubkey: read.advert.nodePubkey,
-      roles,
-      hostedGames: read.advert.hostedGames,
-      advert: read.advert,
-      advertId: read.advertId,
-    });
-  }
-
-  return {
-    ok: true,
-    eligible,
-    excluded,
-    // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
-    // the signature as unchecked after checking it would be as wrong as not
-    // checking it: the list is what a reader is asked to take on trust.
-    // WHAT IS STILL UNCHECKED SHRINKS AS CALLERS BRING WHAT IT TAKES: the
-    // signature needs a curve, the script template needs the network's set and
-    // a curve. Reporting either as unchecked after checking it would be as
-    // wrong as not checking it.
-    chainChecked: !!view,
-    unchecked: [
-      ...BOND_UNCHECKED.filter((u) => {
-        if (verifyAdvert && /advertisement signature/.test(u)) return false;
-        if (bond && /script template/.test(u)) return false;
-        return true;
-      }),
-      // AND THE ONE THIS FUNCTION ITSELF CANNOT ANSWER WITHOUT A CHAIN. Named
-      // rather than silently taken from the entry, because "the list said so"
-      // is not a check and a reader deserves to know which it got.
-      ...(view ? [] : ['whether the output is unspent and deep enough at '
-        + 'census_height (no chain view was given, so the entry was believed)']),
-    ],
-  };
-}
-
-/**
- * 5A.4, ALL FIVE STEPS, AND THE ONLY PLACE A CENSUS ROOT COMES FROM.
- *
- * "Given `census_height`, EVERY PARTICIPANT RUNS THE SAME FIVE STEPS." Five
- * steps that only join when a caller remembers to join them are not a
- * derivation, they are parts - and the parts were reachable in the wrong
- * order. `scanCensus` handed back a root of its own with steps 2 and 3
- * unrun, so the shortest path through this package produced a census over
- * nodes whose advertisements nobody had read. That is the defect this closes:
- *
- *   1. SCAN     the blocks say where each candidate outpoint was created,
- *               whether it was spent by the census height, and how deep it is.
- *   2. RESOLVE  the committed advertisement body, retrieved and hash-matched.
- *   3. FILTER   5A.3's objective criteria, the three that wait on nothing.
- *   4. SORT     ascending by (funding_txid, vout), which cannot be ground.
- *   5. COMMIT   the tagged leaves, Merkle-rooted, promotion on an odd level.
- *
- * Steps 1 and 2-3 are still separately callable, because a node wants to know
- * WHY somebody was dropped and at which step. Neither of them returns a root.
- *
- * Every exclusion comes back, from either step, carrying the step that made it
- * and the reason. A census that quietly lost a bond and one that never had it
- * look identical from the root alone, and a node accused of publishing the
- * wrong census needs to be able to point at the rule that removed a name.
- *
- * The two 5A.3 criteria this cannot apply come back in `unchecked` as they do
- * from RESOLVE: the bond script template is unreadable until the output is
- * spent, and the advertisement signature needs a curve this package does not
- * carry. Neither is skipped quietly.
- */
-function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond, verifyUpdate }) {
-  // MOST WORK WINS, HERE, before anything is read. Two chains that disagree
-  // about Bitcoin are not two censuses: one of them is the chain.
-  const chain = bestChainView(views);
-  if (!chain.ok) return { ok: false, why: `that census cannot be scanned: ${chain.why}` };
-
-  // A ROOT IS NOT PUBLISHED WITH THE TEMPLATE UNCHECKED.
-  //
-  // 5A.3's criterion is that the output is "a bond output built to the 5A.3B
-  // template", and rebuilding that key is a point addition this package
-  // cannot do: it carries no curve on purpose, because every other package
-  // reads it. So `resolveCensus` has always been able to run without one and
-  // say so - the template sits in `unchecked` and the entry is counted.
-  //
-  // That is honest for a STEP and wrong for a CENSUS. This is the composed
-  // five steps, the thing a node publishes a root from, and a root computed
-  // without the template check is a census over outputs nobody proved were
-  // bonds - a stranger's taproot key among them is indistinguishable, and 5A.3
-  // says exactly why that matters: "the bond is what makes identity
-  // expensive". A door nobody walks through is not a door. So the composed
-  // census refuses, by name, and the caller brings a curve.
-  //
-  // `commitCensus` is deliberately NOT given this rule. It takes entries a
-  // caller assembled and already believes about `advertId`; a stamp checked
-  // there would be a check on the caller's own word rather than on the chain.
-  // The guarantee lives on the only path that runs all five steps.
-  const network = contract && contract.networkId ? networkOf(contract.networkId) : null;
-  if (network !== null) {
-    const set = genesisFor(network).arbitrationKeys;
-    if (set && set.length && !bond)
-      return {
-        ok: false,
-        why: `that census would be a root with the bond script template unchecked: `
-          + `${network} names an arbitration set and no curve was injected`,
-      };
-  }
-
-  let scanned;
-  try {
-    scanned = scanCensus(chain, { contract, candidates });
-  } catch (e) {
-    return { ok: false, why: `that census cannot be scanned: ${e.message}` };
-  }
-
-  // THE CHAIN GOES DOWN WITH THEM. Derive holds the view it just scanned, so
-  // resolving from entries whose height and spend state it could re-read and
-  // did not would be the door-nobody-walks-through fault one function deeper.
-  const resolved = resolveCensus(scanned.entries, {
-    contract, resolve, verifyAdvert, bond, view: chain, versionAfterUpdates: typeof verifyUpdate === 'function',
-  });
-  if (!resolved.ok) return resolved;
-
-  // THE NEWEST ADVERTISEMENT, NOT THE FIRST (§5A.2; the owner 2026-09-28): for each resolved bond, the newest valid
-  // update confirmed at or below census_height - signed by the bond's own node key (`verifyUpdate`) - replaces the
-  // advertisement the bond committed to at creation. The census's own filters then read the updated body: an update
-  // that declares no role, or not this round's version, takes the node out of this census. With no `verifyUpdate`
-  // nothing is applied: an update nobody checked is not an update.
-  // A BOND OF THE ANCESTOR COUNTS ONLY ONCE ITS OPERATOR RE-AFFIRMED IT FOR THIS NETWORK (§27A.8.3, spec 0A.9; kanban
-  // #209): a re-affirmation at or below census_height, at or above the bond, signed by the bond's node key for this
-  // network id and this bond - checked with the same BIP-340 verify an update is (`verifyUpdate`). Opt-in per operator:
-  // a bond nobody re-affirmed stays the ancestor's, and is named here, not counted.
-  const reaffirmOut = [];
-  let carried = resolved.eligible;
-  const ancestors = resolved.eligible.filter((e) => e.ancestor);
-  if (ancestors.length) {
-    const said = typeof verifyUpdate === 'function'
-      ? reaffirmedBonds(chain, ancestors, { atHeight: contract.censusHeight, networkId: contract.networkId, verify: verifyUpdate })
-      : new Map();
-    carried = [];
-    for (const e of resolved.eligible) {
-      if (!e.ancestor) { carried.push(e); continue; }
-      const r = said.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
-      if (!r) {
-        reaffirmOut.push({ ...e, why: typeof verifyUpdate === 'function'
-          ? 'a bond of the ancestor network that its operator has not re-affirmed for this network'
-          : 'a bond of the ancestor network, and no signature check was given to read a re-affirmation with' });
-        continue;
-      }
-      carried.push({ ...e, reaffirmedBy: r });
-    }
-  }
-
-  let eligible = carried;
-  const updatedOut = [];
-  if (typeof verifyUpdate === 'function') {
-    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
-    const before = eligible;
-    eligible = [];
-    for (const e of before) {
-      const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
-      if (!u) {
-        if (e.advert && e.advert.serving === false) {
-          updatedOut.push({ ...e, notServing: true, why: 'that advertisement says serving = false: its node stepped out of the census, its bond untouched' });
-          continue;
-        }
-        // no update: the version the bond's own advertisement speaks (resolveCensus left that question for here)
-        const own = (e.advert && e.advert.protocolVersions) || [];
-        if (!own.includes(contract.protocolVersion)) {
-          updatedOut.push({ ...e, tooOld: true, speaks: own, why: `that advertisement speaks ${own.map(protocolVersionName).join(', ') || 'no version'} and this `
-            + `round runs ${protocolVersionName(contract.protocolVersion)}` });
-          continue;
-        }
-        eligible.push(e); continue;
-      }
-      const roles = u.advert.roles || [];
-      const versions = u.advert.protocolVersions || [];
-      if (!roles.length) {
-        updatedOut.push({ ...e, why: 'its newest advertisement update declares no role' });
-        continue;
-      }
-      // STEPPED OUT (§5A.3, kanban #302): "From the first series whose census_height is at or above that update's block, the node is
-      // not in the census and is never drawn"; an update with serving = true brings it back the same way
-      if (u.advert.serving === false) {
-        updatedOut.push({ ...e, notServing: true, why: `its newest advertisement update (block ${u.height}) says serving = false: its node stepped out of the census, its bond untouched` });
-        continue;
-      }
-      if (!versions.includes(contract.protocolVersion)) {
-        updatedOut.push({ ...e, tooOld: true, speaks: versions, why: `its newest advertisement update speaks `
-          + `${versions.map(protocolVersionName).join(', ') || 'no version'} and this round runs ${protocolVersionName(contract.protocolVersion)}` });
-        continue;
-      }
-      // the update's games replace the bond's first advertisement's (kanban #204: a hosted-games change is an update)
-      eligible.push({ ...e, advert: u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
-        updatedBy: { txid: u.txid, height: u.height, position: u.position } });
-    }
-  }
-
-  let census;
-  try {
-    census = commitCensus(eligible, { contract, view: chain });
-  } catch (e) {
-    return { ok: false, why: `that census cannot be committed: ${e.message}` };
-  }
-
-  return {
-    ok: true,
-    entries: census.entries,
-    leaves: census.leaves,
-    root: census.root,
-    work: chain.work,
-    tipHeight: chain.tipHeight,
-    refusedChains: chain.refused || [],
-    excluded: [
-      ...scanned.excluded.map((e) => ({ ...e, step: 'scan' })),
-      ...resolved.excluded.map((e) => ({ ...e, step: 'resolve' })),
-      ...reaffirmOut.map((e) => ({ ...e, step: 'reaffirm' })),
-      ...updatedOut.map((e) => ({ ...e, step: 'update' })),
-    ],
-    unchecked: resolved.unchecked,
-    chainChecked: resolved.chainChecked,
-  };
 }
 
 // ---- arena-protocol/src/rules.js

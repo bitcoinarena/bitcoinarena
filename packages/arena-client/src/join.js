@@ -23,6 +23,7 @@ import { decodeRoundContract, roundId } from '../../arena-protocol/src/contracts
 import { takesAnyFederation, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
 import { OBJECTION_WINDOW_MS } from '../../arena-protocol/src/window.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { httpProvider } from './headers.js';
 import { seedHexFromInput } from './bip39.js';
 import { NO_SHARES, dealHandout, encodeHandout } from '../../arena-protocol/src/handout.js';
@@ -620,6 +621,28 @@ export async function worldSeedFor({ entry, round, nodes, contract, fetcher = fe
  * protocol speaks Bitcoin's own bytes, and translating whatever an operator
  * serves into them is deliberately outside everything that decides.
  */
+/**
+ * THE BOND OF A SEAT ON THIS ROUND'S COMMITTEE (kanban #376, measured 2026-10-16 07:51Z on the hotfix page: "no proven endpoint: the
+ * advertisement is for 2fca1090..., which is not on this round's committee"). daily.json names ONE bond - seat 1's - and a round's
+ * committee is 7 of 14 seats, so about half the rounds could not be joined at all. The bond named first if its node is on the
+ * committee, else the first of the round's seats whose own /bond names a committee member; the named one when none answers.
+ */
+export async function committeeBond({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000 } = {}) {
+  const keys = new Set((committee || []).map((k) => toHex(k)));
+  const candidates = [...new Set([bond, ...(nodes || []).map((n) => `${String(n).replace(/\/+$/, '')}/bond`)].filter(Boolean))];
+  const whose = async (u) => {
+    try {
+      const r = await fetcher(u, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) return null;
+      const o = await r.json();
+      const a = o && typeof o.hex === 'string' ? advertInTransaction(fromHex(o.hex)) : null;
+      return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? u : null;
+    } catch { return null; }
+  };
+  const answers = await Promise.all(candidates.map(whose));
+  return answers.find(Boolean) || bond;
+}
+
 export function bondProvider(where, { fetcher = fetch } = {}) {
   const get = async (ask, opts) => {
     const r = await readWithOneRetry(fetcher, where, opts);
@@ -673,7 +696,7 @@ export async function joinFromQuery(search, { fetcher = fetch } = {}) {
     federation: named.federation,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
-      bonds: [bondProvider(named.bond, { fetcher })],
+      bonds: [bondProvider(await committeeBond({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher }), { fetcher })],
     },
     advert: { signedAdvert: advert },
   };
