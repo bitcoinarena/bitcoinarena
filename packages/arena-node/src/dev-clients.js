@@ -179,6 +179,13 @@ export function createDevClients({ root, donorBin, nodeBin = process.execPath, d
       return { ok: true, kept };
     },
 
+    /** THE CLIENT'S KEY, FOR ITS OWN BALLOT SIGNATURES (§27A.4.1, kanban #382): { recipientPkHex, secretHex } - never answered to a page. */
+    keyOf(slug) {
+      if (!isClient(String(slug))) return null;
+      const k = readJson(join(dirOf(slug), 'key.json'));
+      return k && /^[0-9a-f]{64}$/.test(k.secretHex || '') ? { recipientPkHex: k.recipientPkHex, secretHex: k.secretHex } : null;
+    },
+
     /** Every client's record rows and the seats its donor.json names (kanban #382: the rounds whose game the node must look up). */
     rowsAndSeats() {
       const rows = []; const seats = new Set();

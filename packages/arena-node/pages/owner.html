@@ -197,6 +197,7 @@ async function area() {
     <h2>Standing</h2><div class="card" id="standing"><p class="sub">reading this node's seatings and its bond's standing…</p></div>
     <h2>Leave</h2><div class="card" id="leave"><p class="sub">reading what this seat holds…</p></div>
     <h2>Dev clients</h2><div id="devs"><div class="card"><p class="sub">reading this node's dev clients…</p></div></div>
+    <h2>Developer donation split</h2><div id="ballots"><div class="card"><p class="sub">reading the developers' ballots…</p></div></div>
     <h2>Donations waiting to be collected</h2><div id="dons"><div class="card"><p class="sub">reading this seat's donations…</p></div></div>
     <h2>Games from other seats</h2><div class="card" id="store">
       <p>Games and new versions other seats host. Check runs every check in this browser and shows it; the seat checks again,
@@ -229,6 +230,7 @@ async function area() {
   $('forget').onclick = () => { if (confirm('Sign out on this browser? You need your 24 words or your Nostr key to come back.')) forget(); };
   donations();
   devClients();
+  ballotsPanel();
   standingPanel();
   leavePanel();
   storePanel();
@@ -497,6 +499,58 @@ async function donations() {
 }
 // THE DEV CLIENTS (kanban #358): a donation recipient's key and its wallets, run by this node. Set one up with a new key or a dev key
 // you already have; it collects what the protocol and the games donate to that key, and you withdraw it over Lightning from here.
+// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382, the owner 2026-10-16: "a proposal ui so one of the devs can propose something
+// and another dev sees it in his ui and can click accept or deny. As soon as the threshold is hit it becomes active"): the
+// protocol developers' set in force, every proposal with its votes and state, Accept / Deny for this node's dev clients that
+// are recipients, and a form to propose a new split (it starts from the set in force; a new row adds a developer by key)
+async function ballotsPanel() {
+  let b, d, v;
+  try {
+    [b, d, v] = await Promise.all([fetch(at('/donation-ballots'), { cache: 'no-store' }).then((r) => r.json()),
+      fetch(at('/owner/donations'), { cache: 'no-store' }).then((r) => r.json()), fetch(at('/owner/dev'), { cache: 'no-store' }).then((r) => r.json())]);
+  } catch (e) { $('ballots').innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
+  const set = (d.sets || []).find((x) => x.kind === 'protocol');
+  const mine = (v.clients || []).map((c) => ({ slug: c.slug, key: c.recipientPk, label: c.label || c.slug }));
+  const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
+  const nameOf = (key) => { const r = set && set.recipients.find((x) => x.key === key); const m = mine.find((x) => x.key === key); return esc((r && r.label) || (m && m.label) || key.slice(0, 12) + '…'); };
+  const now = set ? `<div class="card"><h3>In force: serial ${esc(String(set.serial))}</h3>${set.recipients.map((r) => `<div class="row"><span>${esc(r.label || r.key.slice(0, 12))} <span class="sub">${esc(r.key.slice(0, 12))}…</span></span><b>${pct(r.shareBps)}</b></div>`).join('')}
+      <p class="sub">Any developer here can propose a new split. It is in force for new rounds once developers holding more than half of this set accept it; rounds already published keep theirs.</p></div>` : '<div class="card"><p>No protocol developers\' set is in force on this node.</p></div>';
+  const state = (p) => p.state === 'approved' ? `<span class="ok">approved · in force from block ${esc(String(p.validFrom))}</span>` : p.state === 'refused' ? `<span class="err">refused${p.why ? ' · ' + esc(p.why) : ''}</span>` : `open · ${pct(p.acceptBps)} accepted, more than 50 % needed`;
+  const props = (b.ballots || []).slice().sort((x, y) => Number(y.serial) - Number(x.serial)).map((p) => {
+    const voters = mine.filter((m) => set && set.recipients.some((r) => r.key === m.key) && !p.votes.some((x) => x.key === m.key));
+    return `<div class="card"><h3>Proposal · serial ${esc(p.serial)} <span class="sub">${esc(p.id.slice(0, 12))}</span></h3>
+      <div class="row"><span>State</span><b>${state(p)}</b></div>
+      <div class="row"><span>Proposed by</span><b>${nameOf(p.proposer)}</b></div>
+      ${p.recipients.map((r) => `<div class="row"><span>${esc(r.label || r.key.slice(0, 12))} <span class="sub">${esc(r.key.slice(0, 12))}…</span></span><b>${pct(r.shareBps)}</b></div>`).join('')}
+      ${p.votes.map((x) => `<div class="row"><span>${nameOf(x.key)} (${pct(x.bps)})</span><b>${x.accept ? '<span class="ok">accepted</span>' : '<span class="err">denied</span>'} · block ${esc(String(x.atHeight))}</b></div>`).join('')}
+      ${p.state === 'open' ? voters.map((m) => `<button class="primary" data-vote="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="1">Accept as ${esc(m.label)}</button><button data-vote="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="0">Deny as ${esc(m.label)}</button>`).join('') : ''}
+      <div class="err" id="ve-${esc(p.id.slice(0, 16))}"></div></div>`;
+  }).join('');
+  const proposers = mine.filter((m) => set && set.recipients.some((r) => r.key === m.key));
+  const form = proposers.length && set ? `<div class="card"><h3>Propose a new split</h3>
+      <p class="sub">One row per developer: their recipient key (33 bytes, hex), a label and a share in percent; the shares add up to 100 %.</p>
+      <div id="prow">${set.recipients.map((r) => `<div class="name-row"><input class="pk" value="${esc(r.key)}" autocomplete="off" spellcheck="false"><input class="pl" value="${esc(r.label || '')}" placeholder="label"><input class="pp" inputmode="decimal" value="${Number(r.shareBps) / 100}"></div>`).join('')}</div>
+      <button id="padd">Add a developer</button>
+      <label>Propose as</label><select id="pby">${proposers.map((m) => `<option value="${esc(m.slug)}">${esc(m.label)}</option>`).join('')}</select>
+      <button class="primary" id="pgo">Propose</button><div class="err" id="perr2"></div></div>` : '';
+  $('ballots').innerHTML = now + props + form;
+  for (const x of document.querySelectorAll('[data-vote]')) x.onclick = async () => {
+    const box = $('ve-' + x.dataset.p.slice(0, 16)); box.textContent = '';
+    try { await post('/owner/dev/vote', signed('dev/vote', { slug: x.dataset.vote, proposalId: x.dataset.p, accept: x.dataset.a === '1' })); ballotsPanel(); }
+    catch (e) { box.textContent = e.message; }
+  };
+  if ($('padd')) $('padd').onclick = () => { const d2 = document.createElement('div'); d2.className = 'name-row'; d2.innerHTML = '<input class="pk" placeholder="02… or 03… (66 hex)" autocomplete="off" spellcheck="false"><input class="pl" placeholder="label"><input class="pp" inputmode="decimal" placeholder="%">'; $('prow').append(d2); };
+  if ($('pgo')) $('pgo').onclick = async () => {
+    $('perr2').textContent = '';
+    const rows = [...document.querySelectorAll('#prow .name-row')].map((r) => ({ key: r.querySelector('.pk').value.trim().toLowerCase(), label: r.querySelector('.pl').value.trim(),
+      shareBps: Math.round(Number(String(r.querySelector('.pp').value).replace(',', '.')) * 100) })).filter((r) => r.key);
+    const sum = rows.reduce((t, r) => t + r.shareBps, 0);
+    if (sum !== 10000) { $('perr2').textContent = `the shares add up to ${sum / 100} %, not 100 %`; return; }
+    if (rows.some((r) => !/^0[23][0-9a-f]{64}$/.test(r.key))) { $('perr2').textContent = 'every key is 66 hex characters starting 02 or 03'; return; }
+    try { await post('/owner/dev/propose', signed('dev/propose', { slug: $('pby').value, recipients: rows })); ballotsPanel(); }
+    catch (e) { $('perr2').textContent = e.message; }
+  };
+}
 async function devClients() {
   let r;
   try { r = await (await fetch(at('/owner/dev'), { cache: 'no-store' })).json(); }
