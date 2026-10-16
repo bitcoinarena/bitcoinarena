@@ -4170,7 +4170,8 @@
       const noWallet = !!start && getComputedStyle(start).display !== 'none' && start.getBoundingClientRect().height > 0;
       document.getElementById('arena-wb-sats').textContent = bal ? Number(bal.sats || 0).toLocaleString('en-US') + ' sat'
         : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('BLWP_BALANCE_TRIED') ? 'Loading \u2026' : '– sat';
-      document.getElementById('arena-wb-pending').textContent = bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '';
+      document.getElementById('arena-wb-pending').textContent = (bal && bal.arriving ? ' · ' + Number(bal.arriving).toLocaleString('en-US') + ' arriving' : '')
+        + (bal && bal.pending ? ' · ' + Number(bal.pending).toLocaleString('en-US') + ' pending' : '');
       // THE PAYING ROUND'S SETTLEMENT FACTS (kanban #317): the part of its lobby line from "signer nodes" / "selected nodes" on
       const ap = document.getElementById('arena-approval');
       if (ap) {
@@ -6565,14 +6566,19 @@
               catch (e) { console.log('[blwp] the wallet in federation ' + fid.slice(0, 16) + ' did not open: ' + (e && e.message ? e.message : e)); }
             }
           }
-          let sum = 0n; const parts = [];
+          // NOTES STILL ARRIVING (kanban #376): a restore's re-issue, a deposit's notes, a payment's change count in the balance
+          // only once issued - measured: 0 sat for more than 6 minutes after a restore of a seed holding 3000 - so what is being
+          // issued is said beside it, and read again until it has landed
+          let sum = 0n, arriving = 0n; const parts = [];
           for (const [fid, c] of window.BLWP_WALLETS) {
-            try { const m = BigInt(await c.balanceMsat()); sum += m; parts.push({ federation: fid, sats: Number(m / 1000n) }); }
+            try { const m = BigInt(await c.balanceMsat()); const i = BLWPCLIENT.issuingMsat ? await BLWPCLIENT.issuingMsat(c) : 0n; sum += m; arriving += i;
+              parts.push({ federation: fid, sats: Number(m / 1000n), arriving: Number(i / 1000n) }); }
             catch (e) { console.log('[blwp] the balance in federation ' + fid.slice(0, 16) + ' could not be read: ' + (e && e.message ? e.message : e)); }
           }
           if (parts.length) {
-            window.BLWP_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.BLWP_PENDING_SATS || 0, parts,
+            window.BLWP_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.BLWP_PENDING_SATS || 0, arriving: Number(arriving / 1000n), parts,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
+            if (arriving > 0n) { console.log('[blwp] ' + Number(arriving / 1000n) + ' sat still being issued to the player wallet'); setTimeout(() => window.BLWP_SUM_BALANCES(), 3000); }
             if (parts.length > 1) console.log('[blwp] balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')');
           }
         } finally { window.BLWP_BALANCE_TRIED = true; summing = null; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
@@ -6603,7 +6609,7 @@
         if (bal) {
           const t = document.createElement('div'); t.className = 'row total';
           const a = document.createElement('div'); a.textContent = 'Total' + (parts.length > 1 ? ' (' + parts.length + ' federations)' : '');
-          const v = document.createElement('b'); v.textContent = sat(bal.sats) + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : ''); t.append(a, v); el.append(t);
+          const v = document.createElement('b'); v.textContent = sat(bal.sats) + (bal.arriving ? ' + ' + sat(bal.arriving) + ' arriving' : '') + (bal.pending ? ' + ' + sat(bal.pending) + ' pending' : ''); t.append(a, v); el.append(t);
         }
         const c = document.createElement('button'); c.type = 'button'; c.textContent = 'Close'; c.addEventListener('click', () => { el.style.display = 'none'; }); el.append(c);
       };
@@ -7410,7 +7416,16 @@
       const need = BigInt(it.priceSat) * 1000n;
       let wallet = null, federationId = null;
       for (const [fid, c] of (window.BLWP_WALLETS || new Map())) {
-        try { if (BigInt(await c.balanceMsat()) >= need) { wallet = c; federationId = fid; break; } } catch { /* the next federation */ }
+        try {
+          let held = BigInt(await c.balanceMsat());
+          // NOTES STILL ARRIVING (kanban #376): a wallet that holds the price once its notes in issuance land waits for them
+          const arriving = held < need && BLWPCLIENT.issuingMsat ? await BLWPCLIENT.issuingMsat(c) : 0n;
+          if (arriving > 0n && held + arriving >= need) {
+            addons.said = 'Your wallet\'s ' + String(arriving / 1000n) + ' sat are still arriving \u2026';
+            held = (await BLWPCLIENT.awaitIssued(c, { onStep: (x) => console.log('[blwp] buy: ' + x) })).have;
+          }
+          if (held >= need) { wallet = c; federationId = fid; break; }
+        } catch { /* the next federation */ }
       }
       if (!wallet) return { ok: false, step: 'wallet', why: 'your wallet holds less than ' + String(it.priceSat) + ' sat in any one federation: deposit first' };
       if (typeof wallet.paySubmit !== 'function') return { ok: false, step: 'wallet', why: 'this page\'s wallet cannot pay an item yet (its lock client has no paySubmit)' };

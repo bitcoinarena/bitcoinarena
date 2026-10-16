@@ -634,6 +634,15 @@ impl LockClient {
         Ok(self.client.get_balance_for_btc().await.map_err(js)?.msats.to_string())
     }
 
+    /// THE E-CASH STILL BEING ISSUED to this wallet, in msat, as a decimal string (kanban #376): every pending mintv2 output
+    /// state machine's denominations - a recovery's re-issue, a deposit's notes, a payment's change. `balanceMsat` counts
+    /// none of it until its machine finishes; held + issuing is what the wallet will hold.
+    #[wasm_bindgen(js_name = issuingMsat)]
+    pub async fn issuing_msat(&self) -> Result<String, JsError> {
+        let mint = self.client.get_first_module::<fedimint_mintv2_client::MintClientModule>().map_err(js)?;
+        Ok(mint.blwp_issuing_msat().await.msats.to_string())
+    }
+
     /// What locking `amount_msat` costs this client's ecash: the amount plus the
     /// federation's own quote for that transaction (one Lightning output), as a
     /// decimal string. Point-in-time: it moves with the notes the client holds.

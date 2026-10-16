@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
-import { pendingWindowLine, savedLockExpiration, PAYOUT_GRACE_MS, QUOTE_SETTLE_MS, QUOTE_SETTLE_TRIES } from '../src/page-lock.js';
+import { pendingWindowLine, savedLockExpiration, PAYOUT_GRACE_MS, ISSUE_POLL_MS, awaitIssued } from '../src/page-lock.js';
 import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, redeemSlashPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
@@ -2024,38 +2024,79 @@ test('a wronged player\'s page collects its slash payout from the arbitration se
 });
 
 const round100q = { ...round, stakeMsat: 100000n };   // a 100 sat round, as the tests above make it
-// A WALLET THAT HOLDS THE ROUND BUT CANNOT QUOTE IT YET (kanban #376, the owner 2026-10-16 06:25Z, right after buying the larger truck:
-// "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - the join asked a deposit of a wallet
-// holding four rounds and never started). The quote is asked again before any deposit; and its own words are said.
-test('a wallet holding the round whose quote fails for a moment is quoted again, and joins with no deposit asked', async () => {
-  const { LockClient } = lockClient();
-  let fails = 2;
-  class Settling extends LockClient {
-    static async join(...a) { const f = await super.join(...a); Object.setPrototypeOf(f, Settling.prototype); f.balance = 400000n; return f; }
-    async lockCostMsat(msat) { if (fails > 0) { fails--; throw new Error('Insufficient funds'); } return super.lockCostMsat(msat); }
+// A WALLET WHOSE NOTES ARE STILL BEING ISSUED (kanban #376, the owner 2026-10-16 06:25Z, right after buying the larger truck:
+// "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - the join asked a deposit and never
+// started; measured on a page with one pinned seed: 0 sat read for more than 6 minutes after a restore while the seed held 3000 sat,
+// and a "Claimed" deposit still read 0 - the notes were being issued). Each fails if a funded wallet is told insufficient and sent
+// to deposit, or if a join right after a buy never starts for that reason.
+class Issuing {
+  // a wallet whose `held` msat count in its balance and whose `issuing` msat land after `landsMs`
+  static of(LockClient, { held, issuing, landsMs }) {
+    return class extends LockClient {
+      static async join(...a) {
+        const f = await super.join(...a); Object.setPrototypeOf(f, this.prototype);
+        f.balance = held; f.issuing = issuing;
+        setTimeout(() => { f.balance += f.issuing; f.issuing = 0n; }, landsMs);
+        return f;
+      }
+      async issuingMsat() { return String(this.issuing); }
+    };
   }
+}
+test('a restored wallet whose notes are still being issued is waited for, and joins with no deposit asked', async () => {
+  const { LockClient } = lockClient();
+  const Wallet = Issuing.of(LockClient, { held: 0n, issuing: 3000000n, landsMs: 1500 });
   const steps = []; let asked = 0;
   const t0 = Date.now();
-  await fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Settling, storage: tabStorage(), onStep: (s) => steps.push(s), askDeposit: () => { asked++; } });
-  assert.equal(asked, 0, 'no deposit is asked of a wallet that holds the round');
-  assert.ok(steps.some((s) => /more than this round's locks .* and cannot quote them yet \(Insufficient funds\): asking again/.test(s)), steps.join(' | '));
-  assert.match(steps.at(-1), /the player wallet holds 400000 msat; this round's locks need \d+ msat/);
-  assert.ok(Date.now() - t0 >= QUOTE_SETTLE_MS, 'it waited for the quote');
+  const got = await fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Wallet, storage: tabStorage(), onStep: (s) => steps.push(s), askDeposit: () => { asked++; } });
+  assert.equal(asked, 0, 'no deposit is asked of a wallet whose notes are on their way');
+  assert.ok(steps.some((s) => /holds 0 msat and is being issued 3000000 msat more .*: waiting for those notes/.test(s)), steps.join(' | '));
+  assert.match(steps.at(-1), /the player wallet holds 3000000 msat; this round's locks need \d+ msat/);
+  assert.ok(Date.now() - t0 >= 1500 - ISSUE_POLL_MS, 'it waited for the notes');
+  assert.equal(got.heldMsat, 3000000n);
 });
-
-test('a quote that never comes says its own words before the deposit is asked', async () => {
+test('a join right after a buy waits for the buy\'s change, and starts: never "insufficient", never a deposit', async () => {
+  const { LockClient } = lockClient();
+  // the larger truck paid (500 sat) from 2000 sat: the 1500 sat of change are being issued for 1.2 s
+  const Wallet = Issuing.of(LockClient, { held: 0n, issuing: 1500000n, landsMs: 1200 });
+  const steps = []; let asked = 0;
+  await fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Wallet, storage: tabStorage(), onStep: (s) => steps.push(s), askDeposit: () => { asked++; } });
+  assert.equal(asked, 0);
+  assert.ok(!steps.some((s) => /more than that|insufficient/i.test(s)), steps.join(' | '));
+  assert.match(steps.at(-1), /holds 1500000 msat; this round's locks need \d+ msat/);
+});
+test('a funded wallet with nothing being issued is quoted at once: no wait, no deposit', async () => {
+  const { LockClient } = lockClient();
+  const Wallet = Issuing.of(LockClient, { held: 400000n, issuing: 0n, landsMs: 0 });
+  const steps = []; let asked = 0;
+  const t0 = Date.now();
+  await fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Wallet, storage: tabStorage(), onStep: (s) => steps.push(s), askDeposit: () => { asked++; } });
+  assert.equal(asked, 0);
+  assert.ok(!steps.some((s) => /being issued|more than that/.test(s)), steps.join(' | '));
+  assert.ok(Date.now() - t0 < ISSUE_POLL_MS, 'no wait');
+});
+test('short with nothing being issued: the deposit is asked at once, in the quote\'s own words', async () => {
   const { LockClient } = lockClient();
   class Never extends LockClient {
     static async join(...a) { const f = await super.join(...a); Object.setPrototypeOf(f, Never.prototype); f.balance = 400000n; return f; }
     async lockCostMsat() { throw new Error('Insufficient funds: notes pending'); }
+    async issuingMsat() { return '0'; }
   }
   const steps = []; let offer = null;
-  const done = fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Never, storage: tabStorage(), onStep: (s) => steps.push(s),
+  await fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Never, storage: tabStorage(), onStep: (s) => steps.push(s),
     askDeposit: (o) => { offer = o; o.close('test over'); } }).catch((e) => e);
-  await done;
-  assert.ok(offer, 'after the tries a deposit is asked, as before');
-  assert.equal(steps.filter((x) => /cannot quote them yet/.test(x)).length, QUOTE_SETTLE_TRIES, 'asked again QUOTE_SETTLE_TRIES times first');
+  assert.ok(offer, 'a deposit is asked');
+  assert.ok(!steps.some((s) => /being issued/.test(s)), steps.join(' | '));
   assert.ok(steps.some((s) => /this round's locks need more than that \(Insufficient funds: notes pending\)/.test(s)), steps.join(' | '));
+});
+test('issuance not landed by the entry close is said, and waited no longer', async () => {
+  const w = { balance: 0n, async balanceMsat() { return String(this.balance); }, async issuingMsat() { return '5000'; } };
+  const steps = [];
+  const t0 = Date.now();
+  const got = await awaitIssued(w, { untilMs: Date.now() + 300, onStep: (s) => steps.push(s) });
+  assert.deepEqual([got.have, got.issuing], [0n, 5000n]);
+  assert.ok(Date.now() - t0 < 300 + ISSUE_POLL_MS + 200);
+  assert.match(steps[0], /is being issued 5000 msat more/);
 });
 
 // ONE CLIENT PER WALLET (kanban #376, measured on live UI 147 with one pinned seed: an open of 21-25 s, PLAY's "did not open in
