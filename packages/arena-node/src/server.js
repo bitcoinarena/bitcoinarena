@@ -193,6 +193,7 @@ import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
 import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
+import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
@@ -1234,6 +1235,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // successor still being seated) waits, and /reserves says why
   const reserveNeeded = (n) => { try { return committeeThreshold(n); } catch { return null; } };
   const RESERVE_DKG_MS = Number(process.env.ARENA_RESERVE_DKG_MS || 120000);
+  // A FEDERATION'S RESERVE KEY, FOR AN ENTRY TO PAY (kanban #397 slice 3): this seat's own when it guards the federation; else
+  // the key its guardian seats serve at GET /reserves, taken only when at least the threshold of them name the same one. Kept.
+  const reserveKeys = new Map();
+  const reserveKeyFor = async (fedHex) => {
+    if (reserveKeys.has(fedHex)) return reserveKeys.get(fedHex);
+    const g = reserveGuardians()[fedHex];
+    if (!g) return null;
+    const nodes = sortedKeys(g.members); const needed = reserveNeeded(nodes.length);
+    if (needed === null) return null;
+    const own = reserveDkgOf(fedHex).signerNodeFor(nodes);
+    if (own.ok) { reserveKeys.set(fedHex, own.pool.groupPublicKey); return own.pool.groupPublicKey; }
+    const said = new Map();
+    await Promise.all(g.peers.map(async (u) => { try {
+      const r = await (await fetch(`${u}/reserves`, { signal: AbortSignal.timeout(8000) })).json();
+      const f = (r.federations || []).find((x) => x.federationId === fedHex && x.key);
+      if (f) said.set(f.key, (said.get(f.key) || 0) + 1);
+    } catch { /* a seat that does not answer names nothing */ } }));
+    const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (!best || best[1] < needed) return null;
+    const key = fromHex(best[0]); reserveKeys.set(fedHex, key); return key;
+  };
   const reserveRound = async () => {
     for (const [fedHex, g] of Object.entries(reserveGuardians())) {
       if (!g.members.some((k) => toHex(k) === toHex(round.pubkey)) || reserveNeeded(g.members.length) === null) continue;
@@ -5124,7 +5146,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
                 if (!bonded.ok) return text(res, 409, bonded.why);
               }
             }
-            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsOf(g.plugin.manifest) : undefined }); }
+            try { const g = pluginForRound(rc, hosted); gate = await roundMintsFees({ contract: rc, port: fport, feeBps: g.ok ? entryFeeBpsForRound(rc, g.plugin.manifest) : undefined }); }
             catch (e) { return text(res, 503, `this node could not read the federation's fee rule, so it takes no entry in a round that may mint fee locks: ${e.message}`); }
             // AND THE FEDERATION MUST CHARGE NO BASE FEE (FEDERATION.md item 4; §22A: "Fedimint's own base
             // fees are 0: the federation runs with disable_base_fees"). A base fee comes out of every input
@@ -5144,7 +5166,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           // THE DONATION OUTPUTS THE ENTRY NAMES ARE ITS SET'S (the owner 2026-10-03, FEDERATION.md): as many as its donation owes
           // a set of keys, none for an LNURL set or no donation. The federation is asked when the lock is handed over (/lock).
           const ds = donationTargetFor(rc);
-          if (ds.ok || (contract.donationOutpoints || []).length) {
+          const rg = pluginForRound(rc, hosted);
+          if (entryPaysReserves(rc, rg.ok ? rg.plugin.manifest : null) && contract.stakeMsat > 0n) {
+            // PROTOCOL 11 (§27A.9.2, kanban #397): the developers' outputs and the reserve lock, to the entry's federation's reserve key
+            const efed = entryFederation(rc, contract);
+            const rk = efed.ok ? await reserveKeyFor(toHex(efed.federationId)) : null;
+            const want = ds.ok ? reservesEntryExpected({ entry: contract, recipients: ds.target, reserveKey: rk }) : { ok: false, why: ds.why };
+            if (!want.ok) return text(res, 409, `entry refused: reserves: ${want.why}`);
+          } else if (ds.ok || (contract.donationOutpoints || []).length) {
             const want = ds.ok ? donationOutputsExpected(contract, ds.target) : { ok: false, why: ds.why };
             if (!want.ok) return text(res, 409, `entry refused: donation: ${want.why}`);
           }
@@ -5933,7 +5962,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
           if (ds.ok) donationRecipients = ds.target; }
         let got;
-        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients }); }
+        let reserveKey = null;
+        { const se = decodeEntryContract(stored); const rr = round.get(se.roundId);
+          if (rr && se.reserveOutpoint) { const rcx = decodeRoundContract(new Uint8Array(rr.contract)); const ef = entryFederation(rcx, se);
+            if (ef.ok) reserveKey = await reserveKeyFor(toHex(ef.federationId)); } }
+        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         // AN ORDER (comment 1127): tradable here once both its locks are verified

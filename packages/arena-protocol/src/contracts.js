@@ -717,6 +717,13 @@ export function encodeEntryContract(e) {
     w.u8(ITEMS_ENTRY_MARKER);
     w.vec(e.items, (it, ww) => { ww.str(it.itemId); ww.bytes32(it.purchaseId); ww.bytes(it.ownerSig, 64); });
   }
+  // THE RESERVE LOCK (protocol 11, §27A.9.2, kanban #397): where the entry's lock transaction locked the round's 2 % to the
+  // federation's reserve key. WRITTEN ONLY WHEN THERE IS ONE, last of all, after its own marker: every other entry keeps exactly
+  // its bytes and its id.
+  if (e.reserveOutpoint !== undefined && e.reserveOutpoint !== null) {
+    w.u8(RESERVE_ENTRY_MARKER);
+    writeOutpoint(w, e.reserveOutpoint, 'reserveOutpoint');
+  }
   return w.finish();
 }
 
@@ -733,6 +740,8 @@ export function entryItemDigest({ roundId, playerPubkey, purchaseId }) {
 
 /** The byte before the items an entry plays with (protocol 10, kanban #365), last of all. */
 export const ITEMS_ENTRY_MARKER = 0xad;
+/** An entry's reserve lock outpoint follows (protocol 11, kanban #397). */
+export const RESERVE_ENTRY_MARKER = 0xae;
 export const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
@@ -782,7 +791,7 @@ export function decodeEntryContract(bytes) {
     claimKeyAttestationRef: r.bytes32(),
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -813,10 +822,14 @@ export function decodeEntryContract(bytes) {
     e.frontendPk = r.bytes(33);
     if (e.frontendPk[0] !== 2 && e.frontendPk[0] !== 3) throw new Error('an entry names the website that brought it by a 33-byte compressed payout key');
   }
-  if (r.at < bytes.length) {
-    if (r.u8() !== ITEMS_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website nor its items');
+  if (r.at < bytes.length && bytes[r.at] === ITEMS_ENTRY_MARKER) {
+    r.u8();
     e.items = r.vec((rr) => ({ itemId: rr.str(), purchaseId: rr.bytes32(), ownerSig: rr.bytes(64) }));
     if (!e.items.length) throw new Error('an empty list of items is not written: these bytes are not an entry\'s one encoding');
+  }
+  if (r.at < bytes.length) {
+    if (r.u8() !== RESERVE_ENTRY_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items nor its reserve lock');
+    e.reserveOutpoint = readOutpoint(r);
   }
   r.end();
   return e;

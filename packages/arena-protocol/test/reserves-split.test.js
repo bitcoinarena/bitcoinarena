@@ -48,7 +48,7 @@ test('the reserve output: 2 % of an entry, 20 % of an item, in its own federatio
 
 test('today\'s versions untouched: the reserves version is not spoken yet, #377\'s 50-0 % item share stands', () => {
   assert.equal(RESERVES_VERSION, 11);
-  assert.ok(!SUPPORTED_PROTOCOL_VERSIONS.includes(RESERVES_VERSION));
+  assert.ok(SUPPORTED_PROTOCOL_VERSIONS.includes(RESERVES_VERSION), 'spoken since slice 3');
   assert.deepEqual(ITEM_DEV_SHARES, [50, 40, 30, 20, 10, 0]);
   assert.equal(itemPriceFor(500n, 50), 500n);
   assert.equal(itemPriceFor(500n, 0), 250n);

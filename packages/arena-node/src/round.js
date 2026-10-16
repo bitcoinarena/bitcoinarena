@@ -29,6 +29,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION } from '../../arena-protocol/src/constants.js';
+import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
@@ -569,7 +570,17 @@ export class Round {
     const feeGame = pluginForRound(asks, this.plugins);
     // A MARKET'S DONATION IS IN ITS FEE LOCK, DUE AT RESOLUTION (the owner 2026-10-09): its entry's fee is node fee + donation
     // (entryFeeBpsOf, 1 % by default) and its donation field 0
-    const feeBps = feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
+    // ON PROTOCOL 11 A GAME'S ENTRY PAYS THE RESERVES (§27A.9, kanban #397): the nodes' fee is the mandatory 4 %, and its donation
+    // field carries the developers' 4 % and the reserves' 2 % exactly, with its reserve lock named
+    const reserves = entryPaysReserves(asks, feeGame.ok ? feeGame.plugin.manifest : null);
+    const feeBps = reserves ? RESERVES_NODE_FEE_BPS : feeGame.ok ? entryFeeBpsOf(feeGame.plugin.manifest) : NODE_FEE_BPS;
+    if (reserves) {
+      const split = roundSplit(ownAmount ? contract.stakeMsat : asks.stakeMsat);
+      const owed = split.protocolDevsMsat + split.gameDevsMsat + split.reservesMsat;
+      if (contract.donationMsat !== owed)
+        throw new Error(`on protocol version ${asks.protocolVersion} an entry pays the developers' 4 % and the reserves' 2 %: ${owed} msat, not ${contract.donationMsat}`);
+      if (!contract.reserveOutpoint) throw new Error(`on protocol version ${asks.protocolVersion} an entry names its reserve lock`);
+    }
     const fee = feeMatchesEntry({
       stakeMsat: ownAmount ? contract.stakeMsat : asks.stakeMsat, feeMsat: contract.feeMsat, donationMsat: contract.donationMsat,
     }, { feeBps, donationInFee: feeGame.ok && donationInFee(feeGame.plugin.manifest) });

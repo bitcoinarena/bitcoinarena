@@ -33,6 +33,7 @@
 // the round's order), each signer node one pre-expired payout contract to its own key -
 // never to the donation recipients, and no split invented here. A VOID or
 // ENTRY_VOID entry's fee lock is not claimed: §22A's fee base leaves it out.
+import { paysReserves, RESERVES_NODE_FEE_BPS } from './reserves.js';
 import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payout.js';
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
@@ -509,6 +510,7 @@ function finish(stake, fee) {
 // `feeBps`: the round's game's node fee (fee.js feeBpsOf - a market's own, 0.5 % by default; kanban #235), the network's if none
 export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps = undefined } = {}) {
   if (!contract) return { pays: false, why: 'no round to size the fee lock for' };
+  if (feeBps === undefined && paysReserves(contract)) feeBps = RESERVES_NODE_FEE_BPS;   // version 11: 4 % (kanban #397)
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint')
     return { pays: false, why: 'the federation\'s fee rule is not known, so no fee lock is minted' };
   const stakeMsat = BigInt(contract.stakeMsat || 0n);
@@ -560,7 +562,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // caller names them on `signerNodes.conflicted` (hex), and their shares go to the rest of their pool as any absent node's
   for (const k of signerNodes.conflicted || []) eligible.delete(String(k).toLowerCase());
   let table;
-  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(feeBps !== undefined ? { feeBps } : {}) }); } catch (e) { return refuse(e.message); }
+  // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397): its fee locks hold that, and the table owes that
+  const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
+  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'
   const donationOwedMsat = donation ? poolMsat - table.fee : 0n;

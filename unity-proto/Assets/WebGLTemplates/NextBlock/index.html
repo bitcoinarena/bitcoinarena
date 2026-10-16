@@ -3016,8 +3016,22 @@
       // AN ORDER'S OWN AMOUNT (kanban #237: market and limit orders): the deposit, both locks and the entry stake it - set beside
       // the contract's fields, so the round's id and bytes are the round's (arena-client join.js stakeOf)
       { const ord = pickFor(named.roundIdHex); if (ord && ord.limitPrice && ord.stakeMsat) named.round.orderStakeMsat = BigInt(ord.stakeMsat); }
+      // PROTOCOL 11 PAYS THE RESERVES (§27A.9, kanban #397): the developers' 4 % and the reserves' 2 % are mandatory - no choice -
+      // and the reserves' part goes to the federation's 5-of-7 reserve key, read from the round's signer nodes (at least 5 agree)
+      let reservesHere = null;
+      if (pays && donationSet && BLWPCLIENT.roundPaysReserves && BLWPCLIENT.roundPaysReserves(named.round)) {
+        const fid = named.round.federationId;   // the entry's federation (on a round that takes any, the one the page chose)
+        const rk = await joinStep('fetchReserveKey', () => BLWPCLIENT.fetchReserveKey({ federationId: fid, nodes: named.nodes }));
+        if (!rk.ok) { window.BLWP_JOIN_REFUSED = 'this round pays the protocol reserves, and ' + rk.why; console.error('[blwp] join refused before any lock: ' + window.BLWP_JOIN_REFUSED); return; }
+        const rd = BLWPCLIENT.reservesDonationForRound(named.round);
+        reservesHere = { ...rd, key: rk.key };
+        donationTarget = Object.assign({}, donationTarget, { reserve: { recipientPk: rk.key, amountMsat: rd.reserveMsat } });
+        window.BLWP_DONATION_TARGET = donationTarget;
+        console.log(`[blwp] protocol 11: ${rd.donationMsat} msat to the developers and the reserves (${rd.reserveMsat} to reserve key ${BLWPCLIENT.toHex(rk.key).slice(0, 16)}, ${rk.agreeing} of ${rk.asked} nodes agree)`);
+      }
       const donation = marketHere && marketHere.fee
         ? { bps: 0, donationMsat: 0n, inFee: marketHere.fee.donationBps }
+        : reservesHere ? { bps: reservesHere.bps, donationMsat: reservesHere.donationMsat, mandatory: true }
         : pays && donationSet
         ? BLWPCLIENT.chooseDonation({ roundIdHex: named.roundIdHex, round: named.round,
           ask: () => settingsPct, confirm: () => false, storage: window.sessionStorage, recipientsLine })

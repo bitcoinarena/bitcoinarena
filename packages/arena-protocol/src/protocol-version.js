@@ -25,6 +25,9 @@ export const PROTOCOL_RELEASES = Object.freeze([
   // in-game items: a game sells items for sat (25 % protocol devs, 25 % game dev, 50 % the nodes that served), an entry plays with
   // the items its player bought (kanban #365)
   Object.freeze({ version: 10, year: 2026, x: 0 }),
+  // the protocol reserves: a game round's 10 % is nodes 4 %, developers 4 %, reserves 2 % - all mandatory - and each entry locks
+  // the reserves' part to its federation's 5-of-7 reserve key (kanban #397)
+  Object.freeze({ version: 11, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));

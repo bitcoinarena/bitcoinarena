@@ -346,6 +346,8 @@ export async function locksForRound(round, client, donationMsat, donationRecipie
 export function donationCostMsat(donationMsat, recipients = null) {
   const d = BigInt(donationMsat || 0n);
   if (d <= 0n) return 0n;
+  // a version-11 target: the developers' shares and the reserve output, each its own payment (kanban #397)
+  if (recipients && recipients.reserve) return donationKeyShares(d, recipients).reduce((t, s) => t + (s.amountMsat > 0n ? ceilNote(s.amountMsat) : 0n), 0n);
   // one set, or a round's two (protocol devs and game dev, §0A.8; kanban #205)
   const split = recipients ? splitDonation({ donationMsat: d, recipients }) : null;
   const shares = split && split.owed ? split.shares.map((x) => x.amountMsat) : [d];
@@ -863,6 +865,15 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
 
 /** The shares a donation pays in the federation: for a set of keys, each share above 0 msat, in the set's order; else none. */
 export function donationKeyShares(donationMsat, recipients) {
+  // A VERSION-11 TARGET (§27A.9.2, kanban #397): { network, game, reserve: { recipientPk, amountMsat } } - the developers' part of
+  // the donation over their sets, then one share to the federation's reserve key, marked, last
+  if (recipients && recipients.reserve && typeof donationMsat === 'bigint') {
+    const r = recipients.reserve;
+    const devs = donationMsat - BigInt(r.amountMsat);
+    if (devs < 0n) throw new Error('the donation is smaller than its reserve part');
+    const shares = devs > 0n ? donationKeyShares(devs, { network: recipients.network, game: recipients.game }) : [];
+    return [...shares, { recipientPk: r.recipientPk, amountMsat: BigInt(r.amountMsat), label: 'protocol reserves', reserve: true }];
+  }
   if (typeof donationMsat !== 'bigint' || donationMsat <= 0n || !donationSetPaysKeys(recipients)) return [];
   const split = splitDonation({ donationMsat, recipients });
   if (!split.owed) throw new Error(`the donation cannot be split over this round's set: ${split.why}`);
@@ -881,7 +892,7 @@ export function donationOutputsFromClient(said, shares) {
     if (String(d.recipient_pk).toLowerCase() !== toHex(shares[i].recipientPk)) throw new Error(`donation output ${i} pays another key than the set's`);
     if (BigInt(d.amount_msat) !== shares[i].amountMsat) throw new Error(`donation output ${i} holds ${d.amount_msat} msat, and its share is ${shares[i].amountMsat}`);
     if (!/^[0-9a-f]{64}$/.test(String(d.txid)) || !Number.isInteger(d.out_idx)) throw new Error('the lock client named no donation outpoint');
-    return { txid: fromHex(d.txid), outIdx: BigInt(d.out_idx), recipientPk: shares[i].recipientPk, amountMsat: shares[i].amountMsat };
+    return { txid: fromHex(d.txid), outIdx: BigInt(d.out_idx), recipientPk: shares[i].recipientPk, amountMsat: shares[i].amountMsat, ...(shares[i].reserve ? { reserve: true } : {}) };
   });
 }
 
