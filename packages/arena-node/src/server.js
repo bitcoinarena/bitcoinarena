@@ -666,6 +666,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const operatorTokens = operatorFiles ? createOperatorTokens({ store: operatorFiles.store, log: (l) => console.log(l) }) : null;
   if (operatorTokens) { const t = operatorTokens.first(operatorFiles.endpoint); if (t && operatorFiles.writePairing) operatorFiles.writePairing(t.uri); }
+  // THE GAME OF A ROUND THIS SEAT DOES NOT HOLD (kanban #382, measured on testnet4 seat 7: 91 % of dev b's donations were for rounds
+  // other seats hold, so the page could only call them "rounds this node no longer holds"): asked once of the seats that may hold
+  // it - the census's and the dev clients' own - GET /round, its contract decoded here; the answer (or "nobody had it") is kept.
+  // At most LEARN_MAX rounds and LEARN_MS per call, one seat at a time per round.
+  const roundGames = new Map();
+  const roundTried = new Set();
+  const LEARN_MAX = 60, LEARN_MS = 6000;
+  const learnRoundGames = async (rows, seats) => {
+    const t0 = Date.now();
+    const bases = [...new Set([...networkSeats(), ...(seats || []).map(baseOf)])].filter((u) => /^https?:\/\//.test(u));
+    const want = [...new Set((rows || []).map((r) => String(r.roundId || '')).filter((rid) => /^[0-9a-f]{64}$/.test(rid) && !roundGames.has(rid) && !roundTried.has(rid)))];
+    let asked = 0;
+    for (const rid of want) {
+      if (asked >= LEARN_MAX || Date.now() - t0 > LEARN_MS) break;
+      try { if (round.db.prepare('SELECT 1 FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex'))) continue; } catch { /* asked below */ }
+      asked++; roundTried.add(rid);
+      for (const b of bases) {
+        if (Date.now() - t0 > LEARN_MS) break;
+        try {
+          const r = await fetch(`${b}/round?id=${rid}`, { signal: AbortSignal.timeout(2500) });
+          if (!r.ok) continue;
+          const c = decodeRoundContract(new Uint8Array(await r.arrayBuffer()));
+          if (c.gameId instanceof Uint8Array) { roundGames.set(rid, toHex(c.gameId)); break; }
+        } catch { /* the next seat */ }
+      }
+    }
+    return { asked, known: roundGames.size };
+  };
   // A DEV KEY'S DONATIONS, BY WHOM THEY WERE FOR (kanban #358): its share in the newest protocol set this seat holds, and per round the
   // round's game (from the contract this seat keeps) and its share in that game's set - attributeDonations splits each donation p : g
   const devAttribute = (rows, pk) => {
@@ -681,11 +709,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       let out = null;
       try {
         const row = /^[0-9a-f]{64}$/.test(rid) ? round.db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(Buffer.from(rid, 'hex')) : null;
-        if (row) {
-          const c = decodeRoundContract(new Uint8Array(row.contract));
-          const g = c.gameId instanceof Uint8Array ? hosted.get(toHex(c.gameId)) : null;
-          if (g) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); out = { name: g.name, title: g.title || g.name, bps: r ? Number(r.shareBps || 0) : 0 }; }
-        }
+        let gid = null;
+        if (row) { const c = decodeRoundContract(new Uint8Array(row.contract)); gid = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null; }
+        else gid = roundGames.get(rid) || null;   // a round another seat holds, looked up once (learnRoundGames)
+        const g = gid ? hosted.get(gid) : null;
+        if (g) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); out = { name: g.name, title: g.title || g.name, bps: r ? Number(r.shareBps || 0) : 0 }; }
       } catch { out = null; }
       seen.set(rid, out);
       return out;
@@ -3895,6 +3923,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // THE OWNER'S DEV CLIENTS (kanban #358, dev-clients.js): each one's stats from its own record - what it was given, split
         // into the protocol developers' part and each game's part - its wallets, and what the owner's withdrawals answered
         if (req.method === 'GET' && url.pathname === '/owner/dev') {
+          // the games of the rounds other seats hold, looked up first (kanban #382)
+          try {
+            const all = devClients ? devClients.rowsAndSeats() : { rows: [], seats: [] };
+            if (devClientDir) { try { const cfg = JSON.parse(readFileSync(joinPath(devClientDir, 'donor.json'), 'utf8')); all.seats.push(...(cfg.seats || []));
+              all.rows.push(...readFileSync(joinPath(devClientDir, 'donations.jsonl'), 'utf8').split('\n').filter((l) => l.trim()).map((l) => { try { return JSON.parse(l); } catch { return {}; } })); } catch { /* none beside */ } }
+            await learnRoundGames(all.rows, all.seats);
+          } catch (e) { console.log(`[dev] round games not looked up: ${e.message}`); }
           return answer(200, { managed: !!devClients, clients: devClients ? devClients.list({ attribute: devAttribute }) : [],
             beside: devClientDir ? { ...devClientSnapshot(devClientDir), split: devSplitOfDir(devClientDir) } : null });
         }
