@@ -127,7 +127,25 @@ public class MempoolFeed : MonoBehaviour
         foreach (var t in arrived)
             if (have.Add(t.txid)) pool.Insert(0, t);   // newest at the front
 
-        if (pool.Count > keep) pool.RemoveRange(keep, pool.Count - keep);
+        return Trim(pool, keep);
+    }
+
+    /// <summary>
+    /// THE POOL KEEPS EVERY SIZE IT HAS (kanban #375, the owner 2026-10-16: "it must not be all of the same so no 9% 9% 9%"): over
+    /// `keep`, the oldest of the most common size goes - not the oldest of all, which threw out the rare large transactions
+    /// first, since small ones arrive many times as often. `pool` is newest first.
+    /// </summary>
+    public static List<Tx> Trim(List<Tx> pool, int keep)
+    {
+        while (pool.Count > keep)
+        {
+            var count = new Dictionary<float, int>();
+            foreach (var t in pool) { float r = CargoBay.RoomFor(t); count[r] = count.TryGetValue(r, out var n) ? n + 1 : 1; }
+            float most = 0f; int max = -1;
+            foreach (var kv in count) if (kv.Value > max) { max = kv.Value; most = kv.Key; }
+            for (int i = pool.Count - 1; i >= 0; i--)
+                if (CargoBay.RoomFor(pool[i]) == most) { pool.RemoveAt(i); break; }
+        }
         return pool;
     }
 
