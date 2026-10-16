@@ -24467,11 +24467,12 @@ async function chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, expl
   return got;
 }
 
-async function evidenceFor(roundIdHex, contract, nodes, { fetcher }) {
+async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set() }) {
   const key = toHex(contract.censusRoot);
-  if (keptCensus.has(key)) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
+  if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
   const refused = [];
   for (const u of nodes) {
+    if (skip.has(u)) continue;
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); continue; }
@@ -24501,7 +24502,7 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   const g = BOND_TERMS[network];
   if (!g) return { ok: false, why: `this client carries no bond terms for ${network}` };
   const t0 = Date.now();
-  const [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
+  let [chain, evidence] = await Promise.all([chainFor(contract, nodes, { fetcher, least, nowMs, anchorAt, explorer }), evidenceFor(roundIdHex, contract, nodes, { fetcher })]);
   if (!chain.ok) {
     // A CENSUS THAT DOES NOT STAND OUTSIDE THE NETWORK IS OBJECTED (§5A.4, kanban #299): handed to every seat, each checks it on its
     // own chain against the same explorer; upheld, the round takes no new entry there - so other clients refuse it too
@@ -24513,13 +24514,25 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     }
     return chain;
   }
-  if (!evidence.ok) return evidence;
   const t1 = Date.now();
   const roundId = Uint8Array.from(roundIdHex.match(/../g).map((h) => parseInt(h, 16)));
-  const got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-    bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-    verify: curve.verify, census: keptChecked.get(toHex(contract.censusRoot)) || null });
-  if (!got.ok) return got;
+  // A CENSUS THAT DOES NOT HASH TO THE CONTRACT'S ROOT NAMES ITS SEAT, AND THE NEXT SEAT IS ASKED (the spec's "The client computes the
+  // committee itself": "A census entry missing from what a node sent shows as a root that does not match the contract's census_root,
+  // and the client asks another source"; kanban #32, measured 2026-10-16: one seat's census with an entry dropped refused the whole
+  // round and named nobody)
+  const censusRefused = []; const skip = new Set();
+  let got;
+  for (;;) {
+    if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
+    got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
+      bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
+      verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+    if (got.ok || evidence.from === 'kept' || !/^the census the seats handed over hashes to /.test(String(got.why))) break;
+    censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over /, '')}` });
+    skip.add(evidence.from);
+    evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
+  }
+  if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight) } : got.checkedCensus);
   // THE SEATING (§5A.7 reserve seats, kanban #301): each role's certificate, asked of the seats and checked against the draw
@@ -24550,41 +24563,60 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
     got.seating[role] = found ? found : spoke ? { missing: true, refused } : null;
     if (found) got.committees[role] = found.seated;
   }
+  // EVERY SEAT'S ANSWER FOR EVERY ROLE, against this client's own (kanban #32: the settlement role alone was compared). A seat agrees
+  // when every role it answered is the client's; null when it answered none (a seat that does not hold the round: not a lie)
   const seats = [];
   if (compare) {
-    const mine = got.committees.settlement.map(toHex).sort().join(',');
     await Promise.all(nodes.map(async (u) => {
-      try {
-        const r = await readWithOneRetry(fetcher, `${baseOf(u)}/committee?role=settlement&round=${roundIdHex}`);
-        if (!r.ok) { seats.push({ node: u, agrees: null, why: `answered ${r.status}` }); return; }
-        const b = new Uint8Array(await r.arrayBuffer());
-        const keys = []; for (let i = 0; i + 32 <= b.length; i += 32) keys.push(toHex(b.subarray(i, i + 32)));
-        const agrees = keys.sort().join(',') === mine;
-        seats.push({ node: u, agrees, why: agrees ? null : 'names another settlement committee than the one this client derived' });
-      } catch (e) { seats.push({ node: u, agrees: null, why: e.message }); }
+      const said = {};
+      for (const role of roles) {
+        const mine = (got.committees[role] || []).map(toHex).sort().join(',');
+        try {
+          const r = await readWithOneRetry(fetcher, `${baseOf(u)}/committee?role=${role}&round=${roundIdHex}`);
+          if (!r.ok) { said[role] = { agrees: null, why: `answered ${r.status}` }; continue; }
+          const b = new Uint8Array(await r.arrayBuffer());
+          const keys = []; for (let i = 0; i + 32 <= b.length; i += 32) keys.push(toHex(b.subarray(i, i + 32)));
+          const agrees = keys.sort().join(',') === mine;
+          said[role] = { agrees, why: agrees ? null : `names another ${role} committee (${keys.map((k) => k.slice(0, 8)).join(', ') || 'none'}) than the one this client derived (${mine.split(',').map((k) => k.slice(0, 8)).join(', ')})` };
+        } catch (e) { said[role] = { agrees: null, why: e.message }; }
+      }
+      const answered = Object.values(said).filter((x) => x.agrees !== null);
+      const differ = Object.values(said).filter((x) => x.agrees === false);
+      seats.push({ node: u, agrees: answered.length ? !differ.length : null, why: differ.length ? differ.map((x) => x.why).join('; ') : answered.length ? null : Object.values(said).map((x) => x.why).join('; '), roles: said });
     }));
   }
-  return { ...got, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
+  return { ...got, censusRefused, explorer: chain.explorer || null, headers: { from: chain.chain.from, agreed: chain.chain.agreed, firstHeight: chain.firstHeight, count: chain.chain.headers.length },
     seats, ms: { chainAndCensus: t1 - t0, total: Date.now() - t0 } };
 }
 
 /**
- * WHAT A JOIN DEALS TO (replaces `fetchSettlementSignerNodes`): the settlement committee this client derived. Refused
- * when the client cannot derive it, or when no node that answered agrees with it.
+ * WHAT A JOIN DEALS TO (replaces `fetchSettlementSignerNodes`): the settlement committee this client derived. Refused when the client
+ * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED the owner 2026-09-28), when ANY seat's committee
+ * answer or seating certificate differs from the client's own computation: "the round is refused, the lobby says which node answered
+ * what, and no share is sealed, no stake locked, no entry signed" (kanban #32, measured 2026-10-16 on live testnet4: one seat
+ * forging its /committee was named and the join still dealt to the client's seven).
  */
 async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
-  const got = await clientCommittee(roundIdHex, contract, nodes, opts);
-  if (!got.ok) throw new Error(`this client could not build the round's committee itself: ${got.why}`);
+  return settlementSignerNodesFrom(await clientCommittee(roundIdHex, contract, nodes, opts));
+}
+/** The decision of clientSettlementSignerNodes over a derivation (clientCommittee's answer): the signer nodes, or a refusal naming who answered what. */
+function settlementSignerNodesFrom(got) {
+  if (!got || !got.ok) throw new Error(`this client could not build the round's committee itself: ${got ? got.why : 'nothing derived'}`);
   // NO ENTRY WITHOUT A CHECKED SEATING where the seats seat (§5A.7): the stake is dealt to who a certificate seats
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
     if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
-  const answered = got.seats.filter((s) => s.agrees !== null);
-  if (answered.length && !answered.some((s) => s.agrees))
-    throw new Error('every node that answered names another settlement committee than the one this client derived from the chain');
-  return { signerNodes: got.committees.settlement, agreed: got.seats.filter((s) => s.agrees).length,
-    refused: got.seats.filter((s) => s.agrees === false).map((s) => `${s.node}: ${s.why}`), derived: got };
+  const named = [];
+  for (const s of got.seats || []) if (s.agrees === false) named.push(`${s.node} ${s.why}`);
+  for (const role of ['game', 'settlement']) {
+    const st = got.seating && got.seating[role];
+    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) named.push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
+  }
+  if (named.length)
+    throw new Error(`the round is refused: ${named.join('; ')} - nothing is sealed, locked or signed`);
+  return { signerNodes: got.committees.settlement, agreed: (got.seats || []).filter((s) => s.agrees).length,
+    refused: (got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), derived: got };
 }
 
 /**
