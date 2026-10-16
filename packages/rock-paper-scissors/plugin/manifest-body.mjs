@@ -12,7 +12,7 @@ import { TESTNET4_DONATION_SET_KEYS } from '../../arena-protocol/src/testnet4-do
 const sha = (b) => new Uint8Array(createHash('sha256').update(b).digest());
 export const RPS_DECIDE_HASH = sha(readFileSync(new URL('./decide.js', import.meta.url)));
 export const RPS_CONFIG_HASH = sha('rock-paper-scissors-config:v1');
-export const RPS_CLIENT_HASH = sha(readFileSync(new URL('../client/index.html', import.meta.url)));
+export const RPS_CLIENT_HASH = sha(readFileSync(new URL('../client/index-v2.html', import.meta.url)));   // versions 1 and 2's bytes (kanban #396 keeps them there)
 export const RPS_DEV_PUBKEY = fromHex('db57bd7ad41ef92d72fb53a6d4bf5f4b614150fadeedf5430be1af7814091dab');
 
 export const BODY = {

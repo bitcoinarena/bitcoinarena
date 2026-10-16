@@ -11,7 +11,9 @@ const HTML = readFileSync(PAGE, 'utf8');
 
 test('the strip holds "← Games", shown for a chosen game, never over a game\'s own client', () => {
   const strip = HTML.slice(HTML.indexOf('  <div id="blwp-money">'), HTML.indexOf("<button id=\"blwp-settings-go\""));
-  assert.match(strip, /<button id="arena-games-back" type="button"[^>]*>.*&larr;.*Games<\/span><\/button>/);
+  // it says Arena, as every way back does (kanban #396)
+  assert.match(strip, /<button id="arena-games-back" type="button"[^>]*>.*&larr;.*Arena<\/span><\/button>/);
+  assert.doesNotMatch(HTML, /\\u2190 Games|&larr; Games|← Games<\/button>/, 'no "← Games" left on the page');
   assert.match(HTML, /#arena-games-back \{ display: none; \}/);
   assert.match(HTML, /body\.arena-game-chosen:not\(\.arena-own-client\) #arena-games-back \{ display: inline-flex;/);
 });
