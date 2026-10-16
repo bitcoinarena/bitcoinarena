@@ -321,8 +321,6 @@ public class FeatureTests
             Apart(f.hint, f.play, "der Hinweis und PLAY");
             Apart(f.hint, f.spectate, "der Hinweis und DEBUG SPECTATE");
             Apart(f.play, f.spectate, "die beiden Knoepfe");
-            Apart(f.spectate, f.benchmark, "SPECTATE und BENCHMARK");
-            Apart(f.hint, f.benchmark, "der Hinweis und BENCHMARK");
             Apart(f.head, f.copy, "die Kopfzeile und der Text");
             // The build stamp is a row of its own and has to stay one: it is
             // only useful if nothing is drawn over it.

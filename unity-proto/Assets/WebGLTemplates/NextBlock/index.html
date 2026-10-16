@@ -1019,6 +1019,14 @@
       <button id="blwp-logs-copy" type="button">Copy client logs</button>
       <div class="muted" id="blwp-logs-said"></div>
     </section>
+    <!-- THE BENCHMARK, HERE AND NOT IN THE LOBBY (kanban #373, the owner 2026-10-16: "Remove the benchmark button and have that in the
+         settings instead"): the same test the lobby's BENCHMARK ran - SPECTATE, then the frame rate with each render cost off in turn -->
+    <section class="settings-card" id="blwp-set-bench">
+      <h3>Benchmark</h3>
+      <label class="muted"><input type="checkbox" id="blwp-bench-on"> On - off by default</label>
+      <div class="muted">Spectates the round and measures this device's frame rate with each graphics cost switched off in turn; the result shows under the FPS line. While it is on, a tap on the FPS line runs it too.</div>
+      <button id="blwp-bench-go" type="button" disabled>Run the benchmark</button>
+    </section>
     <section class="settings-card" id="blwp-set-seed">
       <h3>Seed phrase</h3>
       <div class="muted" id="blwp-settings-backup"></div>
@@ -1807,6 +1815,8 @@
       };
       requestAnimationFrame(tick);
     })();
+    // THE BENCHMARK SWITCH (kanban #373, the owner 2026-10-16: "Benchmark is disabled by default"): Settings turns it on, this browser keeps it
+    window.ARENA_BENCH_ON = () => { try { return localStorage.getItem('arena.bench.on') === '1'; } catch { return false; } };
     // THE FRAME-RATE TEST (kanban #266, the owner 2026-10-08: "measure it alone and display the data you need in the fps line"): what
     // costs the frames on THIS phone. Eleven modes, 1.5 s to settle and 3 s measured each - as built, 1x pixels, no post-processing,
     // no shadows, no HDR, the shadow map's parts (cascades, size, reach), all of them off - then back as built. The result stays under the frame rate with the drawing buffer
@@ -1938,8 +1948,10 @@
         console.log('[bench] ' + line);
       }
       window.arenaBench = run;
-      box.addEventListener('click', (e) => { e.stopPropagation(); run(); });
-      // `?bench=1` (kanban #269): BENCHMARK opens by itself once the lobby is up - the lobby's own button, by its name - and the
+      // OFF BY DEFAULT (kanban #373, the owner 2026-10-16: "Benchmark is disabled by default"): a tap on the readout runs the test only
+      // while the Settings switch is on; ?bench=1 asks for it by address and runs as before
+      box.addEventListener('click', (e) => { e.stopPropagation(); if (window.ARENA_BENCH_ON()) run(); });
+      // `?bench=1` (kanban #269): BENCHMARK opens by itself once the lobby is up - the Benchmark the Settings card runs (#373) - and the
       // finished lines go to bitcoin-arena.io/__bench (fps, buffer, the browser's user agent; nothing else), so a phone's result
       // reaches the card without a screenshot. Only on that address.
       if (new URLSearchParams(location.search).get('bench') === '1') (async () => {
@@ -4745,6 +4757,19 @@
     });
     document.getElementById('blwp-settings-close').addEventListener('click', () => {
       settingsPanel().style.display = 'none';
+    });
+    // THE BENCHMARK FROM SETTINGS (kanban #373): Settings closes, and Unity spectates and runs the page's frame-rate test (Benchmark,
+    // as the lobby's button did); a game without Unity runs the test over its own client
+    {
+      const on = document.getElementById('blwp-bench-on'), go = document.getElementById('blwp-bench-go');
+      on.checked = window.ARENA_BENCH_ON(); go.disabled = !on.checked;
+      on.addEventListener('change', () => { try { localStorage.setItem('arena.bench.on', on.checked ? '1' : '0'); } catch { /* this page only */ } go.disabled = !on.checked; });
+    }
+    document.getElementById('blwp-bench-go').addEventListener('click', () => {
+      if (!window.ARENA_BENCH_ON()) return;   // off by default (kanban #373)
+      settingsPanel().style.display = 'none';
+      if (window.unityInstance && window.ARENA_UNITY !== false) { try { window.unityInstance.SendMessage('Bootstrap', 'Benchmark'); return; } catch { /* the test alone */ } }
+      if (typeof window.arenaBench === 'function') window.arenaBench();
     });
     // THE DONATION IS A DROPDOWN, 2% UNTIL THE PLAYER PICKS (the owner 2026-09-29 12:47): six choices, no custom field (§24B).
     document.getElementById('blwp-donation-select').addEventListener('change', (e) => {
