@@ -154,3 +154,19 @@ test('a settled answer is asked again only after 30 s, a provisional one at ever
   await moving.look(); await moving.look(); await moving.look();
   assert.equal(moving.counted.asked, 6, 'a provisional answer is asked at every look');
 });
+
+test('a round no signer node answers for is asked again after 10 s, not at every look', async () => {
+  const kept = new Map([['arena.pending.r9.e9', JSON.stringify({ roundIdHex: 'r9', entryIdHex: 'e9', nodes: ['http://a', 'http://b', 'http://c'] })]]);
+  const store = { get length() { return kept.size; }, key: (i) => [...kept.keys()][i], getItem: (k) => kept.get(k) ?? null, removeItem: (k) => kept.delete(k) };
+  let asked = 0;
+  const fetch = async () => { asked++; return { ok: false, status: 404, json: async () => null }; };
+  const window = { BLWP_WALLET_BALANCE: { sats: 0, pending: 0 }, sessionStorage: { getItem: () => null } };
+  const look = pageFunction(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), ['vault', 'BLWPCLIENT', 'fetch', 'document', 'window', 'paintMoney'], src, '; return lookThePending;')(
+    () => store, { savedCollects: () => [], pendingWindowLine, savedLockExpiration }, fetch, { getElementById: () => null }, window, () => {});
+  for (let k = 0; k < 5; k++) await look();
+  assert.equal(asked, 3, 'asked once (three signer nodes), not five times');
+  assert.equal(window.BLWP_PENDING_SATS, 0);
+  look.st.seen.get('arena.pending.r9.e9').at -= 10001;              // ten seconds on
+  await look();
+  assert.equal(asked, 6, 'asked again after 10 s');
+});

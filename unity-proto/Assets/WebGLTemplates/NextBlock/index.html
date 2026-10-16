@@ -5462,7 +5462,7 @@
     // signer node, every 2 s, and a slow look overlapped the next). A round whose answer is not provisional is asked again
     // after 30 s; its last answer counts meanwhile. The state lives on the function (st: busy, seen = note key -> { at, said }).
     async function lookThePending() {
-      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000 });
+      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000, unansweredMs: 10000 });
       if (st.busy) return;
       st.busy = true;
       try {
@@ -5475,7 +5475,10 @@
         let n; try { n = JSON.parse(vault().getItem(k)); } catch { n = null; }
         if (!n || done.has(n.roundIdHex)) { try { vault().removeItem(k); } catch { /* none */ } continue; }
         const last = st.seen.get(k);
-        const said = last && Date.now() - last.at < st.settledMs && last.said.some((x) => x) && !last.said.some((x) => x && x.provisional)
+        // asked again: a provisional answer at every look; a settled one after 30 s; a round no signer node answers for (an entry
+        // they never took) after 10 s - before, it was asked every 2 s for as long as its note was kept
+        const waitMs = !last ? 0 : last.said.some((x) => x && x.provisional) ? 0 : last.said.some((x) => x) ? st.settledMs : st.unansweredMs;
+        const said = last && Date.now() - last.at < waitMs
           ? last.said
           : await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
             .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
