@@ -71,6 +71,15 @@ public class LargeTruckTests
         return (lo, hi);
     }
 
+    /// <summary>True when any material of the body carries a property block (the morph's glow).</summary>
+    bool BodyTinted()
+    {
+        var block = new MaterialPropertyBlock();
+        foreach (var r in (_truck.Find("Body") ?? _truck.Find("BodyProxy")).GetComponentsInChildren<Renderer>(true))
+            for (int i = 0; i < r.sharedMaterials.Length; i++) { r.GetPropertyBlock(block, i); if (!block.isEmpty) return true; }
+        return false;
+    }
+
     void Shot(string name)
     {
         string dir = System.Environment.GetEnvironmentVariable("BLWP_SHOT_DIR");
@@ -171,12 +180,13 @@ public class LargeTruckTests
         Assert.AreEqual(bed, _bay.bedLength, 1e-5f, "the bay takes the core's bed at once");
         Assert.Less(_view.AppliedBed, 3.2f, "the body starts at the old truck");
         // no picture while it is timed: a 1280x720 shot takes longer than the morph in batch mode
-        float peak = 0f; var seen = new List<float>(); bool lit = false;
+        float peak = 0f; var seen = new List<float>(); bool lit = false, glowed = false;
         while (_view.Morphing && Time.unscaledTime - t0 < LargeTruckView.MorphS + 1f)
         {
             peak = Mathf.Max(peak, _view.AppliedBed); seen.Add(_view.AppliedBed);
             var pulse = _truck.Find("MorphPulse");
             if (pulse != null && pulse.GetComponent<Light>().enabled && pulse.GetComponent<Light>().intensity > 1f) lit = true;
+            if (BodyTinted()) glowed = true;
             yield return null;
         }
         Assert.IsFalse(_view.Morphing, "the morph ends");
@@ -184,6 +194,8 @@ public class LargeTruckTests
         Assert.Greater(seen.Count, 5, "drawn over many frames, not at once");
         Assert.Greater(peak, bed + 0.03f, $"the bed reached past {bed:0.000} m (peak {peak:0.000})");
         Assert.IsTrue(lit, "the pulse light shone over the bed");
+        Assert.IsTrue(glowed, "the body glowed orange while it morphed");
+        Assert.IsFalse(BodyTinted(), "the glow is gone once the morph ends");
         Assert.AreEqual(bed, _view.AppliedBed, 1e-4f, "it rests at the core's bed");
         var span1 = BodySpan();
         Assert.AreEqual(span0.rear - (bed - 3.0f), span1.rear, 2e-3f, "the body is the larger truck's at the end");
@@ -199,15 +211,9 @@ public class LargeTruckTests
         Shot("truck-morph-start");
         float t1 = Time.unscaledTime;
         while (_view.Morphing && Time.unscaledTime - t1 < LargeTruckView.MorphS * 0.3f) yield return null;
-        var tinted = new MaterialPropertyBlock();
-        foreach (var r in (_truck.Find("Body") ?? _truck.Find("BodyProxy")).GetComponentsInChildren<Renderer>(true))
-            if (r.HasPropertyBlock()) { r.GetPropertyBlock(tinted, 0); break; }
-        Assert.IsFalse(tinted.isEmpty, "the body glows while it morphs");
         Shot("truck-morph-mid");
         Debug.Log($"[LargeTruckTests] FACTS mid shot at bed {_view.AppliedBed:0.000} m");
         for (int i = 0; i < 400 && _view.Morphing; i++) yield return null;
-        foreach (var r in (_truck.Find("Body") ?? _truck.Find("BodyProxy")).GetComponentsInChildren<Renderer>(true))
-            Assert.IsFalse(r.HasPropertyBlock(), $"{r.name}: the glow is gone once the morph ends");
         Shot("truck-morph-end");
     }
 }
