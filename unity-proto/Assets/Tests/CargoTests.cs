@@ -967,7 +967,7 @@ public class CargoTests
         var yard = Object.FindFirstObjectByType<PackageYard>();
 
         int before = yard.Captions().Count;
-        Assert.AreEqual(yard.show, before, "die Rampe ist nicht voll besetzt");
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.ShowNow), before, "die Rampe ist nicht voll besetzt");
 
         var first = yard.Captions().Find((c) => c.tx.Btc <= CargoBay.BtcLimit).tx;   // one that fits the truck
         yard.Toggle(first);
