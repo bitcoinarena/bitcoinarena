@@ -302,14 +302,16 @@ public class LoadoutPanel : MonoBehaviour
 
         foreach (var c in yard.Captions())
         {
-            float wCap = Mathf.Max(140f, Screen.width * 0.13f);
-            float y = c.screen.y + c.radius + 3f;
-            var box = new Rect(c.screen.x - wCap * 0.5f, y, wCap, _cap.fontSize * 2.5f);
+            // IN ITS OWN CELL (kanban #375, the owner 2026-10-16: "must be gleichmäßig and fit the dialog"): the caption is the bottom
+            // of the crate's cell, the cell's width - every caption of a row on one line, none wider than its cell, all inside the
+            // panel. Before, each hung under its own crate at max(140 px, 13 % of the screen), wider than a phone's cell.
+            var box = c.label.width > 0f ? c.label
+                    : new Rect(c.screen.x - 70f, c.screen.y + c.radius + 3f, 140f, _cap.fontSize * 2.5f);
+            float wCap = box.width;
 
             // a plate behind the text: crate colours run light and so does the sky
             GUI.color = new Color(0f, 0f, 0f, c.loaded ? 0.62f : 0.45f);
-            GUI.DrawTexture(new Rect(box.x + wCap * 0.06f, box.y - 2f,
-                                     wCap * 0.88f, box.height), _flat);
+            GUI.DrawTexture(new Rect(box.x + wCap * 0.03f, box.y - 2f, wCap * 0.94f, box.height), _flat);
             GUI.color = Color.white;
 
             // What this package BUYS leads, and it is bed share - not sats.
@@ -323,8 +325,11 @@ public class LoadoutPanel : MonoBehaviour
             int share = bay != null ? Mathf.RoundToInt(bay.ShareOf(c.tx) * 100f) : 0;
             _cap.normal.textColor = c.loaded ? new Color(0.45f, 0.95f, 0.6f)
                                              : new Color(1f, 0.85f, 0.35f);
-            GUI.Label(new Rect(box.x, box.y, box.width, _cap.fontSize * 1.5f),
-                      c.loaded ? "ON BOARD" : $"FILLS {share}%", _cap);
+            string head = c.loaded ? "ON BOARD" : $"FILLS {share}%";
+            var headStyle = new GUIStyle(_cap);
+            headStyle.fontSize = Mathf.Min(headStyle.fontSize, Mathf.Max(8, Mathf.RoundToInt(box.height * 0.40f)));
+            DriveHud.FitLine(headStyle, head, box.width - 6f, 8);
+            GUI.Label(new Rect(box.x, box.y, box.width, headStyle.fontSize * 1.5f), head, headStyle);
 
             _capSub.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
             // The stake and the danger it attracts, on one line and plainly
@@ -335,8 +340,9 @@ public class LoadoutPanel : MonoBehaviour
             string sub = c.loaded ? $"fills {share}% · danger +{risk}%"
                                   : BtcShort(c.tx.Btc) + $" · danger +{risk}%" + (c.tx.Whale ? "  🐋" : "");
             var subStyle = new GUIStyle(_capSub);
-            if (DriveHud.FitLine(subStyle, sub, box.width - 4f, 8))
-                GUI.Label(new Rect(box.x, box.y + _cap.fontSize * 1.25f, box.width, subStyle.fontSize * 1.5f), sub, subStyle);
+            subStyle.fontSize = Mathf.Min(subStyle.fontSize, Mathf.Max(7, Mathf.RoundToInt(box.height * 0.30f)));
+            if (DriveHud.FitLine(subStyle, sub, box.width - 6f, 7))
+                GUI.Label(new Rect(box.x, box.y + headStyle.fontSize * 1.3f, box.width, subStyle.fontSize * 1.5f), sub, subStyle);
 
             // Two lines only. Twenty-one crates in three rows leaves no room
             // for a third, and the value is already told by the colour.

@@ -284,7 +284,7 @@ public class CargoTests
         foreach (var t in Object.FindObjectsByType<Transform>(FindObjectsSortMode.None))
             if (t.name == "YardPackage") standing++;
         // the best few, not everything the mempool holds
-        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), standing,
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.ShowNow), standing,
             "die angebotenen Transaktionen stehen nicht als Pakete im Panel");
 
         // the first crate that fits the truck's 20 BTC (CARGO-BTC-2148): the whale at the front does not
@@ -630,7 +630,7 @@ public class CargoTests
         var yard = Object.FindFirstObjectByType<PackageYard>();
         var caps = yard.Captions();
 
-        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), caps.Count,
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.ShowNow), caps.Count,
             "nicht jedes angebotene Paket hat eine Beschriftung");
 
         foreach (var c in caps)
@@ -850,8 +850,13 @@ public class CargoTests
         }
     }
 
+    /// <summary>
+    /// LARGEST FIRST, THE BEST PAYING WITHIN A SIZE, AND A SPREAD OF SIZES (kanban #375, the owner 2026-10-16: "it must not be all of
+    /// the same so no 9% 9% 9% etc, be more diverse but largest first"). Before, the ramp was the 21 best paying - nearly all the
+    /// small transactions - in fee order.
+    /// </summary>
     [UnityTest]
-    public IEnumerator TheValuableOnesAreShownFirst()
+    public IEnumerator TheLargestAreShownFirst_FromASpreadOfSizes()
     {
         yield return null;
         var yard = Object.FindFirstObjectByType<PackageYard>();
@@ -860,21 +865,19 @@ public class CargoTests
         // The panel is laid out in the order Captions() returns, so that order
         // IS the reading order. Sorting by screen position would be wrong: the
         // crates bob, so their y drifts by a few pixels every frame.
-        // Ordered by what it PAYS. The fee is what the run banks; the value
-        // being moved is not something the player is ever paid for.
-        long best = long.MaxValue;
-        foreach (var c in caps)
-        {
-            Assert.LessOrEqual(c.tx.feeSats, best,
-                $"{c.tx.Short} mit {c.tx.feeSats} sat steht hinter einem schlechter " +
-                "bezahlten Posten");
-            best = c.tx.feeSats;
-        }
+        for (int i = 1; i < caps.Count; i++)
+            Assert.LessOrEqual(PackageYard.RampOrder(caps[i - 1].tx, caps[i].tx), 0,
+                $"{caps[i].tx.Short} ({caps[i].tx.vsize} vB, {caps[i].tx.feeSats} sat) steht hinter {caps[i - 1].tx.Short} ({caps[i - 1].tx.vsize} vB, {caps[i - 1].tx.feeSats} sat)");
+
+        // every size the offers have is on the ramp, as long as the ramp has room for them
+        var offered = new HashSet<float>(); foreach (var t in _feed.Offers) offered.Add(CargoBay.RoomFor(t));
+        var shown = new HashSet<float>(); foreach (var c in caps) shown.Add(CargoBay.RoomFor(c.tx));
+        Assert.AreEqual(Mathf.Min(offered.Count, caps.Count), shown.Count, $"the offers come in {offered.Count} sizes, the ramp shows {shown.Count}");
 
         // and that order runs left to right along each row, then down
         for (int i = 1; i < caps.Count; i++)
         {
-            bool sameRow = i % yard.perRow != 0;
+            bool sameRow = i % yard.Cols != 0;
             if (sameRow)
                 Assert.Greater(caps[i].screen.x, caps[i - 1].screen.x,
                     "die Reihenfolge in der Reihe entspricht nicht der auf dem Bildschirm");
@@ -883,10 +886,38 @@ public class CargoTests
                     "die zweite Reihe steht nicht unter der ersten");
         }
 
-        // the dust must not crowd out the movers
-        Assert.LessOrEqual(caps.Count, yard.show, "es werden zu viele Posten angeboten");
-        Assert.GreaterOrEqual(yard.show, 20, "es werden weniger als zwanzig Posten angeboten");
+        Assert.LessOrEqual(caps.Count, yard.ShowNow, "es werden zu viele Posten angeboten");
         Assert.Greater(caps[0].tx.feeSats, 0, "der erste Posten zahlt nichts");
+    }
+
+    /// <summary>
+    /// THE CAPTIONS ARE EVEN AND INSIDE THE PANEL (kanban #375, the owner 2026-10-16: "The labels for the cargo items must be
+    /// gleichmaessig and fit the dialog"): every caption inside the panel, none over another, every caption of a row on one line,
+    /// the captions of a row the same width.
+    /// </summary>
+    [UnityTest]
+    public IEnumerator TheCaptionsAreEvenAndInsideThePanel()
+    {
+        yield return null;
+        var yard = Object.FindFirstObjectByType<PackageYard>();
+        var caps = yard.Captions();
+        var panel = yard.PanelRect(Screen.width, Screen.height);
+        Assert.Greater(caps.Count, 3);
+        for (int i = 0; i < caps.Count; i++)
+        {
+            var r = caps[i].label;
+            Assert.Greater(r.width, 0f, "a caption has its place");
+            Assert.IsTrue(r.xMin >= panel.xMin - 0.5f && r.xMax <= panel.xMax + 0.5f && r.yMin >= panel.yMin - 0.5f && r.yMax <= panel.yMax + 0.5f,
+                $"caption {i} {r} out of the panel {panel}");
+            for (int j = i + 1; j < caps.Count; j++)
+                Assert.IsFalse(r.Overlaps(caps[j].label), $"captions {i} and {j} overlap: {r} / {caps[j].label}");
+            if (i % yard.Cols != 0)
+            {
+                Assert.AreEqual(caps[i - 1].label.y, r.y, 0.5f, $"caption {i} is not on its row's line");
+                Assert.AreEqual(caps[i - 1].label.width, r.width, 0.5f, "a row's captions are as wide as each other");
+            }
+        }
+        Debug.Log($"[CargoTests] FACTS {Screen.width}x{Screen.height}: {caps.Count} on the ramp in {yard.Cols} columns, caption {caps[0].label.width:0} px wide");
     }
 
     /// <summary>
@@ -1000,7 +1031,7 @@ public class CargoTests
         yield return null;
         var yard = Object.FindFirstObjectByType<PackageYard>();
         Assert.GreaterOrEqual(yard.show, 20, "es werden weniger als zwanzig Posten angeboten");
-        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.show), yard.Captions().Count,
+        Assert.AreEqual(Mathf.Min(_feed.Offers.Count, yard.ShowNow), yard.Captions().Count,
             "die Rampe ist nicht voll besetzt");
     }
 
