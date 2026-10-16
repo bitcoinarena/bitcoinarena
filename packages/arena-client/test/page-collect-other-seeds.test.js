@@ -20,7 +20,7 @@ const Keeper = pageFunction(PAGE, [], html.slice(kFrom, kTo), '; return blwpSeed
 // the page's readers, lifted as they are
 const slice = (start, end) => { const a = html.indexOf(start), b = html.indexOf(end, a); assert.ok(a > 0 && b > a, `no slice ${start}`); return html.slice(a, b); };
 const readers = pageFunction(PAGE, ['BLWPCLIENT', 'vault', 'collectSeed', 'sessionStorage', 'navigator', 'window'], [
-  slice('    function roundAsk(r, LockClient) {', '    // ONE TAB AT A TIME USES A KEPT ROUND'),
+  slice('    function withMarketTerms(round) {', '    // ONE TAB AT A TIME USES A KEPT ROUND'),   // roundAsk calls withMarketTerms (kanban #336)
   slice('    function keptRecords() {', '    function newestKept() {'),
 ], '; return { roundAsk, keptRecords, withRecordPhrase };');
 

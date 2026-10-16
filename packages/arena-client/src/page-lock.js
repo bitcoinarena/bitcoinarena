@@ -1772,8 +1772,9 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
-        let round = null;
-        for (const node of nodes) {
+        // A CONTRACT READ ONCE IS KEPT (kanban #378): the id is its hash, so it is the round for good - not read again at every scan
+        let round = OWED_ROUNDS.get(id) || null;
+        for (const node of round ? [] : nodes) {
           try {
             const r = await fetcher(`${base(node)}/round?id=${id}`);
             if (!r.ok) continue;
@@ -1781,6 +1782,7 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
             if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
           } catch { /* this signer node did not answer, or not with the round */ }
         }
+        if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
         contracts.set(id, round);
       }
       const round = contracts.get(id);
@@ -1790,6 +1792,8 @@ export async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fe
   }
   return found;
 }
+const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked once (kanban #378)
+export const forgetOwedRounds = () => OWED_ROUNDS.clear();
 // how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
 export const ORDER_SCAN = 32;
 

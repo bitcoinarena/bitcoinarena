@@ -140,7 +140,17 @@ export function joinQuery(search) {
  * each one gave is carried into the error, so "nobody had it" and "everybody
  * answered with something else" do not look alike.
  */
+/**
+ * A ROUND'S CONTRACT IS READ ONCE (kanban #378; the owner 2026-10-16: "Lower the amount of concurrent connections and network load";
+ * measured on live UI 158, one run, 60 s window: GET /round 208). The id is the contract's own hash, so a contract that matched its
+ * id and passed the checks below is the round for good; kept per id, at most ROUNDS_KEPT_MAX, the oldest dropped first.
+ */
+export const ROUNDS_KEPT_MAX = 2000;
+const ROUNDS_KEPT = new Map();
+export const forgetRounds = () => ROUNDS_KEPT.clear();
 export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
+  const kept = ROUNDS_KEPT.get(id);
+  if (kept) return { contract: kept.contract, from: kept.from, refused: [], kept: true };
   const refused = [];
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/round?id=' + id;
@@ -158,6 +168,8 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
       // invalid - the page lists it nowhere and joins it never, whatever a node answers.
       if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
         throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
+      ROUNDS_KEPT.set(id, { contract, from: node });
+      if (ROUNDS_KEPT.size > ROUNDS_KEPT_MAX) ROUNDS_KEPT.delete(ROUNDS_KEPT.keys().next().value);
       return { contract, from: node, refused };
     } catch (e) {
       refused.push(`${node}: ${e.message}`);

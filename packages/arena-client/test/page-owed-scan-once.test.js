@@ -71,3 +71,25 @@ test('a fresh browser behind the start screen: the scan waits for the wallet, th
   assert.equal(asked.filter((a) => a.url.includes('/settled?')).length, 3, 'each signer node read once');
   assert.ok(asked.every((a) => a.at >= minted), 'no signer node asked before the wallet exists');
 });
+
+// A CONTRACT READ ONCE IS KEPT (kanban #378; the owner 2026-10-16: "Lower the amount of concurrent connections and network load";
+// measured on live UI 158, one run, 60 s window: GET /round 208): the id is the contract's hash, so a second scan does not read it again
+test('a second owed scan does not read the round contract again', async () => {
+  PL.forgetOwedRounds();
+  const seed = new Uint8Array(32).fill(5);
+  const contract = decodeRoundContract(fromHex(CONTRACT_HEX)); const id = toHex(roundId(contract));
+  const mine = toHex(refundKeyOf(playerFor({ id: fromHex(id) }, { seed, curve: pageCurve }).pubkey));
+  const nodes = ['https://n1', 'https://n2'];
+  const asked = [];
+  const fetcher = async (url) => {
+    asked.push(url);
+    if (url.includes('/settled?')) return { ok: true, json: async () => ({ rounds: [{ id, payouts: [mine], refunds: [] }] }) };
+    if (url.includes('/round?id=')) return { ok: true, arrayBuffer: async () => encodeRoundContract(contract).buffer.slice(0) };
+    return { ok: false };
+  };
+  const first = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, fetcher });
+  const second = await PL.findOwedRounds({ seed, curve: pageCurve, nodes, fetcher });
+  assert.deepEqual([first.length, second.length], [1, 1]);
+  assert.equal(toHex(roundId(second[0].round)), id);
+  assert.equal(asked.filter((u) => u.includes('/round?id=')).length, 1, 'the contract read once for two scans');
+});
