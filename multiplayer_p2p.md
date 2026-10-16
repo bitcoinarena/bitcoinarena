@@ -6792,6 +6792,13 @@ list price, both mandatory, and the **developers' share the player chooses: 40, 
 The new split is a protocol version: rounds of a game version that requires it carry it, older
 rounds keep theirs ("updates before feature freeze": versions run side by side).
 
+**Rounding, as built** *(kanban #397 slice 1, `arena-protocol/src/reserves.js`, protocol version 11 -
+`RESERVES_VERSION`, not yet spoken)*: every share is floored to the msat; a round's net stake takes what
+the floors leave, so the parts sum exactly to the gross. An item's developers' share is split half to the
+protocol developers (floored) and the rest to the game developers, and its price is the sum of its parts:
+a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves 2,000 and keeps 90,000 msat; a
+500 sat item costs 500 sat at the 40 % default (nodes 200, reserves 100, devs 100 + 100) and 300 sat at 0 %.
+
 ### 27A.9.2 Where the reserves are, and how they are seen
 
 - Each paid entry's reserve share is an output of its own in the entry's federation, like a donation
