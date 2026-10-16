@@ -25,7 +25,7 @@ import {
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
-  TYPE_VALUE_ATTESTATION,
+  TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL,
 } from './constants.js';
 
 /**
@@ -95,6 +95,10 @@ export const FRAMES = new Map([
   [TYPE_HALT_OBSERVATION, { name: 'HaltObservation', authority: true }],
   // A SCALAR MARKET'S ATTESTED VALUE (kanban #362 feature 8): k of n attestors' word on the number it asked for - it moves money
   [TYPE_VALUE_ATTESTATION, { name: 'ValueAttestation', authority: true }],
+  // THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a new split proposed, and a recipient's yes or no - once more than half
+  // of the set accepted, it decides who the donations pay
+  [TYPE_DONATION_PROPOSAL, { name: 'DonationProposal', authority: true }],
+  [TYPE_DONATION_APPROVAL, { name: 'DonationApproval', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],

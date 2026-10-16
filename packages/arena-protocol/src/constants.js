@@ -340,6 +340,9 @@ export const TYPE_HALT_OBSERVATION = 0x29;
 // AN ATTESTED VALUE (kanban #362 feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 export const TYPE_VALUE_ATTESTATION = 0x2a;
+// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a proposed donation set and a recipient's approval of it
+export const TYPE_DONATION_PROPOSAL = 0x2b;
+export const TYPE_DONATION_APPROVAL = 0x2c;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -407,6 +410,9 @@ export const TAG = {
   // signature that carries somewhere it was never given.
   signedDonationSet: 'ARENA/v1/SignedDonationSet',
   authorityRotation: 'ARENA/v1/AuthorityRotation',
+  // §27A.4.1 (kanban #382): what a developer proposes and what each recipient signs
+  donationProposal: 'ARENA/v1/DonationProposal',
+  donationApproval: 'ARENA/v1/DonationApproval',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
