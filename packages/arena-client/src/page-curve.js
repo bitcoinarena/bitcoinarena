@@ -36,6 +36,9 @@ export const combinePoints = (terms) => {
   return sum === null ? new Uint8Array(33) : sum.toBytes(true);
 };
 
+/** ECDSA over a 32-byte digest by a 33-byte key: a developer's ballot signature (§27A.4.1, kanban #382). */
+export const verifyEcdsa = (sig, digest, key) => { try { return secp256k1.verify(sig, digest, key); } catch { return false; } };
+
 /** BIP-340. Node adverts and receipts are schnorr under the bond key. */
 export const verify = (sig, msg, key) => {
   try { return schnorr.verify(sig, msg, key); }
