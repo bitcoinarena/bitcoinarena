@@ -2134,13 +2134,25 @@
     const loadWatch = setInterval(() => {
       if (window.unityInstance || !document.getElementById('boot') || err.classList.contains('show')) { clearInterval(loadWatch); return; }
       const now = pct.textContent + ' | ' + stage.textContent;
-      if (now !== loadSeen || !LOADING_LINES.has(stage.textContent)) { loadSeen = now; loadChangedAt = Date.now(); return; }
+      if (now !== loadSeen || !LOADING_LINES.has(stage.textContent) || loadWaitsOnPlayer()) { loadSeen = now; loadChangedAt = Date.now(); return; }
       if (Date.now() - loadChangedAt < LOAD_STALL_S * 1000) return;
       clearInterval(loadWatch);
       window.BLWP_LOAD_STALLED = { stage: stage.textContent, pct: pct.textContent, afterS: LOAD_STALL_S };
       console.error('[blwp] loading stalled at "' + stage.textContent + '" (' + pct.textContent + ') for ' + LOAD_STALL_S + ' s');
       fail(stallMessage(stage.textContent, pct.textContent));
     }, 1000);
+    // A SCREEN THAT WAITS ON THE PLAYER IS NOT A STALL (kanban #379, playtest 2026-10-16: the red "Nothing has loaded for
+    // 90 seconds ... "Connecting …" (0%)" under a page that had loaded - after making a Nostr account, and back from the
+    // account settings). Measured on live UI 166: the loading screen keeps "0% · Connecting …" behind the wallet start
+    // screen and behind the games list until the player picks, and the watch failed at 100 s on both. The 90 s count only
+    // while the loading screen is what the player sees: not while the start screen waits for a way in, not while any page
+    // (games, Settings, a dialog) covers it, not while the tab is in the background; it starts again from when it shows.
+    function loadWaitsOnPlayer() {
+      if (document.hidden) return true;
+      if (window.ARENA_START_PENDING && window.ARENA_START_PENDING()) return true;
+      const top = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+      return !!top && !boot.contains(top);
+    }
     function stallMessage(at, progress) {
       return 'Nothing has loaded for ' + LOAD_STALL_S + ' seconds - the page stopped at "' + at + '" (' + progress.trim()
         + '). Check your connection and reload the page.';
