@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { replay, unlocksOf, RunInProgress } from '../src/replay.js';
+import { replay, unlocksOf, RunInProgress, replayInWorker } from '../src/replay.js';
 import { itemUnlocksOf } from '../src/plugins.js';
 
 // a core whose state says what its start was handed: whether an options.items key came at all, and which unlocks
@@ -63,4 +63,17 @@ test('a warm ghost opens its run with the same unlocks', () => {
   const bad = new RunInProgress({ joinTick: 0, items: [{ itemId: 'wings' }] }, { core, seedWord: 7 });
   assert.equal(bad.ok, false);
   assert.match(bad.why, /does not sell/);
+});
+
+// THE SEATS' OWN PATH (kanban #369, measured live 2026-10-16 05:50Z): a close replays in a worker (replayInWorker, the pool), and the
+// core crossed to it without its catalogue - every committee seat held the truck entry 3de8e94c "plays with item "large-truck", which
+// the round's game does not sell". The worker's replay of an entry with items equals the in-thread one.
+test('in the worker too: the unlocks reach start() and the run is the in-thread one', async () => {
+  const inThread = replay(TWO, { joinTick: 0, items: [{ itemId: 'large-truck' }] }, { core, seedWord: 7 });
+  const inWorker = await replayInWorker(TWO, { joinTick: 0, items: [{ itemId: 'large-truck' }] }, { core, seedWord: 7 });
+  assert.equal(inWorker.ok, true, inWorker.why);
+  assert.equal(inWorker.stateHash, inThread.stateHash);
+  assert.equal(inWorker.stateHash, `h:true:${U}:2`);
+  const plain = await replayInWorker(TWO, { joinTick: 0 }, { core, seedWord: 7 });
+  assert.equal(plain.stateHash, 'h:false::2', 'no items: as before');
 });
