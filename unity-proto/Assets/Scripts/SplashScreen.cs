@@ -524,7 +524,7 @@ public class SplashScreen : MonoBehaviour
     /// </summary>
     public struct Frame
     {
-        public Rect panel, head, copy, hint, play, spectate, benchmark, build;
+        public Rect panel, head, copy, hint, play, spectate, build;
         public float pad;
     }
 
@@ -550,14 +550,13 @@ public class SplashScreen : MonoBehaviour
         float bh = Mathf.Max(30f, btnFont * 2.0f);
         float gap = Mathf.Max(8f, padV * 0.35f);
 
-        // one row, one baseline, one height - the primary takes half because it is the one to press; SPECTATE and
-        // BENCHMARK (kanban #266) share the other half
+        // one row, one baseline, one height - the primary takes half because it is the one to press; SPECTATE the other half
+        // (BENCHMARK is in the page's Settings since kanban #373, the owner 2026-10-16: "Remove the benchmark button and have that in
+        // the settings instead")
         float row = panel.yMax - padV * 0.6f - bh;
-        float wide = (inner - 2f * gap) * 0.5f;
-        float side = (inner - wide - 2f * gap) * 0.5f;
+        float wide = (inner - gap) * 0.5f;
         var play = new Rect(panel.x + pad, row, wide, bh);
-        var spectate = new Rect(play.xMax + gap, row, side, bh);
-        var benchmark = new Rect(spectate.xMax + gap, row, side, bh);
+        var spectate = new Rect(play.xMax + gap, row, inner - wide - gap, bh);
 
         float hintHigh = subFont * 1.5f;
         var hint = new Rect(panel.x + pad, row - gap - hintHigh, inner, hintHigh);
@@ -576,7 +575,7 @@ public class SplashScreen : MonoBehaviour
                             Mathf.Max(0f, hint.y - padV * 0.25f - top));
 
         return new Frame { panel = panel, head = head, copy = copy, hint = hint,
-                           play = play, spectate = spectate, benchmark = benchmark, pad = pad, build = build };
+                           play = play, spectate = spectate, pad = pad, build = build };
     }
 
     void OnGUI()
@@ -928,7 +927,7 @@ public class SplashScreen : MonoBehaviour
         sb.Append(",\"panel\":").Append(R(f.panel));
         sb.Append(",\"play\":").Append(R(f.play)).Append(",\"playEnabled\":")
           .Append(_lobby == null || (!_joining && !string.IsNullOrEmpty(_pickId)) ? "true" : "false");
-        sb.Append(",\"spectate\":").Append(R(f.spectate)).Append(",\"benchmark\":").Append(R(f.benchmark)).Append(",\"hint\":").Append(R(f.hint));
+        sb.Append(",\"spectate\":").Append(R(f.spectate)).Append(",\"hint\":").Append(R(f.hint));
         if (_lobby != null)
         {
             sb.Append(",\"you\":").Append(J(_lobby.you.name)).Append(",\"withdrawNotice\":").Append(J(_lastNotice)).Append(",\"name\":").Append(R(_lastName))
@@ -961,8 +960,6 @@ public class SplashScreen : MonoBehaviour
     public const string Title = NextBlockMark.Name;
     public const string PlayLabel = "▶  PLAY";
     public const string SpectateLabel = "SPECTATE";
-    public const string BenchmarkLabel = "BENCHMARK";
-    public const string BenchmarkShort = "BENCH";
 
     const string Standfirst = "HAUL REAL MEMPOOL FREIGHT THROUGH A LIVE BATTLEFIELD";
     const string Footnote = "One Bitcoin block is one round - and every fee, block and " +
@@ -1078,22 +1075,12 @@ public class SplashScreen : MonoBehaviour
         blue.normal.textColor = new Color(0.70f, 0.85f, 1f);
         Shrink(blue, SpectateLabel, f.spectate);
         if (GUI.Button(f.spectate, SpectateLabel, blue)) Spectate();
-
-        // BENCHMARK (kanban #266, the owner 2026-10-08: "basically it is spectate with benchmark"): SPECTATE, and the page's
-        // frame-rate test over it - each render cost switched off in turn, the frame rate of each written into the FPS line
-        PanelSkin.Gradient(f.benchmark, new Color(0.10f, 0.14f, 0.20f, 0.95f),
-                                        new Color(0.06f, 0.09f, 0.13f, 0.95f));
-        PanelSkin.Border(f.benchmark, new Color(0.55f, 0.75f, 1f, 0.75f));
-        var bench = new GUIStyle(_btn);
-        bench.normal.textColor = new Color(0.70f, 0.85f, 1f);
-        // ONE LINE, OR THE SHORT WORD (kanban #8, measured at 360 px: "BENCHMAR" / "K")
-        bench.wordWrap = false;
-        Shrink(bench, BenchmarkLabel, f.benchmark);
-        string benchLabel = FitWords(bench, new[] { BenchmarkLabel, BenchmarkShort }, f.benchmark.width - 10f);
-        if (GUI.Button(f.benchmark, benchLabel, bench)) Benchmark();
     }
 
-    /// <summary>SPECTATE, and the page's frame-rate test once the camera has settled (kanban #266).</summary>
+    /// <summary>
+    /// SPECTATE, and the page's frame-rate test once the camera has settled (kanban #266) - started from the page's Settings
+    /// (kanban #373: SendMessage("Bootstrap", "Benchmark")), no longer from a lobby button.
+    /// </summary>
     public void Benchmark()
     {
         Spectate();
