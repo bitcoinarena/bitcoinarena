@@ -11421,7 +11421,17 @@ function joinQuery(search) {
  * each one gave is carried into the error, so "nobody had it" and "everybody
  * answered with something else" do not look alike.
  */
+/**
+ * A ROUND'S CONTRACT IS READ ONCE (kanban #378; the owner 2026-10-16: "Lower the amount of concurrent connections and network load";
+ * measured on live UI 158, one run, 60 s window: GET /round 208). The id is the contract's own hash, so a contract that matched its
+ * id and passed the checks below is the round for good; kept per id, at most ROUNDS_KEPT_MAX, the oldest dropped first.
+ */
+const ROUNDS_KEPT_MAX = 2000;
+const ROUNDS_KEPT = new Map();
+const forgetRounds = () => ROUNDS_KEPT.clear();
 async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
+  const kept = ROUNDS_KEPT.get(id);
+  if (kept) return { contract: kept.contract, from: kept.from, refused: [], kept: true };
   const refused = [];
   for (const node of nodes) {
     const at = node.replace(/\/+$/, '') + '/round?id=' + id;
@@ -11439,6 +11449,8 @@ async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
       // invalid - the page lists it nowhere and joins it never, whatever a node answers.
       if (contract.objectionWindowMs !== OBJECTION_WINDOW_MS)
         throw new Error(`round ${id} names an objection window of ${contract.objectionWindowMs} ms, not ${OBJECTION_WINDOW_MS}: that contract is invalid and the page does not join it`);
+      ROUNDS_KEPT.set(id, { contract, from: node });
+      if (ROUNDS_KEPT.size > ROUNDS_KEPT_MAX) ROUNDS_KEPT.delete(ROUNDS_KEPT.keys().next().value);
       return { contract, from: node, refused };
     } catch (e) {
       refused.push(`${node}: ${e.message}`);
@@ -15898,8 +15910,9 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
       const payout = l.payouts.has(mine); const lock = l.refunds.has(mine);
       if (!payout && !lock) continue;
       if (!contracts.has(id)) {
-        let round = null;
-        for (const node of nodes) {
+        // A CONTRACT READ ONCE IS KEPT (kanban #378): the id is its hash, so it is the round for good - not read again at every scan
+        let round = OWED_ROUNDS.get(id) || null;
+        for (const node of round ? [] : nodes) {
           try {
             const r = await fetcher(`${base(node)}/round?id=${id}`);
             if (!r.ok) continue;
@@ -15907,6 +15920,7 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
             if (toHex(roundIdOf(c)) === id && roundLocks(c)) { round = c; break; }
           } catch { /* this signer node did not answer, or not with the round */ }
         }
+        if (round && !OWED_ROUNDS.has(id)) { OWED_ROUNDS.set(id, round); if (OWED_ROUNDS.size > 2000) OWED_ROUNDS.delete(OWED_ROUNDS.keys().next().value); }
         contracts.set(id, round);
       }
       const round = contracts.get(id);
@@ -15916,6 +15930,8 @@ async function findOwedRounds({ seed, seeds = null, curve, nodes = [], fetcher =
   }
   return found;
 }
+const OWED_ROUNDS = new Map();   // round id -> its contract, read and checked once (kanban #378)
+const forgetOwedRounds = () => OWED_ROUNDS.clear();
 // how many orders of one market round the seed scan reads keys for (orders 0 ... ORDER_SCAN)
 const ORDER_SCAN = 32;
 
