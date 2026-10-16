@@ -27078,19 +27078,39 @@ function readItems(r) {
 const itemOf = (m, id) => (m && Array.isArray(m.items) ? m.items.find((it) => it.id === id) || null : null);
 
 /**
- * THE SPLIT OF ONE PURCHASE, in msat. `priceMsat` a BigInt; `nodes` the served nodes' keys (hex, any order; each once - the served
- * list's keys). Answers { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat },
- * or throws on a price below 1 msat or no served node (a purchase with nobody to pay half to is refused before any money moves).
+ * THE DEVELOPERS' SHARE IS THE BUYER'S CHOICE (kanban #377, the owner 2026-10-16 ~06:58Z: "50% of the fees go to protocol devs and game
+ * devs (25/25) but are fully optional ... 50% 40% 30% 20% 10% 0% ... if the ingame donations are zero the price is 250 Sats instead of
+ * 500 sats. Node fees are never optional."). A share is a percent of the item's list price, one of ITEM_DEV_SHARES; the nodes' half
+ * is always paid. 50 is the list price itself, the split as it was.
  */
-function itemSplit({ priceMsat, nodes }) {
+const ITEM_DEV_SHARES = Object.freeze([50, 40, 30, 20, 10, 0]);
+const ITEM_DEV_SHARE_DEFAULT = 50;
+const itemDevShareOk = (pct) => ITEM_DEV_SHARES.includes(Number(pct));
+/** What a buyer pays for an item of `priceSat` at a developers' share of `devsPct` %: the nodes' half and the share, in sat. */
+const itemPriceFor = (priceSat, devsPct = ITEM_DEV_SHARE_DEFAULT) => {
+  if (!itemDevShareOk(devsPct)) throw new Error(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
+  const list = BigInt(priceSat);
+  return list / 2n + (list * BigInt(devsPct)) / 100n;
+};
+
+/**
+ * THE SPLIT OF ONE PURCHASE, in msat. `priceMsat` a BigInt (the list price); `nodes` the served nodes' keys (hex, any order; each
+ * once - the served list's keys); `devsPct` the developers' share (ITEM_DEV_SHARES, default 50). Answers { protocolMsat, gameMsat,
+ * devsMsat, nodesMsat, perNodeMsat, nodes: [{ key, msat }] sorted by key, sumMsat }, or throws on a price below 1 msat, a share
+ * that is not one of ITEM_DEV_SHARES, or no served node (a purchase with nobody to pay half to is refused before any money moves).
+ * At 50 % the developers take the list price less the node shares' floors, as always; at a lower share that part scaled by
+ * devsPct / 50, floored.
+ */
+function itemSplit({ priceMsat, nodes, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
   const price = BigInt(priceMsat);
   if (price < 1n) throw new Error('an item costs at least 1 msat');
+  if (!itemDevShareOk(devsPct)) throw new Error(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const keys = [...new Set((nodes || []).map((k) => String(k).toLowerCase()))].sort();
   if (!keys.length) throw new Error('no node served a round in the window: an item\'s half for the nodes has nobody to go to');
   if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
   const perNodeMsat = (price / 2n) / BigInt(keys.length);
   const nodesMsat = perNodeMsat * BigInt(keys.length);
-  const devsMsat = price - nodesMsat;                          // the developers' half and the node shares' floors
+  const devsMsat = ((price - nodesMsat) * BigInt(devsPct)) / 50n;   // the developers' half and the node shares' floors, at the share
   const protocolMsat = devsMsat / 2n;                          // as splitTwoSets: the protocol devs' half floored,
   const gameMsat = devsMsat - protocolMsat;                    // the game dev's the rest
   return { protocolMsat, gameMsat, devsMsat, nodesMsat, perNodeMsat, nodes: keys.map((key) => ({ key, msat: perNodeMsat })), sumMsat: protocolMsat + gameMsat + nodesMsat };
@@ -27127,6 +27147,12 @@ const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String
 const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
 const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
 const PURCHASE_OUTPUTS_MAX = 255;
+/**
+ * A RECORD WITH THE BUYER'S DEVELOPERS' SHARE (kanban #377): written as version PURCHASE_SHARE_VERSION, the share (a u8 percent, one of
+ * ITEM_DEV_SHARES) after the price. A purchase at the full 50 % is written as before (ITEMS_VERSION, no share byte) - the same bytes
+ * and id a seat that has not rolled yet reads - and a version-10 record reads as 50 %.
+ */
+const PURCHASE_SHARE_VERSION = 11;
 /** How far before the purchase its served window may end: the buyer's client merges the seats' lists just before it pays. */
 const PURCHASE_WINDOW_SLACK_MS = 3600000;
 const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
@@ -27139,9 +27165,12 @@ function encodePurchase(p) {
   if (!Array.isArray(p.outputs) || p.outputs.length < 1 || p.outputs.length > PURCHASE_OUTPUTS_MAX) throw new Error(`a purchase pays 1 to ${PURCHASE_OUTPUTS_MAX} outputs`);
   for (const o of p.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !pIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
     throw new Error('an output names its index, its payee\'s 33-byte key and its msat');
+  const share = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
+  if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const w = new Writer();
-  w.u8(TYPE_ITEM_PURCHASE); w.u16(ITEMS_VERSION);
+  w.u8(TYPE_ITEM_PURCHASE); w.u16(share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
   w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
+  if (share !== ITEM_DEV_SHARE_DEFAULT) w.u8(share);
   w.bytes32(p.playerPubkey); w.bytes32(p.federationId); w.bytes32(p.txid);
   w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs)); w.bytes32(p.servedRoot);
   w.vec(p.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
@@ -27153,8 +27182,12 @@ function decodePurchase(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
   const version = r.u16();
-  if (version !== ITEMS_VERSION) throw new Error(`an item purchase of version ${version}`);
-  const p = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64(), playerPubkey: r.bytes32(), federationId: r.bytes32(),
+  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION) throw new Error(`an item purchase of version ${version}`);
+  const head = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64() };
+  const devsPct = version === PURCHASE_SHARE_VERSION ? r.u8() : ITEM_DEV_SHARE_DEFAULT;
+  if (version === PURCHASE_SHARE_VERSION && (devsPct === ITEM_DEV_SHARE_DEFAULT || !itemDevShareOk(devsPct)))
+    throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
+  const p = { ...head, devsPct, playerPubkey: r.bytes32(), federationId: r.bytes32(),
     txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
     outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
   r.end();
@@ -27169,8 +27202,8 @@ const purchaseId = (p) => taggedHash(TAG_ITEM_PURCHASE, encodePurchase(p));
  * is paid once, the sum), none of 0 msat. `servedKeys` the served nodes' keys in hex; `networkSet` / `gameSet` the two donation
  * sets' recipients (they must pay keys).
  */
-function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet }) {
-  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys });
+function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
+  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys, devsPct });
   const devs = splitTwoSets({ donationMsat: split.devsMsat, networkSet, gameSet });
   if (!devs.owed) throw new Error(`the developers' half cannot be paid: ${devs.why}`);
   const by = new Map();
@@ -27201,7 +27234,10 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify }) {
     return no('the served window ends at most an hour before the purchase, and not after it');
   if (!served || BigInt(served.fromMs) !== BigInt(p.servedFromMs) || BigInt(served.toMs) !== BigInt(p.servedToMs) || served.root !== toHex(p.servedRoot))
     return no(`the purchase paid the served list ${toHex(p.servedRoot).slice(0, 16)}, and the one read here is ${served && served.root ? served.root.slice(0, 16) : 'none'}`);
-  let want; try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet }).outputs; }
+  // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is
+  const devsPct = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
+  if (!itemDevShareOk(devsPct)) return no(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %, and the purchase names ${p.devsPct}`);
+  let want; try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct }).outputs; }
   catch (e) { return no(e.message); }
   const got = [...p.outputs].map((o) => ({ pk: toHex(o.pk), msat: o.msat })).sort((a, b) => (a.pk < b.pk ? -1 : 1));
   const line = (o) => `${typeof o.pk === 'string' ? o.pk : toHex(o.pk)}:${o.msat}`;
@@ -27253,17 +27289,19 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }
 /**
  * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
  * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
- * `seats` the game's seats; `verify` BIP340. Answers { ok, purchaseId, txid, priceSat, outputs, keptBy } or { ok: false, step, why }.
+ * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (kanban #377: one of ITEM_DEV_SHARES, default
+ * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
-async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now() }) {
+async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = ITEM_DEV_SHARE_DEFAULT }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
+  if (!itemDevShareOk(devsPct)) return no('share', `a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
   const got = await servedFromSeats({ seats, toMs, fetch, verify });
   if (!got.ok) return no('served', got.why);
   let built;
-  try { built = purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet }); }
+  try { built = purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct) }); }
   catch (e) { return no('split', e.message); }
   let submitted, accepted;
   try {
@@ -27272,7 +27310,7 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const outs = accepted.donations || [];
   if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, playerPubkey: player.pubkey,
+  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
     federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
     outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()) };
   const signature = player.sign(purchaseId(record));
@@ -27288,7 +27326,8 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
   }
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
     retry: body };
-  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, outputs: outs.length, keptBy };
+  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceFor(item.priceSat, Number(devsPct)),
+    devsPct: Number(devsPct), outputs: outs.length, keptBy };
 }
 
 /** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
@@ -31136,7 +31175,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,
          sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,
          zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
-         shopOf: shopOf, buyItem: buyItem, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
+         shopOf: shopOf, buyItem: buyItem, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
          entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,
          toHex: toHex, fromHex: fromHex };

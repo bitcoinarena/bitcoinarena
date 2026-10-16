@@ -996,14 +996,6 @@
       </div>
       <div class="muted" id="arena-zap-why"></div>
     </section>
-    <section class="settings-card" id="blwp-set-donation">
-      <h3>Donation</h3>
-      <select id="blwp-donation-select" aria-label="Donation">
-        <option value="0">0%</option><option value="1">1%</option><option value="2">2%</option>
-        <option value="3">3%</option><option value="4">4%</option><option value="5" selected>5%</option>
-      </select>
-      <div class="muted" id="blwp-donation-recipients"></div>
-    </section>
     <section class="settings-card" id="arena-set-graphics">
       <h3>Graphics</h3>
       <select id="arena-gfx-select" aria-label="Graphics">
@@ -1074,6 +1066,24 @@
       <h3>Community</h3>
       <div class="muted">Chat with players, node operators and game developers on Armada - log in with your Nostr key.</div>
       <a id="arena-armada-link" href="https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF" target="_blank" rel="noopener" style="color:#c9a8ff;font-weight:600">Join Bitcoin Arena on Armada →</a>
+    </section>
+    <!-- ADVANCED SETTINGS, AT THE VERY BOTTOM (kanban #377, the owner 2026-10-16 ~06:58Z: "There is a screen in settings called advanced
+         settings which has two select boxes, the existing donation dropdown and a new one for ingame options: 50% 40% 30% 20% 10% 0%
+         ... It is at the very bottom of the settings screen and needs to be scrolled to be visible.") -->
+    <section class="settings-card" id="blwp-set-advanced">
+      <h3>Advanced settings</h3>
+      <div class="muted">Donation - a share of each paid entry to the protocol and game developers</div>
+      <select id="blwp-donation-select" aria-label="Donation">
+        <option value="0">0%</option><option value="1">1%</option><option value="2">2%</option>
+        <option value="3">3%</option><option value="4">4%</option><option value="5" selected>5%</option>
+      </select>
+      <div class="muted" id="blwp-donation-recipients"></div>
+      <div class="muted" style="margin-top:12px">In-game items - your share to the protocol and game developers (25/25); the nodes' half is always paid</div>
+      <select id="arena-items-share-select" aria-label="In-game items: developers' share">
+        <option value="50" selected>50%</option><option value="40">40%</option><option value="30">30%</option>
+        <option value="20">20%</option><option value="10">10%</option><option value="0">0%</option>
+      </select>
+      <div class="muted" id="arena-items-share-what"></div>
     </section>
   </div>
   <script>
@@ -4788,6 +4798,11 @@
       try { window.sessionStorage.setItem('arena.donation.settings', String(window.BLWP_DONATION_BPS)); } catch { /* kept for this page only */ }
       paintSettings();
     });
+    // THE IN-GAME ITEMS' DEVELOPERS' SHARE (kanban #377): the buyer's choice, kept in this browser; every buy screen prices by it
+    document.getElementById('arena-items-share-select').addEventListener('change', (e) => {
+      if (window.ARENA_ITEMS_SHARE_SET) window.ARENA_ITEMS_SHARE_SET(Number(e.target.value));
+      paintSettings();
+    });
     // THE NAME, UPDATE ONLY: the field holds the current name; no key here, no empty create field.
     const nameField = document.getElementById('blwp-name-field');
     const nameUpdate = document.getElementById('blwp-name-update');
@@ -4823,6 +4838,12 @@
       // dropdown that plainly shows the choice (the owner 2026-09-29 12:47)
       const line = BLWPCLIENT.donationRecipientsLine ? BLWPCLIENT.donationRecipientsLine(window.BLWP_ROUND) : '';
       if (rec) rec.textContent = /no donation/i.test(line || '') ? '' : (line || '');
+      // (the shop code that keeps the share runs later in this script: a paint before it shows the select alone)
+      const share = window.ARENA_ITEMS_SHARE ? window.ARENA_ITEMS_SHARE() : 50; const shareSel = document.getElementById('arena-items-share-select');
+      if (shareSel && shareSel.value !== String(share)) shareSel.value = String(share);
+      const shareWhat = document.getElementById('arena-items-share-what');
+      if (shareWhat && window.ARENA_ITEM_PRICE) shareWhat.textContent = 'A 500 sat item costs ' + String(window.ARENA_ITEM_PRICE(500)) + ' sat: 250 sat to the nodes'
+        + (share ? ', ' + String(window.ARENA_ITEM_PRICE(500) - 250n) + ' sat to the developers.' : ', nothing to the developers.');
       if (document.activeElement !== nameField) { nameField.value = currentName(); nameUpdate.disabled = true; }
       paintMoney();
     }
@@ -7399,6 +7420,15 @@
     };
     const ITEM_PICTURE = { 'large-truck': '<svg viewBox="0 0 40 40" aria-hidden="true"><rect x="3" y="14" width="24" height="12" rx="2" fill="#f7931a"/><rect x="27" y="17" width="9" height="9" rx="2" fill="#c9d1d9"/><circle cx="10" cy="29" r="3.5" fill="#e6edf3"/><circle cx="31" cy="29" r="3.5" fill="#e6edf3"/><path d="M6 12h18" stroke="#3fb950" stroke-width="2" stroke-linecap="round"/></svg>' };
     const ITEM_WHAT = { 'large-truck': '30 % more cargo room, quicker off the line' };
+    // THE PRICE AT THE BUYER'S SHARE (kanban #377, the owner 2026-10-16: "The price shown in the buy screens is this dynamic, if the ingame
+    // donations are zero the price is 250 Sats instead of 500 sats"): the nodes' half and the chosen share of the list price, in sat
+    const ITEMS_SHARE_KEY = 'arena.items.devsPct';
+    window.ARENA_ITEMS_SHARE = () => {
+      let v = 50; try { const k = localStorage.getItem(ITEMS_SHARE_KEY); if (k !== null) v = Number(k); } catch { /* the default */ }
+      return (BLWPCLIENT.ITEM_DEV_SHARES || [50]).includes(v) ? v : 50;
+    };
+    window.ARENA_ITEMS_SHARE_SET = (v) => { try { localStorage.setItem(ITEMS_SHARE_KEY, String(Number(v))); } catch { /* this page only */ } };
+    window.ARENA_ITEM_PRICE = (priceSat) => (BLWPCLIENT.itemPriceFor ? BLWPCLIENT.itemPriceFor(BigInt(priceSat), window.ARENA_ITEMS_SHARE()) : BigInt(priceSat));
     async function openShop() {
       const sheet = document.getElementById('arena-shop'); if (!sheet) return;
       const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
@@ -7418,7 +7448,7 @@
           const pic = document.createElement('div'); pic.className = 'pic'; pic.innerHTML = ITEM_PICTURE[it.id] || '';
           const mid = document.createElement('div');
           const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = it.name;
-          const wh = document.createElement('div'); wh.className = 'what'; wh.textContent = (ITEM_WHAT[it.id] ? ITEM_WHAT[it.id] + ' · ' : '') + String(it.priceSat) + ' sat';
+          const wh = document.createElement('div'); wh.className = 'what'; wh.textContent = (ITEM_WHAT[it.id] ? ITEM_WHAT[it.id] + ' · ' : '') + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat';
           mid.append(nm, wh);
           const end = document.createElement('div');
           if (mine) {
@@ -7428,9 +7458,9 @@
             cb.addEventListener('change', () => { const now = new Set(itemsUse(shop.game.name) || owned.map((x) => x.itemId)); if (cb.checked) now.add(it.id); else now.delete(it.id); setItemsUse(shop.game.name, [...now]); });
             lab.append(cb, document.createTextNode('Play with it')); end.append(lab);
           } else {
-            const b = document.createElement('button'); b.type = 'button'; b.className = 'buy'; b.textContent = 'Buy · ' + String(it.priceSat) + ' sat';
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'buy'; b.textContent = 'Buy · ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat';
             b.addEventListener('click', async () => {
-              b.disabled = true; say('Paying ' + String(it.priceSat) + ' sat …');
+              b.disabled = true; say('Paying ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat …');
               const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
               if (got.ok) { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }).catch(() => owned); say('Bought: ' + it.name + ' is yours (transaction ' + String(got.txid).slice(0, 12) + '…).'); paint(); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }
               else { b.disabled = false; say('Not bought (' + got.step + '): ' + got.why, true); }
@@ -7447,7 +7477,8 @@
     async function buyShopItem(shop, it) {
       const key = itemsKey(); if (!key) return { ok: false, step: 'wallet', why: 'open your wallet first' };
       if (window.BLWP_SUM_BALANCES) await window.BLWP_SUM_BALANCES();
-      const need = BigInt(it.priceSat) * 1000n;
+      const devsPct = window.ARENA_ITEMS_SHARE();
+      const need = window.ARENA_ITEM_PRICE(it.priceSat) * 1000n;
       let wallet = null, federationId = null;
       for (const [fid, c] of (window.BLWP_WALLETS || new Map())) {
         try {
@@ -7461,7 +7492,7 @@
           if (held >= need) { wallet = c; federationId = fid; break; }
         } catch { /* the next federation */ }
       }
-      if (!wallet) return { ok: false, step: 'wallet', why: 'your wallet holds less than ' + String(it.priceSat) + ' sat in any one federation: deposit first' };
+      if (!wallet) return { ok: false, step: 'wallet', why: 'your wallet holds less than ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat in any one federation: deposit first' };
       if (typeof wallet.paySubmit !== 'function') return { ok: false, step: 'wallet', why: 'this page\'s wallet cannot pay an item yet (its lock client has no paySubmit)' };
       const ids = new Set((window.ARENA_GAMES_FULL || []).filter((g) => g.name === shop.game.name).map((g) => g.id));
       const row = (window.BLWP_LOBBY || []).map((x) => x.raw).find((r) => r && !r.free && r.contract && ids.has(r.game));
@@ -7469,7 +7500,7 @@
       const ds = await BLWPCLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: BLWPCLIENT.fromHex(row.id) }),
         nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
       if (!ds.ok || !ds.target) return { ok: false, step: 'donation', why: ds.why || 'the round names no donation sets' };
-      return BLWPCLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId,
+      return BLWPCLIENT.buyItem({ manifest: shop.game.manifest, itemId: it.id, networkSet: ds.target.network, gameSet: ds.target.game, wallet, federationId, devsPct,
         player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o),
         verify: (sg, m, k) => window.BLWP_CURVE.verify(sg, m, k) });
     }
@@ -7495,13 +7526,13 @@
       const use = itemsUse(shop.game.name);
       const owned = addons.ownedFor === shop.game.name ? (addons.owned || []) : [];
       return { shop: true, game: shop.game.name, read: addons.owned !== null, busy: addons.busy, said: addons.said, bad: addons.bad, seq: addons.seq,
-        bought: addons.bought, items: shop.items.map((it) => ({ id: it.id, name: it.name, what: ITEM_WHAT[it.id] || '', priceSat: Number(it.priceSat),
+        bought: addons.bought, devsPct: window.ARENA_ITEMS_SHARE(), items: shop.items.map((it) => ({ id: it.id, name: it.name, what: ITEM_WHAT[it.id] || '', priceSat: Number(window.ARENA_ITEM_PRICE(it.priceSat)), listSat: Number(it.priceSat),
           owned: owned.some((o) => o.itemId === it.id), use: !use || use.includes(it.id) })) };
     };
     window.ARENA_ADDONS_BUY = (itemId) => {
       const shop = addonsShop(); const it = shop && shop.items.find((x) => x.id === itemId);
       if (!it || addons.busy) return 0;
-      addons.busy = itemId; addons.said = 'Paying ' + String(it.priceSat) + ' sat …'; addons.bad = false;
+      addons.busy = itemId; addons.said = 'Paying ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat …'; addons.bad = false;
       (async () => {
         const got = await buyShopItem(shop, it).catch((e) => ({ ok: false, step: 'page', why: e.message }));
         if (got.ok) {

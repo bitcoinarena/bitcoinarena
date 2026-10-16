@@ -11,7 +11,7 @@
 // No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
 import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-protocol/src/served-nodes.js';
 import { purchaseOutputs, purchaseId, encodePurchase } from '../../arena-protocol/src/purchase.js';
-import { itemOf } from '../../arena-protocol/src/items.js';
+import { itemOf, itemPriceFor, itemDevShareOk, ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT } from '../../arena-protocol/src/items.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { itemsSecretFor } from '../../arena-protocol/src/player-key.js';
 import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
@@ -38,17 +38,19 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
 /**
  * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
  * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
- * `seats` the game's seats; `verify` BIP340. Answers { ok, purchaseId, txid, priceSat, outputs, keptBy } or { ok: false, step, why }.
+ * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (kanban #377: one of ITEM_DEV_SHARES, default
+ * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
-export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now() }) {
+export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = ITEM_DEV_SHARE_DEFAULT }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
+  if (!itemDevShareOk(devsPct)) return no('share', `a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
   const got = await servedFromSeats({ seats, toMs, fetch, verify });
   if (!got.ok) return no('served', got.why);
   let built;
-  try { built = purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet }); }
+  try { built = purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct) }); }
   catch (e) { return no('split', e.message); }
   let submitted, accepted;
   try {
@@ -57,7 +59,7 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const outs = accepted.donations || [];
   if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, playerPubkey: player.pubkey,
+  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
     federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
     outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()) };
   const signature = player.sign(purchaseId(record));
@@ -73,7 +75,8 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   }
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
     retry: body };
-  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, outputs: outs.length, keptBy };
+  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceFor(item.priceSat, Number(devsPct)),
+    devsPct: Number(devsPct), outputs: outs.length, keptBy };
 }
 
 /** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
