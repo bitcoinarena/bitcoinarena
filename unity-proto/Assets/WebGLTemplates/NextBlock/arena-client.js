@@ -14372,13 +14372,21 @@ async function openPlayerWallet({ federationId, invite, seed, LockClient, storag
   // THE WALLET THE LOBBY OPENED, IF IT DID OPEN (JOIN-TIME-1359, measured 2026-10-02 on testnet4: 2 of 12 paid joins sat at
   // "the player wallet is open" for good - the lobby's join of the federation never settled, and PLAY took that promise
   // as an open wallet; a named step is never cut by time). Given `openWaitMs`; then, unsettled or failed, joined again.
+  // ONE CLIENT PER WALLET, NEVER TWO (kanban #376, measured 2026-10-16 on live UI 147 with one pinned seed: the lobby's open took
+  // 21-25 s, PLAY gave up on it after openWaitMs, "the player wallet did not open in 15 s - joining the federation again", and a
+  // SECOND lock client opened the same store beside the first. Each keeps its own notes and operations in memory: the deposit
+  // invoiced by one was "Operation not found" to the other, and a balance read off one (the owner's 400 sat) was quoted on the other,
+  // "insufficient funds"). An open still running is waited for, however long - it is refused by name after joinWaitMs, and only a
+  // refused or failed open is joined again; past openWaitMs the wait is said.
   if (open && open.has(key)) {
     const kept = open.get(key);
-    const done = await Promise.race([kept.then((v) => ({ v }), (e) => ({ e })), new Promise((r) => setTimeout(() => r(null), openWaitMs))]);
-    if (done && 'v' in done) { onStep('the player wallet is open'); return done.v; }
-    if (open.get(key) === kept) open.delete(key);
-    onStep(done ? `the player wallet did not open (${done.e && done.e.message ? done.e.message : done.e}) - joining the federation again`
-      : `the player wallet did not open in ${Math.round(openWaitMs / 1000)} s - joining the federation again`);
+    const said = setTimeout(() => onStep(`the player wallet is still opening (over ${Math.round(openWaitMs / 1000)} s) - one wallet, waited for`), openWaitMs);
+    if (said.unref) said.unref();
+    try { const v = await kept; onStep('the player wallet is open'); return v; }
+    catch (e) {
+      if (open.get(key) === kept) open.delete(key);
+      onStep(`the player wallet did not open (${e && e.message ? e.message : e}) - joining the federation again`);
+    } finally { clearTimeout(said); }
   }
   const store = storage ? walletStoreFor(storage, round.federationId, secret) : unkeptLockStore();
   const kept = JSON.parse(store.entries()).length;
