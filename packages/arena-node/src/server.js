@@ -195,6 +195,7 @@ import { Dkg } from './dkg.js';
 import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
+import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
@@ -4940,8 +4941,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let p; try { p = { ...decodePurchase(fromHex(String(j.purchase || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
         catch (e) { return text(res, 400, `that is not an item purchase: ${e.message}`); }
         const dev = toHex(p.gameDevPubkey);
-        const game = [...hosted.values()].find((g) => g.manifest && toHex(g.manifest.gameDevPubkey) === dev && g.manifest.gameName === p.gameName && itemOf(g.manifest, p.itemId));
-        if (!game) return text(res, 404, `this seat hosts no game "${p.gameName}" by ${dev.slice(0, 16)} selling "${p.itemId}"`);
+        // THE VERSION IT WAS BOUGHT UNDER (kanban #397 slice 5): a record on the reserves' terms names it; an older record is checked
+        // against a version selling on the old terms (one requiring protocol 11 sells only on the reserves')
+        const sells = (g) => g && g.manifest && toHex(g.manifest.gameDevPubkey) === dev && g.manifest.gameName === p.gameName && itemOf(g.manifest, p.itemId);
+        const onReserves = p.reserveKey instanceof Uint8Array;
+        const game = onReserves ? [hosted.get(toHex(p.gameId))].find(sells)
+          : [...hosted.values()].find((g) => sells(g) && !(Number(g.manifest.requiredProtocolVersion) >= ITEM_RESERVES_FROM));
+        if (!game) return text(res, 404, `this seat hosts no ${onReserves ? `version ${toHex(p.gameId).slice(0, 16)} of ` : ''}game "${p.gameName}" by ${dev.slice(0, 16)} selling "${p.itemId}"${onReserves ? '' : ' on the old terms'}`);
+        const itemReserveKey = onReserves ? await reserveKeyFor(toHex(p.federationId)) : null;
         if (!Array.isArray(game.donationSet)) return text(res, 404, 'this seat holds no donation set of that game');
         let latest = null; try { latest = round.db.prepare('SELECT contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); } catch { latest = null; }
         const net = latest ? decodeRoundContract(new Uint8Array(latest.contract)) : null;
@@ -4965,7 +4972,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const merged = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
-          verify: (sg, m, k) => schnorr.verify(sg, m, k) });
+          verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]) });
         if (!got.ok) return text(res, got.status || 422, got.why);
         // KEPT HERE THE FIRST TIME: handed on to every other seat, each of which checks it for itself and hands it on only when it
         // too keeps it for the first time - so an entry naming the item finds its purchase on whichever seats it is sent to

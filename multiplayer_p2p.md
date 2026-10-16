@@ -6825,6 +6825,18 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - On version 11 the developers' outputs are the mandatory 2 % + 2 % (no `donation_bps` to lower) and
     the fee lock is 4 %.
   - An item purchase on version 11 carries its reserve lock (20 % of the list price) the same way.
+  - **As built for items** *(kanban #397 slice 5, the owner 2026-10-16: "Go" on (A))*: a game version decides an item's terms.
+    - A version whose manifest requires protocol 11 (Tick Tock v4, 76f50510…, v3 in every other term) sells its items on the
+      reserves' terms: nodes 40 % (equal per served node, floored), **exactly 20 % to the payment federation's reserve key as
+      one output**, and the developers' 40/30/20/10/0 % over the two donation sets. An older version keeps #377's terms.
+    - The purchase record is written as **layout 12** (a record layout, not a protocol version). It names the share, the game
+      version's id and the reserve key it paid (`purchaseOutputsReserves`, `purchaseStands` in `purchase.js`).
+    - A seat checks the record against that version and against the federation's reserve key it holds. A record on the old
+      terms is checked only against a version selling on them.
+    - Once kept, every output has been checked with the federation. The reserve output is then kept as a reserve row (the
+      purchase id in the entry's place, `item` = "game · item id"), so `GET /reserves` counts it.
+    - The page pays nothing before five of the game's nodes name the federation's reserve key. Its share choices and prices
+      follow the terms of the version the shop sells from.
   - A round is published at version 11 only for a federation whose reserve key is made.
 - Each round's dashboard shows what the round paid in.
 - Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,

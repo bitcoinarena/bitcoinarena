@@ -1172,6 +1172,9 @@ export function openStore(path = ':memory:') {
   // stored here to read the player key from, so the image the federation's contract carries is kept beside it
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'image'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN image TEXT');
+  // AND WHAT IT PAID FOR WHEN IT IS NO ROUND'S ENTRY (kanban #397 slice 5): an item purchase's reserve output, "game · item id"
+  if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'item'))
+    db.exec('ALTER TABLE donation_outputs ADD COLUMN item TEXT');
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))

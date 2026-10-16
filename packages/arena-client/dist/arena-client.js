@@ -11146,6 +11146,21 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
     requiredProtocolVersion: 10,
   }),
+  // kanban #397 slice 5: manifest version 4, parent b8b88e23 - version 3 in every term, requiring protocol 11 (its items pay the reserves)
+  '76f505108cfdb664e7f390c2a9390ad21ddb85d46966743695b02be3242bc93b': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+      'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
 });
 
 // ---- arena-protocol/src/known-game.js
@@ -27730,309 +27745,6 @@ function itemSplit({ priceMsat, nodes, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
 const itemLine = (it) => `${it.id} (${it.name}) ${String(it.priceSat).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sat`;
 const itemsHex = (items) => (items || []).map((it) => ({ ...it, priceSat: String(it.priceSat), unlock: toHex(it.unlock) }));
 
-// ---- arena-protocol/src/purchase.js
-// AN ITEM, BOUGHT (kanban #365 step 2): the buyer's signed record of one purchase, and the check any node makes of it.
-//
-// THE MONEY IS ONE FEDERATION TRANSACTION from the buyer's e-cash whose outputs are pre-expired payout contracts, each spendable only
-// by its payee's key - the same outputs a round's donation pays its recipients in today (page-lock.js lockSubmit, role "donation").
-// Its outputs are exactly the split (items.js itemSplit): the nodes' half equal per served node (each to refundKeyOf(node key)), the
-// developers' half over the network's and the game's donation sets as a round's donation is split (donation.js splitTwoSets).
-//
-// THE RECORD names what was bought and how it was paid - the game (its developer key and name, so the item outlives versions), the
-// item and its price, the buyer's key, the federation and the transaction, every output (index, payee key, msat), and the served list
-// it paid (its window and root, served-nodes.js) - and the buyer signs it (BIP340, injected). `purchaseStands` rebuilds the outputs
-// from the manifest, the two donation sets and the reader's own merged served list and compares them one by one; a record whose
-// outputs pay anybody else, or anything else, does not stand. Whether the federation accepted the transaction is the federation's
-// to say (the seats ask it, as for a stake lock) - this file only says what that transaction must be.
-//
-// OWNERSHIP is a standing record whose transaction the federation accepted: bound to the buyer's key and the game, not transferable
-// (no record names a second owner), the same across the game's versions while the item's id stays in its catalogue.
-
-
-
-
-
-
-
-const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
-const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
-const PURCHASE_OUTPUTS_MAX = 255;
-/**
- * A RECORD WITH THE BUYER'S DEVELOPERS' SHARE (kanban #377): written as version PURCHASE_SHARE_VERSION, the share (a u8 percent, one of
- * ITEM_DEV_SHARES) after the price. A purchase at the full 50 % is written as before (ITEMS_VERSION, no share byte) - the same bytes
- * and id a seat that has not rolled yet reads - and a version-10 record reads as 50 %.
- */
-const PURCHASE_SHARE_VERSION = 11;
-/** How far before the purchase its served window may end: the buyer's client merges the seats' lists just before it pays. */
-const PURCHASE_WINDOW_SLACK_MS = 3600000;
-const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-const pIs33 = (b) => b instanceof Uint8Array && b.length === 33 && (b[0] === 2 || b[0] === 3);
-
-/** The record's bytes, without the signature. Outputs sorted by index. */
-function encodePurchase(p) {
-  if (!pIs32(p.gameDevPubkey) || !pIs32(p.playerPubkey) || !pIs32(p.federationId) || !pIs32(p.txid) || !pIs32(p.servedRoot))
-    throw new Error('a purchase names the game\'s developer, the buyer, the federation, the transaction and the served root by 32 bytes each');
-  if (!Array.isArray(p.outputs) || p.outputs.length < 1 || p.outputs.length > PURCHASE_OUTPUTS_MAX) throw new Error(`a purchase pays 1 to ${PURCHASE_OUTPUTS_MAX} outputs`);
-  for (const o of p.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !pIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
-    throw new Error('an output names its index, its payee\'s 33-byte key and its msat');
-  const share = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
-  if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
-  const w = new Writer();
-  w.u8(TYPE_ITEM_PURCHASE); w.u16(share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
-  w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
-  if (share !== ITEM_DEV_SHARE_DEFAULT) w.u8(share);
-  w.bytes32(p.playerPubkey); w.bytes32(p.federationId); w.bytes32(p.txid);
-  w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs)); w.bytes32(p.servedRoot);
-  w.vec(p.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
-  w.u64(BigInt(p.boughtAtMs));
-  return w.finish();
-}
-
-function decodePurchase(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
-  const version = r.u16();
-  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION) throw new Error(`an item purchase of version ${version}`);
-  const head = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64() };
-  const devsPct = version === PURCHASE_SHARE_VERSION ? r.u8() : ITEM_DEV_SHARE_DEFAULT;
-  if (version === PURCHASE_SHARE_VERSION && (devsPct === ITEM_DEV_SHARE_DEFAULT || !itemDevShareOk(devsPct)))
-    throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
-  const p = { ...head, devsPct, playerPubkey: r.bytes32(), federationId: r.bytes32(),
-    txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
-    outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
-  r.end();
-  return p;
-}
-
-/** What the buyer signs, and the purchase's id. */
-const purchaseId = (p) => taggedHash(TAG_ITEM_PURCHASE, encodePurchase(p));
-
-/**
- * THE OUTPUTS A PURCHASE MUST PAY: [{ pk (33 bytes), msat }] sorted by key, one per payee (a key paid as a node and as a developer
- * is paid once, the sum), none of 0 msat. `servedKeys` the served nodes' keys in hex; `networkSet` / `gameSet` the two donation
- * sets' recipients (they must pay keys).
- */
-function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
-  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys, devsPct });
-  const devs = splitTwoSets({ donationMsat: split.devsMsat, networkSet, gameSet });
-  if (!devs.owed) throw new Error(`the developers' half cannot be paid: ${devs.why}`);
-  const by = new Map();
-  const add = (pk, msat) => { if (msat <= 0n) return; const k = toHex(pk); by.set(k, { pk, msat: (by.get(k) ? by.get(k).msat : 0n) + msat }); };
-  for (const n of split.nodes) add(refundKeyOf(fromHex(n.key)), n.msat);
-  for (const s of devs.shares) {
-    if (!(s.recipientPk instanceof Uint8Array)) throw new Error('an item is paid in the federation: both donation sets must pay keys, not LNURLs');
-    add(s.recipientPk, s.amountMsat);
-  }
-  return { outputs: [...by.values()].sort((a, b) => (toHex(a.pk) < toHex(b.pk) ? -1 : 1)), split, devs };
-}
-
-/**
- * DOES A PURCHASE STAND? `p` the record with `signature`; `manifest` the game's (any version naming the item); `networkSet` /
- * `gameSet` the donation sets; `served` the reader's own merged list for the record's window ({ fromMs, toMs, nodes, root });
- * `verify(sig, digest, key)` BIP340. Answers { ok, id } or { ok: false, why }.
- */
-function purchaseStands(p, { manifest, networkSet, gameSet, served, verify }) {
-  const no = (why) => ({ ok: false, why });
-  let id; try { id = purchaseId(p); } catch (e) { return no(`that purchase does not encode: ${e.message}`); }
-  if (!manifest || toHex(manifest.gameDevPubkey) !== toHex(p.gameDevPubkey) || manifest.gameName !== p.gameName)
-    return no(`the purchase is of game "${p.gameName}" by ${toHex(p.gameDevPubkey).slice(0, 16)}, not of the manifest given`);
-  const item = itemOf(manifest, p.itemId);
-  if (!item) return no(`"${p.gameName}" sells no item "${p.itemId}"`);
-  if (BigInt(p.priceSat) !== item.priceSat) return no(`item "${p.itemId}" costs ${item.priceSat} sat, and the purchase paid ${p.priceSat}`);
-  if (BigInt(p.servedToMs) - BigInt(p.servedFromMs) !== BigInt(SERVED_WINDOW_MS)) return no('the served window is 24 hours');
-  if (BigInt(p.servedToMs) > BigInt(p.boughtAtMs) || BigInt(p.boughtAtMs) - BigInt(p.servedToMs) > BigInt(PURCHASE_WINDOW_SLACK_MS))
-    return no('the served window ends at most an hour before the purchase, and not after it');
-  if (!served || BigInt(served.fromMs) !== BigInt(p.servedFromMs) || BigInt(served.toMs) !== BigInt(p.servedToMs) || served.root !== toHex(p.servedRoot))
-    return no(`the purchase paid the served list ${toHex(p.servedRoot).slice(0, 16)}, and the one read here is ${served && served.root ? served.root.slice(0, 16) : 'none'}`);
-  // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is
-  const devsPct = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
-  if (!itemDevShareOk(devsPct)) return no(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %, and the purchase names ${p.devsPct}`);
-  let want; try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct }).outputs; }
-  catch (e) { return no(e.message); }
-  const got = [...p.outputs].map((o) => ({ pk: toHex(o.pk), msat: o.msat })).sort((a, b) => (a.pk < b.pk ? -1 : 1));
-  const line = (o) => `${typeof o.pk === 'string' ? o.pk : toHex(o.pk)}:${o.msat}`;
-  if (got.length !== want.length || got.some((o, i) => line(o) !== line(want[i])))
-    return no(`its outputs are not the split: it pays ${got.length} output(s), the split ${want.length}`);
-  let good = false;
-  try { good = verify(p.signature, id, p.playerPubkey) === true; } catch { good = false; }
-  if (!good) return no('the buyer\'s signature does not verify');
-  return { ok: true, id };
-}
-
-// ---- arena-client/src/item-buy.js
-// AN IN-GAME ITEM, BOUGHT FROM THE PAGE (kanban #365 step 5; #369's larger truck the first): the player's wallet pays the item's split
-// in one federation transaction, the player signs the record, and the seats keep it as the player's for good.
-//
-//   1. WHO SERVED: every seat's signed FINALs of the 24 h before now (GET /served?finals=1), merged by round and each FINAL checked
-//      here (served-nodes.js) - the same list every seat rebuilds when it checks the purchase.
-//   2. THE SPLIT: purchaseOutputs over the item's price, those nodes and the two donation sets (purchase.js).
-//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, the buyer's key as their image),
-//      its acceptance read back output by output (lockAccepted).
-//   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
-//      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
-// No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
-
-
-
-
-
-
-
-/** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
-async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
-  const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
-  const held = [];
-  await Promise.all((seats || []).map(async (s) => {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
-      if (!r.ok) return;
-      const a = await r.json();
-      held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
-    } catch { /* a seat that does not answer adds nothing */ }
-  }));
-  if (!held.length) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
-  const served = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs, toMs: BigInt(toMs), verify });
-  if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
-  return { ok: true, served, seats: held.length };
-}
-
-/**
- * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
- * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
- * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (kanban #377: one of ITEM_DEV_SHARES, default
- * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
- */
-async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = ITEM_DEV_SHARE_DEFAULT }) {
-  const no = (step, why) => ({ ok: false, step, why });
-  const item = itemOf(manifest, itemId);
-  if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
-  if (!itemDevShareOk(devsPct)) return no('share', `a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
-  const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
-  const got = await servedFromSeats({ seats, toMs, fetch, verify });
-  if (!got.ok) return no('served', got.why);
-  let built;
-  try { built = purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct) }); }
-  catch (e) { return no('split', e.message); }
-  let submitted, accepted;
-  try {
-    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(player.pubkey) })))));
-    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
-  } catch (e) { return no('payment', String(e && e.message || e)); }
-  const outs = accepted.donations || [];
-  if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
-    federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
-    outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()) };
-  const signature = player.sign(purchaseId(record));
-  const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
-  // HANDED TO THE FIRST SEAT THAT KEEPS IT: it checks the record and the federation, then hands it on to every other seat
-  let keptBy = null, last = 'no seat to hand it to';
-  for (const s of seats || []) {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
-      if (r.ok) { keptBy = s; break; }
-      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
-    } catch (e) { last = `${s}: ${e.message}`; }
-  }
-  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
-    retry: body };
-  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceFor(item.priceSat, Number(devsPct)),
-    devsPct: Number(devsPct), outputs: outs.length, keptBy };
-}
-
-/** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
-async function ownedItems({ seats, player, gameName = null, fetch }) {
-  for (const s of seats || []) {
-    try {
-      const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
-      if (r.ok) return (await r.json()).items || [];
-    } catch { /* the next seat */ }
-  }
-  return [];
-}
-
-/**
- * THE PLAYER'S ITEMS KEY (kanban #369): the same in every round, from the seed (protocol player-key.js itemsSecretFor) - it buys an
- * item and signs, per entry, that the entry plays with it. `curve` the page's (pointX, signSchnorr). Answers { secret, pubkey, sign }.
- */
-function itemsKeyFor(seed, curve) {
-  const secret = itemsSecretFor(seed);
-  const pubkey = curve.pointX(secret);
-  return { secret, pubkey, sign: (digest) => curve.signSchnorr(digest, secret) };
-}
-
-/** WHAT A GAME'S ITEMS UNLOCK: its manifest's catalogue as { item id: unlock hex } ({} when it sells none). */
-function itemUnlocksOf(manifest) {
-  const out = {};
-  for (const it of (manifest && manifest.items) || []) out[it.id] = toHex(it.unlock);
-  return out;
-}
-
-/**
- * THE SHOP OF A GAME: the items its newest manifest that sells any names, from the lobby's games (games.js fetchGames, one entry per
- * version) of that game name. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
- */
-function shopOf(games, gameName) {
-  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && (g.manifest.items || []).length)
-    .sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version));
-  if (!selling.length) return null;
-  const game = selling[0];
-  return { game, items: game.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
-}
-
-/**
- * THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #369): of the purchases this player owns (ownedItems) of the round's game, the
- * ones `use` names and the game sells, each with its owner's proof for THIS entry - the items key's signature over
- * entryItemDigest(round, the entry's per-round key, purchase). Sorted by item id, one purchase per item. [] on a round before
- * version 10, or with nothing to play with: the entry then names no items at all.
- */
-function entryItemsFor({ round, roundId, playerPubkey, owned, use = null, manifest, key }) {
-  if (!(Number(round && round.protocolVersion) >= ITEMS_VERSION)) return [];
-  const sells = itemUnlocksOf(manifest);
-  const byItem = new Map();
-  for (const o of owned || []) {
-    if (!sells[o.itemId] || (use && !use.includes(o.itemId)) || byItem.has(o.itemId)) continue;
-    byItem.set(o.itemId, o);
-  }
-  return [...byItem.values()].sort((a, b) => (a.itemId < b.itemId ? -1 : 1)).map((o) => {
-    const purchaseId = fromHex(o.id);
-    return { itemId: o.itemId, purchaseId, ownerSig: key.sign(entryItemDigest({ roundId, playerPubkey, purchaseId })) };
-  });
-}
-
-/** THE UNLOCKS A RUN STARTS WITH: an entry's items as its game's catalogue unlocks them, in the entry's order ([] for none). */
-function entryUnlocks(entry, manifest) {
-  const sells = itemUnlocksOf(manifest);
-  return ((entry && entry.items) || []).map((it) => sells[it.itemId]).filter(Boolean);
-}
-
-// ---- arena-client/src/replay-link.js
-// COPY GAME REPLAY (the owner 2026-09-25 18:39): the one https link a player copies from the result screen.
-//
-// The host is a RANDOM committee node of the round, taken from that round's advertisement endpoints (the node's
-// /replay/nodes answers them); ws becomes https. The path is the same on every node - /replay?round=<hex>&entry=<hex>
-// - so the link plays on any node that holds the run, and the page asks the others when the named one does not.
-
-/** An advertisement endpoint as the https origin a browser opens: ws and wss become https, no trailing slash. */
-function httpsOfEndpoint(endpoint) {
-  const s = String(endpoint || '').trim().replace(/\/+$/, '');
-  if (!/^(wss?|https?):\/\//i.test(s)) return null;
-  return s.replace(/^(wss?|https?):/i, 'https:');
-}
-
-/**
- * The replay link: `random()` in [0, 1) picks the host among the endpoints. Refused - null, and why - when there is no
- * endpoint or the ids are not 32-byte hex.
- */
-function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } = {}) {
-  const hosts = [...new Set((endpoints || []).map(httpsOfEndpoint).filter(Boolean))];
-  if (!/^[0-9a-f]{64}$/i.test(String(roundHex || '')) || !/^[0-9a-f]{64}$/i.test(String(entryHex || '')))
-    return { ok: false, why: 'a replay link names a round and an entry' };
-  if (!hosts.length) return { ok: false, why: 'the round names no committee endpoint to replay it from' };
-  const host = hosts[Math.min(hosts.length - 1, Math.floor(random() * hosts.length))];
-  return { ok: true, host, url: `${host}/replay?round=${String(roundHex).toLowerCase()}&entry=${String(entryHex).toLowerCase()}` };
-}
-
 // ---- arena-protocol/src/manifest.js
 // A GAME IS A MANIFEST (§0A.3, kanban #202, the owner 2026-10-06/07). The engine never imports a game's code: what it needs
 // from a game - which cores, which configs, how long a run may be, which of the engine's payout rules and with which
@@ -28794,6 +28506,413 @@ function payoutRuleForRound(contract, manifest = null) {
   if (contract && Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= TOP_SPLIT_VERSION)
     return { ok: false, why: `a round of protocol version ${protocolVersionName(contract.protocolVersion)} may pay by its game's top split, and no manifest of game ${manIs32(contract.gameId) ? toHex(contract.gameId).slice(0, 16) : '(none)'} is held to say` };
   return { ok: true, payoutShares: null };
+}
+
+// ---- arena-protocol/src/purchase.js
+// AN ITEM, BOUGHT (kanban #365 step 2): the buyer's signed record of one purchase, and the check any node makes of it.
+//
+// THE MONEY IS ONE FEDERATION TRANSACTION from the buyer's e-cash whose outputs are pre-expired payout contracts, each spendable only
+// by its payee's key - the same outputs a round's donation pays its recipients in today (page-lock.js lockSubmit, role "donation").
+// Its outputs are exactly the split (items.js itemSplit): the nodes' half equal per served node (each to refundKeyOf(node key)), the
+// developers' half over the network's and the game's donation sets as a round's donation is split (donation.js splitTwoSets).
+//
+// THE RECORD names what was bought and how it was paid - the game (its developer key and name, so the item outlives versions), the
+// item and its price, the buyer's key, the federation and the transaction, every output (index, payee key, msat), and the served list
+// it paid (its window and root, served-nodes.js) - and the buyer signs it (BIP340, injected). `purchaseStands` rebuilds the outputs
+// from the manifest, the two donation sets and the reader's own merged served list and compares them one by one; a record whose
+// outputs pay anybody else, or anything else, does not stand. Whether the federation accepted the transaction is the federation's
+// to say (the seats ask it, as for a stake lock) - this file only says what that transaction must be.
+//
+// OWNERSHIP is a standing record whose transaction the federation accepted: bound to the buyer's key and the game, not transferable
+// (no record names a second owner), the same across the game's versions while the item's id stays in its catalogue.
+
+
+
+
+
+
+
+
+
+const TAG_ITEM_PURCHASE = 'ARENA/v1/ItemPurchase';
+const TYPE_ITEM_PURCHASE = 0x49;          // 'I'
+const PURCHASE_OUTPUTS_MAX = 255;
+/**
+ * A RECORD WITH THE BUYER'S DEVELOPERS' SHARE (kanban #377): written as version PURCHASE_SHARE_VERSION, the share (a u8 percent, one of
+ * ITEM_DEV_SHARES) after the price. A purchase at the full 50 % is written as before (ITEMS_VERSION, no share byte) - the same bytes
+ * and id a seat that has not rolled yet reads - and a version-10 record reads as 50 %.
+ */
+const PURCHASE_SHARE_VERSION = 11;
+/** How far before the purchase its served window may end: the buyer's client merges the seats' lists just before it pays. */
+const PURCHASE_WINDOW_SLACK_MS = 3600000;
+/**
+ * A RECORD ON THE RESERVES' TERMS (§27A.9.1, kanban #397 slice 5): the purchase of an item a game version requiring protocol 11 sells
+ * pays nodes 40 %, the protocol reserves 20 % and the developers the buyer's 40/30/20/10/0 % (itemSplitReserves). Its record is
+ * written as LAYOUT 12 - a record layout, not a protocol version - naming after the price the share (a u8, always written), the
+ * game version's id it was bought under (32 bytes) and the reserve key it paid (33 bytes): the 5-of-7 key of the payment's federation.
+ */
+const PURCHASE_RESERVES_LAYOUT = 12;
+const pIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const pIs33 = (b) => b instanceof Uint8Array && b.length === 33 && (b[0] === 2 || b[0] === 3);
+
+/** The record's bytes, without the signature. Outputs sorted by index. */
+function encodePurchase(p) {
+  if (!pIs32(p.gameDevPubkey) || !pIs32(p.playerPubkey) || !pIs32(p.federationId) || !pIs32(p.txid) || !pIs32(p.servedRoot))
+    throw new Error('a purchase names the game\'s developer, the buyer, the federation, the transaction and the served root by 32 bytes each');
+  if (!Array.isArray(p.outputs) || p.outputs.length < 1 || p.outputs.length > PURCHASE_OUTPUTS_MAX) throw new Error(`a purchase pays 1 to ${PURCHASE_OUTPUTS_MAX} outputs`);
+  for (const o of p.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !pIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
+    throw new Error('an output names its index, its payee\'s 33-byte key and its msat');
+  const reserves = p.reserveKey !== undefined && p.reserveKey !== null;
+  const share = p.devsPct === undefined || p.devsPct === null ? (reserves ? ITEM_DEV_SHARE_RESERVES_DEFAULT : ITEM_DEV_SHARE_DEFAULT) : Number(p.devsPct);
+  if (reserves) {
+    if (!ITEM_DEV_SHARES_RESERVES.includes(share)) throw new Error(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    if (!pIs32(p.gameId) || !pIs33(p.reserveKey)) throw new Error('a purchase on the reserves\' terms names its game version by 32 bytes and the reserve key by 33');
+  } else if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
+  const w = new Writer();
+  w.u8(TYPE_ITEM_PURCHASE); w.u16(reserves ? PURCHASE_RESERVES_LAYOUT : share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
+  w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
+  if (reserves) { w.u8(share); w.bytes32(p.gameId); w.bytes(p.reserveKey, 33); }
+  else if (share !== ITEM_DEV_SHARE_DEFAULT) w.u8(share);
+  w.bytes32(p.playerPubkey); w.bytes32(p.federationId); w.bytes32(p.txid);
+  w.u64(BigInt(p.servedFromMs)); w.u64(BigInt(p.servedToMs)); w.bytes32(p.servedRoot);
+  w.vec(p.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
+  w.u64(BigInt(p.boughtAtMs));
+  return w.finish();
+}
+
+function decodePurchase(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
+  const version = r.u16();
+  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION && version !== PURCHASE_RESERVES_LAYOUT) throw new Error(`an item purchase of version ${version}`);
+  const head = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64() };
+  const devsPct = version === ITEMS_VERSION ? ITEM_DEV_SHARE_DEFAULT : r.u8();
+  if (version === PURCHASE_SHARE_VERSION && (devsPct === ITEM_DEV_SHARE_DEFAULT || !itemDevShareOk(devsPct)))
+    throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
+  const terms = {};
+  if (version === PURCHASE_RESERVES_LAYOUT) {
+    if (!ITEM_DEV_SHARES_RESERVES.includes(devsPct)) throw new Error(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    terms.gameId = r.bytes32(); terms.reserveKey = r.bytes(33);
+    if (!pIs33(terms.reserveKey)) throw new Error('a reserve key is a 33-byte compressed key');
+  }
+  const p = { ...head, devsPct, ...terms, playerPubkey: r.bytes32(), federationId: r.bytes32(),
+    txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
+    outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
+  r.end();
+  return p;
+}
+
+/** What the buyer signs, and the purchase's id. */
+const purchaseId = (p) => taggedHash(TAG_ITEM_PURCHASE, encodePurchase(p));
+
+/**
+ * THE OUTPUTS A PURCHASE MUST PAY: [{ pk (33 bytes), msat }] sorted by key, one per payee (a key paid as a node and as a developer
+ * is paid once, the sum), none of 0 msat. `servedKeys` the served nodes' keys in hex; `networkSet` / `gameSet` the two donation
+ * sets' recipients (they must pay keys).
+ */
+function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_DEFAULT }) {
+  const split = itemSplit({ priceMsat: BigInt(priceSat) * 1000n, nodes: servedKeys, devsPct });
+  const devs = splitTwoSets({ donationMsat: split.devsMsat, networkSet, gameSet });
+  if (!devs.owed) throw new Error(`the developers' half cannot be paid: ${devs.why}`);
+  const by = new Map();
+  const add = (pk, msat) => { if (msat <= 0n) return; const k = toHex(pk); by.set(k, { pk, msat: (by.get(k) ? by.get(k).msat : 0n) + msat }); };
+  for (const n of split.nodes) add(refundKeyOf(fromHex(n.key)), n.msat);
+  for (const s of devs.shares) {
+    if (!(s.recipientPk instanceof Uint8Array)) throw new Error('an item is paid in the federation: both donation sets must pay keys, not LNURLs');
+    add(s.recipientPk, s.amountMsat);
+  }
+  return { outputs: [...by.values()].sort((a, b) => (toHex(a.pk) < toHex(b.pk) ? -1 : 1)), split, devs };
+}
+
+/**
+ * THE OUTPUTS A PURCHASE ON THE RESERVES' TERMS MUST PAY (§27A.9.1, kanban #397 slice 5): nodes 40 % of the list price, equal per
+ * served node (each floored; what the floors leave is not paid); the protocol reserves exactly 20 %, ONE output to `reserveKey`;
+ * the developers the buyer's share over the two donation sets as a round's donation is split. [{ pk, msat }] sorted by key, with
+ * `reserve` { pk, msat } named apart. A reserve key that is also another payee's key is refused: the reserves' output stands alone.
+ */
+function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, reserveKey }) {
+  if (!pIs33(reserveKey)) throw new Error('no reserve key to pay the reserves\' 20 % to');
+  const split = itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) });
+  const keys = [...new Set((servedKeys || []).map((k) => String(k).toLowerCase()))].sort();
+  if (!keys.length) throw new Error('no node served a round in the window: an item\'s 40 % for the nodes has nobody to go to');
+  if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
+  const perNodeMsat = split.nodesMsat / BigInt(keys.length);
+  const devs = splitTwoSets({ donationMsat: split.protocolDevsMsat + split.gameDevsMsat, networkSet, gameSet });
+  if (!devs.owed) throw new Error(`the developers' share cannot be paid: ${devs.why}`);
+  const by = new Map();
+  const add = (pk, msat) => { if (msat <= 0n) return; const k = toHex(pk); by.set(k, { pk, msat: (by.get(k) ? by.get(k).msat : 0n) + msat }); };
+  for (const k of keys) add(refundKeyOf(fromHex(k)), perNodeMsat);
+  for (const s of devs.shares) {
+    if (!(s.recipientPk instanceof Uint8Array)) throw new Error('an item is paid in the federation: both donation sets must pay keys, not LNURLs');
+    add(s.recipientPk, s.amountMsat);
+  }
+  if (by.has(toHex(reserveKey))) throw new Error('the reserve key is also another payee\'s key: the reserves\' output must stand alone');
+  add(reserveKey, split.reservesMsat);
+  return { outputs: [...by.values()].sort((a, b) => (toHex(a.pk) < toHex(b.pk) ? -1 : 1)), split: { ...split, perNodeMsat, nodes: keys },
+    devs, reserve: { pk: reserveKey, msat: split.reservesMsat } };
+}
+
+/**
+ * DOES A PURCHASE STAND? `p` the record with `signature`; `manifest` the game's (any version naming the item); `networkSet` /
+ * `gameSet` the donation sets; `served` the reader's own merged list for the record's window ({ fromMs, toMs, nodes, root });
+ * `verify(sig, digest, key)` BIP340. Answers { ok, id } or { ok: false, why }.
+ */
+function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey = null }) {
+  const no = (why) => ({ ok: false, why });
+  let id; try { id = purchaseId(p); } catch (e) { return no(`that purchase does not encode: ${e.message}`); }
+  if (!manifest || toHex(manifest.gameDevPubkey) !== toHex(p.gameDevPubkey) || manifest.gameName !== p.gameName)
+    return no(`the purchase is of game "${p.gameName}" by ${toHex(p.gameDevPubkey).slice(0, 16)}, not of the manifest given`);
+  const item = itemOf(manifest, p.itemId);
+  if (!item) return no(`"${p.gameName}" sells no item "${p.itemId}"`);
+  if (BigInt(p.priceSat) !== item.priceSat) return no(`item "${p.itemId}" costs ${item.priceSat} sat, and the purchase paid ${p.priceSat}`);
+  if (BigInt(p.servedToMs) - BigInt(p.servedFromMs) !== BigInt(SERVED_WINDOW_MS)) return no('the served window is 24 hours');
+  if (BigInt(p.servedToMs) > BigInt(p.boughtAtMs) || BigInt(p.boughtAtMs) - BigInt(p.servedToMs) > BigInt(PURCHASE_WINDOW_SLACK_MS))
+    return no('the served window ends at most an hour before the purchase, and not after it');
+  if (!served || BigInt(served.fromMs) !== BigInt(p.servedFromMs) || BigInt(served.toMs) !== BigInt(p.servedToMs) || served.root !== toHex(p.servedRoot))
+    return no(`the purchase paid the served list ${toHex(p.servedRoot).slice(0, 16)}, and the one read here is ${served && served.root ? served.root.slice(0, 16) : 'none'}`);
+  // WHICH TERMS (kanban #397 slice 5): a game version requiring protocol 11 sells on the reserves' terms only, and a record on
+  // them names that very version and the reserve key of its federation that the reader holds; an older version, the old terms
+  const reservesTerms = Number(manifest.requiredProtocolVersion) >= RESERVES_VERSION;
+  const onReserves = p.reserveKey !== undefined && p.reserveKey !== null;
+  if (reservesTerms !== onReserves)
+    return no(reservesTerms ? `version ${manifest.version} of "${p.gameName}" requires protocol ${manifest.requiredProtocolVersion}: its items pay the protocol reserves, and this record does not`
+      : `this record pays the protocol reserves, and version ${manifest.version} of "${p.gameName}" does not sell on those terms`);
+  let want;
+  if (onReserves) {
+    let mid = null; try { mid = toHex(gameIdOf(manifest)); } catch { mid = null; }
+    if (!pIs32(p.gameId) || mid !== toHex(p.gameId)) return no('the record names another version of the game than the manifest given');
+    if (!pIs33(reserveKey)) return no(`no reserve key is known here for federation ${toHex(p.federationId).slice(0, 16)}`);
+    if (toHex(reserveKey) !== toHex(p.reserveKey)) return no(`the record paid reserve key ${toHex(p.reserveKey).slice(0, 16)}, and federation ${toHex(p.federationId).slice(0, 16)}'s is ${toHex(reserveKey).slice(0, 16)}`);
+    if (!ITEM_DEV_SHARES_RESERVES.includes(Number(p.devsPct))) return no(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    try { want = purchaseOutputsReserves({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(p.devsPct), reserveKey }).outputs; }
+    catch (e) { return no(e.message); }
+  } else {
+    // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is
+    const devsPct = p.devsPct === undefined || p.devsPct === null ? ITEM_DEV_SHARE_DEFAULT : Number(p.devsPct);
+    if (!itemDevShareOk(devsPct)) return no(`a developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %, and the purchase names ${p.devsPct}`);
+    try { want = purchaseOutputs({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct }).outputs; }
+    catch (e) { return no(e.message); }
+  }
+  const got = [...p.outputs].map((o) => ({ pk: toHex(o.pk), msat: o.msat })).sort((a, b) => (a.pk < b.pk ? -1 : 1));
+  const line = (o) => `${typeof o.pk === 'string' ? o.pk : toHex(o.pk)}:${o.msat}`;
+  if (got.length !== want.length || got.some((o, i) => line(o) !== line(want[i])))
+    return no(`its outputs are not the split: it pays ${got.length} output(s), the split ${want.length}`);
+  let good = false;
+  try { good = verify(p.signature, id, p.playerPubkey) === true; } catch { good = false; }
+  if (!good) return no('the buyer\'s signature does not verify');
+  return { ok: true, id };
+}
+
+// ---- arena-client/src/item-buy.js
+// AN IN-GAME ITEM, BOUGHT FROM THE PAGE (kanban #365 step 5; #369's larger truck the first): the player's wallet pays the item's split
+// in one federation transaction, the player signs the record, and the seats keep it as the player's for good.
+//
+//   1. WHO SERVED: every seat's signed FINALs of the 24 h before now (GET /served?finals=1), merged by round and each FINAL checked
+//      here (served-nodes.js) - the same list every seat rebuilds when it checks the purchase.
+//   2. THE SPLIT: purchaseOutputs over the item's price, those nodes and the two donation sets (purchase.js).
+//   3. THE PAYMENT: the lock client's paySubmit (one transaction of pre-expired payout contracts, the buyer's key as their image),
+//      its acceptance read back output by output (lockAccepted).
+//   4. THE RECORD: the game, the item, the price, the buyer, the federation, the transaction, every output and the served list,
+//      signed with the player's key, handed to a seat (POST /item-purchase), which hands it on to every other.
+// No float touches an amount; every step that fails says which, and nothing is paid before the list and the split stand.
+
+
+
+
+
+
+
+
+
+
+/**
+ * THE TERMS A GAME VERSION SELLS ITS ITEMS ON (kanban #397 slice 5): a version requiring protocol 11 the reserves' - nodes 40 %, the
+ * protocol reserves 20 %, the developers 40/30/20/10/0 % added on top; an older one #377's - nodes 50 %, the developers 50 .. 0 %.
+ */
+function itemTermsOf(manifest) {
+  return Number(manifest && manifest.requiredProtocolVersion) >= RESERVES_VERSION
+    ? { reserves: true, shares: [...ITEM_DEV_SHARES_RESERVES], defaultShare: ITEM_DEV_SHARE_RESERVES_DEFAULT, nodesPct: 40, reservesPct: 20 }
+    : { reserves: false, shares: [...ITEM_DEV_SHARES], defaultShare: ITEM_DEV_SHARE_DEFAULT, nodesPct: 50, reservesPct: 0 };
+}
+/** The buyer's kept share on these terms: as kept when they offer it, else their highest (a kept 50 % is 40 % on the reserves'). */
+function itemShareOn(manifest, kept) {
+  const t = itemTermsOf(manifest); const v = Number(kept);
+  if (t.shares.includes(v)) return v;
+  return Number.isFinite(v) && v > Math.max(...t.shares) ? Math.max(...t.shares) : t.defaultShare;
+}
+/** What the buyer pays for an item of `priceSat` at `devsPct` on the version's terms, in sat (a BigInt). */
+function itemPriceOn(manifest, priceSat, devsPct) {
+  const t = itemTermsOf(manifest);
+  return t.reserves ? itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) }).priceMsat / 1000n : itemPriceFor(BigInt(priceSat), Number(devsPct));
+}
+
+/** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
+async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000 }) {
+  const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
+  const held = [];
+  await Promise.all((seats || []).map(async (s) => {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!r.ok) return;
+      const a = await r.json();
+      held.push((a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) })));
+    } catch { /* a seat that does not answer adds nothing */ }
+  }));
+  if (!held.length) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  const served = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs, toMs: BigInt(toMs), verify });
+  if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
+  return { ok: true, served, seats: held.length };
+}
+
+/**
+ * BUY ONE ITEM. `manifest` the game's (it sells `itemId`); `networkSet` / `gameSet` the donation sets (paying keys); `wallet` the
+ * player's lock client in the federation `federationId` (hex); `player` { pubkey (32 bytes), sign(digest) -> 64-byte BIP340 };
+ * `seats` the game's seats; `verify` BIP340; `devsPct` the developers' share the buyer chose (kanban #377: one of ITEM_DEV_SHARES, default
+ * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
+ */
+async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5 }) {
+  const no = (step, why) => ({ ok: false, step, why });
+  const item = itemOf(manifest, itemId);
+  if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
+  const terms = itemTermsOf(manifest);
+  if (devsPct === null || devsPct === undefined) devsPct = terms.defaultShare;
+  if (!terms.shares.includes(Number(devsPct))) return no('share', `a developers' share is one of ${terms.shares.join(', ')} %`);
+  // THE RESERVES' KEY FIRST (kanban #397 slice 5): on the reserves' terms nothing is paid before five of the game's nodes name the
+  // same reserve key for the federation the wallet pays from
+  let reserveKey = null;
+  if (terms.reserves) {
+    const rk = await fetchReserveKey({ federationId: fromHex(federationId), nodes: seats, needed: reserveNeeded, fetcher: fetch });
+    if (!rk.ok) return no('reserves', rk.why);
+    reserveKey = rk.key;
+  }
+  const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
+  const got = await servedFromSeats({ seats, toMs, fetch, verify });
+  if (!got.ok) return no('served', got.why);
+  let built;
+  try {
+    built = terms.reserves
+      ? purchaseOutputsReserves({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct), reserveKey })
+      : purchaseOutputs({ priceSat: item.priceSat, servedKeys: got.served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(devsPct) });
+  } catch (e) { return no('split', e.message); }
+  let submitted, accepted;
+  try {
+    submitted = JSON.parse(await wallet.paySubmit(JSON.stringify(built.outputs.map((o) => ({ pk: toHex(o.pk), msat: String(o.msat), image: toHex(player.pubkey) })))));
+    accepted = JSON.parse(await wallet.lockAccepted(JSON.stringify(submitted)));
+  } catch (e) { return no('payment', String(e && e.message || e)); }
+  const outs = accepted.donations || [];
+  if (outs.length !== built.outputs.length || !outs.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
+  const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: Number(devsPct), playerPubkey: player.pubkey,
+    federationId: fromHex(federationId), txid: fromHex(submitted.txid), servedFromMs: got.served.fromMs, servedToMs: got.served.toMs, servedRoot: fromHex(got.served.root),
+    outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(nowMs()),
+    ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey } : {}) };
+  const signature = player.sign(purchaseId(record));
+  const body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(signature) });
+  // HANDED TO THE FIRST SEAT THAT KEEPS IT: it checks the record and the federation, then hands it on to every other seat
+  let keptBy = null, last = 'no seat to hand it to';
+  for (const s of seats || []) {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/item-purchase`, { method: 'POST', body, signal: AbortSignal.timeout(60000) });
+      if (r.ok) { keptBy = s; break; }
+      last = `${s}: ${r.status} ${(await r.text()).trim().slice(0, 200)}`;
+    } catch (e) { last = `${s}: ${e.message}`; }
+  }
+  if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, purchaseId: toHex(purchaseId(record)), txid: submitted.txid,
+    retry: body };
+  return { ok: true, purchaseId: toHex(purchaseId(record)), txid: submitted.txid, priceSat: item.priceSat, paidSat: itemPriceOn(manifest, item.priceSat, devsPct),
+    devsPct: Number(devsPct), outputs: outs.length, keptBy, ...(terms.reserves ? { reserveKey: toHex(reserveKey), reserveMsat: built.reserve.msat } : {}) };
+}
+
+/** THE ITEMS A PLAYER OWNS, from the first seat that answers (GET /items): [{ id, gameName, itemId, ... }]. */
+async function ownedItems({ seats, player, gameName = null, fetch }) {
+  for (const s of seats || []) {
+    try {
+      const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
+      if (r.ok) return (await r.json()).items || [];
+    } catch { /* the next seat */ }
+  }
+  return [];
+}
+
+/**
+ * THE PLAYER'S ITEMS KEY (kanban #369): the same in every round, from the seed (protocol player-key.js itemsSecretFor) - it buys an
+ * item and signs, per entry, that the entry plays with it. `curve` the page's (pointX, signSchnorr). Answers { secret, pubkey, sign }.
+ */
+function itemsKeyFor(seed, curve) {
+  const secret = itemsSecretFor(seed);
+  const pubkey = curve.pointX(secret);
+  return { secret, pubkey, sign: (digest) => curve.signSchnorr(digest, secret) };
+}
+
+/** WHAT A GAME'S ITEMS UNLOCK: its manifest's catalogue as { item id: unlock hex } ({} when it sells none). */
+function itemUnlocksOf(manifest) {
+  const out = {};
+  for (const it of (manifest && manifest.items) || []) out[it.id] = toHex(it.unlock);
+  return out;
+}
+
+/**
+ * THE SHOP OF A GAME: the items its newest manifest that sells any names, from the lobby's games (games.js fetchGames, one entry per
+ * version) of that game name. Answers { game, items: [{ id, name, priceSat }] } or null when no version sells anything.
+ */
+function shopOf(games, gameName) {
+  const selling = (games || []).filter((g) => g && g.manifest && g.manifest.gameName === gameName && (g.manifest.items || []).length)
+    .sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version));
+  if (!selling.length) return null;
+  const game = selling[0];
+  return { game, items: game.manifest.items.map((it) => ({ id: it.id, name: it.name, priceSat: it.priceSat })) };
+}
+
+/**
+ * THE ITEMS AN ENTRY PLAYS WITH (protocol 10, kanban #369): of the purchases this player owns (ownedItems) of the round's game, the
+ * ones `use` names and the game sells, each with its owner's proof for THIS entry - the items key's signature over
+ * entryItemDigest(round, the entry's per-round key, purchase). Sorted by item id, one purchase per item. [] on a round before
+ * version 10, or with nothing to play with: the entry then names no items at all.
+ */
+function entryItemsFor({ round, roundId, playerPubkey, owned, use = null, manifest, key }) {
+  if (!(Number(round && round.protocolVersion) >= ITEMS_VERSION)) return [];
+  const sells = itemUnlocksOf(manifest);
+  const byItem = new Map();
+  for (const o of owned || []) {
+    if (!sells[o.itemId] || (use && !use.includes(o.itemId)) || byItem.has(o.itemId)) continue;
+    byItem.set(o.itemId, o);
+  }
+  return [...byItem.values()].sort((a, b) => (a.itemId < b.itemId ? -1 : 1)).map((o) => {
+    const purchaseId = fromHex(o.id);
+    return { itemId: o.itemId, purchaseId, ownerSig: key.sign(entryItemDigest({ roundId, playerPubkey, purchaseId })) };
+  });
+}
+
+/** THE UNLOCKS A RUN STARTS WITH: an entry's items as its game's catalogue unlocks them, in the entry's order ([] for none). */
+function entryUnlocks(entry, manifest) {
+  const sells = itemUnlocksOf(manifest);
+  return ((entry && entry.items) || []).map((it) => sells[it.itemId]).filter(Boolean);
+}
+
+// ---- arena-client/src/replay-link.js
+// COPY GAME REPLAY (the owner 2026-09-25 18:39): the one https link a player copies from the result screen.
+//
+// The host is a RANDOM committee node of the round, taken from that round's advertisement endpoints (the node's
+// /replay/nodes answers them); ws becomes https. The path is the same on every node - /replay?round=<hex>&entry=<hex>
+// - so the link plays on any node that holds the run, and the page asks the others when the named one does not.
+
+/** An advertisement endpoint as the https origin a browser opens: ws and wss become https, no trailing slash. */
+function httpsOfEndpoint(endpoint) {
+  const s = String(endpoint || '').trim().replace(/\/+$/, '');
+  if (!/^(wss?|https?):\/\//i.test(s)) return null;
+  return s.replace(/^(wss?|https?):/i, 'https:');
+}
+
+/**
+ * The replay link: `random()` in [0, 1) picks the host among the endpoints. Refused - null, and why - when there is no
+ * endpoint or the ids are not 32-byte hex.
+ */
+function replayLinkFor({ endpoints, roundHex, entryHex, random = Math.random } = {}) {
+  const hosts = [...new Set((endpoints || []).map(httpsOfEndpoint).filter(Boolean))];
+  if (!/^[0-9a-f]{64}$/i.test(String(roundHex || '')) || !/^[0-9a-f]{64}$/i.test(String(entryHex || '')))
+    return { ok: false, why: 'a replay link names a round and an entry' };
+  if (!hosts.length) return { ok: false, why: 'the round names no committee endpoint to replay it from' };
+  const host = hosts[Math.min(hosts.length - 1, Math.floor(random() * hosts.length))];
+  return { ok: true, host, url: `${host}/replay?round=${String(roundHex).toLowerCase()}&entry=${String(entryHex).toLowerCase()}` };
 }
 
 // ---- arena-protocol/src/scalar.js
@@ -31791,7 +31910,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          yourBadgesLine: yourBadgesLine, badgeGlyph: badgeGlyph, badgeImagePath: badgeImagePath, badgesPath: badgesPath,
          sendZap: sendZap, zapTarget: zapTarget, zapsReceived: zapsReceived, playerLightningAddress: playerLightningAddress,
          zapProfileEvent: zapProfileEvent, zapSatLine: zapSatLine, ZAP_CHOICES_SAT: ZAP_CHOICES_SAT, identitySignEvent: identitySignEvent,
-         shopOf: shopOf, buyItem: buyItem, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
+         shopOf: shopOf, buyItem: buyItem, itemTermsOf: itemTermsOf, itemShareOn: itemShareOn, itemPriceOn: itemPriceOn, itemPriceFor: itemPriceFor, ITEM_DEV_SHARES: ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFAULT: ITEM_DEV_SHARE_DEFAULT, ownedItems: ownedItems, itemsKeyFor: itemsKeyFor, entryItemsFor: entryItemsFor,
          entryUnlocks: entryUnlocks, itemUnlocksOf: itemUnlocksOf,
          entryBreakdown: entryBreakdown, pendingWindowLine: pendingWindowLine, savedLockExpiration: savedLockExpiration,
          toHex: toHex, fromHex: fromHex };
