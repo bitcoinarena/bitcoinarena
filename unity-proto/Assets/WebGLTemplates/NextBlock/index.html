@@ -6613,7 +6613,8 @@
       const list = document.createElement('ol');
       for (const p of r.paidIn.slice(0, 10)) {
         const li = document.createElement('li');
-        li.textContent = new Date(p.at).toLocaleString() + ' \u00b7 ' + (p.game || ('round ' + String(p.roundId || '').slice(0, 8))) + ' \u00b7 ' + sat(p.amountMsat);
+        // an item purchase names its item (kanban #397 slice 5: "nextblock · large-truck"), a round entry its game
+        li.textContent = new Date(p.at).toLocaleString() + ' \u00b7 ' + (p.item ? 'item ' + p.item : (p.game || ('round ' + String(p.roundId || '').slice(0, 8)))) + ' \u00b7 ' + sat(p.amountMsat);
         list.append(li);
       }
       if (!r.paidIn.length) { const li = document.createElement('li'); li.textContent = 'No payments in yet: they start with the first paid round of protocol version 11.'; list.append(li); }
