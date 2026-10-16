@@ -51,9 +51,9 @@ public class AddonsPanelTests
     public void TheItemsButton_PriceThenPayingThenOwned()
     {
         var it = new AddonItem { id = "large-truck", name = "Large truck", priceSat = 500 };
-        Assert.AreEqual("BUY  500 sat", AddonsPanel.ButtonLabel(it, ""));
+        Assert.AreEqual("BUY · 500 sat", AddonsPanel.ButtonLabel(it, ""));
         Assert.AreEqual("PAYING ...", AddonsPanel.ButtonLabel(it, "large-truck"));
-        Assert.AreEqual("BUY  500 sat", AddonsPanel.ButtonLabel(it, "other-item"));
+        Assert.AreEqual("BUY · 500 sat", AddonsPanel.ButtonLabel(it, "other-item"));
         it.owned = true;
         Assert.AreEqual("OWNED", AddonsPanel.ButtonLabel(it, ""));
     }

@@ -25888,6 +25888,7 @@ function stakeWithinCeiling({ entries, stakeSats, maxPlayers = MAX_PLAYERS_PER_R
 
 
 
+
 /** How far a signer node's signed time may be from this page's clock and still count. */
 const LOBBY_SKEW_MS = 60000;
 
@@ -26094,6 +26095,10 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       // THE ROUND'S GAME, FROM ITS CONTRACT (checked against the round id above, so no node's word): one row per game and
       // kind; a market (§0A.7a) - pinned, or a round naming no core, which only a market does - is joined by its pick sheet
       game: contract.gameId instanceof Uint8Array ? toHex(contract.gameId) : '',
+      // AND ITS NAME AND VERSION RANK (kanban #376, the owner 2026-10-16: "games show up as duplicates it's always the same round twice" -
+      // nextblock v1's duty day and v3's grid start a round at the same instants, and the lobby kept one row per game ID)
+      gameName: contract.gameId instanceof Uint8Array && KNOWN_GOOD_GAMES[toHex(contract.gameId)] ? KNOWN_GOOD_GAMES[toHex(contract.gameId)].name : '',
+      gameRank: contract.gameId instanceof Uint8Array && KNOWN_GOOD_GAMES[toHex(contract.gameId)] ? Number(KNOWN_GOOD_GAMES[toHex(contract.gameId)].requiredProtocolVersion || 1) : 0,
       market: contract.gameId instanceof Uint8Array ? marketOf(contract.gameId) : null,
       // A ROUND OF A MARKET TEMPLATE ASKS ITS OWN QUESTION (kanban #362 feature 5): from the contract checked above, never a node's word
       event: contract.event || null,
@@ -26189,8 +26194,9 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
   // two series of that one stake - 8172fffd and the next day's - nothing but the soonest round decides: measured by the rule
   // before this, k=2's first round, joinable 2 h before its start, would have hidden 8172fffd's last two hours of rounds.
   const winningStake = new Map();
-  // ONE ROW PER GAME AND KIND (kanban #206 slice 2): a market's paying row never takes nextblock's
-  const kindOf = (r) => `${r.game || ''}:${r.free ? 'free' : 'paying'}`;
+  // ONE ROW PER GAME AND KIND (kanban #206 slice 2): a market's paying row never takes nextblock's - BY THE GAME'S NAME, so its
+  // versions share the row (kanban #376: v1's and v3's rounds of one instant were two rows, "always the same round twice")
+  const kindOf = (r) => `${r.gameName || r.game || ''}:${r.free ? 'free' : 'paying'}`;
   for (const r of rows) {
     if (!series(r) || !r.joinable) continue;
     const kind = kindOf(r);
@@ -26202,7 +26208,7 @@ function lobbyOnePerKind(rows, nowMs = Date.now(), { paidSeriesOnly = false, lea
     : x.joinable !== y.joinable ? x.joinable
     : series(x) !== series(y) ? series(x)
       : series(x) && leads(x) !== leads(y) ? leads(x)
-        : series(x) ? x.entryCloseMs < y.entryCloseMs
+        : series(x) ? (x.entryCloseMs !== y.entryCloseMs ? x.entryCloseMs < y.entryCloseMs : Number(x.gameRank || 0) > Number(y.gameRank || 0))
           : x.phase !== y.phase ? x.phase === 'open' : x.entryCloseMs > y.entryCloseMs);
   const kept = new Map();
   for (const r of rows) {

@@ -76,8 +76,8 @@ public class AddonsPanel : MonoBehaviour
     int _seenSeq = -1;
     AddonBought _banner;
     float _bannerAt = -99f;
-    GUIStyle _title, _body, _small, _btn;
-    Texture2D _flat;
+    GUIStyle _title, _body, _small, _btn, _buy;
+    Texture2D _flat, _orange, _orangeHi, _orangeBusy;
 
     void Awake() { Instance = this; }
     void OnDestroy() { if (Instance == this) Instance = null; }
@@ -108,7 +108,7 @@ public class AddonsPanel : MonoBehaviour
 
     /// <summary>An item's button: OWNED, PAYING while it is bought, else its price.</summary>
     public static string ButtonLabel(AddonItem it, string busy) =>
-        it.owned ? "OWNED" : !string.IsNullOrEmpty(busy) && busy == it.id ? "PAYING ..." : $"BUY  {it.priceSat} sat";
+        it.owned ? "OWNED" : !string.IsNullOrEmpty(busy) && busy == it.id ? "PAYING ..." : $"BUY · {it.priceSat} sat";
 
     /// <summary>Opens the panel - the cargo screen's BUY ADD-ONS, or the page's countdown box through SendMessage.</summary>
     public void OpenAddons()
@@ -151,7 +151,33 @@ public class AddonsPanel : MonoBehaviour
         _small = new GUIStyle(_body);
         _small.normal.textColor = new Color(1f, 1f, 1f, 0.62f);
         _btn = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold, wordWrap = false };
+        // THE BUY BUTTON IS SOLID ORANGE WITH BLACK WORDS (kanban #376, the owner's phone 06:24Z: "The buy button isn't readable" - a
+        // grey skin button tinted orange by GUI.color, its words dark on dark): its own background, never a tint
+        _orange = Solid(new Color(0.97f, 0.58f, 0.10f)); _orangeHi = Solid(new Color(1f, 0.70f, 0.28f)); _orangeBusy = Solid(new Color(0.55f, 0.40f, 0.20f));
+        _buy = new GUIStyle(GUI.skin.button) { fontStyle = FontStyle.Bold, wordWrap = false, alignment = TextAnchor.MiddleCenter };
+        _buy.normal.background = _orange; _buy.hover.background = _orangeHi; _buy.active.background = _orangeHi; _buy.focused.background = _orange;
+        _buy.normal.textColor = _buy.hover.textColor = _buy.active.textColor = _buy.focused.textColor = new Color(0.06f, 0.06f, 0.06f);
+        _buy.border = new RectOffset(0, 0, 0, 0);
     }
+
+    static Texture2D Solid(Color c) { var t = new Texture2D(1, 1); t.SetPixel(0, 0, c); t.Apply(); return t; }
+
+    /// <summary>
+    /// THE ITEM'S PICTURE (kanban #376, the owner: "no icon"): the shop sheet's truck, drawn - an orange bed, a grey cab, two wheels - in
+    /// a dark tile, the page's ITEM_PICTURE in rectangles.
+    /// </summary>
+    void Icon(Rect r, string itemId)
+    {
+        PanelSkin.Gradient(r, new Color(0.06f, 0.07f, 0.09f, 1f), new Color(0.03f, 0.04f, 0.05f, 1f));
+        PanelSkin.Border(r, new Color(1f, 1f, 1f, 0.10f));
+        float u = r.width / 40f;
+        Box(new Rect(r.x + 3f * u, r.y + 14f * u, 24f * u, 12f * u), new Color(0.97f, 0.58f, 0.10f));   // the bed
+        Box(new Rect(r.x + 27f * u, r.y + 17f * u, 9f * u, 9f * u), new Color(0.79f, 0.82f, 0.85f));   // the cab
+        Box(new Rect(r.x + 7f * u, r.y + 26f * u, 6f * u, 6f * u), new Color(0.13f, 0.13f, 0.13f));    // the wheels
+        Box(new Rect(r.x + 28f * u, r.y + 26f * u, 6f * u, 6f * u), new Color(0.13f, 0.13f, 0.13f));
+    }
+
+    void Box(Rect r, Color c) { GUI.color = c; GUI.DrawTexture(r, _flat); GUI.color = Color.white; }
 
     void OnGUI()
     {
@@ -199,18 +225,22 @@ public class AddonsPanel : MonoBehaviour
         if (_s == null || !_s.shop) GUI.Label(new Rect(p.x + pad, y, inner, 30f * scale), "This game sells nothing.", _body);
         else
         {
-            float rowH = 74f * scale;
             foreach (var it in _s.items)
             {
+                // THE WORDS FIT (kanban #376, the owner: "text doesn't fit" - "· 500" then "sat" cut at the row's floor): the icon, the words
+                // in the room left between it and the button, and the row as tall as the words need; the price is on the button
+                float icon = 52f * scale, bw = Mathf.Min(140f * scale, inner * 0.36f), bh = 40f * scale, gap = 12f * scale;
+                float textX = icon + 2f * gap, textW = inner - textX - bw - 2f * gap;
+                var name = new GUIStyle(_body) { fontStyle = FontStyle.Bold, wordWrap = true };
+                float nameH = name.CalcHeight(new GUIContent(it.name), textW), whatH = string.IsNullOrEmpty(it.what) ? 0f : _small.CalcHeight(new GUIContent(it.what), textW);
+                float rowH = Mathf.Max(icon + 2f * gap, nameH + whatH + 3f * gap, (it.owned ? bh + 30f * scale : bh) + 2f * gap);
                 var row = new Rect(p.x + pad, y, inner, rowH);
                 PanelSkin.Gradient(row, new Color(0.13f, 0.15f, 0.19f, 0.95f), new Color(0.09f, 0.10f, 0.13f, 0.95f));
                 PanelSkin.Border(row, new Color(1f, 1f, 1f, 0.12f));
-                float bw = 150f * scale, bh = 36f * scale;
-                var name = new GUIStyle(_body) { fontStyle = FontStyle.Bold };
-                GUI.Label(new Rect(row.x + 12f * scale, row.y + 8f * scale, row.width - bw - 30f * scale, 24f * scale), it.name, name);
-                GUI.Label(new Rect(row.x + 12f * scale, row.y + 32f * scale, row.width - bw - 30f * scale, rowH - 34f * scale),
-                          (string.IsNullOrEmpty(it.what) ? "" : it.what + " · ") + it.priceSat + " sat", _small);
-                var b = new Rect(row.xMax - bw - 12f * scale, row.y + (it.owned ? 6f * scale : (rowH - bh) * 0.5f), bw, bh);
+                Icon(new Rect(row.x + gap, row.y + (rowH - icon) * 0.5f, icon, icon), it.id);
+                GUI.Label(new Rect(row.x + textX, row.y + gap, textW, nameH), it.name, name);
+                if (whatH > 0f) GUI.Label(new Rect(row.x + textX, row.y + gap + nameH + 2f * scale, textW, whatH), it.what, _small);
+                var b = new Rect(row.xMax - bw - gap, row.y + (it.owned ? gap : (rowH - bh) * 0.5f), bw, bh);
                 if (it.owned)
                 {
                     var own = new GUIStyle(_body) { fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
@@ -221,13 +251,11 @@ public class AddonsPanel : MonoBehaviour
                 }
                 else
                 {
-                    GUI.enabled = string.IsNullOrEmpty(_s.busy);
-                    var buy = new GUIStyle(_btn);
-                    buy.normal.textColor = buy.hover.textColor = new Color(0.07f, 0.07f, 0.07f);
-                    GUI.color = new Color(0.97f, 0.58f, 0.10f);
-                    if (GUI.Button(b, ButtonLabel(it, _s.busy), buy)) { BlwpAddonsBuy(it.id); _polledAt = -99f; }
-                    GUI.color = Color.white;
-                    GUI.enabled = true;
+                    bool free = string.IsNullOrEmpty(_s.busy);
+                    var buy = new GUIStyle(_buy) { fontSize = _btn.fontSize };
+                    DriveHud.FitLine(buy, ButtonLabel(it, _s.busy), b.width - 12f * scale, 10);
+                    if (!free) { buy.normal.background = buy.hover.background = buy.active.background = _orangeBusy; }
+                    if (GUI.Button(b, ButtonLabel(it, _s.busy), buy) && free) { BlwpAddonsBuy(it.id); _polledAt = -99f; }
                 }
                 y += rowH + 10f * scale;
             }
