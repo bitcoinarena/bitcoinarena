@@ -25,7 +25,7 @@ import {
   TYPE_CLAIM_KEY_ATTESTATION, TYPE_DKG_AGREEMENT, TYPE_TRANSCRIPT_POSTING, TYPE_RERUN_RESULT, TYPE_FINAL_SIGNATURE,
   TYPE_GAME_MANIFEST, TYPE_OUTCOME_ATTESTATION, TYPE_PRICE_SAMPLE, TYPE_PRICE_TAPE, TYPE_FEDERATION_RECORD, TYPE_PRESENT, TYPE_SEATING,
   TYPE_CONFIG_PROPOSAL, TYPE_ABSENCE_ATTESTATION, TYPE_DEPARTURE_NOTICE, TYPE_SPENT_SET, TYPE_ROUND_RESULT, TYPE_RESULT_FRONT, TYPE_HALT_OBSERVATION,
-  TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL,
+  TYPE_VALUE_ATTESTATION, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TYPE_DONATION_SET_KEYS_VESTING,
 } from './constants.js';
 
 /**
@@ -99,6 +99,8 @@ export const FRAMES = new Map([
   // of the set accepted, it decides who the donations pay
   [TYPE_DONATION_PROPOSAL, { name: 'DonationProposal', authority: true }],
   [TYPE_DONATION_APPROVAL, { name: 'DonationApproval', authority: true }],
+  // a donation set of keys whose entries vest day by day (§27A.4.1): who the donations pay, and how that moves
+  [TYPE_DONATION_SET_KEYS_VESTING, { name: 'DonationSetKeysVesting', authority: true }],
 
   // THE ONLY ONE. 0.9's ghost: something to look at, and nothing else.
   [TYPE_GHOST, { name: 'Ghost', authority: false }],
