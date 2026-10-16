@@ -400,6 +400,11 @@
     #arena-games .layout-switch button[aria-pressed="true"] { background: #1f2630; color: #f7931a; }
     #arena-games .chip .ico { display: none; width: 14px; height: 14px; flex: none; }
     #arena-games.compact .lead { display: none; }
+    /* THE PROTOCOL RESERVES (kanban #397 slice 4): the total and the latest payments in, under the tiles */
+    #arena-games .reserves { margin: 4px 0 18px; color: #8b949e; font: 13px/1.5 system-ui, sans-serif; }
+    #arena-games .reserves summary { cursor: pointer; color: #c9d1d9; }
+    #arena-games .reserves summary b { color: #f7931a; font-weight: 700; }
+    #arena-games .reserves ol { margin: 8px 0 0; padding-left: 20px; }
     #arena-games.compact h2 { padding-right: 84px; }
     #arena-games.compact .grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
     @media (min-width: 560px) { #arena-games.compact .grid { grid-template-columns: repeat(3, 1fr); } }
@@ -1573,7 +1578,7 @@
   <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
-  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
+  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="reserves" hidden></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
     <script>
@@ -6345,6 +6350,7 @@
             }
           }
           el.classList.add('show');
+          showReserves(el, nodes);
           document.body.classList.add('arena-picking');
           // SETTINGS BEFORE A GAME IS CHOSEN names Bitcoin Arena, not Next Block (the chosen game's name replaces it after)
           { const small = document.querySelector('#blwp-settings .settings-head h2 small'); if (small) small.textContent = 'Bitcoin Arena'; }
@@ -6578,6 +6584,33 @@
       if (deposit) document.body.appendChild(deposit);
       boot.remove();
       console.log('[arena] ' + game.name + ' client ' + file.hash.slice(0, 16) + ' loaded by its manifest hash, ' + (Date.now() - t0) + ' ms');
+    }
+    // THE PROTOCOL RESERVES (§27A.9.2, kanban #397 slice 4: "testnet.bitcoin-arena.io shows the total and the latest payments
+    // in"): GET /reserves on the network's nodes, shown only once five of them name the same total; a tap lists the payments in
+    async function showReserves(el, nodes) {
+      const box = el.querySelector('.reserves');
+      if (!box || typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.fetchReservesTotal) return;
+      let r;
+      try { r = await BLWPCLIENT.fetchReservesTotal({ nodes }); } catch (e) { r = { ok: false, why: e.message }; }
+      window.ARENA_RESERVES = r.ok ? { totalMsat: String(r.totalMsat), entries: r.entries, agreeing: r.agreeing, asked: r.asked } : { why: r.why };
+      if (!r.ok) { console.log('[arena] reserves: ' + r.why); return; }
+      const sat = (m) => (Number(m) / 1000).toLocaleString('en-US', { maximumFractionDigits: 3 }) + ' sat';
+      box.textContent = '';
+      const d = document.createElement('details');
+      const s = document.createElement('summary');
+      s.append('Protocol reserves: ');
+      const b = document.createElement('b'); b.textContent = sat(r.totalMsat); s.append(b);
+      s.append(' \u00b7 ' + r.entries + ' payment' + (r.entries === 1 ? '' : 's') + ' in');
+      s.title = r.agreeing + ' of ' + r.asked + ' nodes name this total';
+      const list = document.createElement('ol');
+      for (const p of r.paidIn.slice(0, 10)) {
+        const li = document.createElement('li');
+        li.textContent = new Date(p.at).toLocaleString() + ' \u00b7 ' + (p.game || ('round ' + String(p.roundId || '').slice(0, 8))) + ' \u00b7 ' + sat(p.amountMsat);
+        list.append(li);
+      }
+      if (!r.paidIn.length) { const li = document.createElement('li'); li.textContent = 'No payments in yet: they start with the first paid round of protocol version 11.'; list.append(li); }
+      d.append(s, list); box.append(d); box.hidden = false;
+      console.log('[arena] reserves: ' + sat(r.totalMsat) + ', ' + r.entries + ' payment(s) in, ' + r.agreeing + ' of ' + r.asked + ' nodes agree');
     }
     // A GAME'S CLIENT THAT IS NOT ITS MANIFEST'S IS NOT RUN, and the player is told why, with the way back to the games
     function gameNotLoaded(e) {
