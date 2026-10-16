@@ -228,15 +228,18 @@ public class LobbyScreenTests
             + "{\"id\":\"5a343b8d00\",\"free\":true,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":993,\"joined\":1,\"stakeSats\":0},"
             + "{\"id\":\"eb1109af00\",\"free\":false,\"agree\":2,\"needed\":2,\"joinable\":true,\"leftS\":1000,\"joined\":0,\"stakeSats\":100}]}");
         Assert.IsNotNull(s, "the page's lobby view was not read");
-        foreach (var w in DailyLobby.RowWords(s.rows[1]))
+        // every form names the stake and the time; the first three the signer nodes too (the shorter ones are a phone's, kanban #8)
+        var paidForms = DailyLobby.RowWords(s.rows[1]);
+        for (int i = 0; i < 3; i++) StringAssert.StartsWith("PAID · 100 sats · join until 16:40 · 2 signer nodes (2 needed)", paidForms[i]);
+        foreach (var w in paidForms)
         {
-            StringAssert.StartsWith("PAID · 100 sats · join until 16:40 · 2 signer nodes (2 needed)", w, "a form of the paying row does not say its stake");
+            StringAssert.StartsWith("PAID · 100 sats · join until 16:40", w, "a form of the paying row does not say its stake");
             // NEVER "SEAT" TO THE PLAYER (the owner 2026-09-15 16:22).
             StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
         }
         foreach (var w in DailyLobby.RowWords(s.rows[0]))
         {
-            StringAssert.StartsWith("FREE · join until 16:33 · 2 signer nodes (2 needed)", w);
+            StringAssert.StartsWith("FREE · join until 16:33", w);
             StringAssert.DoesNotContain("sat", w, "a free row names an amount");
             StringAssert.DoesNotContain("seat", w.ToLowerInvariant(), "a lobby row says seat to the player");
         }

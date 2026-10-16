@@ -247,6 +247,24 @@ namespace Blwp
         /// rows differ says "PER ROUND" (each row keeps its "(N needed)"); a row without the committee size (an older page)
         /// says "N NEEDED" with no "OF"; nothing listed: "ROUNDS". No fixed number: every count is a row's.
         /// </summary>
+        /// <summary>
+        /// THE HEADER, LONGEST FIRST, FOR THE NARROW SCREEN (kanban #8, measured on UI 133 at 390 px: "ROUNDS · JOIN NEEDS 5 OF 7
+        /// SIGNER NC" - the line was cut, even at the smallest font): the full line, then the same numbers in fewer words, then
+        /// "ROUNDS". The drawer takes the longest that fits (SplashScreen FitWords).
+        /// </summary>
+        public static string[] HeaderWordings(LobbyRow[] rows)
+        {
+            string full = HeaderWords(rows);
+            if (rows == null || rows.Length == 0) return new[] { full };
+            string paid = KindNumbers(rows, false), free = KindNumbers(rows, true);
+            string one = paid ?? free;
+            var list = new System.Collections.Generic.List<string> { full };
+            if (paid != null && free != null) list.Add($"ROUNDS · PAID {paid} · FREE {free}");
+            else if (one != null && one.Contains(" OF ")) { list.Add($"ROUNDS · {one} SIGNER NODES"); list.Add($"ROUNDS · {one} NODES"); }
+            list.Add("ROUNDS");
+            return list.ToArray();
+        }
+
         public static string HeaderWords(LobbyRow[] rows)
         {
             if (rows == null || rows.Length == 0) return "ROUNDS";
@@ -713,11 +731,16 @@ namespace Blwp
                     $"{kind} · round {id} · {left} · {signers}",
                     $"{kind} · round {id} · {left}",
                 };
+            // AND SHORTER, FOR A PHONE (kanban #8, measured on UI 133 at 390 px: "PAID · 100 sats · starts in 0:28 · join until
+            // 1:00 · 7 signer node" - the last wording still too wide, cut): the nodes as a count, then the times alone
+            string few = r.joinable ? $"{r.agree} {(r.agree == 1 ? "node" : "nodes")}" : r.leftS == 0 ? "entry closed" : "waiting";
             return new[]
             {
                 $"{kind} · {left} · {signers} · {r.joined} joined · {id}",
                 $"{kind} · {left} · {signers} · {r.joined} joined",
                 $"{kind} · {left} · {signers}",
+                $"{kind} · {left} · {few}",
+                $"{kind} · {left}",
             };
         }
     }
