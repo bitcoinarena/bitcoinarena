@@ -8449,6 +8449,22 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
+    name: 'nextblock',
+    // 2026.0.3 (kanban #369): manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
+    // from the generator's output for known-v3.js, which would drop the hand-kept fields above (seatsPerTable)
+    cores: Object.freeze({
+      '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      '68e2b3d6757dc26a76f95eaf0b57799f4e965267ae70a2e79ce4228154acb589': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+      'd15c39bb83b7cb63ce2b232a7b62b0078d78d9944013ce42799c80a29bf005ef': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1']),
+      'de2f263da7ddf892699713ccd43041fb2ea881df9994fbe9f32581904e32e6c8': Object.freeze(['bbae68dc11e6e25f3dbb4d225cd52f2d4b32095a61a3bd1d8ced655eed82a5f1', 'dbb493445fd56ba099bf8651a444f7c6de4b36add1cb01275bd1857920bd0801']),
+      'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 10,
+  }),
 });
 
 // ---- arena-protocol/src/protocol-version.js
