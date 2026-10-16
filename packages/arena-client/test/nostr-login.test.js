@@ -98,3 +98,22 @@ test('a seed event that does not decrypt is left alone; no relay answering makes
     await assert.rejects(seedFor(localSigner(generateSecretKey()), { pool, relays: ['ws://127.0.0.1:1'], maxWait: 800 }), /no Nostr relay answered/);
   } finally { pool.close([url]); await r.close(); }
 });
+
+test('a new account (fresh): its seed is made without asking the relays for one, and is the seed a later login reads', async () => {
+  // kanban #381: a key made a moment ago has no seed event; the ask waited for every relay's answer first
+  const r = await startRelay({ port: 0 });
+  const url = `ws://127.0.0.1:${r.port}`;
+  const pool = new SimplePool();
+  const asked = [];
+  const querySync = pool.querySync.bind(pool);
+  pool.querySync = (...a) => { asked.push(a[1]); return querySync(...a); };
+  try {
+    const acct = newAccount();
+    const made = await seedFor(acct.signer, { pool, relays: [url], fresh: true });
+    assert.deepEqual([made.created, made.from], [true, 'derived']);
+    assert.equal(asked.length, 0, 'no relay was asked for a seed event');
+    const again = await seedFor(signerFromNsec(acct.nsec), { pool, relays: [url] });
+    assert.deepEqual([again.created, again.from, hex(again.seed)], [false, 'relays', hex(made.seed)]);
+    assert.equal(asked.length, 1, 'a later login asks');
+  } finally { pool.close([url]); await r.close(); }
+});
