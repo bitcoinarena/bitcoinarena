@@ -211,7 +211,7 @@ namespace Blwp
         public static string EmptyListLine(LobbyState s)
         {
             if (s != null && s.asked > 0 && s.failed >= s.asked)
-                return $"No signer node answered ({s.asked} asked) \u2013 the rounds cannot be read. Asked again every 5 seconds.";
+                return $"No signer node answered ({s.asked} asked) - the rounds cannot be read. Asked again every 5 seconds.";
             return "No round is open for entry right now. The signer nodes are asked again every 5 seconds."
                 + (s != null && s.refused != null && s.refused.Length > 0 ? $"\nNot listed: {s.refused.Length}" : "");
         }
