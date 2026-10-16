@@ -39,6 +39,7 @@ public class SplashScreen : MonoBehaviour
     string _pickId = "", _tapId = "", _nameWhy = "";
     int _offset;
     bool _joining, _autoPlay, _hiddenTold;
+    float _autoPlayAskedAt = -1f;
     string _adoptedRound = "";
     /// <summary>An adopted next round is being joined: stepped until it plays or is refused, lobby or countdown or neither.</summary>
     bool _nextJoin;
@@ -165,7 +166,14 @@ public class SplashScreen : MonoBehaviour
         }
         // held here, whatever else thinks it should be driveable
         if (truck != null) truck.controlsLocked = true;
-        if (_autoPlay && Time.frameCount > 3) { _autoPlay = false; Play(fromAddress: true); return; }
+        // ON THE PAGE'S WORD (kanban #372): a round link held to its start does not drive on its play=1
+        if (_autoPlay && Time.frameCount > 3)
+        {
+            if (_autoPlayAskedAt < 0f) _autoPlayAskedAt = Time.realtimeSinceStartup;
+            string step = Blwp.DailyLobby.LinkAutoPlayStep(Blwp.DailyLobby.LinkAutoPlay(), Time.realtimeSinceStartup - _autoPlayAskedAt);
+            if (step == "play") { _autoPlay = false; Play(fromAddress: true); return; }
+            if (step == "no") { _autoPlay = false; Debug.Log("[SplashScreen] the round link is held to its start: no drive on play=1"); }
+        }
 
         // The page's lobby, asked again every 0.75 s (it asks the signer nodes every 5 s).
         if (Time.unscaledTime - _polledAt > 0.75f)

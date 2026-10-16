@@ -1304,6 +1304,12 @@ mergeInto(LibraryManager.library, {
     try { window.BLWP_UNITY_ASSAULT = JSON.parse(UTF8ToString(jsonPtr)); } catch (e) { /* not JSON: nothing to keep */ }
   },
 
+  // kanban #372: the page's word on a round link's play=1 - -1 not decided yet, 0 held to the round's start, 1 drive, 2 no word (an older page)
+  BlwpLinkAutoPlay: function () {
+    var v = window.BLWP_LINK_AUTOPLAY;
+    return v === null ? -1 : v === false ? 0 : v === true ? 1 : 2;
+  },
+
   BlwpQueryParam: function (namePtr, outPtr, cap) {
     var name = UTF8ToString(namePtr);
     var v = null;
