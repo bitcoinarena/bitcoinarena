@@ -1746,7 +1746,7 @@ test('handLock asks every signer node at once and keeps their order', async () =
 
 // THE LOBBY'S WALLET OPEN THAT NEVER SETTLES DOES NOT HOLD PLAY FOR GOOD (JOIN-TIME-1359, measured 2026-10-02 on testnet4:
 // 2 of 12 paid joins sat at "the player wallet is open" - the lobby's federation join never answered). A lock client whose
-// first join hangs and whose second answers: the lobby opens (and hangs), PLAY waits openWaitMs, says so, joins again and
+// first join hangs and whose second answers: the lobby opens (and hangs), PLAY waits for it until it is refused, says so, joins again and
 // gets the second client; and a join that never answers at all is refused by name after joinWaitMs.
 test('a wallet the lobby could not open is joined again at PLAY, and a join that never answers is refused by name', async () => {
   let joins = 0;
@@ -1760,7 +1760,8 @@ test('a wallet the lobby could not open is joined again at PLAY, and a join that
   console.log('  FACTS:', JSON.stringify({ ms: Date.now() - t0, joins, steps }));
   assert.equal(got, good);
   assert.equal(joins, 2);
-  assert.ok(steps.some((s) => /did not open in 0 s|did not open in/.test(s)), 'PLAY did not say the lobby wallet failed to open');
+  // (since kanban #376 PLAY waits for the lobby's open until it is refused at joinWaitMs - never a second client beside a live one)
+  assert.ok(steps.some((s) => /did not open \(.*did not open the player wallet in 0 s.*\) - joining the federation again/.test(s)), 'PLAY did not say the lobby wallet failed to open');
   const never = { join: () => new Promise(() => {}) };
   await assert.rejects(playerWallet({ round, invite: INVITE, seed: b32(0x94), LockClient: never, storage: tabStorage(), joinWaitMs: 100 }),
     /did not open the player wallet in 0 s - press PLAY again/);
@@ -2055,4 +2056,23 @@ test('a quote that never comes says its own words before the deposit is asked', 
   assert.ok(offer, 'after the tries a deposit is asked, as before');
   assert.equal(steps.filter((x) => /cannot quote them yet/.test(x)).length, QUOTE_SETTLE_TRIES, 'asked again QUOTE_SETTLE_TRIES times first');
   assert.ok(steps.some((s) => /this round's locks need more than that \(Insufficient funds: notes pending\)/.test(s)), steps.join(' | '));
+});
+
+// ONE CLIENT PER WALLET (kanban #376, measured on live UI 147 with one pinned seed: an open of 21-25 s, PLAY's "did not open in
+// 15 s - joining the federation again", and a second lock client over the same store - its awaitReceive answered "Operation not
+// found" for the deposit the first had invoiced, and a balance read off one was quoted "insufficient funds" on the other). A slow
+// open is waited for: every caller gets the one client, the federation is joined once, and the wait is said.
+test('a slow wallet open is waited for, not joined twice: one client for every caller', async () => {
+  let joins = 0;
+  const one = { tag: 'the one client' };
+  const LockClient = { join: () => { joins++; return new Promise((r) => setTimeout(() => r(one), 300)); } };
+  const tab = tabStorage(); const steps = [];
+  const args = { round, invite: INVITE, seed: b32(0x95), LockClient, storage: tab, openWaitMs: 100, joinWaitMs: 5000 };
+  const lobby = playerWallet(args);
+  const play = await playerWallet({ ...args, onStep: (s) => steps.push(s) });
+  assert.equal(play, one);
+  assert.equal(await lobby, one);
+  assert.equal(joins, 1, 'the federation was joined once - no second client over the same store');
+  assert.ok(steps.some((s) => /still opening \(over 0 s\) - one wallet, waited for/.test(s)), steps.join(' | '));
+  assert.ok(!steps.some((s) => /joining the federation again/.test(s)), steps.join(' | '));
 });
