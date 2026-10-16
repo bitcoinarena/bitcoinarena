@@ -4142,7 +4142,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const said = String(url.searchParams.get('creator') || '');
           const sig = /^[0-9a-f]{128}$/i.test(said) ? fromHex(said.toLowerCase()) : null;
           const st = creatorSignatureStands(contract, sig, { verify: (s, m, k) => schnorr.verify(s, m, k) });
-          if (!st.ok && !(round.get(rid) && round.creatorSignature(rid))) return text(res, 403, st.why);
+          // A ROUND IT HOLDS FROM A SERIES IT WRITES stands too (kanban #376, measured 2026-10-16 06:45Z: the page's PLAY opened a duty
+          // grid's round at its node and was refused "that round names its creator, and comes without the creator's 64-byte signature
+          // over its id" - the creator signed the SERIES, which takeGridSeries checked, and its rounds have no row of their own)
+          const fromSeries = contract.seriesId instanceof Uint8Array && writers.some((w) => toHex(w.id) === toHex(contract.seriesId));
+          if (!st.ok && !(round.get(rid) && (round.creatorSignature(rid) || fromSeries))) return text(res, 403, st.why);
           if (st.ok) round.putCreatorSignature(rid, sig);
         }
         // THE RULES IT NAMES, THIS BUILD'S OR REFUSED (§6, kanban #314; rules.js): a round settled under rules this seat does not run is
