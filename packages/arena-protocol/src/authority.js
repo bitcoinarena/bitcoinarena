@@ -332,7 +332,7 @@ export function authorityAt({
  * returns `ok` for.
  */
 export function donationSetInForce({
-  networkId, authority, recovery, sets = [], rotations = [], height, verify,
+  networkId, authority, recovery, sets = [], rotations = [], height, verify, approved = [],
 }) {
   if (!isDonationBytes32(networkId)) throw new Error('a network is a 32-byte id');
   const inForce = authorityAt({ networkId, authority, recovery, rotations, height, verify });
@@ -363,6 +363,14 @@ export function donationSetInForce({
     }
     accepted.push(set);
   }
+  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): checked by donation-vote.js approvedDonationSets against the
+  // set each replaces - the recipients' signatures stand in for the admin key's - and ordered by serial with the rest
+  for (const set of approved || []) {
+    if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) continue;
+    if (!Number.isInteger(set.validFrom) || set.validFrom > height) continue;
+    if (!donationSetStands(set.recipients).ok) continue;
+    accepted.push(set);
+  }
 
   const { best, contested } = bestBySerial(accepted, donationSetBodyId);
   for (const serial of contested)
@@ -383,6 +391,7 @@ export function donationSetInForce({
     serial: best.serial,
     validFrom: best.validFrom,
     setId: donationSetBodyId(best),
+    approvedBy: best.approvedBy || null,
     authority: inForce.authority,
     rotated: inForce.rotated,
     refused,
