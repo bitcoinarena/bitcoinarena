@@ -548,8 +548,10 @@
     #arena-games .season-go:hover, #arena-games .season-go:focus-visible { color: #f7931a; outline: none; }
     /* AND BESIDE THE GEAR, and on the wallet bar over a game's own client, once a game is chosen */
     /* BACK TO THE GAMES (kanban #383, the owner 2026-10-16: "there is no link/button to get back to the game selection like in the
-       other games"): Rock Paper Scissors and Up/Down have "← Games" in their own client; Unity's game has it at the strip's left,
+       other games"): Rock Paper Scissors and Up/Down have "← Arena" in their own client; Unity's game has it at the strip's left,
        over the loading screen and the lobby (the strip is gone while a round's own screens are up). A phone shows the arrow. */
+    /* "← ARENA", NOT "← GAMES" (kanban #396, the owner 2026-10-16: "everywhere where you added < games as navigation it needs to say
+       Arena to stay consistent. Also in the prediction market") */
     #arena-games-back { display: none; }
     body.arena-game-chosen:not(.arena-own-client) #arena-games-back { display: inline-flex; flex: none; align-items: center; gap: 4px; margin-right: auto;
       padding: 7px 10px; cursor: pointer; background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px;
@@ -958,7 +960,7 @@
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
-    <button id="arena-games-back" type="button" title="Back to the games" aria-label="Back to the games"><span aria-hidden="true">&larr;</span><span class="word">Games</span></button>
+    <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
          warning is the only thing standing between a player and losing a wallet he never wrote down. -->
     <div id="blwp-backup-warn" style="display:none">
@@ -6565,7 +6567,7 @@
       el.querySelector('h2').textContent = (g.title || 'That game') + ' cannot be loaded';
       el.querySelector('.why').textContent = e.message;
       const list = el.querySelector('.list'); list.textContent = '';
-      const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.textContent = '\u2190 Games';
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.textContent = '\u2190 Arena';   // kanban #396: every way back says Arena
       b.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); location.search = q.toString(); });
       list.append(b);
       el.classList.add('show');

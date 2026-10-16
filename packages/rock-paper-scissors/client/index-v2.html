@@ -1,0 +1,1275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rock Paper Scissors</title>
+<!-- ROCK PAPER SCISSORS' OWN CLIENT (kanban #233): one file, its SHA-256 in the game's manifest clients[]. The Bitcoin Arena page
+     loads it only from bytes that hash to that, in a frame of its own origin, and hands it the engine as
+     window.parent.ARENA_GAME: the lobby's rows of this game, the player's identity, and a head-to-head round's three acts -
+     hide(round, move), reveal(round), reveals(round). The stake, the lock, the entry and the hidden move's salt are the
+     engine's; this file holds no key, no wallet and no seed. What beats what is this game's (plugin/decide.js), shown here.
+     SEEN, NOT READ (kanban #279, the owner 2026-10-09: "No text wall. More graphical"; "the page refreshes constantly"): the
+     round is a picture - the steps, the two seats, a face-down card, a countdown ring, the reveal - drawn once per change of
+     state; each second only the countdown moves. -->
+<style>
+  :root { color-scheme: dark; --bg: #0b0e13; --panel: #141922; --panel2: #1a2130; --line: #2a3242; --dim: #8b95a5; --btc: #f7931a;
+    --win: #2fd38a; --loss: #ff5d5d; --draw: #9aa7ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 14px 16px 28px; background: radial-gradient(120% 80% at 50% 0%, #182131 0%, var(--bg) 60%); color: #e6edf3;
+    font: 15px/1.4 system-ui, -apple-system, sans-serif; min-height: 100vh; }
+  button.back { font: 600 13px system-ui; background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 14px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: -0.01em; }
+  h1 .icons { margin-left: 6px; font-size: 20px; }
+  .chip { font: 700 11px/1 system-ui; letter-spacing: 0.06em; padding: 6px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); white-space: nowrap; }
+  .chip.free { color: var(--win); border-color: #1f5a43; background: #0f2a20; }
+  .chip.paid { color: var(--btc); border-color: #6b4310; background: #2a1c0a; }
+  .card { background: linear-gradient(180deg, var(--panel2), var(--panel)); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+  /* THE STEPS: where the round is, at a glance */
+  .steps { display: flex; justify-content: space-between; margin: 0 4px 16px; position: relative; }
+  .steps::before { content: ''; position: absolute; left: 16px; right: 16px; top: 15px; height: 2px; background: var(--line); }
+  .step { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 64px; font-size: 11px; color: var(--dim); }
+  .step b { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--bg); border: 2px solid var(--line); font-size: 15px; }
+  .step.done b { border-color: var(--win); color: var(--win); }
+  .step.now b { border-color: var(--btc); color: var(--btc); box-shadow: 0 0 0 4px rgba(247,147,26,0.15); }
+  .step.now { color: #e6edf3; }
+  /* THE TABLE: the two seats and the clock between them */
+  .table { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+  .seat { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .seat .who { font-size: 12px; color: var(--dim); }
+  .slot { width: 96px; height: 128px; border-radius: 14px; display: grid; place-items: center; font-size: 54px; border: 2px dashed var(--line); background: rgba(255,255,255,0.02); }
+  .slot.facedown { border: 2px solid #6b4310; background: repeating-linear-gradient(45deg, #2a1c0a 0 10px, #33230e 10px 20px); font-size: 34px; }
+  .slot.in { border: 2px solid #1f5a43; background: repeating-linear-gradient(45deg, #0f2a20 0 10px, #133325 10px 20px); font-size: 34px; }
+  .slot.empty { animation: pulse 1.6s ease-in-out infinite; color: var(--dim); font-size: 40px; }
+  .slot.shown { border: 2px solid var(--line); background: var(--bg); animation: flip 0.45s ease-out; }
+  .slot.win { border-color: var(--win); box-shadow: 0 0 24px rgba(47,211,138,0.35); }
+  .slot.loss { border-color: var(--loss); opacity: 0.8; }
+  @keyframes pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+  @keyframes flip { from { transform: rotateY(90deg); } to { transform: rotateY(0); } }
+  .clock { position: relative; width: 84px; height: 84px; }
+  .clock svg { width: 84px; height: 84px; transform: rotate(-90deg); }
+  .clock .t { position: absolute; inset: 0; display: grid; place-items: center; font: 700 17px/1 ui-monospace, monospace; }
+  .vs { font: 800 14px/1 system-ui; color: var(--dim); text-align: center; }
+  /* THE MOVES */
+  .pick { margin-top: 16px; text-align: center; color: var(--dim); font-size: 13px; }
+  .pick.due { color: var(--btc); font-size: 15px; font-weight: 600; }
+  .moves { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+  .moves button { font: 700 14px/1.2 system-ui; padding: 14px 6px 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--bg); color: #e6edf3; cursor: pointer; transition: transform 0.08s, border-color 0.15s; }
+  .moves button span { display: block; font-size: 42px; margin-bottom: 6px; }
+  .moves button:hover { border-color: var(--btc); } .moves button:active { transform: scale(0.96); }
+  .moves button:disabled { opacity: 0.4; }
+  .moves button { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }   /* a tap fires at once: no double-tap zoom wait (#292) */
+  .moves { position: relative; } .moves button span.ic { display: block; width: 88px; height: 88px; margin: -10px auto -4px; font-size: 0; }
+  .moves canvas.hand-icons { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .moves button.chosen, .moves button.chosen:disabled { opacity: 1; border-color: var(--btc); box-shadow: 0 0 0 3px rgba(247,147,26,0.25); }
+  .verdict { margin-top: 16px; text-align: center; font: 800 26px/1.2 system-ui; }
+  .verdict.win { color: var(--win); } .verdict.loss { color: var(--loss); } .verdict.draw { color: var(--draw); }
+  .foot { margin-top: 12px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+  .none { text-align: center; color: var(--dim); padding: 28px 8px; }
+  .none .big { font-size: 44px; display: block; margin-bottom: 8px; animation: pulse 1.6s ease-in-out infinite; }
+  .last { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 0 0 12px; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 13px; color: var(--dim); }
+  .last b { font-size: 26px; font-weight: 400; } .last i { font-style: normal; font-size: 11px; } .last em { font: 800 13px system-ui; text-transform: uppercase; letter-spacing: 0.05em; font-style: normal; }
+  .last.win em { color: var(--win); } .last.loss em { color: var(--loss); } .last.draw em { color: var(--draw); }
+  .presence { display: flex; align-items: center; gap: 14px; margin: 0 0 12px; padding: 14px 16px; border-radius: 14px; border: 2px solid var(--line); }
+  .presence .icon { font-size: 34px; } .presence b { display: block; font-size: 19px; } .presence small { display: block; color: var(--dim); font-size: 14px; margin-top: 2px; }
+  .presence.alone { border-color: #6b4310; background: #2a1c0a; } .presence.alone b { color: var(--btc); }
+  .presence.here { border-color: #1f5a43; background: #0f2a20; } .presence.here b { color: var(--win); }
+  .presence .dots i { font-style: normal; animation: pulse 1.2s infinite; } .presence .dots i:nth-child(2) { animation-delay: .2s; } .presence .dots i:nth-child(3) { animation-delay: .4s; }
+  .board { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 0 0 12px; padding: 10px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); }
+  .board b { font: 800 38px/1 ui-monospace, monospace; } .board i { font-style: normal; font: 800 30px/1 system-ui; color: var(--dim); } .board .who { color: var(--dim); font-size: 13px; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* THE STAGE (kanban #284): a Three.js scene - two hands, lit, on a floor of light - in place of the two cards */
+  .stage { position: relative; height: min(52vh, 440px); min-height: 280px; margin: 0 -8px; border-radius: 14px; overflow: hidden;
+    background: radial-gradient(90% 70% at 50% 35%, #1d2a44 0%, #0f1524 55%, #090c14 100%); }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .stage .ov { position: absolute; inset: 0; pointer-events: none; }
+  .stage .ov .top { position: absolute; top: 10px; left: 0; right: 0; display: flex; justify-content: center; }
+  .stage .ov .clock .t { text-shadow: 0 2px 8px #000; }
+  .stage .ov .who { position: absolute; bottom: 10px; font: 700 12px/1 system-ui; letter-spacing: 0.08em; text-transform: uppercase; padding: 6px 10px;
+    border-radius: 999px; background: rgba(9,12,20,0.6); border: 1px solid var(--line); max-width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stage .ov .who.me { left: 12px; color: #ffc27a; } .stage .ov .who.them { right: 12px; color: #9cc4ff; }
+  /* THE VERDICT, BIG (kanban #283, the owner 2026-10-09: "Like the big WASTED in the truck game ... WON, large, stays 2 seconds, then
+     fades. LOST, the same"): over everything, never in the way of a tap */
+  .verdict-big { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; pointer-events: none;
+    background: radial-gradient(60% 40% at 50% 50%, rgba(0,0,0,0.55), rgba(0,0,0,0) 70%); animation: vb 2.7s ease-out forwards; }
+  .verdict-big b { font: 900 clamp(64px, 24vw, 200px)/1 system-ui, -apple-system, sans-serif; letter-spacing: 0.06em; transform-origin: center;
+    animation: vbIn 0.35s cubic-bezier(.2,1.6,.4,1) both; -webkit-text-stroke: 2px rgba(0,0,0,0.35); }
+  .verdict-big.win b { color: #2fd38a; text-shadow: 0 0 28px rgba(47,211,138,0.85), 0 6px 0 #0b5a3a; }
+  .verdict-big.loss b { color: #ff4d4d; text-shadow: 0 0 28px rgba(255,77,77,0.8), 0 6px 0 #6a1010; }
+  .verdict-big.draw b { color: #9aa7ff; text-shadow: 0 0 24px rgba(154,167,255,0.75), 0 6px 0 #2b3170; }
+  body.lost-gray #view { filter: grayscale(0.85) brightness(0.8); transition: filter 0.3s; }
+  #view { transition: filter 0.6s; }
+  @keyframes vb { 0% { opacity: 0; } 8% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; } }
+  @keyframes vbIn { from { transform: scale(1.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  /* ONE SCREEN, NO SCROLLING (the owner 2026-10-09: "everything must fit on one iPhone page, no scrolling"): a column the
+     height of the frame - the header, then the round, whose stage takes whatever height is left; banners, score, steps and
+     buttons kept compact */
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  button.back { padding: 4px 10px; font-size: 12px; align-self: flex-start; }
+  header { margin: 4px 0 6px; } h1 { font-size: 18px; } h1 .icons { font-size: 16px; }
+  #view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  #view > .card { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 8px; }
+  .stage { flex: 1; height: auto; min-height: 160px; margin: 0 -4px; }
+  .presence { margin: 0 0 6px; padding: 6px 10px; gap: 10px; border-width: 1.5px; }
+  .presence .icon { font-size: 22px; } .presence b { font-size: 15px; } .presence small { font-size: 12px; margin-top: 0; }
+  .board { margin: 0 0 6px; padding: 4px 8px; gap: 8px; } .board b { font-size: 24px; } .board i { font-size: 20px; } .board .who { font-size: 12px; }
+  .last { margin: 0 0 6px; padding: 3px 10px; } .last b { font-size: 18px; }
+  .steps { margin: 0 2px 6px; } .steps::before { top: 11px; } .step { width: 56px; font-size: 10px; gap: 3px; } .step b { width: 24px; height: 24px; font-size: 12px; }
+  .pick { margin-top: 6px; font-size: 12px; }
+  .moves { margin-top: 6px; gap: 8px; } .moves button { padding: 4px 4px 8px; font-size: 13px; }
+  .moves button span.ic { width: 72px; height: 72px; margin: 0 auto 0; }
+  .verdict { margin-top: 6px; font-size: 20px; }
+  .card.loading { flex: 1; display: grid; place-items: center; min-height: 200px; }
+  .card.loading .spin { width: 44px; height: 44px; border-radius: 50%; border: 4px solid var(--line); border-top-color: var(--btc); animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* THE FRAME, ALIVE (#290, the owner 2026-10-09: "make the frame of rps and the background visually more exciting, it is
+     still too boring"): drifting colour clouds and sparkles behind everything, a shimmering title, glass cards, a rainbow
+     edge running round the stage, a colour for each move */
+  @property --ang { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+  body { background:
+      radial-gradient(1.5px 1.5px at 20% 30%, rgba(255,255,255,0.7), transparent 60%),
+      radial-gradient(1.5px 1.5px at 70% 60%, rgba(255,201,60,0.7), transparent 60%),
+      radial-gradient(1.5px 1.5px at 40% 80%, rgba(43,210,255,0.7), transparent 60%),
+      radial-gradient(1.5px 1.5px at 85% 15%, rgba(255,60,172,0.8), transparent 60%),
+      radial-gradient(55% 40% at 10% 0%, rgba(255,60,172,0.38), transparent 70%),
+      radial-gradient(50% 40% at 95% 25%, rgba(43,210,255,0.32), transparent 70%),
+      radial-gradient(70% 50% at 50% 105%, rgba(157,78,221,0.45), transparent 70%),
+      radial-gradient(40% 30% at 70% 70%, rgba(255,201,60,0.16), transparent 70%),
+      linear-gradient(180deg, #120a26, #08061a);
+    background-size: 180px 180px, 230px 230px, 160px 160px, 210px 210px, 200% 200%, 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+    animation: skyDrift 22s ease-in-out infinite alternate; }
+  @keyframes skyDrift { 0% { background-position: 0 0, 0 0, 0 0, 0 0, 0% 0%, 100% 0%, 50% 100%, 30% 60%, 0 0; }
+    100% { background-position: 180px 360px, -230px 230px, 160px -320px, -210px 420px, 60% 30%, 40% 50%, 30% 70%, 80% 20%, 0 0; } }
+  h1 { background: linear-gradient(90deg, #ffc93c, #ff3cac, #9d4edd, #2bd2ff, #3cff9e, #ffc93c); background-size: 300% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer 7s linear infinite; font-weight: 900; }
+  h1 .icons { -webkit-text-fill-color: initial; color: initial; display: inline-block; animation: wiggle 2.4s ease-in-out infinite; }
+  @keyframes shimmer { to { background-position: 300% 0; } }
+  @keyframes wiggle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(6deg) scale(1.08); } }
+  button.back { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); color: #d9d2ff; }
+  .chip.free { box-shadow: 0 0 14px rgba(47,211,138,0.45); }
+  #view > .card, .card { background: linear-gradient(160deg, rgba(48,22,86,0.72), rgba(12,14,34,0.88)); border: 1px solid rgba(255,255,255,0.09);
+    box-shadow: 0 12px 40px rgba(157,78,221,0.28), inset 0 1px 0 rgba(255,255,255,0.07); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  .stage { border: 2.5px solid transparent;
+    background: linear-gradient(#0b0820, #0b0820) padding-box, conic-gradient(from var(--ang), #ff3cac, #ffc93c, #3cff9e, #2bd2ff, #9d4edd, #ff3cac) border-box;
+    box-shadow: 0 0 26px rgba(255,60,172,0.35), 0 0 52px rgba(43,210,255,0.18); animation: edge 5s linear infinite; }
+  @keyframes edge { to { --ang: 360deg; } }
+  .presence.here { background: linear-gradient(100deg, rgba(47,211,138,0.28), rgba(43,210,255,0.16)); border-color: rgba(60,255,158,0.6); box-shadow: 0 0 18px rgba(60,255,158,0.22); }
+  .presence.alone { background: linear-gradient(100deg, rgba(247,147,26,0.3), rgba(255,60,172,0.16)); border-color: rgba(255,170,60,0.65); box-shadow: 0 0 18px rgba(255,140,60,0.22); }
+  .board { background: linear-gradient(100deg, rgba(157,78,221,0.25), rgba(43,210,255,0.14)); border-color: rgba(157,78,221,0.45); }
+  .board b { background: linear-gradient(180deg, #fff, #ffc93c); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .last { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.1); }
+  .step b { background: rgba(10,8,30,0.8); }
+  .step.now b { border-color: #ffc93c; color: #ffc93c; box-shadow: 0 0 0 4px rgba(255,201,60,0.18), 0 0 16px rgba(255,140,60,0.55); }
+  .step.done b { border-color: #3cff9e; color: #3cff9e; box-shadow: 0 0 10px rgba(60,255,158,0.35); }
+  .moves button { --c: #ff8a3c; position: relative; overflow: hidden; border: 1.5px solid color-mix(in srgb, var(--c) 65%, transparent);
+    background: radial-gradient(120% 90% at 50% 100%, color-mix(in srgb, var(--c) 38%, transparent), rgba(12,8,30,0.92) 70%);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--c) 30%, transparent), inset 0 1px 0 rgba(255,255,255,0.08); transition: transform 0.12s, box-shadow 0.2s; }
+  .moves button:nth-of-type(2) { --c: #2bd2ff; } .moves button:nth-of-type(3) { --c: #ff3cac; }
+  .moves button:hover { transform: translateY(-2px); box-shadow: 0 0 26px color-mix(in srgb, var(--c) 55%, transparent); }
+  .moves button.chosen, .moves button.chosen:disabled { border-color: var(--c); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 35%, transparent), 0 0 30px color-mix(in srgb, var(--c) 60%, transparent); }
+  .moves button::after { content: ''; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 35%, rgba(255,255,255,0.18) 50%, transparent 65%);
+    background-size: 250% 100%; animation: sheen 3.6s ease-in-out infinite; pointer-events: none; }
+  .moves button:nth-of-type(2)::after { animation-delay: 0.6s; } .moves button:nth-of-type(3)::after { animation-delay: 1.2s; }
+  @keyframes sheen { 0% { background-position: 120% 0; } 60%, 100% { background-position: -120% 0; } }
+  .demo-label { position: fixed; top: 6px; right: 8px; z-index: 60; padding: 6px 12px; border-radius: 999px;
+    background: rgba(10, 8, 30, 0.85); border: 1px solid rgba(255,201,60,0.6); font: 600 13px/1.2 system-ui; white-space: nowrap; box-shadow: 0 0 18px rgba(255,201,60,0.3); }
+  .demo-label b { color: #ffc93c; margin-right: 6px; } .demo-label i { color: var(--dim); font-style: normal; margin: 0 4px; }
+</style>
+</head>
+<body>
+  <button class="back" type="button" id="back">&larr; Games</button>
+  <header><h1>Rock Paper Scissors<span class="icons">✊✋✌️</span></h1><span class="chip" id="kind" hidden></span></header>
+  <div id="view"></div>
+<script>
+  // THE STAGE (kanban #284, the owner 2026-10-09: "Change the Rock Paper Scissors game to a Three.js version. More dynamic ... The
+  // choice of rock, paper, or scissors is animated. You see the hand in that position. The result is animated too. Scissors
+  // cut the flat paper hand. The paper hand covers the fist."). Two hands built from the shapes Three.js has - a bevelled
+  // palm, jointed fingers and thumb - posed by their joints; this client only shows. Three.js itself is fetched from one
+  // pinned build and run only if its bytes hash to THREE_SHA256, so the client still runs no code its manifest hash does
+  // not pin. Without WebGL or Three.js the client draws the cards it drew before.
+  const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js';
+  const THREE_SHA256 = '3e690ac7d180b0aadf0891bea39eec643e29e2d3e75c99b18689518665f69ba6';
+  async function loadStage() {
+    const probe = document.createElement('canvas');
+    if (!(probe.getContext('webgl2') || probe.getContext('webgl'))) throw new Error('no WebGL');
+    const bytes = await (await fetch(THREE_URL, { cache: 'force-cache' })).arrayBuffer();
+    const hex = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((x) => x.toString(16).padStart(2, '0')).join('');
+    if (hex !== THREE_SHA256) throw new Error('three.js at ' + THREE_URL + ' is not the pinned build (' + hex.slice(0, 16) + ')');
+    const THREE = await import(URL.createObjectURL(new Blob([bytes], { type: 'text/javascript' })));
+    return createStage(THREE);
+  }
+
+  function createStage(THREE) {
+    const box = document.createElement('div'); box.className = 'stage';
+    const canvas = document.createElement('canvas'); box.append(canvas);
+    const ov = document.createElement('div'); ov.className = 'ov'; box.append(ov);
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(3, window.devicePixelRatio || 1));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.3;
+    renderer.localClippingEnabled = true;
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(0x1a0f33, 16, 34);
+    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 60);
+
+    // REFLECTIONS: a small room of light panels, prefiltered once - the clear coat of the hands catches them
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const room = new THREE.Scene();
+    room.add(new THREE.Mesh(new THREE.SphereGeometry(20, 24, 12), new THREE.MeshBasicMaterial({ color: 0x0a0f1c, side: THREE.BackSide })));
+    const panel = (color, pos, w, h) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })); m.position.set(...pos); m.lookAt(0, 0, 0); room.add(m); };
+    panel(0xffffff, [0, 8, 6], 10, 4); panel(0xff9a3c, [-9, 2, -2], 4, 8); panel(0x4aa3ff, [9, 2, -2], 4, 8); panel(0x8899bb, [0, -6, 8], 12, 2);
+    scene.environment = pmrem.fromScene(room, 0.03).texture;
+
+    scene.add(new THREE.HemisphereLight(0x9cbcff, 0x20120a, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 1.7); key.position.set(2.5, 6, 7); scene.add(key);
+    const rimL = new THREE.PointLight(0xff8a1c, 26, 12, 2); rimL.position.set(-3.2, 1.6, -2.4); scene.add(rimL);
+    const rimR = new THREE.PointLight(0x3c8cff, 26, 12, 2); rimR.position.set(3.2, 1.6, -2.4); scene.add(rimR);
+
+    // THE FLOOR: dark glass with a ring of light under each hand, and a line of light between them
+    const FLOOR_Y = -1.25;
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(6, 64), new THREE.MeshStandardMaterial({ color: 0x0c1220, roughness: 0.5, metalness: 0.5, envMapIntensity: 0.35 }));
+    floor.rotation.x = -Math.PI / 2; floor.position.y = FLOOR_Y; scene.add(floor);
+    const ringOf = (color, x) => {
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.95, 1.07, 72), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.rotation.x = -Math.PI / 2; m.position.set(x, FLOOR_Y + 0.01, 0); scene.add(m); return m;
+    };
+    const ringMe = ringOf(0xff9a2e, -1.55), ringThem = ringOf(0x4c9dff, 1.55);
+    const line = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.03), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.25, blending: THREE.AdditiveBlending, depthWrite: false }));
+    line.rotation.x = -Math.PI / 2; line.position.y = FLOOR_Y + 0.012; scene.add(line);
+
+    // SPARKS AND DUST: one soft dot, drawn once
+    const dot = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+      const r = g.createRadialGradient(32, 32, 0, 32, 32, 32); r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.35, 'rgba(255,255,255,0.45)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = r; g.fillRect(0, 0, 64, 64); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t; })();
+    const DUST = 160;
+    const dustGeo = new THREE.BufferGeometry();
+    const dustPos = new Float32Array(DUST * 3), dustSpeed = new Float32Array(DUST);
+    for (let i = 0; i < DUST; i++) { dustPos[i * 3] = (Math.random() - 0.5) * 12; dustPos[i * 3 + 1] = FLOOR_Y + Math.random() * 6; dustPos[i * 3 + 2] = -5 + Math.random() * 6; dustSpeed[i] = 0.08 + Math.random() * 0.25; }
+    dustGeo.setAttribute('position', new THREE.BufferAttribute(dustPos, 3));
+    { const dc = new Float32Array(DUST * 3), c = new THREE.Color(); const P = [0xff3cac, 0x2bd2ff, 0xffc93c, 0x9d4edd, 0x3cff9e, 0xff7a3c]; for (let i = 0; i < DUST; i++) { c.setHex(P[i % P.length]); dc.set([c.r, c.g, c.b], i * 3); } dustGeo.setAttribute('color', new THREE.BufferAttribute(dc, 3)); }
+    const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ size: 0.09, map: dot, vertexColors: true, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false }));
+    scene.add(dust);
+
+    // LIFE (#287, the owner 2026-10-09: "the background does not look playful ... breathe life into the game, it must feel alive,
+    // the background too. Far more colours and action"): a sky of drifting colour clouds, sweeping beams and twinkling stars;
+    // toys floating behind the table; dust in every colour; a floor of rippling rainbow rings; a camera that sways and kicks
+    const PAL = [0xff3cac, 0x2bd2ff, 0xffc93c, 0x9d4edd, 0x3cff9e, 0xff7a3c];
+    scene.add(camera);
+    const sky = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.ShaderMaterial({ depthWrite: false, depthTest: false,
+      uniforms: { uT: { value: 0 }, uFlash: { value: 0 }, uAspect: { value: 1 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `varying vec2 vUv; uniform float uT, uFlash, uAspect;
+        vec3 pal(float k) { return 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + k)); }
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        void main() {
+          vec2 uv = vUv; vec2 p = (uv - 0.5) * vec2(uAspect, 1.0);
+          vec3 col = mix(vec3(0.13, 0.04, 0.26), vec3(0.03, 0.12, 0.3), uv.y);
+          vec3 bc[5]; bc[0] = vec3(1.0, 0.24, 0.67); bc[1] = vec3(0.17, 0.82, 1.0); bc[2] = vec3(1.0, 0.62, 0.12); bc[3] = vec3(0.6, 0.3, 1.0); bc[4] = vec3(0.2, 1.0, 0.62);
+          for (int i = 0; i < 5; i++) { float fi = float(i);
+            vec2 c = vec2(sin(uT * 0.17 * (1.0 + fi * 0.31) + fi * 1.7) * 0.62 * uAspect, cos(uT * 0.13 * (1.0 + fi * 0.23) + fi * 2.3) * 0.33 + 0.12);
+            float d = length(p - c); col += bc[i] * 0.62 * exp(-d * d * 5.0); }
+          float beam = pow(max(0.0, sin(p.x * 3.2 + uT * 0.8 + sin(p.y * 2.0 + uT * 0.35) * 1.4)), 20.0) * (1.0 - uv.y * 0.4);
+          col += vec3(1.0, 0.9, 1.0) * beam * 0.16;
+          vec2 g = uv * vec2(uAspect, 1.0) * 46.0; vec2 id = floor(g); vec2 f = fract(g) - 0.5; float h = hash(id);
+          if (h > 0.84) { float tw = 0.5 + 0.5 * sin(uT * (2.0 + h * 6.0) + h * 40.0);
+            float st = smoothstep(0.13, 0.0, length(f + vec2(hash(id + 3.1) - 0.5, hash(id + 7.7) - 0.5) * 0.6)); col += pal(h * 3.0) * st * tw * 1.3; }
+          col += uFlash * vec3(1.0, 0.92, 0.8) * 0.55;
+          gl_FragColor = vec4(col, 1.0);
+        }` }));
+    sky.renderOrder = -10; sky.position.z = -18; sky.frustumCulled = false; camera.add(sky);
+    const TOY_GEOS = [new THREE.TorusGeometry(0.28, 0.1, 20, 48), new THREE.IcosahedronGeometry(0.3, 0), new THREE.OctahedronGeometry(0.32, 0),
+      new THREE.TorusKnotGeometry(0.2, 0.07, 96, 12), new THREE.CylinderGeometry(0.3, 0.3, 0.07, 40), new THREE.DodecahedronGeometry(0.28, 0)];
+    const toys = Array.from({ length: 18 }, (_, i) => {
+      const c = PAL[i % PAL.length];
+      const m = new THREE.Mesh(TOY_GEOS[i % TOY_GEOS.length], new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 0.45, roughness: 0.3, metalness: 0.15, flatShading: i % 6 === 1 || i % 6 === 2 || i % 6 === 5 }));
+      m.position.set((Math.random() - 0.5) * 15, -0.3 + Math.random() * 4.6, -11 + Math.random() * 7);
+      m.userData = { spin: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(2), bob: Math.random() * 6, drift: (Math.random() - 0.5) * 0.4, y: m.position.y };
+      m.scale.setScalar(0.7 + Math.random() * 0.8); scene.add(m); return m;
+    });
+    // two neon rings turning behind the table
+    const halos = [[3.4, 0.035, 0xff3cac, 0.5], [4.3, 0.028, 0x2bd2ff, -0.35]].map(([r, w, c, sp]) => {
+      const m = new THREE.Mesh(new THREE.TorusGeometry(r, w, 12, 200), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+      m.position.set(0, 0.9, -5.5); m.userData.sp = sp; scene.add(m); return m; });
+    const ripple = new THREE.Mesh(new THREE.CircleGeometry(6, 96), new THREE.ShaderMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uT: { value: 0 }, uPulse: { value: 0 } },
+      vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `varying vec2 vUv; uniform float uT, uPulse;
+        vec3 pal(float k) { return 0.5 + 0.5 * cos(6.2831 * (vec3(0.0, 0.33, 0.67) + k)); }
+        void main() { float r = length(vUv - 0.5) * 2.0; float w = sin(r * 26.0 - uT * 2.6) * 0.5 + 0.5;
+          float a = pow(w, 8.0) * (1.0 - smoothstep(0.55, 1.0, r)) * (0.22 + uPulse * 0.6);
+          gl_FragColor = vec4(pal(r * 0.9 - uT * 0.12) * a, a); }` }));
+    ripple.rotation.x = -Math.PI / 2; ripple.position.y = -1.245; scene.add(ripple);
+    let shake = 0, flash = 0, pulse = 0;
+    const kick = (power) => { shake = Math.max(shake, power); flash = Math.max(flash, power * 1.4); pulse = Math.max(pulse, power * 2.5); };
+    // CONFETTI when you win
+    const confetti = (n = 260) => {
+      const g = new THREE.BufferGeometry(), pos = new Float32Array(n * 3), col = new Float32Array(n * 3), v = [];
+      const c = new THREE.Color();
+      for (let i = 0; i < n; i++) { pos.set([(Math.random() - 0.5) * 5, 3.2 + Math.random() * 1.5, (Math.random() - 0.5) * 2], i * 3); c.setHex(PAL[i % PAL.length]); col.set([c.r, c.g, c.b], i * 3); v.push(new THREE.Vector3((Math.random() - 0.5) * 2.4, -1 - Math.random() * 2, (Math.random() - 0.5))); }
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      const m = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.13, vertexColors: true, transparent: true, depthWrite: false }));
+      scene.add(m); fx.push({ t: 0, life: 3.0, step(dt, t) { const a = g.attributes.position.array; for (let i = 0; i < n; i++) { a[i * 3] += (v[i].x + Math.sin(t * 12 + i) * 0.6) * dt; a[i * 3 + 1] += v[i].y * dt; a[i * 3 + 2] += v[i].z * dt; } g.attributes.position.needsUpdate = true; m.material.opacity = 1 - Math.max(0, t - 0.7) / 0.3; }, end() { scene.remove(m); g.dispose(); m.material.dispose(); } });
+    };
+
+    // A HAND: a bevelled palm, four fingers of three joints and a thumb of two, a sleeve with a band of light. Fingers point
+    // along +x, the back of the hand faces the camera (+z), a finger curls away from it (rotation.y > 0).
+    // FULLER (#291, the owner 2026-10-09: "the hand looks very bony, it must have a bit more fat"): thicker fingers that taper
+    // less, a little more room between them, a plumper palm, softer knuckles and tendons
+    const FINGERS = [{ y: 0.345, len: [0.36, 0.24, 0.2], r: 0.138 }, { y: 0.113, len: [0.4, 0.27, 0.21], r: 0.146 },
+      { y: -0.119, len: [0.37, 0.25, 0.2], r: 0.138 }, { y: -0.34, len: [0.29, 0.2, 0.17], r: 0.122 }];
+    const POSES = {
+      idle: { f: [[0.3, 0.35, 0.2, 0.07], [0.3, 0.35, 0.2, 0], [0.35, 0.4, 0.25, -0.06], [0.4, 0.45, 0.3, -0.12]], t: [0.7, 0.25, 0.2] },
+      rock: { f: [[1.5, 1.75, 1.25, 0], [1.5, 1.75, 1.25, 0], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.25, 0.85, 0.55] },
+      paper: { f: [[0, 0.04, 0.02, 0.1], [0, 0.03, 0.02, 0.02], [0, 0.04, 0.02, -0.06], [0.02, 0.05, 0.03, -0.15]], t: [0.95, 0.05, 0.05] },
+      scissors: { f: [[0, 0.03, 0.02, 0.26], [0, 0.03, 0.02, -0.22], [1.5, 1.75, 1.25, 0], [1.45, 1.75, 1.25, 0]], t: [-0.15, 0.85, 0.6] },
+    };
+    const NAMES = ['rock', 'paper', 'scissors'];
+    // ONE SEAMLESS HAND (#286, the owner 2026-10-09 19:29 playtest: "the ball of the hand looks unnatural ... and must flow
+    // seamlessly into the fingers"): no meshes joined at seams - the hand is one smooth surface, a signed distance field of
+    // a palm, a thumb pad and a wrist blended with every finger's three tapered bones and the thumb's two, ray-marched on the
+    // GPU inside a box around the hand. The bones are the jointed groups the poses and the shows already move; each frame
+    // their ends and radii are handed to the shader. Exact at any size: there are no polygons to see.
+    const SDF_VERT = `out vec3 vLocal; void main() { vLocal = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+    const SDF_FRAG = `
+      precision highp float;
+      in vec3 vLocal;
+      layout(location = 0) out highp vec4 outColor;
+      uniform vec3 uA[14]; uniform vec3 uB[14]; uniform vec2 uR[14]; uniform vec3 uU[14];   // uU: each bone's back (the nail side)
+      uniform float uPix;                  // one pixel's size per unit of distance, for a smooth silhouette
+      uniform vec4 uChain[5];              // a bounding sphere per finger and the thumb: center, radius
+      uniform vec3 uColor; uniform vec3 uGlow; uniform float uOpacity;
+      uniform vec4 uCut; uniform float uCutOn;
+      uniform vec3 uBoxMin; uniform vec3 uBoxMax;
+      uniform mat4 uInvModel; uniform mat4 uModel; uniform mat4 uView; uniform mat4 uProj;
+      uniform vec3 uRimL; uniform vec3 uRimR;
+      float smin(float a, float b, float k) { float h = max(k - abs(a - b), 0.0) / k; return min(a, b) - h * h * k * 0.25; }
+      float sdRoundCone(vec3 p, vec3 a, vec3 b, float r1, float r2) {
+        vec3 ba = b - a; float l2 = dot(ba, ba); float rr = r1 - r2; float a2 = l2 - rr * rr; float il2 = 1.0 / l2;
+        vec3 pa = p - a; float y = dot(pa, ba); float z = y - l2; vec3 xv = pa * l2 - ba * y; float x2 = dot(xv, xv);
+        float y2 = y * y * l2; float z2 = z * z * l2; float k = sign(rr) * rr * rr * x2;
+        if (sign(z) * a2 * z2 > k) return sqrt(x2 + z2) * il2 - r2;
+        if (sign(y) * a2 * y2 < k) return sqrt(x2 + y2) * il2 - r1;
+        return (sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+      }
+      float sdEllipsoid(vec3 p, vec3 r) { float k0 = length(p / r); float k1 = length(p / (r * r)); return k0 * (k0 - 1.0) / k1; }
+      float sdRoundBox(vec3 p, vec3 b, float r) { vec3 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r; }
+      float palm(vec3 p) {
+        // broad at the knuckles, narrower to the wrist, a domed back and a soft heel
+        float u = smoothstep(0.0, 1.0, clamp((p.x + 0.45) / 0.9, 0.0, 1.0));   // smooth: a hard corner here drew a seam
+        vec3 q = p; q.y /= mix(0.8, 1.0, u); q.z -= 0.025 * cos(q.y * 2.6);
+        float d = sdRoundBox(q, vec3(0.37, 0.43, 0.135), 0.13) * 0.85;
+        d = smin(d, sdEllipsoid(p - vec3(-0.12, 0.27, -0.05), vec3(0.33, 0.2, 0.19)), 0.14);    // the thumb's pad
+        d = smin(d, sdEllipsoid(p - vec3(-0.18, -0.22, -0.04), vec3(0.27, 0.19, 0.15)), 0.12);  // the heel
+        vec3 w = p; w.z *= 1.3;
+        d = smin(d, sdRoundCone(w, vec3(-0.3, 0.0, 0.0), vec3(-1.05, 0.0, 0.0), 0.27, 0.25) * 0.8, 0.16);  // the wrist
+        // the tendons from each big knuckle over the back of the hand, part of the palm's shape (never cut by a finger's
+        // bounding sphere: a tendon reaches past it, and the cut drew a line across the hand)
+        if (p.x < 0.75 && p.z > -0.05 && abs(p.y) < 0.7) {
+          for (int c = 0; c < 4; c++) { vec3 kn = uA[c * 3] + uU[c * 3] * uR[c * 3].x * 0.3;
+            d = smin(d, sdRoundCone(p, kn + uU[c * 3] * 0.02, vec3(-0.28, kn.y * 0.45, 0.13), 0.017, 0.012), 0.09); }
+        }
+        return d;
+      }
+      float chain(vec3 p, int c, float d) {
+        // a finger's three bones (the thumb's two), each tapering into the next, the whole finger blended into the palm
+        vec4 s = uChain[c];
+        if (length(p - s.xyz) - s.w > d + 0.12) return d;
+        int n0 = c * 3, n = c == 4 ? 2 : 3;
+        float f = 1e5;
+        for (int i = 0; i < 3; i++) { if (i >= n) break; int k = n0 + i; f = smin(f, sdRoundCone(p, uA[k], uB[k], uR[k].x, uR[k].y), 0.035);
+          // a knuckle where each bone starts, raised on the back
+          if (i > 0) f = smin(f, length(p - uA[k] - uU[k] * uR[k].x * 0.12) - uR[k].x * 0.99, 0.05); }
+        if (c < 4) {
+          // the big knuckle where the finger leaves the hand, and the tendon running from it over the back of the hand
+          vec3 kn = uA[n0] + uU[n0] * uR[n0].x * 0.3;
+          f = smin(f, length(p - kn) - uR[n0].x * 0.95, 0.08);
+        }
+        return smin(d, f, c == 4 ? 0.14 : 0.09);
+      }
+      float map(vec3 p) {
+        float d = palm(p);
+        for (int c = 0; c < 5; c++) d = chain(p, c, d);
+        if (uCutOn > 0.5) d = max(d, -(dot(uCut.xyz, p) + uCut.w));
+        return d;
+      }
+      vec3 normalAt(vec3 p) {
+        const vec2 e = vec2(0.0015, -0.0015);
+        return normalize(e.xyy * map(p + e.xyy) + e.yyx * map(p + e.yyx) + e.yxy * map(p + e.yxy) + e.xxx * map(p + e.xxx));
+      }
+      void main() {
+        vec3 ro = (uInvModel * vec4(cameraPosition, 1.0)).xyz;
+        vec3 rd = normalize(vLocal - ro);
+        vec3 t0 = (uBoxMin - ro) / rd, t1 = (uBoxMax - ro) / rd;
+        vec3 tn = min(t0, t1), tf = max(t0, t1);
+        float tNear = max(max(max(tn.x, tn.y), tn.z), 0.0), tFar = min(min(tf.x, tf.y), tf.z);
+        float t = tNear; bool hit = false; vec3 p;
+        // THE SILHOUETTE, SMOOTH: the ray's closest pass to the hand, in pixels - a ray that misses by less than a pixel still
+        // draws, faded by how much it missed, so the outline is anti-aliased instead of a staircase
+        float minR = 1e9, tMin = t;
+        for (int i = 0; i < 72; i++) {
+          p = ro + rd * t; float d = map(p);
+          float r = d / (uPix * t); if (r < minR) { minR = r; tMin = t; }
+          if (d < 0.25 * uPix * t) { hit = true; break; }
+          t += d * 0.96; if (t > tFar) break;
+        }
+        float cover = 1.0;
+        if (!hit) { if (minR > 1.0) discard; p = ro + rd * tMin; cover = 1.0 - clamp(minR, 0.0, 1.0); }
+        vec3 n = normalAt(p);
+        // SKIN: a fine grain on the normal, so the light catches a surface and not plastic
+        { vec3 q = p * 95.0; vec3 g = vec3(sin(q.x + sin(q.y * 1.3)), sin(q.y * 1.1 + sin(q.z * 0.9)), sin(q.z * 1.2 + sin(q.x * 0.8)));
+          n = normalize(n + g * 0.007); }
+        // occlusion in the creases between the fingers and the palm
+        float ao = 0.0; for (int i = 1; i <= 3; i++) { float h = 0.04 * float(i); ao += (h - map(p + n * h)) / h; }
+        ao = clamp(1.0 - ao * 0.28, 0.35, 1.0);
+        vec3 pw = (uModel * vec4(p, 1.0)).xyz;
+        vec3 nw = normalize(transpose(inverse(mat3(uModel))) * n);
+        vec3 v = normalize(cameraPosition - pw);
+        vec3 key = normalize(vec3(2.5, 6.0, 7.0));
+        float wrap = clamp((dot(nw, key) + 0.45) / 1.45, 0.0, 1.0) * 0.92;
+        // (#291, the owner 2026-10-09: the hand lit too bright, "highlighted" - a calmer, matte skin)
+        vec3 hemi = mix(vec3(0.14, 0.09, 0.07), vec3(0.3, 0.35, 0.47), nw.y * 0.5 + 0.5);
+        vec3 h = normalize(key + v);
+        float spec = pow(max(dot(nw, h), 0.0), 40.0) * 0.16 + pow(max(dot(nw, h), 0.0), 8.0) * 0.03;
+        float fres = pow(1.0 - max(dot(nw, v), 0.0), 3.0);
+        vec3 lL = normalize(uRimL - pw), lR = normalize(uRimR - pw);
+        vec3 rim = vec3(1.0, 0.55, 0.15) * pow(max(dot(nw, lL), 0.0), 2.0) * 0.9 + vec3(0.25, 0.55, 1.0) * pow(max(dot(nw, lR), 0.0), 2.0) * 0.9;
+        // NAILS on the back of each fingertip and the thumb's; CREASES across the back of each finger joint
+        float nail = 0.0, crease = 0.0;
+        for (int c = 0; c < 5; c++) {
+          int k = c == 4 ? 13 : c * 3 + 2; vec3 dir = normalize(uB[k] - uA[k]); float r = uR[k].y;
+          vec3 q = p - uB[k]; float along = dot(q, dir); float hh = dot(q, uU[k]); float side = length(q - dir * along - uU[k] * hh);
+          // only points on this last bone itself (its segment, not the line through it): a curled fist lays other bones across that line
+          vec3 ab = uB[k] - uA[k]; float tt = clamp(dot(p - uA[k], ab) / dot(ab, ab), 0.0, 1.0); float onBone = 1.0 - smoothstep(r * 1.15, r * 1.45, length(p - uA[k] - ab * tt));
+          nail = max(nail, onBone * smoothstep(-r * 2.3, -r * 1.7, along) * (1.0 - smoothstep(r * 0.2, r * 0.6, along)) * (1.0 - smoothstep(r * 0.5, r * 0.72, side)) * smoothstep(r * 0.2, r * 0.5, hh));
+        }
+        for (int k = 0; k < 14; k++) {
+          if (k == 0 || k == 3 || k == 6 || k == 9 || k == 12) continue;
+          vec3 dir = normalize(uB[k] - uA[k]); float along = dot(p - uA[k], dir); float hh = dot(p - uA[k], uU[k]);
+          // only on this finger at this joint (a plane alone ran the crease across the neighbours)
+          float near = 1.0 - smoothstep(uR[k].x * 1.1, uR[k].x * 1.4, length(p - uA[k] - dir * along));
+          crease = max(crease, near * exp(-along * along / 0.00009) * smoothstep(0.0, 0.06, hh));
+        }
+        // the nail: lighter, a darker rim where it meets the skin, a pale half-moon near its base
+        float rimN = nail * (1.0 - nail) * 4.0;
+        vec3 skin = mix(uColor, uColor * 0.55 + vec3(0.46, 0.4, 0.42), nail) * (1.0 - crease * 0.3) * (1.0 - rimN * 0.22);
+        spec += nail * pow(max(dot(nw, h), 0.0), 120.0) * 1.2;
+        vec3 sss = uColor * vec3(1.0, 0.45, 0.3) * (1.0 - wrap) * 0.18;     // light through the skin, warm in the shade
+        vec3 col = skin * (wrap * 1.05 + hemi) * ao + sss + rim * (0.12 + fres * 0.45) * ao + spec + fres * 0.05 * hemi + uGlow;
+        col = (col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14);   // ACES, as the rest of the stage
+        outColor = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), uOpacity * cover);
+        vec4 clip = uProj * uView * vec4(pw, 1.0);
+        gl_FragDepth = clip.z / clip.w * 0.5 + 0.5;
+      }`;
+    const BOX_MIN = new THREE.Vector3(-1.2, -0.85, -0.85), BOX_MAX = new THREE.Vector3(1.7, 1.15, 0.7);
+    const boxGeo = (() => { const g = new THREE.BoxGeometry(BOX_MAX.x - BOX_MIN.x, BOX_MAX.y - BOX_MIN.y, BOX_MAX.z - BOX_MIN.z); g.translate((BOX_MAX.x + BOX_MIN.x) / 2, (BOX_MAX.y + BOX_MIN.y) / 2, (BOX_MAX.z + BOX_MIN.z) / 2); return g; })();
+    // a material's opacity and color are its uniforms, so the shows' fades and greys work on it as on any material
+    // the matrices the fragment shader needs (a ShaderMaterial's fragment stage is handed none of them)
+    const vp = new THREE.Vector4();
+    const sdfCamera = (m, mesh, camera, renderer) => { const U = m.uniforms; if (renderer) { renderer.getCurrentViewport(vp); U.uPix.value = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(1, vp.w); } U.uModel.value.copy(mesh.matrixWorld); U.uInvModel.value.copy(mesh.matrixWorld).invert(); U.uView.value.copy(camera.matrixWorldInverse); U.uProj.value.copy(camera.projectionMatrix); };
+    const bindSdf = (m) => { Object.defineProperty(m, 'opacity', { get: () => m.uniforms.uOpacity.value, set: (v) => { m.uniforms.uOpacity.value = v; }, configurable: true }); m.color = m.uniforms.uColor.value; m.isSdf = true; return m; };
+    const sdfMaterial = (skin, glow) => bindSdf(new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3, vertexShader: SDF_VERT, fragmentShader: SDF_FRAG, side: THREE.BackSide, transparent: true, depthWrite: true,
+      uniforms: { uA: { value: Array.from({ length: 14 }, () => new THREE.Vector3()) }, uB: { value: Array.from({ length: 14 }, () => new THREE.Vector3()) },
+        uR: { value: Array.from({ length: 14 }, () => new THREE.Vector2(0.1, 0.1)) }, uU: { value: Array.from({ length: 14 }, () => new THREE.Vector3(0, 0, 1)) }, uPix: { value: 0.002 }, uChain: { value: Array.from({ length: 5 }, () => new THREE.Vector4(0, 0, 0, 1)) },
+        uColor: { value: new THREE.Color(skin) }, uGlow: { value: new THREE.Color(glow) }, uOpacity: { value: 1 },
+        uCut: { value: new THREE.Vector4(0, 1, 0, 0) }, uCutOn: { value: 0 }, uBoxMin: { value: BOX_MIN.clone() }, uBoxMax: { value: BOX_MAX.clone() },
+        uInvModel: { value: new THREE.Matrix4() }, uModel: { value: new THREE.Matrix4() }, uView: { value: new THREE.Matrix4() }, uProj: { value: new THREE.Matrix4() }, uRimL: { value: new THREE.Vector3(-3.2, 1.6, -2.4) }, uRimR: { value: new THREE.Vector3(3.2, 1.6, -2.4) } } }));
+    const sleeveGeo = new THREE.CylinderGeometry(0.38, 0.4, 1.4, 64, 1, false);
+    const rimGeo = new THREE.TorusGeometry(0.39, 0.06, 24, 96);
+    const bandGeo = new THREE.TorusGeometry(0.405, 0.022, 12, 96);
+    function makeHand(skin, sheen, band, side, glow) {
+      const mat = sdfMaterial(skin, glow);
+      const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x161c2a, roughness: 0.55, metalness: 0.35 });
+      const bandMat = new THREE.MeshBasicMaterial({ color: band });
+      const root = new THREE.Group(), body = new THREE.Group(), hand = new THREE.Group();
+      root.add(body); body.add(hand);
+      const skinMesh = new THREE.Mesh(boxGeo, mat); skinMesh.frustumCulled = false; hand.add(skinMesh);
+      const sleeve = new THREE.Mesh(sleeveGeo, sleeveMat); sleeve.rotation.z = Math.PI / 2; sleeve.scale.set(1, 1, 0.8); sleeve.position.x = -1.75; hand.add(sleeve);
+      const rim = new THREE.Mesh(rimGeo, sleeveMat); rim.rotation.y = Math.PI / 2; rim.scale.set(1, 0.8, 1); rim.position.x = -1.06; hand.add(rim);
+      const cuff = new THREE.Mesh(bandGeo, bandMat); cuff.rotation.y = Math.PI / 2; cuff.scale.set(1, 0.8, 1); cuff.position.x = -1.2; hand.add(cuff);
+      // THE BONES: groups only (nothing drawn); the shader reads their ends
+      const bones = [];   // { j, len, r1, r2 } in uniform order: 4 fingers x 3, then the thumb's 2
+      const fingers = FINGERS.map((spec) => {
+        const base = new THREE.Group(); base.position.set(0.36, spec.y * 0.98, 0.0); hand.add(base);
+        const joints = []; let parent = base, at = 0;
+        spec.len.forEach((l, k) => {
+          const j = new THREE.Group(); j.position.x = at; parent.add(j);
+          const r1 = spec.r * [1.04, 0.98, 0.94][k], r2 = spec.r * [0.98, 0.94, 0.84][k];
+          bones.push({ j, len: l, r1, r2 }); joints.push(j); parent = j; at = l;
+        });
+        return joints;
+      });
+      const thumbBase = new THREE.Group(); thumbBase.position.set(-0.06, 0.4, -0.03); hand.add(thumbBase);
+      const t1 = new THREE.Group(); thumbBase.add(t1); const t2 = new THREE.Group(); t2.position.x = 0.32; t1.add(t2);
+      bones.push({ j: t1, len: 0.32, r1: 0.15, r2: 0.13 }, { j: t2, len: 0.27, r1: 0.13, r2: 0.105 });
+      const inv = new THREE.Matrix4(), m = new THREE.Matrix4(), va = new THREE.Vector3(), vb = new THREE.Vector3();
+      // every frame, just before the hand is drawn: the bones' ends in the hand's own space, a bounding sphere per finger
+      skinMesh.onBeforeRender = (renderer, sc, cam) => {
+        hand.updateMatrixWorld(true);
+        inv.copy(hand.matrixWorld).invert();
+        const U = mat.uniforms;
+        bones.forEach((b, i) => {
+          m.multiplyMatrices(inv, b.j.matrixWorld);
+          U.uA.value[i].set(0, 0, 0).applyMatrix4(m); U.uB.value[i].set(b.len, 0, 0).applyMatrix4(m); U.uR.value[i].set(b.r1, b.r2); U.uU.value[i].set(0, 0, 1).transformDirection(m);
+        });
+        for (let c = 0; c < 5; c++) {
+          const ks = c < 4 ? [c * 3, c * 3 + 1, c * 3 + 2] : [12, 13];
+          va.set(0, 0, 0); ks.forEach((k) => va.add(U.uA.value[k]).add(U.uB.value[k])); va.multiplyScalar(1 / (ks.length * 2));
+          let r = 0; ks.forEach((k) => { r = Math.max(r, va.distanceTo(U.uA.value[k]) + U.uR.value[k].x, va.distanceTo(U.uB.value[k]) + U.uR.value[k].y); });
+          U.uChain.value[c].set(va.x, va.y, va.z, r);
+        }
+        sdfCamera(mat, skinMesh, cam, renderer);
+      };
+      root.scale.x = side;          // the opponent's hand is the mirror of yours
+      const pose = JSON.parse(JSON.stringify(POSES.idle)), target = JSON.parse(JSON.stringify(POSES.idle));
+      const apply = () => {
+        fingers.forEach((joints, i) => { const p = pose.f[i]; joints[0].rotation.set(0, p[0], p[3]); joints[1].rotation.y = p[1]; joints[2].rotation.y = p[2]; });
+        thumbBase.rotation.set(0, 0, pose.t[0]); t1.rotation.y = pose.t[1]; t2.rotation.y = pose.t[2];
+      };
+      const mats = [mat];
+      return { root, body, hand, mat, mats, pose, target, apply, skin: new THREE.Color(skin), skinMesh, decor: [sleeve, rim, cuff],
+        set(name) { const p = POSES[name]; target.f = p.f.map((x) => x.slice()); target.t = p.t.slice(); },
+        step(k) { for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) pose.f[i][j] += (target.f[i][j] - pose.f[i][j]) * k; for (let j = 0; j < 3; j++) pose.t[j] += (target.t[j] - pose.t[j]) * k; apply(); } };
+    }
+    const me = makeHand(0xffb15e, new THREE.Color(0xffe2bf), 0xff9a2e, 1, 0x3a1600);
+    const them = makeHand(0x6fa8ff, new THREE.Color(0xd8e8ff), 0x4c9dff, -1, 0x05183a);
+    const HOME = { me: new THREE.Vector3(-1.55, 0, 0), them: new THREE.Vector3(1.55, 0, 0) };
+    for (const [h, at] of [[me, HOME.me], [them, HOME.them]]) { h.root.position.copy(at); h.root.rotation.set(0.3, h === me ? -0.32 : 0.32, 0); scene.add(h.root); h.apply(); }
+
+    // THE OPPONENT'S MOVE, NOT YET SHOWN: a turning cage of light around a closed fist; green once their move is in
+    const cage = new THREE.Mesh(new THREE.IcosahedronGeometry(1.08, 1), new THREE.MeshBasicMaterial({ color: 0x4c9dff, wireframe: true, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false }));
+    cage.position.copy(HOME.them); scene.add(cage);
+    const mark = (() => { const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+      g.font = '800 96px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#ffffff'; g.shadowColor = '#4c9dff'; g.shadowBlur = 18; g.fillText('?', 64, 70);
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthTest: false })); })();
+    mark.scale.set(0.8, 0.8, 1); mark.position.set(HOME.them.x, 1.25, 0.4); scene.add(mark);
+
+    // BURSTS AND SHOCKWAVES, short-lived
+    const fx = [];
+    const burst = (pos, color, n = 90, speed = 3.2) => {
+      const g = new THREE.BufferGeometry(), p = new Float32Array(n * 3), v = [];
+      for (let i = 0; i < n; i++) { p.set([pos.x, pos.y, pos.z], i * 3); const d = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.3, Math.random() - 0.5).normalize().multiplyScalar(speed * (0.4 + Math.random())); v.push(d); }
+      g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+      const m = new THREE.Points(g, new THREE.PointsMaterial({ size: 0.12, map: dot, color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+      scene.add(m); fx.push({ t: 0, life: 0.9, step(dt, t) { const a = g.attributes.position.array; for (let i = 0; i < n; i++) { v[i].y -= 4 * dt; a[i * 3] += v[i].x * dt; a[i * 3 + 1] += v[i].y * dt; a[i * 3 + 2] += v[i].z * dt; } g.attributes.position.needsUpdate = true; m.material.opacity = 1 - t; }, end() { scene.remove(m); g.dispose(); m.material.dispose(); } });
+    };
+    const shock = (pos, color) => {
+      kick(0.22);
+      const m = new THREE.Mesh(new THREE.RingGeometry(0.2, 0.32, 64), new THREE.MeshBasicMaterial({ color, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+      m.rotation.x = -Math.PI / 2; m.position.set(pos.x, FLOOR_Y + 0.02, pos.z); scene.add(m);
+      fx.push({ t: 0, life: 0.7, step(dt, t) { const s = 1 + t * 9; m.scale.set(s, s, s); m.material.opacity = 1 - t; }, end() { scene.remove(m); m.geometry.dispose(); m.material.dispose(); } });
+    };
+
+    // THE CUT (scissors beat paper): the paper hand drawn twice, each copy clipped to one side of the cut, the halves parting
+    let halves = null;
+    const cutPaper = (h, cutY) => {
+      const local = [new THREE.Plane(new THREE.Vector3(0, 1, 0), -cutY), new THREE.Plane(new THREE.Vector3(0, -1, 0), cutY)];
+      const parts = local.map((pl) => {
+        // every material of the copy - skin, sleeve, band - clipped by the one plane of its half
+        const plane = new THREE.Plane(), made = new Map(), copy = h.root.clone(true);
+        copy.traverse((o) => {
+          if (!o.isMesh) return;
+          if (o.material.isSdf) {
+            // the seamless hand: its bones as they are now, cut by the plane in its own space, its camera matrices its own
+            const m = bindSdf(o.material.clone()); m.transparent = true; m.uniforms.uCutOn.value = 1; m.uniforms.uCut.value.set(pl.normal.x, pl.normal.y, pl.normal.z, pl.constant);
+            o.material = m; o.onBeforeRender = (r, sc, cam) => sdfCamera(m, o, cam, r); made.set(Symbol('sdf'), m); return;
+          }
+          if (!made.has(o.material)) { const m = o.material.clone(); m.clippingPlanes = [plane]; m.side = THREE.DoubleSide; m.transparent = true; made.set(o.material, m); }
+          o.material = made.get(o.material);
+        });
+        scene.add(copy); return { copy, mats: [...made.values()], plane, local: pl };
+      });
+      h.root.visible = false;
+      const out = Math.sign(h.root.position.x) || 1;
+      halves = { parts, h, v: [new THREE.Vector3(0.9 * out, 2.2, 0.5), new THREE.Vector3(0.5 * out, -0.4, 0.8)], spin: [1.6 * out, -1.1 * out], t: 0 };
+    };
+    const clearHalves = () => { if (!halves) return; for (const p of halves.parts) { scene.remove(p.copy); for (const m of p.mats) m.dispose(); } halves.h.root.visible = true; halves = null; };
+
+    // A SEQUENCE: tweens on a clock, each update(p) with p 0..1 over its span
+    let seq = null;
+    const ease = { out: (p) => 1 - Math.pow(1 - p, 3), inOut: (p) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2), back: (p) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); } };
+    const resetHand = (h, at) => { h.body.position.set(0, 0, 0); h.body.rotation.set(0, 0, 0); h.body.scale.set(1, 1, 1); h.mat.color.copy(h.skin); h.mat.opacity = 1; h.root.position.copy(at); };
+    const winnerOf = (a, b) => (a === b ? 0 : (a - b + 3) % 3 === 1 ? 1 : -1);   // 1: a beats b (paper 1 > rock 0 > scissors 2 > paper)
+    // THE LEAD-IN (#288, the owner 2026-10-09: "after the result screen the animation must morph smoothly from the lock animation to
+    // the win/loss animation"): for INTRO s the cage around their hand bursts open and fades, and both hands glide from wherever
+    // they are - bouncing, posed, half-faded - to the start of the pump; nothing snaps
+    const INTRO = 0.45, PUMP = 1.95, REVEAL = 0.9, LATER = (PUMP - 1.05) + (REVEAL - 0.35);
+    let revealing = false;   // while the moves open, the fingers move slower
+    function shoot(mine, theirs) {
+      clearHalves();
+      const from = [me, them].map((h) => ({ h, pos: h.body.position.clone(), rot: h.body.rotation.clone(), scale: h.body.scale.clone(), color: h.mat.color.clone(), op: h.mat.opacity }));
+      const w = winnerOf(mine, theirs);
+      const win = w > 0 ? me : w < 0 ? them : null, lose = w > 0 ? them : w < 0 ? me : null;
+      const winMove = w > 0 ? mine : theirs;
+      const dir = (h) => (h === me ? 1 : -1);
+      const tw = [], c = {};   // c: what each tween did once (a burst, a hit)
+      const lead = { at: -INTRO, dur: INTRO, update: (p) => { const e = ease.inOut(p);
+        for (const f of from) { f.h.body.position.copy(f.pos).multiplyScalar(1 - e); f.h.body.rotation.set(f.rot.x * (1 - e), f.rot.y * (1 - e), f.rot.z * (1 - e)); f.h.body.scale.copy(f.scale).lerp(new THREE.Vector3(1, 1, 1), e); f.h.mat.color.copy(f.color).lerp(f.h.skin, e); f.h.mat.opacity = f.op + (1 - f.op) * e; }
+        if (!c.opened) { c.opened = true; burst(new THREE.Vector3(HOME.them.x, 0.1, 0), 0x6fe3ff, 70, 2.6); kick(0.06); } } };
+      // 1. "ROCK - PAPER - SCISSORS": three pumps of both fists
+      tw.push({ at: 0, dur: 0.05, update: () => { me.set('rock'); them.set('rock'); } });
+      // (#291, the owner 2026-10-09: "the hand strikes down 3 times and then reveals"): each stroke lifts the fist, brings it
+      // down hard, and lands with a small kick; the third lands and opens into the move
+      tw.push({ at: 0, dur: PUMP, update: (p) => { const q = (p * 3) % 1, n = Math.min(2, Math.floor(p * 3));
+        const y = p >= 1 ? 0 : q < 0.55 ? 0.62 * Math.sin((q / 0.55) * Math.PI / 2) : q < 0.75 ? 0.62 - 0.74 * Math.pow((q - 0.55) / 0.2, 2) : -0.12 * (1 - (q - 0.75) / 0.25);
+        for (const h of [me, them]) { h.body.position.y = y; h.body.rotation.z = Math.max(0, y) * 0.45; }
+        if (q >= 0.75 && !c['hit' + n]) { c['hit' + n] = true; kick(0.07); } } });
+      // 2. "SHOOT": both forms, a pulse
+      tw.push({ at: 1.05, dur: 0.05, update: () => { me.set(NAMES[mine]); them.set(NAMES[theirs]); kick(0.08); burst(new THREE.Vector3(0, 0.2, 0), 0xffffff, 60, 2.4); } });
+      tw.push({ at: 1.05, dur: REVEAL, update: (p) => { revealing = p < 1; const s = 1 + Math.sin(p * Math.PI) * 0.12; me.body.scale.setScalar(s); them.body.scale.setScalar(s); me.body.position.x = ease.out(p) * 0.25; them.body.position.x = ease.out(p) * 0.25; } });
+      // 3. THE STRIKE
+      if (!win) {
+        tw.push({ at: 1.55, dur: 0.5, update: (p) => { const x = Math.sin(p * Math.PI) * 0.75 + 0.25; me.body.position.x = x; them.body.position.x = x; if (p > 0.5 && !c.bumped) { c.bumped = true; burst(new THREE.Vector3(0, 0.1, 0), 0x9aa7ff, 70, 2.6); } } });
+      } else if (winMove === 2) {
+        // scissors cut the paper: the hand turns so its blades open in front of and behind the paper, reaches in, snips twice,
+        // and the paper falls apart in two halves
+        tw.push({ at: 1.5, dur: 0.45, update: (p) => { const e = ease.out(p); win.body.rotation.x = e * 1.4; win.body.position.x = 0.25 + e * 1.15; win.target.f[0][3] = win.pose.f[0][3] = 0.42 * e + 0.26 * (1 - e); win.target.f[1][3] = win.pose.f[1][3] = -(0.42 * e + 0.22 * (1 - e)); } });
+        tw.push({ at: 1.95, dur: 0.6, update: (p) => { const open = 0.42 * Math.abs(Math.cos(p * Math.PI * 1.5)); win.target.f[0][3] = win.pose.f[0][3] = open; win.target.f[1][3] = win.pose.f[1][3] = -open; win.body.position.x = 0.25 + 1.15 + p * 0.3;
+          if (p > 0.66 && !c.cut) { c.cut = true; lose.root.updateMatrixWorld(true); cutPaper(lose, 0.0); kick(0.2); burst(new THREE.Vector3(lose.root.position.x - 0.5 * Math.sign(lose.root.position.x), 0.0, 0.4), 0xffd27a, 120, 3.6); } } });
+        tw.push({ at: 2.6, dur: 0.5, update: (p) => { win.body.rotation.x = 1.4 * (1 - ease.out(p)); win.body.position.x = 1.7 - ease.out(p) * 1.2; } });
+      } else if (winMove === 1) {
+        // paper covers the fist: up, over, and down onto it; the fist sinks and greys
+        tw.push({ at: 1.5, dur: 0.55, update: (p) => { const e = ease.inOut(p); win.body.position.x = 0.25 + e * 2.15; win.body.position.y = Math.sin(p * Math.PI) * 0.9 + e * 0.55; win.body.rotation.x = -e * 1.15; } });
+        tw.push({ at: 2.05, dur: 0.35, update: (p) => { win.body.position.y = 0.55 - ease.out(p) * 0.32; lose.body.scale.setScalar(1 - ease.out(p) * 0.22); lose.mat.color.copy(lose.skin).lerp(new THREE.Color(0x2a3040), ease.out(p) * 0.7); if (p > 0.6 && !c.covered) { c.covered = true; shock(new THREE.Vector3(lose.root.position.x, 0, 0), 0xffffff); } } });
+      } else {
+        // rock smashes the scissors: up high, down hard, the scissors crumple
+        tw.push({ at: 1.5, dur: 0.4, update: (p) => { const e = ease.out(p); win.body.position.x = 0.25 + e * 1.6; win.body.position.y = e * 1.25; win.body.rotation.z = e * 0.5; } });
+        tw.push({ at: 1.9, dur: 0.16, update: (p) => { win.body.position.y = 1.25 - p * 1.05; win.body.rotation.z = 0.5 - p * 0.6; if (p === 1 && !c.hit) { c.hit = true; shock(new THREE.Vector3(lose.root.position.x, 0, 0), 0xffb35c); burst(new THREE.Vector3(lose.root.position.x * 0.7, 0.3, 0.2), 0xffb35c, 120, 4); lose.set('idle'); lose.target.f[0] = [1.1, 1.3, 0.9, 0.5]; lose.target.f[1] = [1.2, 1.4, 1.0, -0.5]; } } });
+        tw.push({ at: 2.06, dur: 0.6, update: (p) => { lose.body.scale.set(1 + (1 - p) * 0.1, 1 - ease.out(p) * 0.35, 1); lose.body.position.x = Math.sin(p * 40) * 0.06 * (1 - p); lose.mat.color.copy(lose.skin).lerp(new THREE.Color(0x2a3040), ease.out(p) * 0.6); } });
+      }
+      // 4. HOLD, then home
+      tw.push({ at: 3.5, dur: 0.6, update: (p) => {
+        if (!c.homing) { c.homing = true; clearHalves(); }
+        for (const h of [me, them]) { h.body.position.multiplyScalar(1 - ease.out(p)); h.body.rotation.x *= 1 - p; h.body.rotation.z *= 1 - p; h.body.scale.lerp(new THREE.Vector3(1, 1, 1), p); h.mat.color.lerp(h.skin, p); }
+      } });
+      // the old 1.05 s pump and 0.35 s pulse were the first draft: everything after them moves by what they grew
+      for (const x of tw) { if (x.at === 1.05) x.at += PUMP - 1.05; else if (x.at > 1.05) x.at += LATER; }
+      tw.push(lead); for (const x of tw) x.at += INTRO;
+      seq = { t: 0, tw, end: 4.1 + LATER + INTRO, w };
+      return w;
+    }
+
+    // WHAT THE TABLE SAYS (from the client's state): your hand, theirs, and whether their move is in
+    let want = { mine: 'idle', theirs: 'absent' }, preview = null, shownFor = null, demoMode = false;
+    function show(s) {
+      const mine = s.phase === 'wait' || s.phase === 'reveal' || s.phase === 'result' ? NAMES[s.move] : preview !== null ? NAMES[preview] : 'idle';
+      const present = (s.here && s.here.length) || (s.phase === 'pick' ? s.joined : s.them > 0);
+      const theirs = s.phase === 'wait' || s.phase === 'pick' ? (s.phase === 'pick' ? (s.joined ? 'in' : present ? 'here' : 'absent') : (s.them > 0 ? 'in' : present ? 'here' : 'absent')) : 'here';
+      want = { mine, theirs };
+      // THE SHOW: once a round of this tab has both moves, played out once
+      const done = (s.phase === 'reveal' || s.phase === 'result') && s.theirs !== null && s.theirs !== undefined ? { id: s.id, mine: s.move, theirs: s.theirs }
+        : s.prev && s.prev.id && s.prev.theirs !== null && s.prev.theirs !== undefined && s.prev.phase === 'result' ? { id: s.prev.id, mine: s.prev.move, theirs: s.prev.theirs } : null;
+      if (!demoMode && done && done.id !== shownFor && (!s.prev || !s.prev.id || done.id !== s.prev.id || Date.now() - (s.prev.closeMs || 0) < 30000)) { shownFor = done.id; console.log('[rps] the show: ' + NAMES[done.mine] + ' vs ' + NAMES[done.theirs]); shoot(done.mine, done.theirs); }
+    }
+
+    // THE MOVES' BUTTONS (#286, the owner 2026-10-09: "the icons below must not be standard icons - high-quality hands too,
+    // animated, e.g. turning on their own axis"): the same seamless hand in each move's pose, turning, drawn by a small
+    // renderer of its own and copied into each button's canvas; the one pointed at turns faster
+    // one transparent canvas over the row of buttons, each hand drawn straight into its button's square (no copy back from
+    // the GPU, which stalled every frame)
+    const iconRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    iconRenderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); iconRenderer.autoClear = false; iconRenderer.setClearColor(0x000000, 0);
+    iconRenderer.outputColorSpace = THREE.SRGBColorSpace; iconRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    const iconLayer = iconRenderer.domElement; iconLayer.className = 'hand-icons';
+    const iconScene = new THREE.Scene();
+    const iconCam = new THREE.PerspectiveCamera(30, 1, 0.1, 20); iconCam.position.set(0, 0.25, 3.7); iconCam.lookAt(0, 0.2, 0);
+    const iconHands = NAMES.map((name) => {
+      const h = makeHand(0xffb15e, new THREE.Color(0xffe2bf), 0xff9a2e, 1, 0x3a1600);
+      h.decor.forEach((d) => { d.visible = false; });
+      const p = POSES[name]; h.pose.f = p.f.map((x) => x.slice()); h.pose.t = p.t.slice(); h.set(name); h.apply();
+      // UPRIGHT (the owner 2026-10-09: "vertical, from below, not horizontal"): fingers up, the wrist below the button's edge
+      const pivot = new THREE.Group(); h.root.rotation.set(0, 0.0, Math.PI / 2); h.root.position.set(name === 'rock' ? 0.05 : 0, name === 'rock' ? -0.05 : -0.3, 0); pivot.add(h.root); pivot.visible = false; iconScene.add(pivot);
+      return { h, pivot, rise: 0, hop: 0 };
+    });
+    let iconHover = null, iconChosen = null, iconSlots = [], layerW = 0, layerH = 0;   // each hand's rise starts at 0 once, when the page loads
+    const drawIcons = (dt) => {
+      if (!iconLayer.isConnected || !iconSlots.length) return;
+      const host = iconLayer.parentElement, hr = host.getBoundingClientRect();
+      if (Math.round(hr.width) !== layerW || Math.round(hr.height) !== layerH) { layerW = Math.round(hr.width); layerH = Math.round(hr.height); iconRenderer.setSize(layerW, layerH, false); }
+      iconRenderer.setScissorTest(false); iconRenderer.clear();
+      iconRenderer.setScissorTest(true);
+      iconHands.forEach((x, i) => {
+        const slot = iconSlots[i]; if (!slot || !slot.isConnected) return;
+        // rising from below when the buttons appear (each a moment after the last), then bobbing and turning on its upright
+        // axis; the one pointed at hops, the chosen one pumps
+        const now = performance.now() / 1000;
+        x.rise = Math.min(1, x.rise + dt * 1.8);
+        const e = x.rise < 0 ? 0 : (() => { const q = Math.max(0, Math.min(1, x.rise * 1.25 - i * 0.12)), c = 1.9; return 1 + (c + 1) * Math.pow(q - 1, 3) + c * Math.pow(q - 1, 2); })();
+        x.hop += ((i === iconHover ? 1 : 0) - x.hop) * Math.min(1, dt * 10);
+        const pump = i === iconChosen ? Math.abs(Math.sin(now * 7)) * 0.35 : 0;
+        x.pivot.position.y = -2.4 * (1 - e) + Math.sin(now * 2.2 + i * 1.3) * 0.07 + x.hop * 0.22 + pump;
+        x.pivot.rotation.y = Math.sin(now * 1.25 + i * 2.0) * 0.5 + x.hop * Math.sin(now * 9) * 0.25;
+        x.pivot.rotation.z = Math.sin(now * 1.7 + i) * 0.06;
+        iconHands.forEach((y) => { y.pivot.visible = y === x; });
+        const r = slot.getBoundingClientRect(), vx = r.left - hr.left, vy = layerH - (r.top - hr.top) - r.height;
+        iconRenderer.setViewport(vx, vy, r.width, r.height); iconRenderer.setScissor(vx, vy, r.width, r.height);
+        iconRenderer.render(iconScene, iconCam);
+      });
+    };
+
+    // THE FRAME
+    let last = performance.now(), visible = true;
+    document.addEventListener('visibilitychange', () => { visible = !document.hidden; last = performance.now(); });
+    const camBase = new THREE.Vector3();
+    const fit = () => {
+      const w = box.clientWidth || 1, h = box.clientHeight || 1;
+      renderer.setSize(w, h, false); camera.aspect = w / h;
+      // the two hands and their reach (~6.4 wide) fit any width; a tall screen moves the camera back
+      const half = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const dist = Math.max(5.6, 2.85 / (half * camera.aspect));
+      camera.position.set(0, 1.35 + dist * 0.06, dist); camBase.copy(camera.position); camera.lookAt(0, 0.05, 0); camera.updateProjectionMatrix();
+      const skyH = 2 * 18 * half * 1.08; sky.scale.set(skyH * camera.aspect, skyH, 1); sky.material.uniforms.uAspect.value = camera.aspect;
+    };
+    new ResizeObserver(fit).observe(box);
+    // THE FRAME RATE HOLDS (#286): the seamless hands are drawn per pixel, so a screen that cannot keep 45 fps for 1.5 s
+    // draws the stage at a lower pixel ratio, a quarter at a time, down to 1 - window.RPS_PIXEL_RATIO says where it is
+    let pr = renderer.getPixelRatio(), fpsN = 0, fpsT = 0;
+    const PR_FLOOR = Math.min(1.5, pr);   // a sharp screen keeps at least 1.5: below it the hands' outline shows its pixels
+    window.RPS_PIXEL_RATIO = pr;
+    const frame = (now) => {
+      requestAnimationFrame(frame);
+      if (!visible || !box.isConnected) return;
+      const dt = Math.min(0.05, (now - last) / 1000); last = now;
+      fpsN++; fpsT += dt;
+      if (fpsT >= 1.5) { const fps = fpsN / fpsT; fpsN = 0; fpsT = 0; if (fps < 45 && !(fps > 28 && fps < 32) && pr > PR_FLOOR) {   // a steady 30 is a capped display (low power), not a slow one
+         pr = Math.max(PR_FLOOR, pr - 0.25); renderer.setPixelRatio(pr); fit(); window.RPS_PIXEL_RATIO = pr; } }
+      const t = now / 1000;
+      if (seq) {
+        seq.t += dt;
+        for (const x of seq.tw) { const p = (seq.t - x.at) / x.dur; if (p >= 0 && !x.finished) { x.update(Math.min(1, p)); if (p >= 1) x.finished = true; } }
+        if (seq.t >= seq.end) { seq = null; clearHalves(); resetHand(me, HOME.me); resetHand(them, HOME.them); }
+        const glow = seq ? (seq.w > 0 ? [1, 0.3] : seq.w < 0 ? [0.3, 1] : [0.7, 0.7]) : [0.55, 0.55];
+        ringMe.material.opacity += (glow[0] - ringMe.material.opacity) * 0.1; ringThem.material.opacity += (glow[1] - ringThem.material.opacity) * 0.1;
+      } else {
+        me.set(want.mine); them.set(want.theirs === 'absent' || want.theirs === 'here' || want.theirs === 'in' ? 'rock' : want.theirs);
+        // breathing: an idle bob, each hand on its own beat
+        me.body.position.y = Math.abs(Math.sin(t * 2.2)) * 0.12; them.body.position.y = Math.abs(Math.sin(t * 2.2 + 1.3)) * 0.12;
+        me.body.rotation.z = Math.sin(t * 1.1) * 0.04; them.body.rotation.z = Math.sin(t * 1.1 + 0.8) * 0.04;
+        const ghost = want.theirs === 'absent';
+        for (const m of them.mats) { m.opacity += ((ghost ? 0.22 : 1) - m.opacity) * 0.1; }
+        ringMe.material.opacity += (0.55 - ringMe.material.opacity) * 0.1; ringThem.material.opacity += ((ghost ? 0.15 : 0.55) - ringThem.material.opacity) * 0.1;
+      }
+      const intro = seq && seq.t < INTRO ? seq.t / INTRO : null;
+      const caged = (!seq && want.theirs !== 'absent') || intro !== null;
+      cage.visible = caged;
+      if (intro !== null) { cage.scale.setScalar(1 + intro * 1.1); cage.material.opacity = 0.12 * (1 - intro); }
+      else { cage.scale.setScalar(1); cage.material.opacity = 0.12; } mark.visible = caged || (!seq && want.theirs === 'absent');
+      cage.rotation.y = t * 0.6; cage.rotation.x = t * 0.25;
+      cage.material.color.setHex(want.theirs === 'in' ? 0x5fae94 : 0x5a7fb8);
+      mark.material.opacity = 0.3 + Math.sin(t * 2) * 0.08; mark.position.y = 1.3 + Math.sin(t * 2) * 0.06;
+      const k = 1 - Math.exp(-dt * (revealing ? 4.5 : 14)); me.step(k); them.step(k);
+      if (halves) {
+        halves.t += dt;
+        halves.parts.forEach((p, i) => {
+          p.copy.position.addScaledVector(halves.v[i], dt); halves.v[i].y -= 3.2 * dt; p.copy.rotation.z += halves.spin[i] * dt;
+          const o = Math.max(0, 1 - Math.max(0, halves.t - 0.5) / 0.9); for (const m of p.mats) m.opacity = o;
+          p.copy.updateMatrixWorld(true);
+          p.plane.copy(p.local).applyMatrix4(p.copy.children[0].children[0].matrixWorld);
+        });
+      }
+      for (let i = fx.length - 1; i >= 0; i--) { const f = fx[i]; f.t += dt; f.step(dt, Math.min(1, f.t / f.life)); if (f.t >= f.life) { f.end(); fx.splice(i, 1); } }
+      const a = dustGeo.attributes.position.array;
+      for (let i = 0; i < DUST; i++) { a[i * 3 + 1] += dustSpeed[i] * dt; if (a[i * 3 + 1] > FLOOR_Y + 6) a[i * 3 + 1] = FLOOR_Y; }
+      dustGeo.attributes.position.needsUpdate = true;
+      line.material.opacity = 0.18 + Math.sin(t * 2.2) * 0.08;
+      sky.material.uniforms.uT.value = t; sky.material.uniforms.uFlash.value = flash;
+      halos.forEach((m, i) => { m.rotation.x = 1.15 + Math.sin(t * 0.4 + i) * 0.12; m.rotation.z += m.userData.sp * dt; m.material.opacity = 0.55 + Math.sin(t * 2 + i * 1.7) * 0.2 + pulse * 0.4; });
+      ripple.material.uniforms.uT.value = t; ripple.material.uniforms.uPulse.value = pulse;
+      for (const m of toys) { const u = m.userData; m.rotation.x += u.spin.x * dt; m.rotation.y += u.spin.y * dt; m.rotation.z += u.spin.z * dt;
+        m.position.y = u.y + Math.sin(t * 1.1 + u.bob) * 0.25 + pulse * 0.15; m.position.x += u.drift * dt; if (m.position.x > 8) m.position.x = -8; if (m.position.x < -8) m.position.x = 8; }
+      camera.position.set(camBase.x + Math.sin(t * 0.35) * 0.28 + (Math.random() - 0.5) * shake, camBase.y + Math.sin(t * 0.5) * 0.12 + (Math.random() - 0.5) * shake, camBase.z);
+      camera.lookAt(0, 0.05, 0);
+      shake *= Math.exp(-dt * 7); flash *= Math.exp(-dt * 5); pulse *= Math.exp(-dt * 2.5);
+      renderer.render(scene, camera);
+      drawIcons(dt);
+    };
+    requestAnimationFrame(frame);
+    // seconds until the show's strike lands (the big verdict waits for it), 0 when no show is running
+    const STRIKE_AT = 2.1 + LATER + INTRO;
+    // A PROBE'S BENCH: ms per frame of the stage drawn and waited for (a 1-pixel read makes the GPU finish), with the
+    // hands and without them, and of the buttons' hands - a measure no browser frame cap can hide
+    const bench = (n = 40) => {
+      const gl = renderer.getContext(), px = new Uint8Array(4);
+      const time = (f) => { f(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); const t0 = performance.now(); for (let i = 0; i < n; i++) { f(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); } return +((performance.now() - t0) / n).toFixed(2); };
+      const withHands = time(() => renderer.render(scene, camera));
+      me.skinMesh.visible = them.skinMesh.visible = false;
+      const without = time(() => renderer.render(scene, camera));
+      me.skinMesh.visible = them.skinMesh.visible = true;
+      const igl = iconRenderer.getContext();
+      const t0 = performance.now(); for (let i = 0; i < n; i++) { drawIcons(0.016); igl.readPixels(0, 0, 1, 1, igl.RGBA, igl.UNSIGNED_BYTE, px); }
+      const icons = iconLayer.isConnected ? +((performance.now() - t0) / n).toFixed(2) : null;
+      return { stageMs: withHands, stageWithoutHandsMs: without, buttonsMs: icons, pixelRatio: renderer.getPixelRatio(), size: [box.clientWidth, box.clientHeight] };
+    };
+    // a probe's view of the show: my fist's height and my middle finger's curl, and whether a show runs
+    return { get probe() { return { y: +me.body.position.y.toFixed(3), curl: +me.pose.f[1][0].toFixed(3), t: seq ? +seq.t.toFixed(3) : null }; }, demo(on) { demoMode = !!on; if (on) want = { mine: 'idle', theirs: 'here' }; }, get iconRise() { return iconHands.map((x) => +x.rise.toFixed(2)); }, box, ov, show, shoot, bench, celebrate() { confetti(); kick(0.12); }, attachIcons(row, slots) { row.append(iconLayer); iconSlots = slots; } /* the hands rise from below once, at the page's first buttons (#289: not again at each round's end) */, iconHover(i) { iconHover = i; }, iconChosen(i) { iconChosen = i; }, preview(i) { preview = i; }, get busy() { return !!seq; }, get shown() { return shownFor; }, strikeIn: () => (seq ? Math.max(0, STRIKE_AT - seq.t) : 0) };
+  }
+</script>
+<script>
+  const A = window.parent && window.parent.ARENA_GAME;
+  const $ = (id) => document.getElementById(id);
+  const MOVES = [['Rock', '✊'], ['Paper', '✋'], ['Scissors', '✌️']];
+  const R = 36, C = 2 * Math.PI * R;
+  const revealing = new Set();
+  const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; };
+  // THE STEPS: 0 pick, 1 wait for entry close, 2 reveal, 3 result
+  const steps = (at) => {
+    const s = el('div', 'steps');
+    [['✋', 'Pick'], ['⏳', 'Wait'], ['👁', 'Reveal'], ['🏁', 'Result']].forEach(([icon, name], i) => {
+      const x = el('div', 'step' + (i < at ? ' done' : i === at ? ' now' : ''), '<b>' + (i < at ? '✓' : icon) + '</b>' + name);
+      s.append(x);
+    });
+    return s;
+  };
+  // THE CLOCK: a ring that empties towards entry close; only its arc and digits move each second
+  const clock = () => {
+    const c = el('div', 'clock', '<svg viewBox="0 0 84 84"><circle cx="42" cy="42" r="' + R + '" fill="none" stroke="#2a3242" stroke-width="6"/>'
+      + '<circle class="arc" cx="42" cy="42" r="' + R + '" fill="none" stroke="#f7931a" stroke-width="6" stroke-linecap="round" stroke-dasharray="' + C + '"/></svg><div class="t"></div>');
+    return c;
+  };
+  const tickClock = (c, closeMs, openMs) => {
+    if (!c) return;
+    const left = Math.max(0, closeMs - Date.now());
+    const span = Math.max(1, closeMs - openMs);
+    c.querySelector('.t').textContent = mmss(left);
+    c.querySelector('.arc').setAttribute('stroke-dashoffset', String(C * (1 - Math.min(1, left / span))));
+  };
+  const seat = (who, cls, face) => { const s = el('div', 'seat'); s.append(el('div', 'slot ' + cls, face), el('div', 'who', who)); return s; };
+
+  if (!A || !A.headToHead) {
+    $('view').append(el('div', 'none', '<span class="big">✊✋✌️</span>This client runs inside the Bitcoin Arena page, which hands it the game.'));
+  } else {
+    window.RPS_CLIENT = { hash: A.clientHash, game: A.game.id };
+    $('back').addEventListener('click', () => A.back());
+    let drawnKey = null;
+    let live = null;            // what the countdown needs between redraws: { clock, closeMs, openMs }
+    const WINDOW_MS = 8000;     // a round takes picks for 8 s (#291, the owner 2026-10-09: "reduce the round length to 8 seconds"; #280: 10)
+    const MATCH_CONTINUE_MS = 60000;   // a match goes on while both keep playing (arena-protocol match.js)
+    const joinedOf = (line) => { const m = String(line || '').match(/(\d+) joined/); return m ? Number(m[1]) : 0; };
+    // THE ROUND TO PLAY: the open one that closes soonest with a few seconds left - every player's page offers the same one
+    // ONLY IN ITS OWN 8 SECONDS (#291, the owner 2026-10-09: "round length is over 1m, not 8 secs"): the seats hold each round
+    // 150 s before its window, so a round is listed long before it starts - after a seat restart the first one waited ~2.5
+    // min with its clock running. A round is offered only from its window's start (entry close less WINDOW_MS)
+    // ITS LAST 1.5 S THE TABLE STAYS, CLOSING (#291): a pick then might not land before the close, so the moves are off -
+    // but the table is not swapped for an empty screen, and the next round's own 8 s have begun by then
+    const CLOSING_MS = 1500;
+    // NO GAP AND NO DEAD BUTTONS (#292, the owner 2026-10-10: "Rounds must run seamlessly ... Every tap on an option must fire"):
+    // a round's last CLOSING_MS took no taps (buttons off) and the next round was offered only from its own window - so for
+    // 1.5 s of every 8 s a tap did nothing. Now the next round takes the table CLOSING_MS before this one closes: a tap
+    // always lands in a round with at least 1.5 s of entry left, and there is never a moment without buttons.
+    // SEATING BEGIN - TABLES (kanban #293, the owner 2026-10-10: "When one player is waiting, one round is being opened. A 2nd
+    // player joins that round. A 3rd player gets a second round, the 4th player joins that round. 5th player gets the 3rd round
+    // and so on"): each slot of the grid holds several rounds side by side (the seats' keeper, tablesNeeded). Every page
+    // orders a slot's tables by round id, so all see the same table 1, 2, 3. A pair goes on at its own place in the next slot,
+    // and that place is kept for it; anyone else sits down where one player waits, else at an empty table.
+    // `slot`: [{ id, joined }] of the rounds taking picks now; `prevSlot`: the slot before as this page last saw it;
+    // `mineId`: this tab's round in it. Pure - the node tests run it as it is written here (test/seating.test.js).
+    function seatAt(slot, { prevSlot = null, mineId = null } = {}) {
+      const byId = (x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0);
+      const now = [...(slot || [])].sort(byId), before = prevSlot ? [...prevSlot].sort(byId) : [];
+      // places count over every table of the slot; only a table that takes entries now (`open` not false) can be sat at
+      const open = (r) => !!r && r.open !== false && r.joined < 2;
+      // THE PAIRS OF THE SLOT BEFORE, in their order, take the first places of this one - pair j at place j - whatever the
+      // number of tables (measured with 5 bots: places kept by position moved when the slot grew from 3 tables to 4, and a
+      // pair was split); everyone else sits after them, where one player waits first, else at an empty table
+      const pairs = before.filter((r) => r.joined >= 2);
+      const j = mineId ? pairs.findIndex((r) => r.id === mineId) : -1;
+      if (j >= 0 && open(now[j])) return now[j];
+      const free = now.slice(pairs.length).filter(open);
+      return free.find((r) => r.joined === 1) || free.find((r) => r.joined === 0) || now.find(open) || null;
+    }
+    // SEATING END
+    // EACH SLOT AS LAST SEEN, by its entry close (its tables and how many sat at each), for the seating of the slot after it
+    const slotsSeen = new Map();
+    // A TABLE'S PLAYERS AS ITS SEAT HOLDS THEM NOW (kanban #293, measured with 5 bots: the signed listing's `joined` waits for
+    // its row to be signed again - 0 for a table a player had entered 1.2 s before - and pairs were split on it): read from the
+    // seat's /api/round-result, every second for the tables of this slot and the one before, and again at a tap
+    const liveSeat = new Map(); // round id -> players
+    const seatsOf = (id) => { try { return window.parent.BLWP_ROW_NODES ? window.parent.BLWP_ROW_NODES(id) : []; } catch { return []; } };
+    const liveCount = (ids, timeoutMs = 2000) => Promise.all(ids.map(async (id) => {
+      const n = seatsOf(id)[0];
+      if (!n) return;
+      try {
+        const r = await fetch(String(n).replace(/\/+$/, '') + '/api/round-result?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+        if (r.ok) { const j = await r.json(); liveSeat.set(id, (j.players || []).length); }
+      } catch { /* the listing's count stands */ }
+    }));
+    const joinedNow = (r) => Math.max(joinedOf(r.line), liveSeat.has(r.id) ? liveSeat.get(r.id) : 0);
+    const prevFrozen = new Map();   // slot close -> the slot before it, as seen when this slot was first seated
+    const offered = (rows) => rows.filter((r) => r.joinable && !A.hidden(r.id) && r.entryCloseMs && r.entryCloseMs - Date.now() > CLOSING_MS && r.entryCloseMs - Date.now() <= WINDOW_MS + CLOSING_MS);
+    const openRound = (rows, mineId) => {
+      for (const r of rows) if (r.entryCloseMs) { const k = String(r.entryCloseMs); const m = slotsSeen.get(k) || new Map(); m.set(r.id, { id: r.id, joined: joinedNow(r) }); slotsSeen.set(k, m); }
+      for (const k of [...slotsSeen.keys()]) if (Number(k) < Date.now() - 60000) slotsSeen.delete(k);
+      const can = offered(rows);
+      if (!can.length) return null;
+      const close = Math.min(...can.map((r) => r.entryCloseMs));
+      const canIds = new Set(can.map((r) => r.id));
+      const slot = rows.filter((r) => r.entryCloseMs === close).map((r) => ({ id: r.id, joined: joinedNow(r), open: canIds.has(r.id), row: r }));
+      // THE SLOT BEFORE, FROZEN the first time this slot is seated (measured with bots: its counts change once its rounds
+      // close, and two partners tapping seconds apart read different pairs - every table was reshuffled): at the switch, 1.5 s
+      // before its close, its entries are final (nobody enters it then)
+      if (!prevFrozen.has(close)) { const before = [...slotsSeen.keys()].map(Number).filter((k) => k < close).sort((x, y) => y - x)[0];
+        prevFrozen.set(close, before !== undefined ? [...slotsSeen.get(String(before)).values()].map((x) => ({ ...x })) : null);
+        for (const k of [...prevFrozen.keys()]) if (k < Date.now() - 60000) prevFrozen.delete(k); }
+      const got = seatAt(slot, { prevSlot: prevFrozen.get(close), mineId });
+      return got ? got.row : null;
+    };
+    // WHO SITS AT THE TABLE (kanban #280, the owner 2026-10-09 playtest: two tabs at one table both read "You are alone"): this
+    // tab says it is here to the table's seats every 2 s (ARENA_GAME.here) and keeps who else is - the banner reads that, not
+    // the moves already in
+    // A new round's table is empty for the second or two before the other tab says it moved on with this one: who was
+    // seen within HERE_CARRY_MS still counts, so the banner does not blink "alone" at every round's turn
+    const HERE_CARRY_MS = 4000;
+    let here = { id: null, names: [], at: 0, seenAt: 0, busy: false };
+    const lookHere = (id) => {
+      if (!A.here || !id || here.busy || (here.id === id && Date.now() - here.at < 2000)) return;
+      here.busy = true;
+      A.here(id).then((x) => {
+        const now = Date.now();
+        if (x && x.others.length) here = { id, names: x.others, at: now, seenAt: now, busy: false };
+        else here = { ...here, id, names: here.id !== id && now - here.seenAt < HERE_CARRY_MS ? here.names : [], at: now, busy: false };
+      }).catch(() => { here.busy = false; });
+    };
+    const hereAt = (id) => (here.id === id || Date.now() - here.at < HERE_CARRY_MS ? here.names : []);
+    // WHAT THE TABLE LOOKS LIKE NOW, as a key: the view is redrawn only when it changes (never a full rebuild each second)
+    // a move carried into the next round when nobody answered it (below): { move, since, toId, closeMs, at }
+    const CARRY_MS = 120000, CARRY_RETRY_MS = 8000;
+    let carry = null;
+    let due = null;             // the reveal view's "result in" line, ticked every second: { el, closeMs, endMs }
+    let stage = null;           // the Three.js stage (kanban #284), null until it is loaded or if it cannot be
+    let stageFailed = false;    // only then the emoji cards are drawn (#289: never while Three.js is still loading)
+    let pickedFor = null;       // the round the stage's pick preview belongs to
+    // THE BIG VERDICT (kanban #283): once per decided round of this tab, when the seats' signed result arrives - on the stage's
+    // strike if a show is running - WON / LOST / DRAW, 2 s, then it fades; a loss greys the page under it, as WASTED does
+    let bannerFor = null;
+    const bigVerdict = (verdict) => {
+      const kind = verdict === 'win' ? 'win' : verdict === 'loss' || verdict === 'forfeit' ? 'loss' : 'draw';
+      const word = { win: 'WON', loss: 'LOST', draw: verdict === 'void' ? 'NOT PLAYED' : 'DRAW' }[kind];
+      const b = el('div', 'verdict-big ' + kind, '<b>' + word + '</b>');
+      document.body.append(b);
+      if (kind === 'win' && stage) stage.celebrate();
+      if (kind === 'loss') document.body.classList.add('lost-gray');
+      setTimeout(() => document.body.classList.remove('lost-gray'), 2300);
+      setTimeout(() => b.remove(), 2800);
+      window.RPS_VERDICT_SHOWN = { word, at: Date.now() };
+    };
+    let kept = null;            // the match score of this tab's newest decided round (below)
+    // WHAT THE SEATS SAID OF THIS TAB'S LAST ROUND, kept (#292): the table is drawn from this, never while waiting on a seat -
+    // a paint that awaited the result and the reveals (two network reads) put the next round's buttons up late, every round
+    const seen = new Map();     // round id -> { held, reveals }
+    let refreshing = false;
+    const lastHidden = () => { const mine = A.hiddenAll().filter((x) => Date.now() < Number(x.entryCloseMs) + 120000); return mine.length ? mine[mine.length - 1] : null; };
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const near = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs && r.entryCloseMs > Date.now() - WINDOW_MS && r.entryCloseMs <= Date.now() + 2 * WINDOW_MS + CLOSING_MS);
+        await liveCount(near.map((r) => r.id));
+        const h = lastHidden();
+        if (h) {
+          const id = h.roundIdHex, players = (A.headToHead && A.headToHead.players) || 2;
+          const held = await A.result(id);
+          const was = seen.get(id) || {};
+          let reveals = was.reveals || {};
+          const entries = held ? held.entries : [];
+          if (Date.now() >= Number(h.entryCloseMs) && !(entries.length && entries.length < players)) {
+            if (!revealing.has(id)) { revealing.add(id); A.reveal(id).then((x) => { if (!x.ok) revealing.delete(id); }); }
+            reveals = await A.reveals(id);
+          }
+          seen.set(id, { held, reveals, at: Date.now() });   // when the seats were read: before or after the close
+        }
+      } catch (e) { console.warn('[rps] the seats could not be read: ' + e.message); } finally { refreshing = false; }
+      paint();
+    };
+    // EVERY TAP, KEPT (#292: "it does not always accept taps"): what it was, how long before its round's close, what the page
+    // answered, and when the seats held it - window.RPS_TAPS, for the measurement and for the console
+    const TAPS = window.RPS_TAPS = [];
+    let tapped = null;          // the tap going in: { id, move, closeMs, rec } - the buttons stay chosen through every redraw
+    const note = (text) => { const n = el('div', 'demo-label'); n.textContent = text; document.body.append(n); setTimeout(() => n.remove(), 2600); };
+    const tap = async (id, i, closeMs, g, b) => {
+      if (tapped && tapped.id === id) return;
+      for (const x of g.querySelectorAll('button')) x.disabled = true;
+      b.classList.add('chosen');
+      if (stage) { stage.preview(i); stage.iconChosen(i); }
+      const rec = { at: Date.now(), round: id, move: i, leftMs: closeMs - Date.now(), answer: null, why: null, landedMs: null, lost: null };
+      TAPS.push(rec);
+      tapped = { id, move: i, closeMs, rec };
+      // AT THE TAP, THE SLOT'S TABLES COUNTED LIVE AND THE TABLE CHOSEN AGAIN (at most 400 ms): two players who come at once
+      // must not both take the seat beside the one waiting (a refused one would still go on to the next table)
+      const sameSlot = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs === closeMs);
+      await liveCount(sameSlot.map((r) => r.id), 400);
+      const again = openRound(A.allRows ? A.allRows() : A.rows(), (lastHidden() || {}).roundIdHex || null);
+      if (again && again.id !== id && again.entryCloseMs === closeMs) { rec.moved = { from: id, to: again.id }; id = again.id; rec.round = id; tapped.id = id; }
+      let ok = false;
+      try { ok = A.hide(id, i); } catch (e) { rec.why = e.message; }
+      let said = null; try { said = window.parent.BLWP_JOIN_ANSWER; } catch { /* another origin */ }
+      rec.answer = !!ok;
+      if (said && said.round === id) rec.why = said.why;
+      // REFUSED AT ONCE: said, and the buttons come back - never a move that looks chosen and went nowhere
+      if (!ok) { rec.lost = 'refused: ' + (rec.why || 'no answer'); tapped = null; note('That tap did not go in (' + (rec.why || 'refused') + ') - tap again'); }
+      drawnKey = null; paint();
+    };
+    // A TAP IN FLIGHT: in once this tab holds its hidden move; lost if the page refused the join or the round closed first
+    const settleTap = () => {
+      if (!tapped) return;
+      const r = tapped.rec;
+      if (A.hidden(tapped.id)) { r.landedMs = Date.now() - r.at; tapped = null; return; }
+      let j = null; try { j = window.parent.BLWP_JOIN; } catch { /* another origin */ }
+      if (j && j.round === tapped.id && j.state === 'refused') {
+        // A FULL TABLE (two players came for one seat at once): the tap goes to the next open table of the same slot
+        if (/already seats/.test(j.why || '') && !r.reseated) {
+          const other = offered(A.allRows ? A.allRows() : A.rows()).filter((x) => x.entryCloseMs === tapped.closeMs && x.id !== tapped.id && joinedOf(x.line) < 2)
+            .sort((x, y) => (x.id < y.id ? -1 : 1));
+          const to = other.find((x) => joinedOf(x.line) === 1) || other[0];
+          if (to) { r.reseated = { from: tapped.id, to: to.id }; tapped = { ...tapped, id: to.id }; r.round = to.id; A.hide(to.id, tapped.move); return; }
+        }
+        r.lost = 'refused: ' + (j.why || ''); tapped = null; note('That tap did not go in (' + (j.why || 'refused') + ') - tap again'); return;
+      }
+      if (Date.now() > tapped.closeMs + 3000) { r.lost = 'the round closed before it went in'; tapped = null; }
+    };
+    // NO REDRAW UNDER A FINGER (#292): a redraw between a finger's down and up replaced the button under it, and no click came
+    let touching = 0;
+    document.addEventListener('pointerdown', () => { touching = Date.now(); }, true);
+    const untouch = () => setTimeout(() => { touching = 0; }, 0);
+    document.addEventListener('pointerup', untouch, true);
+    document.addEventListener('pointercancel', untouch, true);
+    // THE NEXT ROUND TAKES THE TABLE ON TIME (#292): a paint at that very moment, not at the next second's
+    let switchAt = null, switchTimer = null;
+    const paint = () => {
+      settleTap();
+      // every listed round of this game (the page's allRows), so the soonest to close is the one offered
+      const rows = A.allRows ? A.allRows() : A.rows();
+      const players = (A.headToHead && A.headToHead.players) || 2;
+      const h = lastHidden();
+      // THE LAST ROUND THIS TAB PLAYED, as the seats last said
+      let last = null;
+      if (h) {
+        const got = seen.get(h.roundIdHex) || {};
+        const held = got.held;
+        const entries = held ? held.entries : [];
+        const closeMs = Number(h.entryCloseMs);
+        const row = rows.find((r) => r.id === h.roundIdHex);
+        last = { id: h.roundIdHex, move: h.move, closeMs, endMs: h.endMs ? Number(h.endMs) : null, free: row ? !!row.free : true, them: Math.max(0, entries.length - 1) };
+        if (Date.now() < closeMs) last.phase = 'wait';
+        else if (entries.length && entries.length < players) last.phase = 'alone';
+        else {
+          const all = got.reveals || {};
+          const theirs = Object.entries(all).filter(([e]) => e !== h.entryIdHex).map(([, m]) => m);
+          const me = entries.find((e) => e.entry === h.entryIdHex);
+          last.theirs = theirs.length ? theirs[0] : null;
+          last.verdict = me && me.outcome && me.signedBy > 0
+            ? (me.outcome === 'DELIVERED' && me.score >= 2 ? 'win' : me.outcome === 'DELIVERED' ? 'draw' : me.outcome === 'VOID' ? 'void' : me.outcome === 'FORFEIT' ? 'forfeit' : 'loss') : null;
+          last.phase = last.verdict ? 'result' : 'reveal';
+          if (last.verdict && bannerFor !== h.roundIdHex && Date.now() - closeMs < 60000) {
+            bannerFor = h.roundIdHex;
+            const v = last.verdict;
+            // the stage's show may start in this same paint: let it, then wait for its strike
+            setTimeout(() => setTimeout(() => bigVerdict(v), stage ? stage.strikeIn() * 1000 : 0), 50);
+          }
+        }
+        // THE SCORE ACROSS ROUNDS (kanban #280): the seats' signed match record - which identity is this tab's, its score first
+        const m = held && held.match;
+        if (m && m.byEntry && m.byEntry[h.entryIdHex]) {
+          const mine = m.identities.indexOf(m.byEntry[h.entryIdHex]);
+          if (mine >= 0) last.score = { me: m.score[mine], them: m.score[1 - mine], themName: (m.names || [])[1 - mine] || 'them', themKey: m.identities[1 - mine], played: m.played };
+        }
+      }
+      let state;
+      // THE MATCH GOES ON while this tab played within the last minute and its last round was played: its score stays up
+      // kept from the newest decided round: while the next is picked and waited for, its own record is not there yet, and the
+      // board - and whose name the banner gives - must not drop out between moves
+      if (last && last.score && (!kept || last.closeMs >= kept.closeMs)) kept = { ...last.score, closeMs: last.closeMs };
+      const scoreboard = kept && kept.played && Date.now() - kept.closeMs <= MATCH_CONTINUE_MS ? kept : null;
+      // ONLY A ROUND STILL TAKING ENTRIES HOLDS THE TABLE, and only until the next one takes over CLOSING_MS before its close
+      // (#292): its result used to hold the table ("reveal") until the seats had signed, so the next round - already taking
+      // picks - had no buttons; now the next round is the table on time and the last one's result comes into its strip, and
+      // onto the stage, when it is signed
+      // A PICK THE OPPONENT HAS NOT ANSWERED YET KEEPS THE WAIT SCREEN THROUGH THE SWITCH (the owner 2026-10-10 playtest: "my choice
+      // is shown in the wait screen, then it returns back to the pick screen, wanting me to pick again. Then suddenly it goes
+      // back to the wait with the already set up choice. It should not show the pick screen until the opponent has chosen,
+      // even if it takes multiple rounds"): CLOSING_MS before the close the next round took the table and showed its buttons,
+      // and only once the seats said this tab was alone did the move carry over and the wait come back. Alone in its round,
+      // the move holds the table to the close; then it carries on (below) while someone is at the table
+      // ... and past the close until the seats have been read after it (measured: 230-240 ms of buttons at each turn, between
+      // the close and the read that said this tab was alone, when the move carries on)
+      const readAfterClose = last && (seen.get(last.id) || {}).at >= last.closeMs;
+      const company = Date.now() - here.seenAt < 15000;
+      const waiting = last && ((last.phase === 'wait' && (Date.now() < last.closeMs - CLOSING_MS || (last.them === 0 && company)))
+        || (last.them === 0 && company && !readAfterClose && Date.now() - last.closeMs < 5000 && (last.phase === 'reveal' || last.phase === 'alone') && !last.verdict));
+      if (waiting) { lookHere(last.id); state = { ...last, phase: 'wait', openMs: last.closeMs - WINDOW_MS, scoreboard, here: hereAt(last.id) }; }
+      else {
+        const row = openRound(rows, h ? h.roundIdHex : null);
+        const prev = last ? { id: last.id, closeMs: last.closeMs, phase: last.phase === 'wait' ? 'reveal' : last.phase, move: last.move, theirs: last.theirs ?? null, verdict: last.verdict || null, score: last.score || null } : null;
+        if (row) lookHere(row.id);
+        // A MOVE NOBODY ANSWERED STAYS IN (the owner 2026-10-09 playtest: "pick, the Wait screen comes, then back to Pick -
+        // sometimes it works and the selection is really locked"): a round that closed with this tab alone in it was not
+        // played, and the move goes into the next open round by itself - still hidden, so whoever comes cannot see it - until
+        // an opponent plays it or CARRY_MS have passed since it was picked
+        // ... but only while someone else is at the table (the owner 2026-10-09 21:08 playtest: "when nobody is in the game and the
+        // timer runs out, you do not get back to the select screen"): alone, the round ends and the pick screen comes back
+        if (last && last.phase === 'alone' && company && row && row.id !== last.id && !tapped && (!carry || carry.toId !== row.id || Date.now() - carry.at > CARRY_RETRY_MS)) {   // a new round at once; the same one again after CARRY_RETRY_MS (measured: the wait between two carries was ~8 s, so a turn just under it showed the buttons)
+          const since = carry && carry.toId === last.id ? carry.since : last.closeMs - WINDOW_MS;
+          if (Date.now() - since < CARRY_MS) { carry = { move: last.move, since, toId: row.id, closeMs: row.entryCloseMs, at: Date.now() }; A.hide(row.id, last.move); }
+        }
+        if (carry && carry.toId === (row && row.id) && Date.now() - carry.at < CARRY_RETRY_MS && !(h && h.roundIdHex === carry.toId))
+          state = { phase: 'wait', id: carry.toId, move: carry.move, closeMs: carry.closeMs, openMs: carry.closeMs - WINDOW_MS, them: 0, carried: true, scoreboard, here: hereAt(carry.toId) };
+        else state = row ? { phase: 'pick', chosen: tapped && tapped.id === row.id ? tapped.move : null, id: row.id, closeMs: row.entryCloseMs, openMs: row.entryCloseMs - WINDOW_MS, free: !!row.free, joined: joinedOf(row.line) > 0, prev, scoreboard, here: hereAt(row.id) }
+          : { phase: 'none', prev, scoreboard };
+      }
+      const key = JSON.stringify(state);
+      if (key !== drawnKey && !(touching && Date.now() - touching < 1500)) {
+        drawnKey = key; draw(state);
+        // EVERY SCREEN CHANGE, with what decided it (window.RPS_STATES, for the measurement and the console)
+        const ST = window.RPS_STATES = window.RPS_STATES || [];
+        ST.push({ at: Date.now(), phase: state.phase, id: (state.id || '').slice(0, 8), last: last ? last.phase : null, lastId: last ? last.id.slice(0, 8) : null,
+          them: last ? last.them : null, readAfterClose: !!(last && (seen.get(last.id) || {}).at >= last.closeMs), carry: carry ? carry.toId.slice(0, 8) : null });
+        if (ST.length > 400) ST.splice(0, ST.length - 400);
+      }
+      // the moment this table gives way: CLOSING_MS before its close
+      const at = state.closeMs ? state.closeMs - CLOSING_MS : null;
+      if (at && at !== switchAt && at > Date.now()) { switchAt = at; clearTimeout(switchTimer); switchTimer = setTimeout(paint, at - Date.now() + 20); }
+      if (live) tickClock(live.clock, live.closeMs, live.openMs);
+      tickDue();
+    };
+    const tickDue = () => {
+      if (!due) return;
+      const now = Date.now(), waited = Math.max(0, Math.floor((now - due.closeMs) / 1000));
+      const left = due.endMs ? Math.ceil((due.endMs - now) / 1000) : null;
+      due.el.textContent = 'Result: waiting ' + waited + ' s' + (left === null ? '' : left > 0 ? ' · at most ' + left + ' s more' : ' · past its ' + Math.round((due.endMs - due.closeMs) / 1000) + ' s timeout, the seats are signing');
+    };
+    const draw = (s) => {
+      const view = $('view');
+      view.textContent = '';
+      live = null;
+      due = null;
+      const kind = $('kind');
+      kind.hidden = s.phase === 'none';
+      kind.className = 'chip ' + (s.free ? 'free' : 'paid');
+      kind.textContent = s.free ? 'FREE' : 'PAID';
+      // THE LAST RESULT, as a strip above the next table: your move, theirs, and how it went
+      if (s.prev && (s.prev.phase === 'result' || s.prev.phase === 'alone' || s.prev.phase === 'reveal')) {
+        const p = s.prev;
+        const words = p.phase === 'reveal' ? ['draw', 'result coming…'] : p.phase === 'alone' ? ['draw', 'not played'] : ({ win: ['win', 'won'], loss: ['loss', 'lost'], forfeit: ['loss', 'lost'], draw: ['draw', 'draw'], void: ['draw', 'not played'] }[p.verdict] || ['draw', '']);
+        view.append(el('div', 'last ' + words[0], '<span>last round</span><b>' + MOVES[p.move][1] + '</b><i>vs</i><b>' + (p.theirs === null || p.theirs === undefined ? '∅' : MOVES[p.theirs][1]) + '</b><em>' + words[1] + '</em>'));
+      }
+      // THE SCORE ACROSS ROUNDS, big, while the match goes on (kanban #280)
+      if (s.scoreboard) view.append(el('div', 'board', '<span class="who">You</span><b>' + s.scoreboard.me + '</b><i>:</i><b>' + s.scoreboard.them + '</b><span class="who">'
+        + String(s.scoreboard.themName).replace(/[<>&]/g, '') + '</span>'));
+      if (s.phase === 'none') {
+        if (!stage && !stageFailed) { view.append(el('div', 'card loading', '<span class="spin"></span>')); return; }
+        if (stage) { const c = el('div', 'card'); stage.show(s); stage.ov.textContent = ''; c.append(stage.box, el('div', 'pick', 'The next round opens in a moment.')); view.append(c); return; }
+        view.append(el('div', 'card none', '<span class="big">⏳</span>The next round opens in a moment.')); return;
+      }
+      // WHO IS HERE, prominently (kanban #280: "Always show prominently when you are alone in the round. Then also Waiting for
+      // other Players. When someone else is there, show that")
+      if (s.phase === 'pick' || s.phase === 'wait') {
+        const moved = s.phase === 'pick' ? s.joined : s.them > 0;     // the other move is in
+        const names = s.here || [];
+        // who they are: the name the table's seats give their key - the match's own name (the seats sign it) when it is the
+        // same player the match goes on with
+        const sb = s.scoreboard;
+        const seen = names.find((o) => sb && o.key === sb.themKey) || names[0] || null;
+        const them = seen ? (sb && seen.key === sb.themKey ? sb.themName : seen.name) : null;
+        const clean = (t) => String(t).replace(/[<>&]/g, '');
+        const what = s.phase === 'pick' ? (moved ? 'their move is in - pick yours' : 'pick your move')
+          : (moved ? 'both moves are in - hidden until the round closes' : 'waiting for their move');
+        view.append(names.length || moved
+          ? el('div', 'presence here', '<span class="icon">⚔️</span><div><b>' + (them ? 'You are playing against ' + clean(them) : 'Opponent is here') + '</b><small>' + what + '</small></div>')
+          : el('div', 'presence alone', '<span class="icon">🙋</span><div><b>You are alone in this round</b><small>Waiting for other players<span class="dots"><i>.</i><i>.</i><i>.</i></span></small></div>'));
+      }
+      // WHILE THREE.JS LOADS (#289, the owner 2026-10-09: "do not show the normal emojis and the fallback at all until Three.js
+      // has loaded"): the round waits behind one quiet card; the emoji cards only if the stage cannot load at all
+      if (!stage && !stageFailed) { view.append(el('div', 'card loading', '<span class="spin"></span>')); return; }
+      const card = el('div', 'card');
+      const at = { pick: 0, wait: 1, alone: 3, reveal: 2, result: 3 }[s.phase];
+      card.append(steps(at));
+      // ON THE STAGE: the hands play the round; the clock and who is who sit over it
+      if (stage) {
+        if (s.phase !== 'pick' || pickedFor !== s.id) { stage.preview(null); stage.iconChosen(null); pickedFor = s.id; }
+        stage.show(s);
+        card.append(stage.box);
+        const ov = stage.ov; ov.textContent = '';
+        if (s.phase === 'pick' || s.phase === 'wait') { const top = el('div', 'top'); const c = clock(); top.append(c); ov.append(top); live = { clock: c, closeMs: s.closeMs, openMs: s.openMs }; }
+        const sb = s.scoreboard, names = s.here || [];
+        const seen = names.find((o) => sb && o.key === sb.themKey) || names[0] || null;
+        const themName = seen ? (sb && seen.key === sb.themKey ? sb.themName : seen.name) : (sb ? sb.themName : null);
+        ov.append(el('div', 'who me', 'You' + (s.phase === 'wait' || s.phase === 'reveal' ? ' · ' + MOVES[s.move][0] : '')));
+        const w = el('div', 'who them'); w.textContent = themName || (s.phase === 'pick' && !s.joined && !names.length ? 'waiting…' : 'opponent'); ov.append(w);
+      }
+      const table = el('div', 'table');
+      const middle = el('div');
+      if (stage) { /* the clock is on the stage */ } else if (s.phase === 'pick' || s.phase === 'wait') {
+        const c = clock(); middle.append(c);
+        live = { clock: c, closeMs: s.closeMs, openMs: s.openMs };
+      } else middle.append(el('div', 'vs', 'VS'));
+      const put = (...xs) => { if (!stage) card.append(...xs); };
+      if (s.phase === 'pick') {
+        table.append(seat('you', 'empty', '?'), middle, seat(s.joined ? 'opponent in' : 'opponent', s.joined ? 'in' : 'empty', s.joined ? '✓' : '?'));
+        put(table);
+        card.append(el('div', 'pick', s.chosen !== null && s.chosen !== undefined ? 'Your ' + MOVES[s.chosen][0] + ' is going in…' : 'Pick - your opponent cannot see it until the round closes'));
+        const g = el('div', 'moves');
+        MOVES.forEach(([name, icon], i) => {
+          const b = el('button', '', stage ? '<span class="ic"></span>' + name : '<span>' + icon + '</span>' + name); b.type = 'button';
+          if (s.chosen !== null && s.chosen !== undefined) { b.disabled = true; if (s.chosen === i) b.classList.add('chosen'); }
+          b.addEventListener('click', () => tap(s.id, i, s.closeMs, g, b));
+          if (stage) { b.addEventListener('pointerenter', () => { stage.iconHover(i); if (!b.disabled) stage.preview(i); }); b.addEventListener('pointerleave', () => { stage.iconHover(null); if (!b.disabled) stage.preview(null); }); }
+          g.append(b);
+        });
+        card.append(g);
+        if (stage) stage.attachIcons(g, [...g.querySelectorAll('span.ic')]);
+      } else if (s.phase === 'wait') {
+        table.append(seat('you · ' + MOVES[s.move][0], 'shown', MOVES[s.move][1]), middle,
+          seat(s.them ? 'opponent in' : 'waiting…', s.them ? 'in' : 'empty', s.them ? '🔒' : '?'));
+        put(table);
+      } else if (s.phase === 'alone') {
+        table.append(seat('you · ' + MOVES[s.move][0], 'shown', MOVES[s.move][1]), middle, seat('nobody came', 'empty', '∅'));
+        put(table); card.append(el('div', 'verdict draw', 'Not played · stake back'));
+      } else {
+        const win = s.verdict === 'win', loss = s.verdict === 'loss' || s.verdict === 'forfeit';
+        table.append(seat('you', 'shown' + (win ? ' win' : loss ? ' loss' : ''), MOVES[s.move][1]), middle,
+          seat('them', s.theirs === null ? 'empty' : 'shown' + (loss ? ' win' : win ? ' loss' : ''), s.theirs === null ? '…' : MOVES[s.theirs][1]));
+        put(table);
+        // THE RESULT NOT THERE YET (the owner 2026-10-09: "if the result takes time, show how long it takes, in seconds, with a
+        // timeout"): seconds since the moves closed, and the most it can still take - the round's reveal deadline, by which the
+        // seats decide whoever revealed
+        if (!s.verdict) { const w = el('div', 'pick due'); card.append(w); due = { el: w, closeMs: s.closeMs, endMs: s.endMs }; }
+        if (s.verdict) {
+          const words = { win: ['win', 'You win 🏆'], loss: ['loss', 'You lose'], forfeit: ['loss', 'Not revealed · you lose'], draw: ['draw', 'Draw · stakes back'], void: ['draw', 'Not played · stake back'] }[s.verdict];
+          card.append(el('div', 'verdict ' + words[0], words[1]));
+          if (s.score) card.append(el('div', 'pick', 'score ' + s.score.me + ' : ' + s.score.them + (s.score.played ? '' : ' · match over')));
+        }
+      }
+      view.append(card);
+    };
+    // THE STAGE, once Three.js is in (kanban #284); until then, and without it, the cards
+    // EVERY COMBINATION, ON THE PAGE ITSELF (#291, the owner 2026-10-09: "make a ?parameter where I can see all combinations in
+    // the UI"): ?rps-demo=all on the page's address plays the nine - your rock, paper, scissors against theirs - one after
+    // another on the stage, each with its big verdict, a label saying which it is, over and over; the rounds go on under it
+    const DEMO = (() => { try { return new URLSearchParams(window.parent.location.search).get('rps-demo'); } catch { return null; } })();
+    const runDemo = async () => {
+      stage.demo(true);
+      const label = el('div', 'demo-label'); document.body.append(label);
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let loop = 0; ; loop++) {
+        for (let n = 0; n < 9; n++) {
+          const a = Math.floor(n / 3), b = n % 3, w = (a - b + 3) % 3;
+          label.innerHTML = '<b>' + (n + 1) + ' / 9</b> You ' + MOVES[a][1] + ' ' + MOVES[a][0] + ' <i>vs</i> ' + MOVES[b][0] + ' ' + MOVES[b][1] + ' them';
+          stage.shoot(a, b);
+          setTimeout(() => bigVerdict(w === 0 ? 'draw' : w === 1 ? 'win' : 'loss'), stage.strikeIn() * 1000);
+          await sleep(300); while (stage.busy) await sleep(100);
+          await sleep(1200);
+        }
+      }
+    };
+    loadStage().then((st) => { stage = window.RPS_STAGE = st; drawnKey = null; paint(); if (DEMO) runDemo(); }).catch((e) => { stageFailed = true; drawnKey = null; console.warn('[rps] no 3D stage: ' + e.message); paint(); });
+    paint();
+    // the table from what is known, four times a second (no network); what the seats say, once a second
+    setInterval(paint, 250);
+    refresh();
+    setInterval(refresh, 1000);
+  }
+</script>
+</body>
+</html>
