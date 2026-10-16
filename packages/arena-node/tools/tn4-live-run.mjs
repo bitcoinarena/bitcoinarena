@@ -12,6 +12,10 @@
  *
  *   PORTS=<seven seat ports> INVITE_FILE=<federation invite> WASM_PKG=<dir with blwp_lock_client.js> LNCLI=<lncli>
  *   PAYER_DIR=<payer lnd dir> PAYER_RPC=<host:port> [ROUND=<id hex>] node tools/tn4-live-run.mjs
+ *
+ * WITH THE PLAYER'S ITEMS (kanban #369): ITEMS_SEED_FILE=<64 hex player seed> - the entry names every item that seed's items key owns
+ * in the round's game (GET /items), each with its owner proof, as the page's join does, and the run is driven with their unlocks.
+ * GAME_ID=<hex prefix> picks the next round of that game version (nextblock v3: b8b88e23).
  */
 import { readFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -46,7 +50,9 @@ import { encodeInputBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { drivenTape, say as sayTo, bedFrom, GENESIS_HASH } from '../test/window-fixture.js';
-import { NEXTBLOCK_CORES } from '../../nextblock/plugin/truck-cores.js';
+import { NEXTBLOCK_CORES_V3 as NEXTBLOCK_CORES } from '../../nextblock/plugin/truck-cores.js';
+import { MANIFEST_V3, GAME_ID_V3 } from '../../nextblock/plugin/nextblock-v3.js';
+import { itemsKeyFor, ownedItems, entryItemsFor, entryUnlocks } from '../../arena-client/src/item-buy.js';
 const env = process.env;
 for (const k of [env.NODES ? 'NODES' : 'PORTS', 'INVITE_FILE', 'WASM_PKG', 'LNCLI', 'PAYER_DIR', 'PAYER_RPC'])
   if (!env[k]) { console.error(`${k} is needed`); process.exit(2); }
@@ -77,7 +83,8 @@ try {
   if (!env.ROUND) {
     const list = (await (await fetch(`${nodes[0]}/rounds`)).json()).rounds;
     const now = Date.now();
-    const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000)
+    const next = list.filter((x) => x.entryOpen && x.game && x.game.name === 'nextblock' && Number(x.startTimeMs) - now > 75000
+      && (!env.GAME_ID || String(x.game.id).startsWith(env.GAME_ID.toLowerCase())))
       .sort((a, b) => Number(a.startTimeMs) - Number(b.startTimeMs))[0];
     if (!next) throw new Error('no nextblock round open for entries and starting more than 75 s ahead');
     env.ROUND = next.id;
@@ -177,6 +184,17 @@ try {
     // THE OPERATOR THIS PLAYER DECLARES (§5A.13, kanban #309): OPERATOR_ID=<64 hex> - a committee node advertising the same operator
     // is conflicted in this round: it neither signs nor earns
     ...(/^[0-9a-f]{64}$/.test(env.OPERATOR_ID || '') ? { operatorId: fromHex(env.OPERATOR_ID) } : {}) };
+  // THE PLAYER'S ITEMS, as the page's join names them (ARENA_ITEMS_FOR_ENTRY): owned by the seed's items key, in a round of version 10+
+  let unlocks = [];
+  if (env.ITEMS_SEED_FILE) {
+    const key = itemsKeyFor(fromHex(readFileSync(env.ITEMS_SEED_FILE, 'utf8').trim()), { pointX: (sk) => schnorr.getPublicKey(sk), signSchnorr: (m, sk) => schnorr.sign(m, sk) });
+    if (toHex(c.gameId) !== toHex(GAME_ID_V3)) throw new Error(`round ${env.ROUND.slice(0, 16)} is not nextblock v3, which sells the items`);
+    const owned = await ownedItems({ seats: nodes, player: key.pubkey, gameName: 'nextblock', fetch: (u, o) => fetch(u, o) });
+    entry.items = entryItemsFor({ round: c, roundId: rid, playerPubkey: s.player, owned, manifest: MANIFEST_V3, key });
+    unlocks = entryUnlocks(entry, MANIFEST_V3);
+    log({ step: 'items', itemsKey: toHex(key.pubkey).slice(0, 16), owned: owned.map((o) => `${o.itemId} ${o.id.slice(0, 8)}`), entry: entry.items.map((i) => `${i.itemId} ${toHex(i.purchaseId).slice(0, 8)}`), unlocks: unlocks.map((u) => u.slice(0, 16)) });
+    if (!entry.items.length) throw new Error('the seed owns no item this round\'s game sells');
+  }
   const eid = entryId(entry);
   // THE RUN: the world the round's randomness seeds, driven to the gate, under the round's core and run length
   const seed = await worldSeedFor({ entry, round: env.ROUND, nodes, contract: c });
@@ -186,7 +204,7 @@ try {
   const N = c.blockTicks;
   const drive = drivenTape(seed.seedWord, N);
   const A = core.adapter;
-  const st = A.start(seed.seedWord, config, { runTicks: N });
+  const st = A.start(seed.seedWord, config, { runTicks: N, ...(unlocks.length ? { items: unlocks } : {}) });
   const ev = A.eventsOf({ loads: bedFrom(0) });
   const stateAt = [];
   const FIRST = 60;
