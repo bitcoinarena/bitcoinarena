@@ -93,6 +93,12 @@ export const FRONTEND_FEE_VERSION = 9;
 // manifest's item catalogue (items.js, marker 0x07), a purchase (purchase.js) and an entry's items (contracts.js, marker 0xad) require
 // version 10; spoken since the purchase, its money path (paySubmit) and the seats' check of an entry's items were built.
 export const ITEMS_VERSION = 10;
+/**
+ * THE PROTOCOL RESERVES' VERSION (§27A.9, kanban #397): a paid round's 10 % split mandatory as nodes 4 %, developers 4 % (2 + 2),
+ * reserves 2 %; items 40 % nodes, 20 % reserves, the developers' share 40/30/20/10/0 %. Slice 1 only computes the split
+ * (reserves.js): this version is NOT in SUPPORTED_PROTOCOL_VERSIONS until rounds of it can be paid and settled.
+ */
+export const RESERVES_VERSION = 11;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
