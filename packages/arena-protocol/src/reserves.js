@@ -8,6 +8,8 @@
 // THE REMAINDER RULE (§27A.9.1): every share is floored to the msat; a round's net stake takes what the floors leave, so the
 // parts always sum to the gross. An item's price is the sum of its parts.
 import { RESERVES_VERSION } from './constants.js';
+import { donationOutputsExpected } from './donation.js';
+import { entryFeeBpsOf, donationInFee } from './fee.js';
 
 /** A paid round's shares on the reserves version, in basis points of the gross stake - all mandatory. */
 export const ROUND_SPLIT_BPS = Object.freeze({ nodes: 400, protocolDevs: 200, gameDevs: 200, reserves: 200 });
@@ -69,3 +71,43 @@ export function reserveOutputsExpected({ kind, federationId, grossMsat, listMsat
   if (kind === 'item') return [{ federationId, amountMsat: itemSplitReserves({ listMsat, devsPct }).reservesMsat, to: 'reserves' }];
   throw new Error('a reserve output is paid by an entry or an item');
 }
+
+/**
+ * DOES THIS ROUND PAY THE RESERVES (§27A.9, kanban #397): a paid round of protocol version 11 or later. Its node fee is then the
+ * mandatory 4 % (400 bps) and its developers' donation the mandatory 4 %; before it, §0A.8's 5 % fee and lowerable 5 % donation.
+ * A market keeps the fee its terms name (§0A.7a) - the reserves on markets are a later slice.
+ */
+export const paysReserves = (contract) => !!contract && Number(contract.protocolVersion) >= RESERVES_VERSION && !(contract.stakeMsat === 0n);
+export const RESERVES_NODE_FEE_BPS = ROUND_SPLIT_BPS.nodes;
+export const RESERVES_DONATION_BPS = ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_BPS.gameDevs;
+
+/**
+ * WHAT A VERSION-11 ENTRY MUST PAY AND NAME (§27A.9.2, kanban #397 slice 3), from its gross stake: the fee lock the nodes' 4 %;
+ * its `donationMsat` the developers' 4 % AND the reserves' 2 % (both leave the wallet beside the stake, so the pool's net is the
+ * same 90 % `netStakeMsat` takes); its donation outputs the developers' part split over the round's sets as any donation is
+ * (donationOutputsExpected); and its `reserveOutpoint` the reserves' part, a payout contract to the federation's reserve key.
+ * Answers { ok, fee, outputs, reserve: { outpoint, recipientPk, amountMsat } } or why not, by name.
+ */
+export function reservesEntryExpected({ entry, recipients, reserveKey }) {
+  if (!entry || typeof entry.stakeMsat !== 'bigint') return { ok: false, why: 'that entry names no stake' };
+  if (!(reserveKey instanceof Uint8Array) || reserveKey.length !== 33) return { ok: false, why: 'no reserve key is known for that round\'s federation' };
+  const split = roundSplit(entry.stakeMsat);
+  const devs = split.protocolDevsMsat + split.gameDevsMsat;
+  if (entry.feeMsat !== split.nodesMsat) return { ok: false, why: `on protocol version ${RESERVES_VERSION} the node fee is ${split.nodesMsat} msat (4 %), not ${entry.feeMsat}` };
+  if (entry.donationMsat !== devs + split.reservesMsat)
+    return { ok: false, why: `on protocol version ${RESERVES_VERSION} the developers' 4 % and the reserves' 2 % are ${devs + split.reservesMsat} msat, not ${entry.donationMsat}` };
+  if (!entry.reserveOutpoint) return { ok: false, why: `on protocol version ${RESERVES_VERSION} an entry names its reserve lock` };
+  const dev = donationOutputsExpected({ ...entry, donationMsat: devs }, recipients);
+  if (!dev.ok) return dev;
+  return { ok: true, fee: split.nodesMsat, outputs: dev.outputs,
+    reserve: { outpoint: entry.reserveOutpoint, recipientPk: reserveKey, amountMsat: split.reservesMsat },
+    why: `${dev.outputs.length} developer output(s) of ${devs} msat and ${split.reservesMsat} msat to the reserves` };
+}
+
+/**
+ * THE ENTRY FEE RATE OF A ROUND (§27A.9.1): a version-11 round of a game takes the nodes' mandatory 4 %; a market, and every
+ * older round, the rate its manifest gives (entryFeeBpsOf: the network's 5 %, or a market's own).
+ */
+export const entryFeeBpsForRound = (contract, manifest) => (paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
+/** Does this round's entry pay the reserves - a version-11 round of a game (a market's reserves are a later slice)? */
+export const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest);

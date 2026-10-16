@@ -34,6 +34,7 @@ import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/pla
 import { gameIsKnownGood, sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
+import { paysReserves, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
 
 /**
  * THE ENTRY FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
@@ -41,7 +42,11 @@ import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
  * DONATION TOGETHER (1 % by default): both sit in its fee lock and are due only when it resolves (the owner 2026-10-09).
  */
 const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ? k.nodeBps + (k.donationBps ?? 0) : NODE_FEE_BPS; };
-export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps : knownEntryBps(round && round.gameId));
+// A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397); a market keeps its own (its fee lock holds its donation too)
+const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
+export const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
+export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
+  : roundPaysReserves(round) ? RESERVES_NODE_FEE_BPS : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../arena-protocol/src/claim-key.js';
@@ -1008,8 +1013,11 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
       : { txid: new Uint8Array(32), outIdx: 0n },
     claimKeyAttestationRef: roundLocks(round) ? claimKey.ref : new Uint8Array(32),
     // THE DONATION OUTPUTS THE LOCK TRANSACTION MADE (the owner 2026-10-03): named only when there are any
-    ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.length
-      ? { donationOutpoints: stakeLock.donations.map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
+    ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.filter((d) => !d.reserve).length
+      ? { donationOutpoints: stakeLock.donations.filter((d) => !d.reserve).map((d) => ({ txid: d.txid, outIdx: BigInt(d.outIdx) })) } : {}),
+    // THE RESERVE LOCK (protocol 11, §27A.9.2, kanban #397): the output the lock transaction paid the federation's reserve key
+    ...(stakeLock && Array.isArray(stakeLock.donations) && stakeLock.donations.some((d) => d.reserve)
+      ? { reserveOutpoint: (({ txid, outIdx }) => ({ txid, outIdx: BigInt(outIdx) }))(stakeLock.donations.find((d) => d.reserve)) } : {}),
     // THE FEDERATION ITS LOCKS ARE IN, on a round that takes any (inFederation; contracts.js FEDERATION_MARKER)
     ...(round.anyFederation ? { federationId: round.federationId } : {}),
     // THE OPERATOR THIS PLAYER IS (§7 operator_id_declaration, kanban #309): only when the player declared one (a player who runs nodes)

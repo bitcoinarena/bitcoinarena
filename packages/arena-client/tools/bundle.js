@@ -40,6 +40,8 @@ walk(SRC + 'client.js');
 // client that publishes a run should not depend on whether anybody is drawing
 // the others.
 walk(SRC + 'ghost-field.js');
+// THE PROTOCOL RESERVES (kanban #397): the reserve key a version-11 entry pays and its mandatory split - the page asks before a lock
+walk(SRC + 'reserves-page.js');
 // AND THE BACKUP GATE AND THE PHRASE IT CHECKS (§24B). Nothing in the client imports them - the gate is
 // what the PAGE asks before a deposit or a paid join, and the phrase is what it shows in Settings - so
 // they are walked in here the same way `ghost-field.js` is.
@@ -212,6 +214,7 @@ out += '         sharesNeededFor: sharesNeededFor,\n';
 // THE PLAYER'S STAKE LOCK (W1b): what the injected lock client is asked, and the
 // hand-over of the lock it made to every signer node.
 out += '         lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,\n';
+out += '         fetchReserveKey: fetchReserveKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,\n';
 // AND THE PLAYER WALLET (§24A.1, RULED 2026-09-25): one per seed and federation; the top-up is its own act, before the
 // stake, and the stake is spent from it.
 out += '         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,\n';
