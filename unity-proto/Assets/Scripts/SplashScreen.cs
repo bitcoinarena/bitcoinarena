@@ -834,8 +834,7 @@ public class SplashScreen : MonoBehaviour
             var none = new GUIStyle(_body) { fontSize = Mathf.RoundToInt(font), wordWrap = true };
             none.normal.textColor = new Color(1f, 1f, 1f, 0.7f);
             GUI.Label(l.list, _lobby.from == Reading ? "Reading the rounds from the signer nodes …"
-                : "No round is open for entry right now. The signer nodes are asked again every 5 seconds."
-                + (_lobby.refused.Length > 0 ? $"\nNot listed: {_lobby.refused.Length}" : ""), none);
+                : Blwp.DailyLobby.EmptyListLine(_lobby), none);   // none reached is said so (kanban #6)
         }
     }
 
