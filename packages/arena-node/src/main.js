@@ -347,6 +347,8 @@ if (url) {
     },
     // THE CHAIN'S TIP, for the settlement's takeover order (M3.3-19) and a lock's expiry, as the launcher gave its nodes
     chainTip: async () => Number(await call('getblockcount')),
+    // THE CHAIN'S MEDIAN TIME AT A HEIGHT (kanban #397 slice 6): a funding signal's active window, read alike by every seat
+    blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ
     // OF IT IN FLIGHT (the owner 2026-09-30, measured on testnet4): a node holding series 3cfbe516 lists ~508 rounds that
     // all name the same census and beacon, and a view read per round id - ~100 blocks each, re-asked on every listing

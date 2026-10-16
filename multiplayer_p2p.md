@@ -6874,6 +6874,25 @@ carry no weight in any count.
 - **An active node** *(LOCKED the owner 2026-10-16)* is a node that served a round in those 72 hours;
   nodes are counted one each, not by bond.
 - This filters and starts the discussion; nothing is paid on a signal.
+- **As built** *(kanban #397 slice 6, the owner 2026-10-16: signals are "signed messages kept and passed on by the seats. Not on-chain
+  signals"; the spec timings are the rule on testnet4 and mainnet)*:
+  - `FundingProposal` { network_id, author, published_height, amount_sats, lnurl, purpose } (type 0x2e), signed BIP340 by its
+    author. A seat keeps it only when the author is a bonded node in its census and it is not dated ahead of the seat's chain.
+  - `FundingComment` { proposal_id, parent_id, author, at_height, text } (0x2f), signed by anyone.
+  - `FundingSignal` { proposal_id, node, at_height } (0x30), signed by a bonded node.
+  - `arena-protocol/src/funding.js` holds these objects, the window and the rule; `arena-node/src/funding-book.js` is the seat's
+    store and decision.
+  - Seats keep them (`funding_items`) and hand each new one on to every seat once: `POST /funding` { kind, hex },
+    `GET /funding`.
+  - A node's owner posts, signals or comments through the owner doors `/owner/funding-propose`, `-signal` and `-comment`. The
+    node signs with its own key.
+  - The signal runs [published_height, published_height + 1008).
+  - Once it is over, each seat decides it **once** and writes the outcome down:
+    - the active nodes are those whose signed FINAL falls in [median time(end − 432), median time(end)), read from every
+      seat's FINALs;
+    - a signal counts once per node, inside the period, from an active node;
+    - the proposal passes at supporters × 100 ≥ 15 × active.
+  - `ARENA_FUNDING_SCHEDULE=short` (a 1-block signal) is only for the live end-to-end proof on the throwaway T federation.
 
 **Stage 2 - the vote (2 weeks, 2016 blocks).**
 - A proposal that passed its signal goes to a vote of the bonded nodes, **weighted by bond**.
