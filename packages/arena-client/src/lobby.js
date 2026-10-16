@@ -47,6 +47,8 @@ export const LOBBY_SKEW_MS = 60000;
  * provider ("no answer in 10000 ms"), so the lobby and the run give up on a node at the same point.
  */
 export const SIGNER_ANSWER_MS = 10000;
+/** How long the lobby waits for the other seats once half of them answered (kanban #395). */
+export const LOBBY_LAST_MS = 2500;
 
 /**
  * `fetcher` with a limit: a read that has not answered in `ms` is refused with the words the lobby shows, and a real
@@ -62,7 +64,15 @@ export function answerWithin(fetcher, ms = SIGNER_ANSWER_MS) {
         reject(Object.assign(new Error(`did not answer in ${ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`}`), { silent: true }));
       }, ms);
     });
-    const asked = Promise.resolve().then(() => fetcher(url, abort ? { ...opts, signal: abort.signal } : opts));
+    // THE WHOLE ANSWER WITHIN THE LIMIT, NOT ONLY ITS HEADERS (kanban #395, measured on testnet4 2026-10-16 ~18:45Z: federation
+    // B's seats sent /rounds headers at once and the body over 19-45 s; the limit stopped at the headers, the lobby's first read
+    // waited for every body, and Unity's lobby listed no round for over a minute). The body is read inside the race, and the
+    // caller gets it already in hand.
+    const asked = Promise.resolve().then(() => fetcher(url, abort ? { ...opts, signal: abort.signal } : opts)).then(async (r) => {
+      if (!r || typeof r.arrayBuffer !== 'function' || typeof Response !== 'function') return r;
+      const body = [101, 204, 205, 304].includes(r.status) ? null : await r.arrayBuffer();
+      return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers });
+    });
     return Promise.race([asked, late]).finally(() => clearTimeout(timer));
   };
 }
@@ -153,10 +163,18 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
   // EVERY NODE AT ONCE, each within its limit: asked one after another, one silent node held the next one's answer back
   // and a lobby of two cost two limits. Answers are read in the order the nodes were named.
   const unique = [...new Set(nodes)];
-  const answers = await Promise.all(unique.map((node) =>
+  // ONCE HALF HAVE ANSWERED, THE REST GET LOBBY_LAST_MS MORE (kanban #395, measured on testnet4 2026-10-16: seven seats answered in
+  // 0.3-1.7 s and federation B's seven in 19-45 s, and the first lobby waited the full limit for them): the lobby is drawn from
+  // the seats that answered; a late one is in the next read, a second later
+  let settle = null; let answeredCount = 0;
+  const settled = new Promise((resolve) => { settle = resolve; });
+  const answers = await Promise.all(unique.map((node) => {
     // AT MOST 8 UPCOMING ROUNDS OF EACH SERIES (`next`): a node holding two series lists ~1150 rounds otherwise - 63 s,
     // past what the lobby waits for a node. A lobby shows one round per kind; eight leaves the lead's choice its room.
-    ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}`).then((r) => ({ r }), (e) => ({ e }))));
+    const one = ask(`${String(node).replace(/\/+$/, '')}/rounds?next=${LOBBY_PER_SERIES}`).then((r) => ({ r }), (e) => ({ e }));
+    one.then(() => { answeredCount += 1; if (answeredCount * 2 >= unique.length && unique.length > 2) setTimeout(settle, LOBBY_LAST_MS); });
+    return Promise.race([one, settled.then(() => ({ e: Object.assign(new Error(`did not answer within ${LOBBY_LAST_MS} ms of half the seats`), { silent: true }) }))]);
+  }));
   for (const [k, node] of unique.entries()) {
     try {
       const { r, e } = answers[k];
