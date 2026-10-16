@@ -750,7 +750,7 @@ public class SplashScreen : MonoBehaviour
             { fontSize = Mathf.RoundToInt(font), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft, wordWrap = false };
         head.normal.textColor = PanelSkin.Gold;
         // each kind listed with its own signer numbers, from its rows (kanban #43 follow-up) - no fixed 2
-        GUI.Label(l.head, Fit(head, Blwp.DailyLobby.HeaderWords(rows), l.head.width), head);
+        GUI.Label(l.head, FitWords(head, Blwp.DailyLobby.HeaderWordings(rows), l.head.width), head);   // the longest that fits (kanban #8)
         if (_offset >= rows.Length) _offset = 0;
         if (l.rows > 0 && rows.Length > l.rows)
         {
