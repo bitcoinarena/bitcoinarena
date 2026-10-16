@@ -169,4 +169,10 @@ test('a round no signer node answers for is asked again after 10 s, not at every
   look.st.seen.get('arena.pending.r9.e9').at -= 10001;              // ten seconds on
   await look();
   assert.equal(asked, 6, 'asked again after 10 s');
+  look.st.seen.get('arena.pending.r9.e9').at -= 10001;              // ten seconds more: the second miss waits 20 s
+  await look();
+  assert.equal(asked, 6, 'not after 10 s once it went unanswered twice');
+  look.st.seen.get('arena.pending.r9.e9').at -= 10001;
+  await look();
+  assert.equal(asked, 9, 'after 20 s');
 });
