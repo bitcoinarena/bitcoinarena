@@ -343,6 +343,8 @@ export const TYPE_VALUE_ATTESTATION = 0x2a;
 // THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a proposed donation set and a recipient's approval of it
 export const TYPE_DONATION_PROPOSAL = 0x2b;
 export const TYPE_DONATION_APPROVAL = 0x2c;
+// A SET OF KEYS WHOSE ENTRIES MAY VEST (§27A.4.1, kanban #382): a set without vesting keeps TYPE_DONATION_SET_KEYS and its id
+export const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather

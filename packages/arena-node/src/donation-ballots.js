@@ -80,7 +80,7 @@ export function createDonationBallots({ db, knownSets, verifySecp256k1, log = ()
         const t = tallies.get(id) || { state: 'open', acceptBps: 0, denyBps: 0, counted: [] };
         const p = b.proposal;
         return { id, serial: String(p.serial), network: toHex(p.networkId), parentSetId: toHex(p.parentSetId), proposer: toHex(p.proposer),
-          recipients: p.recipients.map((r) => ({ key: toHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
+          recipients: p.recipients.map((r) => ({ key: toHex(r.recipientPk), shareBps: r.shareBps, label: r.label, ...(r.vesting ? { vesting: r.vesting } : {}) })),
           state: t.state, validFrom: t.validFrom ?? null, acceptBps: t.acceptBps, denyBps: t.denyBps, why: t.why || null,
           votes: (t.counted || []).map((c) => ({ key: c.key, accept: c.accept, atHeight: c.atHeight, bps: c.bps })),
           hex: b.hex, approvals: b.approvals.map((a) => a.hex) };

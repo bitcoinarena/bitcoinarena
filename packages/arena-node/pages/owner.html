@@ -521,15 +521,16 @@ async function ballotsPanel() {
     return `<div class="card"><h3>Proposal · serial ${esc(p.serial)} <span class="sub">${esc(p.id.slice(0, 12))}</span></h3>
       <div class="row"><span>State</span><b>${state(p)}</b></div>
       <div class="row"><span>Proposed by</span><b>${nameOf(p.proposer)}</b></div>
-      ${p.recipients.map((r) => `<div class="row"><span>${esc(r.label || r.key.slice(0, 12))} <span class="sub">${esc(r.key.slice(0, 12))}…</span></span><b>${pct(r.shareBps)}</b></div>`).join('')}
+      ${p.recipients.map((r) => `<div class="row"><span>${esc(r.label || r.key.slice(0, 12))} <span class="sub">${esc(r.key.slice(0, 12))}…</span></span><b>${pct(r.shareBps)}${r.vesting ? ` → ${pct(r.vesting.targetBps)} over ${esc(String(r.vesting.days))} days from block ${esc(String(r.vesting.startHeight))}` : ''}</b></div>`).join('')}
       ${p.votes.map((x) => `<div class="row"><span>${nameOf(x.key)} (${pct(x.bps)})</span><b>${x.accept ? '<span class="ok">accepted</span>' : '<span class="err">denied</span>'} · block ${esc(String(x.atHeight))}</b></div>`).join('')}
       ${p.state === 'open' ? voters.map((m) => `<button class="primary" data-vote="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="1">Accept as ${esc(m.label)}</button><button data-vote="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="0">Deny as ${esc(m.label)}</button>`).join('') : ''}
       <div class="err" id="ve-${esc(p.id.slice(0, 16))}"></div></div>`;
   }).join('');
   const proposers = mine.filter((m) => set && set.recipients.some((r) => r.key === m.key));
   const form = proposers.length && set ? `<div class="card"><h3>Propose a new split</h3>
-      <p class="sub">One row per developer: their recipient key (33 bytes, hex), a label and a share in percent; the shares add up to 100 %.</p>
-      <div id="prow">${set.recipients.map((r) => `<div class="name-row"><input class="pk" value="${esc(r.key)}" autocomplete="off" spellcheck="false"><input class="pl" value="${esc(r.label || '')}" placeholder="label"><input class="pp" inputmode="decimal" value="${Number(r.shareBps) / 100}"></div>`).join('')}</div>
+      <p class="sub">One row per developer: their recipient key (33 bytes, hex), a label and a share in percent now; the shares add up to 100 %.
+      To let a share grow day by day (vesting), give the share it grows to and over how many days - a newcomer starts at 0 %. Until it is reached, the part not yet vested stays with the others in their proportions.</p>
+      <div id="prow">${set.recipients.map((r) => `<div class="name-row"><input class="pk" value="${esc(r.key)}" autocomplete="off" spellcheck="false"><input class="pl" value="${esc(r.label || '')}" placeholder="label"><input class="pp" inputmode="decimal" value="${Number(r.shareBps) / 100}"><input class="pv" inputmode="decimal" placeholder="vests to %"><input class="pd" inputmode="numeric" placeholder="days"></div>`).join('')}</div>
       <button id="padd">Add a developer</button>
       <label>Propose as</label><select id="pby">${proposers.map((m) => `<option value="${esc(m.slug)}">${esc(m.label)}</option>`).join('')}</select>
       <button class="primary" id="pgo">Propose</button><div class="err" id="perr2"></div></div>` : '';
@@ -539,11 +540,12 @@ async function ballotsPanel() {
     try { await post('/owner/dev/vote', signed('dev/vote', { slug: x.dataset.vote, proposalId: x.dataset.p, accept: x.dataset.a === '1' })); ballotsPanel(); }
     catch (e) { box.textContent = e.message; }
   };
-  if ($('padd')) $('padd').onclick = () => { const d2 = document.createElement('div'); d2.className = 'name-row'; d2.innerHTML = '<input class="pk" placeholder="02… or 03… (66 hex)" autocomplete="off" spellcheck="false"><input class="pl" placeholder="label"><input class="pp" inputmode="decimal" placeholder="%">'; $('prow').append(d2); };
+  if ($('padd')) $('padd').onclick = () => { const d2 = document.createElement('div'); d2.className = 'name-row'; d2.innerHTML = '<input class="pk" placeholder="02… or 03… (66 hex)" autocomplete="off" spellcheck="false"><input class="pl" placeholder="label"><input class="pp" inputmode="decimal" placeholder="%"><input class="pv" inputmode="decimal" placeholder="vests to %"><input class="pd" inputmode="numeric" placeholder="days">'; $('prow').append(d2); };
   if ($('pgo')) $('pgo').onclick = async () => {
     $('perr2').textContent = '';
     const rows = [...document.querySelectorAll('#prow .name-row')].map((r) => ({ key: r.querySelector('.pk').value.trim().toLowerCase(), label: r.querySelector('.pl').value.trim(),
-      shareBps: Math.round(Number(String(r.querySelector('.pp').value).replace(',', '.')) * 100) })).filter((r) => r.key);
+      shareBps: Math.round(Number(String(r.querySelector('.pp').value || 0).replace(',', '.')) * 100),
+      ...(r.querySelector('.pd').value.trim() ? { vestBps: Math.round(Number(String(r.querySelector('.pv').value).replace(',', '.')) * 100), vestDays: Number(r.querySelector('.pd').value.trim()) } : {}) })).filter((r) => r.key);
     const sum = rows.reduce((t, r) => t + r.shareBps, 0);
     if (sum !== 10000) { $('perr2').textContent = `the shares add up to ${sum / 100} %, not 100 %`; return; }
     if (rows.some((r) => !/^0[23][0-9a-f]{64}$/.test(r.key))) { $('perr2').textContent = 'every key is 66 hex characters starting 02 or 03'; return; }
