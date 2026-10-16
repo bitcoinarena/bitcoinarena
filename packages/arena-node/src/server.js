@@ -32,7 +32,7 @@ import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.j
 import { BADGES } from '../../arena-protocol/src/badges.js';
 import { missedInARow, seatingWarning } from './seatings.js';
 import { devClientSnapshot } from './dev-client.js';
-import { attributeDonations } from './dev-clients.js';
+import { attributeDonations, devEarnings } from './dev-clients.js';
 import { nodeStanding } from './node-standing.js';
 import { bondMinInForce, bondMinWarning, medianHistory, NOTICE_BLOCKS } from '../../arena-protocol/src/bond-min-notice.js';
 import { creatorSignatureStands, seriesCreatorStands } from '../../arena-protocol/src/creator.js';
@@ -690,7 +690,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       seen.set(rid, out);
       return out;
     };
-    return attributeDonations(rows, { protocolBps, gameOf });
+    // THE KEY'S SHARES AND ITS EARNINGS BY PERIOD (kanban #382): its share of the protocol developers' half, its share of each
+    // hosted game's half (games whose set does not name it are left out), and devEarnings over the same split
+    const games = [];
+    for (const g of hosted.values()) { const r = (g.donationSet || []).find((x) => kh(x.recipientPk) === key); if (r && !games.some((x) => x.game === g.name)) games.push({ game: g.name, title: g.title || g.name, bps: Number(r.shareBps || 0) }); }
+    return { ...attributeDonations(rows, { protocolBps, gameOf }), shares: { protocolBps, games }, earnings: devEarnings(rows, { protocolBps, gameOf, nowMs: Date.now() }) };
   };
   const devSplitOfDir = (dir) => {
     try {

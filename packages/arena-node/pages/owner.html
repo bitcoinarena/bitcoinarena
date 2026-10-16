@@ -23,6 +23,9 @@ textarea{min-height:110px}
 .err{color:var(--bad);min-height:1.5em}.ok{color:var(--ok)}
 label{display:block;margin:8px 0 4px;color:var(--dim)}
   table.found { width: 100%; border-collapse: collapse; } table.found th, table.found td { padding: 4px 6px; text-align: left; vertical-align: top; } .info { margin: 2px 0 6px; } .info a { color: inherit; }
+  /* the dev key's earnings by period (kanban #382): scrolls sideways on a phone, numbers right-aligned */
+  .tablewrap { overflow-x: auto; } table.earn { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  table.earn th, table.earn td { padding: 4px 6px; text-align: right; white-space: nowrap; border-bottom: 1px solid rgba(255,255,255,0.06); } table.earn tbody th { text-align: left; font-weight: 500; }
 </style></head><body>
 <h1>Bitcoin Arena · Node Owner</h1>
 <div class="sub" id="who">loading…</div>
@@ -501,6 +504,23 @@ async function devClients() {
   const row = (k, v) => `<div class="row"><span>${k}</span><b>${v}</b></div>`;
   const split = (S) => !S ? '' : row('For the protocol developers', sat(S.protocolMsat)) + (S.games || []).map((g) => row('For ' + esc(g.title || g.game), `${sat(g.msat)} · ${g.donations} donation${g.donations === 1 ? '' : 's'}`)).join('')
     + (S.unknownMsat && S.unknownMsat !== '0' ? row('Rounds this node no longer holds', sat(S.unknownMsat)) : '');
+  // WHAT THIS KEY EARNED, BY PERIOD, AND ITS SHARES (kanban #382): one row per part - the protocol developers' and each game's -
+  // across today, this week (from Monday), this month, this year and all time (UTC), from the client's own record
+  const pct = (bps) => (Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %';
+  const earnings = (S) => {
+    if (!S || !S.earnings) return '';
+    const P = S.earnings.periods; const cols = [['day', 'Today'], ['week', 'This week'], ['month', 'This month'], ['year', 'This year'], ['all', 'All time']];
+    const names = new Map(); for (const k of Object.keys(P)) for (const g of P[k].games) names.set(g.game, g.title || g.game);
+    const gameMsat = (k, name) => ((P[k].games.find((g) => g.game === name) || {}).msat || '0');
+    const tr = (label, f) => `<tr><th>${label}</th>${cols.map(([k]) => `<td>${sat(f(k))}</td>`).join('')}</tr>`;
+    const share = S.shares ? `<div class="row"><span>Your share of the protocol developers' half</span><b>${pct(S.shares.protocolBps)}</b></div>`
+      + S.shares.games.map((g) => `<div class="row"><span>Your share of ${esc(g.title)}'s developers' half</span><b>${pct(g.bps)}</b></div>`).join('') : '';
+    return `<h4>Earnings</h4><div class="tablewrap"><table class="earn"><thead><tr><th></th>${cols.map(([, t]) => `<th>${t}</th>`).join('')}</tr></thead><tbody>
+      ${tr('Protocol', (k) => P[k].protocolMsat)}
+      ${[...names].map(([name, title]) => tr(esc(title), (k) => gameMsat(k, name))).join('')}
+      ${P.all.unknownMsat !== '0' ? tr('Rounds this node no longer holds', (k) => P[k].unknownMsat) : ''}
+      ${tr('<b>Total</b>', (k) => P[k].totalMsat)}</tbody></table></div>${share}`;
+  };
   const card = (V, managed) => {
     if (V.error) return `<div class="card"><h3>${esc(V.label || V.slug || 'Dev client')}</h3><p class="err">${esc(V.error)}</p></div>`;
     const holds = (V.balances || []).reduce((t, b) => t + BigInt(b.msat || 0), 0n);
@@ -509,6 +529,7 @@ async function devClients() {
       ${row('Recipient key', `<span title="${esc(V.recipientPk)}">${esc(V.recipientPk.slice(0, 16))}…</span>`)}
       ${row('Received', `${sat(V.receivedMsat)} · ${V.donations} donation${V.donations === 1 ? '' : 's'}`)}
       ${split(V.split)}
+      ${earnings(V.split)}
       ${(V.balances || []).map((b) => row('Holds in ' + esc(b.federation.slice(0, 12)), sat(b.msat))).join('')}
       ${row('Withdrawn over Lightning', sat(V.withdrawnMsat))}
       ${V.lastPass ? row('Last pass', `${esc(String(V.lastPass.at).slice(0, 16).replace('T', ' '))} · asked ${V.lastPass.seats} nodes`) : row('Last pass', 'not yet')}
