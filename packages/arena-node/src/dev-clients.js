@@ -46,6 +46,49 @@ export function attributeDonations(rows, { protocolBps = 0, gameOf = () => null 
 }
 
 /**
+ * WHAT A DEV KEY EARNED, BY PERIOD (kanban #382, the owner 2026-10-16: "Shows the dev protocol and dev game earnings (grouped by game)
+ * with daily, weekly, monthly : yearly earnings, also shows your stake of the total dev earnings (protocol / game)"). The same
+ * split as attributeDonations, each donation counted in the UTC day, the ISO week (from Monday), the month and the year it was
+ * verified in, measured from `nowMs`; `days` the last N UTC days one by one. Amounts are msat strings; unknown rounds are kept apart.
+ */
+export const PERIODS = Object.freeze(['day', 'week', 'month', 'year', 'all']);
+export function devEarnings(rows, { protocolBps = 0, gameOf = () => null, nowMs = Date.now(), days = 30 } = {}) {
+  const now = new Date(nowMs);
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const starts = { day: dayStart, week: dayStart - ((now.getUTCDay() + 6) % 7) * 86400000,
+    month: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1), year: Date.UTC(now.getUTCFullYear(), 0, 1), all: -Infinity };
+  const blank = () => ({ protocol: 0n, games: new Map(), unknown: 0n });
+  const periods = Object.fromEntries(PERIODS.map((k) => [k, blank()]));
+  const daily = new Map();
+  for (let i = days - 1; i >= 0; i--) daily.set(new Date(dayStart - i * 86400000).toISOString().slice(0, 10), blank());
+  const add = (b, part, title, msat) => {
+    if (part === null) { b.unknown += msat; return; }
+    if (part === '') { b.protocol += msat; return; }
+    const x = b.games.get(part) || { game: part, title, msat: 0n }; x.msat += msat; b.games.set(part, x);
+  };
+  for (const r of rows || []) {
+    const amount = BigInt(r.amountMsat || 0);
+    const at = Number(r.verifiedMs || r.recordedAt || 0);
+    const g = gameOf(String(r.roundId || ''));
+    const parts = [];
+    if (!g) parts.push([null, null, amount]);
+    else {
+      const p = BigInt(protocolBps), q = BigInt(g.bps || 0);
+      if (p + q === 0n) parts.push([null, null, amount]);
+      else { const toProtocol = (amount * p) / (p + q); parts.push(['', null, toProtocol], [g.name, g.title || g.name, amount - toProtocol]); }
+    }
+    const day = Number.isFinite(at) && at > 0 ? new Date(at).toISOString().slice(0, 10) : null;
+    for (const [part, title, msat] of parts) {
+      for (const k of PERIODS) if (at >= starts[k] && at <= nowMs + 60000) add(periods[k], part, title, msat);
+      if (day && daily.has(day)) add(daily.get(day), part, title, msat);
+    }
+  }
+  const out = (b) => ({ protocolMsat: String(b.protocol), games: [...b.games.values()].map((x) => ({ ...x, msat: String(x.msat) })),
+    unknownMsat: String(b.unknown), totalMsat: String(b.protocol + [...b.games.values()].reduce((t, x) => t + x.msat, 0n) + b.unknown) });
+  return { nowMs, periods: Object.fromEntries(PERIODS.map((k) => [k, out(periods[k])])), days: [...daily.entries()].map(([day, b]) => ({ day, ...out(b) })) };
+}
+
+/**
  * The node's side. `root`: the clients' directories. `donorBin`: arena-donor.mjs. `defaults`: what every new client's donor.json
  * takes - { seats, invites, invitesFrom, wasmPkg, gateways } (the node's own knowledge, so the owner types none of it).
  * `keys`: { newKey(), keyFromSecret(Buffer) } (arena-donor's). `spawn` and `restartMs` for tests.

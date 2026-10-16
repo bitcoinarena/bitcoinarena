@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, statSync, existsSync, readdirSync, writeFile
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
-import { createDevClients, attributeDonations, slugOf } from '../src/dev-clients.js';
+import { createDevClients, attributeDonations, devEarnings, slugOf } from '../src/dev-clients.js';
 import { newKey, keyFromSecret } from '../../arena-donor/src/donor.js';
 
 const fakeSpawn = () => {
@@ -99,4 +99,30 @@ test('each donation is split p : g between the protocol developers and its game;
 test('labels become directory names', () => {
   assert.equal(slugOf(' Dev A! '), 'dev-a');
   assert.equal(slugOf('../../etc'), 'etc');
+});
+
+test('a dev key\'s earnings by period: today, this week from Monday, this month, this year, all time, and day by day (kanban #382)', () => {
+  // Thursday 2026-10-15 12:00Z; the week began Monday 10-12
+  const nowMs = Date.UTC(2026, 9, 15, 12);
+  const at = (y, m, d, h = 10) => Date.UTC(y, m - 1, d, h);
+  const rows = [
+    { roundId: 'tt', amountMsat: '3000', verifiedMs: at(2026, 10, 15) },   // today
+    { roundId: 'tt', amountMsat: '3000', verifiedMs: at(2026, 10, 12, 0) }, // Monday: this week
+    { roundId: 'rps', amountMsat: '1000', verifiedMs: at(2026, 10, 11) },  // Sunday: last week, this month
+    { roundId: 'tt', amountMsat: '3000', verifiedMs: at(2026, 9, 30) },    // September: this year
+    { roundId: 'tt', amountMsat: '3000', verifiedMs: at(2025, 12, 31) },   // last year
+    { roundId: 'gone', amountMsat: '500', verifiedMs: at(2026, 10, 15) },  // a round this node no longer holds
+  ];
+  const games = { tt: { name: 'nextblock', title: 'Tick Tock', bps: 3333 }, rps: { name: 'rock-paper-scissors', title: 'RPS', bps: 10000 } };
+  const e = devEarnings(rows, { protocolBps: 6667, gameOf: (r) => games[r] || null, nowMs, days: 7 });
+  const part = (k) => ({ p: e.periods[k].protocolMsat, tt: (e.periods[k].games.find((g) => g.game === 'nextblock') || {}).msat || '0',
+    rps: (e.periods[k].games.find((g) => g.game === 'rock-paper-scissors') || {}).msat || '0', u: e.periods[k].unknownMsat, t: e.periods[k].totalMsat });
+  // 3000 split 6667 : 3333 -> 2000 protocol, 1000 game; 1000 for RPS split 6667 : 10000 -> 400 protocol, 600 game
+  assert.deepEqual(part('day'), { p: '2000', tt: '1000', rps: '0', u: '500', t: '3500' });
+  assert.deepEqual(part('week'), { p: '4000', tt: '2000', rps: '0', u: '500', t: '6500' });
+  assert.deepEqual(part('month'), { p: '4400', tt: '2000', rps: '600', u: '500', t: '7500' });
+  assert.deepEqual(part('year'), { p: '6400', tt: '3000', rps: '600', u: '500', t: '10500' });
+  assert.deepEqual(part('all'), { p: '8400', tt: '4000', rps: '600', u: '500', t: '13500' });
+  assert.deepEqual(e.days.map((d) => d.day), ['2026-10-09', '2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15']);
+  assert.deepEqual(e.days.map((d) => d.totalMsat), ['0', '0', '1000', '3000', '0', '0', '3500']);
 });
