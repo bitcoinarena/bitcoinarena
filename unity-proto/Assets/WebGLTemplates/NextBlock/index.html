@@ -5627,6 +5627,17 @@
     const script = document.createElement('script');
     script.src = 'Build/{{{ LOADER_FILENAME }}}';
     script.onerror = () => fail('The loader could not be loaded.');
+    // UNITY STARTS LOADING AS SOON AS IT IS THE GAME (kanban #395, the owner 2026-10-16: "it takes too long to load a game, it's at 0%
+    // for 10-15 seconds ... It's only showing connecting"). Measured on live UI 175, phone profile: the pick at 0 s, "0% ·
+    // Connecting …" until 14.5 s - the loader was only fetched once the lobby's first read had heard from every seat, and the
+    // federation B seats behind the tunnel answered /rounds in 10.4-13.1 s. The download now starts when the game is chosen and
+    // runs beside the lobby's reads; once, whichever asks first.
+    window.ARENA_START_UNITY = () => {
+      if (window.ARENA_LOADER_AT) return;
+      window.ARENA_LOADER_AT = Date.now();
+      stage.textContent = 'Loading the program …';
+      document.body.appendChild(script);
+    };
     // THE TEXTURES THIS GPU HAS (kanban #265, measured 2026-10-08): the build's textures were DXT only, which most Android
     // GPUs and iPhones lack - Unity then decompressed 33 of them on the CPU, 20 before 100 %. A deploy may carry the same
     // build's ASTC data beside it (Build/<data>-astc..., StreamingAssets-astc/ with its catalog; the code files are byte-
@@ -6822,6 +6833,8 @@
       // THE GAME, BEFORE ITS ROUNDS (kanban #208): the lobby below lists only the chosen game's rows
       const game = await chooseTheGame([...named.nodes, ...(testnet ? testnet.named.nodes : [])]);
       window.ARENA_UNITY = !game || (game.known && game.name === 'nextblock');
+      // THE DOWNLOAD BEGINS NOW, NOT AFTER THE LOBBY'S FIRST READ (kanban #395)
+      if (window.ARENA_UNITY && !(window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock') && window.ARENA_START_UNITY) window.ARENA_START_UNITY();
       if (window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.BLWP_LEDGER_LOBBY);
       // NEXT BLOCK'S LOADING SCREEN, ONCE IT IS THE GAME (kanban #350): the bare root showed Bitcoin Arena's splash until here
       if (window.ARENA_UNITY && document.documentElement.classList.contains('arena-root')) document.documentElement.classList.remove('other-game', 'arena-root');
@@ -7663,7 +7676,7 @@
         // ANOTHER GAME'S SITE NEVER FALLS BACK TO NEXTBLOCK (kanban #279): no Unity - its splash says the nodes are not reached
         : window.ARENA_SITE_GAME && window.ARENA_SITE_GAME !== 'nextblock'
           ? (document.getElementById('stage').textContent = 'The game\'s nodes are not reachable right now - try again in a moment.')
-          : document.body.appendChild(script)))
+          : window.ARENA_START_UNITY()))
       .catch((e) => { fail('That round link cannot be used: ' + e.message); showNotedDonation(); });
   </script>
   <script>
