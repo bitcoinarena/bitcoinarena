@@ -192,6 +192,7 @@ import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYT
 import { slashOwing, entriesForSlash } from './slash-owing.js';
 import { StakeSecrets, encodeShareAnswer, SEALED_ANSWER_BYTES } from './stake-secret.js';
 import { Dkg } from './dkg.js';
+import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
 import { decodeCommitments, encodeCommitments, encodeShare } from './pool-wire.js';
@@ -1200,6 +1201,47 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     peers, fetcher: (u, o) => fetch(u, o),
   });
+  // THE PROTOCOL RESERVES' KEY OF EACH FEDERATION THIS NODE GUARDS (§27A.9.2, kanban #397 slice 2, the owner 2026-10-16: custody
+  // "A" - the federation's guardian seats hold a k-of-n key): the same DKG as a round's claim key, under the federation's own
+  // reserve epoch, over the census entries whose advertisements name a guardian of that federation. Contributions travel
+  // through /dkg like a round's (an epoch is an epoch); nothing is locked to the key yet.
+  const reserveDkgs = new Map();
+  const reserveDkgOf = (fedHex) => {
+    if (!reserveDkgs.has(fedHex)) reserveDkgs.set(fedHex, new Dkg(round, { curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
+      fetcher: (u, o) => fetch(u, o), epochOf: (nodes) => reserveEpochId(fromHex(fedHex), nodes) }));
+    return reserveDkgs.get(fedHex);
+  };
+  const reserveState = new Map();   // federation hex -> { members, at, ok, why, told, got }
+  const sortedKeys = (ks) => [...ks].sort((a, b) => (toHex(a) < toHex(b) ? -1 : toHex(a) > toHex(b) ? 1 : 0));
+  /** Make (or finish) a federation's reserve key with `members` (node keys) reached at `peers`. */
+  const makeReserveKey = async (fedHex, members, peersOf) => {
+    const nodes = sortedKeys(members);
+    const r = await reserveDkgOf(fedHex).run(nodes, peersOf);
+    reserveState.set(fedHex, { members: nodes.map(toHex), at: Date.now(), ok: !!r.ok, why: r.ok ? null : (r.why || null), told: r.told, got: r.got });
+    return r;
+  };
+  /** The guardian seats of each federation, from the census this seat reads: { fedHex: { members, peers } }. */
+  const reserveGuardians = () => {
+    const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
+    if (!now.ok) return {};
+    const out = {};
+    for (const e of now.entries || []) for (const g of (e.advert && e.advert.guardianOf) || []) {
+      const f = toHex(g.federationId); (out[f] = out[f] || []).push(e);
+    }
+    return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: endpointsOf(es, round.pubkey) }]));
+  };
+  const RESERVE_DKG_MS = Number(process.env.ARENA_RESERVE_DKG_MS || 120000);
+  const reserveRound = async () => {
+    for (const [fedHex, g] of Object.entries(reserveGuardians())) {
+      if (!g.members.some((k) => toHex(k) === toHex(round.pubkey)) || g.members.length < 2) continue;
+      const nodes = sortedKeys(g.members);
+      if (reserveDkgOf(fedHex).signerNodeFor(nodes).ok) continue;
+      try { const r = await makeReserveKey(fedHex, nodes, g.peers);
+        if (r.ok) console.log(`[reserves] ${fedHex.slice(0, 8)}: reserve key ${toHex(r.groupPublicKey || new Uint8Array()).slice(0, 16)} of ${nodes.length} guardian seats`); }
+      catch (e) { reserveState.set(fedHex, { members: nodes.map(toHex), at: Date.now(), ok: false, why: e.message }); }
+    }
+  };
+  if (process.env.ARENA_RESERVE_DKG !== '0') { const t = setInterval(() => { reserveRound().catch(() => {}); }, RESERVE_DKG_MS); if (t.unref) t.unref(); setTimeout(() => reserveRound().catch(() => {}), 20000).unref?.(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
@@ -6425,6 +6467,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // THE DEVELOPERS' BALLOTS (§27A.4.1, kanban #382): every proposal and approval this seat holds, with its tally; a new one
       // is checked, kept and handed on to the seats this one knows (once: a forwarded one is not forwarded again)
+      // THE PROTOCOL RESERVES (§27A.9.2, kanban #397): per federation this node knows guardians of, its reserve key - the
+      // guardian seats, the threshold, the group key once made, and every seat's public share (from public commitments)
+      if (req.method === 'GET' && url.pathname === '/reserves') {
+        const g = reserveGuardians();
+        const feds = [...new Set([...Object.keys(g), ...reserveDkgs.keys()])].sort();
+        const federations = feds.map((fedHex) => {
+          const nodes = g[fedHex] ? sortedKeys(g[fedHex].members) : (reserveState.get(fedHex) ? reserveState.get(fedHex).members.map(fromHex) : []);
+          const held = nodes.length ? reserveDkgOf(fedHex).signerNodeFor(nodes) : { ok: false };
+          const pub = held.ok ? reserveDkgOf(fedHex).publicSharesFor(nodes) : null;
+          const st = reserveState.get(fedHex) || null;
+          return { federationId: fedHex, members: nodes.map(toHex), needed: committeeThreshold(nodes.length),
+            key: held.ok ? toHex(held.pool.groupPublicKey) : null, mine: held.ok ? held.signerNode.id : null,
+            publicShares: pub && pub.ok ? Object.fromEntries([...pub.shares].map(([j, P]) => [j, toHex(P)])) : null,
+            epoch: nodes.length ? toHex(reserveEpochId(fromHex(fedHex), nodes)) : null,
+            last: st ? { at: new Date(st.at).toISOString(), ok: st.ok, why: st.why, told: st.told, got: st.got } : null };
+        });
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), federations, paidIn: [], payouts: [] }));
+      }
       if (req.method === 'GET' && url.pathname === '/donation-ballots') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         return ans(200, { ballots: donationBallots ? donationBallots.list() : [], approved: approvedSets().map((x) => ({ serial: String(x.serial), validFrom: x.validFrom,
@@ -7416,6 +7477,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     http.listen(port, host, () => resolve({
       http, wss, round, host, verifier, ghosts, roster, stakeSecrets,
       dkg, settlements, winnings, orderBook,
+      // the protocol reserves' keys (kanban #397): make one with given members and peers, and the DKG of a federation
+      reserves: { make: makeReserveKey, dkgOf: reserveDkgOf, round: reserveRound },
       // What the last close did with the money, and the same door an operator
       // uses to run a settlement again by hand.
       stakes: () => stakes,

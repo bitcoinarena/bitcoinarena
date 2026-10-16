@@ -35,8 +35,10 @@ export class Dkg {
    * makes the secrets; `peers` and `fetcher` are how a contribution reaches
    * the other signer nodes, injected the way `Payouts` injects them.
    */
-  constructor(round, { curve, random, peers = [], fetcher = null } = {}) {
+  constructor(round, { curve, random, peers = [], fetcher = null, epochOf = epochId } = {}) {
     this.round = round;
+    // WHICH EPOCH A COMMITTEE IS (kanban #397): a round's by default; a federation's reserve key names its own (reserveEpochId)
+    this.epochOf = epochOf;
     this.curve = curve;
     this.random = random;
     this.peers = peers;
@@ -49,7 +51,7 @@ export class Dkg {
   /** Which epoch a committee is, and this node's place in it. */
   epochFor(signerNodes) {
     let id;
-    try { id = epochId(signerNodes); }
+    try { id = this.epochOf(signerNodes); }
     catch (e) { return { ok: false, why: e.message }; }
     const mine = this.round.pubkey;
     if (!signerNodes.some((k) => same(k, mine)))

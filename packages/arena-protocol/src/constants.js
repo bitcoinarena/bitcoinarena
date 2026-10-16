@@ -403,6 +403,8 @@ export const TAG = {
   // other.
   dkgContribution: 'ARENA/v1/DkgContribution',
   dkgEpoch: 'ARENA/v1/DkgEpoch',
+  // A FEDERATION'S RESERVE KEY (§27A.9.2, kanban #397): its own epoch, never a round committee's, even over the same seven nodes
+  reserveEpoch: 'ARENA/v1/ReserveEpoch',
   feeClaim: 'ARENA/v1/FeeClaim',
   serviceRecord: 'ARENA/v1/ServiceRecord',
   // The record and the minimum a claim is measured against, bound as one hash

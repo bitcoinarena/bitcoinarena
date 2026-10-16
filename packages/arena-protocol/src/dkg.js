@@ -143,6 +143,18 @@ export function epochId(signerNodes) {
   return taggedHash(TAG.dkgEpoch, w.finish());
 }
 
+/**
+ * THE EPOCH OF A FEDERATION'S RESERVE KEY (§27A.9.2, kanban #397): the protocol reserves of `federationId` are locked to a
+ * k-of-n key of its guardian seats, made by the same DKG as a round's claim key - under an epoch of its own, tagged apart and
+ * bound to the federation, so a round committee of the same seven nodes never makes (or is handed) the reserve key.
+ */
+export function reserveEpochId(federationId, signerNodes) {
+  if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a reserve key belongs to a 32-byte federation');
+  const committee = epochId(signerNodes);
+  const b = new Uint8Array(64); b.set(federationId, 0); b.set(committee, 32);
+  return taggedHash(TAG.reserveEpoch, b);
+}
+
 export function encodeContribution(c) {
   const w = new Writer();
   w.u8(TYPE_DKG_CONTRIBUTION);
