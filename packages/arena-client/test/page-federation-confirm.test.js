@@ -31,7 +31,8 @@ function memStorage() {
 }
 function node(tag) {
   const n = { tag, textContent: '', style: {}, dataset: {}, children: [], className: '', listeners: {},
-    append: (...c) => n.children.push(...c), appendChild: (c) => n.children.push(c), addEventListener: (ev, f) => { n.listeners[ev] = f; } };
+    append: (...c) => n.children.push(...c), appendChild: (c) => n.children.push(c), addEventListener: (ev, f) => { n.listeners[ev] = f; },
+    contains: (c) => c === n || n.children.some((k) => k === c || (k && typeof k.contains === 'function' && k.contains(c))) };   // the page asks it (waitBox.el.contains)
   let html = '';
   Object.defineProperty(n, 'innerHTML', { get: () => html, set: (v) => { html = v; n.parts = { b: node('b'), span: node('span'), code: [node('code'), node('code')] }; } });
   n.querySelector = (s) => n.parts[s];

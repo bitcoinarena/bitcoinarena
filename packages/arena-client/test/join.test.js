@@ -25,7 +25,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { openStore } from '../../arena-node/src/store.js';
 import { serve } from '../../arena-node/src/server.js';
 import { Client } from '../src/client.js';
-import { joinQuery, joinFromQuery, fetchRound, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSignerNodes, roundPays } from '../src/join.js';
+import { joinQuery, joinFromQuery, fetchRound, forgetRounds, tabSeed, playerFor, entryFor, stakeFor, fetchSettlementSignerNodes, roundPays } from '../src/join.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
 import { coreHashHex } from '../../nextblock/tools/hash-core.js';
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
@@ -146,7 +146,11 @@ test('a node answering with a different round is refused, not played', async () 
     assert.equal(got.from, `http://127.0.0.1:${a.port}`, 'the page took the substituted round');
     assert.match(got.refused[0], /answered with round/);
 
-    // AND WITH NOBODY ELSE TO ASK, IT IS A REFUSAL AND NOT A GUESS.
+    // AND WITH NOBODY ELSE TO ASK, IT IS A REFUSAL AND NOT A GUESS (the contract read above is kept, so it is forgotten first).
+    const again = await fetchRound(toHex(rid), ['http://liar.test'], { fetcher: swap });
+    assert.equal(again.kept, true, 'a contract read once is kept: the liar is not even asked');
+    assert.equal(toHex(roundId(again.contract)), toHex(rid));
+    forgetRounds();
     await assert.rejects(
       fetchRound(toHex(rid), ['http://liar.test'], { fetcher: swap }),
       /no node holds the round this URL names/);
