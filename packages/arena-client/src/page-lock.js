@@ -746,9 +746,35 @@ export function restOfFeesMsat(shortMsat) {
 }
 /** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
 export const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
-/** How often, and how far apart, a wallet holding a round's floor asks its lock quote again before a deposit is asked (kanban #376). */
-export const QUOTE_SETTLE_TRIES = 5;
-export const QUOTE_SETTLE_MS = 3000;
+/**
+ * NOTES STILL BEING ISSUED (kanban #376, the join that never started): a wallet's e-cash counts in `balanceMsat` only once the
+ * guardians' blind signatures for it are in - a restored wallet's notes are re-issued by an output state machine AFTER `recover`
+ * returns, a deposit's after its claim, a payment's change after the payment. Measured on a page with one pinned seed (6b360bd8,
+ * a fresh profile): the balance read 0 sat for more than 6 minutes while the seed held 3000 sat, and a deposit "Claimed" at 78 s
+ * still read 0 - a quote in that window called a funded wallet "insufficient" and sent it to deposit. `issuingMsat` (lock client)
+ * is what is being issued; 0 from a client that cannot tell.
+ */
+export const ISSUE_POLL_MS = 1000;
+export const ISSUE_WAIT_MS = 600000;
+export async function issuingMsat(client) {
+  if (!client || typeof client.issuingMsat !== 'function') return 0n;
+  try { return BigInt(await client.issuingMsat()); } catch { return 0n; }
+}
+/** Waits until nothing is being issued to the wallet (or `untilMs`, or ISSUE_WAIT_MS), saying so; answers { have, issuing }. */
+export async function awaitIssued(client, { untilMs = null, onStep = () => {} } = {}) {
+  const end = Math.min(untilMs === null || untilMs === undefined || !Number.isFinite(Number(untilMs)) ? Infinity : Number(untilMs), Date.now() + ISSUE_WAIT_MS);
+  let saidAt = 0;
+  for (;;) {
+    const have = BigInt(await client.balanceMsat());
+    const issuing = await issuingMsat(client);
+    if (issuing === 0n || Date.now() >= end) return { have, issuing };
+    if (Date.now() - saidAt >= 5000) {
+      onStep(`the player wallet holds ${have} msat and is being issued ${issuing} msat more (a restore, a deposit or a payment's change): waiting for those notes`);
+      saidAt = Date.now();
+    }
+    await new Promise((r) => setTimeout(r, ISSUE_POLL_MS));
+  }
+}
 export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
   estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
@@ -758,15 +784,17 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
   for (let tries = 0; ; tries++) {
     let have = BigInt(await client.balanceMsat());
     let n = await needFor(client, LockClient, locks);
-    // A WALLET THAT HOLDS THE ROUND BUT CANNOT QUOTE IT YET (kanban #376, the owner 2026-10-16 06:25Z: right after buying the larger truck,
-    // "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - and the join never started): the
-    // quote is asked again for up to QUOTE_SETTLE_TRIES x QUOTE_SETTLE_MS (a payment's change is issued in the seconds after it,
-    // measured 2.6 s) before a deposit is asked of a wallet that already holds the round's floor; the quote's own words are said
-    for (let settle = 0; n.need === null && have >= n.floor && settle < QUOTE_SETTLE_TRIES; settle++) {
-      onStep(`the player wallet holds ${have} msat, more than this round's locks (${n.floor} msat), and cannot quote them yet (${n.quoteWhy || 'insufficient funds'}): asking again`);
-      await new Promise((r) => setTimeout(r, QUOTE_SETTLE_MS));
-      have = BigInt(await client.balanceMsat());
-      n = await needFor(client, LockClient, locks);
+    // A WALLET WHOSE NOTES ARE STILL BEING ISSUED (kanban #376, the owner 2026-10-16 06:25Z, right after buying the larger truck:
+    // "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - the join asked a deposit and
+    // never started): short of the quote, but not once what is being issued has landed - those notes are waited for, then the
+    // round is quoted again. Nothing being issued, the quote stands and its own words are said.
+    if (n.need === null || have < n.need) {
+      const issuing = await issuingMsat(client);
+      if (issuing > 0n && have + issuing >= (n.need !== null ? n.need : n.floor)) {
+        const w = await awaitIssued(client, { untilMs: entryClosesMs, onStep });
+        if (w.issuing > 0n) onStep(`the player wallet's ${w.issuing} msat were still being issued at the round's entry close`);
+        have = w.have; n = await needFor(client, LockClient, locks);
+      }
     }
     onStep(`the player wallet holds ${have} msat; this round's locks need ${n.need === null ? `more than that (${n.quoteWhy || 'insufficient funds'})` : `${n.need} msat`}`);
     if (n.need !== null && have >= n.need) { if (prev) prev.decided({ funded: true }); break; }

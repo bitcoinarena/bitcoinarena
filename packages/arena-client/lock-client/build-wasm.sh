@@ -74,6 +74,9 @@ grep -n "(0..42).map(Denomination)" modules/fedimint-mintv2-common/src/config.rs
 # PENDING OUTPUTS (kanban #323, spec 23A.5 "Notes still in issuance at the halt"): the wallet names what was issued to its seed
 # and never signed, for a liquidation's pending-output claim - mintv2's own recovery scan, as a method
 grep -q "fn blwp_pending_outputs" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-pending-outputs.rs >> modules/fedimint-mintv2-client/src/lib.rs
+# NOTES IN ISSUANCE (kanban #376): what the wallet's pending output state machines are being issued - a recovery's re-issue, a
+# deposit's notes, a payment's change - which the balance does not count until each finishes
+grep -q "fn blwp_issuing_msat" modules/fedimint-mintv2-client/src/lib.rs || cat $HERE/mintv2-issuing.rs >> modules/fedimint-mintv2-client/src/lib.rs
 ln -sfn $HERE blwp-lock-client
 grep -q '"blwp-lock-client"' Cargo.toml || perl -0pi -e 's/^members = \[/members = [\n  "blwp-lock-client",/m' Cargo.toml
 export CC_wasm32_unknown_unknown=$B/wasi-sdk/bin/clang AR_wasm32_unknown_unknown=$B/wasi-sdk/bin/llvm-ar
