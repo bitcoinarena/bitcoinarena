@@ -264,7 +264,10 @@ export function replayInWorker(transcript, entry, options = {}) {
     const worker = new Worker(new URL(import.meta.url), {
       workerData: { blwpReplay: true, transcript, entry, source: source || null, options: rest,
         core: { hash: core.hash, url: core.url, root: core.root ? String(core.root) : undefined, sourceHash: core.sourceHash,
-          name: core.name, config: core.config, runTicks: core.runTicks, world: core.world || null } },
+          name: core.name, config: core.config, runTicks: core.runTicks, world: core.world || null,
+          // AND THE GAME'S ITEM CATALOGUE (kanban #369, measured live 2026-10-16 05:50Z: every committee seat held the truck entry
+          // 3de8e94c "plays with item "large-truck", which the round's game does not sell" - the worker's core lost `items` here)
+          ...(core.items ? { items: { ...core.items } } : {}) } },
     });
     let answered = false;
     worker.once('message', (m) => { answered = true; resolve(m); });
