@@ -22,7 +22,7 @@ import assert from 'node:assert/strict';
 import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
-import { pendingWindowLine, savedLockExpiration, PAYOUT_GRACE_MS } from '../src/page-lock.js';
+import { pendingWindowLine, savedLockExpiration, PAYOUT_GRACE_MS, QUOTE_SETTLE_MS, QUOTE_SETTLE_TRIES } from '../src/page-lock.js';
 import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, redeemSlashPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
@@ -2020,4 +2020,39 @@ test('a wronged player\'s page collects its slash payout from the arbitration se
   const other = await redeemSlashPayout({ round, roundId: rid, invite: INVITE, seed: b32(0x53), curve: pageCurve, LockClient: Wallet, arbiter: 'https://arbiter.example', fetcher: arbiterAt });
   assert.deepEqual([other.ok, other.final, asked.length], [false, true, 0]);
   assert.match(other.why, /no slash payout of this round names this seed's key/);
+});
+
+const round100q = { ...round, stakeMsat: 100000n };   // a 100 sat round, as the tests above make it
+// A WALLET THAT HOLDS THE ROUND BUT CANNOT QUOTE IT YET (kanban #376, the owner 2026-10-16 06:25Z, right after buying the larger truck:
+// "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - the join asked a deposit of a wallet
+// holding four rounds and never started). The quote is asked again before any deposit; and its own words are said.
+test('a wallet holding the round whose quote fails for a moment is quoted again, and joins with no deposit asked', async () => {
+  const { LockClient } = lockClient();
+  let fails = 2;
+  class Settling extends LockClient {
+    static async join(...a) { const f = await super.join(...a); Object.setPrototypeOf(f, Settling.prototype); f.balance = 400000n; return f; }
+    async lockCostMsat(msat) { if (fails > 0) { fails--; throw new Error('Insufficient funds'); } return super.lockCostMsat(msat); }
+  }
+  const steps = []; let asked = 0;
+  const t0 = Date.now();
+  await fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Settling, storage: tabStorage(), onStep: (s) => steps.push(s), askDeposit: () => { asked++; } });
+  assert.equal(asked, 0, 'no deposit is asked of a wallet that holds the round');
+  assert.ok(steps.some((s) => /more than this round's locks .* and cannot quote them yet \(Insufficient funds\): asking again/.test(s)), steps.join(' | '));
+  assert.match(steps.at(-1), /the player wallet holds 400000 msat; this round's locks need \d+ msat/);
+  assert.ok(Date.now() - t0 >= QUOTE_SETTLE_MS, 'it waited for the quote');
+});
+
+test('a quote that never comes says its own words before the deposit is asked', async () => {
+  const { LockClient } = lockClient();
+  class Never extends LockClient {
+    static async join(...a) { const f = await super.join(...a); Object.setPrototypeOf(f, Never.prototype); f.balance = 400000n; return f; }
+    async lockCostMsat() { throw new Error('Insufficient funds: notes pending'); }
+  }
+  const steps = []; let offer = null;
+  const done = fundPlayerWallet({ round: round100q, invite: INVITE, seed, LockClient: Never, storage: tabStorage(), onStep: (s) => steps.push(s),
+    askDeposit: (o) => { offer = o; o.close('test over'); } }).catch((e) => e);
+  await done;
+  assert.ok(offer, 'after the tries a deposit is asked, as before');
+  assert.equal(steps.filter((x) => /cannot quote them yet/.test(x)).length, QUOTE_SETTLE_TRIES, 'asked again QUOTE_SETTLE_TRIES times first');
+  assert.ok(steps.some((s) => /this round's locks need more than that \(Insufficient funds: notes pending\)/.test(s)), steps.join(' | '));
 });
