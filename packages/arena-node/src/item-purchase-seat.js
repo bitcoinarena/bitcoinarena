@@ -5,7 +5,7 @@
 // transaction already kept for another purchase is refused: one payment is one purchase. Kept, it is the buyer's ownership.
 import { purchaseStands, purchaseId, encodePurchase } from '../../arena-protocol/src/purchase.js';
 import { donationContractFields } from './stake-lock-signer-node.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
+import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 export const ITEM_PURCHASES_SQL = `CREATE TABLE IF NOT EXISTS item_purchases (
   id TEXT PRIMARY KEY, player TEXT NOT NULL, game_dev TEXT NOT NULL, game_name TEXT NOT NULL, item_id TEXT NOT NULL,
@@ -16,9 +16,9 @@ export const ITEM_PURCHASES_SQL = `CREATE TABLE IF NOT EXISTS item_purchases (
  * purchaseStands takes them; `port` the federation's lock port (status, contractId); `db` the seat's store; `verify` BIP340.
  * Answers { ok, id, kept: 'new' | 'held' } or { ok: false, status, why }.
  */
-export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now() }) {
+export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null }) {
   const no = (status, why) => ({ ok: false, status, why });
-  const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify });
+  const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey });
   if (!st.ok) return no(422, st.why);
   const id = toHex(st.id);
   db.exec(ITEM_PURCHASES_SQL);
@@ -26,16 +26,35 @@ export async function keepItemPurchase({ p, manifest, networkSet, gameSet, serve
   if (had && had.id === id) return { ok: true, id, kept: 'held' };
   if (had) return no(409, `transaction ${toHex(p.txid).slice(0, 16)} already paid for purchase ${had.id.slice(0, 16)}: one payment is one purchase`);
   if (!port) return no(503, 'this seat reaches no federation of that purchase, so it cannot check its outputs');
+  const heldIds = new Map();
   for (const o of p.outputs) {
     const outpoint = { txid: p.txid, outIdx: BigInt(o.outIdx) };
     const at = `${toHex(p.txid).slice(0, 16)}…:${o.outIdx}`;
     const [stored, want] = await Promise.all([port.status(outpoint), port.contractId(donationContractFields({ recipientPk: o.pk, amountMsat: o.msat, image: p.playerPubkey }))]);
     if (!stored || !stored.stored) return no(409, `the federation holds nothing at ${at} (not accepted yet, or never)`);
     if (String(stored.stored.contractId) !== String(want)) return no(422, `the output at ${at} is not ${o.msat} msat to key ${toHex(o.pk).slice(0, 16)}… from the buyer`);
+    heldIds.set(o.outIdx, String(stored.stored.contractId));
   }
   db.prepare('INSERT OR IGNORE INTO item_purchases (id, player, game_dev, game_name, item_id, txid, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, toHex(p.playerPubkey), toHex(p.gameDevPubkey), p.gameName, p.itemId, toHex(p.txid), Buffer.from(encodePurchase(p)), Buffer.from(p.signature), nowMs);
-  return { ok: true, id, kept: 'new' };
+  // THE RESERVES' 20 % (kanban #397 slice 5): its output, checked above with the federation like every other, kept as a reserve row
+  // under the federation's reserve key - what GET /reserves counts - with the purchase's id in the entry's place
+  const reserve = reserveRowOf(p, id, (outIdx) => heldIds.get(outIdx));
+  if (reserve && keepReserve) keepReserve(reserve);
+  return { ok: true, id, kept: 'new', reserve };
+}
+
+/**
+ * THE RESERVE ROW OF A PURCHASE ON THE RESERVES' TERMS, in the shape putDonationOutputs keeps (round id zeros: it is no round's),
+ * or null for a purchase on the old terms. The output paying the record's reserve key is the one; the record stood, so there is one.
+ */
+export function reserveRowOf(p, idHex, contractIdAt = () => null) {
+  if (!p || !(p.reserveKey instanceof Uint8Array)) return null;
+  const o = p.outputs.find((x) => toHex(x.pk) === toHex(p.reserveKey));
+  if (!o) return null;
+  return { outpoint: { txid: p.txid, outIdx: BigInt(o.outIdx) }, entryId: fromHex(idHex), roundId: new Uint8Array(32), federationId: p.federationId,
+    recipientPk: p.reserveKey, amountMsat: o.msat, contractId: contractIdAt(o.outIdx) || `item:${idHex}`, senderOnContract: true, image: toHex(p.playerPubkey),
+    item: `${p.gameName} · ${p.itemId}` };
 }
 
 /** THE ITEMS A PLAYER OWNS here (optionally of one game): [{ id, gameDev, gameName, itemId, txid, purchase (hex), signature (hex) }]. */

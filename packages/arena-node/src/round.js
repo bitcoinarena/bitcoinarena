@@ -2838,11 +2838,11 @@ export class Round {
 
   /** Donation outputs this signer node verified for one entry (the owner 2026-10-03): kept, and indexed by recipient key. */
   putDonationOutputs(rows) {
-    const put = this.db.prepare('INSERT OR REPLACE INTO donation_outputs (outpoint, entry_id, round_id, federation_id, recipient_pk, amount_msat, contract_id, verified_ms, sender_on_contract, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const put = this.db.prepare('INSERT OR REPLACE INTO donation_outputs (outpoint, entry_id, round_id, federation_id, recipient_pk, amount_msat, contract_id, verified_ms, sender_on_contract, image, item) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const r of rows)
       put.run(`${Buffer.from(r.outpoint.txid).toString('hex')}:${r.outpoint.outIdx}`, Buffer.from(r.entryId), Buffer.from(r.roundId),
         Buffer.from(r.federationId), Buffer.from(r.recipientPk).toString('hex'), String(r.amountMsat), r.contractId, this.now(), r.senderOnContract ? 1 : 0,
-        typeof r.image === 'string' ? r.image : null);
+        typeof r.image === 'string' ? r.image : null, typeof r.item === 'string' ? r.item.slice(0, 120) : null);
   }
 
   /** How many donation-key outputs of this round's settlement are indexed (kanban #152). */
@@ -2958,11 +2958,11 @@ export class Round {
     // AND WHO SENT IT (kanban #156, the owner 2026-10-05): the entry's player key, read from the stored entry; whether that key
     // is also on the Fedimint contract (its payment image) or the contract carries the zero image of an older page.
     const playerOf = (entryId) => { const e = this.entry(entryId); try { return e ? Buffer.from(decodeEntryContract(e).playerPubkey).toString('hex') : null; } catch { return null; } };
-    return this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
+    return this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image, item FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
       .all(String(recipientHex).toLowerCase(), Math.max(0, Math.floor(Number(sinceMs) || 0)))
       .map((r) => ({ outpoint: r.outpoint, entryId: Buffer.from(r.entry_id).toString('hex'), roundId: Buffer.from(r.round_id).toString('hex'),
         federationId: Buffer.from(r.federation_id).toString('hex'), amountMsat: r.amount_msat, contractId: r.contract_id, verifiedMs: Number(r.verified_ms),
-        playerKey: playerOf(new Uint8Array(r.entry_id)) || r.image || null, senderOnContract: r.sender_on_contract === 1 }));
+        playerKey: playerOf(new Uint8Array(r.entry_id)) || r.image || null, senderOnContract: r.sender_on_contract === 1, ...(r.item ? { item: r.item } : {}) }));
   }
 
   /**

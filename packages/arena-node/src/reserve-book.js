@@ -26,7 +26,8 @@ export function reserveFigures(rows, { federationId, last = RESERVES_LAST, gameO
   const shown = last === Infinity ? mine : mine.slice(-last);
   return { heldMsat: String(heldMsat), entries: mine.length,
     paidIn: shown.slice().reverse().map((r) => ({ outpoint: r.outpoint, roundId: r.roundId, entryId: r.entryId, amountMsat: String(r.amountMsat),
-      at: new Date(r.verifiedMs).toISOString(), game: gameOf(r.roundId) || null, image: r.senderOnContract && r.playerKey ? r.playerKey : null })) };
+      at: new Date(r.verifiedMs).toISOString(), game: gameOf(r.roundId) || null, image: r.senderOnContract && r.playerKey ? r.playerKey : null,
+      ...(r.item ? { item: r.item } : {}) })) };
 }
 
 /**
@@ -54,5 +55,6 @@ export async function verifyPeerReserveRow({ row, port, reserveKey, federationId
   const senderOnContract = keyedId !== null && String(keyedId) === stored;
   if (!senderOnContract && String(zeroId) !== stored) return { ok: false, why: `the output at ${txHex.slice(0, 16)}…:${idx} is not ${amountMsat} msat to the reserve key` };
   return { ok: true, row: { outpoint, entryId: fromHex(row.entryId), roundId: fromHex(row.roundId), federationId, recipientPk: reserveKey,
-    amountMsat, contractId: stored, senderOnContract, image: senderOnContract ? row.image : null } };
+    amountMsat, contractId: stored, senderOnContract, image: senderOnContract ? row.image : null,
+    ...(typeof row.item === 'string' && row.item.length <= 120 ? { item: row.item } : {}) } };
 }

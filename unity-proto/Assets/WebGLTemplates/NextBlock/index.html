@@ -4943,10 +4943,18 @@
       if (rec) rec.textContent = /no donation/i.test(line || '') ? '' : (line || '');
       // (the shop code that keeps the share runs later in this script: a paint before it shows the select alone)
       const share = window.ARENA_ITEMS_SHARE ? window.ARENA_ITEMS_SHARE() : 50; const shareSel = document.getElementById('arena-items-share-select');
+      // THE CHOICES OF THE SHOP'S TERMS (kanban #397 slice 5): 40 .. 0 % where the items pay the protocol reserves
+      const terms = window.ARENA_ITEMS_TERMS ? window.ARENA_ITEMS_TERMS() : null;
+      if (shareSel && terms && [...shareSel.options].map((o) => o.value).join(',') !== terms.shares.join(',')) {
+        shareSel.textContent = '';
+        for (const v of terms.shares) { const o = document.createElement('option'); o.value = String(v); o.textContent = v + '%'; shareSel.append(o); }
+      }
       if (shareSel && shareSel.value !== String(share)) shareSel.value = String(share);
       const shareWhat = document.getElementById('arena-items-share-what');
-      if (shareWhat && window.ARENA_ITEM_PRICE) shareWhat.textContent = 'A 500 sat item costs ' + String(window.ARENA_ITEM_PRICE(500)) + ' sat: 250 sat to the nodes'
-        + (share ? ', ' + String(window.ARENA_ITEM_PRICE(500) - 250n) + ' sat to the developers.' : ', nothing to the developers.');
+      const nodes500 = terms ? BigInt(5 * terms.nodesPct) : 250n, reserves500 = terms ? BigInt(5 * terms.reservesPct) : 0n;
+      if (shareWhat && window.ARENA_ITEM_PRICE) shareWhat.textContent = 'A 500 sat item costs ' + String(window.ARENA_ITEM_PRICE(500)) + ' sat: ' + nodes500 + ' sat to the nodes'
+        + (reserves500 ? ', ' + reserves500 + ' sat to the protocol reserves' : '')
+        + (share ? ', ' + String(window.ARENA_ITEM_PRICE(500) - nodes500 - reserves500) + ' sat to the developers.' : ', nothing to the developers.');
       if (document.activeElement !== nameField) { nameField.value = currentName(); nameUpdate.disabled = true; }
       paintMoney();
     }
@@ -7585,12 +7593,18 @@
     // THE PRICE AT THE BUYER'S SHARE (kanban #377, the owner 2026-10-16: "The price shown in the buy screens is this dynamic, if the ingame
     // donations are zero the price is 250 Sats instead of 500 sats"): the nodes' half and the chosen share of the list price, in sat
     const ITEMS_SHARE_KEY = 'arena.items.devsPct';
+    // ON THE TERMS OF THE VERSION THE SHOP SELLS FROM (kanban #397 slice 5): a version requiring protocol 11 pays the protocol reserves
+    // 20 % and the nodes 40 %, the share 40 .. 0 % on top; an older one #377's nodes' half and 50 .. 0 %
+    const itemsManifest = () => { const c = window.ARENA_GAME_CHOSEN; const s = c && BLWPCLIENT.shopOf ? BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], c.name) : null; return s ? s.game.manifest : null; };
+    window.ARENA_ITEMS_TERMS = () => (BLWPCLIENT.itemTermsOf ? BLWPCLIENT.itemTermsOf(itemsManifest()) : { reserves: false, shares: [50, 40, 30, 20, 10, 0], defaultShare: 50, nodesPct: 50, reservesPct: 0 });
     window.ARENA_ITEMS_SHARE = () => {
-      let v = 50; try { const k = localStorage.getItem(ITEMS_SHARE_KEY); if (k !== null) v = Number(k); } catch { /* the default */ }
+      let v = null; try { const k = localStorage.getItem(ITEMS_SHARE_KEY); if (k !== null) v = Number(k); } catch { /* the default */ }
+      if (BLWPCLIENT.itemShareOn) return BLWPCLIENT.itemShareOn(itemsManifest(), v === null ? window.ARENA_ITEMS_TERMS().defaultShare : v);
       return (BLWPCLIENT.ITEM_DEV_SHARES || [50]).includes(v) ? v : 50;
     };
     window.ARENA_ITEMS_SHARE_SET = (v) => { try { localStorage.setItem(ITEMS_SHARE_KEY, String(Number(v))); } catch { /* this page only */ } };
-    window.ARENA_ITEM_PRICE = (priceSat) => (BLWPCLIENT.itemPriceFor ? BLWPCLIENT.itemPriceFor(BigInt(priceSat), window.ARENA_ITEMS_SHARE()) : BigInt(priceSat));
+    window.ARENA_ITEM_PRICE = (priceSat) => (BLWPCLIENT.itemPriceOn ? BLWPCLIENT.itemPriceOn(itemsManifest(), BigInt(priceSat), window.ARENA_ITEMS_SHARE())
+      : BLWPCLIENT.itemPriceFor ? BLWPCLIENT.itemPriceFor(BigInt(priceSat), window.ARENA_ITEMS_SHARE()) : BigInt(priceSat));
     async function openShop() {
       const sheet = document.getElementById('arena-shop'); if (!sheet) return;
       const chosen = window.ARENA_GAME_CHOSEN; const shop = chosen && BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], chosen.name);
