@@ -1230,10 +1230,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     return Object.fromEntries(Object.entries(out).map(([f, es]) => [f, { members: es.map((e) => e.pubkey), peers: endpointsOf(es, round.pubkey) }]));
   };
+  // A threshold for this many guardian seats, or null: the committee rule's sizes only (7 -> 5, 2 -> 2); a federation of six (a
+  // successor still being seated) waits, and /reserves says why
+  const reserveNeeded = (n) => { try { return committeeThreshold(n); } catch { return null; } };
   const RESERVE_DKG_MS = Number(process.env.ARENA_RESERVE_DKG_MS || 120000);
   const reserveRound = async () => {
     for (const [fedHex, g] of Object.entries(reserveGuardians())) {
-      if (!g.members.some((k) => toHex(k) === toHex(round.pubkey)) || g.members.length < 2) continue;
+      if (!g.members.some((k) => toHex(k) === toHex(round.pubkey)) || reserveNeeded(g.members.length) === null) continue;
       const nodes = sortedKeys(g.members);
       if (reserveDkgOf(fedHex).signerNodeFor(nodes).ok) continue;
       try { const r = await makeReserveKey(fedHex, nodes, g.peers);
@@ -6474,10 +6477,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const feds = [...new Set([...Object.keys(g), ...reserveDkgs.keys()])].sort();
         const federations = feds.map((fedHex) => {
           const nodes = g[fedHex] ? sortedKeys(g[fedHex].members) : (reserveState.get(fedHex) ? reserveState.get(fedHex).members.map(fromHex) : []);
-          const held = nodes.length ? reserveDkgOf(fedHex).signerNodeFor(nodes) : { ok: false };
+          const needed = reserveNeeded(nodes.length);
+          const held = nodes.length && needed !== null ? reserveDkgOf(fedHex).signerNodeFor(nodes) : { ok: false };
           const pub = held.ok ? reserveDkgOf(fedHex).publicSharesFor(nodes) : null;
           const st = reserveState.get(fedHex) || null;
-          return { federationId: fedHex, members: nodes.map(toHex), needed: committeeThreshold(nodes.length),
+          return { federationId: fedHex, members: nodes.map(toHex), needed, ...(needed === null ? { why: `no reserve key for ${nodes.length} guardian seats: the threshold rule knows 7 (5) and 2 (2)` } : {}),
             key: held.ok ? toHex(held.pool.groupPublicKey) : null, mine: held.ok ? held.signerNode.id : null,
             publicShares: pub && pub.ok ? Object.fromEntries([...pub.shares].map(([j, P]) => [j, toHex(P)])) : null,
             epoch: nodes.length ? toHex(reserveEpochId(fromHex(fedHex), nodes)) : null,
