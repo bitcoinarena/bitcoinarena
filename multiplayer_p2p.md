@@ -1001,6 +1001,8 @@ A version-8 manifest; dormant until seats advertise 8.
 
 ## 0A.8 The money: 10% of the gross stake
 
+*(Kanban #397, the owner 2026-10-16: with the protocol reserves the split becomes nodes 4 %, developers 4 %, reserves 2 %, and items 40 / 40 / 20 - §27A.9, not yet built; the table below is the split in force.)*
+
 RULED (the owner 2026-10-06):
 
 ```text
@@ -6760,6 +6762,88 @@ bracket sizes, the score curve, the node fee, the army's speeds. All of that
 is §27A.7, because none of it changes what a transcript *is*.
 
 ---
+
+## 27A.9 Protocol reserves and project funding *(kanban #397, the owner 2026-10-16; SPEC, not yet built)*
+
+The network gets a fund of its own, the **protocol reserves** - a DAO treasury that no single key
+spends. Every paid round pays into it; the bonded nodes decide, in two stages, what it pays out.
+
+### 27A.9.1 The split *(RULED the owner 2026-10-16)*
+
+A paid round's 10 % of the gross stake (§0A.8) is split anew:
+
+| | today (§0A.8) | from the reserves version |
+|---|---|---|
+| nodes (three pools, §22A) | 5 % | **4 %** |
+| developers: protocol + game (half each, as today) | 5 % | **4 %** (2 % + 2 %) |
+| **protocol reserves** | - | **2 %** |
+| net stake | ≥ 90 % | ≥ 90 % |
+
+An in-game item (§0A.9, kanban #365/#377) pays **40 % developers** (protocol + game), **40 % nodes**
+and **20 % protocol reserves**.
+
+The new split is a protocol version: rounds of a game version that requires it carry it, older
+rounds keep theirs ("updates before feature freeze": versions run side by side).
+
+### 27A.9.2 Where the reserves are, and how they are seen
+
+- Each paid entry's reserve share is an output of its own in the entry's federation, like a donation
+  output (§22A): amount = 2 % of the gross stake, floored to msat; an item purchase's reserve output
+  = 20 % of its price.
+- Each round's dashboard shows what the round paid in.
+- Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,
+  and every payout with the proposal that decided it - all from its own store, as `/donations` is.
+- testnet.bitcoin-arena.io shows the total and the latest payments in and out.
+
+### 27A.9.3 Project funding proposals
+
+A **project funding proposal** is a forum post with threads:
+
+- `purpose` (free text: what the money is for);
+- `amount_sats` (X) and `lnurl` (where X is paid);
+- `author`: a bonded node's key, which signs it.
+
+Anyone - node or player - may comment, in threads; comments are signed by their writer's key and
+carry no weight in any count.
+
+**Stage 1 - the signal (1 week, 1008 blocks).**
+- Any bonded node may post a proposal.
+- Nodes signal support.
+- It passes when the nodes supporting it are **at least 15 % of the nodes active in the 72 hours
+  (432 blocks) before** its signal period ends.
+- This filters and starts the discussion; nothing is paid on a signal.
+
+**Stage 2 - the vote (2 weeks, 2016 blocks).**
+- A proposal that passed its signal goes to a vote of the bonded nodes, **weighted by bond**.
+- The votes are Bitcoin transactions, as §27A.7.3's: `OP_RETURN`, signed by the bond key, YES / NO /
+  ABSTAIN, the last one by height counts.
+- Eligible: the bonds active at the start of the vote (snapshot, so no one bonds in reaction).
+- Comments continue.
+
+**Payout.**
+- Once the vote passes, X sat leave the reserves to the proposal's LNURL.
+- The payout is recorded beside the proposal on every node.
+- One payout per proposal.
+- A proposal larger than the reserves at payout time pays nothing and says so.
+
+### 27A.9.4 Open (the owner to decide)
+
+1. **The pass rule of stage 2.** The ticket says "Threshold to activate the payout ... is 2 weeks".
+   That is a period, not a threshold. Proposed: §27A.7.4's MONEY class - turnout ≥ 40 % of the
+   bonded capital, approval ≥ 66 % of the non-abstaining weight.
+2. **Is the developers' 4 % still a donation the player may lower (0-4 %)?** Today the 5 % is.
+   Are the nodes' 4 % and the reserves' 2 % mandatory?
+3. **Items: does 40 / 40 / 20 replace the player's choice of the developers' share (#377, 50-0 %)?**
+   Or does the choice now run 40-0 %, with the rest to nodes / reserves?
+4. **Who holds the reserves, so that no single key can spend them?** Options:
+   - (a) e-cash locked to a threshold key of the census nodes (k of n, as the settlement
+     committee's claim key) - spent only by a payout signature that names a passed proposal;
+   - (b) held by the donation authority (admin key) and paid out by it after a vote passes -
+     simple, but a trusted key;
+   - (c) per federation: the federation's guardians release it on a passed vote.
+   Proposed: (a).
+5. **"Active nodes" for the 15 %:** proposed, nodes that served (signed a round's FINAL or a
+   PRESENT) in the last 432 blocks - by count, not bond weight.
 
 # 28. Failure matrix
 
