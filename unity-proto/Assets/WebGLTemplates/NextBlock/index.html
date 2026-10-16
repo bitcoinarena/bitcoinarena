@@ -5477,12 +5477,15 @@
         const last = st.seen.get(k);
         // asked again: a provisional answer at every look; a settled one after 30 s; a round no signer node answers for (an entry
         // they never took) after 10 s - before, it was asked every 2 s for as long as its note was kept
-        const waitMs = !last ? 0 : last.said.some((x) => x && x.provisional) ? 0 : last.said.some((x) => x) ? st.settledMs : st.unansweredMs;
+        // (unanswered: 10 s, then twice as long each time nobody answers again, at most 5 min - measured on live UI 160: one such note,
+        // its 14 signer nodes every 10 s, 238 GET /standing in 3 min)
+        const waitMs = !last ? 0 : last.said.some((x) => x && x.provisional) ? 0 : last.said.some((x) => x) ? st.settledMs
+          : Math.min(300000, st.unansweredMs * 2 ** Math.max(0, (last.misses || 1) - 1));
         const said = last && Date.now() - last.at < waitMs
           ? last.said
           : await Promise.all((n.nodes || []).map((u) => fetch(String(u).replace(/\/$/, '') + '/standing?entry=' + n.entryIdHex, { cache: 'no-store' })
             .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
-        if (said !== (last && last.said)) st.seen.set(k, { at: Date.now(), said });
+        if (said !== (last && last.said)) st.seen.set(k, { at: Date.now(), said, misses: said.some((x) => x) ? 0 : ((last && last.misses) || 0) + 1 });
         // WINNINGS MORE THAN HALF THE ANSWERING SEATS SAY (WINDOW-LIVE-1155, the owner 2026-10-02: "If the payment becomes
         // invalid, the pending line disappears"): every seat that answers votes - one with no figure, or with a refund (a
         // VOID run's stake coming back, not winnings), votes for none. Measured before: four seats VOID, three still
@@ -7226,7 +7229,12 @@
       // EVERY SECOND, ONE AT A TIME (the owner 2026-09-16 15:36): every 5 s the list trailed a new round, a
       // join and the countdown; a paint that is still waiting on a signer node is not started again.
       let painting = false;
-      setInterval(() => { if (painting) return; painting = true; window.BLWP_LOBBY_PAINTING = true;
+      // AND EVERY 30 S WHILE A RUN HIDES IT (kanban #378; the owner 2026-10-16: "Lower the amount of concurrent connections and network
+      // load"; measured on live UI 160 with GET /rounds's callers sampled: every seat's /rounds about every 10 s - 238 in 3 min - while
+      // the player drove and nobody saw the lobby). Joined and Unity's lobby down: a read every LOBBY_IN_RUN_MS keeps the next rounds known.
+      const LOBBY_IN_RUN_MS = 30000;
+      const inRun = () => !!(window.BLWP_JOIN && window.BLWP_JOIN.state === 'joined' && window.BLWP_UNITY_LOBBY && window.BLWP_UNITY_LOBBY.showing === false);
+      setInterval(() => { if (painting) return; if (inRun() && Date.now() - (window.BLWP_LOBBY_PAINTED_AT || 0) < LOBBY_IN_RUN_MS) return; painting = true; window.BLWP_LOBBY_PAINTING = true;
         paint().finally(() => { painting = false; window.BLWP_LOBBY_PAINTING = false; window.BLWP_LOBBY_PAINTED_AT = Date.now(); }); }, 1000);
       return true;
     }
