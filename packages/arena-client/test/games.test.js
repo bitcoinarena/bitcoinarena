@@ -97,3 +97,18 @@ test('a seat reached at two addresses hosts a game once (the owner 2026-10-14 07
   assert.deepEqual(got.games[0].nodes, ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/fed2-1', 'http://old'],
     'two seats with keys, once each; a seat that names no key counts by its address');
 });
+
+test('a tile showing version 2 runs version 3\'s newer client file - the same developer\'s - and never another developer\'s (kanban #388)', async () => {
+  const { MANIFEST_V2 } = await import('../../btc-updown/plugin/btc-updown-v2.js');
+  const { MANIFEST_V3 } = await import('../../btc-updown/plugin/btc-updown-v3.js');
+  const { UPDOWN_CLIENT_V3_FILE } = await import('../../arena-node/test/plugins/updown/index.js');
+  const v3file = readFileSync(UPDOWN_CLIENT_V3_FILE);
+  const served = async () => new Response(v3file);
+  const v2 = { name: 'btc-updown-15m', manifest: MANIFEST_V2 };
+  const v3 = { name: 'btc-updown-15m', manifest: MANIFEST_V3 };
+  assert.equal((await gameClientFile({ game: v2, url: 'u', digest: sha256, fetcher: served })).ok, false, 'version 2 alone does not name it');
+  assert.equal((await gameClientFile({ game: { ...v2, older: [v3] }, url: 'u', digest: sha256, fetcher: served })).ok, true, 'the tile holds version 3');
+  assert.equal((await gameClientFile({ game: v3, url: 'u', digest: sha256, fetcher: served })).ok, true);
+  const other = { name: 'btc-updown-15m', manifest: { ...MANIFEST_V3, gameDevPubkey: new Uint8Array(32).fill(9) } };
+  assert.equal((await gameClientFile({ game: { ...v2, older: [other] }, url: 'u', digest: sha256, fetcher: served })).ok, false, 'another developer\'s manifest does not count');
+});

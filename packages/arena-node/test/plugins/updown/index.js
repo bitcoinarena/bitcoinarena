@@ -21,8 +21,12 @@ export const UPDOWN_TERMS = Object.freeze({
 // the attestors' words, in the order A, B, C (the manifest lists their keys sorted)
 export const UPDOWN_ATTESTOR_WORDS = Object.freeze(['updown attestor A', 'updown attestor B', 'updown attestor C']);
 // THE MARKET'S OWN CLIENT (kanban #237 step 2), pinned by its hash: the Arena page runs only these bytes for this market
-export const UPDOWN_CLIENT_FILE = new URL('./client/index.html', import.meta.url);
+// The bytes manifests v1 (672415c8) and v2 (f5f3f187) pin are kept as client/index-v2.html; client/index.html is the newest
+// client, version 3's (kanban #388: the back button on its own row, the title on its own line, as Rock Paper Scissors')
+export const UPDOWN_CLIENT_FILE = new URL('./client/index-v2.html', import.meta.url);
 export const UPDOWN_CLIENT_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_FILE)).digest();
+export const UPDOWN_CLIENT_V3_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V3_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V3_FILE)).digest();
 // ITS DONATION KEY IS A POINT ON THE CURVE (kanban #237, measured on the regtest stack: the settlement failed with
 // "blwp-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
 // curve only half the time; this market's key is the public key of a test secret, so a payout to it can be made
