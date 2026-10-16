@@ -6783,9 +6783,11 @@ A paid round's 10 % of the gross stake (§0A.8) is split anew:
 developers' 4 % (2 % protocol, 2 % game). The developers' share is no donation on this version, and
 the player cannot lower it; §0A.8's lowerable 5 % does not carry into it.
 
-An in-game item (§0A.9, kanban #365/#377) pays **40 % developers** (protocol + game), **40 % nodes**
-and **20 % protocol reserves** *(LOCKED the owner 2026-10-16)*. This replaces the player's choice of
-the developers' share (#377, 50 % down to 0 %): on this version there is no slider.
+An in-game item (§0A.9, kanban #365/#377) pays **40 % nodes** and **20 % protocol reserves** of its
+list price, both mandatory, and the **developers' share the player chooses: 40, 30, 20, 10 or 0 %**
+(protocol + game, half each) *(the owner 2026-10-16: "yes it's 40 30 20 10 0"; it replaces #377's
+50-0 % on this version)*. As in #377 the developers' share is added on top: the player pays
+60 % + the chosen share of the list price - 100 % at the default of 40 %, 60 % at 0 %.
 
 The new split is a protocol version: rounds of a game version that requires it carry it, older
 rounds keep theirs ("updates before feature freeze": versions run side by side).
@@ -6795,10 +6797,16 @@ rounds keep theirs ("updates before feature freeze": versions run side by side).
 - Each paid entry's reserve share is an output of its own in the entry's federation, like a donation
   output (§22A): amount = 2 % of the gross stake, floored to msat; an item purchase's reserve output
   = 20 % of its price.
-- **Custody (a)** *(LOCKED the owner 2026-10-16)*: the reserve outputs are locked to a **shared key of
-  the bonded nodes that needs k of n of them to sign** (a threshold key, as the settlement
-  committee's claim key). It is released only by a payout signature that names a passed proposal
-  (§27A.9.3). Not the admin key; not each federation's guardians.
+- **Custody: the federations' guardians** *(the owner 2026-10-16: "Guardians. Multiple federations. When
+  one federation is drained it is automatically moved to a healthy one"; this replaces the earlier
+  custody (a))*:
+  - The reserves are held in the federations themselves, in each federation where entries paid
+    them. The federation's guardians release them, by their own threshold, only for a payout that
+    names a passed proposal (§27A.9.3).
+  - There may be several federations; `GET /reserves` shows the reserves per federation and their sum.
+  - **When a federation is drained** (§23A: draining, succession, liquidation), its reserves move
+    automatically to a healthy federation, as the players' funds do. No vote is needed for that
+    move; it is recorded on every node like a payout.
 - Each round's dashboard shows what the round paid in.
 - Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,
   and every payout with the proposal that decided it - all from its own store, as `/donations` is.
@@ -6829,7 +6837,7 @@ carry no weight in any count.
 - The votes are Bitcoin transactions, as §27A.7.3's: `OP_RETURN`, signed by the bond key, YES / NO /
   ABSTAIN, the last one by height counts.
 - Eligible: the bonds active at the start of the vote (snapshot, so no one bonds in reaction).
-- **Turnout** *(LOCKED the owner 2026-10-16)*: at least **40 % of all bonded capital** in the snapshot
+- **Turnout** *(the owner 2026-10-16: "30%")*: at least **30 % of all bonded capital** in the snapshot
   votes (YES, NO or ABSTAIN). Below that the vote fails and nothing is paid.
 - **Passes at 60 %** *(RULED the owner 2026-10-16: "Voting threshold is 60%")*: YES holds at least 60 % of
   the bond weight that voted YES or NO (ABSTAIN counts for turnout only).
@@ -6843,12 +6851,13 @@ carry no weight in any count.
 
 ### 27A.9.4 Decided *(the owner 2026-10-16)*
 
-1. Turnout: at least 40 % of all bonded capital must vote, or the vote fails and nothing is paid.
+1. Turnout: at least 30 % of all bonded capital must vote, or the vote fails and nothing is paid.
 2. On this version the whole round split is mandatory: nodes 4 %, reserves 2 %, developers 4 %
    (2 % protocol, 2 % game). The developers' share is not a donation the player can lower.
-3. Items at 40 / 40 / 20 replace the player's choice from #377; no slider on this version.
-4. Custody (a): a k-of-n shared key of the bonded nodes, released only by a payout that names a
-   passed proposal.
+3. Items: nodes 40 %, reserves 20 %, developers 40 / 30 / 20 / 10 / 0 % as the player chooses
+   (replacing #377's 50-0 %).
+4. Custody: the federations' guardians, in several federations. A drained federation's reserves move
+   automatically to a healthy one.
 5. An active node for the 15 % served a round in the last 72 hours, counted one per node.
 
 # 28. Failure matrix
