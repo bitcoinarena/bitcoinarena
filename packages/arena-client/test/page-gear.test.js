@@ -17,7 +17,7 @@ const CATCH_UP = slice('    if (window.BLWP_SETTINGS_EARLY && settingsPanel()', 
 
 const LOBBY = { showing: true, lobby: true, screen: [430, 932], balance: [56, 468, 318, 34] };
 
-function strip({ unity = true, boot = false, lobby = LOBBY, driving = false }) {
+function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, broughtIn = false }) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
   for (const id of ['blwp-money', 'blwp-settings', 'blwp-lobby-balance', 'blwp-backup-notice', 'blwp-backup-warn', 'blwp-settings-backup',
@@ -26,8 +26,8 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false }) {
   const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : els[id] || null) };
   const window = { BLWP_UNITY_LOBBY: lobby, BLWP_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const BLWPCLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
-  pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp'], PAINT, 'return paintMoney();')(
-    document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false);
+  pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
+    document, window, BLWPCLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
   return { money: els['blwp-money'].style.display, warn: els['blwp-backup-warn'].style.display, balance: els['blwp-lobby-balance'].style.display };
 }
 
@@ -77,4 +77,9 @@ test('a click after the main script: opened and filled on the click, once', () =
 
 test('the gear has one click handler: the main script no longer adds its own', () => {
   assert.equal(HTML.split("getElementById('blwp-settings-go').addEventListener").length - 1, 1);
+});
+
+test('a wallet the player brought in - restored words or a Nostr account - shows no backup warning (kanban #387)', () => {
+  assert.equal(strip({}).warn, 'flex', 'a seed minted here and never checked: the warning');
+  assert.equal(strip({ broughtIn: true }).warn, 'none', 'restored or opened from Nostr: no warning');
 });
