@@ -11908,7 +11908,18 @@ async function worldSeedFor({ entry, round, nodes, contract, fetcher = fetch } =
  * committee is 7 of 14 seats, so about half the rounds could not be joined at all. The bond named first if its node is on the
  * committee, else the first of the round's seats whose own /bond names a committee member; the named one when none answers.
  */
-async function committeeBond({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000 } = {}) {
+async function committeeBond(o = {}) {
+  const found = await committeeBonds(o);
+  return found.length ? found[0].where : o.bond;
+}
+/**
+ * EVERY COMMITTEE SEAT'S BOND, WITH THE ANSWER ALREADY READ (kanban #376, measured 2026-10-16 11:20:47Z on preview UI 151 after
+ * Unity's PLAY: the entry made, then "no proven endpoint: no bond: no provider proved that bond into the chain (provider 0: no
+ * answer in 10000 ms)" two seconds before the round's start - one provider, and it read again the /bond this search had just
+ * read). In the candidates' order, each { where, body }: the bond prover takes the body as it is, and the next seat when one
+ * does not prove.
+ */
+async function committeeBonds({ bond, nodes = [], committee = [], fetcher = fetch, timeoutMs = 8000 } = {}) {
   const keys = new Set((committee || []).map((k) => toHex(k)));
   const candidates = [...new Set([bond, ...(nodes || []).map((n) => `${String(n).replace(/\/+$/, '')}/bond`)].filter(Boolean))];
   const whose = async (u) => {
@@ -11917,18 +11928,23 @@ async function committeeBond({ bond, nodes = [], committee = [], fetcher = fetch
       if (!r.ok) return null;
       const o = await r.json();
       const a = o && typeof o.hex === 'string' ? advertInTransaction(fromHex(o.hex)) : null;
-      return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? u : null;
+      return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? { where: u, body: o } : null;
     } catch { return null; }
   };
-  const answers = await Promise.all(candidates.map(whose));
-  return answers.find(Boolean) || bond;
+  return (await Promise.all(candidates.map(whose))).filter(Boolean);
 }
+/** How many committee seats' bonds a join hands the bond prover, at most. */
+const COMMITTEE_BONDS_ASKED = 3;
 
-function bondProvider(where, { fetcher = fetch } = {}) {
+function bondProvider(where, { fetcher = fetch, body = null } = {}) {
   const get = async (ask, opts) => {
-    const r = await readWithOneRetry(fetcher, where, opts);
-    if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
-    const o = await r.json();
+    // AN ANSWER ALREADY READ (committeeBonds) is taken as it is: the proof is checked against the chain all the same
+    let o = body;
+    if (!o) {
+      const r = await readWithOneRetry(fetcher, where, opts);
+      if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
+      o = await r.json();
+    }
     const proof = (x) => ({ transaction: fromHex(x.hex), branch: (x.merkle || []).map(fromHex), position: x.pos | 0 });
     // A CARRIED BOND (kanban #209): the ancestor bond, and beside it its re-affirmation and its advertisement update
     return {
@@ -11977,7 +11993,12 @@ async function joinFromQuery(search, { fetcher = fetch } = {}) {
     federation: named.federation,
     chain: {
       headers: named.chainFrom.map((u) => httpProvider(u.replace(/\/+$/, '') + '/headers', { tag: sourceKey(u) })),
-      bonds: [bondProvider(await committeeBond({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher }), { fetcher })],
+      // EVERY COMMITTEE SEAT FOUND, UP TO COMMITTEE_BONDS_ASKED, each with the /bond it answered; the named bond when none did
+      bonds: await (async () => {
+        const found = await committeeBonds({ bond: named.bond, nodes: named.nodes, committee: contract.nodes, fetcher });
+        return found.length ? found.slice(0, COMMITTEE_BONDS_ASKED).map((b) => bondProvider(b.where, { fetcher, body: b.body }))
+          : [bondProvider(named.bond, { fetcher })];
+      })(),
     },
     advert: { signedAdvert: advert },
   };
