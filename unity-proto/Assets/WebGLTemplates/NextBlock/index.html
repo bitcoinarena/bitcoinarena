@@ -542,6 +542,16 @@
     #arena-games .season-go svg { width: 13px; height: 13px; color: #f7931a; }
     #arena-games .season-go:hover, #arena-games .season-go:focus-visible { color: #f7931a; outline: none; }
     /* AND BESIDE THE GEAR, and on the wallet bar over a game's own client, once a game is chosen */
+    /* BACK TO THE GAMES (kanban #383, the owner 2026-10-16: "there is no link/button to get back to the game selection like in the
+       other games"): Rock Paper Scissors and Up/Down have "← Games" in their own client; Unity's game has it at the strip's left,
+       over the loading screen and the lobby (the strip is gone while a round's own screens are up). A phone shows the arrow. */
+    #arena-games-back { display: none; }
+    body.arena-game-chosen:not(.arena-own-client) #arena-games-back { display: inline-flex; flex: none; align-items: center; gap: 4px; margin-right: auto;
+      padding: 7px 10px; cursor: pointer; background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px;
+      font: 600 13px/1 system-ui, sans-serif; }
+    #arena-games-back:hover, #arena-games-back:focus-visible { color: #f7931a; }
+    @media (max-width: 560px) { #arena-games-back .word { display: none; } }
+    body.blwp-clean #arena-games-back { display: none !important; }
     #blwp-season-go, #arena-wb-season { display: none; }
     body.arena-game-chosen #blwp-season-go { display: inline-flex; flex: none; align-items: center; gap: 6px; padding: 7px 10px; cursor: pointer;
       background: rgba(13,16,20,0.9); color: #e8eaed; border: 1px solid #3a4452; border-radius: 6px; font: 600 13px/1 system-ui, sans-serif; }
@@ -924,6 +934,7 @@
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
+    <button id="arena-games-back" type="button" title="Back to the games" aria-label="Back to the games"><span aria-hidden="true">&larr;</span><span class="word">Games</span></button>
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
          warning is the only thing standing between a player and losing a wallet he never wrote down. -->
     <div id="blwp-backup-warn" style="display:none">
@@ -6143,6 +6154,12 @@
         const b = document.getElementById(id);
         if (b) b.addEventListener('click', () => open(window.ARENA_GAME_CHOSEN));
       }
+      // BACK TO THE GAMES (kanban #383): as a game's own client does (ARENA_GAME.back) - the address without the game, its round
+      // and play, so the page opens on the choice of games
+      document.getElementById('arena-games-back').addEventListener('click', () => {
+        const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); q.delete('round'); q.delete('play');
+        location.search = q.toString();
+      });
       window.ARENA_SEASON = { open, close, isOpen: () => s.open, days: () => s.days, polling: () => s.timer !== null,
         badgesAsked: () => (s.book ? s.book.asked : null) };
     })();
