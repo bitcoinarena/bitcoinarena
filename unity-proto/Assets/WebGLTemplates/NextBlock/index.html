@@ -93,17 +93,22 @@
     /* The loading screen sits ON TOP of the canvas rather than beside it, so
        there is never a moment of blank page between the two. */
     /* ANOTHER GAME'S SITE (kanban #279): none of nextblock's loading screen - its own splash only */
-    html.other-game #title, html.other-game #sub, html.other-game #howto, html.other-game #pctwrap, html.other-game #track,
-    html.other-game #note, html.other-game #arena-platform { display: none !important; }
+    /* EVERY LOADING SCREEN THE SAME (kanban #385, the owner 2026-10-16: the platform link "is on the loading screen of tic toc next
+       block and should also be on the other games. actually, make sure all loading screens look consistent"): another game's
+       screen is Tick Tock's without what only a Unity download has (its pictures, the percent and megabytes): the game's icon
+       and name as Tick Tock's title, the same bar (running, as nothing reports a percent), the step, the platform link and the
+       build line. Before, it was a bobbing emoji, three dots and a small grey step, with no link. */
+    html.other-game #title, html.other-game #sub, html.other-game #howto, html.other-game #pctwrap,
+    html.other-game #note { display: none !important; }
     #site-splash { display: none; }
-    html.other-game #site-splash { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 18vh; }
-    #site-splash .icons { font-size: 64px; letter-spacing: 0.1em; animation: site-bob 1.4s ease-in-out infinite; }
-    #site-splash .name { font: 700 clamp(24px, 6vw, 38px)/1.1 system-ui, sans-serif; letter-spacing: -0.02em; }
-    #site-splash .dots { display: flex; gap: 8px; } #site-splash .dots i { width: 9px; height: 9px; border-radius: 50%; background: #f7931a; animation: site-dot 1s ease-in-out infinite; }
-    #site-splash .dots i:nth-child(2) { animation-delay: 0.15s; } #site-splash .dots i:nth-child(3) { animation-delay: 0.3s; }
-    @keyframes site-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-    @keyframes site-dot { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
-    html.other-game #stage { font-size: 13px; opacity: 0.7; }
+    html.other-game #site-splash { display: flex; align-items: center; gap: 0.45em; font-size: clamp(22px, 5vw, 40px); font-weight: 700;
+      letter-spacing: -0.02em; }
+    #site-splash .icons { display: flex; align-items: center; justify-content: center; width: 1.5em; height: 1.5em; flex: none; font-size: 1em; line-height: 1; }
+    #site-splash .icons img { width: 100%; height: 100%; object-fit: contain; border-radius: 0.25em; }
+    #site-splash .icons:empty { display: none; }
+    #site-splash .name { line-height: 1.1; }
+    html.other-game #bar { width: 30%; transform: translateX(-100%); transition: none; animation: other-load 1.3s ease-in-out infinite; }
+    @keyframes other-load { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
     #boot {
       position: absolute; inset: 0; display: flex; flex-direction: column;
       align-items: center; justify-content: center; gap: 22px; padding: 24px;
@@ -1568,7 +1573,7 @@
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
-    <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div><div class="dots"><i></i><i></i><i></i></div></div>
+    <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
     <script>
       if (window.ARENA_SITE_TITLE) { document.getElementById('site-name').textContent = window.ARENA_SITE_TITLE[0]; document.getElementById('site-icons').textContent = window.ARENA_SITE_TITLE[1]; }
     </script>
@@ -6331,7 +6336,12 @@
         const head = document.querySelector('#blwp-settings .settings-head h2');
         if (head) { const small = head.querySelector('small'); if (small) small.textContent = game.title || game.name;
           const mark = head.querySelector('img.mark'); if (mark) { if (game.icon) { const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(game.icon) : game.icon; mark.onerror = () => { if (mark.src !== game.icon) mark.src = game.icon; }; mark.src = via; } else mark.remove(); } }
-        if (document.documentElement.classList.contains('arena-root')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name; const i = document.getElementById('site-icons'); if (i) i.textContent = ''; }
+        // the loading screen's title: the game's name and its icon, as on its tile (kanban #385)
+        if (document.documentElement.classList.contains('other-game')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name;
+          const i = document.getElementById('site-icons');
+          if (i && game.icon) { const img = document.createElement('img'); const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(game.icon) : game.icon; img.alt = '';
+            img.onerror = () => { if (img.src !== game.icon) img.src = game.icon; else img.remove(); }; img.src = via; i.textContent = ''; i.append(img); }
+          else if (i && document.documentElement.classList.contains('arena-root')) i.textContent = ''; }
       }
       window.ARENA_GAME_ID = game.id;
       // EVERY VERSION'S ROUNDS FOR THE UNITY GAME (the owner 2026-10-14 ~08:45Z: "next block ... shows no open round"): the tile shows
