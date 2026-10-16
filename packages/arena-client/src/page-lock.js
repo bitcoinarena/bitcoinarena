@@ -389,10 +389,11 @@ async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, 
   const locks = feeMsat > 0n ? [amount, feeMsat] : [amount];
   let quoted = 0n;
   const quotes = await Promise.all(locks.map((m) => quoteLock(client, m).then((q) => ({ q }), (e) => ({ e }))));
+  let quoteWhy = null;
   for (const { q, e } of quotes) {
     if (e) {
       if (!/insufficient funds/i.test(String((e && e.message) || e))) throw e;
-      quoted = null;
+      quoted = null; quoteWhy = String((e && e.message) || e).slice(0, 160);
       break;
     }
     quoted += q;
@@ -400,7 +401,7 @@ async function needFor(client, LockClient, { amount, feeMsat, zeroFees = false, 
   const margin = feeMsat > 0n && !zeroFees ? BigInt(LockClient.lockAllowanceMsat(String(feeMsat))) : 0n;
   const allowance = zeroFees ? locks.reduce((t, m) => t + (ceilNote(m) - m), 0n) : locks.reduce((t, m) => t + BigInt(LockClient.lockAllowanceMsat(String(m))), 0n);
   // and the donation's shares, paid from the same wallet once the stake is counted
-  return { locks, need: quoted === null ? null : quoted + margin + donation, floor: locks.reduce((t, m) => t + m, 0n) + allowance + margin + donation };
+  return { locks, need: quoted === null ? null : quoted + margin + donation, floor: locks.reduce((t, m) => t + m, 0n) + allowance + margin + donation, quoteWhy };
 }
 
 /**
@@ -737,6 +738,9 @@ export function restOfFeesMsat(shortMsat) {
 }
 /** A wallet that holds most of a round and is short only by its fees (no more than a tenth of the stake) is asked the rest. */
 export const shortOnlyByFees = (haveMsat, shortMsat, stakeMsat) => haveMsat > 0n && shortMsat > 0n && shortMsat * 10n <= BigInt(stakeMsat || 0n);
+/** How often, and how far apart, a wallet holding a round's floor asks its lock quote again before a deposit is asked (kanban #376). */
+export const QUOTE_SETTLE_TRIES = 5;
+export const QUOTE_SETTLE_MS = 3000;
 export async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
   estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
@@ -744,9 +748,19 @@ export async function fundPlayerWallet({ round, invite, seed, LockClient, storag
   const deposits = [];
   let prev = null;
   for (let tries = 0; ; tries++) {
-    const have = BigInt(await client.balanceMsat());
-    const n = await needFor(client, LockClient, locks);
-    onStep(`the player wallet holds ${have} msat; this round's locks need ${n.need === null ? 'more than that' : `${n.need} msat`}`);
+    let have = BigInt(await client.balanceMsat());
+    let n = await needFor(client, LockClient, locks);
+    // A WALLET THAT HOLDS THE ROUND BUT CANNOT QUOTE IT YET (kanban #376, the owner 2026-10-16 06:25Z: right after buying the larger truck,
+    // "stake lock: the player wallet holds 400000 msat; this round's locks need more than that" - and the join never started): the
+    // quote is asked again for up to QUOTE_SETTLE_TRIES x QUOTE_SETTLE_MS (a payment's change is issued in the seconds after it,
+    // measured 2.6 s) before a deposit is asked of a wallet that already holds the round's floor; the quote's own words are said
+    for (let settle = 0; n.need === null && have >= n.floor && settle < QUOTE_SETTLE_TRIES; settle++) {
+      onStep(`the player wallet holds ${have} msat, more than this round's locks (${n.floor} msat), and cannot quote them yet (${n.quoteWhy || 'insufficient funds'}): asking again`);
+      await new Promise((r) => setTimeout(r, QUOTE_SETTLE_MS));
+      have = BigInt(await client.balanceMsat());
+      n = await needFor(client, LockClient, locks);
+    }
+    onStep(`the player wallet holds ${have} msat; this round's locks need ${n.need === null ? `more than that (${n.quoteWhy || 'insufficient funds'})` : `${n.need} msat`}`);
     if (n.need !== null && have >= n.need) { if (prev) prev.decided({ funded: true }); break; }
     // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the page shows the offer - the tabs, the invoice, a close - and
     // this waits for whichever invoice is paid, then looks again.
