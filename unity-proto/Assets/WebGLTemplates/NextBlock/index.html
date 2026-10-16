@@ -844,6 +844,12 @@
       cursor: pointer; background: #1e2833; color: #e8eaed; border: 1px solid #3a4a5c; border-radius: 6px; }
     #blwp-settings button.primary, #blwp-seed-modal button.primary { background: #f7931a; color: #1b1000; border-color: #f7931a; }
     #blwp-settings button:disabled { opacity: 0.45; cursor: default; }
+    /* THE RISK IS SAID AND SHOWN (kanban #380, the owner 2026-10-16: "this section should highlight the potential risk. maybe choosing
+       red as text color in the button instead of white. also for the account section wording"): both delete buttons in red, the
+       risk in red under the heading, and the confirm step names what is lost */
+    #blwp-settings button.danger { color: #ff6b6b; border-color: #8b2b2b; background: #1f1316; }
+    #blwp-settings button.danger.primary { color: #fff; background: #c62828; border-color: #c62828; }
+    #arena-set-account .risk { color: #ff8a80; font-weight: 600; }
     #blwp-settings .bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
     #blwp-settings .bal-box { display: flex; align-items: center; gap: 8px; padding: 10px; border-radius: 8px;
       background: #0d1218; border: 1px solid #263240; }
@@ -1067,13 +1073,14 @@
     <section class="settings-card" id="arena-set-account">
       <h3>Account</h3>
       <div class="muted" id="arena-acct-who"></div>
-      <button id="arena-acct-delete" type="button">Delete this account from this browser</button>
+      <div class="risk" id="arena-acct-risk">Deleting removes this wallet from this browser. Without your 24 words or your Nostr key, the money in it is lost for good.</div>
+      <button id="arena-acct-delete" type="button" class="danger">Delete this account from this browser</button>
       <div id="arena-acct-confirm" style="display:none">
-        <div class="muted" id="arena-acct-holds"></div>
+        <div class="risk" id="arena-acct-holds"></div>
         <label class="muted" style="display:flex;gap:8px;align-items:flex-start;margin:8px 0"><input type="checkbox" id="arena-acct-saved" style="width:auto;margin:2px 0 0">
           <span>I have my 24 words or my Nostr key. Without them the money in this wallet cannot be opened again.</span></label>
         <div class="name-row">
-          <button id="arena-acct-go" type="button" class="primary" disabled>Delete and log in again</button>
+          <button id="arena-acct-go" type="button" class="primary danger" disabled>Delete and log in again</button>
           <button id="arena-acct-cancel" type="button">Cancel</button>
         </div>
       </div>
@@ -4996,8 +5003,8 @@
       $('arena-acct-delete').addEventListener('click', () => {
         const b = window.BLWP_WALLET_BALANCE;
         $('arena-acct-holds').textContent = b && Number.isFinite(b.sats)
-          ? 'This wallet holds ' + b.sats.toLocaleString('en-US') + ' sat' + (b.pending ? ' and ' + b.pending.toLocaleString('en-US') + ' sat pending' : '') + '. Withdraw it first, or keep your 24 words or Nostr key to open it again.'
-          : 'Keep your 24 words or Nostr key: they open this wallet again in any browser.';
+          ? 'This wallet holds ' + b.sats.toLocaleString('en-US') + ' sat' + (b.pending ? ' and ' + b.pending.toLocaleString('en-US') + ' sat pending' : '') + '. Withdraw it first.'
+          : '';   // the risk line above says what is lost (#380)
         $('arena-acct-saved').checked = false; $('arena-acct-go').disabled = true; $('arena-acct-why').textContent = '';
         $('arena-acct-confirm').style.display = ''; $('arena-acct-delete').style.display = 'none';
       });
