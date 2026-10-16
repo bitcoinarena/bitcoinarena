@@ -7123,6 +7123,10 @@
             join.state = 'refused'; join.held = false; join.loaded = false; join.stage = '';
             join.why = String(why);
             if (/the round is closed/.test(join.why)) (window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set()).add(id);
+            // A ROUND REFUSED FOR A SEAT'S COMMITTEE OR SEATING IS NOT LISTED AS JOINABLE AGAIN (kanban #32; "The client computes the committee
+            // itself": no round is listed as joinable whose committee a node answered otherwise - measured on preview UI 164: refused and named,
+            // and the same row still offered PLAY)
+            if (/the round is refused: /.test(join.why)) (window.BLWP_CLOSED_ROUNDS = window.BLWP_CLOSED_ROUNDS || new Set()).add(id);
             // not joined: the lobby's address back, and no round left named for Unity to open
             window.BLWP_ROUND = undefined;
             window.BLWP_ENTRY = undefined;
