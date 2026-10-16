@@ -148,6 +148,19 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  '90f462c823bdd382dce3a72c2bf25999575d727e8ea81459b8b4dce80b63339c': Object.freeze({
+    name: 'rock-paper-scissors',
+    // kanban #396: manifest version 3, parent a75f54fd - version 2 in every term, with the new client ("← Arena")
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (kanban #293, the owner 2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'd65609877c2681c17a8c97a4203c26172464ffd2f598624e5abf1aafdcaf4434': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   '672415c814e61b47ce038cd7f9a9431be8b41123c59502c371d5cd6a79c7684f': Object.freeze({
     name: 'btc-updown-15m',
     cores: Object.freeze({
@@ -177,6 +190,20 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
   '122a4478c7bf905996155e8136b165706a9f1a2b45a72d92871ec96c5a6e3a40': Object.freeze({
     name: 'btc-updown-15m',
     // kanban #388: manifest version 3, parent f5f3f187 - version 2 in every term, with the new client (back button on its own row)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
+  '6f4174f6ccf973683fc36faae6afe42ab73f0ad4cf1e69b657c7a05e5034eedb': Object.freeze({
+    name: 'btc-updown-15m',
+    // kanban #396: manifest version 4, parent 122a4478 - version 3 in every term, with the new client ("← Arena")
     requiredProtocolVersion: 2,
     cores: Object.freeze({
 

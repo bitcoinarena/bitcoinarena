@@ -21,7 +21,9 @@ const requireCore = createRequire(import.meta.url);
 export const RPS_DECIDE_NAME = 'rock-paper-scissors decide v1';
 export const RPS_DECIDE_CORE = Object.freeze(Object.defineProperty({ name: RPS_DECIDE_NAME, hash: sha(readFileSync(DECIDE_URL)), url: DECIDE_URL.href,
   configs: new Map([[sha('rock-paper-scissors-config:v1'), {}]]) }, 'adapter', { get: () => requireCore('./decide.js').DECIDE, enumerable: false }));
-export const RPS_CLIENT_FILE = new URL('../client/index.html', import.meta.url);
+// THE BYTES VERSIONS 1 AND 2 PIN, kept as client/index-v2.html; client/index.html is version 3's ("← Arena", kanban #396)
+export const RPS_CLIENT_FILE = new URL('../client/index-v2.html', import.meta.url);
+export const RPS_CLIENT_V3_FILE = new URL('../client/index.html', import.meta.url);
 
 export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', manifest: RPS_MANIFEST, gameId: RPS_GAME_ID, info: INFO,
   // its square icon (kanban #338): served at GET /game-icon, shown on the chooser's tile
@@ -29,7 +31,7 @@ export const ROCK_PAPER_SCISSORS = Object.freeze({ name: 'rock-paper-scissors', 
   cores: new Map([[RPS_DECIDE_CORE.hash, RPS_DECIDE_CORE]]), title: 'Rock Paper Scissors',
   donationSet: TESTNET4_DONATION_SET_KEYS.recipients,
   // its client, so the plugin store can hand the game to another seat (kanban #276 step 5)
-  clientUrls: [new URL('../client/index.html', import.meta.url).href] });
+  clientUrls: [new URL('../client/index-v2.html', import.meta.url).href] });
 
 /** What a launcher loads from this module (ARENA_GAMES): the registration. */
 export const GAME = ROCK_PAPER_SCISSORS;
