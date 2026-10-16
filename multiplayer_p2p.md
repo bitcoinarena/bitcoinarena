@@ -6814,6 +6814,18 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - **When a federation is drained** (§23A: draining, succession, liquidation), its reserves move
     automatically to a healthy federation, as the players' funds do. No vote is needed for that
     move; it is recorded on every node like a payout.
+- **The reserve output, concretely** *(slice 3 plan, kanban #397)*: in the entry's ONE lock transaction
+  (FEDERATION.md "Donations in the federation"), beside the stake lock, the fee lock and the developers'
+  outputs, one **reserve lock**: an LNv2 contract with `claim_pk` = `refund_pk` = the federation's
+  reserve key (§27A.9.2, the 5-of-7 key of its guardian seats, `GET /reserves`) and an expiry far beyond
+  any round (a refund to the reserve key itself, so the money never leaves the reserves' control).
+  - The Entry Contract on version 11 names the reserve outpoint beside the donation outpoints.
+  - A signer node takes such an entry only if the federation holds that output, to that federation's
+    reserve key, for exactly `roundSplit(gross).reservesMsat`, as it refuses a wrong stake lock.
+  - On version 11 the developers' outputs are the mandatory 2 % + 2 % (no `donation_bps` to lower) and
+    the fee lock is 4 %.
+  - An item purchase on version 11 carries its reserve lock (20 % of the list price) the same way.
+  - A round is published at version 11 only for a federation whose reserve key is made.
 - Each round's dashboard shows what the round paid in.
 - Every node serves `GET /reserves`: the total held, by federation, the last rounds' payments in,
   and every payout with the proposal that decided it - all from its own store, as `/donations` is.
