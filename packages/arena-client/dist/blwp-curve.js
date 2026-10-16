@@ -28,7 +28,8 @@ var BLWP_CURVE_EXPORTS = (() => {
     pointFromScalar: () => pointFromScalar,
     pointX: () => pointX,
     signSchnorr: () => signSchnorr,
-    verify: () => verify
+    verify: () => verify,
+    verifyEcdsa: () => verifyEcdsa
   });
 
   // node_modules/@noble/hashes/_u64.js
@@ -2748,6 +2749,13 @@ var BLWP_CURVE_EXPORTS = (() => {
       sum = sum === null ? p : sum.add(p);
     }
     return sum === null ? new Uint8Array(33) : sum.toBytes(true);
+  };
+  var verifyEcdsa = (sig, digest, key) => {
+    try {
+      return secp256k1.verify(sig, digest, key);
+    } catch {
+      return false;
+    }
   };
   var verify = (sig, msg, key) => {
     try {

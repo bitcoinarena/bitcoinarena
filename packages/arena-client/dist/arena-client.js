@@ -916,6 +916,9 @@ const TYPE_HALT_OBSERVATION = 0x29;
 // AN ATTESTED VALUE (kanban #362 feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 const TYPE_VALUE_ATTESTATION = 0x2a;
+// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382): a proposed donation set and a recipient's approval of it
+const TYPE_DONATION_PROPOSAL = 0x2b;
+const TYPE_DONATION_APPROVAL = 0x2c;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -983,6 +986,9 @@ const TAG = {
   // signature that carries somewhere it was never given.
   signedDonationSet: 'ARENA/v1/SignedDonationSet',
   authorityRotation: 'ARENA/v1/AuthorityRotation',
+  // §27A.4.1 (kanban #382): what a developer proposes and what each recipient signs
+  donationProposal: 'ARENA/v1/DonationProposal',
+  donationApproval: 'ARENA/v1/DonationApproval',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
@@ -19998,7 +20004,7 @@ function authorityAt({
  * returns `ok` for.
  */
 function donationSetInForce({
-  networkId, authority, recovery, sets = [], rotations = [], height, verify,
+  networkId, authority, recovery, sets = [], rotations = [], height, verify, approved = [],
 }) {
   if (!isDonationBytes32(networkId)) throw new Error('a network is a 32-byte id');
   const inForce = authorityAt({ networkId, authority, recovery, rotations, height, verify });
@@ -20029,6 +20035,14 @@ function donationSetInForce({
     }
     accepted.push(set);
   }
+  // THE SETS ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): checked by donation-vote.js approvedDonationSets against the
+  // set each replaces - the recipients' signatures stand in for the admin key's - and ordered by serial with the rest
+  for (const set of approved || []) {
+    if (!set || !isDonationBytes32(set.networkId) || !sameDonationBytes32(set.networkId, networkId)) continue;
+    if (!Number.isInteger(set.validFrom) || set.validFrom > height) continue;
+    if (!donationSetStands(set.recipients).ok) continue;
+    accepted.push(set);
+  }
 
   const { best, contested } = bestBySerial(accepted, donationSetBodyId);
   for (const serial of contested)
@@ -20049,12 +20063,172 @@ function donationSetInForce({
     serial: best.serial,
     validFrom: best.validFrom,
     setId: donationSetBodyId(best),
+    approvedBy: best.approvedBy || null,
     authority: inForce.authority,
     rotated: inForce.rotated,
     refused,
     why: `serial ${best.serial}, in force from height ${best.validFrom}, `
       + `${best.recipients.length} recipients`,
   };
+}
+
+// ---- arena-protocol/src/donation-vote.js
+// THE DEVELOPERS' OWN BALLOT (§27A.4.1, kanban #382, the owner 2026-10-16: "I can propose to add a third person so instead of
+// 66,33 it would perhaps be 60,20,10%. This donation set change works without changing the network id and becomes active
+// immediately for all new rounds (not old rounds) after being confirmed by 50.01% of the currently active dev sets. The ui
+// includes a proposal ui so one of the devs can propose something and another dev sees it in his ui and can click accept or
+// deny. As soon as the threshold is hit it becomes active. Nodes accept it immediately.").
+//
+//     DonationProposal { network_id, serial, parent_set_id, entries[] }      signed by a recipient of the parent set
+//     DonationApproval { proposal_id, at_height, accept }                     signed by a recipient of the parent set
+//
+// A proposal is APPROVED at the first accepting approval - in at_height order, then key - after which the accepting
+// recipients hold more than half of the parent's share_bps; it is then a donation set in force from that approval's
+// at_height + 1, ordered against the admin key's sets by serial like any other (authority.js). Refused once the denying
+// recipients hold half or more. `parent_set_id` is donationSetId of the parent's entries: the set a round names (22A).
+//
+// Signatures are secp256k1 over the tagged digest, by the 33-byte recipient key; the verifier is injected, as every
+// verifier in this package is: `verifySecp256k1(sig, digest, pubkey)` answers a boolean (or a promise of one).
+
+
+
+
+const isBallot32 = (b) => b instanceof Uint8Array && b.length === 32;
+const sameBallotBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+
+function encodeDonationProposal(p) {
+  if (!isBallot32(p.networkId)) throw new Error('a proposal names a 32-byte network');
+  if (typeof p.serial !== 'bigint' || p.serial < 0n) throw new Error('a serial is a BigInt, not negative');
+  if (!isBallot32(p.parentSetId)) throw new Error('a proposal names the 32-byte id of the set it replaces');
+  if (!(p.proposer instanceof Uint8Array) || p.proposer.length !== RECIPIENT_KEY_BYTES) throw new Error('a proposal names its proposer\'s 33-byte key');
+  if (!donationSetPaysKeys(p.recipients)) throw new Error('a proposal pays keys, as the set it replaces does');
+  const entries = encodeDonationSet(p.recipients);
+  const w = new Writer();
+  w.u8(TYPE_DONATION_PROPOSAL);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(p.networkId);
+  w.u64(p.serial);
+  w.bytes32(p.parentSetId);
+  w.bytes(p.proposer, RECIPIENT_KEY_BYTES);
+  w.u16(entries.length);
+  w.bytes(entries);
+  return w.finish();
+}
+
+function decodeDonationProposal(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DONATION_PROPOSAL) throw new Error('not a donation proposal');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const networkId = r.bytes32();
+  const serial = r.u64();
+  const parentSetId = r.bytes32();
+  const proposer = r.bytes(RECIPIENT_KEY_BYTES);
+  const recipients = decodeDonationSet(r.bytes(r.u16()));
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation proposal');
+  return { networkId, serial, parentSetId, proposer, recipients };
+}
+
+/** The proposal's id: what every approval names and what the proposer signs. */
+const donationProposalId = (p) => taggedHash(TAG.donationProposal, encodeDonationProposal(p));
+
+function encodeDonationApproval(a) {
+  if (!isBallot32(a.proposalId)) throw new Error('an approval names a 32-byte proposal');
+  if (!Number.isInteger(a.atHeight) || a.atHeight < 0) throw new Error('at_height is a block height');
+  const w = new Writer();
+  w.u8(TYPE_DONATION_APPROVAL);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(a.proposalId);
+  w.u32(a.atHeight);
+  w.u8(a.accept ? 1 : 0);
+  w.bytes(a.signer, RECIPIENT_KEY_BYTES);
+  return w.finish();
+}
+
+function decodeDonationApproval(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DONATION_APPROVAL) throw new Error('not a donation approval');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const proposalId = r.bytes32();
+  const atHeight = r.u32();
+  const flag = r.u8();
+  if (flag > 1) throw new Error('an approval accepts (1) or denies (0)');
+  const signer = r.bytes(RECIPIENT_KEY_BYTES);
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation approval');
+  return { proposalId, atHeight, accept: flag === 1, signer };
+}
+
+/** What an approval's signer signs. */
+const donationApprovalDigest = (a) => taggedHash(TAG.donationApproval, encodeDonationApproval(a));
+
+/**
+ * THE TALLY OF ONE PROPOSAL against its parent set (the recipients the parent pays, by key). `proposal` carries its
+ * `signature` by the proposer; `approvals` each carry theirs. Answers { state: 'approved' | 'refused' | 'open', validFrom,
+ * acceptBps, denyBps, counted[], refused[] (why each object was not counted) }. A recipient counts once: its first valid
+ * approval (lowest at_height) - a second one, either way, is not counted.
+ */
+async function tallyDonationProposal({ proposal, approvals = [], parent, verifySecp256k1 }) {
+  if (typeof verifySecp256k1 !== 'function') throw new Error('a tally checks signatures, and no secp256k1 verifier was injected');
+  const refused = [];
+  const out = (state, extra = {}) => ({ state, validFrom: null, acceptBps: 0, denyBps: 0, counted: [], refused, ...extra });
+  if (!Array.isArray(parent) || !donationSetPaysKeys(parent)) return out('refused', { why: 'the parent set pays no keys: its recipients cannot vote' });
+  const p = proposal;
+  if (!sameBallotBytes(p.parentSetId, donationSetId(parent))) return out('refused', { why: 'the proposal names another parent set' });
+  const stands = donationSetStands(p.recipients);
+  if (!stands.ok) return out('refused', { why: `the proposed set does not stand: ${stands.why}` });
+  const shareOf = new Map(parent.map((r) => [toHex(r.recipientPk), Number(r.shareBps)]));
+  if (!shareOf.has(toHex(p.proposer))) return out('refused', { why: 'the proposer is not a recipient of the parent set' });
+  const pid = donationProposalId(p);
+  if (!(p.signature instanceof Uint8Array) || !(await verifySecp256k1(p.signature, pid, p.proposer))) return out('refused', { why: 'the proposer\'s signature does not verify' });
+
+  const valid = [];
+  for (const [i, a] of approvals.entries()) {
+    if (!a || !sameBallotBytes(a.proposalId, pid)) { refused.push(`approval ${i} is for another proposal`); continue; }
+    const k = a.signer instanceof Uint8Array ? toHex(a.signer) : '';
+    if (!shareOf.has(k)) { refused.push(`approval ${i} is not by a recipient of the parent set`); continue; }
+    if (!(a.signature instanceof Uint8Array) || !(await verifySecp256k1(a.signature, donationApprovalDigest(a), a.signer))) { refused.push(`approval ${i}: the signature does not verify`); continue; }
+    valid.push({ ...a, key: k });
+  }
+  valid.sort((x, y) => x.atHeight - y.atHeight || (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+  const seen = new Set();
+  let acceptBps = 0, denyBps = 0;
+  const counted = [];
+  for (const a of valid) {
+    if (seen.has(a.key)) { refused.push(`${a.key.slice(0, 16)} voted before: counted once`); continue; }
+    seen.add(a.key);
+    const bps = shareOf.get(a.key);
+    counted.push({ key: a.key, accept: a.accept, atHeight: a.atHeight, bps });
+    if (a.accept) acceptBps += bps; else denyBps += bps;
+    if (acceptBps * 2 > DONATION_BPS_TOTAL) return out('approved', { validFrom: a.atHeight + 1, acceptBps, denyBps, counted, proposalId: pid });
+    if (denyBps * 2 >= DONATION_BPS_TOTAL) return out('refused', { acceptBps, denyBps, counted, proposalId: pid, why: 'recipients holding half the parent set or more denied it' });
+  }
+  return out('open', { acceptBps, denyBps, counted, proposalId: pid });
+}
+
+/**
+ * THE SETS THE DEVELOPERS APPROVED, AS SETS (authority.js donationSetInForce takes them beside the admin key's): each
+ * `ballot` = { proposal, approvals } whose parent is found among `known` sets (by donationSetId of its recipients) - the
+ * admin key's and those approved before it, in serial order. Answers [{ networkId, serial, validFrom, recipients,
+ * approvedBy: proposalId }] and why each other ballot is not one.
+ */
+async function approvedDonationSets({ networkId, known = [], ballots = [], verifySecp256k1 }) {
+  const sets = [];
+  const refused = [];
+  const all = [...known];
+  const order = [...ballots].filter((b) => b && b.proposal).sort((a, b) => (a.proposal.serial < b.proposal.serial ? -1 : a.proposal.serial > b.proposal.serial ? 1 : 0));
+  for (const b of order) {
+    const p = b.proposal;
+    if (!sameBallotBytes(p.networkId, networkId)) { refused.push('a proposal for another network'); continue; }
+    const parent = all.find((s) => sameBallotBytes(donationSetId(s.recipients), p.parentSetId));
+    if (!parent) { refused.push(`proposal serial ${p.serial}: its parent set is not one this network holds`); continue; }
+    if (!(p.serial > parent.serial)) { refused.push(`proposal serial ${p.serial}: not above its parent's serial ${parent.serial}`); continue; }
+    const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1 });
+    if (t.state !== 'approved') { refused.push(`proposal serial ${p.serial}: ${t.state}${t.why ? ' - ' + t.why : ''}`); continue; }
+    if (Number.isInteger(parent.validFrom) && t.validFrom <= parent.validFrom) { refused.push(`proposal serial ${p.serial}: approved before its parent was in force`); continue; }
+    const set = { networkId: p.networkId, serial: p.serial, validFrom: t.validFrom, recipients: p.recipients, approvedBy: t.proposalId };
+    sets.push(set);
+    all.push(set);
+  }
+  return { sets, refused };
 }
 
 // ---- arena-client/src/donation-pay.js
@@ -20084,6 +20258,7 @@ function donationSetInForce({
  * had no caller; `pay_invoice` had one call site, the stake; a 2% donor's 2000
  * msat was taken by nobody.
  */
+
 
 
 
@@ -20261,7 +20436,11 @@ const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
   p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
 });
 
-async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false } = {}) {
+// a recipient's ballot signature (§27A.4.1): secp256k1 ECDSA over the tagged digest, by the developers' own keys - the page's curve
+// bundle (page-curve.js verifyEcdsa, window.BLWP_CURVE), as every curve operation of this client is injected
+const pageSecp256k1Verify = (sig, digest, key) => { const c = globalThis.BLWP_CURVE; try { return !!(c && c.verifyEcdsa && c.verifyEcdsa(sig, digest, key)); } catch { return false; } };
+
+async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false, verifySecp256k1 = pageSecp256k1Verify } = {}) {
   if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
@@ -20295,14 +20474,25 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   const served = toHex(answers[0].bytes);
   if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  const bytes = answers[0].bytes;
+  // A SET ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): the nodes serve, as JSON, the admin key's set it replaces (signed,
+  // checked below as any set) and the proposals and approvals since; this page tallies them itself
+  let approval = null;
+  let bytes = answers[0].bytes;
+  if (bytes.length && bytes[0] === 0x7b) {
+    try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
+    if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
+      return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
+    try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
+  }
   if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
   let set;
   try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
   catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
   if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  const named = donationSetMatchesRound(round, set.recipients);
-  if (!named.ok) return { ok: false, why: named.why };
+  if (!approval) {
+    const named = donationSetMatchesRound(round, set.recipients);
+    if (!named.ok) return { ok: false, why: named.why };
+  }
   if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
 
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
@@ -20320,6 +20510,24 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+  if (approval) {
+    // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
+    let ballots;
+    try {
+      ballots = approval.chain.slice().reverse().map((c) => {
+        const pb = fromHex(String(c.proposal));
+        return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
+          approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
+      });
+    } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
+    const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
+    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: [set], rotations: [],
+      height: round.censusHeight, verify: (sig) => toHex(sig) === toHex(set.signature), approved: got.sets });
+    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${got.refused.length ? ': ' + got.refused[0] : ''}` };
+    const named = donationSetMatchesRound(round, now.recipients);
+    if (!named.ok) return { ok: false, why: named.why };
+    set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+  }
 
   // AND THE GAME DEV'S SET (§0A.8, kanban #205): every signer node serves the one its round's game's manifest names, and it
   // is taken only if it hashes to the game_donation_set this page's own known-games list carries for that game - so a node

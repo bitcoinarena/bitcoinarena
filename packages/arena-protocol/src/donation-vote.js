@@ -19,13 +19,13 @@ import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_DONATION_PROPOSAL, TYPE_DONATION_APPROVAL, TAG } from './constants.js';
 import { encodeDonationSet, decodeDonationSet, donationSetStands, donationSetId, donationSetPaysKeys, RECIPIENT_KEY_BYTES, DONATION_BPS_TOTAL } from './donation.js';
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
-const sameBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+const isBallot32 = (b) => b instanceof Uint8Array && b.length === 32;
+const sameBallotBytes = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
 
 export function encodeDonationProposal(p) {
-  if (!is32(p.networkId)) throw new Error('a proposal names a 32-byte network');
+  if (!isBallot32(p.networkId)) throw new Error('a proposal names a 32-byte network');
   if (typeof p.serial !== 'bigint' || p.serial < 0n) throw new Error('a serial is a BigInt, not negative');
-  if (!is32(p.parentSetId)) throw new Error('a proposal names the 32-byte id of the set it replaces');
+  if (!isBallot32(p.parentSetId)) throw new Error('a proposal names the 32-byte id of the set it replaces');
   if (!(p.proposer instanceof Uint8Array) || p.proposer.length !== RECIPIENT_KEY_BYTES) throw new Error('a proposal names its proposer\'s 33-byte key');
   if (!donationSetPaysKeys(p.recipients)) throw new Error('a proposal pays keys, as the set it replaces does');
   const entries = encodeDonationSet(p.recipients);
@@ -58,7 +58,7 @@ export function decodeDonationProposal(bytes) {
 export const donationProposalId = (p) => taggedHash(TAG.donationProposal, encodeDonationProposal(p));
 
 export function encodeDonationApproval(a) {
-  if (!is32(a.proposalId)) throw new Error('an approval names a 32-byte proposal');
+  if (!isBallot32(a.proposalId)) throw new Error('an approval names a 32-byte proposal');
   if (!Number.isInteger(a.atHeight) || a.atHeight < 0) throw new Error('at_height is a block height');
   const w = new Writer();
   w.u8(TYPE_DONATION_APPROVAL);
@@ -98,7 +98,7 @@ export async function tallyDonationProposal({ proposal, approvals = [], parent, 
   const out = (state, extra = {}) => ({ state, validFrom: null, acceptBps: 0, denyBps: 0, counted: [], refused, ...extra });
   if (!Array.isArray(parent) || !donationSetPaysKeys(parent)) return out('refused', { why: 'the parent set pays no keys: its recipients cannot vote' });
   const p = proposal;
-  if (!sameBytes(p.parentSetId, donationSetId(parent))) return out('refused', { why: 'the proposal names another parent set' });
+  if (!sameBallotBytes(p.parentSetId, donationSetId(parent))) return out('refused', { why: 'the proposal names another parent set' });
   const stands = donationSetStands(p.recipients);
   if (!stands.ok) return out('refused', { why: `the proposed set does not stand: ${stands.why}` });
   const shareOf = new Map(parent.map((r) => [toHex(r.recipientPk), Number(r.shareBps)]));
@@ -108,7 +108,7 @@ export async function tallyDonationProposal({ proposal, approvals = [], parent, 
 
   const valid = [];
   for (const [i, a] of approvals.entries()) {
-    if (!a || !sameBytes(a.proposalId, pid)) { refused.push(`approval ${i} is for another proposal`); continue; }
+    if (!a || !sameBallotBytes(a.proposalId, pid)) { refused.push(`approval ${i} is for another proposal`); continue; }
     const k = a.signer instanceof Uint8Array ? toHex(a.signer) : '';
     if (!shareOf.has(k)) { refused.push(`approval ${i} is not by a recipient of the parent set`); continue; }
     if (!(a.signature instanceof Uint8Array) || !(await verifySecp256k1(a.signature, donationApprovalDigest(a), a.signer))) { refused.push(`approval ${i}: the signature does not verify`); continue; }
@@ -143,8 +143,8 @@ export async function approvedDonationSets({ networkId, known = [], ballots = []
   const order = [...ballots].filter((b) => b && b.proposal).sort((a, b) => (a.proposal.serial < b.proposal.serial ? -1 : a.proposal.serial > b.proposal.serial ? 1 : 0));
   for (const b of order) {
     const p = b.proposal;
-    if (!sameBytes(p.networkId, networkId)) { refused.push('a proposal for another network'); continue; }
-    const parent = all.find((s) => sameBytes(donationSetId(s.recipients), p.parentSetId));
+    if (!sameBallotBytes(p.networkId, networkId)) { refused.push('a proposal for another network'); continue; }
+    const parent = all.find((s) => sameBallotBytes(donationSetId(s.recipients), p.parentSetId));
     if (!parent) { refused.push(`proposal serial ${p.serial}: its parent set is not one this network holds`); continue; }
     if (!(p.serial > parent.serial)) { refused.push(`proposal serial ${p.serial}: not above its parent's serial ${parent.serial}`); continue; }
     const t = await tallyDonationProposal({ proposal: p, approvals: b.approvals || [], parent: parent.recipients, verifySecp256k1 });

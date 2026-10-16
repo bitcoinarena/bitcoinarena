@@ -25,10 +25,11 @@
  * msat was taken by nobody.
  */
 import {
-  decodeDonationSetBody, donationSetBodyId, decodeAuthorityRotation, authorityRotationId, authorityAt,
+  decodeDonationSetBody, donationSetBodyId, decodeAuthorityRotation, authorityRotationId, authorityAt, donationSetInForce,
   DONATION_SIGNATURE_BYTES,
 } from '../../arena-protocol/src/authority.js';
 import { donationSetMatchesRound, donationSetId, decodeDonationSet } from '../../arena-protocol/src/donation.js';
+import { decodeDonationProposal, decodeDonationApproval, approvedDonationSets } from '../../arena-protocol/src/donation-vote.js';
 import { gameDonationSetIdOf } from '../../arena-protocol/src/known-game.js';
 import { donationKeysForNetworkId } from '../../arena-protocol/src/donation-keys.js';
 import { urlOfLnurl } from '../../arena-protocol/src/bech32.js';
@@ -205,7 +206,11 @@ const donationWithinMs = (p, ms) => new Promise((resolve, reject) => {
   p.then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
 });
 
-export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false } = {}) {
+// a recipient's ballot signature (§27A.4.1): secp256k1 ECDSA over the tagged digest, by the developers' own keys - the page's curve
+// bundle (page-curve.js verifyEcdsa, window.BLWP_CURVE), as every curve operation of this client is injected
+const pageSecp256k1Verify = (sig, digest, key) => { const c = globalThis.BLWP_CURVE; try { return !!(c && c.verifyEcdsa && c.verifyEcdsa(sig, digest, key)); } catch { return false; } };
+
+export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verifyEd25519, keys, keepBySet = false, verifySecp256k1 = pageSecp256k1Verify } = {}) {
   if (!round || !(round.donationSetId instanceof Uint8Array)) return { ok: false, why: 'there is no round to fetch a donation set for' };
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
@@ -239,14 +244,25 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     return { ok: false, why: `only ${answers.length} of ${nodes.length} nodes served this round's donation set in ${DONATION_ANSWER_MS} ms` };
   const served = toHex(answers[0].bytes);
   if (answers.some((a) => toHex(a.bytes) !== served)) return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
-  const bytes = answers[0].bytes;
+  // A SET ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): the nodes serve, as JSON, the admin key's set it replaces (signed,
+  // checked below as any set) and the proposals and approvals since; this page tallies them itself
+  let approval = null;
+  let bytes = answers[0].bytes;
+  if (bytes.length && bytes[0] === 0x7b) {
+    try { approval = JSON.parse(new TextDecoder().decode(bytes)); } catch { approval = null; }
+    if (!approval || approval.approved !== true || typeof approval.root !== 'string' || !Array.isArray(approval.chain))
+      return { ok: false, why: 'the nodes serve a set its developers approved, and not the proof of it' };
+    try { bytes = fromHex(approval.root); } catch { return { ok: false, why: 'the admin key\'s set behind the approved set is not hex' }; }
+  }
   if (bytes.length <= DONATION_SIGNATURE_BYTES) return { ok: false, why: 'that is no signed donation set' };
   let set;
   try { set = { ...decodeDonationSetBody(bytes.slice(0, -DONATION_SIGNATURE_BYTES)), signature: bytes.slice(-DONATION_SIGNATURE_BYTES) }; }
   catch (e) { return { ok: false, why: `that is no donation set: ${e.message}` }; }
   if (toHex(set.networkId) !== toHex(round.networkId)) return { ok: false, why: 'that donation set is for another network' };
-  const named = donationSetMatchesRound(round, set.recipients);
-  if (!named.ok) return { ok: false, why: named.why };
+  if (!approval) {
+    const named = donationSetMatchesRound(round, set.recipients);
+    if (!named.ok) return { ok: false, why: named.why };
+  }
   if (!(set.validFrom <= round.censusHeight)) return { ok: false, why: 'that donation set is not in force at the round\'s height' };
 
   // EVERY SIGNER NODE'S ROTATIONS, EACH CHECKED HERE against the network's recovery
@@ -264,6 +280,24 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     rotations, height: round.censusHeight, verify: (sig) => signedRotations.has(toHex(sig)) });
   if (await verifyEd25519(set.signature, donationSetBodyId(set), inForce.authority) !== true)
     return { ok: false, why: 'that donation set is not signed by the network\'s donation authority at the round\'s height' };
+  if (approval) {
+    // the ballots oldest first, each checked against the set it replaces; the set in force at the round's height must be the one it names
+    let ballots;
+    try {
+      ballots = approval.chain.slice().reverse().map((c) => {
+        const pb = fromHex(String(c.proposal));
+        return { proposal: { ...decodeDonationProposal(pb.slice(0, -64)), signature: pb.slice(-64) },
+          approvals: (c.approvals || []).map((h) => { const ab = fromHex(String(h)); return { ...decodeDonationApproval(ab.slice(0, -64)), signature: ab.slice(-64) }; }) };
+      });
+    } catch (e) { return { ok: false, why: `the developers' ballots served do not decode: ${e.message}` }; }
+    const got = await approvedDonationSets({ networkId: round.networkId, known: [set], ballots, verifySecp256k1 });
+    const now = donationSetInForce({ networkId: round.networkId, authority: inForce.authority, recovery: networkKeys.recovery, sets: [set], rotations: [],
+      height: round.censusHeight, verify: (sig) => toHex(sig) === toHex(set.signature), approved: got.sets });
+    if (!now.ok || !now.approvedBy) return { ok: false, why: `the developers' approvals served do not make a set in force at the round's height${got.refused.length ? ': ' + got.refused[0] : ''}` };
+    const named = donationSetMatchesRound(round, now.recipients);
+    if (!named.ok) return { ok: false, why: named.why };
+    set = { networkId: set.networkId, serial: now.serial, validFrom: now.validFrom, recipients: now.recipients, approvedBy: now.approvedBy };
+  }
 
   // AND THE GAME DEV'S SET (§0A.8, kanban #205): every signer node serves the one its round's game's manifest names, and it
   // is taken only if it hashes to the game_donation_set this page's own known-games list carries for that game - so a node

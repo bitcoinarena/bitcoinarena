@@ -184,7 +184,9 @@ import { decodeFinalSig, splitSignedFinalSig, finalSigFault, SIGNED_FINAL_SIG_BY
 import { verifyStakeLock, verifyFeeLock, lockFieldsFromJson, roundMintsFees, federationTakesNoBaseFee } from './stake-lock-signer-node.js';
 import { refundKeyOf, lockFieldsToJson } from '../../arena-protocol/src/stake-lock.js';
 import { encodeClaimKeyAttestation, claimKeyAttestationId } from '../../arena-protocol/src/claim-key.js';
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { createDonationBallots } from './donation-ballots.js';
+import { decodeDonationProposal, donationProposalId, donationApprovalDigest, encodeDonationProposal, encodeDonationApproval } from '../../arena-protocol/src/donation-vote.js';
 
 import { SLASH_PROOF_BYTES, splitSlashEvidence, slashProofId, SLASH_EVIDENCE_BYTES, REPLAY_CONTRADICTS, splitRerunSlashEvidence, RERUN_SLASH_EVIDENCE_BYTES } from '../../arena-protocol/src/slash.js';
 import { slashOwing, entriesForSlash } from './slash-owing.js';
@@ -989,11 +991,22 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // signed by that network's donation authority at that height - Ed25519
   // (ruled 2026-09-13), rotations included. Anything else is no set.
   const verifyDonation = (sig, msg, pub) => { try { return ed25519.verify(sig, msg, pub); } catch { return false; } };
+  // THE DEVELOPERS' BALLOTS (§27A.4.1, kanban #382, donation-ballots.js): the sets they approved stand beside the admin key's
+  const verifySecp256k1 = (sig, digest, pub) => { try { return secp256k1.verify(sig, digest, pub); } catch { return false; } };
+  const donationBallots = round.db ? createDonationBallots({ db: round.db, knownSets: () => donationSets, verifySecp256k1, log: (l) => console.log(l) }) : null;
+  if (donationBallots) donationBallots.retally().catch((e) => console.log(`[donation-ballot] tally: ${e.message}`));
+  const approvedSets = () => (donationBallots ? donationBallots.approved() : []);
+  // handed on once to every seat this one knows (networkSeats, defined below; called only from a request), best effort
+  const forwardBallot = (kind, hex) => {
+    let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+    for (const base of seats) fetch(`${base}/donation-ballot`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-forwarded': '1' },
+      body: JSON.stringify({ kind, hex }), signal: AbortSignal.timeout(8000) }).catch(() => {});
+  };
   const donationSetFor = (contract) => {
     const keys = donationKeysForNetworkId(contract.networkId);
     if (!keys) return { ok: false, why: 'this round\'s network has no donation authority this signer node knows' };
     const want = toHex(contract.donationSetId);
-    const named = donationSets.filter((s) => { try { return toHex(donationSetId(s.recipients)) === want; } catch { return false; } });
+    const named = [...donationSets, ...approvedSets()].filter((s) => { try { return toHex(donationSetId(s.recipients)) === want; } catch { return false; } });
     if (!named.length) return { ok: false, why: 'this signer node holds no signed donation set with the id this round names' };
     const at = authorityAt({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery,
       rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation });
@@ -1001,12 +1014,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the round's census height has reached is the set the round must name. A round written below a newer set's valid_from
     // keeps the set it named (22A); one at or past it names the newer set or is no round with a set.
     const forced = donationSetInForce({ networkId: contract.networkId, authority: keys.authority, recovery: keys.recovery,
-      sets: donationSets, rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation });
+      sets: donationSets, rotations: donationRotations, height: contract.censusHeight, verify: verifyDonation, approved: approvedSets() });
     if (forced.ok && toHex(donationSetId(forced.recipients)) !== want)
       return { ok: false, why: `at census height ${contract.censusHeight} this network's donation set in force is serial ${forced.serial} `
         + `(${toHex(donationSetId(forced.recipients)).slice(0, 16)}), and this round names ${want.slice(0, 16)}` };
     for (const s of named) {
       if (toHex(s.networkId) !== toHex(contract.networkId) || !(s.validFrom <= contract.censusHeight)) continue;
+      if (s.approvedBy) return { ok: true, set: s, approved: true };   // its developers' approvals were checked by the tally
       if (donationSetSignedBy(s, { authority: at.authority, verify: verifyDonation }).ok) return { ok: true, set: s };
     }
     return { ok: false, why: 'the set this round names is not signed by its network\'s donation authority at the round\'s height' };
@@ -1023,7 +1037,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const networkId = fromHex(net); const keys = donationKeysForNetworkId(networkId);
       if (!keys) return null;
       const forced = donationSetInForce({ networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
-        rotations: donationRotations, height, verify: verifyDonation });
+        rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
       return forced.ok ? forced.recipients : null;
     },
     lowestBondMinSatsFor: () => ballot.lowestBondMinSats,
@@ -3152,7 +3166,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const pr = pluginForRound(c, hosted);
         if (!pr.ok) { why = `round ${i}: ${pr.why}`; break; }
         if (c.stakeMsat > 0n && keys) {
-          const f = donationSetInForce({ networkId: c.networkId, authority: keys.authority, recovery: keys.recovery, sets, rotations: rots, height: c.censusHeight, verify: verifyNet });
+          const f = donationSetInForce({ networkId: c.networkId, authority: keys.authority, recovery: keys.recovery, sets, rotations: rots, height: c.censusHeight, verify: verifyNet, approved: approvedSets() });
           if (!f.ok || toHex(donationSetId(f.recipients)) !== toHex(c.donationSetId)) { why = `round ${i}: with this seat's own sets, serial ${f.serial} is in force at ${c.censusHeight}, not the set it names`; break; }
         }
       }
@@ -3935,7 +3949,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (req.method === 'GET' && url.pathname === '/owner/donations') {
           const newest = new Map();
-          for (const s of donationSets) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
+          for (const s of [...donationSets, ...approvedSets()]) { const k = toHex(s.networkId); if (!newest.has(k) || Number(s.serial) > Number(newest.get(k).serial)) newest.set(k, s); }
           return answer(200, donationReport({ protocolSets: [...newest.values()],
             games: [...hosted.values()].map((g) => ({ name: g.name, title: g.title, gameId: g.gameId, donationSet: g.donationSet })),
             rowsFor: (key) => round.donationsFor(key, 0) }));
@@ -4048,6 +4062,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             : action === 'dev/withdraw' ? devClients.withdraw({ slug: args.slug, invoice: args.invoice, lnAddress: args.lnAddress, msat: args.msat, federation: args.federation })
               : devClients.remove({ slug: args.slug });
           if (r.ok) dashboardKept = null;
+          return answer(r.ok ? 200 : (r.status || 400), r);
+        }
+        // THE DEVELOPERS' BALLOT FROM THE OWNER PAGE (§27A.4.1, kanban #382): a dev client of this node proposes a new split of
+        // the protocol developers' set in force, or accepts or denies one - signed here with that client's own recipient key,
+        // kept, and handed on to the seats this node knows
+        if (url.pathname === '/owner/dev/propose' || url.pathname === '/owner/dev/vote') {
+          const action = url.pathname.slice('/owner/'.length);
+          const a = owner.authorize(body, action);
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!devClients || !donationBallots) return answer(501, { ok: false, why: 'this node runs no dev clients or keeps no ballots' });
+          const args = body.args || {};
+          const k = devClients.keyOf(args.slug);
+          if (!k) return answer(404, { ok: false, why: 'no such dev client on this node' });
+          const secret = fromHex(k.secretHex), me = fromHex(k.recipientPkHex);
+          let kind, hex;
+          if (action === 'dev/propose') {
+            const newest = new Map();
+            for (const x of [...donationSets, ...approvedSets()]) { const n = toHex(x.networkId); if (!newest.has(n) || x.serial > newest.get(n).serial) newest.set(n, x); }
+            const parent = [...newest.values()].find((x) => x.recipients.some((r) => r.recipientPk && toHex(r.recipientPk) === k.recipientPkHex));
+            if (!parent) return answer(409, { ok: false, why: 'this dev key is not a recipient of the protocol developers\' set in force, so it cannot propose' });
+            let recipients;
+            try {
+              recipients = (args.recipients || []).map((r) => ({ recipientPk: fromHex(String(r.key)), shareBps: Number(r.shareBps), label: String(r.label || '').slice(0, 48) }));
+              const p = { networkId: parent.networkId, serial: parent.serial + 1n, parentSetId: donationSetId(parent.recipients), proposer: me, recipients };
+              hex = toHex(encodeDonationProposal(p)) + toHex(secp256k1.sign(donationProposalId(p), secret));
+            } catch (e) { return answer(400, { ok: false, why: `that split does not stand: ${e.message}` }); }
+            kind = 'proposal';
+          } else {
+            if (!/^[0-9a-f]{64}$/.test(String(args.proposalId || ''))) return answer(400, { ok: false, why: 'name the proposal by its id' });
+            let at = 0; try { at = typeof chainTip === 'function' ? Number(await chainTip()) : 0; } catch { at = 0; }
+            if (!at) return answer(503, { ok: false, why: 'this node cannot read its chain tip, and an approval names it' });
+            const ap = { proposalId: fromHex(args.proposalId), atHeight: at, accept: !!args.accept, signer: me };
+            hex = toHex(encodeDonationApproval(ap)) + toHex(secp256k1.sign(donationApprovalDigest(ap), secret));
+            kind = 'approval';
+          }
+          const r = await donationBallots.add(kind, hex);
+          if (r.ok && r.fresh) forwardBallot(kind, hex);
           return answer(r.ok ? 200 : (r.status || 400), r);
         }
         if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
@@ -4786,7 +4837,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!keys) return text(res, 503, 'this seat knows no network donation authority to pay the protocol devs\' part to');
         let height = net.censusHeight; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { /* the newest round's height */ }
         const forced = donationSetInForce({ networkId: net.networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
-          rotations: donationRotations, height, verify: verifyDonation });
+          rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
         if (!forced.ok) return text(res, 503, `no network donation set in force here: ${forced.why}`);
         // THE SERVED LIST OF THE RECORD'S WINDOW, merged from this seat's FINALs and every other seat's
         const from = Number(p.servedFromMs), to = Number(p.servedToMs);
@@ -6367,6 +6418,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
         return res.end(Buffer.from(encodeManifest(game.manifest)));
       }
+      // THE DEVELOPERS' BALLOTS (§27A.4.1, kanban #382): every proposal and approval this seat holds, with its tally; a new one
+      // is checked, kept and handed on to the seats this one knows (once: a forwarded one is not forwarded again)
+      if (req.method === 'GET' && url.pathname === '/donation-ballots') {
+        const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        return ans(200, { ballots: donationBallots ? donationBallots.list() : [], approved: approvedSets().map((x) => ({ serial: String(x.serial), validFrom: x.validFrom,
+          setId: toHex(donationSetId(x.recipients)), approvedBy: toHex(x.approvedBy) })) });
+      }
+      if (req.method === 'POST' && url.pathname === '/donation-ballot') {
+        const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        if (!donationBallots) return ans(501, { ok: false, why: 'this node keeps no ballots' });
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
+        const r = await donationBallots.add(b.kind, b.hex);
+        if (r.ok && r.fresh && !req.headers['x-arena-forwarded']) forwardBallot(b.kind, b.hex);
+        return ans(r.ok ? 200 : (r.status || 400), r);
+      }
       if (req.method === 'GET' && url.pathname === '/donation-set') {
         const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (rid.length !== 32) return text(res, 400, 'that is not a round id');
@@ -6374,6 +6440,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!row) return text(res, 404, 'this node holds no such round');
         const served = donationSetFor(decodeRoundContract(new Uint8Array(row.contract)));
         if (!served.ok) return text(res, 404, served.why);
+        // A SET ITS DEVELOPERS APPROVED (§27A.4.1, kanban #382): no admin key signed it, so the page is handed what did - the
+        // proposals and approvals back to the admin key's set they replace, and that set as signed - and checks them itself
+        if (served.approved) {
+          const chain = donationBallots.chainOf(served.set);
+          const last = chain.length ? chain[chain.length - 1] : null;
+          let root = null;
+          try {
+            const lp = last ? decodeDonationProposal(fromHex(last.proposal).slice(0, -64)) : null;
+            const r = lp ? donationSets.find((x) => toHex(donationSetId(x.recipients)) === toHex(lp.parentSetId)) : null;
+            if (r) { const b = encodeDonationSetBody(r); root = toHex(b) + toHex(r.signature); }
+          } catch { root = null; }
+          if (!root) return text(res, 404, 'this node cannot show the admin key\'s set this approved set replaces');
+          res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+          return res.end(JSON.stringify({ approved: true, root, chain }));
+        }
         const body = encodeDonationSetBody(served.set);
         const out = new Uint8Array(body.length + served.set.signature.length);
         out.set(body, 0);
