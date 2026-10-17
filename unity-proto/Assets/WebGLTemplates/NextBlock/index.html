@@ -3024,6 +3024,55 @@
       }
     }
     setInterval(() => { readMarketOutcomes().catch((e) => console.warn('[blwp] market outcomes: ' + e.message)); }, 10000);
+    // MY ORDERS FROM THE SEATS (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and still no closed
+    // orders"; "Have the open orders from the nodes not from local storage"): the tab's picks live in sessionStorage, which a reload,
+    // a new tab or another device does not have. Every 15 s, in a market game, each paid round of it the lobby lists is read from its
+    // own signer seats (its book's positions and resting buys); every entry not looked at yet is fetched (GET /entry) and kept when its
+    // player key is one this wallet makes for that round (playerFor, order 0..7) - it is a pick of this wallet again, as the order
+    // made it, so its result, My orders and the past orders follow. Its cancel key is not on the seats: a restored order is not
+    // cancelled from here. The next order in that round takes the next key.
+    const ORDER_KEYS = 8;
+    const ENTRIES_SEEN = new Set();
+    window.BLWP_RESTORED_ORDERS = [];
+    async function restoreOrdersFromSeats() {
+      const G = window.ARENA_GAME;
+      if (!G || !G.market || !BLWPCLIENT.myOrdersFromEntries || !window.BLWP_CURVE) return;
+      let seed = null;
+      try { if (window.sessionStorage.getItem('arena.player.seed')) seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { seed = null; }
+      if (!seed) return;                                  // no wallet in this tab yet: nothing is minted for this
+      const known = new Set(readPicks().map((x) => x.entryIdHex));
+      const rows = (window.BLWP_LOBBY_ROWS || []).filter((r) => r && !r.free && r.contract && BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(r.contract)
+        && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
+      for (const r of rows) {
+        const round = Object.assign({}, r.contract, { id: BLWPCLIENT.fromHex(r.id) });
+        const keys = new Map();
+        for (let i = 0; i < ORDER_KEYS; i++) { try { keys.set(BLWPCLIENT.toHex(BLWPCLIENT.playerFor(round, { seed, curve: window.BLWP_CURVE, order: i }).pubkey), i); } catch { /* no key */ } }
+        let book = null; try { book = await G.market.book(r.id); } catch { book = null; }
+        if (!book) continue;
+        const ids = [...new Set([...(book.positions || []).map((x) => x.entry), ...((book.resting && book.resting.buys) || [])])]
+          .filter((id) => id && !known.has(id) && !ENTRIES_SEEN.has(r.id + id));
+        if (!ids.length) continue;
+        const nodes = window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(r.id) : [];
+        const entries = [];
+        for (const id of ids) {
+          for (const n of nodes) {
+            try { const res = await fetch(String(n).replace(/\/+$/, '') + '/entry?id=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+              if (res.ok) { entries.push({ idHex: id, bytes: new Uint8Array(await res.arrayBuffer()) }); break; } } catch { /* the next seat */ }
+          }
+          ENTRIES_SEEN.add(r.id + id);
+        }
+        const mine = BLWPCLIENT.myOrdersFromEntries({ entries, keys });
+        for (const m of mine) {
+          rememberPick(Object.assign(BLWPCLIENT.pickRecord({ roundIdHex: r.id, entryIdHex: m.entryIdHex, pick: m.pick, round, nodes, confirmed: false }),
+            { stakeMsat: m.stakeMsat, order: { limitPrice: m.limitPrice, orderExpiryMs: m.orderExpiryMs, sessionKeyPkcs8: null, placedMs: Date.now(), index: m.orderIndex, restored: true } }));
+          window.BLWP_RESTORED_ORDERS.push({ round: r.id, entry: m.entryIdHex, pick: m.pick, index: m.orderIndex });
+          try { const k = 'arena.order.next.' + r.id; if ((Number(window.sessionStorage.getItem(k)) || 0) <= m.orderIndex) window.sessionStorage.setItem(k, String(m.orderIndex + 1)); } catch { /* this tab's only */ }
+        }
+        if (mine.length) console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats');
+      }
+    }
+    setTimeout(() => { restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)); }, 4000);
+    setInterval(() => { restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)); }, 15000);
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
     function marketViewLines(onlyThisGame = false) {
       if (!BLWPCLIENT.marketLines) return [];
@@ -6896,6 +6945,8 @@
           cancel: async (entryIdHex) => {
             const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
             if (!x) return { ok: false, why: 'this tab placed no such order' };
+            // A RESTORED ORDER (kanban #452): read back from the seats, without the session key it is cancelled with
+            if (!x.order.sessionKeyPkcs8) return { ok: false, why: 'this order was read back from the seats; it can be cancelled only in the tab that placed it' };
             const key = await crypto.subtle.importKey('pkcs8', BLWPCLIENT.fromHex(x.order.sessionKeyPkcs8), { name: 'Ed25519' }, false, ['sign']);
             const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, BLWPCLIENT.orderCancelId({ roundId: BLWPCLIENT.fromHex(x.roundIdHex), entryId: BLWPCLIENT.fromHex(entryIdHex) })));
             const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig })
@@ -6930,7 +6981,12 @@
             + (game.name === 'btc-updown-15m' ? '.list{flex:1 0 auto!important;overflow:visible!important}'
               // A PAST ORDER'S STATUS ON ITS OWN LINE (kanban #447, the owner 2026-10-17 on the phone card: "pending final breaks the
               // layout" - "pending · final in 6:57" ran past the card's edge at 390): it wraps under the round, right-aligned
-              + '.pastc .ph{flex-wrap:wrap;row-gap:3px}.pastc .ph .rd{flex:1 1 auto;min-width:0}.pastc .ph .fin{flex:1 0 100%;order:3;text-align:right}' : '')
+              + '.pastc .ph{flex-wrap:wrap;row-gap:3px}.pastc .ph .rd{flex:1 1 auto;min-width:0}.pastc .ph .fin{flex:1 0 100%;order:3;text-align:right}'
+              // THE SAME COLUMNS ON EVERY CARD (kanban #451, the owner 2026-10-17: "Fix the alignment so columns have the same width
+              // always" - "▼ Down" is wider than "▲ Up", so each card's amount column started where its badge ended): the side's column
+              // one fixed width, the badge centred in it; the past orders' badge the same width
+              + '.ord{grid-template-columns:72px minmax(0,1fr) auto!important}.ord .sd{display:block;text-align:center;padding-left:0!important;padding-right:0!important}'
+              + '.pastc .ph .sd{width:72px;flex:none;padding-left:0!important;padding-right:0!important;box-sizing:border-box;text-align:center}' : '')
             // the way back is the bar's (kanban #398): the client's own "← Arena" goes
             + '#back,button.back{display:none!important}';
           d.head.appendChild(st);
