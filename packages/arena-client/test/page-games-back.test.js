@@ -22,10 +22,17 @@ test('a click opens the choice of games: the address without game, round and pla
   const from = HTML.indexOf("      const back = document.getElementById('arena-games-back');");
   assert.ok(from > 0, 'the button has a click handler');
   const src = HTML.slice(from, HTML.indexOf('\n      });\n', from) + 11);
-  let click = null;
-  const document = { getElementById: (id) => (id === 'arena-games-back' ? { addEventListener: (ev, fn) => { click = fn; } } : null) };
+  let click = null, sheet = null, closed = 0;
+  const document = { getElementById: (id) => (id === 'arena-games-back' ? { addEventListener: (ev, fn) => { click = fn; } } : null),
+    querySelector: (q) => (sheet && q.includes(sheet) ? { click: () => { closed++; } } : null) };
   const location = { search: '?game=nextblock&round=ab12&play=1&fed=b' };
   pageFunction(PAGE, ['document', 'location', 'URLSearchParams'], src)(document, location, URLSearchParams);
-  click();
+  // kanban #405: over the leaderboard or the shop, ← closes that sheet and stays in the game
+  for (const s of ['#arena-season.show .back', '#arena-shop.show .back']) {
+    sheet = s; click();
+    assert.equal(location.search, '?game=nextblock&round=ab12&play=1&fed=b');
+  }
+  assert.equal(closed, 2);
+  sheet = null; click();
   assert.equal(location.search, 'fed=b');
 });

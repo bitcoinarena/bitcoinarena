@@ -50,14 +50,14 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   const m = HTML.indexOf('    function moneyContext(which = \'deposit\') {');
   assert.ok(a > 0 && m > a, 'depositPick comes before moneyContext');
   const slice = HTML.slice(a, HTML.indexOf('\n    }\n', m) + 7);
-  const run = (held) => {
+  const run = (held, which = 'deposit', parts = []) => {
     const fn = pageFunction(PAGE, ['window', 'BLWPCLIENT', 'walletSeed', 'moneyRound', 'vault', 'localStorage'], [slice], 'return moneyContext;');
     const window = { BLWP_LOBBY: [{ id: 'r1', free: false, raw: { contract: { stakeMsat: 100000n } } }], BLWP_LEDGER_LOBBY: { federation: inviteOf(A) },
-      ARENA_FED_LOADS: new Map([[A, st(A, 4.3333)], [B, st(B, 0.0002)]]) };
+      ARENA_FED_LOADS: new Map([[A, st(A, 4.3333)], [B, st(B, 0.0002)]]), BLWP_WALLET_BALANCE: { parts } };
     const BLWPCLIENT = { depositFederation, withdrawFederation, ledgerFederations: () => held, federationIsKnown: () => true, federationConfirmed: () => false,
       inviteNamesFederation: sameFederation, marketForRound: () => null, lobbyStakeSats: () => 100,
       fromHex: (h) => Uint8Array.from(String(h).match(/../g).map((x) => parseInt(x, 16))) };
-    const ctx = fn(window, BLWPCLIENT, () => 'seed', () => null, () => ({}), {})();
+    const ctx = fn(window, BLWPCLIENT, () => 'seed', () => null, () => ({}), {})(which);
     return { ctx, picked: window.ARENA_DEPOSIT_FEDERATION };
   };
   const first = run([]);
@@ -67,4 +67,12 @@ test('the page\'s moneyContext hands every deposit B\'s invite, not the lobby ro
   // and the wallet is opened under B's own id, not the lobby round's (kanban #353: B's invite beside A's id opened B's wallet under A's key)
   assert.equal(Buffer.from(first.ctx.round.federationId).toString('hex'), String(B).toLowerCase());
   assert.equal(run([A]).ctx.invite, inviteOf(B), 'a player already holding A deposits into B, the lower load');
+  // kanban #399: a withdraw with nothing held anywhere reads the federation a deposit would, under its own id - never fromHex("null")
+  const empty = run([], 'withdraw', []).ctx;
+  assert.equal(Buffer.from(empty.round.federationId).toString('hex'), String(B).toLowerCase());
+  assert.equal(empty.invite, inviteOf(B));
+  // and one holding A reads A
+  const holding = run([A], 'withdraw', [{ federation: A, sats: 500 }]).ctx;
+  assert.equal(Buffer.from(holding.round.federationId).toString('hex'), String(A).toLowerCase());
+  assert.equal(holding.invite, inviteOf(A));
 });

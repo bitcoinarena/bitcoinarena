@@ -135,7 +135,13 @@ test('a market on a game is believed only from its source round\'s result, signe
   const table = { refunded: false, losingPoolMsat: '50000', rows: [{ entryId: 'e2'.repeat(32), netMsat: '98500', payoutMsat: '148000', won: true }] };
   const [won] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, table, check: ok }]]), nowMs: Number(S) });
   assert.equal(won.text, `tick-tock-fronts ${rid.slice(0, 8)}: 'BULLS' (source round ${toHex(SOURCE_ID).slice(0, 8)} ended BULLS, signed by its committee, verified) · you won 49.5 sats`);
+  assert.deepEqual([won.state, won.gainMsat, won.final, won.finalAtMs], ['won', '49500', true, null]);
+  // kanban #447: every attested line says whether its result is final, and when - a lost one too, so the client counts it down
+  const lostTable = { ...table, rows: [{ ...table.rows[0], won: false, payoutMsat: '0' }] };
+  const [lost] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
+  assert.deepEqual([lost.state, lost.lostMsat, lost.final, lost.finalAtMs], ['lost', '98500', false, 1788200600000]);
   const [open] = marketLines({ picks: [pick], outcomes: new Map(), nowMs: Number(S) });
+  assert.equal(open.final, undefined);
   assert.match(open.text, new RegExp(`waiting for source round ${toHex(SOURCE_ID).slice(0, 8)}'s signed result$`));
   const [voided] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'VOID', why: 'the source round ended FLAT, which this market refunds' }]]), nowMs: Number(S) });
   assert.match(voided.text, /VOID - the source round ended FLAT, which this market refunds · every stake comes back$/);
