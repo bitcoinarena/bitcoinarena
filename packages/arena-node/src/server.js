@@ -1867,6 +1867,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}) };
     },
   });
+  // AND THE WINNERS' SHARES OF MARKET ROUNDS SETTLED BEFORE THEY WERE KEPT (kanban #457): once, a minute after start
+  setTimeout(() => { settlements.backfillShares().then((n) => { if (n) console.log(`[season] winners' shares kept for ${n} settled round(s)`); }, () => {}); }, 60000).unref?.();
 
 
   // WHO MAY HOLD A ROUND, from the chain. The census stopped being library

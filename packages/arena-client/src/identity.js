@@ -98,10 +98,12 @@ export async function identitySignEvent(template, { storage, random, curve, now 
  * empty for none, and the others are then shown the generated one - and now,
  * signed with that round key. The others are shown what this tab shows itself.
  */
-export function nameRecordFor(round, { storage, random, curve, nowMs = Date.now() } = {}) {
+// `order` (kanban #457): an order's own round key is the order-th the seed makes for the round (playerFor) - each order of a market is
+// named under its own key, so the season counts every order under the player's identity
+export function nameRecordFor(round, { storage, random, curve, nowMs = Date.now(), order = 0 } = {}) {
   if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a name is signed with the round key, and no signer was injected');
   const me = tabIdentity({ storage, random, curve });
-  const player = playerFor(round, { seed: tabSeed({ storage, random }), curve });
+  const player = playerFor(round, { seed: tabSeed({ storage, random }), curve, order });
   const record = { roundId: player.roundId, playerPubkey: player.pubkey, identityPubkey: me.pubkey,
     name: me.custom ? me.name : '', atMs: BigInt(Math.floor(nowMs)) };
   return { record: toHex(encodeLobbyName(record)), sig: toHex(curve.signSchnorr(lobbyNameId(record), player.secret)) };

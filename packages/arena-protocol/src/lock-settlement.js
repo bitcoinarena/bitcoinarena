@@ -735,5 +735,9 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
-    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat } };
+    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat },
+    // WHAT IT PAID EACH WINNER (kanban #457, measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
+    // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
+    // player key - its own stake back and its winnings, as the book paid them
+    stakeShares: payouts.filter((p) => p.kind === 'qualifier').map((p) => ({ pubkey: p.pubkey, msat: p.msat })) };
 }
