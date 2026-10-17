@@ -56,3 +56,30 @@ test('shown when five of seven nodes hold it; its stage as most say; every comme
   const sent = await postFunding({ nodes, kind: 'comment', hex: 'ab', fetcher });
   assert.deepEqual([sent.ok, sent.took, posted.length], [true, 3, 7]);
 });
+
+// PIP (the owner 2026-10-17): "Each item set to vote are prefixed with PIP"; "Users can sign in with their ingame key and their custom name or
+// their generated name"; "Have custom names in the protocol"
+test('PIP: numbered by publication; a player signs in with the in-game identity key and is shown its own name, else its generated one', async () => {
+  const { signedName, forumIdentity, forumNameOf } = await import('../src/funding-page.js');
+  const { identitySecretFor } = await import('../../arena-protocol/src/player-key.js');
+  const { displayNameFromKey } = await import('../../arena-protocol/src/display-name.js');
+  const seed = '11'.repeat(32);
+  const me = forumIdentity(seed, curve);
+  assert.equal(me.pubkey, toHex(schnorr.getPublicKey(identitySecretFor(fromHex(seed)))), 'the identity key the lobby and the board use');
+  assert.equal(me.generated, displayNameFromKey(fromHex(me.pubkey)));
+  const n = signedName({ curve, secretKey: me.secret, networkId: NET, name: 'Satoshi Fan', atMs: 1792240000000 });
+  const r = readSignedFunding('name', fromHex(n.hex), verify);
+  assert.deepEqual([r.ok, toHex(r.obj.player), r.obj.name], [true, me.pubkey, 'Satoshi Fan']);
+  // three proposals at 7 nodes: PIP-1 is the earliest published; a forged name (another key's signature) is not shown
+  const other = newProposalKey(curve), mk = (h, x) => signedProposal({ curve, secretKey: other, networkId: NET, publishedHeight: h, amountSats: 1000, lnurl: 'a@b.org', purpose: x });
+  const ps = [mk(156900, 'B'), mk(156800, 'A'), mk(156950, 'C')].map((x) => ({ ...readSignedFunding('proposal', fromHex(x.hex), verify).obj, id: x.id, hex: x.hex }));
+  const forged = (() => { const f = signedName({ curve, secretKey: other, networkId: NET, name: 'Not Me', atMs: 1792240000001 }); return f.hex; })();
+  const view = (p) => ({ id: p.id, hex: p.hex, purpose: p.purpose, amountSats: '1000', lnurl: p.lnurl, author: toHex(p.author), network: NET, publishedHeight: p.publishedHeight, signal: { state: 'open' }, vote: null, comments: [] });
+  const fetcher = async () => new Response(JSON.stringify({ tip: 157000, proposals: ps.map(view), names: [
+    { player: me.pubkey, name: 'Satoshi Fan', atMs: '1792240000000', hex: n.hex },
+    { player: me.pubkey, name: 'Not Me', atMs: '1792240000001', hex: forged } ] }), { status: 200 });
+  const got = await fetchProposals({ nodes: Array.from({ length: 7 }, (_, i) => `https://n${i}.example`), fetcher, verify });
+  assert.deepEqual(got.proposals.map((p) => [p.purpose, p.pip]), [['C', 3], ['B', 2], ['A', 1]]);
+  assert.equal(forumNameOf(me.pubkey, got.names), 'Satoshi Fan', 'the forged newer record is not believed');
+  assert.equal(forumNameOf(toHex(schnorr.getPublicKey(other)), got.names), displayNameFromKey(schnorr.getPublicKey(other)), 'no record: the generated name');
+});

@@ -355,6 +355,8 @@ export const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
 export const TYPE_FUNDING_PROPOSAL = 0x2e;
 export const TYPE_FUNDING_COMMENT = 0x2f;
 export const TYPE_FUNDING_SIGNAL = 0x30;
+// A PLAYER'S NAME, NETWORK-WIDE (kanban #397 PIP, the owner 2026-10-17: "Have custom names in the protocol"): player-name.js
+export const TYPE_PLAYER_NAME = 0x31;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -430,6 +432,7 @@ export const TAG = {
   fundingProposal: 'ARENA/v1/FundingProposal',
   fundingComment: 'ARENA/v1/FundingComment',
   fundingSignal: 'ARENA/v1/FundingSignal',
+  playerName: 'ARENA/v1/PlayerName',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',

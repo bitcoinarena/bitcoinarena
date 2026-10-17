@@ -6896,6 +6896,11 @@ carry no weight in any count.
     (the owner 2026-10-17; until then only a bonded node in the seat's census).
   - `FundingComment` { proposal_id, parent_id, author, at_height, text } (0x2f), signed by anyone.
   - `FundingSignal` { proposal_id, node, at_height } (0x30), signed by a bonded node.
+  - `PlayerName` { network_id, player, at_ms, name } (0x31), signed by the player's identity key *(the owner 2026-10-17: "Have custom
+    names in the protocol")*. `name` follows the lobby's rule (1-24 letters and digits, with space, dot, dash or underscore between);
+    empty means the name made from the key. A seat keeps the newest per player and refuses one dated more than 10 minutes ahead
+    of its clock; `GET /funding` serves them as `names`. A page checks each signature itself, so a node can leave a name out but
+    cannot write one. `arena-protocol/src/player-name.js`.
   - `arena-protocol/src/funding.js` holds these objects, the window and the rule; `arena-node/src/funding-book.js` is the seat's
     store and decision.
   - Seats keep them (`funding_items`) and hand each new one on to every seat once: `POST /funding` { kind, hex },
@@ -7027,6 +7032,15 @@ review")*:
 - A visitor comments, replies or proposes with their own key: an nsec, or a key that browser keeps. The page builds and signs the
   same `FundingComment` / `FundingProposal` the seats read (`arena-client/src/funding-page.js`, the Arena page's bundle) and hands
   it to every node (`POST /funding`).
+
+**Project improvement proposals (PIPs)** *(the owner 2026-10-17: "Project improvement proposals, PIP. Each item set to vote are prefixed
+with PIP. Users can sign in with their ingame key and their custom name or their generated name")*:
+- The forum is its own page beside the Arena: testnet.bitcoin-arena.io/proposals.
+- Every proposal five nodes hold is a **PIP-N**, numbered by publication: published block, then id. The earliest is PIP-1.
+- A player signs in with their **in-game key**: the identity key of their wallet seed, the key the lobby and the board use. An
+  nsec or a new key also works.
+- Everyone is shown by name: their `PlayerName`, else the name made from their key. A name set in the game's Settings or on the
+  forum is signed and handed to every node.
 
 # 28. Failure matrix
 
