@@ -55,8 +55,11 @@ export const UPDOWN_CLIENT_V11_HASH = createHash('sha256').update(readFileSync(U
 export const UPDOWN_CLIENT_V12_FILE = new URL('./client/index-v12.html', import.meta.url);
 export const UPDOWN_CLIENT_V12_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V12_FILE)).digest();
 // version 13 (kanban #454): the fee line as the market's terms name it - 0.4 % nodes + 0.4 % donation + 0.2 % protocol reserve
-export const UPDOWN_CLIENT_V13_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V13_FILE = new URL('./client/index-v13.html', import.meta.url);
 export const UPDOWN_CLIENT_V13_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V13_FILE)).digest();
+// version 14 (kanban #461): a phone's Compact / Advanced switch - Advanced shows the exchange (chart or depth, the full order book)
+export const UPDOWN_CLIENT_V14_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V14_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V14_FILE)).digest();
 // ITS DONATION KEY IS A POINT ON THE CURVE (kanban #237, measured on the regtest stack: the settlement failed with
 // "blwp-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
 // curve only half the time; this market's key is the public key of a test secret, so a payout to it can be made
