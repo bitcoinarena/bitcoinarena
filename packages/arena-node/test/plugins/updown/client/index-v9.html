@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Bitcoin Up or Down · 15 min</title>
+<!-- THE MARKET'S OWN CLIENT (kanban #237): btc-updown-15m, pinned by its manifest's clients[] and run by the Arena page in its
+     frame. Laid out as Polymarket's (the owner 2026-10-10 screenshots): the window's question and prices, "Buy Up 52¢" / "Buy
+     Down 48¢", and a buy sheet - MARKET (an amount in sats, "To win") or, behind the settings icon, LIMIT (a limit price,
+     shares, an expiry, Total and To win). Every order brings its own amount (order-book.js MIN_ORDER_MSAT .. MAX_ORDER_MSAT)
+     and goes through the page's own join, deposit and locks (window.parent.ARENA_GAME.market.order). A share pays 1 sat if
+     its side wins. The live BTC price and the price to beat are Coinbase's, for the eye; the outcome is the attestors'. -->
+<style>
+  :root { --bg:#0e1117; --card:#171b24; --line:#262d3b; --text:#e8edf3; --dim:#8d99a8; --up:#2fd38a; --down:#ff5a6a; --blue:#4f7cff; color-scheme:dark; }
+  * { box-sizing:border-box; } html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--text); font:15px/1.4 system-ui,-apple-system,sans-serif; display:flex; flex-direction:column;
+    padding:max(10px,env(safe-area-inset-top)) 12px 10px; gap:8px; overflow:hidden; }
+  button { font:inherit; color:inherit; cursor:pointer; }
+  /* THE WAY BACK ON ITS OWN ROW, THE TITLE ON ITS OWN LINE (kanban #388, the owner 2026-10-16: Rock Paper Scissors' "is easier to
+     recognize and the game title looks much nicer and is separated from the navigation button ... make is consistent") */
+  button.back { display:inline-flex; align-items:center; gap:6px; align-self:flex-start; background:var(--card); border:1px solid var(--line);
+    border-radius:8px; padding:6px 12px; font:600 13px system-ui; color:var(--dim); cursor:pointer; }
+  button.back:hover { color:#f7931a; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:10px 0 12px; }
+  header h1 { font:800 22px/1.15 system-ui; letter-spacing:-0.01em; margin:0; flex:1; }
+  header h1 .arrows { margin-left:8px; font-size:18px; } header h1 .up { color:#3fb950; } header h1 .down { color:#f85149; } .chip { font:700 11px system-ui; letter-spacing:.06em; padding:4px 8px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px 12px; }
+  .q { font:700 16px system-ui; } .sub { color:var(--dim); font-size:13px; }
+  .row3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:8px; text-align:center; }
+  .row3 b { display:block; font:700 16px system-ui; font-variant-numeric:tabular-nums; } .row3 span { color:var(--dim); font-size:11.5px; }
+  .odds { display:flex; justify-content:space-between; align-items:baseline; margin-top:6px; } .odds b { font:800 26px system-ui; }
+  .sides { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .side { border:0; border-radius:12px; padding:12px 6px; font:700 16px system-ui; }
+  /* AN ORDER'S PROGRESS IN THE SHEET (version 5, kanban #438, the owner 2026-10-17: "When I press buy up nothing happens no order no
+     error. There needs to be feedback and some sort of progress indicator while we wait for the result") */
+  .status { display:none; align-items:center; gap:8px; margin-top:8px; padding:9px 11px; border-radius:10px; border:1px solid var(--line); font:600 13px/1.35 system-ui; }
+  .status.on { display:flex; } .status.ok { border-color:var(--up); color:var(--up); } .status.bad { border-color:var(--down); color:#ffb4ad; }
+  .status .spin { flex:none; width:15px; height:15px; border-radius:50%; border:2px solid var(--line); border-top-color:#f7931a; animation:spin .8s linear infinite; }
+  .status.ok .spin, .status.bad .spin { display:none; } @keyframes spin { to { transform:rotate(360deg); } }
+  .r .pend { color:#f7931a; }
+  /* THE DESKTOP VIEW, AS AN EXCHANGE (version 8, kanban #448, the owner 2026-10-17: "build a real desktop view with complete order book
+     bids ask, chart, depth (switchable) like an exchange. Like Polymarket is doing"): from 1000 px the window's card, the chart or
+     the depth and the full order book on the left - drawn by the page (ARENA_GAME.market.exchange) - and the buy panel, my orders
+     and the history on the right, beside them; a phone keeps the one column */
+  .cols, .colL, .colR { display:contents; } #xv { display:none; }
+  @media (min-width:1000px) {
+    body { max-width:1320px; margin:0 auto; width:100%; padding-left:20px; padding-right:20px; }
+    .cols { display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:16px; align-items:start; }
+    .colL, .colR { display:flex; flex-direction:column; gap:10px; min-width:0; }
+    .colR { position:sticky; top:10px; }
+    #xv { display:flex; }
+  }
+  /* MY ORDERS AS CARDS (version 6, kanban #443, the owner 2026-10-17: "This looks pretty bad, make it prettier and more structured"): one
+     card per order - the side, the amount and the limit, the window, and where it stands - its result in the same card */
+  .ords { display:flex; flex-direction:column; gap:6px; }
+  .ord { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:10px; padding:9px 10px; border-radius:11px; background:#11151d; border:1px solid var(--line); }
+  .ord .sd { font:800 13px system-ui; padding:5px 9px; border-radius:8px; white-space:nowrap; }
+  .ord .sd.up { color:var(--up); background:rgba(47,211,138,.12); } .ord .sd.down { color:var(--down); background:rgba(255,90,106,.12); }
+  .ord .what b { font:700 14.5px system-ui; } .ord .what .lim { color:var(--dim); font-size:13px; } .ord .what .win { color:var(--dim); font-size:12px; margin-top:1px; }
+  .ord .st { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+  .chip2 { font:700 11.5px system-ui; padding:3px 8px; border-radius:999px; white-space:nowrap; border:1px solid var(--line); color:var(--dim); }
+  .chip2.open { color:#7aa2ff; border-color:rgba(79,124,255,.45); } .chip2.wait { color:#f7931a; border-color:rgba(247,147,26,.45); }
+  .chip2.won { color:var(--up); border-color:rgba(47,211,138,.5); background:rgba(47,211,138,.08); } .chip2.lost { color:var(--down); border-color:rgba(255,90,106,.45); }
+  .ord .st button { background:none; border:1px solid var(--line); border-radius:7px; padding:1px 8px; font-size:11.5px; color:var(--dim); }
+  .ord.flight { border-style:dashed; }
+  /* THE HISTORY (version 7, kanban #447, the owner 2026-10-17: "also show closed orders with the history with how much you won or lost,
+     and also show there if it's still pending (10 minute delay)"): open orders first, then every closed one with what it won or
+     lost, the 10-minute objection window counted down until the result is final, and the totals */
+  .ord .st .amt { font:800 14px system-ui; font-variant-numeric:tabular-nums; } .amt.won { color:var(--up); } .amt.lost { color:var(--down); }
+  .ord .st .fin { font-size:11px; color:var(--dim); white-space:nowrap; } .ord .st .fin.pend { color:#f7931a; }
+  .hist { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin:12px 0 6px; }
+  /* PAST ORDERS (version 9, kanban #447, the owner 2026-10-17: "Don't forget past orders also for the desktop view and mobile. Shows round
+     (human readable name eg 18:45-19:00), result, stake, p/l"): on a phone each past order's card names its round, stake, result and
+     P/L; on a desktop a table under the order book; kept in this browser, so they outlive the tab */
+  .pastc { padding:9px 10px; border-radius:11px; background:#11151d; border:1px solid var(--line); }
+  .pastc .ph { display:flex; align-items:center; gap:8px; } .pastc .ph .rd { flex:1; font:700 14px system-ui; white-space:nowrap; }
+  .pastc .ph .sd { font:800 12.5px system-ui; padding:4px 8px; border-radius:8px; white-space:nowrap; }
+  .pastc .ph .sd.up { color:var(--up); background:rgba(47,211,138,.12); } .pastc .ph .sd.down { color:var(--down); background:rgba(255,90,106,.12); }
+  .pastc .ph .fin { font-size:11px; color:var(--dim); white-space:nowrap; } .pastc .ph .fin.pend { color:#f7931a; }
+  .pastc .pg { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:7px; }
+  .pastc .pg span { display:block; font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  .pastc .pg b { font:700 13.5px system-ui; font-variant-numeric:tabular-nums; } .pastc .pg b.won { color:var(--up); } .pastc .pg b.lost { color:var(--down); }
+  .pastc .pg div:last-child { text-align:right; }
+  #pastd { display:none; } table.past { width:100%; border-collapse:collapse; font:13.5px system-ui; font-variant-numeric:tabular-nums; }
+  table.past th { color:var(--dim); font:600 11.5px system-ui; text-transform:uppercase; letter-spacing:.05em; text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  table.past td { padding:7px 8px; border-bottom:1px solid var(--line); } table.past tr:last-child td { border:0; }
+  table.past td.n, table.past th.n { text-align:right; } table.past .won { color:var(--up); font-weight:700; } table.past .lost { color:var(--down); font-weight:700; }
+  table.past .up { color:var(--up); font-weight:700; } table.past .down { color:var(--down); font-weight:700; } table.past .pend { color:#f7931a; }
+  @media (min-width:1000px) { #pastd { display:block; } #histhead, #hist { display:none !important; } }
+  .hist h3 { margin:0 !important; } .tot { font:600 12px system-ui; color:var(--dim); text-align:right; } .tot b.won { color:var(--up); } .tot b.lost { color:var(--down); }
+  .side.up { background:#12301f; color:var(--up); } .side.down { background:#3a1216; color:#ff8a94; }
+  .side.on.up { outline:2px solid var(--up); } .side.on.down { outline:2px solid var(--down); }
+  .sheet { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:12px; position:relative; }
+  .sheet .top { display:flex; justify-content:space-between; align-items:center; }
+  .pill { background:#232937; border-radius:99px; padding:5px 14px; font-weight:600; }
+  .gear { background:none; border:0; font-size:20px; padding:2px 6px; }
+  .menu { position:absolute; right:12px; top:44px; background:#1d222d; border:1px solid var(--line); border-radius:12px; padding:4px 0; z-index:5; display:none; min-width:130px; }
+  .menu.open { display:block; } .menu button { display:block; width:100%; text-align:left; background:none; border:0; padding:9px 14px; }
+  .menu button.on { color:var(--blue); font-weight:700; }
+  .amount { text-align:center; font:800 42px system-ui; margin:6px 0 0; font-variant-numeric:tabular-nums; }
+  .amount input { width:100%; text-align:center; background:none; border:0; color:var(--text); font:inherit; outline:none; }
+  .center { text-align:center; } .win { color:var(--up); font-weight:800; }
+  .chips { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:6px 0; }
+  .chips button { background:#2a3040; border:0; border-radius:10px; padding:6px 11px; font-weight:600; }
+  .line { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-top:1px solid var(--line); }
+  .line input, .line select { width:7.5em; text-align:right; background:var(--bg); border:1px solid var(--line); border-radius:10px; color:var(--text); padding:7px; font:600 16px system-ui; }
+  .stepper { display:flex; gap:4px; align-items:center; } .stepper button { background:#2a3040; border:0; border-radius:8px; width:30px; height:32px; }
+  .total { font:700 18px system-ui; color:var(--blue); } .bigwin { font:800 22px system-ui; color:var(--up); }
+  .go { width:100%; padding:13px; border:0; border-radius:12px; background:var(--blue); color:#fff; font:800 16px system-ui; margin-top:8px; }
+  .go:disabled { opacity:.45; } .err { color:var(--down); font-size:13px; min-height:1em; text-align:center; }
+  .list { flex:1; min-height:0; overflow:auto; } .list h3 { margin:0 0 4px; font:700 12px system-ui; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; }
+  .r { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid var(--line); font-size:13.5px; } .r:last-child { border:0; }
+  .r button { background:none; border:1px solid var(--line); border-radius:8px; padding:2px 8px; font-size:12px; }
+  a { color:#7cc4ff; } .none { color:var(--dim); text-align:center; padding:30px 10px; } [hidden] { display:none !important; }
+</style></head><body>
+<button class="back" type="button" id="back" title="Back to Bitcoin Arena">&larr; Arena</button>
+<header><h1>Bitcoin Up or Down<span class="arrows" aria-hidden="true"><span class="up">&#9650;</span><span class="down">&#9660;</span></span></h1><span class="chip" id="kind">…</span></header>
+<div id="view" style="display:contents"></div>
+<script>
+const A = window.parent && window.parent.ARENA_GAME;
+const $ = (id) => document.getElementById(id);
+const SCALE = 100000, TICK = 1000, PERIOD_MS = 15 * 60000;
+const MIN_SHARES = 5, FEE_BPS = 100, MIN_SAT = 1, MAX_SAT = 100000;   // the book's minimum shares; 1 % fee; order-book.js limits
+const usd = (c) => (c === null || c === undefined ? '…' : '$' + (c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const sats = (n) => Math.floor(n).toLocaleString('en-US') + ' sats';
+const hhmm = (ms) => new Date(ms).toISOString().slice(11, 16);
+const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+
+if (!A || !A.market) {
+  $('view').innerHTML = '<div class="none">This market runs inside the Bitcoin Arena page, which hands it the market.</div>';
+} else {
+  window.UPDOWN_CLIENT = { hash: A.clientHash, game: A.game.id, state: {} };
+  // this client says its orders' progress itself: the page's strip over it stays away (kanban #438)
+  try { window.parent.ARENA_CLIENT_SAYS_JOIN = true; } catch {}
+  $('back').onclick = () => A.back();
+  const outcomes = A.game.outcomes.length ? A.game.outcomes : ['Up', 'Down'];
+  $('view').innerHTML = `<div class="cols"><div class="colL">
+    <div class="card"><div class="q" id="q">…</div><div class="sub"><span id="left"></span> · <a id="poly" target="_blank" rel="noopener">Polymarket</a></div>
+      <div class="row3"><div><b id="beat">…</b><span>price to beat</span></div><div><b id="now">…</b><span>BTC now</span></div><div><b id="delta">…</b><span>change</span></div></div>
+      <div class="odds"><span class="sub">chance of Up</span><b id="chance">50%</b></div></div>
+    <div id="xv"></div>
+    <div class="card" id="pastd"><div class="hist" style="margin-top:0"><h3>Past orders</h3><span class="tot" id="totd"></span></div><div id="pastt"></div></div></div><div class="colR">
+    <div class="sides"><button class="side up" id="s0">Buy ${esc(outcomes[0])} <span id="p0">50¢</span></button><button class="side down" id="s1">Buy ${esc(outcomes[1])} <span id="p1">50¢</span></button></div>
+    <div class="sheet">
+      <div class="top"><span class="pill" id="mode">Buy · Market</span><button class="gear" id="gear" aria-label="order type">⚙︎</button></div>
+      <div class="menu" id="menu"><button data-mode="market">Market</button><button data-mode="limit">Limit</button></div>
+      <div id="market">
+        <div class="amount"><input id="amt" inputmode="numeric" value="1000" aria-label="amount in sats"></div>
+        <div class="center sub">sats · <span id="side">Up</span></div>
+        <div class="chips"><button data-add="100">+100</button><button data-add="500">+500</button><button data-add="1000">+1,000</button><button data-add="10000">+10,000</button></div>
+        <div class="center">To win <span class="win" id="mwin">…</span> <span class="sub" id="mprice"></span></div>
+      </div>
+      <div id="limit" hidden>
+        <div class="line"><span>Limit price</span><span class="stepper"><button data-lp="-1">−</button><input id="lp" inputmode="numeric" value="50"><button data-lp="1">+</button></span></div>
+        <div class="line"><span>Shares</span><input id="sh" inputmode="numeric" value="100"></div>
+        <div class="chips" style="justify-content:flex-end"><button data-sh="-100">−100</button><button data-sh="-10">−10</button><button data-sh="10">+10</button><button data-sh="100">+100</button></div>
+        <div class="line"><span class="sub">Expires</span><select id="exp"><option value="0">at the close</option><option value="60000">in 1 min</option></select></div>
+        <div class="line"><span>Total</span><span class="total" id="ltotal">…</span></div>
+        <div class="line"><span>To win</span><span class="bigwin" id="lwin">…</span></div>
+      </div>
+      <div class="err" id="err"></div><button class="go" id="go">Buy Up</button><div class="status" id="status" role="status" aria-live="polite"><span class="spin"></span><span id="statustxt"></span></div>
+      <div class="center sub" id="fee">Fee 1 %: 0.5 % nodes + 0.5 % donation, due when the market resolves; all back if it is void.</div>
+    </div>
+    <div class="card list"><h3>My orders</h3><div id="mine" class="ords"></div>
+      <div class="hist" id="histhead" hidden><h3>History</h3><span class="tot" id="tot"></span></div><div id="hist" class="ords"></div></div></div></div>`;
+  let pick = 0, mode = 'market', current = null, book = null, live = { now: null, beat: null, beatFor: null };
+  // THE WINDOW AN ORDER CAN JOIN (version 5, kanban #438: Buy was refused "this round is no longer listed in the lobby" - the client had
+  // picked a window the page could not join, one at its close or a federation's row its seats did not yet agree on): the soonest
+  // joinable one, else the soonest open one as before
+  const windowNow = () => {
+    const open = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs && r.entryCloseMs > Date.now()).sort((x, y) => x.entryCloseMs - y.entryCloseMs);
+    return open.find((r) => r.joinable) || open[0] || null;
+  };
+  // THE ORDER IN FLIGHT: the page's join and the pick it carries, said in the sheet and in My orders until the order is the page's
+  let placing = null;
+  function joinStatus() {
+    const j = A.state().join, box = $('status'), txt = $('statustxt');
+    if (!j || !placing || j.round !== placing.round) { box.className = 'status'; return null; }
+    let line, cls = '';
+    const st = String(j.stage || ''), starts = /round starts in ([0-9:]+)/.exec(st);
+    if (j.state === 'refused') { line = 'Order not placed: ' + (j.why || 'refused'); cls = 'bad'; }
+    else if (j.state === 'joining' && starts) { line = '\u2713 Order locked \u00b7 the window starts in ' + starts[1]; cls = 'ok'; }
+    else if (j.state === 'joining') { line = 'Placing your order \u2026 ' + (/^stake lock/.test(st) ? 'locking your stake in the federation' : (st || 'asking the round\'s seats')); }
+    else { line = '\u2713 Order placed'; cls = 'ok'; }
+    if (cls && !placing.doneAt) placing.doneAt = Date.now();
+    if (!cls) placing.doneAt = 0;
+    if (placing.doneAt && Date.now() - placing.doneAt > (cls === 'bad' ? 20000 : 10000) && !starts) { placing = null; box.className = 'status'; return null; }
+    txt.textContent = line; box.className = 'status on' + (cls ? ' ' + cls : '');
+    return { state: j.state, line, cls };
+  }
+  // THE PRICE OF UP: the last certified batch's, else 50¢; Down is 1 less it
+  const upCents = () => { const b = book && book.batches ? book.batches.filter((x) => x.price) : []; return b.length ? Math.round(Number(b[b.length - 1].price) / TICK) : 50; };
+  const priceOf = (i) => (i === 0 ? upCents() : 100 - upCents());
+  const net = (s) => s * (1 - FEE_BPS / 10000);
+  async function prices() {
+    try { const j = await (await fetch('https://api.coinbase.com/v2/prices/BTC-USD/spot', { cache: 'no-store' })).json(); live.now = Math.round(Number(j.data.amount) * 100); } catch {}
+    if (current && live.beatFor !== current.id && Date.now() >= current.entryCloseMs - PERIOD_MS) {
+      try {
+        const start = current.entryCloseMs - PERIOD_MS, iso = (ms) => new Date(ms).toISOString();
+        const c = await (await fetch(`https://api.exchange.coinbase.com/products/BTC-USD/candles?granularity=60&start=${iso(start - 60000)}&end=${iso(start)}`)).json();
+        const before = c.filter((x) => x[0] * 1000 < start).sort((a, b) => b[0] - a[0])[0];
+        if (before) { live.beat = Math.round(before[4] * 100); live.beatFor = current.id; }
+      } catch {}
+    }
+    draw();
+  }
+  async function readBook() { if (current) { try { book = await A.market.book(current.id); } catch { book = null; } } draw(); }
+  // WHAT THE SHEET ASKS: { stakeSat, limitCents, expiryMs, shares, win } or why not
+  function asked() {
+    if (mode === 'market') {
+      const amt = Math.floor(Number($('amt').value));
+      const p = Math.min(99, priceOf(pick) + 10);               // a market order: at most 10¢ over the price now, filled at the batch's
+      if (!(amt >= MIN_SAT && amt <= MAX_SAT)) return { why: `an amount of ${MIN_SAT} to ${MAX_SAT.toLocaleString('en-US')} sats` };
+      const shares = Math.floor(net(amt) / (priceOf(pick) / 100));
+      if (Math.floor(net(amt) / (p / 100)) < MIN_SHARES) return { why: `at this price an order is at least ${Math.ceil(MIN_SHARES * p / 100 / (1 - FEE_BPS / 10000))} sats` };
+      // A MARKET ORDER DOES NOT REST: what its first batches do not fill expires 60 s on - time for its locks to reach the seats
+      // and a batch to clear - and comes back at settlement (book-ledger.js: an expired rest is refunded whole)
+      return { stakeSat: amt, limitCents: p, expiryMs: Date.now() + 60000, shares, win: shares };
+    }
+    const lp = Math.floor(Number($('lp').value)), sh = Math.floor(Number($('sh').value));
+    if (!(lp >= 1 && lp <= 99)) return { why: 'a limit price of 1 to 99¢' };
+    if (!(sh >= MIN_SHARES)) return { why: `at least ${MIN_SHARES} shares` };
+    const stakeSat = Math.ceil(sh * lp / 100 / (1 - FEE_BPS / 10000));
+    if (stakeSat > MAX_SAT) return { why: `at most ${MAX_SAT.toLocaleString('en-US')} sats an order` };
+    const e = Number($('exp').value);
+    return { stakeSat, limitCents: lp, expiryMs: e ? Date.now() + e : 0, shares: sh, win: sh, total: sh * lp / 100 };
+  }
+  function draw() {
+    current = windowNow();
+    if (!current) { $('q').textContent = 'No window is open on these nodes right now.'; $('go').disabled = true; return; }
+    const start = current.entryCloseMs - PERIOD_MS;
+    $('kind').textContent = current.free ? 'FREE' : 'PAID';
+    $('q').textContent = `BTC up or down, ${hhmm(start)}–${hhmm(current.entryCloseMs)} UTC?`;
+    $('left').textContent = (Date.now() < start ? 'opens in ' + mmss(start - Date.now()) + ', ' : '') + 'closes in ' + mmss(current.entryCloseMs - Date.now());
+    $('poly').href = 'https://polymarket.com/event/btc-updown-15m-' + Math.floor(start / 1000);
+    $('beat').textContent = Date.now() < start ? 'at ' + hhmm(start) : usd(live.beat);
+    $('now').textContent = usd(live.now);
+    const d = live.now !== null && live.beat !== null && Date.now() >= start ? live.now - live.beat : null;
+    $('delta').textContent = d === null ? '–' : (d >= 0 ? '▲ ' : '▼ ') + usd(Math.abs(d));
+    $('delta').style.color = d === null ? '' : d >= 0 ? 'var(--up)' : 'var(--down)';
+    $('p0').textContent = priceOf(0) + '¢'; $('p1').textContent = priceOf(1) + '¢'; $('chance').textContent = upCents() + '%';
+    $('s0').classList.toggle('on', pick === 0); $('s1').classList.toggle('on', pick === 1);
+    $('side').textContent = outcomes[pick];
+    $('mode').textContent = 'Buy · ' + (mode === 'market' ? 'Market' : 'Limit');
+    $('market').hidden = mode !== 'market'; $('limit').hidden = mode !== 'limit';
+    for (const b of document.querySelectorAll('#menu button')) b.classList.toggle('on', b.dataset.mode === mode);
+    const a = asked();
+    if (mode === 'market') { $('mwin').textContent = a.why ? '–' : sats(a.win); $('mprice').textContent = a.why ? '' : 'at ' + priceOf(pick) + '¢'; }
+    else { $('ltotal').textContent = a.why ? '–' : sats(a.stakeSat); $('lwin').textContent = a.why ? '–' : sats(a.win); }
+    $('err').textContent = current.free ? 'Orders need a paid round' : (a.why || '');
+    const js = joinStatus();
+    $('go').disabled = !!a.why || current.free || !!(js && js.state === 'joining' && !js.cls);
+    $('go').textContent = 'Buy ' + outcomes[pick];
+    const mine = A.market.orders();
+    // ONE CARD PER ORDER, its result in it: the order (side, amount, limit, window) and the page's line for its entry (state, payout)
+    const lines = (A.state().picks || []).filter((l) => l && l.text);
+    const lineOf = (o) => lines.find((l) => l.entry && l.entry === o.entry) || lines.find((l) => l.round === o.round && Number(l.pick) === Number(o.pick));
+    const win = (closeMs) => hhmm(closeMs - PERIOD_MS) + '–' + hhmm(closeMs) + ' UTC';
+    const satsOf = (msat) => sats(Number(msat) / 1000);
+    const signed = (msat, sign) => (sign < 0 ? '−' : '+') + satsOf(msat);
+    const CLOSED = ['won', 'lost', 'refunded', 'void', 'disputed', 'right', 'wrong', 'settled'];
+    // WHAT AN ORDER CAME TO: [chip class, chip text, amount line, its class, msat gained (+) or lost (−)]
+    const resultOf = (o, l) => {
+      if (o.cancelled) return ['', 'cancelled', '', '', 0];
+      const st = l && l.state;
+      if (st === 'won') return ['won', 'won', signed(l.gainMsat, 1), 'won', Number(l.gainMsat)];
+      if (st === 'lost') return ['lost', 'lost', signed(l.lostMsat, -1), 'lost', -Number(l.lostMsat)];
+      if (st === 'settled') { const d = Number(l.payoutMsat) - Number(l.netMsat); return [d >= 0 ? 'won' : 'lost', 'paid ' + satsOf(l.payoutMsat), signed(Math.abs(d), d), d >= 0 ? 'won' : 'lost', d]; }
+      if (st === 'refunded' || st === 'void') return ['', 'refunded', '±0', '', 0];
+      if (st === 'disputed') return ['', 'refunded at expiry', '±0', '', 0];
+      if (st === 'right' || st === 'wrong') return [st === 'right' ? 'won' : 'lost', st === 'right' ? 'right' : 'wrong', 'free', '', 0];
+      if (st === 'unverified') return ['wait', 'result unverified', '', '', 0];
+      if (o.entryCloseMs > Date.now()) return ['open', 'closes in ' + mmss(o.entryCloseMs - Date.now()), '', '', 0];
+      return ['wait', 'waiting for the result', '', '', 0];
+    };
+    // PENDING UNTIL FINAL: a result stands open to objection for 10 minutes after it is signed (deadlineAfterResolveMs 600000)
+    const finOf = (l) => {
+      if (!l || !CLOSED.includes(l.state) || l.final === undefined) return '';
+      if (l.final) return '<span class="fin">final</span>';
+      return `<span class="fin pend">pending · final ${l.finalAtMs ? 'in ' + mmss(l.finalAtMs - Date.now()) : 'soon'}</span>`;
+    };
+    const card = (side, amount, limit, closeMs, chip, extra = '', cls = '') => `<div class="ord${cls}"><span class="sd ${side === 0 ? 'up' : 'down'}">${side === 0 ? '▲' : '▼'} ${esc(outcomes[side] || side)}</span>`
+      + `<div class="what"><b>${amount}</b> <span class="lim">≤ ${limit}¢</span><div class="win">${win(closeMs)}</div></div>`
+      + `<div class="st"><span class="chip2 ${chip[0]}">${esc(chip[1])}</span>${extra}</div></div>`;
+    const flight = placing && js && !mine.some((o) => o.round === placing.round && o.placedMs >= placing.at - 1000)
+      ? card(placing.pick, sats(placing.stakeSat), placing.limitCents, placing.entryCloseMs,
+        js.cls === 'bad' ? ['lost', 'not placed'] : js.cls ? ['open', js.line.includes('locked') ? 'locked' : 'placed'] : ['wait', 'placing…'], '', ' flight') : '';
+    const rows = mine.map((o) => ({ o, l: lineOf(o) })).reverse();
+    const isClosed = ({ o, l }) => o.cancelled || !!(l && CLOSED.includes(l.state));
+    const open = rows.filter((r) => !isClosed(r)), closed = rows.filter(isClosed);
+    $('mine').innerHTML = flight + (open.length ? open.map(({ o, l }) => {
+      const r = resultOf(o, l);
+      const cancel = !o.cancelled && o.entryCloseMs > Date.now() && !(l && l.state && l.state !== 'open') ? `<button data-cancel="${o.entry}">cancel</button>` : '';
+      return card(Number(o.pick), satsOf(o.stakeMsat), Math.round(o.limitPrice / TICK), o.entryCloseMs, r, cancel);
+    }).join('') : (flight ? '' : `<div class="sub">${closed.length ? 'No open orders.' : 'No orders yet. Pick Up or Down and buy: your orders and their results show here.'}</div>`));
+    // PAST ORDERS, KEPT IN THIS BROWSER (version 9): each closed order's summary - no key, no secret - under its entry, merged with
+    // the tab's live ones (the live line wins), newest round first, at most 200
+    const PAST_KEY = 'arena.updown.past.v1';
+    let kept = []; try { kept = JSON.parse(window.localStorage.getItem(PAST_KEY) || '[]'); } catch { kept = []; }
+    const byEntry = new Map((Array.isArray(kept) ? kept : []).filter((x) => x && x.entry).map((x) => [x.entry, x]));
+    for (const { o, l } of closed) {
+      const r = resultOf(o, l);
+      byEntry.set(o.entry, { entry: o.entry, closeMs: Number(o.entryCloseMs), side: Number(o.pick), stakeMsat: Number(o.stakeMsat), limit: Math.round(o.limitPrice / TICK),
+        state: o.cancelled ? 'cancelled' : (l && l.state) || '', pnlMsat: r[4], final: l ? l.final : undefined, finalAtMs: l ? l.finalAtMs : undefined });
+    }
+    const past = [...byEntry.values()].sort((x, y) => y.closeMs - x.closeMs || (x.entry < y.entry ? -1 : 1)).slice(0, 200);
+    try { window.localStorage.setItem(PAST_KEY, JSON.stringify(past)); } catch { /* private window: this tab's only */ }
+    const resultLine = (p) => p.state === 'won' ? `${outcomes[p.side]} won` : p.state === 'lost' ? `${outcomes[1 - p.side]} won`
+      : p.state === 'refunded' || p.state === 'void' ? 'refunded' : p.state === 'disputed' ? 'disputed · refunded' : p.state === 'cancelled' ? 'cancelled' : p.state || '–';
+    const plLine = (p) => (p.pnlMsat > 0 ? '+' + satsOf(p.pnlMsat) : p.pnlMsat < 0 ? '−' + satsOf(-p.pnlMsat) : '±0');
+    const plCls = (p) => (p.pnlMsat > 0 ? 'won' : p.pnlMsat < 0 ? 'lost' : '');
+    const isFinal = (p) => p.final === true || (p.finalAtMs && Date.now() >= p.finalAtMs) || p.state === 'cancelled';
+    const statusLine = (p) => (isFinal(p) ? 'final' : p.finalAtMs ? 'pending · final in ' + mmss(p.finalAtMs - Date.now()) : 'pending');
+    $('histhead').hidden = !past.length;
+    $('hist').innerHTML = past.map((p) => `<div class="pastc"><div class="ph"><span class="sd ${p.side === 0 ? 'up' : 'down'}">${p.side === 0 ? '▲' : '▼'} ${esc(outcomes[p.side] || p.side)}</span>`
+      + `<b class="rd">${win(p.closeMs)}</b><span class="fin${isFinal(p) ? '' : ' pend'}">${esc(statusLine(p))}</span></div>`
+      + `<div class="pg"><div><span>Stake</span><b>${satsOf(p.stakeMsat)}</b></div><div><span>Result</span><b>${esc(resultLine(p))}</b></div>`
+      + `<div><span>P/L</span><b class="${plCls(p)}">${esc(plLine(p))}</b></div></div></div>`).join('');
+    $('pastt').innerHTML = past.length ? `<table class="past"><thead><tr><th>Round</th><th>Side</th><th class="n">Stake</th><th>Result</th><th class="n">P/L</th><th>Status</th></tr></thead><tbody>`
+      + past.map((p) => `<tr><td>${win(p.closeMs)}</td><td class="${p.side === 0 ? 'up' : 'down'}">${p.side === 0 ? '▲' : '▼'} ${esc(outcomes[p.side] || p.side)}</td><td class="n">${satsOf(p.stakeMsat)} <span class="sub">≤ ${p.limit}¢</span></td>`
+        + `<td>${esc(resultLine(p))}</td><td class="n ${plCls(p)}">${esc(plLine(p))}</td><td class="${isFinal(p) ? '' : 'pend'}">${esc(statusLine(p))}</td></tr>`).join('') + '</tbody></table>'
+      : '<div class="sub">No past orders yet: an order shows here once its round has a result.</div>';
+    const won = past.reduce((t, p) => t + (p.pnlMsat > 0 ? p.pnlMsat : 0), 0);
+    const lost = past.reduce((t, p) => t + (p.pnlMsat < 0 ? -p.pnlMsat : 0), 0);
+    const pend = past.filter((p) => !isFinal(p)).length;
+    const tot = `${past.length} closed · won <b class="won">+${esc(satsOf(won))}</b> · lost <b class="lost">−${esc(satsOf(lost))}</b> · net <b class="${won >= lost ? 'won' : 'lost'}">${won >= lost ? '+' : '−'}${esc(satsOf(Math.abs(won - lost)))}</b>${pend ? ` · ${pend} pending` : ''}`;
+    $('tot').innerHTML = tot; $('totd').innerHTML = tot;
+    window.UPDOWN_CLIENT.history = past.map((p) => ({ entry: p.entry, round: win(p.closeMs), side: outcomes[p.side], stake: satsOf(p.stakeMsat), result: resultLine(p), pl: plLine(p), status: statusLine(p), final: isFinal(p), finalAtMs: p.finalAtMs }));
+    window.UPDOWN_CLIENT.status = js;
+    window.UPDOWN_CLIENT.state = { round: current.id, free: current.free, window: [start, current.entryCloseMs], beat: live.beat, now: live.now, pick, mode, asked: a, orders: mine.length, upCents: upCents() };
+  }
+  $('s0').onclick = () => { pick = 0; draw(); }; $('s1').onclick = () => { pick = 1; draw(); };
+  $('gear').onclick = () => $('menu').classList.toggle('open');
+  $('menu').onclick = (e) => { const m = e.target.dataset && e.target.dataset.mode; if (m) { mode = m; $('menu').classList.remove('open'); if (m === 'limit') $('lp').value = String(priceOf(pick)); draw(); } };
+  for (const b of document.querySelectorAll('[data-add]')) b.onclick = () => { $('amt').value = String(Math.min(MAX_SAT, (Math.floor(Number($('amt').value)) || 0) + Number(b.dataset.add))); draw(); };
+  for (const b of document.querySelectorAll('[data-sh]')) b.onclick = () => { $('sh').value = String(Math.max(0, (Math.floor(Number($('sh').value)) || 0) + Number(b.dataset.sh))); draw(); };
+  for (const b of document.querySelectorAll('[data-lp]')) b.onclick = () => { $('lp').value = String(Math.min(99, Math.max(1, (Math.floor(Number($('lp').value)) || 50) + Number(b.dataset.lp)))); draw(); };
+  for (const id of ['amt', 'lp', 'sh', 'exp']) $(id).oninput = draw;
+  $('mine').onclick = async (e) => {
+    const id = e.target && e.target.dataset && e.target.dataset.cancel; if (!id) return;
+    e.target.disabled = true; const r = await A.market.cancel(id); $('err').textContent = r.ok ? '' : 'Cancel refused: ' + (r.why || (r.seats || []).map((s) => s.why).join('; ')); draw();
+  };
+  $('go').onclick = () => {
+    const a = asked(); if (a.why) return;
+    $('err').textContent = '';
+    placing = { round: current.id, pick, limitCents: a.limitCents, stakeSat: a.stakeSat, entryCloseMs: current.entryCloseMs, at: Date.now(), doneAt: 0 };
+    const ok = A.market.order(current.id, pick, a.limitCents * TICK, a.expiryMs, a.stakeSat * 1000);
+    if (ok === false) { placing = null; $('err').textContent = 'The page did not take the order: ' + ((A.state().join || {}).why || 'no answer'); }
+    draw();
+    setTimeout(draw, 500);
+  };
+  draw(); prices(); readBook();
+  setInterval(draw, 1000); setInterval(prices, 5000); setInterval(readBook, 3000);
+  // THE EXCHANGE, ON A WIDE SCREEN ONLY (kanban #448): mounted once the window is wide enough, never on a phone (no second poll there);
+  // a tapped level fills a limit order on that side at that price
+  let xv = null;
+  const wide = window.matchMedia('(min-width:1000px)');
+  const mountXv = () => {
+    if (xv || !wide.matches || typeof A.market.exchange !== 'function') return;
+    xv = A.market.exchange($('xv'), { round: () => current && current.id, label: (side) => 'Chance of ' + outcomes[side],
+      onPrice: (cents, side) => { pick = side; mode = 'limit'; $('lp').value = String(Math.min(99, Math.max(1, cents))); draw(); } });
+    window.UPDOWN_CLIENT.exchange = xv;
+  };
+  mountXv();
+  if (wide.addEventListener) wide.addEventListener('change', mountXv);
+}
+</script>
+</body></html>
