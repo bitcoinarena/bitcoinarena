@@ -141,8 +141,8 @@
   .bar { display: flex; height: 60px; border-radius: 16px; overflow: hidden; margin: 32px 0 18px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06); }
   .bar div { display: grid; place-items: center; font: 700 15px "Space Grotesk"; color: #0b0f14; white-space: nowrap; overflow: hidden; }
   .bar .pool { flex: 90; background: linear-gradient(90deg, #1f6f4f, var(--bull)); color: #04130c; }
-  .bar .b-nodes { flex: 5; background: var(--cyan); } .bar .b-game { flex: 2.5; background: var(--gold); } .bar .b-proto { flex: 2.5; background: var(--btc); }
-  .legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .bar .b-nodes { flex: 4; background: var(--cyan); } .bar .b-game { flex: 2; background: var(--gold); } .bar .b-proto { flex: 2; background: var(--btc); } .bar .b-res { flex: 2; background: var(--nostr); }
+  .legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; }
   .legend div { font-size: 15px; color: var(--soft); }
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px; vertical-align: -1px; }
   .legend strong { display: block; font: 700 22px "Space Grotesk"; color: var(--text); }
@@ -312,16 +312,17 @@
   <div class="split reveal">
     <div class="kicker">Economics</div>
     <h2>Know where <em>every&nbsp;sat</em> goes.</h2>
-    <div class="bar" role="img" aria-label="A paid stake: 90 % in play, 5 % node fee, 2.5 % game developer donation, 2.5 % protocol developer donation">
-      <div class="pool">90 % in play</div><div class="b-nodes"></div><div class="b-game"></div><div class="b-proto"></div>
+    <div class="bar" role="img" aria-label="A paid stake on protocol 11: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves">
+      <div class="pool">90 % in play</div><div class="b-nodes"></div><div class="b-game"></div><div class="b-proto"></div><div class="b-res"></div>
     </div>
     <div class="legend">
       <div><i style="background:var(--bull)"></i>In play<strong>90%</strong></div>
-      <div><i style="background:var(--cyan)"></i>Node fee<strong>5%</strong><small>Paid to the nodes that verify the round and hold the money.</small></div>
-      <div><i style="background:var(--gold)"></i>Game developer<strong>2.5%</strong><small>Optional donation.</small></div>
-      <div><i style="background:var(--btc)"></i>Protocol developers<strong>2.5%</strong><small>Optional donation.</small></div>
+      <div><i style="background:var(--cyan)"></i>Node fee<strong>4%</strong><small>Paid to the nodes that verify the round and hold the money.</small></div>
+      <div><i style="background:var(--gold)"></i>Game developer<strong>2%</strong><small>To the game&rsquo;s developer.</small></div>
+      <div><i style="background:var(--btc)"></i>Protocol developers<strong>2%</strong><small>To the protocol developers.</small></div>
+      <div><i style="background:var(--nostr)"></i>Protocol reserves<strong>2%</strong><small>The network&rsquo;s own fund, below.</small></div>
     </div>
-    <p class="note">Developer donations are <b>optional</b> and can be set to <b>0%</b>. Free rounds take nothing.</p>
+    <p class="note">The split above is protocol 11, and it is <b>fixed</b>. Game versions before it keep their own: a 5% node fee and an <b>optional</b> 5% developer donation. Items pay 40% to the nodes and 20% to the reserves, plus the developers&rsquo; share you choose.</p>
     <div class="reserves" id="reserves" data-state="reading">
       <div class="r-head">
         <div class="kicker">Protocol reserves · live</div>
