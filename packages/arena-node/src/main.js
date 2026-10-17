@@ -328,7 +328,7 @@ if (url) {
         const view = await blocksOver(call, Math.max(0, height - CENSUS_LOOKBACK), height, { cache: blocksKept });
         const census = censusOfView(view, contract);
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
-        // each bond's confirmation height and CLTV maturity: the funding vote's seasoning (D1) and lock (D2), §27A.9.5
+        // each bond's confirmation height and CLTV maturity: the funding vote's age (rules 1, 2) and lock (rule 1), §27A.9.5
         return census.entries.map((e) => ({ pubkey: e.pubkey, outpoint: `${Buffer.from(e.txid).toString('hex')}:${e.vout}`, bondSats: e.bondSats,
           height: Number.isInteger(e.height) ? e.height : null, maturity: e.advert && Number.isInteger(e.advert.bondMaturityHeight) ? e.advert.bondMaturityHeight : null }));
       },

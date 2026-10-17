@@ -20,14 +20,14 @@ export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PR
   CREATE TABLE IF NOT EXISTS funding_vote_outcomes (proposal TEXT PRIMARY KEY, outcome TEXT NOT NULL, last_hash TEXT, decided_ms INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS funding_payments (proposal TEXT PRIMARY KEY, tranches INTEGER NOT NULL, cancelled TEXT, cancelled_k INTEGER)`;
 
-/** A payment's id: the proposal's own for a single payment (D5), else one per tranche. */
+/** A payment's id: the proposal's own for a single payment (rule 5), else one per tranche. */
 export const trancheIdOf = (pid, k, of) => (of === 1 ? pid : createHash('sha256').update(`ARENA/v1/FundingTranche:${pid}:${k}`).digest('hex'));
 
 /**
  * `db` a better-sqlite3 handle; `verify(sig, digest, key32)` BIP340; `isBonded(nodeHex)` true / false, or null when this seat cannot
  * tell yet; `tip()` this seat's height (a promise; null when unknown); `activeAt(endHeight)` -> { ok, nodes: [hex] } or { ok: false, why };
  * `schedule` FUNDING_SCHEDULES.spec unless a live proof runs the short one; `seasonedNodes(networkHex, publishedHeight, atHeight)` -> [hex]
- * the nodes whose bond confirmed `season` blocks before publication (D6), or null when this seat cannot tell yet.
+ * the nodes whose bond confirmed `season` blocks before publication (the signal rule), or null when this seat cannot tell yet.
  */
 export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedule = FUNDING_SCHEDULES.spec, log = () => {}, now = () => Date.now(),
   voteChain = null, maxBlocksPerPass = 64, seasonedNodes = null }) {
@@ -46,13 +46,14 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
   const voteBlocks = (pid) => db.prepare('SELECT height, hash, votes FROM funding_vote_blocks WHERE proposal = ? ORDER BY height').all(pid);
   const voteOutcome = (pid) => { const r = db.prepare('SELECT outcome, last_hash FROM funding_vote_outcomes WHERE proposal = ?').get(pid); return r ? { ...JSON.parse(r.outcome), lastHash: r.last_hash } : null; };
   const votesHeld = (pid) => voteBlocks(pid).flatMap((b) => JSON.parse(b.votes).map((v) => ({ payload: fromHex(v.payload), height: b.height, txid: v.txid })));
-  // THE COUNT WITH THE HIJACK DEFENCES (§27A.9.5): only seasoned bonds locked past the vote vote, weighted by their lock (D1, D2), and
-  // YES also needs 20 % of the seasoned capital (D4). `until` the vote's end, or a payment's due height + 1 for its re-count (D5)
+  // THE COUNT WITH THE FIVE RULES (§27A.9.5): only bonds 3 months old and locked 3 months past the vote vote, weighted by their age
+  // (rules 1, 2); 60 % YES and YES at least 20 % of everyone who could vote (rule 3). `until` the vote's end, or a payment's due
+  // height + 1 for its re-count (rule 5)
   const countOf = (pid, period, o, until = period.until) => { const c = voteCensus(pid); if (!c) return null;
     const w = voteWeights({ census: c.census, publishedHeight: o.publishedHeight, last: period.last, schedule });
-    return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify, seasonedSats: w.seasonedSats }),
+    return { ...fundingTally({ proposalId: fromHex(pid), census: w.voters, votes: votesHeld(pid), from: period.from, until, verify }),
       votersEligible: w.voters.length, bondsInCensus: c.census.length }; };
-  /** The last block a passed proposal's votes are read to: its last payment's due height (D5, at most four tranches). */
+  /** The last block a passed proposal's votes are read to: its last payment's due height (rule 5, at most four tranches). */
   const readEndOf = (period) => period.last + schedule.delay + (FUNDING_TRANCHES - 1) * schedule.trancheEvery;
   function voteView(pid, o, signal) {
     const period = votePeriodOf({ proposal: o, signal, schedule });
@@ -105,7 +106,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // read on, a pass at a time, this proposal's votes only
       const prefix = row.id.slice(0, 16);
       let next = held.length ? held[held.length - 1].height + 1 : period.from;
-      // a passed vote is read on through its payments' due heights: a NO in the delay cancels (D5)
+      // a passed vote is read on through its payments' due heights: a NO in the delay cancels (rule 5)
       const upTo = Math.min(height, decided ? readEndOf(period) : period.last);
       for (let n = 0; next <= upTo && n < maxBlocksPerPass; next++, n++) {
         const hash = await hashAt(next);
@@ -119,13 +120,13 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const lastHash = await hashAt(period.last);
       const out = countOf(row.id, period, p.obj);
       db.prepare('INSERT OR IGNORE INTO funding_vote_outcomes (proposal, outcome, last_hash, decided_ms) VALUES (?, ?, ?, ?)').run(row.id, JSON.stringify(out), lastHash, now());
-      log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, ${out.absolute ? '' : 'NOT '}20 % of the seasoned capital, ${out.bondsVoted} bond(s)`);
+      log(`[funding] ${row.id.slice(0, 16)}: vote ${out.passed ? 'passed' : 'failed'} - turnout ${out.turnoutPct} %, YES ${out.approvalPct} % of YES + NO, YES ${out.yesOfAllPct} % of everyone who could vote, ${out.bondsVoted} bond(s)`);
       done.push({ id: row.id, ...out, lastHash });
     }
     return done;
   }
   /**
-   * THE PAYMENTS A PASSED PROPOSAL MAY MAKE NOW (§27A.9.5 D5): its tranches (fixed once, from `reservesSatsOf(pid)` - its paying
+   * THE PAYMENTS A PASSED PROPOSAL MAY MAKE NOW (§27A.9.5 rule 5): its tranches (fixed once, from `reservesSatsOf(pid)` - its paying
    * reserves when first asked), each payable when its due block is `decideDepth` deep and a re-count of every vote up to it still
    * passes. A failed re-count cancels that payment and every later one, for good. Answers [{ id, proposal, k, of, lnurl, amountSats,
    * proposalSats, dueAt, decidableAt }] and, in `cancelled`, the proposals stopped.
@@ -150,7 +151,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (!(Number.isInteger(tip) && tip >= t.payableAt) || readTo < t.dueAt) break;
         const again = countOf(row.id, period, p.obj, t.dueAt + 1);
         if (!again || !again.passed) {
-          const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again && again.absolute ? '' : 'not '}20 % of the seasoned capital`;
+          const why = `payment ${t.k + 1} of ${t.of} cancelled at its due block ${t.dueAt}: YES ${again ? again.approvalPct : '?'} % of YES + NO, ${again ? again.yesOfAllPct : '?'} % of everyone who could vote`;
           db.prepare('UPDATE funding_payments SET cancelled = ?, cancelled_k = ? WHERE proposal = ?').run(why, t.k, row.id);
           log(`[funding] ${row.id.slice(0, 16)}: ${why}`);
           break;
@@ -218,7 +219,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         if (height < end) continue;
         const a = await activeAt(end).catch((e) => ({ ok: false, why: e.message }));
         if (!a || !a.ok) { log(`[funding] ${row.id.slice(0, 16)}: the signal ended at ${end}, its active nodes not read yet: ${a ? a.why : '?'}`); continue; }
-        // D6: only nodes with a seasoned bond count, among the active and among the signals
+        // THE SIGNAL RULE: only nodes with a bond 3 months old count, among the active and among the signals
         if (typeof seasonedNodes === 'function') {
           const seasoned = await Promise.resolve(seasonedNodes(toHex(p.obj.networkId), p.obj.publishedHeight, end)).catch(() => null);
           if (!Array.isArray(seasoned)) { log(`[funding] ${row.id.slice(0, 16)}: the seasoned bonds at ${end} not read yet`); continue; }

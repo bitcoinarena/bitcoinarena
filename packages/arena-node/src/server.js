@@ -1345,7 +1345,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: (sg, m, k) => schnorr.verify(sg, m, k),
     isBonded: (nodeHex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; if (!now.ok) return null; return (now.entries || []).some((e) => toHex(e.pubkey) === nodeHex); },
     tip: async () => (typeof chainTip === 'function' ? Number(await chainTip()) : null),
-    // D6 (§27A.9.5): ACTIVE = served rounds in at least 3 of the 4 weeks before the signal's end, each week on the chain's median time
+    // THE SIGNAL RULE (§27A.9.5): ACTIVE = served rounds in at least 3 of the 4 weeks before the signal's end, each week on the chain's median time
     activeAt: async (end) => {
       if (typeof blockTimeAt !== 'function') return { ok: false, why: 'this seat reads no block times' };
       const w = fundingSchedule.week;
@@ -1360,7 +1360,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       return { ok: true, nodes: activeInWeeks(weeks), fromHeight: end - 4 * w };
     },
-    // D6 / D1: the nodes whose bond confirmed `season` blocks before the proposal was published, in the census at the signal's end
+    // the signal rule and rule 1: the nodes whose bond confirmed `season` blocks before the proposal was published, in the census at the signal's end
     seasonedNodes: ballot && typeof ballot.censusAt === 'function' ? async (net, published, at) => {
       const c = await ballot.censusAt(net, at); if (!c) return null;
       return c.filter((b) => Number.isInteger(b.height) && b.height <= published - fundingSchedule.season).map((b) => toHex(b.pubkey));
@@ -1383,7 +1383,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
-  // the reserves this seat holds unspent, over every federation, in sat (D3's base); the chain tip the funding loop saw last
+  // the reserves this seat holds unspent, over every federation, in sat (rule 4's base); the chain tip the funding loop saw last
   const reserveHeldSats = () => { const spent = reserveSpent(); let t = 0n;
     for (const fed of new Set([...Object.keys(reserveGuardians()), ...reserveKeys.keys()])) {
       const k = reserveKeys.get(fed); if (!k) continue;
@@ -1395,8 +1395,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const movesWaitLogged = new Set();
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
-    // THE PAYMENTS A PASSED VOTE ALLOWS NOW (§27A.9.5): its tranches past the delay whose re-count still passes (D5), each within the
-    // caps (D3): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
+    // THE PAYMENTS A PASSED VOTE ALLOWS NOW (§27A.9.5): its tranches past the delay whose re-count still passes (rule 5), each within the
+    // caps (rule 4): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
     passed: () => {
       if (!fundingBook) return [];
       const held = reserveHeldSats();
