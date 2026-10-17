@@ -14,6 +14,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { gzipSync } from 'node:zlib';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesWriter } from './series-writer.js';
 import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT } from '../../arena-protocol/src/old-series.js';
@@ -4899,7 +4900,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           }
           body = await building;
         }
-        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        // GZIPPED TO A PAGE THAT TAKES IT (kanban #435, the owner 2026-10-17: the lobby said "Signer nodes tn4.bitcoin-arena.io/fed2-1 ...
+        // fed2-7 did not answer in 10 s"): a listing is ~360 KB of JSON and federation B's seats answer through the tunnel to the
+        // test host - measured 6.7-22.9 s there, 0.1 s for the the test host's. Gzip makes it 6.7 % (367,315 -> 24,584 bytes) in ~3 ms,
+        // kept with the listing so it is made once per listing.
+        if (body.json.length > 8192 && /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''))) {
+          if (!body.gz) body.gz = gzipSync(body.json);
+          res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip', vary: 'accept-encoding', ...CORS });
+          return res.end(body.gz);
+        }
+        res.writeHead(200, { 'content-type': 'application/json', vary: 'accept-encoding', ...CORS });
         return res.end(body.json);
       }
 
