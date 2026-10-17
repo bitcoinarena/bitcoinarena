@@ -36,7 +36,6 @@
   .balance { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin: 22px 0 0; padding: 14px 16px; border: 1px solid rgba(247,147,26,.35); border-radius: 14px; background: linear-gradient(135deg, rgba(247,147,26,.12), rgba(247,147,26,.03)); }
   .balance .lbl { color: var(--dim); font-size: 14px; text-transform: uppercase; letter-spacing: .06em; } .balance .sats { font: 700 clamp(24px, 5vw, 34px)/1.1 system-ui; color: var(--btc); } .balance .sub { color: var(--soft); font-size: 14px; }
   .pip { display: inline-block; margin-right: 4px; padding: 0 7px; border-radius: 6px; background: rgba(247,147,26,.14); color: var(--btc); font: 700 13px/1.6 ui-monospace, monospace; vertical-align: 2px; }
-  .name-form { display: flex; gap: 6px; } .name-form input { width: 12em; }
   details.rules ol { margin: 10px 0 4px; padding-left: 22px; color: var(--soft); display: grid; gap: 4px; } details.rules b { color: var(--text); }
   .key { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin-bottom: 16px; font-size: 14px; }
   .key .id { color: var(--gold); font-weight: 600; margin-right: auto; }
@@ -94,11 +93,10 @@
       <li><b>Time to say no:</b> nothing is paid for 2 weeks after the vote, and NO votes in that time stop it. Above 1% of the reserves, it is paid in 4 monthly parts, each stoppable.</li>
     </ol>
   </details>
+  <!-- ALWAYS THE IN-GAME KEY AND NAME (the owner 2026-10-17: "Proposals always use the ingame key and name, no other options"): the key
+       of the wallet this browser plays with, and the name set in the game's Settings -->
   <div class="key">
     <span class="id">Loading…</span>
-    <form class="nsec-form"><input class="nsec" type="password" placeholder="nsec1… (stays in this browser)" autocomplete="off"><button class="btn" type="submit">Use my nsec</button></form>
-    <form class="name-form" hidden><input name="name" maxlength="24" autocomplete="nickname" aria-label="Your name"><button class="btn" type="submit">Save name</button></form>
-    <button class="btn use-arena" type="button" hidden>Use my in-game key</button><button class="btn new-key" type="button">Use a new key</button><button class="btn forget" type="button" hidden>Forget this key</button>
     <span class="say key-say"></span>
   </div>
   <div id="view"></div>
