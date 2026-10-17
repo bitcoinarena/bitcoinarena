@@ -24,15 +24,18 @@ function page(status, extra = {}) {
   const el = (id) => (els[id] = els[id] || { id, textContent: '', style: {} });
   for (const id of ['arena-fed-note', 'blwp-money-why', 'blwp-settings']) el(id);
   const document = { getElementById: (id) => els[id] || null, body: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)), contains: (c) => classes.has(c) } } };
-  const { move, ...fields } = extra;
-  const window = { ARENA_FED_STATUS: status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined, ARENA_FED_MOVE: move };
+  const { move, wallet, ...fields } = extra;
+  // the wallet's own federation (its chip) holds the round's status unless a test names another (#402)
+  const st = status ? { status, allows: FEDERATION_ALLOWS[status], ...fields } : undefined;
+  const mine = wallet || (st ? st.federation || 'f'.repeat(64) : undefined);
+  const window = { ARENA_FED_STATUS: st, ARENA_FED_MOVE: move, BLWP_LEDGER_FEDERATION: mine, ARENA_FED_LOADS: new Map(st && !wallet ? [[mine, st]] : []) };
   const did = [];
   const BLWPCLIENT = { federationSays, loadSays, moveSays, depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => { did.push('offer'); return {}; } };
   const fn = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'moneyContext', 'openWithdraw', 'showDepositOffer', 'donationBps', 'vault'],
     [PAINT, OPEN], 'return { paint: window.ARENA_PAINT_FEDERATION, openMoney };');
   const api = fn(document, window, BLWPCLIENT, () => ({ ok: true, round: { stakeMsat: 1n }, invite: 'fed1', seed: 's', gateways: [] }),
     () => did.push('withdraw'), () => did.push('modal'), () => 0, () => ({}));
-  return { ...api, els, classes, did };
+  return { ...api, els, classes, did, window };
 }
 
 test('CRITICAL: Withdraw and Move only - Deposit refused by name, the note shown, its buttons hidden by the body class', async () => {
@@ -82,7 +85,7 @@ test('an OPEN federation at load 4.33 says so in the note, and the deposit still
   const p = page('OPEN', { reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 });
   p.paint();
   assert.equal(p.els['arena-fed-note'].style.display, '');
-  assert.equal(p.els['arena-fed-note'].textContent, 'Load 4.33: this federation holds 650,000 sat, more than the 150,000 sat its guardians\' bonds cover.');
+  assert.equal(p.els['arena-fed-note'].textContent, 'Federation ffffffff · Load 4.33: this federation holds 650,000 sat, more than the 150,000 sat its guardians\' bonds cover.');
   // the deposit goes the way it goes with no load at all: the load refuses nothing
   const r = await p.openMoney('deposit', () => {});
   const plain = page('OPEN'); const r0 = await plain.openMoney('deposit', () => {});
@@ -90,6 +93,34 @@ test('an OPEN federation at load 4.33 says so in the note, and the deposit still
   const under = page('OPEN', { reserveSats: '100000', exposureCapSats: '150000', load: 0.6666 });
   under.paint();
   assert.equal(under.els['arena-fed-note'].style.display, 'none', 'a load under 1 says nothing');
+});
+
+// THE NOTE SAYS THE WALLET'S FEDERATION (kanban #402, the owner 2026-10-17): the lobby checks rounds of A (load 4.33) and B (0.72) in
+// turn; the note followed whichever came last and came and went. It now says the one on the wallet's chip, and a round of another
+// federation changes nothing - not its words, not whether it is shown.
+test('#402: the note follows the wallet\'s federation; rounds of another federation checked in turn leave it as it is', async () => {
+  const A = '337ae01a'.padEnd(64, '0'), B = 'b18947f0'.padEnd(64, '0');
+  const a = { status: 'OPEN', allows: FEDERATION_ALLOWS.OPEN, reserveSats: '650000', exposureCapSats: '150000', load: 4.3333 };
+  const b = { status: 'OPEN', allows: FEDERATION_ALLOWS.OPEN, reserveSats: '108000', exposureCapSats: '150000', load: 0.72 };
+  const p = page(null, { wallet: A });
+  p.window.ARENA_FED_LOADS = new Map([[A, a], [B, b]]);
+  const seen = [];
+  let writes = 0; const note = p.els['arena-fed-note']; let text = '';
+  Object.defineProperty(note, 'textContent', { get: () => text, set: (v) => { writes++; text = v; } });
+  for (const [fed, st] of [[A, a], [B, b], [A, a], [B, b], [B, b]]) {
+    p.window.ARENA_FED_STATUS = { ...st, federation: fed };
+    p.paint();
+    seen.push([note.style.display, note.textContent]);
+  }
+  const want = ['', 'Federation 337ae01a · Load 4.33: this federation holds 650,000 sat, more than the 150,000 sat its guardians\' bonds cover.'];
+  assert.deepEqual(seen, Array(5).fill(want));
+  assert.equal(writes, 1, 'the note was written once, not once per round');
+  // a wallet in B: the same rounds, no note
+  const q = page(null, { wallet: B }); q.window.ARENA_FED_LOADS = new Map([[A, a], [B, b]]);
+  for (const [fed, st] of [[A, a], [B, b]]) { q.window.ARENA_FED_STATUS = { ...st, federation: fed }; q.paint(); assert.notEqual(q.els['arena-fed-note'].style.display, ''); }
+  // no chip yet: nothing said, whatever round was checked
+  const r = page('OPEN', { wallet: A }); r.window.BLWP_LEDGER_FEDERATION = undefined; r.window.ARENA_FED_STATUS = { ...a, federation: A }; r.paint();
+  assert.equal(r.els['arena-fed-note'].textContent, '');
 });
 
 // RULED A (the owner 2026-10-12, kanban #324): a deposit at load >= 1 is refused on mainnet only - a test network shows and warns
@@ -136,7 +167,7 @@ test('two signed federations: the one above 90 % offers Move to the one below 50
   assert.equal(moveOffer(b, [...all.values()]), null, 'the one at 40 % is offered nothing');
   const p = page('OPEN', { federation: listed[0].federation, load: 0.9333, move: offer });
   p.paint();
-  assert.equal(p.els['arena-fed-note'].textContent, `This federation is at 93 % load; federation ${listed[1].federation.slice(0, 16)} is at 40 %. Move is offered: your money can go there.`);
+  assert.equal(p.els['arena-fed-note'].textContent, `Federation ${listed[0].federation.slice(0, 8)} · This federation is at 93 % load; federation ${listed[1].federation.slice(0, 16)} is at 40 %. Move is offered: your money can go there.`);
   const other = page('OPEN', { federation: listed[1].federation, load: 0.4, move: offer });
   other.paint();
   assert.equal(other.els['arena-fed-note'].style.display, 'none', 'an offer for another federation is not this one\'s note');
