@@ -177,3 +177,17 @@ test('the board, built by leaderboard.js from signed results, is drawn with each
     for (const name of ['Night Hauler 7', twoMe.generated]) assert.equal(bytes.indexOf(Buffer.from(name, 'utf8')), -1, name);
   }
 });
+
+// kanban #457: a market's orders each join under their own key - the order-th the seed makes for the round - and each is named under
+// the player's identity, so the season counts every order under one player
+test('an order is named under its own key (order n) and the same identity as the player\'s', () => {
+  const storage = tab();
+  const zero = decodeLobbyName(fromHex(nameRecordFor(ROUND, { storage, random, curve: pageCurve }).record));
+  const two = nameRecordFor(ROUND, { storage, random, curve: pageCurve, order: 2 });
+  const rec = decodeLobbyName(fromHex(two.record));
+  const player2 = playerFor(ROUND, { seed: tabSeed({ storage, random }), curve: pageCurve, order: 2 });
+  assert.equal(toHex(rec.playerPubkey), toHex(player2.pubkey));
+  assert.notEqual(toHex(rec.playerPubkey), toHex(zero.playerPubkey));
+  assert.equal(toHex(rec.identityPubkey), toHex(zero.identityPubkey), 'one identity for every order');
+  assert.ok(verify(fromHex(two.sig), lobbyNameId(rec), rec.playerPubkey), 'signed by the order\'s own key');
+});

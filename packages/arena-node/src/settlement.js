@@ -825,6 +825,31 @@ export class LockSettlement {
    * qualifier with a kept send plan by its outgoing contract (winnings-send.js); without it, the base plan the send
    * plans are proposed and checked against.
    */
+  /**
+   * THE WINNERS' SHARES OF ROUNDS SETTLED BEFORE A BOOK KEPT THEM (kanban #457): an order book's settlement kept no shares until
+   * bookLockSettlement returned them, so every market round settled before kept [] and a season read its winners as losers. Each
+   * round this node signed whose kept shares are empty is planned again from its store (planOf - no preimage opened, no client
+   * run), and the shares that plan names are kept when the plan pays as many as the signed one did. Answers how many were filled.
+   */
+  async backfillShares({ limit = 500 } = {}) {
+    let rows = [];
+    try { rows = this.round.db.prepare("SELECT round_id FROM lock_settlement_shares WHERE shares = '[]' LIMIT ?").all(limit); } catch { return 0; }
+    let filled = 0;
+    for (const { round_id: rid } of rows) {
+      const id = new Uint8Array(rid);
+      const moves = this.round.lockSettlementMoves(id);
+      if (!moves) continue;
+      let got;
+      try { got = await this.planOf(id, { withSends: true }); } catch { continue; }
+      if (!got || !got.ok || !got.plan || got.plan.payouts.length !== moves.payouts) continue;
+      const shares = got.plan.stakeShares || [];
+      if (!shares.length) continue;
+      this.round.putLockSettlementShares(id, shares);
+      filled++;
+    }
+    return filled;
+  }
+
   async planOf(roundIdBytes, { withSends = false } = {}) {
     const key = toHex(roundIdBytes);
     const row = this.round.get(roundIdBytes);
