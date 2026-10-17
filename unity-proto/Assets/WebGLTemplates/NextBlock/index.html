@@ -3428,6 +3428,20 @@
       { const ord = pickFor(named.roundIdHex); if (ord && ord.limitPrice && ord.stakeMsat) named.round.orderStakeMsat = BigInt(ord.stakeMsat); }
       // PROTOCOL 11 PAYS THE RESERVES (§27A.9, kanban #397): the developers' 4 % and the reserves' 2 % are mandatory - no choice -
       // and the reserves' part goes to the federation's 5-of-7 reserve key, read from the round's signer nodes (at least 5 agree)
+      // THE FEES IN FORCE AT THIS ROUND (kanban #462, the owner 2026-10-17: fees change by proposal): the set its nodes name at the round's
+      // census height (GET /fees?height=, 5 must agree) - what a protocol-11 entry pays (its node fee, the developers' and the reserves'
+      // parts) and a market that pays the reserve charges in its fee lock; shown on the settlement strip while the round is joined
+      window.BLWP_JOIN_FEES = null;
+      const marketReserve = !!(marketHere && marketHere.fee && marketHere.fee.reserveBps > 0);
+      if (pays && BLWPCLIENT.fetchFees && named.round.censusHeight !== undefined && (marketReserve || (BLWPCLIENT.roundPaysReserves && BLWPCLIENT.roundPaysReserves(named.round)))) {
+        const fs = await joinStep('fetchFees', () => BLWPCLIENT.fetchFees({ nodes: named.nodes, height: Number(named.round.censusHeight) }));
+        if (!fs.ok) { window.BLWP_JOIN_REFUSED = 'the fees at this round could not be read: ' + fs.why; console.error('[blwp] join refused before any lock: ' + window.BLWP_JOIN_REFUSED); return; }
+        named.round.feeSet = fs.fees;
+        if (marketReserve) named.round.feeBps = BLWPCLIENT.marketFeeBpsOf(fs.fees);
+        window.BLWP_JOIN_FEES = { round: named.roundIdHex, height: Number(named.round.censusHeight), fees: fs.fees, agreeing: fs.agreeing, asked: fs.asked,
+          line: marketReserve ? BLWPCLIENT.marketFeesLine(fs.fees) : BLWPCLIENT.roundFeesLine(fs.fees) };
+        console.log(`[blwp] fees at census height ${named.round.censusHeight}: ${window.BLWP_JOIN_FEES.line} (${fs.agreeing} of ${fs.asked} nodes agree)`);
+      }
       let reservesHere = null;
       if (pays && donationSet && BLWPCLIENT.roundPaysReserves && BLWPCLIENT.roundPaysReserves(named.round)) {
         const fid = named.round.federationId;   // the entry's federation (on a round that takes any, the one the page chose)
@@ -4712,7 +4726,10 @@
         const at = paid ? paid.line.search(/(signer|selected) nodes: /) : -1;
         const say = at >= 0 ? 'Settled by ' + paid.line.slice(at).replace(/^(signer|selected) nodes: /, '').replace(/\b([0-9a-f]{6})[0-9a-f]{2}\b/g, '$1')
           .replace('no selected operator is playing', 'no operator playing').replace(/in both committees: (\d+) of (\d+)/, 'both committees $1/$2') : '';
-        if (ap.textContent !== say) ap.textContent = say;
+        // THE FEES OF THE ROUND JOINED (kanban #462): the set in force at its census height
+        const jf = window.BLWP_JOIN_FEES;
+        const said = jf ? (say ? say + ' · ' : '') + 'Fees ' + jf.line : say;
+        if (ap.textContent !== said) ap.textContent = said;
       }
     }
     {
