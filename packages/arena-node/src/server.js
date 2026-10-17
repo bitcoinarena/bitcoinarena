@@ -196,6 +196,7 @@ import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
+import { createReservePayouts, lnurlClient } from './reserve-payout.js';
 import { FUNDING_SCHEDULES, activeNodesBefore, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit } from './forfeit.js';
@@ -1280,7 +1281,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const c = decodeRoundContract(new Uint8Array(row.contract)); const id = c.gameId instanceof Uint8Array ? toHex(c.gameId) : null;
       const h = id && hosted instanceof Map ? hosted.get(id) : null; return h ? h.name : id ? id.slice(0, 8) : null; } catch { return null; }
   };
-  const reserveFiguresOf = (fedHex, key, last) => reserveFigures(key ? round.donationsFor(toHex(key)) : [], { federationId: fedHex, last, gameOf: gameOfRound });
+  // (a reserve output a payout spent is no longer held: kanban #397 slice 8)
+  const reserveFiguresOf = (fedHex, key, last) => { const spent = reserveSpent();
+    return reserveFigures(key ? round.donationsFor(toHex(key)).filter((r) => !spent.has(r.outpoint)) : [], { federationId: fedHex, last, gameOf: gameOfRound }); };
   // THE ROWS OTHER SEATS KEPT, CHECKED HERE (kanban #397 slice 4): a reserve output is kept only by the signer nodes its lock was
   // handed to; every 2 min this seat reads the others' rows and keeps each its own federation port confirms (reserve-book.js)
   const RESERVE_PEER_CHECKS = Number(process.env.ARENA_RESERVE_PEER_CHECKS || 200);
@@ -1353,7 +1356,38 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const base of seats) fetch(`${base}/funding`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-forwarded': '1' },
       body: JSON.stringify({ kind, hex }), signal: AbortSignal.timeout(8000) }).catch(() => {});
   };
-  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
+  // THE PAYOUT OF A PASSED PROPOSAL (§27A.9.3, kanban #397 slice 8, reserve-payout.js): the 5-of-7 of the federation that holds the
+  // reserves - its guardian seats, by the reserve key's DKG shares - pay the proposal's LNURL once; every seat records it
+  const payoutNet = String(chain || '').replace(/^bitcoin-/, '') || 'testnet4';
+  const lnurlAsk = lnurlClient({ network: payoutNet });
+  const payoutPeer = (base) => ({
+    commit: async (b) => { const r = await fetch(`${base}/reserve-payout/commit`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ plan: b.plan, kind: b.kind, txid: b.txid || null }), signal: AbortSignal.timeout(60000) }); const j = await r.json();
+      return j.ok ? { ok: true, commitment: { id: Number(j.commitment.id), hiding: fromHex(j.commitment.hiding), binding: fromHex(j.commitment.binding) } } : j; },
+    share: async (b) => { const r = await fetch(`${base}/reserve-payout/share`, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ planId: b.planId, kind: b.kind, commitments: b.commitments.map((c) => ({ id: c.id, hiding: toHex(c.hiding), binding: toHex(c.binding) })) }), signal: AbortSignal.timeout(60000) });
+      const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
+  });
+  const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
+  const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
+    network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
+    passed: () => (fundingBook ? fundingBook.list(null) : []).filter((p) => p.vote && p.vote.state === 'passed')
+      .map((p) => ({ id: p.id, lnurl: p.lnurl, amountSats: BigInt(p.amountSats), decidableAt: p.vote.decidableAt })),
+    guardians: () => new Map(Object.entries(reserveGuardians()).map(([fed, g]) => {
+      const nodes = sortedKeys(g.members); const needed = reserveNeeded(nodes.length);
+      const held = needed === null ? { ok: false } : reserveDkgOf(fed).signerNodeFor(nodes);
+      const key = held.ok ? held.pool.groupPublicKey : (reserveKeys.get(fed) || null);
+      return [fed, { members: nodes.map(toHex), key, needed, signer: held.ok ? { id: held.signerNode.id, share: held.signerNode.share } : null, peers: (g.peers || []).map(payoutPeer) }];
+    })),
+    reserveRows: (fed) => { const k = reserveKeys.get(fed) || (() => { const g = reserveGuardians()[fed]; if (!g) return null; const h = reserveDkgOf(fed).signerNodeFor(sortedKeys(g.members)); return h.ok ? h.pool.groupPublicKey : null; })();
+      return k ? round.donationsFor(toHex(k)).filter((r) => r.federationId === fed).map((r) => ({ outpoint: r.outpoint, amountMsat: r.amountMsat, verifiedMs: r.verifiedMs })) : []; },
+    portOf: (fed) => portOfFederation(fromHex(fed)),
+    keepRow: (row) => round.putDonationOutputs([row]),
+    broadcast: (rec) => { let seats = []; try { seats = networkSeats(); } catch { seats = []; }
+      for (const base of seats) fetch(`${base}/reserve-payout/record`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rec), signal: AbortSignal.timeout(15000) }).catch(() => {}); },
+  }) : null;
+  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound())
+    .then(async () => { if (reservePayouts && typeof chainTip === 'function') await reservePayouts.round({ height: Number(await chainTip()) }); }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
@@ -6660,7 +6694,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const totalMsat = String(federations.reduce((t, f) => t + BigInt(f.heldMsat), 0n));
         const paidIn = federations.flatMap((f) => f.paidIn.map((p) => ({ ...p, federationId: f.federationId }))).sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, RESERVES_LAST);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat, entries: federations.reduce((t, f) => t + f.entries, 0), federations, paidIn, payouts: [] }));
+        const payouts = reservePayouts ? reservePayouts.list().map((x) => ({ proposal: x.proposal, state: x.state, federation: x.federation, amountSats: x.plan ? x.plan.amountSats : null,
+          lnurl: x.plan ? x.plan.lnurl : null, txid: x.txid, paymentHash: x.plan ? x.plan.paymentHash : null, preimage: x.preimage, refundTxid: x.refundTxid, why: x.why })) : [];
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), totalMsat, entries: federations.reduce((t, f) => t + f.entries, 0), federations, paidIn, payouts }));
       }
       if (req.method === 'GET' && url.pathname === '/donation-ballots') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
@@ -6673,6 +6709,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
         return ans(200, { tip: height, schedule: fundingBook ? fundingBook.schedule : null, signalPct: 15, proposals: fundingBook ? fundingBook.list(height) : [] });
+      }
+      // THE PAYOUT'S DOORS (kanban #397 slice 8): a guardian seat's FROST commitment and share for a plan it rebuilt itself, and a
+      // payout record any seat keeps (a PAID one only with the invoice's preimage)
+      if (req.method === 'POST' && (url.pathname === '/reserve-payout/commit' || url.pathname === '/reserve-payout/share' || url.pathname === '/reserve-payout/record')) {
+        const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
+        if (!reservePayouts) return ans(501, { ok: false, why: 'this node pays no reserves' });
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body' }); }
+        try {
+          if (url.pathname.endsWith('/commit')) { const r = await reservePayouts.commit({ plan: b.plan, kind: String(b.kind), txid: b.txid || null });
+            return ans(r.ok ? 200 : (r.status || 400), r.ok ? { ok: true, commitment: { id: r.commitment.id, hiding: toHex(r.commitment.hiding), binding: toHex(r.commitment.binding) } } : r); }
+          if (url.pathname.endsWith('/share')) { const r = await reservePayouts.share({ planId: String(b.planId), kind: String(b.kind),
+            commitments: (b.commitments || []).map((c) => ({ id: Number(c.id), hiding: fromHex(String(c.hiding)), binding: fromHex(String(c.binding)) })) });
+            return ans(r.ok ? 200 : (r.status || 400), r.ok ? { ok: true, share: r.share.toString(16).padStart(64, '0') } : r); }
+          const r = await reservePayouts.learn(b); return ans(r.ok ? 200 : (r.status || 400), r);
+        } catch (e) { return ans(400, { ok: false, why: e.message }); }
+      }
+      if (req.method === 'GET' && url.pathname === '/reserve-payouts') {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ payouts: reservePayouts ? reservePayouts.list() : [] }));
       }
       if (req.method === 'POST' && url.pathname === '/funding') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };

@@ -75,5 +75,14 @@ test('seven guardian seats make a 5-of-7 reserve key: five sign, four do not, al
     const totals = await Promise.all(nodes.map(async (n) => (await figures(n)).totalMsat));
     assert.deepEqual(totals, ['2000', '2000', '2000', '2000', '2000', '2000', '0'], 'six take it; the seat whose federation does not hold it keeps nothing');
     assert.equal((await figures(nodes[3], '?all=1')).federations[0].paidIn.length, 1);
+
+    // SLICE 8: THE PAYOUT'S DOORS (kanban #397): nothing paid yet; a record that is no payout, or a commit for no plan, is refused
+    assert.deepEqual((await (await fetch(`http://127.0.0.1:${nodes[0].port}/reserve-payouts`)).json()).payouts, []);
+    assert.deepEqual(f0.payouts, []);
+    const post = async (path, body) => { const r = await fetch(`http://127.0.0.1:${nodes[0].port}${path}`, { method: 'POST', body: JSON.stringify(body) }); return [r.status, await r.json()]; };
+    const [s1, r1] = await post('/reserve-payout/record', { proposal: 'ab'.repeat(32), state: 'PAID', planId: '00', plan: { federation: toHex(FED) } });
+    assert.equal(r1.ok, false); assert.ok(s1 >= 400, String(s1));
+    const [s2, r2] = await post('/reserve-payout/commit', { plan: { proposal: 'ab'.repeat(32), federation: toHex(FED) }, kind: 'tx' });
+    assert.equal(r2.ok, false); assert.match(r2.why, /no passed vote/); assert.ok(s2 >= 400);
   } finally { await Promise.all(nodes.map((n) => n.close())); delete process.env.ARENA_RESERVE_DKG; }
 });
