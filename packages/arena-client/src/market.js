@@ -353,6 +353,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     const signed = p.market.scalar ? `value ${scalarValueLine(check.value, p.market.scalar.unit)}${check.clamped !== undefined && check.clamped !== check.value ? ` (paid as ${scalarValueLine(check.clamped, p.market.scalar.unit)})` : ''} between ${scalarValueLine(p.market.scalar.low, p.market.scalar.unit)} and ${scalarValueLine(p.market.scalar.high, p.market.scalar.unit)} (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`
       : p.market.gameSource ? `'${check.label}' (source round ${String(p.sourceRoundIdHex || '').slice(0, 8)} ended ${check.value}, signed by its committee, verified)`
         : `'${check.label}' (${p.market.threshold} of ${p.market.attestors.length} attestors, verified)`;
+    // AN ORDER THAT MATCHED NOBODY (kanban #452, measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
+    // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
+    // read its position from the book after the close (`unfilled`); its stake comes back whole
+    if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     const net = BigInt(row.netMsat);
     const pay = BigInt(row.payoutMsat);

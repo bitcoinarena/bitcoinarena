@@ -140,6 +140,13 @@ test('a market on a game is believed only from its source round\'s result, signe
   const lostTable = { ...table, rows: [{ ...table.rows[0], won: false, payoutMsat: '0' }] };
   const [lost] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: false, finalAtMs: '1788200600000', table: lostTable, check: ok }]]), nowMs: Number(S) });
   assert.deepEqual([lost.state, lost.lostMsat, lost.final, lost.finalAtMs], ['lost', '98500', false, 1788200600000]);
+  // kanban #452: a pick with no row in the table stays unknown - unless the page read its position from the book (0 shares, 0 cost)
+  const noRow = { ...table, rows: [] };
+  const [unknown] = marketLines({ picks: [pick], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, finalAtMs: '1', table: noRow, check: ok }]]), nowMs: Number(S) });
+  assert.equal(unknown.state, 'unknown');
+  const [unfilled] = marketLines({ picks: [{ ...pick, unfilled: true }], outcomes: new Map([[rid, { state: 'ATTESTED', label: 'BULLS', final: true, finalAtMs: '1', table: noRow, check: ok }]]), nowMs: Number(S) });
+  assert.deepEqual([unfilled.state, unfilled.backMsat, unfilled.final], ['refunded', String(pick.stakeMsat), true]);
+  assert.match(unfilled.text, /your order matched nobody: its .* sats come back whole$/);
   const [open] = marketLines({ picks: [pick], outcomes: new Map(), nowMs: Number(S) });
   assert.equal(open.final, undefined);
   assert.match(open.text, new RegExp(`waiting for source round ${toHex(SOURCE_ID).slice(0, 8)}'s signed result$`));

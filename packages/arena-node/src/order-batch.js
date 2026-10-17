@@ -462,6 +462,15 @@ export class OrderBook {
     return { book: true, filled: positionFilled(p), cancelled: !!(p && p.cancelled), inPending };
   }
 
+  /** GET /market-rounds (kanban #452): the rounds that took orders here since `sinceMs` (at most 2 days back), newest first, at
+   *  most 200 - where a player's own orders are read back from after a reload, open or closed. Ids only: each round's contract
+   *  is fetched by its id and hashes to it. */
+  recentRounds(sinceMs, nowMs = Date.now()) {
+    const from = Math.max(Number(sinceMs) || 0, nowMs - 2 * 24 * 3600 * 1000);
+    return this.db.prepare('SELECT round_id, MAX(received_ms) AS last FROM market_orders WHERE received_ms >= ? GROUP BY round_id ORDER BY last DESC LIMIT 200')
+      .all(from).map((r) => ({ round: toHex(new Uint8Array(r.round_id)), lastOrderMs: r.last }));
+  }
+
   /** GET /book: the certified batches as this seat clears them, and every position. */
   cleared(roundIdBytes) {
     const L = this.ledger(roundIdBytes);

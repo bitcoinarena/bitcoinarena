@@ -3003,6 +3003,14 @@
           .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
         const rowsOf = (o) => (o && o.table && Array.isArray(o.table.rows) ? o.table.rows.length : -1);
         const best = answers.find(hasRow) || answers.sort((a, b) => rowsOf(b) - rowsOf(a))[0];
+        // NO ROW ANYWHERE, ITS ROUND CLOSED (kanban #452): an order that matched nobody has no row - the table holds filled positions
+        // only. Its position read from the round's book: 0 shares and 0 cost is an order that matched nobody, its stake back whole
+        if (best && best.state === 'ATTESTED' && !hasRow(best) && p.entryIdHex && !p.unfilled && Date.now() > Number(p.entryCloseMs) + 5000) {
+          const books = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
+            .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
+          const pos = books.map((b) => (b.positions || []).find((x) => x.entry === p.entryIdHex)).find(Boolean);
+          if (pos && (pos.shares || []).every((x) => String(x) === '0') && String(pos.cost || '0') === '0') rememberPick(Object.assign({}, p, { unfilled: true }));
+        }
         for (const o of best ? [best] : []) {
           try {
             // EVERY KIND CHECKED HERE (kanban #362): an outcome attestation, a scalar market's value attestation, or a market on a
@@ -3033,6 +3041,23 @@
     // cancelled from here. The next order in that round takes the next key.
     const ORDER_KEYS = 8;
     const ENTRIES_SEEN = new Set();
+    // THE ROUNDS THAT TOOK ORDERS LATELY, from the seats (GET /market-rounds, the last 24 h): asked once a minute, each round's
+    // contract fetched once by its id (fetchRound: it hashes to the id) - an order of this wallet in a round that closed while no tab
+    // of it was open is read back from there
+    const MARKET_ROUNDS = new Map();   // id -> contract, or null when it could not be read
+    let marketRoundsAt = 0;
+    async function recentMarketRounds(nodes) {
+      if (Date.now() - marketRoundsAt < 60000) return;
+      marketRoundsAt = Date.now();
+      const since = Date.now() - 24 * 3600 * 1000;
+      const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/market-rounds?since=' + since, { cache: 'no-store', signal: AbortSignal.timeout(6000) })
+        .then((r) => (r.ok ? r.json() : null)).catch(() => null)));
+      const ids = new Set(said.flatMap((x) => (x && Array.isArray(x.rounds) ? x.rounds.map((r) => String(r.round)) : [])).filter((id) => /^[0-9a-f]{64}$/.test(id)));
+      for (const id of ids) {
+        if (MARKET_ROUNDS.has(id)) continue;
+        try { MARKET_ROUNDS.set(id, (await BLWPCLIENT.fetchRound(id, nodes)).contract || null); } catch { MARKET_ROUNDS.set(id, null); }
+      }
+    }
     window.BLWP_RESTORED_ORDERS = [];
     async function restoreOrdersFromSeats() {
       const G = window.ARENA_GAME;
@@ -3043,18 +3068,32 @@
       const known = new Set(readPicks().map((x) => x.entryIdHex));
       // the rounds the lobby lists, and those just closed that the seats still list (an order there has its result to show)
       const listed = [...(window.BLWP_LOBBY_ROWS || []), ...(window.BLWP_LOBBY_CLOSED || []).map((c) => ({ id: c.id, contract: c.contract, free: false }))];
+      // the seats of this game's side (those of a round of it listed now), and the rounds that took orders on them lately
+      const sideRow = listed.find((r) => r && r.contract && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
+      const sideNodes = sideRow && window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(sideRow.id) : [];
+      if (sideNodes.length) {
+        try { await recentMarketRounds(sideNodes); } catch { /* the next minute */ }
+        const have = new Set(listed.map((r) => r && r.id));
+        for (const [id, contract] of MARKET_ROUNDS) if (contract && !have.has(id)) listed.push({ id, contract, free: false, nodes: sideNodes });
+      }
       const rows = listed.filter((r) => r && !r.free && r.contract && BLWPCLIENT.roundPays && BLWPCLIENT.roundPays(r.contract) !== false
         && BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(r.contract) && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
       for (const r of rows) {
         const round = Object.assign({}, r.contract, { id: BLWPCLIENT.fromHex(r.id) });
         const keys = new Map();
         for (let i = 0; i < ORDER_KEYS; i++) { try { keys.set(BLWPCLIENT.toHex(BLWPCLIENT.playerFor(round, { seed, curve: window.BLWP_CURVE, order: i }).pubkey), i); } catch { /* no key */ } }
-        let book = null; try { book = await G.market.book(r.id); } catch { book = null; }
+        let book = null;
+        if (r.nodes) {   // a round from the seats' recent list: its book from those seats, the fullest answer
+          const got = (await Promise.all(r.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + r.id, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
+            .then((x) => (x.ok ? x.json() : null)).catch(() => null)))).filter(Boolean);
+          const size = (b) => (b.batches || []).length + (b.positions || []).length;
+          book = got.length ? got.reduce((a, b) => (size(b) > size(a) ? b : a)) : null;
+        } else { try { book = await G.market.book(r.id); } catch { book = null; } }
         if (!book) continue;
         const ids = [...new Set([...(book.positions || []).map((x) => x.entry), ...((book.resting && book.resting.buys) || [])])]
           .filter((id) => id && !known.has(id) && !ENTRIES_SEEN.has(r.id + id));
         if (!ids.length) continue;
-        const nodes = window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(r.id) : [];
+        const nodes = r.nodes || (window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(r.id) : []);
         const entries = [];
         for (const id of ids) {
           for (const n of nodes) {
@@ -3073,8 +3112,11 @@
         if (mine.length) console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats');
       }
     }
-    setTimeout(() => { restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)); }, 4000);
-    setInterval(() => { restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)); }, 15000);
+    // ONE PASS AT A TIME (measured: a slow pass and the next one read the same rounds side by side)
+    let restoring = null;
+    const restoreOnce = () => { if (!restoring) restoring = restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)).finally(() => { restoring = null; }); };
+    setTimeout(restoreOnce, 4000);
+    setInterval(restoreOnce, 15000);
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
     function marketViewLines(onlyThisGame = false) {
       if (!BLWPCLIENT.marketLines) return [];
