@@ -317,6 +317,10 @@ export const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && 
  * that whole rate of its stake and its `donationMsat` is 0 (no donation outputs beside the stake); the settlement splits
  * the claimed fee locks into the node table (feeBpsOf) and the donation set (the rest). A game: its node fee alone.
  */
+/** A market's protocol reserve (kanban #454): the part of its donation rate its terms name for the reserves, else 0. */
+export const reserveBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.reserveBps)
+  ? manifest.marketTerms.reserveBps : 0);
+
 export const entryFeeBpsOf = (manifest) => (isMarket(manifest) ? feeBpsOf(manifest) + donationBpsOf(manifest) : feeBpsOf(manifest));
 export const donationInFee = (manifest) => isMarket(manifest);
 

@@ -656,7 +656,15 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
  * locks come back whole by the return door. Under a fee rule that charges, every payout is scaled to what the claimed locks
  * pay after their fees, the dust to the first.
  */
-export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null }) {
+/**
+ * THE KEY A MARKET'S RESERVE LINE NAMES UNTIL ITS FEDERATION IS KNOWN (kanban #454): a round that takes any federation is planned
+ * once and then split per federation (federation-settlement.js splitByFederation), where each federation's part of the line is
+ * paid to that federation's own reserve key. This placeholder is never paid: a split without that key refuses.
+ */
+export const RESERVE_LATER_PK = Uint8Array.from([0x02, ...new Uint8Array(32)]);
+
+export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null,
+  reserveBps = 0, reserveKey = null }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
@@ -683,7 +691,13 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   // THE FEES DUE: the nodes' part of the market's whole rate, the donation the rest
   const total = nodeBps + donationBps;
   let nodesMsat = total > 0 ? (table.feesDueMsat * BigInt(nodeBps)) / BigInt(total) : 0n;
-  const giftMsat = table.feesDueMsat - nodesMsat;
+  // THE PROTOCOL RESERVE (kanban #454): `reserveBps` of the whole rate, out of the donation's part - never the nodes' or a player's.
+  // Paid to `reserveKey` (the round's federation's reserve key), or to RESERVE_LATER_PK when the round takes any federation
+  // and each federation's part goes to its own key
+  if (reserveBps > donationBps) return refuse(`a market's protocol reserve (${reserveBps} bps) is part of its donation (${donationBps} bps)`);
+  const reserveMsat = reserveBps > 0 && total > 0 ? (table.feesDueMsat * BigInt(reserveBps)) / BigInt(total) : 0n;
+  if (reserveMsat > 0n && !(reserveKey instanceof Uint8Array && reserveKey.length === 33)) return refuse('this market pays the protocol reserve, and no reserve key is known for its federation');
+  const giftMsat = table.feesDueMsat - nodesMsat - reserveMsat;
   // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, kanban #362 comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
   // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
   // frontendBookShares). Its lines go before the seats'.
@@ -713,6 +727,7 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
       owed.push({ kind: 'donation key', pubkey: sid, payoutPk: x.recipientPk, owedMsat: x.amountMsat, donation: { id: sid, index: i, recipientPk: x.recipientPk, label: x.label } });
     });
   }
+  if (reserveMsat > 0n) owed.push({ kind: 'reserve', reserve: true, pubkey: reserveKey.subarray(1), payoutPk: reserveKey, owedMsat: reserveMsat });
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendableMsat = poolMsat - inputFeesMsat;
@@ -727,7 +742,8 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   const unpaid = [];
   for (const x of split) {
     if (x.msat <= 0n) { unpaid.push({ pubkey: x.pubkey, owedMsat: x.owedMsat, why: 'its share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey: x.pubkey, payoutPk: x.payoutPk, owedMsat: x.owedMsat, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: x.kind, ...(x.donation ? { donation: x.donation } : {}) });
+    payouts.push({ pubkey: x.pubkey, payoutPk: x.payoutPk, owedMsat: x.owedMsat, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: x.kind,
+      ...(x.donation ? { donation: x.donation } : {}), ...(x.reserve ? { reserve: true } : {}) });
   }
   const paidMsat = payouts.reduce((s, p) => s + p.msat, 0n);
   const outputFeesMsat = payouts.reduce((s, p) => s + p.feeMsat, 0n);
@@ -735,7 +751,7 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
-    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat },
+    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, reserveMsat, websitesMsat: sites.totalMsat },
     // WHAT IT PAID EACH WINNER (kanban #457, measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
     // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
     // player key - its own stake back and its winnings, as the book paid them

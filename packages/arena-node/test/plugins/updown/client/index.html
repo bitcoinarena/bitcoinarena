@@ -218,6 +218,12 @@ if (!A || !A.market) {
     </div>
     <div class="card list"><h3>My orders</h3><div id="mine" class="ords"></div>
       <div class="hist" id="histhead" hidden><h3>History</h3><span class="tot" id="tot"></span></div><div id="hist" class="ords"></div></div></div></div>`;
+  // THE FEE AS THE MARKET'S TERMS NAME IT (version 13, kanban #454, the owner 2026-10-17: "0.4% donation (50/50 protocol / market dev),
+  // 0.4% node, 0.2% protocol reserve fee"): the page hands the chosen version's terms (ARENA_GAME.game.fees); a page that does not
+  // keeps the line above
+  { const F = A.game.fees, pc = (b) => `${(b / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} %`;
+    if (F && Number.isInteger(F.node) && Number.isInteger(F.donation)) $('fee').textContent = `Fee ${pc(F.node + F.donation)}: ${pc(F.node)} nodes + ${pc(F.donation - (F.reserve || 0))} donation`
+      + `${F.reserve ? ` + ${pc(F.reserve)} protocol reserve` : ''}, due when the market resolves; all back if it is void.`; }
   let pick = 0, mode = 'market', current = null, book = null, live = { now: null, beat: null, beatFor: null };
   // THE WINDOW AN ORDER CAN JOIN (version 5, kanban #438: Buy was refused "this round is no longer listed in the lobby" - the client had
   // picked a window the page could not join, one at its close or a federation's row its seats did not yet agree on): the soonest

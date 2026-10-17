@@ -7172,6 +7172,10 @@ const donationBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.
  * that whole rate of its stake and its `donationMsat` is 0 (no donation outputs beside the stake); the settlement splits
  * the claimed fee locks into the node table (feeBpsOf) and the donation set (the rest). A game: its node fee alone.
  */
+/** A market's protocol reserve (kanban #454): the part of its donation rate its terms name for the reserves, else 0. */
+const reserveBpsOf = (manifest) => (manifest && manifest.marketTerms && Number.isInteger(manifest.marketTerms.reserveBps)
+  ? manifest.marketTerms.reserveBps : 0);
+
 const entryFeeBpsOf = (manifest) => (isMarket(manifest) ? feeBpsOf(manifest) + donationBpsOf(manifest) : feeBpsOf(manifest));
 const donationInFee = (manifest) => isMarket(manifest);
 
@@ -11252,6 +11256,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  'fa9a348f9ac4441a05e8ee134d4f3615c758e907626539ef453107e306aaef72': Object.freeze({
+    name: 'btc-updown-15m',
+    // kanban #454: manifest version 13, parent 7432324a - version 12 in every term but the fee: 0.4 % nodes, 0.6 % donation of which 0.2 % protocol reserve
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60, reserveBps: 20 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3 (kanban #369): manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
@@ -11379,7 +11397,7 @@ function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = null, co
 function feeOfKnownGame(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   if (!game) return null;
-  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps };
+  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps, reserveBps: game.fee.reserveBps || 0 };   // the reserve inside the donation (#454)
   return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
 }
 
@@ -14300,7 +14318,15 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
  * locks come back whole by the return door. Under a fee rule that charges, every payout is scaled to what the claimed locks
  * pay after their fees, the dust to the first.
  */
-function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null }) {
+/**
+ * THE KEY A MARKET'S RESERVE LINE NAMES UNTIL ITS FEDERATION IS KNOWN (kanban #454): a round that takes any federation is planned
+ * once and then split per federation (federation-settlement.js splitByFederation), where each federation's part of the line is
+ * paid to that federation's own reserve key. This placeholder is never paid: a split without that key refuses.
+ */
+const RESERVE_LATER_PK = Uint8Array.from([0x02, ...new Uint8Array(32)]);
+
+function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null,
+  reserveBps = 0, reserveKey = null }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
@@ -14327,7 +14353,13 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   // THE FEES DUE: the nodes' part of the market's whole rate, the donation the rest
   const total = nodeBps + donationBps;
   let nodesMsat = total > 0 ? (table.feesDueMsat * BigInt(nodeBps)) / BigInt(total) : 0n;
-  const giftMsat = table.feesDueMsat - nodesMsat;
+  // THE PROTOCOL RESERVE (kanban #454): `reserveBps` of the whole rate, out of the donation's part - never the nodes' or a player's.
+  // Paid to `reserveKey` (the round's federation's reserve key), or to RESERVE_LATER_PK when the round takes any federation
+  // and each federation's part goes to its own key
+  if (reserveBps > donationBps) return refuse(`a market's protocol reserve (${reserveBps} bps) is part of its donation (${donationBps} bps)`);
+  const reserveMsat = reserveBps > 0 && total > 0 ? (table.feesDueMsat * BigInt(reserveBps)) / BigInt(total) : 0n;
+  if (reserveMsat > 0n && !(reserveKey instanceof Uint8Array && reserveKey.length === 33)) return refuse('this market pays the protocol reserve, and no reserve key is known for its federation');
+  const giftMsat = table.feesDueMsat - nodesMsat - reserveMsat;
   // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, kanban #362 comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
   // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
   // frontendBookShares). Its lines go before the seats'.
@@ -14357,6 +14389,7 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
       owed.push({ kind: 'donation key', pubkey: sid, payoutPk: x.recipientPk, owedMsat: x.amountMsat, donation: { id: sid, index: i, recipientPk: x.recipientPk, label: x.label } });
     });
   }
+  if (reserveMsat > 0n) owed.push({ kind: 'reserve', reserve: true, pubkey: reserveKey.subarray(1), payoutPk: reserveKey, owedMsat: reserveMsat });
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   const inputFeesMsat = claims.reduce((s, c) => s + lnv2FeeMsat(fees, c.amountMsat), 0n);
   const spendableMsat = poolMsat - inputFeesMsat;
@@ -14371,7 +14404,8 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   const unpaid = [];
   for (const x of split) {
     if (x.msat <= 0n) { unpaid.push({ pubkey: x.pubkey, owedMsat: x.owedMsat, why: 'its share does not pay its own output fee' }); continue; }
-    payouts.push({ pubkey: x.pubkey, payoutPk: x.payoutPk, owedMsat: x.owedMsat, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: x.kind, ...(x.donation ? { donation: x.donation } : {}) });
+    payouts.push({ pubkey: x.pubkey, payoutPk: x.payoutPk, owedMsat: x.owedMsat, msat: x.msat, feeMsat: lnv2FeeMsat(fees, x.msat), kind: x.kind,
+      ...(x.donation ? { donation: x.donation } : {}), ...(x.reserve ? { reserve: true } : {}) });
   }
   const paidMsat = payouts.reduce((s, p) => s + p.msat, 0n);
   const outputFeesMsat = payouts.reduce((s, p) => s + p.feeMsat, 0n);
@@ -14379,7 +14413,7 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
-    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat },
+    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, reserveMsat, websitesMsat: sites.totalMsat },
     // WHAT IT PAID EACH WINNER (kanban #457, measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
     // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
     // player key - its own stake back and its winnings, as the book paid them
@@ -29198,6 +29232,17 @@ const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !!m.scal
  * payout rule 3 - cannot even read the manifest to host it.
  */
 const PAYOUT_SHARES_MARKER = 0x03;
+/**
+ * A MARKET'S PROTOCOL RESERVE (kanban #454, the owner 2026-10-17: "Prediction markers brauchen auch eine protocol reserve fee: 0.4%
+ * donation (50/50 protocol / market dev), 0.4% node, 0.2% protocol reserve fee"): `marketTerms.reserveBps`, the part of the
+ * market's donation rate that goes to the protocol reserves of the federation each lock is in - written after its own marker,
+ * after a scalar's, and only when a market names it: every manifest before keeps its bytes and its game id. It is
+ * MARKET_RESERVE_BPS exactly (0.2 % of a stake) and inside `donationBps` (0.6 % = 0.4 % to the developers, 50/50 protocol and
+ * market dev, + 0.2 % reserve); the whole fee stays `nodeFeeBps + donationBps`. A node too old to read the marker cannot read the
+ * manifest, and so never hosts or settles such a market.
+ */
+const MARKET_RESERVE_MARKER = 0x08;
+const MARKET_RESERVE_BPS = 20;
 const MARKET_FEE_BPS_MAX = 500;
 const MARKET_DONATION_BPS_MAX = 500;
 const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -29212,6 +29257,10 @@ function marketTermsFit(t) {
   // in total"): the node fee and the donation together, each at most 5 % - a market takes no more of a stake than the
   // network's own games can (5 % node fee + up to 5 % donation)
   if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (10 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
+  if (t.reserveBps !== undefined && t.reserveBps !== null) {
+    if (t.reserveBps !== MARKET_RESERVE_BPS) return { ok: false, why: `a market's protocol reserve is ${MARKET_RESERVE_BPS} bps (0.2 %), not ${t.reserveBps}` };
+    if (t.donationBps < t.reserveBps) return { ok: false, why: `a market's protocol reserve (${t.reserveBps} bps) is part of its donation (${t.donationBps} bps)` };
+  }
   if (typeof t.question !== 'string' || t.question.length < 1 || t.question.length > 256) return { ok: false, why: 'a market asks its question in 1 to 256 characters' };
   if (typeof t.resolveAfterCloseMs !== 'bigint' || t.resolveAfterCloseMs < 0n || t.resolveAfterCloseMs > MARKET_RESOLVE_MAX_MS) return { ok: false, why: 'a market resolves 0 to 30 days after its entry close' };
   if (typeof t.deadlineAfterResolveMs !== 'bigint' || t.deadlineAfterResolveMs < MARKET_DEADLINE_MIN_MS || t.deadlineAfterResolveMs > MARKET_DEADLINE_MAX_MS) return { ok: false, why: 'a market gives its attestors 1 minute to 7 days after its resolution time' };
@@ -29382,6 +29431,8 @@ function encodeManifestBody(m) {
       const sc = m.scalar;
       w.u8(SCALAR_MARKER); w.i64(sc.low); w.i64(sc.high); w.str(sc.unit);
     }
+    // ITS PROTOCOL RESERVE (kanban #454), after its own marker and only when its terms name one: every manifest before keeps its bytes
+    if (m.marketTerms && m.marketTerms.reserveBps) { w.u8(MARKET_RESERVE_MARKER); w.u16(m.marketTerms.reserveBps); }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -29438,6 +29489,11 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === SCALAR_MARKER) {
       r.u8();
       body.scalar = { low: r.i64(), high: r.i64(), unit: r.str() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_RESERVE_MARKER) {
+      r.u8();
+      if (!body.marketTerms) throw new Error('a market\'s protocol reserve is part of its terms, and this manifest names none');
+      body.marketTerms.reserveBps = r.u16();
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
