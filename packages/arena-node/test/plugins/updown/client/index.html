@@ -84,7 +84,8 @@
   table.past td.n, table.past th.n { text-align:right; } table.past .won { color:var(--up); font-weight:700; } table.past .lost { color:var(--down); font-weight:700; }
   table.past .up { color:var(--up); font-weight:700; } table.past .down { color:var(--down); font-weight:700; } table.past .pend { color:#f7931a; }
   @media (min-width:1000px) { #pastd { display:block; } #histhead, #hist { display:none !important; } }
-  .hist h3 { margin:0 !important; } .tot { font:600 12px system-ui; color:var(--dim); text-align:right; } .tot b.won { color:var(--up); } .tot b.lost { color:var(--down); }
+  .hist h3 { margin:0 !important; }
+  .tot .ts { display:none; } @media (max-width:999px) { .tot .tl { display:none; } .tot .ts { display:inline; white-space:nowrap; } } .tot { font:600 12px system-ui; color:var(--dim); text-align:right; } .tot b.won { color:var(--up); } .tot b.lost { color:var(--down); }
   .side.up { background:#12301f; color:var(--up); } .side.down { background:#3a1216; color:#ff8a94; }
   .side.on.up { outline:2px solid var(--up); } .side.on.down { outline:2px solid var(--down); }
   .sheet { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:12px; position:relative; }
@@ -341,7 +342,12 @@ if (!A || !A.market) {
     const lost = past.reduce((t, p) => t + (p.pnlMsat < 0 ? -p.pnlMsat : 0), 0);
     const pend = past.filter((p) => !isFinal(p)).length;
     const tot = `${past.length} closed · won <b class="won">+${esc(satsOf(won))}</b> · lost <b class="lost">−${esc(satsOf(lost))}</b> · net <b class="${won >= lost ? 'won' : 'lost'}">${won >= lost ? '+' : '−'}${esc(satsOf(Math.abs(won - lost)))}</b>${pend ? ` · ${pend} pending` : ''}`;
-    $('tot').innerHTML = tot; $('totd').innerHTML = tot;
+    // THE TOTALS IN ONE LINE ON A PHONE (version 11, kanban #453, the owner 2026-10-17: "In einer Zeile auf mobile"): the full words on a
+    // desktop's table, a short line on a phone - the count, the gain, the loss and the net, each signed
+    const net = won - lost;
+    const num = (msat) => Math.floor(Math.abs(Number(msat)) / 1000).toLocaleString('en-US');
+    const short = `${past.length} closed · <b class="won">+${num(won)}</b> · <b class="lost">−${num(lost)}</b> · net <b class="${net >= 0 ? 'won' : 'lost'}">${net > 0 ? '+' : net < 0 ? '−' : '±'}${num(net)} sats</b>${pend ? ` · ${pend} pending` : ''}`;
+    $('tot').innerHTML = `<span class="tl">${tot}</span><span class="ts">${short}</span>`; $('totd').innerHTML = tot;
     window.UPDOWN_CLIENT.history = past.map((p) => ({ entry: p.entry, round: win(p.closeMs), side: outcomes[p.side], stake: satsOf(p.stakeMsat), result: resultLine(p), pl: plLine(p), status: statusLine(p), final: isFinal(p), finalAtMs: p.finalAtMs }));
     window.UPDOWN_CLIENT.status = js;
     window.UPDOWN_CLIENT.state = { round: current.id, free: current.free, window: [start, current.entryCloseMs], beat: live.beat, now: live.now, pick, mode, asked: a, orders: mine.length, upCents: upCents() };
