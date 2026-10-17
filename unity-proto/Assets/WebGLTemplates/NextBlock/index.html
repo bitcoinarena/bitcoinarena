@@ -3112,6 +3112,23 @@
         if (mine.length) console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats');
       }
     }
+    // EVERY ORDER NAMED UNDER THE PLAYER (kanban #457, the owner 2026-10-17: "The leaderboard is still empty" - measured: each order of a
+    // market joins under its own round key and was named under nobody, so the season listed every order as a stranger and the
+    // player under none): each order of this wallet - placed here or read back from the seats - gets the signed name record of its
+    // own key (nameRecordFor with its order number) at its round's seats, once a seat keeps it
+    async function nameOrders() {
+      if (!window.BLWP_CURVE || !BLWPCLIENT.nameRecordFor || !BLWPCLIENT.postName) return;
+      try { if (!window.sessionStorage.getItem('arena.player.seed')) return; } catch { return; }
+      for (const p of readPicks().filter((x) => x.order && !x.named && x.entryIdHex)) {
+        try {
+          const signed = BLWPCLIENT.nameRecordFor({ id: BLWPCLIENT.fromHex(p.roundIdHex) }, { storage: window.sessionStorage,
+            random: (n) => crypto.getRandomValues(new Uint8Array(n)), curve: window.BLWP_CURVE, order: Number(p.order.index) || 0 });
+          const said = await BLWPCLIENT.postName(signed, p.nodes || [], { fetcher: (u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(8000) })) });
+          if (said.some((x) => x.status === 201 || x.status === 200)) rememberPick(Object.assign({}, p, { named: true }));
+        } catch (e) { console.warn('[blwp] naming an order: ' + e.message); }
+      }
+    }
+    setInterval(() => { nameOrders().catch(() => {}); }, 30000);
     // ONE PASS AT A TIME (measured: a slow pass and the next one read the same rounds side by side)
     let restoring = null;
     const restoreOnce = () => { if (!restoring) restoring = restoreOrdersFromSeats().catch((e) => console.warn('[blwp] orders from the seats: ' + e.message)).finally(() => { restoring = null; }); };

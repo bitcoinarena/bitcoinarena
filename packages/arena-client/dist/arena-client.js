@@ -14379,7 +14379,11 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   if (unspentMsat < 0n) return refuse('the payouts and their fees come to more than the claimed locks pay for');
   return { ok: true, nothing: false, claims: claims.sort(byOutpoint), payouts: payouts.sort(byPayoutPk), unpaid, forfeits: [],
     nonce: settlementNonce(roundId), stakeWhy: null, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat,
-    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat } };
+    book: { claimed: table.claimed.length, feesDueMsat: table.feesDueMsat, nodesMsat, giftMsat, websitesMsat: sites.totalMsat },
+    // WHAT IT PAID EACH WINNER (kanban #457, measured 2026-10-17: the Up/Down season read 0 wins and a whole loss for every order -
+    // a book claims every filled lock, the winners' too, and kept no shares, so a season read 0 paid): each qualifier's out, by its
+    // player key - its own stake back and its winnings, as the book paid them
+    stakeShares: payouts.filter((p) => p.kind === 'qualifier').map((p) => ({ pubkey: p.pubkey, msat: p.msat })) };
 }
 
 // ---- arena-protocol/src/bech32.js
@@ -27740,10 +27744,12 @@ async function identitySignEvent(template, { storage, random, curve, now } = {})
  * empty for none, and the others are then shown the generated one - and now,
  * signed with that round key. The others are shown what this tab shows itself.
  */
-function nameRecordFor(round, { storage, random, curve, nowMs = Date.now() } = {}) {
+// `order` (kanban #457): an order's own round key is the order-th the seed makes for the round (playerFor) - each order of a market is
+// named under its own key, so the season counts every order under the player's identity
+function nameRecordFor(round, { storage, random, curve, nowMs = Date.now(), order = 0 } = {}) {
   if (!curve || typeof curve.signSchnorr !== 'function') throw new Error('a name is signed with the round key, and no signer was injected');
   const me = tabIdentity({ storage, random, curve });
-  const player = playerFor(round, { seed: tabSeed({ storage, random }), curve });
+  const player = playerFor(round, { seed: tabSeed({ storage, random }), curve, order });
   const record = { roundId: player.roundId, playerPubkey: player.pubkey, identityPubkey: me.pubkey,
     name: me.custom ? me.name : '', atMs: BigInt(Math.floor(nowMs)) };
   return { record: toHex(encodeLobbyName(record)), sig: toHex(curve.signSchnorr(lobbyNameId(record), player.secret)) };

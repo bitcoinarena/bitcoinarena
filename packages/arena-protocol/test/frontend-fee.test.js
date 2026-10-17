@@ -106,4 +106,7 @@ test('an order book pays the website 20% of the nodes\' part of the fees; the do
   const others = (s) => s.payouts.filter((p) => !['signer node', 'frontend', 'donation key'].includes(p.kind)).map((p) => [toHex(p.payoutPk), p.msat]);
   assert.deepEqual(others(viaSite), others(plain), 'every player line is the same');
   assert.equal(sumOf(others(plain).map((x) => x[1])), 19800000n, 'the winner is paid the whole pool');
+  // kanban #457: the book names what it paid each winner, by its player key - a season reads it (the winner's out, its own stake back
+  // and its winnings), not 0
+  assert.deepEqual(plain.stakeShares.map((x) => [toHex(x.pubkey), x.msat]), [[toHex(player.a), 19800000n]]);
 });
