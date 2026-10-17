@@ -32,7 +32,11 @@
   nav .links { margin-left: auto; display: flex; gap: 22px; font-size: 15px; color: var(--dim); }
   nav .links a { text-decoration: none; } nav .links a:hover { color: var(--text); }
   nav .play { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 11px; background: linear-gradient(135deg, var(--btc), #ffb347); color: #1a0f00; font: 600 15px/1 Inter; text-decoration: none; white-space: nowrap; }
-  @media (max-width: 860px) { nav .links { display: none; } nav .play { margin-left: auto; } }
+  /* PROPOSALS AND DOCS STAY IN THE MENU ON A PHONE, beside Play (kanban #430, the owner 2026-10-17: "Proposals must be visible from the
+     top menu along with Play and Docs currently it's hidden far below") - the section links go, those two stay */
+  @media (max-width: 860px) { nav .links a:not(.keep) { display: none; } nav .links { gap: 16px; } nav .wrap { gap: 16px; } }
+  @media (max-width: 480px) { nav .play .long { display: none; } nav .wrap { gap: 12px; } nav .links { gap: 12px; font-size: 14px; } .brand { font-size: 16px; } .brand i { width: 26px; height: 26px; } }
+  @media (max-width: 370px) { .brand span.t { display: none; } }
 
   /* HERO */
   .hero { position: relative; min-height: min(100svh, 860px); display: flex; align-items: center; padding: 120px 0 80px; overflow: hidden; isolation: isolate; }
@@ -202,9 +206,9 @@
 </head>
 <body>
 <nav><div class="wrap">
-  <a class="brand" href="#top"><i>₿</i>Bitcoin Arena</a>
-  <div class="links"><a href="#games">Games</a><a href="#how">How it works</a><a href="#nostr">Nostr</a><a href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a><a href="#build">Build &amp; run</a><a href="https://docs.bitcoin-arena.io/">Docs</a></div>
-  <a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet <span aria-hidden="true">→</span></a>
+  <a class="brand" href="#top" aria-label="Bitcoin Arena"><i>₿</i><span class="t">Bitcoin Arena</span></a>
+  <div class="links"><a href="#games">Games</a><a href="#how">How it works</a><a href="#nostr">Nostr</a><a href="#build">Build &amp; run</a><a class="keep" href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a><a class="keep" href="https://docs.bitcoin-arena.io/">Docs</a></div>
+  <a class="play" href="https://testnet.bitcoin-arena.io/">Play<span class="long">on testnet</span> <span aria-hidden="true">→</span></a>
 </div></nav>
 
 <header class="hero" id="top">
