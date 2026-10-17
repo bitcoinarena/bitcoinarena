@@ -30,7 +30,8 @@ export const UPDOWN_CLIENT_HASH = createHash('sha256').update(readFileSync(UPDOW
 // version 6's (My orders as cards - kanban #443) as client/index-v6.html; client/index.html is version 7's (the history: closed orders
 // with what they won or lost, pending through the 10-minute objection window, and the totals - kanban #447) as client/index-v7.html;
 // version 8's (the desktop view as an exchange: chart or depth and the full order book - kanban #448) as client/index-v8.html;
-// client/index.html is version 9's (past orders kept in the browser: round, side, stake, result, P/L - a table on a desktop - kanban #447)
+// version 9's (past orders kept in the browser: round, side, stake, result, P/L - a table on a desktop - kanban #447) as
+// client/index-v9.html; client/index.html is version 10's (its history logic in one block a test runs - kanban #450)
 export const UPDOWN_CLIENT_V3_FILE = new URL('./client/index-v3.html', import.meta.url);
 export const UPDOWN_CLIENT_V3_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V3_FILE)).digest();
 export const UPDOWN_CLIENT_V4_FILE = new URL('./client/index-v4.html', import.meta.url);
@@ -43,8 +44,10 @@ export const UPDOWN_CLIENT_V7_FILE = new URL('./client/index-v7.html', import.me
 export const UPDOWN_CLIENT_V7_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V7_FILE)).digest();
 export const UPDOWN_CLIENT_V8_FILE = new URL('./client/index-v8.html', import.meta.url);
 export const UPDOWN_CLIENT_V8_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V8_FILE)).digest();
-export const UPDOWN_CLIENT_V9_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V9_FILE = new URL('./client/index-v9.html', import.meta.url);
 export const UPDOWN_CLIENT_V9_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V9_FILE)).digest();
+export const UPDOWN_CLIENT_V10_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V10_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V10_FILE)).digest();
 // ITS DONATION KEY IS A POINT ON THE CURVE (kanban #237, measured on the regtest stack: the settlement failed with
 // "blwp-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
 // curve only half the time; this market's key is the public key of a test secret, so a payout to it can be made

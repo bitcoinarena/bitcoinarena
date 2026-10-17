@@ -123,6 +123,55 @@ const sats = (n) => Math.floor(n).toLocaleString('en-US') + ' sats';
 const hhmm = (ms) => new Date(ms).toISOString().slice(11, 16);
 const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+// <history> WHAT AN ORDER CAME TO, AND THE PAST ORDERS KEPT (version 10, kanban #450: one block with no page, no storage and no clock
+// of its own - packages/arena-node/test/updown-client-history.test.js runs it as it stands here): an order `o` (round, entry, pick,
+// stake, limit, close, cancelled) and the page's line `l` for it (state won / lost / refunded / void / disputed / settled /
+// unverified / unknown / open, gain or loss, final, finalAtMs)
+const HISTORY = (() => {
+  const PERIOD = 15 * 60000, MAX = 200, TICK_ = 1000;
+  const CLOSED = ['won', 'lost', 'refunded', 'void', 'disputed', 'right', 'wrong', 'settled'];
+  const satOf = (msat) => Math.floor(Number(msat) / 1000).toLocaleString('en-US') + ' sats';
+  const clock = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const hm = (ms) => new Date(ms).toISOString().slice(11, 16);
+  const signed = (msat, sign) => (sign < 0 ? '−' : '+') + satOf(msat);
+  /** The round by its window, as a person reads it: "18:45–19:00 UTC". */
+  const roundOf = (closeMs) => hm(closeMs - PERIOD) + '–' + hm(closeMs) + ' UTC';
+  /** Closed: cancelled, or the line has a result. A line with no result (open, unknown - a pick not in the seats' table yet,
+   *  unverified) keeps the order open, "waiting for the result". */
+  const isClosed = (o, l) => !!o.cancelled || !!(l && CLOSED.includes(l.state));
+  /** [chip class, chip text, amount, its class, msat gained (+) or lost (−)] */
+  function resultOf(o, l, now) {
+    if (o.cancelled) return ['', 'cancelled', '', '', 0];
+    const st = l && l.state;
+    if (st === 'won') return ['won', 'won', signed(l.gainMsat, 1), 'won', Number(l.gainMsat)];
+    if (st === 'lost') return ['lost', 'lost', signed(l.lostMsat, -1), 'lost', -Number(l.lostMsat)];
+    if (st === 'settled') { const d = Number(l.payoutMsat) - Number(l.netMsat); return [d >= 0 ? 'won' : 'lost', 'paid ' + satOf(l.payoutMsat), signed(Math.abs(d), d), d >= 0 ? 'won' : 'lost', d]; }
+    if (st === 'refunded' || st === 'void') return ['', 'refunded', '±0', '', 0];
+    if (st === 'disputed') return ['', 'refunded at expiry', '±0', '', 0];
+    if (st === 'right' || st === 'wrong') return [st === 'right' ? 'won' : 'lost', st === 'right' ? 'right' : 'wrong', 'free', '', 0];
+    if (st === 'unverified') return ['wait', 'result unverified', '', '', 0];
+    if (o.entryCloseMs > now) return ['open', 'closes in ' + clock(o.entryCloseMs - now), '', '', 0];
+    return ['wait', 'waiting for the result', '', '', 0];
+  }
+  /** The past orders: the kept ones (this browser's), each closed live one over its kept summary, newest round first, at most 200. */
+  function merge(kept, closed, now) {
+    const byEntry = new Map((Array.isArray(kept) ? kept : []).filter((x) => x && x.entry).map((x) => [x.entry, x]));
+    for (const { o, l } of closed) {
+      byEntry.set(o.entry, { entry: o.entry, closeMs: Number(o.entryCloseMs), side: Number(o.pick), stakeMsat: Number(o.stakeMsat), limit: Math.round(o.limitPrice / TICK_),
+        state: o.cancelled ? 'cancelled' : (l && l.state) || '', pnlMsat: resultOf(o, l, now)[4], final: l ? l.final : undefined, finalAtMs: l ? l.finalAtMs : undefined });
+    }
+    return [...byEntry.values()].sort((x, y) => y.closeMs - x.closeMs || (x.entry < y.entry ? -1 : 1)).slice(0, MAX);
+  }
+  const resultLine = (p, outcomes) => p.state === 'won' ? `${outcomes[p.side]} won` : p.state === 'lost' ? `${outcomes[1 - p.side]} won`
+    : p.state === 'refunded' || p.state === 'void' ? 'refunded' : p.state === 'disputed' ? 'disputed · refunded' : p.state === 'cancelled' ? 'cancelled' : p.state || '–';
+  const plLine = (p) => (p.pnlMsat > 0 ? '+' + satOf(p.pnlMsat) : p.pnlMsat < 0 ? '−' + satOf(-p.pnlMsat) : '±0');
+  const plCls = (p) => (p.pnlMsat > 0 ? 'won' : p.pnlMsat < 0 ? 'lost' : '');
+  /** Final: the seats said so, or its objection window has passed (a kept order read after a reload); a cancel is final at once. */
+  const isFinal = (p, now) => p.final === true || (!!p.finalAtMs && now >= p.finalAtMs) || p.state === 'cancelled';
+  const statusLine = (p, now) => (isFinal(p, now) ? 'final' : p.finalAtMs ? 'pending · final in ' + clock(p.finalAtMs - now) : 'pending');
+  return { MAX, CLOSED, roundOf, isClosed, resultOf, merge, resultLine, plLine, plCls, isFinal, statusLine };
+})();
+// </history>
 
 if (!A || !A.market) {
   $('view').innerHTML = '<div class="none">This market runs inside the Bitcoin Arena page, which hands it the market.</div>';
@@ -253,30 +302,10 @@ if (!A || !A.market) {
     // ONE CARD PER ORDER, its result in it: the order (side, amount, limit, window) and the page's line for its entry (state, payout)
     const lines = (A.state().picks || []).filter((l) => l && l.text);
     const lineOf = (o) => lines.find((l) => l.entry && l.entry === o.entry) || lines.find((l) => l.round === o.round && Number(l.pick) === Number(o.pick));
-    const win = (closeMs) => hhmm(closeMs - PERIOD_MS) + '–' + hhmm(closeMs) + ' UTC';
+    const now = Date.now();
+    const win = HISTORY.roundOf;
     const satsOf = (msat) => sats(Number(msat) / 1000);
-    const signed = (msat, sign) => (sign < 0 ? '−' : '+') + satsOf(msat);
-    const CLOSED = ['won', 'lost', 'refunded', 'void', 'disputed', 'right', 'wrong', 'settled'];
-    // WHAT AN ORDER CAME TO: [chip class, chip text, amount line, its class, msat gained (+) or lost (−)]
-    const resultOf = (o, l) => {
-      if (o.cancelled) return ['', 'cancelled', '', '', 0];
-      const st = l && l.state;
-      if (st === 'won') return ['won', 'won', signed(l.gainMsat, 1), 'won', Number(l.gainMsat)];
-      if (st === 'lost') return ['lost', 'lost', signed(l.lostMsat, -1), 'lost', -Number(l.lostMsat)];
-      if (st === 'settled') { const d = Number(l.payoutMsat) - Number(l.netMsat); return [d >= 0 ? 'won' : 'lost', 'paid ' + satsOf(l.payoutMsat), signed(Math.abs(d), d), d >= 0 ? 'won' : 'lost', d]; }
-      if (st === 'refunded' || st === 'void') return ['', 'refunded', '±0', '', 0];
-      if (st === 'disputed') return ['', 'refunded at expiry', '±0', '', 0];
-      if (st === 'right' || st === 'wrong') return [st === 'right' ? 'won' : 'lost', st === 'right' ? 'right' : 'wrong', 'free', '', 0];
-      if (st === 'unverified') return ['wait', 'result unverified', '', '', 0];
-      if (o.entryCloseMs > Date.now()) return ['open', 'closes in ' + mmss(o.entryCloseMs - Date.now()), '', '', 0];
-      return ['wait', 'waiting for the result', '', '', 0];
-    };
-    // PENDING UNTIL FINAL: a result stands open to objection for 10 minutes after it is signed (deadlineAfterResolveMs 600000)
-    const finOf = (l) => {
-      if (!l || !CLOSED.includes(l.state) || l.final === undefined) return '';
-      if (l.final) return '<span class="fin">final</span>';
-      return `<span class="fin pend">pending · final ${l.finalAtMs ? 'in ' + mmss(l.finalAtMs - Date.now()) : 'soon'}</span>`;
-    };
+    const resultOf = (o, l) => HISTORY.resultOf(o, l, now);
     const card = (side, amount, limit, closeMs, chip, extra = '', cls = '') => `<div class="ord${cls}"><span class="sd ${side === 0 ? 'up' : 'down'}">${side === 0 ? '▲' : '▼'} ${esc(outcomes[side] || side)}</span>`
       + `<div class="what"><b>${amount}</b> <span class="lim">≤ ${limit}¢</span><div class="win">${win(closeMs)}</div></div>`
       + `<div class="st"><span class="chip2 ${chip[0]}">${esc(chip[1])}</span>${extra}</div></div>`;
@@ -284,7 +313,7 @@ if (!A || !A.market) {
       ? card(placing.pick, sats(placing.stakeSat), placing.limitCents, placing.entryCloseMs,
         js.cls === 'bad' ? ['lost', 'not placed'] : js.cls ? ['open', js.line.includes('locked') ? 'locked' : 'placed'] : ['wait', 'placing…'], '', ' flight') : '';
     const rows = mine.map((o) => ({ o, l: lineOf(o) })).reverse();
-    const isClosed = ({ o, l }) => o.cancelled || !!(l && CLOSED.includes(l.state));
+    const isClosed = ({ o, l }) => HISTORY.isClosed(o, l);
     const open = rows.filter((r) => !isClosed(r)), closed = rows.filter(isClosed);
     $('mine').innerHTML = flight + (open.length ? open.map(({ o, l }) => {
       const r = resultOf(o, l);
@@ -295,20 +324,10 @@ if (!A || !A.market) {
     // the tab's live ones (the live line wins), newest round first, at most 200
     const PAST_KEY = 'arena.updown.past.v1';
     let kept = []; try { kept = JSON.parse(window.localStorage.getItem(PAST_KEY) || '[]'); } catch { kept = []; }
-    const byEntry = new Map((Array.isArray(kept) ? kept : []).filter((x) => x && x.entry).map((x) => [x.entry, x]));
-    for (const { o, l } of closed) {
-      const r = resultOf(o, l);
-      byEntry.set(o.entry, { entry: o.entry, closeMs: Number(o.entryCloseMs), side: Number(o.pick), stakeMsat: Number(o.stakeMsat), limit: Math.round(o.limitPrice / TICK),
-        state: o.cancelled ? 'cancelled' : (l && l.state) || '', pnlMsat: r[4], final: l ? l.final : undefined, finalAtMs: l ? l.finalAtMs : undefined });
-    }
-    const past = [...byEntry.values()].sort((x, y) => y.closeMs - x.closeMs || (x.entry < y.entry ? -1 : 1)).slice(0, 200);
+    const past = HISTORY.merge(kept, closed, now);
     try { window.localStorage.setItem(PAST_KEY, JSON.stringify(past)); } catch { /* private window: this tab's only */ }
-    const resultLine = (p) => p.state === 'won' ? `${outcomes[p.side]} won` : p.state === 'lost' ? `${outcomes[1 - p.side]} won`
-      : p.state === 'refunded' || p.state === 'void' ? 'refunded' : p.state === 'disputed' ? 'disputed · refunded' : p.state === 'cancelled' ? 'cancelled' : p.state || '–';
-    const plLine = (p) => (p.pnlMsat > 0 ? '+' + satsOf(p.pnlMsat) : p.pnlMsat < 0 ? '−' + satsOf(-p.pnlMsat) : '±0');
-    const plCls = (p) => (p.pnlMsat > 0 ? 'won' : p.pnlMsat < 0 ? 'lost' : '');
-    const isFinal = (p) => p.final === true || (p.finalAtMs && Date.now() >= p.finalAtMs) || p.state === 'cancelled';
-    const statusLine = (p) => (isFinal(p) ? 'final' : p.finalAtMs ? 'pending · final in ' + mmss(p.finalAtMs - Date.now()) : 'pending');
+    const resultLine = (p) => HISTORY.resultLine(p, outcomes), plLine = HISTORY.plLine, plCls = HISTORY.plCls;
+    const isFinal = (p) => HISTORY.isFinal(p, now), statusLine = (p) => HISTORY.statusLine(p, now);
     $('histhead').hidden = !past.length;
     $('hist').innerHTML = past.map((p) => `<div class="pastc"><div class="ph"><span class="sd ${p.side === 0 ? 'up' : 'down'}">${p.side === 0 ? '▲' : '▼'} ${esc(outcomes[p.side] || p.side)}</span>`
       + `<b class="rd">${win(p.closeMs)}</b><span class="fin${isFinal(p) ? '' : ' pend'}">${esc(statusLine(p))}</span></div>`
