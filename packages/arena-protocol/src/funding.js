@@ -21,10 +21,26 @@ import { servedNodes } from './served-nodes.js';
 import { decodeVote, voteMessage, CHOICE } from './ballot.js';
 
 /** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
+// THE HIJACK DEFENCES (§27A.9.5, kanban #397, the owner 2026-10-17: "Take D1-D6 as proposed"), in blocks:
+//   season          D1  a bond votes (and a node signals) only if it confirmed this long before the proposal was published (~6 months)
+//   lockAfterVote   D2  ... and only if its CLTV maturity is at least this far past the vote's last block (~3 months)
+//   fullLock            its weight is bond x min(1, maturity - last / fullLock) - full weight at a year's lock
+//   delay, trancheEvery D5  the first payment is due `delay` after the vote's last block (~2 weeks), the next ones `trancheEvery` apart
+//   capWindow       D3  the window of the 25 % cap (~90 days)
+//   week            D6  a node is active when it served rounds in 3 of the 4 weeks before the signal ends
+// The short schedule is a live proof's only (the T3 federation), scaled to its few blocks.
 export const FUNDING_SCHEDULES = Object.freeze({
-  spec: Object.freeze({ signal: 1008, activeWindow: 432, vote: 2016, decideDepth: 6 }),
-  short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6 }),
+  spec: Object.freeze({ signal: 1008, activeWindow: 432, vote: 2016, decideDepth: 6,
+    season: 26208, lockAfterVote: 12960, fullLock: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
+  short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6,
+    season: 24, lockAfterVote: 48, fullLock: 144, delay: 6, trancheEvery: 6, capWindow: 144, week: 108 }),
 });
+export const FUNDING_ABSOLUTE_PCT = 20n;        // D4: YES of all seasoned bonded capital
+export const FUNDING_CAP_PCT = 10n;             // D3: one proposal of the paying federation's reserves
+export const FUNDING_CAP_WINDOW_PCT = 25n;      // D3: all payments of a window of the reserves at its start
+export const FUNDING_LARGE_PCT = 1n;            // D5: above this share of the reserves a payment goes out in tranches
+export const FUNDING_TRANCHES = 4;
+export const FUNDING_ACTIVE_WEEKS = 4, FUNDING_ACTIVE_WEEKS_NEEDED = 3;   // D6
 /** The vote's rule (§27A.9.3 stage 2, RULED the owner 2026-10-16): turnout of the snapshot's bonded capital, and YES of YES + NO. */
 export const FUNDING_TURNOUT_PCT = 30n;
 export const FUNDING_APPROVAL_PCT = 60n;
@@ -170,7 +186,7 @@ export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.sp
  * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
  * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
  */
-export function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
+export function fundingTally({ proposalId, census = [], votes = [], from, until, verify, seasonedSats = null }) {
   const prefix = toHex(proposalId.subarray(0, 8));
   const latest = new Map();
   for (const v of votes) {
@@ -183,16 +199,74 @@ export function fundingTally({ proposalId, census = [], votes = [], from, until,
       if (!good) continue;
       const had = latest.get(b.outpoint);
       const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.bondSats) });
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats) });
     }
   }
-  const total = census.reduce((a, b) => a + BigInt(b.bondSats), 0n);
+  const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
   let yes = 0n, no = 0n, abstain = 0n;
   for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
   const turnout = yes + no + abstain;
   const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
   const decided = yes + no;
   const approved = decided > 0n && yes * 100n >= FUNDING_APPROVAL_PCT * decided;
-  return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved,
-    passed: quorum && approved, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
+  // D4: YES also at least 20 % of all seasoned bonded capital (when the caller names it)
+  const absolute = seasonedSats === null ? true : BigInt(seasonedSats) > 0n && yes * 100n >= FUNDING_ABSOLUTE_PCT * BigInt(seasonedSats);
+  return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved, absolute,
+    seasonedSats: seasonedSats === null ? null : String(seasonedSats), passed: quorum && approved && absolute, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
+}
+
+/**
+ * D1 + D2: THE VOTE WEIGHT OF EACH BOND. `census` [{ pubkey, outpoint, bondSats, height (confirmation), maturity (CLTV height, or
+ * null when the bond names none) }]; `publishedHeight` the proposal's; `last` the vote's last block. A bond is SEASONED when it
+ * confirmed at least `season` blocks before publication (D1); it VOTES when it is seasoned and its maturity is at least
+ * `lockAfterVote` past `last` (D2), with weight bondSats x min(fullLock, maturity - last) / fullLock. Answers the voting census (each
+ * with its `weight`) and `seasonedSats`, the seasoned bonded capital whatever its lock (D4's base).
+ */
+export function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec }) {
+  const voters = []; let seasonedSats = 0n;
+  for (const b of census) {
+    if (!(Number.isInteger(b.height) && b.height <= publishedHeight - schedule.season)) continue;
+    seasonedSats += BigInt(b.bondSats);
+    const left = Number.isInteger(b.maturity) ? b.maturity - last : -1;
+    if (left < schedule.lockAfterVote) continue;
+    voters.push({ ...b, weight: (BigInt(b.bondSats) * BigInt(Math.min(left, schedule.fullLock))) / BigInt(schedule.fullLock) });
+  }
+  return { voters, seasonedSats };
+}
+
+/** D6: the nodes ACTIVE for a signal: served rounds in at least 3 of the 4 weeks before its end, `weeks` [Set of node hex] newest first. */
+export function activeInWeeks(weeks) {
+  const n = new Map();
+  for (const w of weeks.slice(0, FUNDING_ACTIVE_WEEKS)) for (const k of w) n.set(String(k).toLowerCase(), (n.get(String(k).toLowerCase()) || 0) + 1);
+  return [...n.entries()].filter(([, c]) => c >= FUNDING_ACTIVE_WEEKS_NEEDED).map(([k]) => k);
+}
+
+/**
+ * D5: THE PAYMENTS OF A PASSED PROPOSAL. One payment, or - above 1 % of the paying federation's reserves (`reservesSats`) - four
+ * tranches; payment k is due at `last + delay + k x trancheEvery` and may be made once that block is `decideDepth` deep and a count
+ * over every vote up to it still passes (a NO, or a YES turned NO, in the delay cancels it and every later one).
+ */
+export function trancheSchedule({ amountSats, reservesSats, last, schedule = FUNDING_SCHEDULES.spec }) {
+  const amount = BigInt(amountSats);
+  const n = BigInt(reservesSats) > 0n && amount * 100n > FUNDING_LARGE_PCT * BigInt(reservesSats) ? FUNDING_TRANCHES : 1;
+  const each = amount / BigInt(n);
+  return Array.from({ length: n }, (_, k) => {
+    const dueAt = last + schedule.delay + k * schedule.trancheEvery;
+    return { k, of: n, amountSats: k === n - 1 ? amount - each * BigInt(n - 1) : each, dueAt, payableAt: dueAt + schedule.decideDepth - 1 };
+  });
+}
+
+/**
+ * D3: MAY THIS PAYMENT GO NOW. One proposal at most 10 % of the paying federation's reserves (its whole amount, `proposalSats`,
+ * against the reserves held now plus what it already paid); everything paid in the last `capWindow` blocks (`paidInWindowSats`) plus
+ * this payment at most 25 % of what the reserves held at the window's start (held now + paid in the window). A payment over the
+ * window cap waits for the window to move; a proposal over its own cap is never paid.
+ */
+export function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats = 0n, paidInWindowSats = 0n }) {
+  const held = BigInt(reservesSats), base = held + BigInt(paidByProposalSats);
+  if (BigInt(proposalSats) * 100n > FUNDING_CAP_PCT * base) return { ok: false, final: true, why: `the proposal asks ${proposalSats} sat, more than ${FUNDING_CAP_PCT} % of the ${base} sat reserves` };
+  const start = held + BigInt(paidInWindowSats);
+  if ((BigInt(paidInWindowSats) + BigInt(paymentSats)) * 100n > FUNDING_CAP_WINDOW_PCT * start)
+    return { ok: false, final: false, why: `${paidInWindowSats} sat paid in the window and ${paymentSats} now is more than ${FUNDING_CAP_WINDOW_PCT} % of ${start} sat` };
+  return { ok: true };
 }

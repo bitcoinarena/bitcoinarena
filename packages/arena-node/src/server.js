@@ -197,8 +197,9 @@ import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '.
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
 import { createReservePayouts, lnurlClient } from './reserve-payout.js';
+import { trancheIdOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
-import { FUNDING_SCHEDULES, activeNodesBefore, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
+import { FUNDING_SCHEDULES, activeNodesBefore, activeInWeeks, capStands, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit } from './forfeit.js';
 import { LockSettlement, locksStake, SUBMITTING } from './settlement.js';
@@ -1344,14 +1345,26 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     verify: (sg, m, k) => schnorr.verify(sg, m, k),
     isBonded: (nodeHex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; if (!now.ok) return null; return (now.entries || []).some((e) => toHex(e.pubkey) === nodeHex); },
     tip: async () => (typeof chainTip === 'function' ? Number(await chainTip()) : null),
+    // D6 (§27A.9.5): ACTIVE = served rounds in at least 3 of the 4 weeks before the signal's end, each week on the chain's median time
     activeAt: async (end) => {
       if (typeof blockTimeAt !== 'function') return { ok: false, why: 'this seat reads no block times' };
-      const w = fundingSchedule.activeWindow;
-      const [fromMs, toMs] = await Promise.all([blockTimeAt(end - w), blockTimeAt(end)]);
-      const times = new Map([[end - w, fromMs], [end, toMs]]);
-      const a = activeNodesBefore({ rounds: await servedRoundsBetween(fromMs, toMs), endHeight: end, timeOf: (h) => times.get(h), verify: (sg, m, k) => schnorr.verify(sg, m, k), windowBlocks: w });
-      return { ok: true, nodes: a.nodes.map((n) => n.key), fromHeight: a.fromHeight, rounds: a.rounds };
-    } }) : null;
+      const w = fundingSchedule.week;
+      const weeks = [];
+      for (let k = 0; k < 4; k++) {
+        const to = end - k * w, from = to - w;
+        if (from < 0) { weeks.push(new Set()); continue; }
+        const [fromMs, toMs] = await Promise.all([blockTimeAt(from), blockTimeAt(to)]);
+        const times = new Map([[from, fromMs], [to, toMs]]);
+        const a = activeNodesBefore({ rounds: await servedRoundsBetween(fromMs, toMs), endHeight: to, timeOf: (h) => times.get(h), verify: (sg, m, k2) => schnorr.verify(sg, m, k2), windowBlocks: w });
+        weeks.push(new Set(a.nodes.map((n) => toHex(n.key).toLowerCase())));
+      }
+      return { ok: true, nodes: activeInWeeks(weeks), fromHeight: end - 4 * w };
+    },
+    // D6 / D1: the nodes whose bond confirmed `season` blocks before the proposal was published, in the census at the signal's end
+    seasonedNodes: ballot && typeof ballot.censusAt === 'function' ? async (net, published, at) => {
+      const c = await ballot.censusAt(net, at); if (!c) return null;
+      return c.filter((b) => Number.isInteger(b.height) && b.height <= published - fundingSchedule.season).map((b) => toHex(b.pubkey));
+    } : null }) : null;
   const forwardFunding = (kind, hex) => {
     let seats = []; try { seats = networkSeats(); } catch { seats = []; }
     for (const base of seats) fetch(`${base}/funding`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-forwarded': '1' },
@@ -1370,11 +1383,37 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
+  // the reserves this seat holds unspent, over every federation, in sat (D3's base); the chain tip the funding loop saw last
+  const reserveHeldSats = () => { const spent = reserveSpent(); let t = 0n;
+    for (const fed of new Set([...Object.keys(reserveGuardians()), ...reserveKeys.keys()])) {
+      const k = reserveKeys.get(fed); if (!k) continue;
+      t += round.donationsFor(toHex(k)).filter((x) => x.federationId === fed && !spent.has(x.outpoint)).reduce((a, x) => a + BigInt(x.amountMsat), 0n);
+    }
+    return t / 1000n; };
+  let fundingTipSeen = null;
+  const capLogged = new Set();
   const movesWaitLogged = new Set();
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
-    passed: () => (fundingBook ? fundingBook.list(null) : []).filter((p) => p.vote && p.vote.state === 'passed')
-      .map((p) => ({ id: p.id, lnurl: p.lnurl, amountSats: BigInt(p.amountSats), decidableAt: p.vote.decidableAt })),
+    // THE PAYMENTS A PASSED VOTE ALLOWS NOW (§27A.9.5): its tranches past the delay whose re-count still passes (D5), each within the
+    // caps (D3): the proposal at most 10 % of the reserves, the window's payments at most 25 % of what the reserves held at its start
+    passed: () => {
+      if (!fundingBook) return [];
+      const held = reserveHeldSats();
+      const recs = reservePayouts ? reservePayouts.list().filter((r) => r.plan && r.plan.kind !== 'move' && (r.state === 'SENT' || r.state === 'PAID')) : [];
+      const tip = fundingTipSeen;
+      const out = [];
+      for (const t of fundingBook.payments({ tip, reservesSatsOf: () => held })) {
+        const mine = new Set(Array.from({ length: t.of }, (_, k) => trancheIdOf(t.proposal, k, t.of)));
+        const others = recs.filter((r) => r.proposal !== t.id);
+        const paidByProposal = others.filter((r) => mine.has(r.proposal)).reduce((a, r) => a + BigInt(r.plan.amountSats), 0n);
+        const paidInWindow = others.filter((r) => Number(r.plan.decidableAt) > tip - fundingSchedule.capWindow).reduce((a, r) => a + BigInt(r.plan.amountSats), 0n);
+        const cap = capStands({ proposalSats: t.proposalSats, paymentSats: t.amountSats, reservesSats: held, paidByProposalSats: paidByProposal, paidInWindowSats: paidInWindow });
+        if (!cap.ok) { const k = `${t.id}:${cap.why}`; if (!capLogged.has(k)) { capLogged.add(k); console.log(`[funding] ${t.proposal.slice(0, 16)} payment ${t.k + 1}/${t.of} waits: ${cap.why}`); } continue; }
+        out.push({ id: t.id, lnurl: t.lnurl, amountSats: BigInt(t.amountSats), decidableAt: t.decidableAt });
+      }
+      return out;
+    },
     guardians: () => new Map(Object.entries(reserveGuardians()).map(([fed, g]) => {
       const nodes = sortedKeys(g.members); const needed = reserveNeeded(nodes.length);
       const held = needed === null ? { ok: false } : reserveDkgOf(fed).signerNodeFor(nodes);
@@ -1403,7 +1442,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       for (const base of seats) fetch(`${base}/reserve-payout/record`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rec), signal: AbortSignal.timeout(15000) }).catch(() => {}); },
   }) : null;
   if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound())
-    .then(async () => { if (reservePayouts && typeof chainTip === 'function') await reservePayouts.round({ height: Number(await chainTip()) }); }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
+    .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); await reservePayouts.round({ height: fundingTipSeen }); } }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //

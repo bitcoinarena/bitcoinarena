@@ -18,7 +18,8 @@ const hexOf = (bytes, id, n) => toHex(Uint8Array.from([...bytes, ...schnorr.sign
 const proposal = (n, purpose) => ({ networkId: new Uint8Array(32).fill(7), author: pk(1), publishedHeight: 100, amountSats: 1000n, lnurl: 'dev@bitcoin-arena.io', purpose });
 const P1 = proposal(1, 'passes its signal'), P2 = proposal(1, 'fails its signal');
 const ID1 = fundingProposalId(P1);
-const bond = (n, sats) => ({ pubkey: pk(n), outpoint: `${n.toString(16).padStart(2, '0').repeat(32)}:0`, bondSats: BigInt(sats) });
+// seasoned (confirmed 50 blocks before the proposal, D1) and locked a year past the vote (full weight, D2)
+const bond = (n, sats) => ({ pubkey: pk(n), outpoint: `${n.toString(16).padStart(2, '0').repeat(32)}:0`, bondSats: BigInt(sats), height: 50, maturity: 100000 });
 const vote = (n, choice, txid = 'aa'.repeat(32)) => ({ payload: encodeVote({ proposalId: ID1, choice, signature: schnorr.sign(voteMessage(ID1, choice), sk(n)) }), txid });
 
 function world() {
