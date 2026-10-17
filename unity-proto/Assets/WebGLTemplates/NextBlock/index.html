@@ -2978,6 +2978,8 @@
     // page against the attestors it pinned (BLWPCLIENT.checkAttestation) - a seat's word alone is shown unverified
     const MARKET_OUTCOMES = new Map();
     window.BLWP_MARKET_OUTCOMES = MARKET_OUTCOMES;
+    // THE ROUNDS WHOSE OUTCOME THIS PAGE HAS ASKED THE SEATS FOR AT LEAST ONCE (kanban #464)
+    const OUTCOMES_READ = new Set();
     async function readMarketOutcomes() {
       for (const p of readPicks()) {
         if (Date.now() < Number(p.entryCloseMs)) continue;
@@ -2992,6 +2994,7 @@
         if (!market) continue;
         const answers = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/outcome?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(6000) })
           .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
+        OUTCOMES_READ.add(p.roundIdHex);
         const rowsOf = (o) => (o && o.table && Array.isArray(o.table.rows) ? o.table.rows.length : -1);
         const best = answers.find(hasRow) || answers.sort((a, b) => rowsOf(b) - rowsOf(a))[0];
         // NO ROW ANYWHERE, ITS ROUND CLOSED (kanban #452): an order that matched nobody has no row - the table holds filled positions
@@ -3105,7 +3108,7 @@
           window.BLWP_RESTORED_ORDERS.push({ round: r.id, entry: m.entryIdHex, pick: m.pick, index: m.orderIndex });
           try { const k = 'arena.order.next.' + r.id; if ((Number(window.sessionStorage.getItem(k)) || 0) <= m.orderIndex) window.sessionStorage.setItem(k, String(m.orderIndex + 1)); } catch { /* this tab's only */ }
         }
-        if (mine.length) console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats');
+        if (mine.length) { console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats'); readMarketOutcomes().catch(() => {}); }
       }));
     }
     // EVERY ORDER NAMED UNDER THE PLAYER (kanban #457, the owner 2026-10-17: "The leaderboard is still empty" - measured: each order of a
@@ -3131,14 +3134,28 @@
     setTimeout(restoreOnce, 4000);
     setInterval(restoreOnce, 15000);
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
+    let QUIET_ORDERS = new Set();
     function marketViewLines(onlyThisGame = false) {
       if (!BLWPCLIENT.marketLines) return [];
       // THE GAME SHOWN ONLY, in a lobby (kanban #444, the owner 2026-10-17: "Btc orders showing up in tick tock"): Tick Tock's lobby listed
       // Up/Down's orders - every market pick of the tab, whatever game is open
       const ids = onlyThisGame ? new Set((window.ARENA_GAME_IDS || [window.ARENA_GAME_ID]).filter(Boolean).map((x) => String(x).toLowerCase())) : null;
+      // AN OLD ORDER READ BACK FROM THE SEATS WAITS FOR ITS RESULT OUT OF SIGHT (kanban #464, the owner 2026-10-17 23:42 local, phone, UI 211:
+      // "I am seeing other users orders, I don't have any open orders. They disappear after a few secs" - measured: they were this
+      // wallet's own closed orders of 20:15 and 19:15, read back from the seats in seconds since UI 211 and listed under My orders as
+      // "waiting for the result" until the page had asked for their outcome, then moved to History): a restored order whose window
+      // closed more than 10 minutes ago is not listed as "waiting" (or as not yet in the table) while its result is being read - for
+      // at most a minute after it was read back, so an order whose result cannot be read still shows
       const picks = readPicks().filter((p) => !ids || ids.has(String(p.gameId || '').toLowerCase()))
         .map((p) => Object.assign({}, p, { market: marketOfPick(p) })).filter((p) => p.market);
-      try { return BLWPCLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() }); } catch (e) { return [{ kind: 'market', text: 'markets: ' + e.message }]; }
+      const quiet = new Set(picks.filter((p) => p.order && p.order.restored && Date.now() > Number(p.entryCloseMs) + 600000
+        && Date.now() - Number(p.order.placedMs || 0) < 60000).map((p) => p.entryIdHex));
+      try {
+        const all = BLWPCLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() });
+        const held = new Set(all.filter((l) => quiet.has(l.entry) && (l.state === 'waiting' || l.state === 'unknown')).map((l) => l.entry));
+        QUIET_ORDERS = held;        // the client's order list (market.orders) leaves them out too
+        return all.filter((l) => !held.has(l.entry));
+      } catch (e) { return [{ kind: 'market', text: 'markets: ' + e.message }]; }
     }
     window.BLWP_MARKET_LINES = marketViewLines;
     // THE SHEET (decision B, plan 777): one button per outcome, the stake, the 5% fee and the 0-5% donation; Cancel ends the
@@ -7010,8 +7027,9 @@
             fetchBook: async () => { const id = opts.round ? opts.round() : null; return id ? window.ARENA_GAME.market.book(id) : null; },
             onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000,
             closeMs: () => { const id = opts.round ? opts.round() : null, row = (window.BLWP_LOBBY_ROWS || []).find((r) => r.id === id); return row ? Number(row.entryCloseMs) || 0 : 0; } }) : null),
-          orders: () => readPicks().filter((x) => x.order && x.gameId === game.id).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
-            limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled })),
+          // an old order read back from the seats is left out while its result is read (kanban #464, marketViewLines)
+          orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && x.gameId === game.id && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
+            limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled })); },
           cancel: async (entryIdHex) => {
             const x = readPicks().find((p) => p.entryIdHex === entryIdHex && p.order);
             if (!x) return { ok: false, why: 'this tab placed no such order' };
