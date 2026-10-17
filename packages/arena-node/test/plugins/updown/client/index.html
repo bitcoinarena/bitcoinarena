@@ -35,6 +35,19 @@
   .status .spin { flex:none; width:15px; height:15px; border-radius:50%; border:2px solid var(--line); border-top-color:#f7931a; animation:spin .8s linear infinite; }
   .status.ok .spin, .status.bad .spin { display:none; } @keyframes spin { to { transform:rotate(360deg); } }
   .r .pend { color:#f7931a; }
+  /* MY ORDERS AS CARDS (version 6, kanban #443, the owner 2026-10-17: "This looks pretty bad, make it prettier and more structured"): one
+     card per order - the side, the amount and the limit, the window, and where it stands - its result in the same card */
+  .ords { display:flex; flex-direction:column; gap:6px; }
+  .ord { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:10px; padding:9px 10px; border-radius:11px; background:#11151d; border:1px solid var(--line); }
+  .ord .sd { font:800 13px system-ui; padding:5px 9px; border-radius:8px; white-space:nowrap; }
+  .ord .sd.up { color:var(--up); background:rgba(47,211,138,.12); } .ord .sd.down { color:var(--down); background:rgba(255,90,106,.12); }
+  .ord .what b { font:700 14.5px system-ui; } .ord .what .lim { color:var(--dim); font-size:13px; } .ord .what .win { color:var(--dim); font-size:12px; margin-top:1px; }
+  .ord .st { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+  .chip2 { font:700 11.5px system-ui; padding:3px 8px; border-radius:999px; white-space:nowrap; border:1px solid var(--line); color:var(--dim); }
+  .chip2.open { color:#7aa2ff; border-color:rgba(79,124,255,.45); } .chip2.wait { color:#f7931a; border-color:rgba(247,147,26,.45); }
+  .chip2.won { color:var(--up); border-color:rgba(47,211,138,.5); background:rgba(47,211,138,.08); } .chip2.lost { color:var(--down); border-color:rgba(255,90,106,.45); }
+  .ord .st button { background:none; border:1px solid var(--line); border-radius:7px; padding:1px 8px; font-size:11.5px; color:var(--dim); }
+  .ord.flight { border-style:dashed; }
   .side.up { background:#12301f; color:var(--up); } .side.down { background:#3a1216; color:#ff8a94; }
   .side.on.up { outline:2px solid var(--up); } .side.on.down { outline:2px solid var(--down); }
   .sheet { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:12px; position:relative; }
@@ -107,7 +120,7 @@ if (!A || !A.market) {
       <div class="err" id="err"></div><button class="go" id="go">Buy Up</button><div class="status" id="status" role="status" aria-live="polite"><span class="spin"></span><span id="statustxt"></span></div>
       <div class="center sub" id="fee">Fee 1 %: 0.5 % nodes + 0.5 % donation, due when the market resolves; all back if it is void.</div>
     </div>
-    <div class="card list"><h3>My orders</h3><div id="mine"></div><h3 style="margin-top:8px">Results</h3><div id="results"></div></div>`;
+    <div class="card list"><h3>My orders</h3><div id="mine" class="ords"></div></div>`;
   let pick = 0, mode = 'market', current = null, book = null, live = { now: null, beat: null, beatFor: null };
   // THE WINDOW AN ORDER CAN JOIN (version 5, kanban #438: Buy was refused "this round is no longer listed in the lobby" - the client had
   // picked a window the page could not join, one at its close or a federation's row its seats did not yet agree on): the soonest
@@ -197,12 +210,35 @@ if (!A || !A.market) {
     $('go').disabled = !!a.why || current.free || !!(js && js.state === 'joining' && !js.cls);
     $('go').textContent = 'Buy ' + outcomes[pick];
     const mine = A.market.orders();
+    // ONE CARD PER ORDER, its result in it: the order (side, amount, limit, window) and the page's line for its entry (state, payout)
+    const lines = (A.state().picks || []).filter((l) => l && l.text);
+    const lineOf = (o) => lines.find((l) => l.entry && l.entry === o.entry) || lines.find((l) => l.round === o.round && Number(l.pick) === Number(o.pick));
+    const win = (closeMs) => hhmm(closeMs - PERIOD_MS) + '–' + hhmm(closeMs) + ' UTC';
+    const satsOf = (msat) => sats(Number(msat) / 1000);
+    const chipOf = (o, l) => {
+      if (o.cancelled) return ['', 'cancelled'];
+      const st = l && l.state;
+      if (st === 'won') return ['won', 'won +' + satsOf(l.gainMsat) + (l.final ? '' : ' · final soon')];
+      if (st === 'lost') return ['lost', 'lost'];
+      if (st === 'refunded' || st === 'void') return ['', 'refunded'];
+      if (st === 'disputed') return ['', 'refunded at expiry'];
+      if (st === 'right' || st === 'wrong') return [st === 'right' ? 'won' : 'lost', st === 'right' ? 'right' : 'wrong'];
+      if (st === 'settled') return ['won', 'paid ' + satsOf(l.payoutMsat)];
+      if (st === 'unverified') return ['wait', 'result unverified'];
+      if (o.entryCloseMs > Date.now()) return ['open', 'closes in ' + mmss(o.entryCloseMs - Date.now())];
+      return ['wait', 'waiting for the result'];
+    };
+    const card = (side, amount, limit, closeMs, chip, extra = '', cls = '') => `<div class="ord${cls}"><span class="sd ${side === 0 ? 'up' : 'down'}">${side === 0 ? '▲' : '▼'} ${esc(outcomes[side] || side)}</span>`
+      + `<div class="what"><b>${amount}</b> <span class="lim">≤ ${limit}¢</span><div class="win">${win(closeMs)}</div></div>`
+      + `<div class="st"><span class="chip2 ${chip[0]}">${esc(chip[1])}</span>${extra}</div></div>`;
     const flight = placing && js && !mine.some((o) => o.round === placing.round && o.placedMs >= placing.at - 1000)
-      ? `<div class="r"><span>${esc(outcomes[placing.pick] || placing.pick)} ≤ ${placing.limitCents}¢ · ${sats(placing.stakeSat)} · ${hhmm(placing.entryCloseMs - PERIOD_MS)}</span><span class="pend">${js.cls === 'bad' ? 'not placed' : js.cls ? (js.line.includes('locked') ? 'locked' : 'placed') : 'placing\u2026'}</span></div>` : '';
-    $('mine').innerHTML = flight + (mine.length ? mine.slice(-4).reverse().map((o) => `<div class="r"><span>${esc(outcomes[o.pick] || o.pick)} ≤ ${Math.round(o.limitPrice / TICK)}¢ · ${sats(Number(o.stakeMsat) / 1000)} · ${hhmm(o.entryCloseMs - PERIOD_MS)}</span>`
-      + `<span>${o.cancelled ? 'cancelled' : o.entryCloseMs > Date.now() ? `<button data-cancel="${o.entry}">cancel</button>` : 'closed'}</span></div>`).join('') : (flight ? '' : '<div class="sub">No orders yet.</div>'));
-    const lines = (A.state().picks || []).filter((l) => l && l.text).slice(-3);
-    $('results').innerHTML = lines.length ? lines.map((l) => `<div class="r"><span>${esc(l.text)}</span></div>`).join('') : '<div class="sub">Results of your windows show here.</div>';
+      ? card(placing.pick, sats(placing.stakeSat), placing.limitCents, placing.entryCloseMs,
+        js.cls === 'bad' ? ['lost', 'not placed'] : js.cls ? ['open', js.line.includes('locked') ? 'locked' : 'placed'] : ['wait', 'placing…'], '', ' flight') : '';
+    $('mine').innerHTML = flight + (mine.length ? mine.slice(-6).reverse().map((o) => {
+      const l = lineOf(o), chip = chipOf(o, l);
+      const cancel = !o.cancelled && o.entryCloseMs > Date.now() && !(l && l.state && l.state !== 'open') ? `<button data-cancel="${o.entry}">cancel</button>` : '';
+      return card(Number(o.pick), satsOf(o.stakeMsat), Math.round(o.limitPrice / TICK), o.entryCloseMs, chip, cancel);
+    }).join('') : (flight ? '' : '<div class="sub">No orders yet. Pick Up or Down and buy: your orders and their results show here.</div>'));
     window.UPDOWN_CLIENT.status = js;
     window.UPDOWN_CLIENT.state = { round: current.id, free: current.free, window: [start, current.entryCloseMs], beat: live.beat, now: live.now, pick, mode, asked: a, orders: mine.length, upCents: upCents() };
   }
