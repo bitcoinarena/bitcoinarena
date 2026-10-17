@@ -75,7 +75,11 @@
         }
         // THE BARE ROOT (kanban #350): no game is known until the player picks one, so Bitcoin Arena's own splash shows - not
         // Next Block's loading screen in front of Rock Paper Scissors. Next Block's comes back when it is the game chosen.
-        else if (!g && !location.search) {
+        // NOT ONLY WITH AN EMPTY ADDRESS (kanban #440, the owner 2026-10-17: "When in RPS and pressing the arena button the next block
+        // loading screen appears. When going back to RPS the wrong loading screen shows up again"): "← Arena" keeps every other
+        // parameter, and a game named by an id this browser kept no name for is unknown at the first paint - both fell through to
+        // Next Block's screen. Only a link to a round (an old Tick Tock link) still starts on Next Block's.
+        else if (!g && !/[?&]round=/.test(location.search)) {
           document.documentElement.classList.add('other-game', 'arena-root');
           window.ARENA_SITE_TITLE = ['Bitcoin Arena', '\u26A1'];
         }
