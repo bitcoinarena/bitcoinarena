@@ -3078,7 +3078,11 @@
       }
       const rows = listed.filter((r) => r && !r.free && r.contract && BLWPCLIENT.roundPays && BLWPCLIENT.roundPays(r.contract) !== false
         && BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(r.contract) && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
-      for (const r of rows) {
+      // THE ROUNDS SIDE BY SIDE, THEIR ENTRIES TOO (kanban #459, measured live 2026-10-17 ~21:10Z, UI 210: a wallet's 14 orders in 9
+      // rounds appeared 15-35 s after the page loaded - every round's book, then every entry in it, each player's, was read after the
+      // one before, each from the first seat that answered): every round at once, and a round's entries at once, each asked first of a
+      // different seat of the round's
+      await Promise.all(rows.map(async (r) => {
         const round = Object.assign({}, r.contract, { id: BLWPCLIENT.fromHex(r.id) });
         const keys = new Map();
         for (let i = 0; i < ORDER_KEYS; i++) { try { keys.set(BLWPCLIENT.toHex(BLWPCLIENT.playerFor(round, { seed, curve: window.BLWP_CURVE, order: i }).pubkey), i); } catch { /* no key */ } }
@@ -3089,19 +3093,20 @@
           const size = (b) => (b.batches || []).length + (b.positions || []).length;
           book = got.length ? got.reduce((a, b) => (size(b) > size(a) ? b : a)) : null;
         } else { try { book = await G.market.book(r.id); } catch { book = null; } }
-        if (!book) continue;
+        if (!book) return;
         const ids = [...new Set([...(book.positions || []).map((x) => x.entry), ...((book.resting && book.resting.buys) || [])])]
           .filter((id) => id && !known.has(id) && !ENTRIES_SEEN.has(r.id + id));
-        if (!ids.length) continue;
+        if (!ids.length) return;
         const nodes = r.nodes || (window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(r.id) : []);
         const entries = [];
-        for (const id of ids) {
-          for (const n of nodes) {
+        await Promise.all(ids.map(async (id, k) => {
+          for (let j = 0; j < nodes.length; j++) {
+            const n = nodes[(k + j) % nodes.length];
             try { const res = await fetch(String(n).replace(/\/+$/, '') + '/entry?id=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
               if (res.ok) { entries.push({ idHex: id, bytes: new Uint8Array(await res.arrayBuffer()) }); break; } } catch { /* the next seat */ }
           }
           ENTRIES_SEEN.add(r.id + id);
-        }
+        }));
         const mine = BLWPCLIENT.myOrdersFromEntries({ entries, keys });
         for (const m of mine) {
           rememberPick(Object.assign(BLWPCLIENT.pickRecord({ roundIdHex: r.id, entryIdHex: m.entryIdHex, pick: m.pick, round, nodes, confirmed: false }),
@@ -3110,7 +3115,7 @@
           try { const k = 'arena.order.next.' + r.id; if ((Number(window.sessionStorage.getItem(k)) || 0) <= m.orderIndex) window.sessionStorage.setItem(k, String(m.orderIndex + 1)); } catch { /* this tab's only */ }
         }
         if (mine.length) console.log('[blwp] restored ' + mine.length + ' order(s) of round ' + r.id.slice(0, 16) + ' from its seats');
-      }
+      }));
     }
     // EVERY ORDER NAMED UNDER THE PLAYER (kanban #457, the owner 2026-10-17: "The leaderboard is still empty" - measured: each order of a
     // market joins under its own round key and was named under nobody, so the season listed every order as a stranger and the
