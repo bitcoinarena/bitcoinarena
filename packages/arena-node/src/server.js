@@ -197,6 +197,7 @@ import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '.
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
 import { createReservePayouts, lnurlClient } from './reserve-payout.js';
+import { moveTargets } from './reserve-move.js';
 import { FUNDING_SCHEDULES, activeNodesBefore, encodeFundingProposal, fundingProposalId, encodeFundingSignal, fundingSignalId, encodeFundingComment, fundingCommentId } from '../../arena-protocol/src/funding.js';
 import { RESERVES_VERSION as ITEM_RESERVES_FROM } from '../../arena-protocol/src/constants.js';
 import { Forfeit } from './forfeit.js';
@@ -1369,6 +1370,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const j = await r.json(); return j.ok ? { ok: true, share: BigInt('0x' + j.share) } : j; },
   });
   const reserveSpent = () => (reservePayouts ? reservePayouts.spent() : new Set());
+  const movesWaitLogged = new Set();
   const reservePayouts = round.db ? createReservePayouts({ db: round.db, me: toHex(round.pubkey), curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)),
     network: payoutNet, payRequest: lnurlAsk.payRequest, invoiceFor: lnurlAsk.invoiceFor, log: (l) => console.log(l),
     passed: () => (fundingBook ? fundingBook.list(null) : []).filter((p) => p.vote && p.vote.state === 'passed')
@@ -1382,6 +1384,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     reserveRows: (fed) => { const k = reserveKeys.get(fed) || (() => { const g = reserveGuardians()[fed]; if (!g) return null; const h = reserveDkgOf(fed).signerNodeFor(sortedKeys(g.members)); return h.ok ? h.pool.groupPublicKey : null; })();
       return k ? round.donationsFor(toHex(k)).filter((r) => r.federationId === fed).map((r) => ({ outpoint: r.outpoint, amountMsat: r.amountMsat, verifiedMs: r.verifiedMs })) : []; },
     portOf: (fed) => portOfFederation(fromHex(fed)),
+    // THE DRAINED-FEDERATION MOVES (kanban #397, decision A): from this seat's own verified federation records - status, the record's
+    // height, the successor - and the reserves it holds unspent there (reserve-move.js moveTargets)
+    moves: () => {
+      if (!fedRecords || typeof fedRecords.list !== 'function') return [];
+      const spent = reserveSpent();
+      const keyHex = (fed) => { const k = reserveKeys.get(fed); if (k) return toHex(k); const g = reserveGuardians()[fed]; if (!g) return null;
+        const h = reserveDkgOf(fed).signerNodeFor(sortedKeys(g.members)); return h.ok ? toHex(h.pool.groupPublicKey) : null; };
+      const feds = fedRecords.list().map((r) => { const key = keyHex(r.federation);
+        const unspentMsat = key ? round.donationsFor(key).filter((x) => x.federationId === r.federation && !spent.has(x.outpoint)).reduce((t, x) => t + BigInt(x.amountMsat), 0n) : 0n;
+        return { id: r.federation, status: String(r.status), height: Number(r.height) || 0, successor: r.successor || null, key, unspentMsat }; });
+      const t = moveTargets(feds);
+      for (const w of t.waiting) if (!movesWaitLogged.has(`${w.federation}:${w.why}`)) { movesWaitLogged.add(`${w.federation}:${w.why}`); console.log(`[move] ${w.federation.slice(0, 16)}: waits - ${w.why}`); }
+      return t.moves;
+    },
     keepRow: (row) => round.putDonationOutputs([row]),
     broadcast: (rec) => { let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       for (const base of seats) fetch(`${base}/reserve-payout/record`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rec), signal: AbortSignal.timeout(15000) }).catch(() => {}); },

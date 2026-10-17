@@ -6814,6 +6814,19 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
   - **When a federation is drained** (§23A: draining, succession, liquidation), its reserves move
     automatically to a healthy federation, as the players' funds do. No vote is needed for that
     move; it is recorded on every node like a payout.
+- **The move, as built** *(kanban #397, the owner 2026-10-17 decision A)*:
+    - **Trigger** (every seat, from its own verified records): federation X is DRAINING or CRITICAL and still holds unspent reserves.
+      A HALTED federation waits; its notes are frozen.
+    - **Destination:** X's successor when it is OPEN with a reserve key, else the lowest-id OPEN federation with one. No healthy
+      federation means no move.
+    - **Steps:** X's 5-of-7 pays, as a payout of kind `move`:
+      - the amount is all of X's unspent reserves less the fees, with no change output;
+      - the invoice comes from a gateway of Y for an incoming contract whose claim key is **Y's reserve key**, its preimage
+        the hash of the move's own seed (stake-lock tool `--mode receive-to-key`);
+      - every X signer reads that contract through its own port before it signs;
+      - then Y's 5-of-7 claims it into a reserve output (`--mode claim-incoming`, FROST-signed).
+    - **Recorded** on every seat (state CLAIMED). `/reserves` shows X at 0 and Y up by the claim.
+    - **Not built:** a move out of a HALTED federation, splitting over destinations, a re-try after a refund.
 - **The reserve output, concretely** *(slice 3 plan, kanban #397)*: in the entry's ONE lock transaction
   (FEDERATION.md "Donations in the federation"), beside the stake lock, the fee lock and the developers'
   outputs, one **reserve lock**: an LNv2 contract with `claim_pk` = `refund_pk` = the federation's
