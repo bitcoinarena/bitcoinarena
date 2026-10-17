@@ -128,6 +128,24 @@
        title jumped up into the frame and to capitals as Unity took over. The page now draws that panel at Unity's rectangle
        (bootPanel() below, the same arithmetic in CSS pixels - BlwpUiScale makes Unity's units the canvas's CSS pixels), so only
        what is inside it changes. Another game's loading screen keeps its own look (#385). */
+    /* DONATE TO THE DEVELOPERS (kanban #431): the popup, over everything; the footer links that open it */
+    #arena-donate { display: none; position: fixed; inset: 0; z-index: 9995; background: rgba(5,7,10,.72); align-items: center; justify-content: center; padding: 16px; }
+    #arena-donate.show { display: flex; }
+    #arena-donate .box { width: min(420px, 100%); background: #11161d; border: 1px solid #2a3442; border-radius: 14px; padding: 16px; color: #e6edf3; font: 14px/1.45 system-ui, sans-serif; }
+    #arena-donate .top { display: flex; align-items: center; justify-content: space-between; } #arena-donate h3 { margin: 0; font-size: 18px; color: #f7931a; }
+    #arena-donate .x { background: none; border: 0; color: #8b949e; font-size: 24px; cursor: pointer; }
+    #arena-donate .muted { color: #8b949e; font-size: 13px; } #arena-donate .to { margin: 8px 0 4px; }
+    #arena-donate .amounts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 8px; }
+    #arena-donate .amounts button, #arena-donate .go { border: 1px solid #2a3442; border-radius: 10px; background: #0d1014; color: #e6edf3; padding: 10px 4px; font: 600 14px system-ui; cursor: pointer; }
+    #arena-donate .amounts button[aria-pressed="true"] { border-color: #f7931a; background: rgba(247,147,26,.16); color: #f7931a; }
+    #arena-donate .custom { display: flex; align-items: center; gap: 8px; } #arena-donate .custom input { flex: 1; min-width: 0; background: #0d1014; color: #e6edf3; border: 1px solid #2a3442; border-radius: 9px; padding: 8px 10px; font: inherit; }
+    #arena-donate .row { margin-top: 10px; } #arena-donate .go { width: 100%; background: #f7931a; color: #111; border-color: #f7931a; } #arena-donate .go:disabled { opacity: .45; cursor: default; }
+    #arena-donate .say { min-height: 1.4em; margin: 8px 0 0; } #arena-donate .say.bad { color: #f85149; }
+    #arena-donate-go { display: none; }
+    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(13px + env(safe-area-inset-bottom, 0px) + 3px); z-index: 38; height: 25px; padding: 0 10px;
+      border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
+    body.arena-own-client #arena-approval { padding-right: 96px; }
+    body.blwp-clean #arena-donate-go { display: none !important; }
     #boot-panel { display: none; }
     html:not(.other-game) #boot.paneled > #boot-panel { display: block; position: absolute; left: var(--px); top: var(--py); width: var(--pw); height: var(--ph);
       box-sizing: border-box; border: 2px solid rgba(255, 214, 79, 0.85); background: linear-gradient(#1a1d26f0, #0e0f13f0);
@@ -838,6 +856,9 @@
     #blwp-next-addons { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #f7931a; color: #111;
       border: 1px solid #f7931a; border-radius: 6px; }
     @media (orientation: landscape) and (max-height: 460px) { #blwp-next-addons { padding: 5px 10px; } }
+    /* DONATE IN THE COUNTDOWN (kanban #431, the owner 2026-10-17: "Ticktok location accepted") */
+    #blwp-next-donate { flex: none; font: inherit; padding: 9px 12px; cursor: pointer; background: #1b1408; color: #f7931a; border: 1px solid #f7931a; border-radius: 6px; }
+    @media (orientation: landscape) and (max-height: 460px) { #blwp-next-donate { padding: 5px 10px; } }
     body.blwp-clean #blwp-next { display: none !important; }
     /* SETTINGS IS ITS OWN SCREEN, over everything while it is open - framed blocks, not a stack of labels. */
     #blwp-settings { position: fixed; inset: 0; z-index: 40; overflow-y: auto; background: #0b0e12;
@@ -980,6 +1001,7 @@
        Unity's lobby): shown over the loading screen and Unity's title too, hidden only while a round's own screens are up
        (paintMoney); the backup warning stays over the lobby alone. -->
   <div id="arena-approval" role="status"></div>
+  <button id="arena-donate-go" type="button" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || null)">&hearts; Donate</button>
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
@@ -1011,7 +1033,7 @@
     <div id="arena-wb-why" role="status"></div>
   </div>
   <div id="arena-bal-split" role="dialog" aria-label="your balance by federation" style="display:none"></div>
-  <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons</button><button id="blwp-next-exit" type="button">exit game</button></div>
+  <div id="blwp-next" role="status"><span id="blwp-next-say"></span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons</button><button id="blwp-next-donate" type="button">&hearts; Donate</button><button id="blwp-next-exit" type="button">exit game</button></div>
   <!-- THE BALANCE, IN THE LOBBY'S OWN PANEL (the owner 2026-09-29): placed over the row Unity reports as `balance`, where
        NAME and KEY stood, above the rounds. -->
   <div id="blwp-lobby-balance" style="display:none">
@@ -1596,7 +1618,7 @@
   <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
-  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
+  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="#donate" class="donate-link" onclick="event.preventDefault(); window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate to the developers</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
     <div id="boot-panel"><div class="head"></div></div>
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
@@ -2642,6 +2664,7 @@
       }
       return show(offer);
     };
+    document.getElementById('blwp-next-donate').addEventListener('click', () => { if (window.ARENA_DONATE_OPEN) window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || 'nextblock'); });
     document.getElementById('blwp-next-addons').addEventListener('click', () => {
       try { window.unityInstance.SendMessage('Bootstrap', 'OpenAddons'); } catch (e) { console.error('[blwp] add-ons: ' + e.message); }
     });
@@ -7730,6 +7753,83 @@
         player: { pubkey: key.pubkey, sign: key.sign }, seats: shop.game.nodes || [], fetch: (u, o) => fetch(u, o),
         verify: (sg, m, k) => window.BLWP_CURVE.verify(sg, m, k) });
     }
+    // DONATE TO THE DEVELOPERS (kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to choose from
+    // 100, 500, 1000, 5000 satoshis or custom"; "B e cash"; Tick Tock's countdown box, the other games, the main testnet UI's footer):
+    // one popup for every place. A game's developers are paid over that game's donation set, the protocol developers over the
+    // network's - both read from a listed paid round of the game (its seats sign them), as the shop reads them - in e-cash from the
+    // player wallet (giftDonation: paySubmit, the signed record, the seats). `gameName` null = the protocol developers.
+    async function donateSets(gameName) {
+      const games = window.ARENA_GAMES_FULL || [];
+      const ids = new Set(games.filter((g) => !gameName || g.name === gameName || (g.manifest && g.manifest.gameName === gameName)).map((g) => g.id));
+      const row = (window.BLWP_LOBBY || []).map((x) => x.raw).find((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
+      if (!row) return { ok: false, why: gameName ? 'no paid round of this game is listed to read its donation set from' : 'no paid round is listed to read the donation sets from' };
+      const ds = await BLWPCLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: BLWPCLIENT.fromHex(row.id) }),
+        nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
+      if (!ds.ok || !ds.target) return { ok: false, why: ds.why || 'the round names no donation sets' };
+      const g = games.filter((x) => x.manifest && (x.name === gameName || x.manifest.gameName === gameName)).sort((a, b) => Number(b.manifest.version) - Number(a.manifest.version))[0];
+      return { ok: true, set: gameName ? ds.target.game : ds.target.network, game: gameName && g ? { gameDevPubkey: g.manifest.gameDevPubkey, gameName: g.manifest.gameName } : null,
+        seats: (g && g.nodes) || ((games[0] || {}).nodes) || (row.said || []).map((c) => c.node).filter(Boolean) };
+    }
+    async function donateWallets() {
+      if (window.BLWP_SUM_BALANCES) await window.BLWP_SUM_BALANCES().catch(() => {});
+      const out = [];
+      for (const [fid, c] of (window.BLWP_WALLETS || new Map())) { try { out.push({ fid, c, msat: BigInt(await c.balanceMsat()) }); } catch { /* the next */ } }
+      return out.sort((a, b) => (b.msat > a.msat ? 1 : b.msat < a.msat ? -1 : 0));
+    }
+    window.ARENA_DONATE_OPEN = (gameName = null) => {
+      let el = document.getElementById('arena-donate');
+      if (!el) { el = document.createElement('div'); el.id = 'arena-donate'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el); }
+      const game = gameName ? ((window.ARENA_GAMES_FULL || []).find((g) => g.name === gameName || (g.manifest && g.manifest.gameName === gameName)) || null) : null;
+      const who = gameName ? 'the developers of ' + ((game && (game.title || game.manifest && game.manifest.title)) || gameName) : 'the Bitcoin Arena protocol developers';
+      el.innerHTML = '<div class="box"><div class="top"><h3>Donate to the developers</h3><button type="button" class="x" aria-label="Close">&times;</button></div>'
+        + '<p class="to"></p><p class="split muted">Reading the donation set …</p>'
+        + '<div class="amounts" role="group" aria-label="amount"></div>'
+        + '<label class="custom">Custom <input inputmode="numeric" placeholder="sat" autocomplete="off"></label>'
+        + '<p class="bal muted"></p><div class="row"><button type="button" class="go primary" disabled>Donate</button></div><p class="say" role="status"></p></div>';
+      el.querySelector('.to').textContent = 'To ' + who + ', in e-cash from your wallet, split by the shares of their donation set.';
+      const say = (t, bad) => { const n = el.querySelector('.say'); n.textContent = t; n.classList.toggle('bad', !!bad); };
+      const close = () => { el.classList.remove('show'); };
+      el.querySelector('.x').addEventListener('click', close);
+      el.addEventListener('click', (e) => { if (e.target === el) close(); });
+      let chosen = null, sets = null, wallets = [], confirming = false;
+      const best = () => (wallets[0] ? wallets[0].msat / 1000n : 0n);
+      const go = el.querySelector('.go'), input = el.querySelector('.custom input');
+      const pick = (sat) => {
+        confirming = false; chosen = sat;
+        for (const b of el.querySelectorAll('.amounts button')) b.setAttribute('aria-pressed', String(Number(b.dataset.sat) === sat));
+        const ok = sat !== null && BigInt(sat) <= best();
+        go.disabled = !(ok && sets && sets.ok);
+        go.textContent = sat === null ? 'Donate' : 'Donate ' + sat.toLocaleString('en-US') + ' sat';
+        say(sat !== null && !ok ? 'Your wallet holds ' + best().toLocaleString('en-US') + ' sat in one federation: that is the most you can give.' : '', sat !== null && !ok);
+      };
+      for (const sat of BLWPCLIENT.GIFT_CHOICES_SAT) {
+        const b = document.createElement('button'); b.type = 'button'; b.dataset.sat = String(sat); b.textContent = sat.toLocaleString('en-US') + ' sat';
+        b.addEventListener('click', () => { input.value = ''; pick(sat); }); el.querySelector('.amounts').append(b);
+      }
+      input.addEventListener('input', () => { if (!input.value.trim()) { pick(null); return; } const a = BLWPCLIENT.giftAmountOf(input.value); if (!a.ok) { pick(null); say(a.why, true); return; } pick(a.sat); });
+      go.addEventListener('click', async () => {
+        if (chosen === null || !sets || !sets.ok) return;
+        if (!confirming) { confirming = true; go.textContent = 'Confirm: give ' + chosen.toLocaleString('en-US') + ' sat'; say('Tap again to send ' + chosen.toLocaleString('en-US') + ' sat to ' + who + '.'); return; }
+        const key = itemsKey(); if (!key) { say('Open your wallet first.', true); return; }
+        const w = wallets.find((x) => x.msat >= BigInt(chosen) * 1000n);
+        if (!w) { say('No federation of your wallet holds ' + chosen.toLocaleString('en-US') + ' sat.', true); return; }
+        go.disabled = true; say('Paying ' + chosen.toLocaleString('en-US') + ' sat …');
+        const got = await BLWPCLIENT.giftDonation({ game: sets.game, recipients: sets.set, sat: chosen, wallet: w.c, federationId: w.fid,
+          donor: { pubkey: key.pubkey, sign: key.sign }, seats: sets.seats, fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+        window.ARENA_DONATE_LAST = got;
+        console.log('[arena] donation ' + (got.ok ? chosen + ' sat, transaction ' + got.txid + ', ' + got.outputs + ' outputs, kept by ' + got.keptBy : 'refused (' + got.step + '): ' + got.why));
+        if (got.ok) { say('Thank you! ' + chosen.toLocaleString('en-US') + ' sat sent · transaction ' + String(got.txid).slice(0, 12) + '…'); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); wallets = await donateWallets(); el.querySelector('.bal').textContent = 'Your wallet: ' + best().toLocaleString('en-US') + ' sat'; confirming = false; go.textContent = 'Donate'; chosen = null; for (const b of el.querySelectorAll('.amounts button')) b.setAttribute('aria-pressed', 'false'); }
+        else { go.disabled = false; confirming = false; go.textContent = 'Donate ' + chosen.toLocaleString('en-US') + ' sat'; say('Not sent (' + got.step + '): ' + got.why, true); }
+      });
+      el.classList.add('show');
+      (async () => {
+        [sets, wallets] = await Promise.all([donateSets(gameName).catch((e) => ({ ok: false, why: e.message })), donateWallets()]);
+        el.querySelector('.split').textContent = sets.ok ? 'Shares: ' + BLWPCLIENT.giftRecipientsLine(sets.set) : 'The donation set could not be read: ' + sets.why;
+        el.querySelector('.bal').textContent = wallets.length ? 'Your wallet: ' + best().toLocaleString('en-US') + ' sat' : 'Open your wallet and deposit first.';
+        window.ARENA_DONATE_STATE = { gameName, set: sets.ok ? sets.set.length : 0, why: sets.ok ? null : sets.why, balanceSat: String(best()) };
+        pick(chosen);
+      })();
+    };
     // ADD-ONS INSIDE UNITY (kanban #374, the owner 2026-10-16: "The buy feature must also be inside unity on the loading screen as 'buy
     // addons' where you load the packages, and when the round has closed and the countdown is showing there is also the option to buy
     // items. There is a visual confirmation in unity when the game is active and an item has been purchased."). Unity draws the panel

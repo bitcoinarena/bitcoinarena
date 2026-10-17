@@ -1,0 +1,95 @@
+// A DONATION TO THE DEVELOPERS, OUTSIDE ANY ROUND (kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to
+// choose from 100, 500, 1000, 5000 satoshis or custom"; "B e cash").
+//
+// The player's wallet pays the amount in ONE federation transaction whose outputs are pre-expired payout contracts to the keys of a
+// donation set, split by share exactly as a round's donation is (splitDonation: floor each share, the remainder to the first
+// recipient, no 0 msat output) - the item shop's payment (paySubmit), with no item. The donor signs a record of it: which set (a
+// game's, by its developer and name, or the network's protocol developers'), the federation, the transaction, every output, the
+// total and when. A seat keeps it only when the outputs are that split of that total over the set it holds and the federation holds
+// each output as built; then it indexes them under each recipient key (GET /donations?key=), where the developer's own client
+// already finds a round's donations, and hands the record on to every seat.
+import { Writer, Reader } from './encode.js';
+import { taggedHash, toHex } from './hash.js';
+import { splitDonation } from './donation.js';
+
+export const TAG_DONATION_GIFT = 'ARENA/v1/DonationGift';
+export const TYPE_DONATION_GIFT = 0x44;          // 'D'
+export const DONATION_GIFT_VERSION = 1;
+export const GIFT_TO_NETWORK = 0, GIFT_TO_GAME = 1;
+/** The amounts the popup offers, in sat (the owner 2026-10-17), and the smallest and largest custom amount. */
+export const GIFT_CHOICES_SAT = Object.freeze([100, 500, 1000, 5000]);
+export const GIFT_MIN_SAT = 1, GIFT_MAX_SAT = 10_000_000;
+/** How far a record may be dated ahead of a seat's clock. */
+export const GIFT_SKEW_MS = 10 * 60 * 1000;
+
+const giftIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+const giftIs33 = (b) => b instanceof Uint8Array && b.length === 33;
+const GIFT_ZERO32 = new Uint8Array(32);
+
+export function encodeDonationGift(g) {
+  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME) throw new Error('a gift is to the network\'s developers (0) or a game\'s (1)');
+  const dev = g.target === GIFT_TO_GAME ? g.gameDevPubkey : GIFT_ZERO32;
+  const name = g.target === GIFT_TO_GAME ? String(g.gameName || '') : '';
+  if (!giftIs32(dev) || (g.target === GIFT_TO_GAME && !name)) throw new Error('a gift to a game names its developer by 32 bytes and its name');
+  if (!giftIs32(g.donor) || !giftIs32(g.federationId) || !giftIs32(g.txid)) throw new Error('a gift names its donor, its federation and its transaction by 32 bytes each');
+  if (typeof g.totalMsat !== 'bigint' || g.totalMsat < 1000n) throw new Error('a gift is at least 1 sat, in msat as a BigInt');
+  if (!Array.isArray(g.outputs) || g.outputs.length < 1 || g.outputs.length > 255) throw new Error('a gift pays 1 to 255 outputs');
+  for (const o of g.outputs) if (!Number.isInteger(o.outIdx) || o.outIdx < 0 || !giftIs33(o.pk) || typeof o.msat !== 'bigint' || o.msat < 1n)
+    throw new Error('an output names its index, its recipient\'s 33-byte key and its msat');
+  const w = new Writer();
+  w.u8(TYPE_DONATION_GIFT); w.u16(DONATION_GIFT_VERSION);
+  w.u8(g.target); w.bytes32(dev); w.str(name);
+  w.bytes32(g.donor); w.bytes32(g.federationId); w.bytes32(g.txid); w.u64(g.totalMsat);
+  w.vec(g.outputs, (o, ww) => { ww.u32(o.outIdx); ww.bytes(o.pk, 33); ww.u64(o.msat); }, { sortedBy: (a, b) => a.outIdx - b.outIdx });
+  w.u64(BigInt(g.atMs));
+  return w.finish();
+}
+
+export function decodeDonationGift(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_DONATION_GIFT) throw new Error('not a donation gift');
+  const v = r.u16(); if (v !== DONATION_GIFT_VERSION) throw new Error(`a donation gift of version ${v}`);
+  const g = { target: r.u8(), gameDevPubkey: r.bytes32(), gameName: r.str(), donor: r.bytes32(), federationId: r.bytes32(), txid: r.bytes32(), totalMsat: r.u64(),
+    outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), atMs: r.u64() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the donation gift');
+  encodeDonationGift(g);                       // the same rules on the way in
+  return g;
+}
+
+export const donationGiftId = (g) => taggedHash(TAG_DONATION_GIFT, encodeDonationGift(g));
+
+/** The outputs a gift of `totalMsat` must pay over a set of keys, in the set's order: [{ pk, msat }], none of 0 msat. */
+export function giftOutputs({ totalMsat, recipients }) {
+  const split = splitDonation({ donationMsat: totalMsat, recipients });
+  if (!split.owed) throw new Error(`the gift cannot be split over this set: ${split.why}`);
+  const out = [];
+  for (const s of split.shares) {
+    if (s.amountMsat <= 0n) continue;
+    if (!(s.recipientPk instanceof Uint8Array)) throw new Error('a gift is paid in the federation: the set must pay keys, not LNURLs');
+    out.push({ pk: s.recipientPk, msat: s.amountMsat });
+  }
+  return out;
+}
+
+/**
+ * WHETHER A GIFT STANDS against the set a seat holds for its target (`recipients`): the donor's signature, and its outputs exactly
+ * the split of its total over that set - the same keys, the same amounts, in the set's order, output index i the i-th. Answers
+ * { ok, id } or { ok: false, why }. The federation's own check of each output is the seat's (it reaches the federation).
+ */
+export function giftStands(g, { recipients, verify, nowMs = Date.now() }) {
+  let id;
+  try { id = donationGiftId(g); } catch (e) { return { ok: false, why: e.message }; }
+  if (Number(g.atMs) > nowMs + GIFT_SKEW_MS) return { ok: false, why: 'that gift is dated ahead of this seat\'s clock' };
+  let good = false; try { good = verify(g.signature, id, g.donor) === true; } catch { good = false; }
+  if (!good) return { ok: false, why: 'the donor\'s signature does not verify' };
+  let want;
+  try { want = giftOutputs({ totalMsat: g.totalMsat, recipients }); } catch (e) { return { ok: false, why: e.message }; }
+  const got = [...g.outputs].sort((a, b) => a.outIdx - b.outIdx);
+  if (got.length !== want.length) return { ok: false, why: `the gift pays ${got.length} output(s), and its total split over the set is ${want.length}` };
+  for (let i = 0; i < want.length; i++) {
+    if (got[i].outIdx !== i) return { ok: false, why: `output ${i} is missing: a gift's outputs are its transaction's 0..${want.length - 1}` };
+    if (toHex(got[i].pk) !== toHex(want[i].pk) || got[i].msat !== want[i].msat)
+      return { ok: false, why: `output ${i} pays ${got[i].msat} msat to ${toHex(got[i].pk).slice(0, 16)}…, and the set's share is ${want[i].msat} msat to ${toHex(want[i].pk).slice(0, 16)}…` };
+  }
+  return { ok: true, id };
+}
