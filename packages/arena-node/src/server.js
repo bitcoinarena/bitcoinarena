@@ -1333,6 +1333,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return mergeServedRounds(held).rounds;
   };
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
+    // THE VOTE'S READS OF THIS SEAT'S OWN CHAIN (kanban #397 slice 7): the same as #329's ballot - tip, block hashes, the "ARN" 'V'
+    // outputs of a block, the census with each bond's amount at a height
+    voteChain: ballot && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function'
+      ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, votesAt: ballot.votesAt, censusAt: ballot.censusAt } : null,
     verify: (sg, m, k) => schnorr.verify(sg, m, k),
     isBonded: (nodeHex) => { const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false }; if (!now.ok) return null; return (now.entries || []).some((e) => toHex(e.pubkey) === nodeHex); },
     tip: async () => (typeof chainTip === 'function' ? Number(await chainTip()) : null),
@@ -1349,7 +1353,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     for (const base of seats) fetch(`${base}/funding`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-forwarded': '1' },
       body: JSON.stringify({ kind, hex }), signal: AbortSignal.timeout(8000) }).catch(() => {});
   };
-  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().catch(() => {}); }, 120000); if (t.unref) t.unref(); }
+  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
   //
