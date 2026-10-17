@@ -132,10 +132,11 @@ export async function verifyDonationOutputs({ round, port, entry, entryIdBytes, 
  * #397) the developers' 4 % as any donation plus the reserves' 2 %, one output to the entry's federation's reserve key, checked
  * the same way (a payout contract to that key for exactly that amount) and kept beside them as a row for that key.
  */
-export async function verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients, reserveKey = null, federationId }) {
+// `split`: the round's split in force at its census height (kanban #462); unset, today's
+export async function verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients, reserveKey = null, federationId, split = undefined }) {
   if (!(paysReserves(contract) && entry.reserveOutpoint !== undefined))
     return verifyDonationOutputs({ round, port, entry, entryIdBytes, recipients, federationId });
-  const want = reservesEntryExpected({ entry, recipients, reserveKey });
+  const want = reservesEntryExpected({ entry, recipients, reserveKey, ...(split ? { split } : {}) });
   if (!want.ok) return { ok: false, why: `reserves: ${want.why}` };
   const devs = await verifyDonationOutputs({ round, port, entry: { ...entry, donationMsat: entry.donationMsat - want.reserve.amountMsat },
     entryIdBytes, recipients, federationId });
@@ -146,7 +147,7 @@ export async function verifyEntryGifts({ round, port, entry, contract, entryIdBy
   return { ok: true, rows: [...devs.rows, ...res.rows.map((r) => ({ ...r, reserve: true }))] };
 }
 
-export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null }) {
+export async function verifyStakeLock({ round, port, entryIdBytes, fields, claimPk, donationRecipients = null, reserveKey = null, split = undefined }) {
   const stored = round.entry(entryIdBytes);
   if (!stored) return { ok: false, why: 'this node holds no such entry' };
   const entry = decodeEntryContract(stored);
@@ -181,7 +182,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
 
   // AND ITS DONATION, IN THE SAME TRANSACTION (the owner 2026-10-03): a stake whose donation outputs are wrong or missing is
   // not counted - nothing is kept for it, and the lock may be handed over again.
-  const donated = await verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients: donationRecipients, reserveKey, federationId: fed.federationId });
+  const donated = await verifyEntryGifts({ round, port, entry, contract, entryIdBytes, recipients: donationRecipients, reserveKey, federationId: fed.federationId, split });
   if (!donated.ok) return donated;
   if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
 

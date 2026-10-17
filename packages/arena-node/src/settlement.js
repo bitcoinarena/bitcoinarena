@@ -31,6 +31,8 @@ import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketVoidOf, attestedTable } from './game-market.js';
 import { decodePlayerResult, splitSignedResult } from '../../arena-protocol/src/result.js';
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
+import { paysReserves } from '../../arena-protocol/src/reserves.js';
 import { bookSettlement } from '../../arena-protocol/src/book-ledger.js';
 import { isScalar, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { outcomeFinality } from '../../arena-protocol/src/attested.js';
@@ -120,8 +122,11 @@ export class LockSettlement {
   constructor(round, { dkg, port, curve, random, stakeSecrets, peersFor = () => [], fetcher = (u, o) => fetch(u, o),
     signerNodesFor = (rid, contract) => ({ gameVerify: contract.nodes, settlement: contract.nodes }), winnings = null,
     turnClock = null, donationSetFor = null, donationTargetFor = null, orderBook = null, now = () => Date.now(), conflictsFor = null,
-    finalityOf = resultFinality, reserveKeyFor = null } = {}) {
+    reserveKeyFor = null, feesFor = null, finalityOf = resultFinality } = {}) {
     this.round = round;
+    // THE FEES IN FORCE AT A ROUND (kanban #462, funding-book.js feesAt): `feesFor(contract)` -> the fee set at its census height. A
+    // version-11 round's node fee and every round's website share are settled from it; unset, today's
+    this.feesFor = feesFor;
     // A FEDERATION'S RESERVE KEY (server.js `reserveKeyFor(fedHex)`, async): where a market's protocol reserve is paid (kanban #454)
     this.reserveKeyFor = reserveKeyFor;
     // `conflictsFor` is no longer consulted (§5A.13, ruled 2026-10-14, kanban #360): no player declares an operator
@@ -373,7 +378,7 @@ export class LockSettlement {
     let fees = this.fees.get(toHex(roundIdBytes));
     if (!fees) { fees = await (await this.portFor(roundIdBytes)).fees(); this.fees.set(toHex(roundIdBytes), fees); }
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
-      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract };
+      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
     // WINNINGS-AUTO (RULED the owner 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
@@ -483,6 +488,13 @@ export class LockSettlement {
    * transaction - winnings, sellers' proceeds, every unfilled rest, the fees due to the nodes and the donation. An order
    * with no fill is not claimed: its locks come back whole by the return door.
    */
+  /** The fees in force at this round as the lock settlements take them (kanban #462): a version-11 round's node fee, the website share. */
+  roundFees(contract) {
+    const set = typeof this.feesFor === 'function' && contract ? this.feesFor(contract) : null;
+    if (!set) return {};
+    return { websitePct: set.websitePct, ...(paysReserves(contract) ? { feeBps: roundSplitBps(set).nodes } : {}) };
+  }
+
   async #bookPlan(roundIdBytes, a, claimPk, held) {
     const { contract } = a;
     await this.orderBook.carry(roundIdBytes);
@@ -541,7 +553,8 @@ export class LockSettlement {
       }
     }
     const book = (f) => bookLockSettlement({ roundId: roundIdBytes, table, entries, locks, feeLocks, fees: f, contract,
-      nodeBps: L.market.nodeBps, donationBps: L.market.donationBps, donation, reserveBps, reserveKey });
+      nodeBps: L.market.nodeBps, donationBps: L.market.donationBps, donation, reserveBps, reserveKey,
+      ...(L.market.websitePct !== undefined ? { websitePct: L.market.websitePct } : {}) });
     if (anyFed)
       return this.#anyFederationPlan(roundIdBytes, contract, entries.map((e) => ({ entryId: fromHex(e.entryId), pubkey: e.pubkey })), locks, feeLocks,
         book, { claimPk, held, lockEntry, table }, reserveBps > 0);
@@ -937,7 +950,7 @@ export class LockSettlement {
     const ds = on.entries.some((e) => e.atTheDoor) && this.donationSetFor ? this.donationSetFor(contract) : null;
     const args = { roundId: roundIdBytes, entries: on.entries, minScore: contract.minScore, payoutShares, locks, fees,
       feeLocks, signerNodes: feeLocks.size ? this.signerNodesFor(roundIdBytes, contract) : null, contract, addressed,
-      donationSet: ds && ds.ok ? ds.set : null };
+      donationSet: ds && ds.ok ? ds.set : null, ...this.roundFees(contract) };
     let plan = lockSettlement(args);
     if (!plan.ok) return refuse(`no lock is claimed: ${plan.why}`);
     if (plan.nothing) return refuse(`no lock is claimed: ${plan.why}`);

@@ -20,6 +20,7 @@ import { PROTOCOL_VERSION, speaksVersion, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_CO
 import { servedNodes } from './served-nodes.js';
 import { decodeVote, voteMessage, CHOICE } from './ballot.js';
 import { decodePlayerName, playerNameId } from './player-name.js';
+import { decodeFeeProposal, feeProposalId, decodeFeeApproval, feeApprovalId } from './fee-proposal.js';
 
 /** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
 // THE HIJACK DEFENCES, FIVE RULES (§27A.9.5, kanban #397, the owner 2026-10-17: "It needs to be more simple so people understand it" -
@@ -123,7 +124,7 @@ export function decodeFundingSignal(bytes) {
 }
 export const fundingSignalId = (s) => taggedHash(TAG.fundingSignal, encodeFundingSignal(s));
 
-/** The object of a signed hex (body || 64-byte signature) of `kind` 'proposal' | 'comment' | 'signal' | 'name', its id, and whether its signer signed it. */
+/** The object of a signed hex (body || 64-byte signature) of `kind` 'proposal' | 'comment' | 'signal' | 'name' | 'fee' | 'fee-approval', its id, and whether its signer signed it. */
 export function readSignedFunding(kind, bytes, verify) {
   if (typeof verify !== 'function') throw new Error('a funding object is checked with a BIP340 verifier, and none was injected');
   if (!(bytes instanceof Uint8Array) || bytes.length <= FUNDING_SIG_BYTES) return { ok: false, why: 'no signature' };
@@ -134,7 +135,10 @@ export function readSignedFunding(kind, bytes, verify) {
     else if (kind === 'comment') { obj = decodeFundingComment(body); id = fundingCommentId(obj); signer = obj.author; }
     else if (kind === 'signal') { obj = decodeFundingSignal(body); id = fundingSignalId(obj); signer = obj.node; }
     else if (kind === 'name') { obj = decodePlayerName(body); id = playerNameId(obj); signer = obj.player; }   // the forum's names (PIP)
-    else return { ok: false, why: 'a proposal, a comment, a signal or a name' };
+    // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER (kanban #462, fee-proposal.js): signed by its author, and by the developer
+    else if (kind === 'fee') { obj = decodeFeeProposal(body); id = feeProposalId(obj); signer = obj.author; }
+    else if (kind === 'fee-approval') { obj = decodeFeeApproval(body); id = feeApprovalId(obj); signer = obj.dev; }
+    else return { ok: false, why: 'a proposal, a comment, a signal, a name, a fee proposal or a fee approval' };
   } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
   let good = false; try { good = verify(signature, id, signer) === true; } catch { good = false; }
   if (!good) return { ok: false, why: `the ${kind}'s signature does not verify` };

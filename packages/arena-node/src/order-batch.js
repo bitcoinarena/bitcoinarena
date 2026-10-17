@@ -29,6 +29,7 @@ import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/s
 import { bookBatchId, batchDeclineId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
 import { bookLedger, positionFilled } from '../../arena-protocol/src/book-ledger.js';
 import { entryFeeBpsOf, feeBpsOf, donationBpsOf, reserveBpsOf } from '../../arena-protocol/src/fee.js';
+import { marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
@@ -40,9 +41,26 @@ const verifySchnorr = (sig, msg, key) => { try { return schnorr.verify(sig, msg,
 const isHex = (s, n) => typeof s === 'string' && s.length === 2 * n && /^[0-9a-f]+$/.test(s);
 const isOrder = (e) => e && e.limitPrice !== undefined && e.limitPrice !== null;
 
+/**
+ * A MARKET'S RATES AT ONE ROUND (kanban #462): one that pays the protocol reserve (its terms name one, #454) at the market rates of the
+ * fee set in force there (`fees`, fee-proposal.js marketBps); any other at its own terms. The website share is the set's. Answers
+ * { feeBps, nodeBps, donationBps, reserveBps, websitePct? } - feeBps the whole rate an order's fee lock holds.
+ */
+export function marketRates(manifest, fees = null) {
+  if (fees && reserveBpsOf(manifest) > 0) {
+    const r = marketBps(fees);
+    return { feeBps: r.nodeBps + r.donationBps, nodeBps: r.nodeBps, donationBps: r.donationBps, reserveBps: r.reserveBps, websitePct: fees.websitePct };
+  }
+  return { feeBps: entryFeeBpsOf(manifest), nodeBps: feeBpsOf(manifest), donationBps: donationBpsOf(manifest) || 0, reserveBps: reserveBpsOf(manifest),
+    ...(fees ? { websitePct: fees.websitePct } : {}) };
+}
+
 export class OrderBook {
-  constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS) } = {}) {
+  constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null } = {}) {
     this.round = round;
+    // THE FEES IN FORCE AT A ROUND (kanban #462): `feesFor(contract)` -> the fee set at its census height (server.js, funding-book.js
+    // feesAt). A market that pays the protocol reserve (its terms name one, #454) trades at that set's market rates
+    this.feesFor = feesFor;
     this.plugins = plugins;
     this.peersFor = peersFor;
     this.fetcher = fetcher;
@@ -63,7 +81,7 @@ export class OrderBook {
     // A SCALAR MARKET'S BOOK (kanban #362, §0A.7e): its two sides trade as any two outcomes do; at resolution a LONG share is worth
     // (V - low) / (high - low) of a sat and a SHORT share the rest (book-ledger.js bookSettlement `scalar`)
     const m = found.plugin.manifest;
-    return { ok: true, contract, manifest: m, feeBps: entryFeeBpsOf(m), nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) || 0, reserveBps: reserveBpsOf(m),
+    return { ok: true, contract, manifest: m, ...marketRates(m, typeof this.feesFor === 'function' ? this.feesFor(contract) : null),
       needed: receiptsNeeded(contract.nodes.length), seats: contract.nodes.map(toHex) };
   }
 
