@@ -6855,18 +6855,33 @@
               ...(stakeMsat !== null && stakeMsat !== undefined ? { stakeMsat: String(stakeMsat) } : {}) };
             return window.BLWP_LOBBY_ACT ? window.BLWP_LOBBY_ACT.join(id) : false;
           },
+          // THE ROUND'S OWN BOOK (kanban #448, measured live 17:46Z: only a round's signer seats hold its book - seats outside its
+          // committee answer an empty one, `ok` - and the first answer was taken, so the view showed no order while two stood): the
+          // round's signer seats asked at once, the fullest answer kept; without them, every seat as before
           book: async (id) => {
-            const nodes = window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(id) : [];
-            for (const n of nodes) {
-              try { const r = await fetch(String(n).replace(/\/+$/, '') + '/book?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) }); if (r.ok) return await r.json(); }
-              catch { /* the next seat */ }
-            }
-            return null;
+            const row = (window.BLWP_LOBBY_ROWS || []).find((r) => r.id === id);
+            let signers = [];
+            try {
+              const keys = new Set(((row && row.contract && row.contract.nodes) || []).map((k) => BLWPCLIENT.toHex(k)));
+              signers = [...new Set(((row && row.said) || []).filter((c) => c && c.node && keys.has(c.key)).map((c) => c.node))];
+            } catch { signers = []; }
+            const nodes = signers.length ? signers : (window.BLWP_ROW_NODES ? window.BLWP_ROW_NODES(id) : []);
+            const ask = (n) => fetch(String(n).replace(/\/+$/, '') + '/book?round=' + id, { cache: 'no-store', signal: AbortSignal.timeout(5000) })
+              .then((r) => (r.ok ? r.json() : null)).catch(() => null);
+            const size = (b) => (b ? (b.batches || []).length + (b.positions || []).length + ((b.levels && b.levels.buys) || []).length + ((b.levels && b.levels.sells) || []).length : -1);
+            const got = (await Promise.all(nodes.slice(0, 9).map(ask))).filter(Boolean);
+            return got.length ? got.reduce((a, b) => (size(b) > size(a) ? b : a)) : null;
           },
           // THE EXCHANGE VIEW (kanban #448, the owner 2026-10-17: "a real desktop view with complete order book bids ask, chart, depth
           // (switchable) like an exchange"; "For all prediction markets"): the page draws it into an element of the client's own
           // document - the order book, the chart and the depth of the round `opts.round()` names, read from its seats
-          exchange: (el, opts = {}) => (BLWPCLIENT.mountExchange ? BLWPCLIENT.mountExchange({ el, outcomes: (game.outcomes && game.outcomes.length ? game.outcomes : ['Yes', 'No']),
+          // its two sides by name: the client's own, else the market of the round it trades (measured on preview UI 203: the
+          // game record names no outcomes, and the tabs read "Trade Yes / Trade No" over Bitcoin Up or Down)
+          exchange: (el, opts = {}) => (BLWPCLIENT.mountExchange ? BLWPCLIENT.mountExchange({ el, outcomes: opts.outcomes || (() => {
+              const id = opts.round ? opts.round() : null, row = (window.BLWP_LOBBY_ROWS || []).find((r) => r.id === id);
+              let m = null; try { m = row && row.contract && BLWPCLIENT.marketForRound ? BLWPCLIENT.marketForRound(row.contract) : null; } catch { m = null; }
+              return m && m.outcomes && m.outcomes.length ? m.outcomes : (game.outcomes && game.outcomes.length ? game.outcomes : ['Yes', 'No']);
+            })(),
             fetchBook: async () => { const id = opts.round ? opts.round() : null; return id ? window.ARENA_GAME.market.book(id) : null; },
             onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000 }) : null),
           orders: () => readPicks().filter((x) => x.order && x.gameId === game.id).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
