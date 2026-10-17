@@ -90,3 +90,32 @@ test('the website names only the current configuration; the proposals forum is i
   assert.match(JS, /it could never be paid/, 'an amount over 10 % of the reserves is refused before posting');
   assert.match(readFileSync(new URL('proposals/index.html', HOME), 'utf8'), /url=https:\/\/testnet\.bitcoin-arena\.io\/proposals\//, 'bitcoin-arena.io/proposals sends readers there');
 });
+
+// A PIP'S FIELDS (kanban #432, the owner 2026-10-17: "Separate title field. Content on what the proposal does, in markdown including tables.
+// Separate text field how does it improve bitcoin arena"): kept in the one signed purpose, read back apart; the Markdown is safe
+test('#432: title, content and "how it improves Bitcoin Arena" round-trip through the purpose; Markdown tables render, HTML does not', () => {
+  const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
+  const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
+  const src = JS.slice(JS.indexOf("  var IMPROVES = "), JS.indexOf('  window.ARENA_FORUM_MD = markdown;'));
+  const { parts, purposeOf, markdown } = new Function(src + '\nreturn { parts, purposeOf, markdown };')();
+  const purpose = purposeOf('A second relay', '## Plan\n\n| item | sat |\n|---|---:|\n| server | 800 |\n| domain | 200 |\n\n- **fast** and `cheap`', 'Faster joins for every game.');
+  assert.deepEqual(parts(purpose), { title: 'A second relay', content: '## Plan\n\n| item | sat |\n|---|---:|\n| server | 800 |\n| domain | 200 |\n\n- **fast** and `cheap`', improves: 'Faster joins for every game.' });
+  assert.deepEqual(parts('Old style title\nall of this is content'), { title: 'Old style title', content: 'all of this is content', improves: '' }, 'an older proposal');
+  const html = markdown(parts(purpose).content);
+  assert.match(html, /<table><thead><tr><th>item<\/th><th>sat<\/th><\/tr><\/thead><tbody><tr><td>server<\/td><td>800<\/td><\/tr><tr><td>domain<\/td><td>200<\/td><\/tr><\/tbody><\/table>/);
+  assert.match(html, /<h4>Plan<\/h4>/); assert.match(html, /<li><b>fast<\/b> and <code>cheap<\/code><\/li>/);
+  const evil = markdown('<img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://bitcoin-arena.io)\n\n| <b>a</b> |\n|---|\n| <script> |');
+  assert.ok(!/<img|<script|<b>a|href="javascript/.test(evil), evil);
+  assert.match(evil, /href="https:\/\/bitcoin-arena\.io"/);
+  for (const t of ['Title', 'What the proposal does', 'How it improves Bitcoin Arena', 'of 4,000 characters']) assert.ok(JS.includes(t), t);
+  assert.match(FORUM, /PIPs improve Bitcoin Arena as a whole: its games, its protocol/);
+});
+
+// THE LOGO, TOP LEFT (kanban #433, the owner 2026-10-17: "show the Bitcoin arena logo on the left on Testnet.bitcoin-arena.io and that link
+// goes to the main page"): first in the games screen's bar, to bitcoin-arena.io; the old in-page "← bitcoin-arena.io" link is gone
+test('#433: the Bitcoin Arena logo is the first thing in the games screen\'s bar and links to bitcoin-arena.io', () => {
+  const bar = GAMES.slice(GAMES.indexOf('<div id="arena-wallet-bar"'), GAMES.indexOf('</div>', GAMES.indexOf('<div id="arena-wallet-bar"')));
+  assert.match(bar, /^<div id="arena-wallet-bar"[^>]*>\s*<a id="arena-wb-home" href="https:\/\/bitcoin-arena\.io\/"/);
+  assert.match(GAMES, /body\.arena-picking #arena-wb-home \{ display: inline-flex;/);
+  assert.ok(!GAMES.includes('class="home-back"'), 'the old link is gone');
+});
