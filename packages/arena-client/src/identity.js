@@ -26,6 +26,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { encodeLobbyName, decodeLobbyName, lobbyNameId, lobbyNameIsValid, LOBBY_NAME_MAX } from '../../arena-protocol/src/lobby-name.js';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { signEvent } from './nwc.js';
+import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 
 /** Where a tab keeps the name its player chose. */
 export const CUSTOM_NAME_KEY = 'arena.player.name';
@@ -208,4 +209,48 @@ export function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
   const secret = identitySecretFor(tabSeed({ storage, random }));
   const key = curve.pointX(secret);
   return { key: toHex(key), sig: toHex(curve.signSchnorr(presenceId({ roundId: fromHex(roundIdHex), identityKey: key }), secret)) };
+}
+
+/**
+ * THE ZAPS THIS PLAYER WAS SENT, COLLECTED INTO ITS OWN WALLET (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the
+ * federation's account of the user"): every seat asked what was paid to this tab's identity refund key (GET /donations?key=), merged
+ * by outpoint; each one in a federation this page holds a wallet client of (`clients`: Map federation id hex -> lock client) is spent
+ * by `Refund` under the identity secret - which never leaves this module - into that wallet. A contract the federation no longer
+ * holds was spent by this key, the only one that can, and is final. Collected outpoints are noted in `storage` (arena.zaps.collected)
+ * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat }], spent, failed, waiting, totalMsat }.
+ */
+export const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+export async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('a zap is collected with the identity key, and no curve was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const pk = toHex(refundKeyOf(curve.pointX(secret)));
+  let done = [];
+  try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
+  const seen = new Set(Array.isArray(done) ? done : []);
+  const found = new Map();
+  await Promise.all((seats || []).map(async (s) => {
+    try {
+      const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return;
+      for (const d of ((await r.json()).donations || [])) if (d && d.outpoint && !found.has(d.outpoint)) found.set(d.outpoint, d);
+    } catch { /* another seat answers for it */ }
+  }));
+  const collected = [], spent = [], failed = [], waiting = [];
+  for (const d of found.values()) {
+    if (seen.has(d.outpoint)) continue;
+    const client = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null;
+    if (!client || typeof client.refund !== 'function') { waiting.push(d); continue; }
+    const m = /^([0-9a-f]{64}):(\d+)$/.exec(String(d.outpoint));
+    if (!m) continue;
+    const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
+    const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
+    let said;
+    try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { failed.push({ ...d, why: String(e && e.message || e) }); continue; }
+    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat) });
+    else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
+    else { failed.push({ ...d, why: said.error || 'the federation did not accept the collect' }); continue; }
+    seen.add(d.outpoint);
+  }
+  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
+  return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)) };
 }

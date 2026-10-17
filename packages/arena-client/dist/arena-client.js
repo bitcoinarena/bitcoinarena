@@ -25052,10 +25052,19 @@ async function postFunding({ nodes, kind, hex, fetcher = (u, o) => fetch(u, o), 
 
 
 
+
 const TAG_DONATION_GIFT = 'ARENA/v1/DonationGift';
 const TYPE_DONATION_GIFT = 0x44;          // 'D'
 const DONATION_GIFT_VERSION = 1;
 const GIFT_TO_NETWORK = 0, GIFT_TO_GAME = 1;
+/**
+ * A ZAP FROM THE SEASON BOARD (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user not
+ * an external lightning payment"): a gift whose 32-byte target is the player's identity key - the key the board names - and whose
+ * one output is a pre-expired payout contract to refundKeyOf(identity) in the donor's federation, which only that player's page
+ * can spend (its identity secret). No set: the player is the whole of it. The name field stays empty.
+ */
+const GIFT_TO_PLAYER = 2;
+const playerGiftRecipients = (identity) => [{ recipientPk: refundKeyOf(identity), shareBps: DONATION_BPS_TOTAL, label: 'player' }];
 /** The amounts the popup offers, in sat (the owner 2026-10-17), and the smallest and largest custom amount. */
 const GIFT_CHOICES_SAT = Object.freeze([100, 500, 1000, 5000]);
 const GIFT_MIN_SAT = 1, GIFT_MAX_SAT = 10_000_000;
@@ -25067,8 +25076,9 @@ const giftIs33 = (b) => b instanceof Uint8Array && b.length === 33;
 const GIFT_ZERO32 = new Uint8Array(32);
 
 function encodeDonationGift(g) {
-  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME) throw new Error('a gift is to the network\'s developers (0) or a game\'s (1)');
-  const dev = g.target === GIFT_TO_GAME ? g.gameDevPubkey : GIFT_ZERO32;
+  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME && g.target !== GIFT_TO_PLAYER) throw new Error('a gift is to the network\'s developers (0), a game\'s (1) or a player (2)');
+  const dev = g.target === GIFT_TO_NETWORK ? GIFT_ZERO32 : g.gameDevPubkey;
+  if (g.target === GIFT_TO_PLAYER && (!giftIs32(dev) || dev.every((b) => b === 0) || g.gameName)) throw new Error('a zap names its player by a 32-byte identity key, and no game');
   const name = g.target === GIFT_TO_GAME ? String(g.gameName || '') : '';
   if (!giftIs32(dev) || (g.target === GIFT_TO_GAME && !name)) throw new Error('a gift to a game names its developer by 32 bytes and its name');
   if (!giftIs32(g.donor) || !giftIs32(g.federationId) || !giftIs32(g.txid)) throw new Error('a gift names its donor, its federation and its transaction by 32 bytes each');
@@ -25159,8 +25169,10 @@ const giftRecipientsLine = (set) => (Array.isArray(set) ? set : []).map((r) => `
  * network's set); `recipients` that set; `sat` the amount; `wallet` the player wallet's lock client in `federationId` (hex);
  * `donor` { pubkey, sign }; `seats` the base URLs. Answers { ok, id, txid, sat, outputs, keptBy } or { ok: false, step, why }.
  */
-async function giftDonation({ game = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
+async function giftDonation({ game = null, player = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
   const no = (step, why) => ({ ok: false, step, why });
+  // A ZAP (kanban #463): the player's identity key is the target and the whole set
+  if (player) { if (!(player instanceof Uint8Array) || player.length !== 32) return no('player', 'a zap names its player by a 32-byte identity key'); recipients = playerGiftRecipients(player); }
   const amt = giftAmountOf(sat); if (!amt.ok) return no('amount', amt.why);
   const totalMsat = BigInt(amt.sat) * 1000n;
   let outs;
@@ -25173,7 +25185,7 @@ async function giftDonation({ game = null, recipients, sat, wallet, federationId
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const held = accepted.donations || [];
   if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { target: game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: game ? game.gameDevPubkey : new Uint8Array(32), gameName: game ? game.gameName : '',
+  const record = { target: player ? GIFT_TO_PLAYER : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
     donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
     outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
   const id = donationGiftId(record);
@@ -25189,6 +25201,13 @@ async function giftDonation({ game = null, recipients, sat, wallet, federationId
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, txid: submitted.txid, retry: body };
   return { ok: true, id: toHex(id), txid: submitted.txid, sat: amt.sat, outputs: outs.length, keptBy };
 }
+
+/**
+ * A ZAP FROM THE SEASON BOARD (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user not an
+ * external lightning payment, remove the configuration setting"): `sat` from this wallet in `federationId` to the player whose identity
+ * key the board names (32 bytes, `player`), as one payout contract to that key's refund key, recorded on the seats like a gift.
+ */
+const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, nowMs });
 
 // ---- arena-client/src/exchange-view.js
 // A MARKET AS AN EXCHANGE SHOWS IT (kanban #448, the owner 2026-10-17: "build a real desktop view with complete order book bids ask,
@@ -27707,6 +27726,7 @@ const matchHex = toHex;
 
 
 
+
 /** Where a tab keeps the name its player chose. */
 const CUSTOM_NAME_KEY = 'arena.player.name';
 
@@ -27888,6 +27908,50 @@ function presenceProofFor({ roundIdHex, storage, random, curve } = {}) {
   const secret = identitySecretFor(tabSeed({ storage, random }));
   const key = curve.pointX(secret);
   return { key: toHex(key), sig: toHex(curve.signSchnorr(presenceId({ roundId: fromHex(roundIdHex), identityKey: key }), secret)) };
+}
+
+/**
+ * THE ZAPS THIS PLAYER WAS SENT, COLLECTED INTO ITS OWN WALLET (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the
+ * federation's account of the user"): every seat asked what was paid to this tab's identity refund key (GET /donations?key=), merged
+ * by outpoint; each one in a federation this page holds a wallet client of (`clients`: Map federation id hex -> lock client) is spent
+ * by `Refund` under the identity secret - which never leaves this module - into that wallet. A contract the federation no longer
+ * holds was spent by this key, the only one that can, and is final. Collected outpoints are noted in `storage` (arena.zaps.collected)
+ * and not asked again. Answers { key, collected: [{ outpoint, federationId, amountMsat }], spent, failed, waiting, totalMsat }.
+ */
+const ZAPS_COLLECTED_KEY = 'arena.zaps.collected';
+async function collectZaps({ storage, keep = storage, random, curve, clients, seats, fetcher = fetch } = {}) {
+  if (!curve || typeof curve.pointX !== 'function') throw new Error('a zap is collected with the identity key, and no curve was injected');
+  const secret = identitySecretFor(tabSeed({ storage, random }));
+  const pk = toHex(refundKeyOf(curve.pointX(secret)));
+  let done = [];
+  try { done = JSON.parse((keep && keep.getItem(ZAPS_COLLECTED_KEY)) || '[]'); } catch { done = []; }
+  const seen = new Set(Array.isArray(done) ? done : []);
+  const found = new Map();
+  await Promise.all((seats || []).map(async (s) => {
+    try {
+      const r = await fetcher(`${String(s).replace(/\/$/, '')}/donations?key=${pk}&since=0`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return;
+      for (const d of ((await r.json()).donations || [])) if (d && d.outpoint && !found.has(d.outpoint)) found.set(d.outpoint, d);
+    } catch { /* another seat answers for it */ }
+  }));
+  const collected = [], spent = [], failed = [], waiting = [];
+  for (const d of found.values()) {
+    if (seen.has(d.outpoint)) continue;
+    const client = clients && clients.get ? clients.get(String(d.federationId).toLowerCase()) : null;
+    if (!client || typeof client.refund !== 'function') { waiting.push(d); continue; }
+    const m = /^([0-9a-f]{64}):(\d+)$/.exec(String(d.outpoint));
+    if (!m) continue;
+    const image = d.senderOnContract && /^[0-9a-f]{64}$/.test(String(d.playerKey || '')) ? d.playerKey : '00'.repeat(32);
+    const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
+    let said;
+    try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { failed.push({ ...d, why: String(e && e.message || e) }); continue; }
+    if (said.accepted === true) collected.push({ outpoint: d.outpoint, federationId: d.federationId, amountMsat: String(d.amountMsat) });
+    else if (said.stored_before === null || said.stored_before === undefined) spent.push(d);
+    else { failed.push({ ...d, why: said.error || 'the federation did not accept the collect' }); continue; }
+    seen.add(d.outpoint);
+  }
+  try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-500))); } catch { /* not kept: asked again, then found spent */ }
+  return { key: pk, collected, spent, failed, waiting, totalMsat: String(collected.reduce((t, c) => t + BigInt(c.amountMsat), 0n)) };
 }
 
 // ---- arena-protocol/src/lobby-listing.js
@@ -33142,7 +33206,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,

@@ -35,7 +35,7 @@ export async function keepDonationGift({ g, recipients, port, db, verify, keepRo
     if (!stored || !stored.stored) return no(409, `the federation holds nothing at ${at} (not accepted yet, or never)`);
     if (String(stored.stored.contractId) !== String(want)) return no(422, `the output at ${at} is not ${o.msat} msat to key ${toHex(o.pk).slice(0, 16)}… from the donor`);
     rows.push({ outpoint, entryId: st.id, roundId: new Uint8Array(32), federationId: g.federationId, recipientPk: o.pk, amountMsat: o.msat,
-      contractId: String(stored.stored.contractId), senderOnContract: true, image: toHex(g.donor), item: g.gameName ? `donation · ${g.gameName}` : 'donation · protocol' });
+      contractId: String(stored.stored.contractId), senderOnContract: true, image: toHex(g.donor), item: g.target === 2 ? 'zap' : g.gameName ? `donation · ${g.gameName}` : 'donation · protocol' });
   }
   db.prepare('INSERT OR IGNORE INTO donation_gifts (id, donor, target, game_dev, game_name, txid, total_msat, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, toHex(g.donor), g.target, toHex(g.gameDevPubkey), g.gameName || '', toHex(g.txid), String(g.totalMsat), Buffer.from(encodeDonationGift(g)), Buffer.from(g.signature), nowMs);

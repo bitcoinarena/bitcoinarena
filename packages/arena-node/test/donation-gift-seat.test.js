@@ -62,3 +62,21 @@ test('refused: a forged signature, outputs that are not the split, outputs the f
   assert.match((await keepDonationGift({ g, recipients: SET, port: fedWith(new Map()), db, verify, nowMs: NOW })).why, /holds nothing/);
   assert.match(giftStands(g, { recipients: SET, verify, nowMs: NOW - 11 * 60 * 1000 }).why, /dated ahead/);
 });
+
+test('a zap (kanban #463): its one output to the player\'s identity refund key, kept and indexed as "zap" under that key', async () => {
+  const { playerGiftRecipients, GIFT_TO_PLAYER } = await import('../../arena-protocol/src/donation-gift.js');
+  const { refundKeyOf } = await import('../../arena-protocol/src/stake-lock.js');
+  const player = schnorr.getPublicKey(b32(0x42));
+  const recipients = playerGiftRecipients(player);
+  const outs = giftOutputs({ totalMsat: 21000n, recipients }).map((o, i) => ({ outIdx: i, pk: o.pk, msat: o.msat }));
+  const body = { target: GIFT_TO_PLAYER, gameDevPubkey: player, gameName: '', donor: DONOR, federationId: b32(0xfe), txid: b32(0x7c), totalMsat: 21000n, outputs: outs, atMs: BigInt(NOW) };
+  const g = { ...body, signature: schnorr.sign(donationGiftId(body), SECRET) };
+  const db = openStore(':memory:'); const rows = [];
+  const a = await keepDonationGift({ g, recipients, port: fedWith(heldFor(g)), db, verify, keepRows: (r) => rows.push(...r), nowMs: NOW });
+  assert.deepEqual([a.ok, a.kept, a.outputs], [true, 'new', 1]);
+  assert.deepEqual(rows.map((r) => [toHex(r.recipientPk), r.amountMsat, r.item]), [[toHex(refundKeyOf(player)), 21000n, 'zap']]);
+  // a zap to another key than the player's is refused
+  const skim = { ...body, txid: b32(0x7d), outputs: [{ outIdx: 0, pk: pk33(0x11), msat: 21000n }] };
+  const sg = { ...skim, signature: schnorr.sign(donationGiftId(skim), SECRET) };
+  assert.equal((await keepDonationGift({ g: sg, recipients, port: fedWith(heldFor(sg)), db, verify, nowMs: NOW })).ok, false);
+});
