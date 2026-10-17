@@ -116,6 +116,10 @@ test('#432: title, content and "how it improves Bitcoin Arena" round-trip throug
 test('#433: the Bitcoin Arena logo is the first thing in the games screen\'s bar and links to bitcoin-arena.io', () => {
   const bar = GAMES.slice(GAMES.indexOf('<div id="arena-wallet-bar"'), GAMES.indexOf('</div>', GAMES.indexOf('<div id="arena-wallet-bar"')));
   assert.match(bar, /^<div id="arena-wallet-bar"[^>]*>\s*<a id="arena-wb-home" href="https:\/\/bitcoin-arena\.io\/"/);
-  assert.match(GAMES, /body\.arena-picking #arena-wb-home \{ display: inline-flex;/);
+  assert.match(GAMES, /body\.arena-picking #arena-wb-home, body\.arena-own-client #arena-wb-home \{ display: inline-flex;/);
+  // and in every game (the owner 2026-10-17): Tick Tock's header starts with the mark; no "build your own" anywhere on the page
+  assert.match(GAMES, /<div id="blwp-money">\s*<a id="arena-game-home" href="https:\/\/bitcoin-arena\.io\/"/);
+  assert.ok(!/why-build|Build your own|Build a game or a market|Build &amp; earn/.test(GAMES.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '')), 'build-your-own is gone');
+  assert.match(GAMES, /<div class="foot-row"><span class="build-line">[^<]*<\/span><button type="button" class="donate-btn"/);
   assert.ok(!GAMES.includes('class="home-back"'), 'the old link is gone');
 });
