@@ -142,9 +142,22 @@
     #arena-donate .row { margin-top: 10px; } #arena-donate .go { width: 100%; background: #f7931a; color: #111; border-color: #f7931a; } #arena-donate .go:disabled { opacity: .45; cursor: default; }
     #arena-donate .say { min-height: 1.4em; margin: 8px 0 0; } #arena-donate .say.bad { color: #f85149; }
     #arena-donate-go { display: none; }
+    /* AN ORDER'S PROGRESS OVER A GAME'S OWN CLIENT (kanban #438, the owner 2026-10-17: "When I press buy up nothing happens no order no error.
+       There needs to be feedback and some sort of progress indicator while we wait for the result"): the page's join, said as it goes */
+    #arena-join-status { display: none; }
+    body.arena-own-client #arena-join-status.on { display: flex; align-items: center; gap: 8px; position: fixed; left: 8px; right: 8px; z-index: 39;
+      bottom: calc(30px + env(safe-area-inset-bottom, 0px) + 8px); padding: 10px 12px; border-radius: 10px; background: #11161d; border: 1px solid #2a3442;
+      color: #e6edf3; font: 600 13px/1.35 system-ui, sans-serif; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+    #arena-join-status.ok { border-color: #2fd38a; } #arena-join-status.bad { border-color: #f85149; color: #ffb4ad; }
+    #arena-join-status .txt { flex: 1; min-width: 0; }
+    #arena-join-status .spin { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #3a4452; border-top-color: #f7931a; animation: arena-spin .8s linear infinite; }
+    #arena-join-status.ok .spin, #arena-join-status.bad .spin { display: none; }
+    #arena-join-status .x { flex: none; background: none; border: 0; color: #8b949e; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px; }
+    @keyframes arena-spin { to { transform: rotate(360deg); } }
+    body.blwp-clean #arena-join-status { display: none !important; }
     /* ONE LINE AT THE FOOT (the owner 2026-10-17: "This can be better in the same line, Donate on right and build numbers before in one line
        so the vertical space is less"): the build line and Donate share one 30 px row; the settlement facts above it only when there are any */
-    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 38; height: 24px; padding: 0 10px;
+    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 9992; height: 24px; padding: 0 10px;
       border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
     body.blwp-clean #arena-donate-go { display: none !important; }
     #boot-panel { display: none; }
@@ -1031,6 +1044,7 @@
        Unity's lobby): shown over the loading screen and Unity's title too, hidden only while a round's own screens are up
        (paintMoney); the backup warning stays over the lobby alone. -->
   <div id="arena-approval" role="status"></div>
+  <div id="arena-join-status" role="status" aria-live="polite"><span class="spin" aria-hidden="true"></span><span class="txt"></span><button type="button" class="x" aria-label="Close">&times;</button></div>
   <button id="arena-donate-go" type="button" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(window.ARENA_GAME_NAME || null)">&hearts; Donate</button>
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
@@ -7809,6 +7823,37 @@
       for (const [fid, c] of (window.BLWP_WALLETS || new Map())) { try { out.push({ fid, c, msat: BigInt(await c.balanceMsat()) }); } catch { /* the next */ } }
       return out.sort((a, b) => (b.msat > a.msat ? 1 : b.msat < a.msat ? -1 : 0));
     }
+    // AN ORDER'S PROGRESS (kanban #438): the join a game's own client starts (market.order, a pick) runs in the page; its state, stage
+    // and refusal are read twice a second and said in a strip over the client - placing (with the step), locked and waiting for the
+    // window's start, placed, or not placed and why. A finished line stays 8 s (a refusal until closed or 20 s).
+    (() => {
+      const box = document.getElementById('arena-join-status'); if (!box) return;
+      const txt = box.querySelector('.txt'); let shownKey = '', doneAt = 0, closedKey = '';
+      box.querySelector('.x').addEventListener('click', () => { closedKey = shownKey; box.classList.remove('on'); });
+      const plain = (stage) => {
+        const st = String(stage || '');
+        if (/^stake lock/.test(st)) return 'locking your stake in the federation';
+        const starts = /round starts in ([0-9:]+)/.exec(st); if (starts) return 'locked - the window starts in ' + starts[1];
+        return st;
+      };
+      setInterval(() => {
+        if (!document.body.classList.contains('arena-own-client')) { box.classList.remove('on'); return; }
+        const j = window.BLWP_JOIN; if (!j || !j.round) { box.classList.remove('on'); return; }
+        let line, cls;
+        if (j.state === 'refused') { line = 'Order not placed: ' + (j.why || 'refused'); cls = 'bad'; }
+        else if (j.state === 'joined' || j.state === 'entered' || j.state === 'playing' || j.state === 'picked') { line = '✓ Order placed' + (j.stakeSats ? ' · ' + Number(j.stakeSats).toLocaleString('en-US') + ' sat' : ''); cls = 'ok'; }
+        else if (j.state === 'joining' && /round starts in ([0-9:]+)/.test(String(j.stage || ''))) {
+          line = '✓ Order locked · the window starts in ' + /round starts in ([0-9:]+)/.exec(j.stage)[1]; cls = 'held'; }
+        else if (j.state === 'joining') { line = 'Placing your order … ' + (plain(j.stage) || 'asking the round\'s seats'); cls = ''; }
+        else { box.classList.remove('on'); return; }
+        // the key leaves the countdown out: a held order is one line, closed once
+        const key = j.round + ':' + (cls === 'held' ? 'held' : j.state) + ':' + (j.why || '');
+        if (key !== shownKey) { shownKey = key; doneAt = cls === 'ok' || cls === 'bad' ? Date.now() : 0; }
+        if (closedKey === key || (doneAt && Date.now() - doneAt > (cls === 'bad' ? 20000 : 8000))) { box.classList.remove('on'); return; }
+        txt.textContent = line; box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
+        window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
+      }, 500);
+    })();
     window.ARENA_DONATE_OPEN = (gameName = null) => {
       let el = document.getElementById('arena-donate');
       if (!el) { el = document.createElement('div'); el.id = 'arena-donate'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); document.body.appendChild(el); }
