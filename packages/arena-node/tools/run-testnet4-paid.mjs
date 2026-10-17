@@ -34,6 +34,12 @@ import { GAME as RPS_V2 } from '../../rock-paper-scissors/plugin/rock-paper-scis
 import { UPDOWN_TN4 } from '../../btc-updown/plugin/btc-updown.js';
 import { GAME as UPDOWN_V2 } from '../../btc-updown/plugin/btc-updown-v2.js';
 import { marketExpiryBlocks } from '../../arena-protocol/src/lock-expiry.js';
+// THE UP/DOWN VERSION THE RUNNER POSTS (kanban #454, the owner 2026-10-17: the market's protocol reserve fee): DUTY_UPDOWN_PLUGIN names a
+// btc-updown plugin file - btc-updown-v13.js, whose terms pay 0.4 % nodes + 0.4 % donation + 0.2 % protocol reserve; unset, version 2
+const UPDOWN_PLUGIN = process.env.DUTY_UPDOWN_PLUGIN || '';
+if (UPDOWN_PLUGIN && !/^btc-updown(-v\d+)?\.js$/.test(UPDOWN_PLUGIN)) throw new Error(`DUTY_UPDOWN_PLUGIN names a btc-updown plugin file, not ${UPDOWN_PLUGIN}`);
+const UPDOWN_CHOSEN = UPDOWN_PLUGIN ? (await import(`../../btc-updown/plugin/${UPDOWN_PLUGIN}`)).GAME : null;
+if (UPDOWN_CHOSEN) console.log(`[duty] Up/Down rounds of ${UPDOWN_PLUGIN}: game ${Buffer.from(UPDOWN_CHOSEN.gameId).toString('hex').slice(0, 16)}`);
 // PAID_MARKET=1 (kanban #206): the paid round is a round of the regtest market the page pins - its seats host nextblock
 // and the market, their bonds advertise both, and the round names the market's game with no core and no config
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -212,7 +218,7 @@ if (env.PAID_DUTY === '1') {
   const fromSlot = Number(env.DUTY_FROM_SLOT || 0);
   const dir = join(home, 'paid', 'duty'); mkdirSync(dir, { recursive: true });
   const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
-  const UPDOWN = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
+  const UPDOWN = UPDOWN_CHOSEN || (Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4);
   const inflight = new Set();
   const censusAt = new Map();
   let busy = false, lastSaid = '';
@@ -309,7 +315,10 @@ if (env.PAID_DUTY_DAILY === '1') {
   const fromDay = Number(env.DUTY_FROM_DAY || 0);              // the first day this duty posts for (days before it are covered)
   const dir = join(home, 'paid', 'duty-day'); mkdirSync(dir, { recursive: true });
   const fileOf = (slot) => join(dir, `${item}-${slot}.json`);
-  const UPDOWN = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
+  const UPDOWN_BASE = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
+  // THE CHOSEN VERSION FROM A NAMED DAY ON (kanban #454): DUTY_UPDOWN_FROM_SLOT - the first day slot posted as DUTY_UPDOWN_PLUGIN; a day
+  // before it keeps the version its seats' census advertisements name (an Up/Down game no census entry hosts has no committee)
+  const UPDOWN_FROM_SLOT = Number(env.DUTY_UPDOWN_FROM_SLOT || 0);
   const censusAt = new Map();
   let busy = false, lastSaid = '';
   const donationSet = () => {
@@ -322,6 +331,7 @@ if (env.PAID_DUTY_DAILY === '1') {
     return idOfDonationSet(forced.recipients);
   };
   const post = async (slot) => {
+    const UPDOWN = UPDOWN_CHOSEN && slot >= UPDOWN_FROM_SLOT ? UPDOWN_CHOSEN : UPDOWN_BASE;
     const { startMs, endMs } = targetDay(slot);
     const committee = BigInt(startMs - DUTY_COMMITTEE_LEAD_MS);
     const ds = donationSet();
@@ -545,7 +555,7 @@ if (env.PAID_NEXTBLOCK_GRID === '1') {
 // the 15 min before (attested.js marketWindowOf) - on the lowest-load OPEN federation this opener serves, its locks lasting
 // through the grid's last window (lock-expiry.js marketExpiryBlocks), and keeps the next one UPDOWN_GRID_AHEAD_MS ahead.
 if (env.PAID_UPDOWN_GRID === '1') {
-  const UPDOWN = Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4;
+  const UPDOWN = UPDOWN_CHOSEN || (Number(env.ARENA_PROTOCOL_VERSION || 1) >= 2 ? UPDOWN_V2 : UPDOWN_TN4);
   const period = BigInt(UPDOWN.manifest.roundPeriodMs);
   const slots = Number(env.UPDOWN_GRID_SLOTS || 96);
   const aheadMs = Number(env.UPDOWN_GRID_AHEAD_MS || 3 * 3600000);
