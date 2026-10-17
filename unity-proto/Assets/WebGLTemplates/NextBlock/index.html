@@ -6558,6 +6558,7 @@
     }
     // ANOTHER GAME'S OWN CLIENT, BY ITS MANIFEST'S HASH (kanban #208): fetched, hashed, run from its checked bytes only
     async function loadTheGameClient(game) {
+      window.ARENA_CLIENT_SAYS_JOIN = false;   // set again by a client that says its orders' progress itself (#438)
       const digest = (b) => crypto.subtle.digest('SHA-256', b);
       const t0 = Date.now();
       // EVERY VERSION OF THE GAME, HOWEVER IT WAS NAMED (the owner 2026-10-17, a reload of Bitcoin Up or Down: "games/btc-updown-15m/index.html
@@ -7840,7 +7841,8 @@
         return st;
       };
       setInterval(() => {
-        if (!document.body.classList.contains('arena-own-client')) { box.classList.remove('on'); return; }
+        // a client that says its orders itself (Up/Down v5) has no strip over it
+        if (!document.body.classList.contains('arena-own-client') || window.ARENA_CLIENT_SAYS_JOIN) { box.classList.remove('on'); return; }
         const j = window.BLWP_JOIN; if (!j || !j.round) { box.classList.remove('on'); return; }
         let line, cls;
         if (j.state === 'refused') { line = 'Order not placed: ' + (j.why || 'refused'); cls = 'bad'; }
