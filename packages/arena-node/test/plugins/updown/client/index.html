@@ -40,6 +40,15 @@
      the depth and the full order book on the left - drawn by the page (ARENA_GAME.market.exchange) - and the buy panel, my orders
      and the history on the right, beside them; a phone keeps the one column */
   .cols, .colL, .colR { display:contents; } #xv { display:none; }
+  /* THE FULL MARKET VIEW ON A PHONE, BY CHOICE (version 14, kanban #461, the owner 2026-10-17: "Also include the full market view for
+     prediction markers for mobile but have a switch that has compact/advanced for mobile"): Compact is the one column as before;
+     Advanced adds the exchange - the chart or the depth and the full order book - under the window's card. The choice is kept in
+     this browser (arena.updown.view). A wide screen always shows the exchange and no switch */
+  .vsw { display:flex; gap:4px; padding:3px; border-radius:11px; background:#11151d; border:1px solid var(--line); align-self:flex-start; }
+  .vsw button { font:700 13px system-ui; padding:7px 14px; border-radius:8px; border:0; background:transparent; color:var(--dim); cursor:pointer; }
+  .vsw button[aria-pressed="true"] { background:var(--card); color:var(--text); box-shadow:0 0 0 1px var(--line); }
+  @media (max-width:999px) { body.adv #xv { display:flex; } }
+  @media (min-width:1000px) { .vsw { display:none; } }
   @media (min-width:1000px) {
     body { max-width:1320px; margin:0 auto; width:100%; padding-left:20px; padding-right:20px; }
     .cols { display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:16px; align-items:start; }
@@ -190,6 +199,7 @@ if (!A || !A.market) {
   $('back').onclick = () => A.back();
   const outcomes = A.game.outcomes.length ? A.game.outcomes : ['Up', 'Down'];
   $('view').innerHTML = `<div class="cols"><div class="colL">
+    <div class="vsw" role="group" aria-label="view"><button type="button" data-v="compact" aria-pressed="true">Compact</button><button type="button" data-v="advanced" aria-pressed="false">Advanced</button></div>
     <div class="card"><div class="q" id="q">…</div><div class="sub"><span id="left"></span> · <a id="poly" target="_blank" rel="noopener">Polymarket</a></div>
       <div class="row3"><div><b id="beat">…</b><span>price to beat</span></div><div><b id="now">…</b><span>BTC now</span></div><div><b id="delta">…</b><span>change</span></div></div>
       <div class="odds"><span class="sub">chance of Up</span><b id="chance">50%</b></div></div>
@@ -404,13 +414,25 @@ if (!A || !A.market) {
   // a tapped level fills a limit order on that side at that price
   let xv = null;
   const wide = window.matchMedia('(min-width:1000px)');
+  // version 14 (kanban #461): on a phone, Advanced mounts it too; Compact keeps the one column (and no second poll)
+  const VIEW_KEY = 'arena.updown.view';
+  let adv = false; try { adv = localStorage.getItem(VIEW_KEY) === 'advanced'; } catch { adv = false; }
   const mountXv = () => {
-    if (xv || !wide.matches || typeof A.market.exchange !== 'function') return;
+    if (xv || !(wide.matches || adv) || typeof A.market.exchange !== 'function') return;
     xv = A.market.exchange($('xv'), { round: () => current && current.id, label: (side) => 'Chance of ' + outcomes[side],
       onPrice: (cents, side) => { pick = side; mode = 'limit'; $('lp').value = String(Math.min(99, Math.max(1, cents))); draw(); } });
     window.UPDOWN_CLIENT.exchange = xv;
   };
-  mountXv();
+  const setView = (v) => {
+    adv = v === 'advanced';
+    document.body.classList.toggle('adv', adv);
+    for (const b of document.querySelectorAll('.vsw button')) b.setAttribute('aria-pressed', String(b.dataset.v === (adv ? 'advanced' : 'compact')));
+    try { localStorage.setItem(VIEW_KEY, adv ? 'advanced' : 'compact'); } catch { /* this view only */ }
+    window.UPDOWN_CLIENT.view = adv ? 'advanced' : 'compact';
+    mountXv();
+  };
+  for (const b of document.querySelectorAll('.vsw button')) b.addEventListener('click', () => setView(b.dataset.v));
+  setView(adv ? 'advanced' : 'compact');
   if (wide.addEventListener) wide.addEventListener('change', mountXv);
 }
 </script>
