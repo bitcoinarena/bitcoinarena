@@ -35,6 +35,7 @@ import { gameIsKnownGood, sharedWorldOf } from '../../arena-protocol/src/known-g
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { paysReserves, RESERVES_NODE_FEE_BPS } from '../../arena-protocol/src/reserves.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 
 /**
  * THE ENTRY FEE A ROUND CHARGES, as this page knows it (kanban #235): the rate the page set on the round (an unpinned market the
@@ -45,8 +46,9 @@ const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ?
 // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397); a market keeps its own (its fee lock holds its donation too)
 const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
 export const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
+// `round.feeSet` (kanban #462): the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
-  : roundPaysReserves(round) ? RESERVES_NODE_FEE_BPS : knownEntryBps(round && round.gameId));
+  : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { readWithOneRetry } from './reread.js';
 import { decodeClaimKeyAttestation, claimKeyIsAttested } from '../../arena-protocol/src/claim-key.js';

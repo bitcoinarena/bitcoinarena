@@ -933,6 +933,9 @@ const TYPE_FUNDING_COMMENT = 0x2f;
 const TYPE_FUNDING_SIGNAL = 0x30;
 // A PLAYER'S NAME, NETWORK-WIDE (kanban #397 PIP, the owner 2026-10-17: "Have custom names in the protocol"): player-name.js
 const TYPE_PLAYER_NAME = 0x31;
+// A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER TO IT (kanban #462, the owner 2026-10-17): fee-proposal.js
+const TYPE_FEE_PROPOSAL = 0x32;
+const TYPE_FEE_APPROVAL = 0x33;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -1009,6 +1012,8 @@ const TAG = {
   fundingComment: 'ARENA/v1/FundingComment',
   fundingSignal: 'ARENA/v1/FundingSignal',
   playerName: 'ARENA/v1/PlayerName',
+  feeProposal: 'ARENA/v1/FeeProposal',
+  feeApproval: 'ARENA/v1/FeeApproval',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
@@ -7025,7 +7030,7 @@ function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE_FEE_BP
  * { shares: Map key -> msat (keys in ascending order), totalMsat }.
  */
 const FRONTEND_FEE_PERCENT = 20n;
-function frontendShares({ entries, fee, gross }) {
+function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT }) {
   const brought = new Map();
   for (const e of entries || []) {
     if (isRefund(e.outcome) || !(e.frontendPk instanceof Uint8Array)) continue;
@@ -7035,10 +7040,10 @@ function frontendShares({ entries, fee, gross }) {
   const shares = new Map();
   let totalMsat = 0n;
   for (const k of [...brought.keys()].sort()) {
-    const msat = gross > 0n ? (fee * FRONTEND_FEE_PERCENT * brought.get(k)) / (100n * gross) : 0n;
+    const msat = gross > 0n ? (fee * pct * brought.get(k)) / (100n * gross) : 0n;
     shares.set(k, msat); totalMsat += msat;
   }
-  if (totalMsat > (fee * FRONTEND_FEE_PERCENT) / 100n) throw new Error('the websites\' shares exceed 20% of the nodes\' fee');
+  if (totalMsat > (fee * pct) / 100n) throw new Error(`the websites' shares exceed ${pct}% of the nodes' fee`);
   return { shares, totalMsat };
 }
 
@@ -7049,7 +7054,7 @@ function frontendShares({ entries, fee, gross }) {
  * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
  * totalMsat }.
  */
-function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) {
+function frontendBookShares({ rows, entries, nodeBps, donationBps = 0, pct = FRONTEND_FEE_PERCENT }) {
   const total = BigInt(nodeBps) + BigInt(donationBps);
   const byKey = new Map();
   for (const r of rows || []) {
@@ -7057,7 +7062,7 @@ function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) {
     if (!e || !(e.frontendPk instanceof Uint8Array) || total === 0n) continue;
     const nodesPart = ((r.buyFeeMsat + r.sellFeeMsat) * BigInt(nodeBps)) / total;
     const k = hex(e.frontendPk);
-    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * FRONTEND_FEE_PERCENT) / 100n);
+    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * pct) / 100n);
   }
   const shares = new Map([...byKey.keys()].sort().map((k) => [k, byKey.get(k)]));
   return { shares, totalMsat: [...shares.values()].reduce((a, b) => a + b, 0n) };
@@ -11992,15 +11997,16 @@ const bps = (gross, b) => (gross * BigInt(b)) / 10000n;
  * A PAID ROUND'S MONEY ON THE RESERVES VERSION: { nodesMsat, protocolDevsMsat, gameDevsMsat, reservesMsat, netMsat }.
  * There is no developers' share to choose: `devsBps`, if given, must be the mandatory 400, or the split is refused by name.
  */
-function roundSplit(grossMsat, { devsBps = ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_BPS.gameDevs } = {}) {
+// `split`: the fees in force (kanban #462, fee-proposal.js roundSplitBps), else today's ROUND_SPLIT_BPS
+function roundSplit(grossMsat, { split = ROUND_SPLIT_BPS, devsBps = split.protocolDevs + split.gameDevs } = {}) {
   const gross = BigInt(grossMsat);
   if (gross < 1n) throw new Error('a paid round has a stake of at least 1 msat');
-  if (Number(devsBps) !== ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_BPS.gameDevs)
-    throw new Error(`on protocol version ${RESERVES_VERSION} the developers' 4 % is mandatory: it is no donation a player can change`);
-  const nodesMsat = bps(gross, ROUND_SPLIT_BPS.nodes);
-  const protocolDevsMsat = bps(gross, ROUND_SPLIT_BPS.protocolDevs);
-  const gameDevsMsat = bps(gross, ROUND_SPLIT_BPS.gameDevs);
-  const reservesMsat = bps(gross, ROUND_SPLIT_BPS.reserves);
+  if (Number(devsBps) !== split.protocolDevs + split.gameDevs)
+    throw new Error(`on protocol version ${RESERVES_VERSION} the developers' ${(split.protocolDevs + split.gameDevs) / 100} % is mandatory: it is no donation a player can change`);
+  const nodesMsat = bps(gross, split.nodes);
+  const protocolDevsMsat = bps(gross, split.protocolDevs);
+  const gameDevsMsat = bps(gross, split.gameDevs);
+  const reservesMsat = bps(gross, split.reserves);
   const netMsat = gross - nodesMsat - protocolDevsMsat - gameDevsMsat - reservesMsat;
   return { nodesMsat, protocolDevsMsat, gameDevsMsat, reservesMsat, netMsat };
 }
@@ -12010,13 +12016,21 @@ function roundSplit(grossMsat, { devsBps = ROUND_SPLIT_BPS.protocolDevs + ROUND_
  * Answers { priceMsat, nodesMsat, reservesMsat, protocolDevsMsat, gameDevsMsat }: nodes 40 % and reserves 20 % of the list
  * price, the developers' share half protocol (floored), half game (the rest), and the price their sum - 60 % + the share.
  */
-function itemSplitReserves({ listMsat, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT }) {
+/**
+ * THE DEVELOPERS' SHARES A BUYER MAY CHOOSE under a fee set (kanban #462): its devs' part, then today's lower steps below it. With
+ * today's fees, 40 30 20 10 0 as before.
+ */
+const itemDevChoices = (fees = null) => { const top = fees ? fees.itemDevsPct : ITEM_DEV_SHARE_RESERVES_DEFAULT;
+  return [...new Set([top, ...ITEM_DEV_SHARES_RESERVES.filter((x) => x < top)])]; };
+// `fees`: the fee set in force (kanban #462, fee-proposal.js): its item nodes', reserves' and developers' parts; unset, today's
+function itemSplitReserves({ listMsat, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, fees = null }) {
   const list = BigInt(listMsat);
   if (list < 1n) throw new Error('an item costs at least 1 msat');
-  if (!ITEM_DEV_SHARES_RESERVES.includes(Number(devsPct)))
-    throw new Error(`on protocol version ${RESERVES_VERSION} an item's developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %, not ${devsPct} %`);
-  const nodesMsat = (list * BigInt(ITEM_NODES_PCT)) / 100n;
-  const reservesMsat = (list * BigInt(ITEM_RESERVES_PCT)) / 100n;
+  const choices = itemDevChoices(fees);
+  if (!choices.includes(Number(devsPct)))
+    throw new Error(`on protocol version ${RESERVES_VERSION} an item's developers' share is one of ${choices.join(', ')} %, not ${devsPct} %`);
+  const nodesMsat = (list * BigInt(fees ? fees.itemNodesPct : ITEM_NODES_PCT)) / 100n;
+  const reservesMsat = (list * BigInt(fees ? fees.itemReservesPct : ITEM_RESERVES_PCT)) / 100n;
   const devs = (list * BigInt(devsPct)) / 100n;
   const protocolDevsMsat = devs / 2n;
   const gameDevsMsat = devs - protocolDevsMsat;
@@ -12028,13 +12042,13 @@ function itemSplitReserves({ listMsat, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT
  * federation's guardians. `kind` 'entry' (gross stake) or 'item' (list price and the chosen share). Answers
  * [{ federationId, amountMsat, to: 'reserves' }] - empty only for a free round, which pays nothing at all.
  */
-function reserveOutputsExpected({ kind, federationId, grossMsat, listMsat, devsPct, free = false }) {
+function reserveOutputsExpected({ kind, federationId, grossMsat, listMsat, devsPct, free = false, split = ROUND_SPLIT_BPS, fees = null }) {
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a reserve output is paid in a 32-byte federation');
   if (kind === 'entry') {
     if (free) return [];
-    return [{ federationId, amountMsat: roundSplit(grossMsat).reservesMsat, to: 'reserves' }];
+    return [{ federationId, amountMsat: roundSplit(grossMsat, { split }).reservesMsat, to: 'reserves' }];
   }
-  if (kind === 'item') return [{ federationId, amountMsat: itemSplitReserves({ listMsat, devsPct }).reservesMsat, to: 'reserves' }];
+  if (kind === 'item') return [{ federationId, amountMsat: itemSplitReserves({ listMsat, devsPct, fees }).reservesMsat, to: 'reserves' }];
   throw new Error('a reserve output is paid by an entry or an item');
 }
 
@@ -12054,20 +12068,21 @@ const RESERVES_DONATION_BPS = ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_BPS.gam
  * (donationOutputsExpected); and its `reserveOutpoint` the reserves' part, a payout contract to the federation's reserve key.
  * Answers { ok, fee, outputs, reserve: { outpoint, recipientPk, amountMsat } } or why not, by name.
  */
-function reservesEntryExpected({ entry, recipients, reserveKey }) {
+// `split`: the round's split in force at its census height (kanban #462, fee-proposal.js roundSplitBps); unset, today's
+function reservesEntryExpected({ entry, recipients, reserveKey, split = ROUND_SPLIT_BPS }) {
   if (!entry || typeof entry.stakeMsat !== 'bigint') return { ok: false, why: 'that entry names no stake' };
   if (!(reserveKey instanceof Uint8Array) || reserveKey.length !== 33) return { ok: false, why: 'no reserve key is known for that round\'s federation' };
-  const split = roundSplit(entry.stakeMsat);
-  const devs = split.protocolDevsMsat + split.gameDevsMsat;
-  if (entry.feeMsat !== split.nodesMsat) return { ok: false, why: `on protocol version ${RESERVES_VERSION} the node fee is ${split.nodesMsat} msat (4 %), not ${entry.feeMsat}` };
-  if (entry.donationMsat !== devs + split.reservesMsat)
-    return { ok: false, why: `on protocol version ${RESERVES_VERSION} the developers' 4 % and the reserves' 2 % are ${devs + split.reservesMsat} msat, not ${entry.donationMsat}` };
+  const parts = roundSplit(entry.stakeMsat, { split });
+  const devs = parts.protocolDevsMsat + parts.gameDevsMsat;
+  if (entry.feeMsat !== parts.nodesMsat) return { ok: false, why: `on protocol version ${RESERVES_VERSION} the node fee is ${parts.nodesMsat} msat (${split.nodes / 100} %), not ${entry.feeMsat}` };
+  if (entry.donationMsat !== devs + parts.reservesMsat)
+    return { ok: false, why: `on protocol version ${RESERVES_VERSION} the developers' ${(split.protocolDevs + split.gameDevs) / 100} % and the reserves' ${split.reserves / 100} % are ${devs + parts.reservesMsat} msat, not ${entry.donationMsat}` };
   if (!entry.reserveOutpoint) return { ok: false, why: `on protocol version ${RESERVES_VERSION} an entry names its reserve lock` };
   const dev = donationOutputsExpected({ ...entry, donationMsat: devs }, recipients);
   if (!dev.ok) return dev;
-  return { ok: true, fee: split.nodesMsat, outputs: dev.outputs,
-    reserve: { outpoint: entry.reserveOutpoint, recipientPk: reserveKey, amountMsat: split.reservesMsat },
-    why: `${dev.outputs.length} developer output(s) of ${devs} msat and ${split.reservesMsat} msat to the reserves` };
+  return { ok: true, fee: parts.nodesMsat, outputs: dev.outputs,
+    reserve: { outpoint: entry.reserveOutpoint, recipientPk: reserveKey, amountMsat: parts.reservesMsat },
+    why: `${dev.outputs.length} developer output(s) of ${devs} msat and ${parts.reservesMsat} msat to the reserves` };
 }
 
 /**
@@ -12077,6 +12092,985 @@ function reservesEntryExpected({ entry, recipients, reserveKey }) {
 const entryFeeBpsForRound = (contract, manifest) => (paysReserves(contract) && !donationInFee(manifest) ? RESERVES_NODE_FEE_BPS : entryFeeBpsOf(manifest));
 /** Does this round's entry pay the reserves - a version-11 round of a game (a market's reserves are a later slice)? */
 const entryPaysReserves = (contract, manifest) => paysReserves(contract) && !donationInFee(manifest);
+
+// ---- arena-protocol/src/final-sig.js
+// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
+//
+// "A result is FINAL only when five settlement seats have each signed FINAL for it, and a seat signs only once its own
+// clock reads final_after and it holds no valid objection." "Signed times are checked on arrival. A seat counts a result
+// or FINAL signature only if the time it carries is within the tolerance of the receiving seat's own clock. A
+// back-dated or forward-dated signature does not count and is itself evidence against its signer."
+//
+// The record: the round, the entry, the run it makes FINAL (the agreed run id - the first result's, or an agreed
+// re-run's), the seat that signs, and the time it signed on its own clock. The count: distinct committee seats whose
+// signature verifies, signed at or after the window's final_after, and received within the tolerance of the
+// receiving seat's clock (the `seenMs` it was stored with) - at the round's own threshold (5 of 7, 2 of 2).
+//
+// The curve is not this package's business: `verify(signature, digest, key)` is injected, as rerun.js takes it.
+
+
+
+
+
+/** 1 type + 2 version + 32 round + 32 entry + 32 run + 32 signer + 8 signed at. */
+const FINAL_SIG_BYTES = 1 + 2 + 32 + 32 + 32 + 32 + 8;
+const FINAL_SIG_SIGNATURE_BYTES = 64;
+const SIGNED_FINAL_SIG_BYTES = FINAL_SIG_BYTES + FINAL_SIG_SIGNATURE_BYTES;
+
+const fsIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodeFinalSig({ roundId, entryId, runId, signerPubkey, signedAtMs }) {
+  const w = new Writer();
+  w.u8(TYPE_FINAL_SIGNATURE);
+  w.u16(PROTOCOL_VERSION);
+  w.bytes32(roundId);
+  w.bytes32(entryId);
+  w.bytes32(runId);
+  w.bytes32(signerPubkey);
+  w.u64(BigInt(signedAtMs));
+  return w.finish();
+}
+
+function decodeFinalSig(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FINAL_SIGNATURE) throw new Error('not a FINAL signature');
+  const version = r.u16();
+  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
+  const x = { roundId: r.bytes32(), entryId: r.bytes32(), runId: r.bytes32(), signerPubkey: r.bytes32(), signedAtMs: r.u64() };
+  r.end();
+  return x;
+}
+
+/** What the seat signs. */
+const finalSigId = (x) => taggedHash(TAG.finalSignature, encodeFinalSig(x));
+
+function joinSignedFinalSig(body, signature) {
+  if (body.length !== FINAL_SIG_BYTES) throw new Error(`a FINAL signature body is ${FINAL_SIG_BYTES} bytes, got ${body.length}`);
+  if (signature.length !== FINAL_SIG_SIGNATURE_BYTES) throw new Error(`a signature is ${FINAL_SIG_SIGNATURE_BYTES} bytes, got ${signature.length}`);
+  const out = new Uint8Array(SIGNED_FINAL_SIG_BYTES);
+  out.set(body, 0);
+  out.set(signature, FINAL_SIG_BYTES);
+  return out;
+}
+
+function splitSignedFinalSig(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_FINAL_SIG_BYTES)
+    throw new Error(`a signed FINAL signature is ${SIGNED_FINAL_SIG_BYTES} bytes`);
+  return { body: bytes.subarray(0, FINAL_SIG_BYTES), signature: bytes.subarray(FINAL_SIG_BYTES) };
+}
+
+/** Sign one FINAL record with `sign(digest) -> 64-byte signature`. */
+function signFinalSig(x, sign) {
+  const body = encodeFinalSig(x);
+  return joinSignedFinalSig(body, sign(finalSigId(x)));
+}
+
+/**
+ * WHY ONE ARRIVING FINAL SIGNATURE DOES NOT COUNT, or null if it does: about this round, entry and run; a committee
+ * seat; a signature that verifies; signed at or after `finalAfterMs`; and signed within the tolerance of `seenMs`, the
+ * receiving seat's own clock when it arrived.
+ */
+function finalSigFault({ bytes, seenMs }, { roundId, entryId, runId, committee, finalAfterMs, verify }) {
+  let x, signature;
+  try {
+    const split = splitSignedFinalSig(bytes);
+    signature = split.signature;
+    x = decodeFinalSig(split.body);
+  } catch (e) { return { why: `not a FINAL signature: ${e.message}` }; }
+  if (toHex(x.roundId) !== toHex(roundId) || toHex(x.entryId) !== toHex(entryId)) return { x, why: 'about another round or entry' };
+  if (runId && toHex(x.runId) !== toHex(runId)) return { x, why: 'about another run' };
+  if (!committee.map(toHex).includes(toHex(x.signerPubkey))) return { x, why: 'not signed by a seat of this round\'s committee' };
+  let good = false;
+  try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
+  if (!good) return { x, why: 'the signature does not verify' };
+  if (x.signedAtMs < BigInt(finalAfterMs))
+    return { x, evidence: true, why: `signed at ${x.signedAtMs}, before the window's final_after ${finalAfterMs}: a seat signed FINAL early` };
+  if (seenMs === null || seenMs === undefined || !withinTolerance(x.signedAtMs, seenMs))
+    return { x, evidence: true, why: `signed at ${x.signedAtMs} and received at ${seenMs}: outside the 5 s tolerance of the receiving seat's clock` };
+  return null;
+}
+
+/**
+ * IS THIS RUN FINAL? The distinct committee seats whose FINAL signature on `runId` counts (finalSigFault), against the
+ * round's threshold for `slots` seats. `records` are `{ bytes, seenMs }`.
+ */
+function finalSigned({ roundId, entryId, runId, records, committee, slots, finalAfterMs, verify } = {}) {
+  if (!fsIs32(roundId) || !fsIs32(entryId) || !fsIs32(runId)) return { ok: false, signed: 0, why: 'FINAL is counted for one round, one entry and one run' };
+  if (typeof verify !== 'function') return { ok: false, signed: 0, why: 'counting FINAL signatures needs a verifier, and none was injected' };
+  if (!Array.isArray(committee) || !committee.length) return { ok: false, signed: 0, why: 'this round has no committee to sign FINAL' };
+  let needed;
+  try { needed = receiptsNeeded(slots); } catch (e) { return { ok: false, signed: 0, why: e.message }; }
+  const counted = new Set();
+  const refused = [];
+  for (const rec of records || []) {
+    const fault = finalSigFault(rec, { roundId, entryId, runId, committee, finalAfterMs, verify });
+    if (fault) { refused.push({ signer: fault.x ? toHex(fault.x.signerPubkey) : null, why: fault.why, evidence: !!fault.evidence }); continue; }
+    counted.add(toHex(decodeFinalSig(splitSignedFinalSig(rec.bytes).body).signerPubkey));
+  }
+  const signed = counted.size;
+  if (signed < needed) return { ok: false, signed, needed, refused, why: `${signed} of ${needed} seats have signed FINAL` };
+  return { ok: true, signed, needed, refused, signers: [...counted] };
+}
+
+// ---- arena-protocol/src/served-nodes.js
+// THE NODES THAT SERVED A ROUND IN THE LAST 24 HOURS (kanban #365, the owner 2026-10-15: an in-game item's price goes "50% an die
+// nodes die in den letzten 24h an einer Runde beteiligt waren"). The part of the item plan that moves no money (plan: comment 2310):
+// WHICH nodes, and in how many rounds each, read so that every node arrives at the same list.
+//
+// WHAT COUNTS AS SERVING: a seat's signed FINAL on a round (final-sig.js) - public, signed by the node's own key, and only a member
+// of that round's committee can give one. A round counts once per node, however many entries it signed FINAL for. The window is
+// [fromMs, toMs) on the signature's own clock; the caller fixes `toMs` from something every node reads alike (a purchase names its
+// anchor block, whose time it is), never its own clock.
+//
+// THE LIST AND ITS ROOT: the nodes sorted by key, each with its count of rounds; root = taggedHash('ARENA/v1/ServedNodes',
+// from || to || [key || rounds]...). A purchase names the root; a node that rebuilds another root from the FINAL signatures it holds
+// can show exactly which node or count differs (servedNodesDiffer). Equal or weighted shares are both read from this one list.
+//
+// NO CURVE: `verify(signature, digest, key)` is injected, as final-sig.js takes it.
+
+
+
+const SERVED_WINDOW_MS = 24 * 3600 * 1000;
+const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
+const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/**
+ * THE SERVED LIST over `rounds` = [{ roundId, committee: [key32...], finals: [signed FINAL bytes...] }], window [fromMs, toMs).
+ * A FINAL counts when it is about that round, signed by a member of its committee, verifies, and was signed inside the window.
+ * Answers { fromMs, toMs, nodes: [{ key (hex), rounds }], rounds (counted), root (hex), refused: [{ round, why }] }.
+ */
+function servedNodes({ rounds, fromMs, toMs, verify }) {
+  if (typeof verify !== 'function') throw new Error('reading who served needs a verifier, and none was injected');
+  const from = BigInt(fromMs), to = BigInt(toMs);
+  if (!(to > from)) throw new Error('a served window ends after it starts');
+  const served = new Map();                                  // key hex -> Set of round hex
+  const refused = [];
+  let counted = 0;
+  for (const round of rounds || []) {
+    if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
+    const rid = toHex(round.roundId);
+    const committee = new Set(round.committee.map(toHex));
+    let any = false;
+    for (const bytes of round.finals || []) {
+      let x, signature;
+      try { ({ signature } = splitSignedFinalSig(bytes)); x = decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)); }
+      catch (e) { refused.push({ round: rid, why: `not a FINAL signature: ${e.message}` }); continue; }
+      const key = toHex(x.signerPubkey);
+      if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
+      if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
+      let good = false;
+      try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
+      if (!good) { refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` }); continue; }
+      if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
+      if (!served.has(key)) served.set(key, new Set());
+      served.get(key).add(rid); any = true;
+    }
+    if (any) counted++;
+  }
+  const nodes = [...served.entries()].map(([key, s]) => ({ key, rounds: s.size })).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return { fromMs: from, toMs: to, nodes, rounds: counted, root: toHex(servedNodesRoot({ fromMs: from, toMs: to, nodes })), refused };
+}
+
+/** The root of a served list: what a purchase names and every node rebuilds. */
+function servedNodesRoot({ fromMs, toMs, nodes }) {
+  const w = new Writer();
+  w.u64(BigInt(fromMs)); w.u64(BigInt(toMs));
+  const sorted = [...nodes].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  for (let i = 1; i < sorted.length; i++) if (sorted[i].key === sorted[i - 1].key) throw new Error(`node ${sorted[i].key.slice(0, 16)} is listed twice`);
+  w.vec(sorted, (n, ww) => { ww.bytes32(Uint8Array.from(n.key.match(/../g).map((h) => parseInt(h, 16)))); ww.u32(n.rounds); });
+  return taggedHash(TAG_SERVED_NODES, w.finish());
+}
+
+/** WHERE TWO SERVED LISTS DIFFER (a claimed one against the reader's own): [] when they agree. */
+function servedNodesDiffer(claimed, mine) {
+  const out = [];
+  if (BigInt(claimed.fromMs) !== BigInt(mine.fromMs) || BigInt(claimed.toMs) !== BigInt(mine.toMs)) out.push({ why: 'another window' });
+  const a = new Map(claimed.nodes.map((n) => [n.key, n.rounds])), b = new Map(mine.nodes.map((n) => [n.key, n.rounds]));
+  for (const [k, r] of a) if (!b.has(k)) out.push({ key: k, why: `named with ${r} round(s), and served none here` }); else if (b.get(k) !== r) out.push({ key: k, why: `named with ${r} round(s), and ${b.get(k)} here` });
+  for (const [k, r] of b) if (!a.has(k)) out.push({ key: k, why: `served ${r} round(s) here, and is left out` });
+  return out;
+}
+
+/**
+ * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (kanban #365, measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
+ * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
+ * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
+ * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
+ */
+function mergeServedRounds(held) {
+  const hx = (b) => toHex(b);
+  const rounds = new Map(), conflicts = new Set();
+  for (const seat of held || []) for (const r of seat || []) {
+    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
+    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
+    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
+    const into = rounds.get(k);
+    if (into.key !== committee) { conflicts.add(k); continue; }
+    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
+  }
+  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
+    conflicts: [...conflicts] };
+}
+
+// ---- arena-protocol/src/ballot.js
+// THE CONFIG BALLOT (spec §27A.7.2-§27A.7.5, kanban #329), its first slice: the proposal object, the vote a bond key signs into
+// a Bitcoin OP_RETURN, and the tally - "a pure function of chain state. Every participant computes the same result, and
+// disagreement about the outcome reduces to disagreement about Bitcoin." Reading the chain (finding the proposal's publication
+// and the vote outputs) and activation (§27A.7.5) are the next slices; nothing here reads a chain or signs with a bond.
+//
+// NO CURVE, as everywhere in this package: `verify(signature, digest, pubkey)` is injected (BIP-340 over the node keys).
+//
+// Two choices the spec leaves open, made here and named:
+//   - the config travels as its bytes with the config_hash it declares, and the two must agree (configHashOf, 27A.7.1)
+//   - the vote's marker is "ARN" 'V' (RULED the owner 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
+//     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
+//     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
+
+
+
+const CLASS = Object.freeze({ DESIGN: 1, MONEY: 2, UPGRADE: 3 });
+const CHOICE = Object.freeze({ YES: 1, NO: 2, ABSTAIN: 3 });
+/** The schedule in blocks (§27A.7.4, §27A.8.2) - genesis parameters; regtest runs 1 / 6 / 1. */
+const SCHEDULES = Object.freeze({
+  mainnet: Object.freeze({ [CLASS.DESIGN]: { review: 1008, voting: 1440, cooldown: 2016 }, [CLASS.MONEY]: { review: 1008, voting: 1440, cooldown: 2016 },
+    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 } }),
+  regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
+    [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
+});
+/**
+ * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
+ * before. It can go back, never forward." Regtest's is 0 / 6 / 0 (a choice made here, named: its voting phase as for the others).
+ */
+const REPEAL_SCHEDULES = Object.freeze({
+  mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 0 }),
+  regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
+});
+/** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
+function isRepeal(p, history = []) {
+  const mine = toHex(p.config);
+  return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
+}
+/** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
+const THRESHOLDS = Object.freeze({
+  [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
+  [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
+  [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
+});
+const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
+const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
+
+/**
+ * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
+ * the hash every config of the network is named by (nextblock config/game-config.js TAG_GAME_CONFIG; the ballot's genesis
+ * 2170f250 is exactly this over its bytes, ballot-genesis.test.js). A proposal carries the FULL config and the hash it names,
+ * and the two must be one: otherwise a ballot could make live a hash whose bytes nobody voted on (kanban #329, the hole).
+ */
+const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
+const configHashOf = (config) => taggedHash(TAG_GAME_CONFIG, config);
+
+const isVoteBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
+const className = (c) => Object.keys(CLASS).find((k) => CLASS[k] === c);
+
+/** THE BODY THE PROPOSER SIGNS (§27A.7.2): network, parent config, the full config, class, activation, proposer, deposit. */
+function encodeConfigProposalBody(p) {
+  if (!isVoteBytes32(p.networkId) || !isVoteBytes32(p.parent) || !isVoteBytes32(p.configHash) || !isVoteBytes32(p.proposer) || !isVoteBytes32(p.depositTxid))
+    throw new Error('a proposal names its network, parent config, config hash, proposer and deposit txid in 32 bytes each');
+  if (!(p.config instanceof Uint8Array) || !p.config.length) throw new Error('a proposal carries the FULL config, never a diff (27A.7.2)');
+  if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY or UPGRADE, not ${p.class}`);
+  if (!Number.isInteger(p.activationHeight) || p.activationHeight < 1 || p.activationHeight > 0xffffffff) throw new Error('activation_height is a block height');
+  const w = new Writer();
+  w.u8(TYPE_CONFIG_PROPOSAL); w.u16(PROTOCOL_VERSION);
+  w.bytes32(p.networkId); w.bytes32(p.parent); w.bytes32(p.configHash);
+  w.vec([...p.config], (x, ww) => ww.u8(x));
+  w.u8(p.class); w.u32(p.activationHeight); w.bytes32(p.proposer); w.bytes32(p.depositTxid);
+  return w.finish();
+}
+function decodeConfigProposalBody(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_CONFIG_PROPOSAL) throw new Error('not a config proposal');
+  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
+  const p = { networkId: r.bytes32(), parent: r.bytes32(), configHash: r.bytes32(), config: Uint8Array.from(r.vec((rr) => rr.u8())),
+    class: r.u8(), activationHeight: r.u32(), proposer: r.bytes32(), depositTxid: r.bytes32() };
+  r.end();
+  encodeConfigProposalBody(p);
+  return p;
+}
+const proposalBodyId = (p) => taggedHash(TAG.configProposalBody, encodeConfigProposalBody(p));
+/** proposal_id = H(canonical(config_proposal)): the body and the proposer's signature together. */
+function proposalId(p) {
+  if (!(p.signature instanceof Uint8Array) || p.signature.length !== 64) throw new Error('a proposal carries its proposer\'s 64-byte signature');
+  const body = encodeConfigProposalBody(p);
+  const out = new Uint8Array(body.length + 64); out.set(body, 0); out.set(p.signature, body.length);
+  return taggedHash(TAG.configProposal, out);
+}
+
+/**
+ * A PROPOSAL ON ITS FACE (§27A.7.2, §27A.7.4): signed by its proposer, activation at or after the end of cooldown counted from
+ * the height it was published at, and its deposit within the cap - at most bond_min of the lowest bracket over 100.
+ */
+function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify, history = null, repealSchedule = REPEAL_SCHEDULES.mainnet }) {
+  try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, why: e.message }; }
+  // THE HASH IT NAMES IS THE HASH OF THE CONFIG IT CARRIES (27A.7.1), or nobody voted on the config it would make live
+  const named = toHex(p.configHash), carried = toHex(configHashOf(p.config));
+  if (named !== carried) return { ok: false, why: `config_hash ${named} is not the hash of the config the proposal carries (${carried}): config_hash = H(canonical(game_config)), 27A.7.1` };
+  if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
+  // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
+  const repeal = !!history && isRepeal(p, history);
+  const s = repeal ? repealSchedule : schedule[p.class];
+  const earliest = publishedAt + s.review + s.voting + s.cooldown;
+  if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
+  const cap = BigInt(lowestBondMinSats) / 100n;
+  if (BigInt(depositSats) > cap) return { ok: false, why: `a deposit of ${depositSats} sat is over the cap of ${cap} (bond_min of the lowest bracket / 100)` };
+  return { ok: true, id: proposalId(p), class: className(p.class), repeal, votingFrom: publishedAt + s.review, votingUntil: publishedAt + s.review + s.voting, activationHeight: p.activationHeight };
+}
+
+/** What a bond key signs to vote: H(proposal_id || choice). */
+const voteMessage = (id, choice) => taggedHash(TAG.vote, Uint8Array.from([...id, choice]));
+/** THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes. */
+function encodeVote({ proposalId: id, choice, signature }) {
+  if (!isVoteBytes32(id)) throw new Error('a vote names a 32-byte proposal id');
+  if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
+  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
+  const out = new Uint8Array(VOTE_BYTES);
+  out.set(VOTE_MARKER, 0); out.set(id.subarray(0, 8), 4); out[12] = choice; out.set(signature, 13);
+  return out;
+}
+function decodeVote(payload) {
+  if (!(payload instanceof Uint8Array) || payload.length !== VOTE_BYTES) return null;
+  if (VOTE_MARKER.some((b, i) => payload[i] !== b)) return null;
+  if (!Object.values(CHOICE).includes(payload[12])) return null;
+  return { idPrefix: payload.slice(4, 12), choice: payload[12], signature: payload.slice(13) };
+}
+
+/**
+ * THE TALLY (§27A.7.3-4). `census`: the bonds active at the proposal's publication - [{ pubkey, outpoint, bondSats }];
+ * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
+ * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
+ * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
+ */
+function tally({ proposal, standing, census, votes, verify }) {
+  const id = standing.id;
+  const prefix = toHex(id.subarray(0, 8));
+  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
+  for (const v of votes || []) {
+    const d = decodeVote(v.payload);
+    if (!d || toHex(d.idPrefix) !== prefix) continue;
+    if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;
+    const msg = voteMessage(id, d.choice);
+    for (const b of census || []) {
+      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
+      if (!good) continue;
+      const had = latest.get(b.outpoint);
+      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.bondSats) });
+    }
+  }
+  const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
+  let yes = 0n, no = 0n, abstain = 0n;
+  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
+  const t = THRESHOLDS[proposal.class];
+  const turnout = yes + no + abstain;
+  const quorum = total > 0n && turnout * 100n >= t.turnoutPct * total;
+  const decided = yes + no;
+  const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided);
+  return { totalSats: total, yesSats: yes, noSats: no, abstainSats: abstain, bondsVoted: latest.size, quorum, approved, passed: quorum && approved,
+    turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
+}
+
+// ---- arena-protocol/src/lobby-name.js
+// A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
+//
+// The name decides nothing (§0.12): it is in no entry, no mark and no result,
+// and the board still shows the name made from a player's key. But a lobby two
+// players share shows each the other's name, so a tab hands its signer nodes ONE
+// RECORD: this round, the round key it is joined under, the tab's identity key
+// (its generated name is made from that), the name the player chose - empty
+// for none - and when. The joined player's round key signs it (BIP-340), so a
+// signer node that serves it can leave a name out but cannot write one, and a record
+// for one round is no record for another. The newest record of a player wins.
+
+
+
+/** The longest name a player may choose, in characters. */
+const LOBBY_NAME_MAX = 24;
+
+/**
+ * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: trimmed, inner
+ * spaces collapsed, 1 to 24 characters, letters and digits with space, dot,
+ * dash and underscore between them. Anything else is refused by name.
+ */
+function lobbyNameIsValid(text) {
+  const name = String(text == null ? '' : text).normalize('NFC').trim().replace(/\s+/g, ' ');
+  if (!name) return { ok: false, why: 'a name is at least one character' };
+  if ([...name].length > LOBBY_NAME_MAX) return { ok: false, why: `a name is at most ${LOBBY_NAME_MAX} characters` };
+  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$/u.test(name))
+    return { ok: false, why: 'a name is letters and digits, with space, dot, dash or underscore between them' };
+  return { ok: true, name };
+}
+
+const nameIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodeLobbyName({ roundId, playerPubkey, identityPubkey, name = '', atMs } = {}) {
+  if (!nameIs32(roundId)) throw new Error('a name record names a 32-byte round id');
+  if (!nameIs32(playerPubkey)) throw new Error('a name record is signed by a 32-byte player key');
+  if (!nameIs32(identityPubkey)) throw new Error('a name record carries the 32-byte identity key its generated name is made from');
+  const at = BigInt(atMs);
+  if (at < 0n) throw new Error('a name record\'s time is not negative');
+  const text = name == null ? '' : name;
+  if (typeof text !== 'string') throw new Error('a name is text');
+  if (text !== '') {
+    const kept = lobbyNameIsValid(text);
+    if (!kept.ok) throw new Error(kept.why);
+    if (kept.name !== text) throw new Error('a name is signed as it is kept: trimmed, one space between words');
+  }
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(playerPubkey);
+  w.bytes32(identityPubkey);
+  w.u64(at);
+  w.str(text);
+  return w.finish();
+}
+
+/** A record as a signer node or a page receives it; held to the same rules as one written. */
+function decodeLobbyName(bytes) {
+  const r = new Reader(bytes);
+  const record = { roundId: r.bytes32(), playerPubkey: r.bytes32(), identityPubkey: r.bytes32(), atMs: r.u64(), name: r.str() };
+  r.end();
+  encodeLobbyName(record);
+  return record;
+}
+
+/** What the joined player signs (BIP-340, its round key) for its name in one round. */
+const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
+
+// ---- arena-protocol/src/player-name.js
+// A PLAYER'S NAME, AS THE WHOLE NETWORK SHOWS IT (kanban #397 PIP, the owner 2026-10-17: "Users can sign in with their ingame key and
+// their custom name or their generated name" - "Have custom names in the protocol").
+//
+// The lobby's name record (lobby-name.js) is one round's: signed by the round key, kept by that round's signer nodes. This one is
+// the player's own, for anywhere a player is named outside a round - the proposals forum first: the network it is for, the player's
+// IDENTITY key (the key its generated name is made from, display-name.js), when (ms), and the name the player chose - empty for
+// none, and then the generated one is shown. The identity key signs it (BIP-340), so a node can leave a name out but cannot write
+// one; nodes keep the newest per player and refuse one dated more than PLAYER_NAME_SKEW_MS ahead of their clock. The name is held
+// to the lobby's rule (lobbyNameIsValid): one rule names a player everywhere. Like every name, it decides nothing (§0.12).
+
+
+
+
+/** How far ahead of a node's clock a name may be dated and still be kept. */
+const PLAYER_NAME_SKEW_MS = 10 * 60 * 1000;
+
+const n32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodePlayerName({ networkId, player, atMs, name = '' } = {}) {
+  if (!n32(networkId) || !n32(player)) throw new Error('a player name names its network and the player\'s identity key by 32 bytes each');
+  const at = BigInt(atMs);
+  if (at < 0n) throw new Error('a player name\'s time is not negative');
+  if (typeof name !== 'string') throw new Error('a name is text');
+  if (name !== '') {
+    const kept = lobbyNameIsValid(name);
+    if (!kept.ok) throw new Error(kept.why);
+    if (kept.name !== name) throw new Error('a name is signed as it is kept: trimmed, one space between words');
+  }
+  const w = new Writer();
+  w.u8(TYPE_PLAYER_NAME); w.u16(PROTOCOL_VERSION);
+  w.bytes32(networkId); w.bytes32(player); w.u64(at); w.str(name);
+  return w.finish();
+}
+
+function decodePlayerName(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PLAYER_NAME) throw new Error('not a player name');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const n = { networkId: r.bytes32(), player: r.bytes32(), atMs: r.u64(), name: r.str() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the player name');
+  encodePlayerName(n);                       // the same rules on the way in
+  return n;
+}
+
+/** What the player's identity key signs (BIP-340). */
+const playerNameId = (n) => taggedHash(TAG.playerName, encodePlayerName(n));
+
+/** Of two records of one player, the one that stands: the later; at the same ms, the lower id. */
+function newerPlayerName(a, b) {
+  if (!a) return b; if (!b) return a;
+  if (a.obj.atMs !== b.obj.atMs) return a.obj.atMs > b.obj.atMs ? a : b;
+  return a.idHex < b.idHex ? a : b;
+}
+
+// ---- arena-protocol/src/funding.js
+// PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
+// purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
+// 15 % or more of the nodes that served a round in the last 432 blocks, after 1008 blocks"; signals are "signed messages kept and
+// passed on by the seats. Not on-chain signals. A signal weighs one per node and moves no money").
+//
+//     FundingProposal { network_id, author, published_height, amount_sats, lnurl, purpose }     signed by the author, anyone (the owner 2026-10-17)
+//     FundingComment  { proposal_id, parent_id, author, at_height, text }                       signed by its writer, anyone
+//     FundingSignal   { proposal_id, node, at_height }                                          signed by the node
+//
+// Signatures are BIP340 over the object's id (its tagged hash), by the 32-byte x-only key it names; the verifier is injected.
+//
+// THE SIGNAL (signalOutcome): the signal runs [published_height, published_height + signal) - 1008 blocks by the rule, 1 on the short
+// schedule of a live proof. When it ends, the ACTIVE nodes are those that served a round - a signed FINAL (served-nodes.js) - in the
+// 432 blocks before its end: the window [time(end - 432), time(end)) on the chain's median time, which every seat reads alike and
+// which never runs backwards. A signal counts when it was given inside the signal period by an active node, once per node, whatever
+// its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
+
+
+
+
+
+
+
+/** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
+// THE HIJACK DEFENCES, FIVE RULES (§27A.9.5, kanban #397, the owner 2026-10-17: "It needs to be more simple so people understand it" -
+// "Make it 3 months" - "older nodes ... can get a factor that increases their weight"; comment 2820, Go), in blocks:
+//   season          1  a bond votes (and a node signals) only if it is at least this old when the proposal is published (~3 months)
+//   lockAfterVote   1  ... and only if its CLTV maturity is at least this far past the vote's last block (~3 months)
+//   year            2  its weight is bond x the age factor: 1x under a year, 2x from one year, 3x from two
+//   capWindow       4  the window of the 25 % cap (~3 months)
+//   delay, trancheEvery 5  the first payment is due `delay` after the vote's last block (~2 weeks), the next ones `trancheEvery` apart
+//   week               the signal's active node served rounds in 3 of the 4 weeks before it ends
+// The short schedule is a live proof's only (the T3 federation), scaled to its few blocks.
+const FUNDING_SCHEDULES = Object.freeze({
+  spec: Object.freeze({ signal: 1008, activeWindow: 432, vote: 2016, decideDepth: 6,
+    season: 12960, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
+  short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6,
+    season: 24, lockAfterVote: 48, year: 72, delay: 6, trancheEvery: 6, capWindow: 144, week: 108 }),
+});
+const FUNDING_ABSOLUTE_PCT = 20n;        // rule 3: YES of everyone who could vote
+const FUNDING_CAP_PCT = 10n;             // rule 4: one proposal of the paying federation's reserves
+const FUNDING_CAP_WINDOW_PCT = 25n;      // rule 4: all payments of a window of the reserves at its start
+const FUNDING_LARGE_PCT = 1n;            // rule 5: above this share of the reserves a payment goes out in tranches
+const FUNDING_TRANCHES = 4;
+const FUNDING_ACTIVE_WEEKS = 4, FUNDING_ACTIVE_WEEKS_NEEDED = 3;   // the signal's active node
+/** The vote's rule (§27A.9.3 stage 2, RULED the owner 2026-10-16): turnout of the snapshot's bonded capital, and YES of YES + NO. */
+const FUNDING_TURNOUT_PCT = 30n;
+const FUNDING_APPROVAL_PCT = 60n;
+const FUNDING_SIGNAL_PCT = 15;
+const FUNDING_PURPOSE_MAX = 4000;
+const FUNDING_COMMENT_MAX = 4000;
+const FUNDING_LNURL_MAX = 512;
+const FUNDING_SIG_BYTES = 64;
+
+const f32 = (b) => b instanceof Uint8Array && b.length === 32;
+const ZERO32 = new Uint8Array(32);
+/** An LNURL (bech32 "lnurl1...") or a Lightning address (user@host): where the amount would be paid. */
+function lnurlStands(s) {
+  if (typeof s !== 'string' || !s.length || s.length > FUNDING_LNURL_MAX) return false;
+  if (/^lnurl1[02-9ac-hj-np-z]{20,}$/i.test(s)) return true;
+  return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(s);
+}
+
+function encodeFundingProposal(p) {
+  if (!f32(p.networkId) || !f32(p.author)) throw new Error('a funding proposal names its network and its author by 32 bytes each');
+  if (!Number.isInteger(p.publishedHeight) || p.publishedHeight < 0) throw new Error('published_height is a block height');
+  if (typeof p.amountSats !== 'bigint' || p.amountSats < 1n) throw new Error('a funding proposal asks at least 1 sat, as a BigInt');
+  if (!lnurlStands(p.lnurl)) throw new Error('a funding proposal names an LNURL or a Lightning address to be paid at');
+  if (typeof p.purpose !== 'string' || !p.purpose.trim() || p.purpose.length > FUNDING_PURPOSE_MAX) throw new Error(`a funding proposal says what the money is for, in at most ${FUNDING_PURPOSE_MAX} characters`);
+  const w = new Writer();
+  w.u8(TYPE_FUNDING_PROPOSAL); w.u16(PROTOCOL_VERSION);
+  w.bytes32(p.networkId); w.bytes32(p.author); w.u32(p.publishedHeight); w.u64(p.amountSats); w.str(p.lnurl); w.str(p.purpose);
+  return w.finish();
+}
+function decodeFundingProposal(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FUNDING_PROPOSAL) throw new Error('not a funding proposal');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const p = { networkId: r.bytes32(), author: r.bytes32(), publishedHeight: r.u32(), amountSats: r.u64(), lnurl: r.str(), purpose: r.str() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the funding proposal');
+  encodeFundingProposal(p);                       // the same rules on the way in
+  return p;
+}
+const fundingProposalId = (p) => taggedHash(TAG.fundingProposal, encodeFundingProposal(p));
+
+function encodeFundingComment(c) {
+  if (!f32(c.proposalId) || !f32(c.author)) throw new Error('a comment names its proposal and its writer by 32 bytes each');
+  const parent = c.parentId === undefined || c.parentId === null ? ZERO32 : c.parentId;
+  if (!f32(parent)) throw new Error('a comment answers a 32-byte comment id, or none');
+  if (!Number.isInteger(c.atHeight) || c.atHeight < 0) throw new Error('at_height is a block height');
+  if (typeof c.text !== 'string' || !c.text.trim() || c.text.length > FUNDING_COMMENT_MAX) throw new Error(`a comment says something, in at most ${FUNDING_COMMENT_MAX} characters`);
+  const w = new Writer();
+  w.u8(TYPE_FUNDING_COMMENT); w.u16(PROTOCOL_VERSION);
+  w.bytes32(c.proposalId); w.bytes32(parent); w.bytes32(c.author); w.u32(c.atHeight); w.str(c.text);
+  return w.finish();
+}
+function decodeFundingComment(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FUNDING_COMMENT) throw new Error('not a funding comment');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const c = { proposalId: r.bytes32(), parentId: r.bytes32(), author: r.bytes32(), atHeight: r.u32(), text: r.str() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the comment');
+  encodeFundingComment(c);
+  return c;
+}
+const fundingCommentId = (c) => taggedHash(TAG.fundingComment, encodeFundingComment(c));
+
+function encodeFundingSignal(s) {
+  if (!f32(s.proposalId) || !f32(s.node)) throw new Error('a signal names its proposal and its node by 32 bytes each');
+  if (!Number.isInteger(s.atHeight) || s.atHeight < 0) throw new Error('at_height is a block height');
+  const w = new Writer();
+  w.u8(TYPE_FUNDING_SIGNAL); w.u16(PROTOCOL_VERSION);
+  w.bytes32(s.proposalId); w.bytes32(s.node); w.u32(s.atHeight);
+  return w.finish();
+}
+function decodeFundingSignal(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FUNDING_SIGNAL) throw new Error('not a funding signal');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const s = { proposalId: r.bytes32(), node: r.bytes32(), atHeight: r.u32() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the signal');
+  return s;
+}
+const fundingSignalId = (s) => taggedHash(TAG.fundingSignal, encodeFundingSignal(s));
+
+/** The object of a signed hex (body || 64-byte signature) of `kind` 'proposal' | 'comment' | 'signal' | 'name' | 'fee' | 'fee-approval', its id, and whether its signer signed it. */
+function readSignedFunding(kind, bytes, verify) {
+  if (typeof verify !== 'function') throw new Error('a funding object is checked with a BIP340 verifier, and none was injected');
+  if (!(bytes instanceof Uint8Array) || bytes.length <= FUNDING_SIG_BYTES) return { ok: false, why: 'no signature' };
+  const body = bytes.slice(0, -FUNDING_SIG_BYTES), signature = bytes.slice(-FUNDING_SIG_BYTES);
+  let obj, id, signer;
+  try {
+    if (kind === 'proposal') { obj = decodeFundingProposal(body); id = fundingProposalId(obj); signer = obj.author; }
+    else if (kind === 'comment') { obj = decodeFundingComment(body); id = fundingCommentId(obj); signer = obj.author; }
+    else if (kind === 'signal') { obj = decodeFundingSignal(body); id = fundingSignalId(obj); signer = obj.node; }
+    else if (kind === 'name') { obj = decodePlayerName(body); id = playerNameId(obj); signer = obj.player; }   // the forum's names (PIP)
+    // A FEE PROPOSAL AND A PROTOCOL DEVELOPER'S ANSWER (kanban #462, fee-proposal.js): signed by its author, and by the developer
+    else if (kind === 'fee') { obj = decodeFeeProposal(body); id = feeProposalId(obj); signer = obj.author; }
+    else if (kind === 'fee-approval') { obj = decodeFeeApproval(body); id = feeApprovalId(obj); signer = obj.dev; }
+    else return { ok: false, why: 'a proposal, a comment, a signal, a name, a fee proposal or a fee approval' };
+  } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
+  let good = false; try { good = verify(signature, id, signer) === true; } catch { good = false; }
+  if (!good) return { ok: false, why: `the ${kind}'s signature does not verify` };
+  return { ok: true, kind, obj, id, signature };
+}
+
+/**
+ * THE NODES ACTIVE BEFORE A SIGNAL ENDS: those that served a round (a signed FINAL) in [time(end - window), time(end)), `timeOf(height)`
+ * the chain's median time in ms at that height. `rounds` as servedNodes takes them. Answers servedNodes' list with the window's heights.
+ */
+function activeNodesBefore({ rounds, endHeight, timeOf, verify, windowBlocks = FUNDING_SCHEDULES.spec.activeWindow }) {
+  if (!Number.isInteger(endHeight) || endHeight < windowBlocks) throw new Error('a signal ends at a height above the active window');
+  const fromMs = BigInt(timeOf(endHeight - windowBlocks)), toMs = BigInt(timeOf(endHeight));
+  return { ...servedNodes({ rounds, fromMs, toMs: toMs > fromMs ? toMs : fromMs + 1n, verify }), fromHeight: endHeight - windowBlocks, toHeight: endHeight };
+}
+
+/**
+ * THE SIGNAL OF ONE PROPOSAL. `proposal` decoded; `signals` [{ node (hex), atHeight }] whose signatures were checked; `active` the
+ * active nodes' keys (hex) at the signal's end, or null before it; `tip` this seat's height. Answers { state: 'signalling' |
+ * 'passed' | 'failed', signalEnd, supporters, active, pct, needed } - `needed` the supporters 15 % of the active nodes asks.
+ */
+function signalOutcome({ proposal, signals = [], active = null, tip, schedule = FUNDING_SCHEDULES.spec }) {
+  const signalEnd = proposal.publishedHeight + schedule.signal;
+  const inPeriod = signals.filter((s) => s.atHeight >= proposal.publishedHeight && s.atHeight < signalEnd);
+  const signers = new Set(inPeriod.map((s) => String(s.node).toLowerCase()));
+  if (!(Number.isInteger(tip) && tip >= signalEnd) || active === null)
+    return { state: 'signalling', signalEnd, signals: signers.size, supporters: null, active: null, pct: null, needed: null };
+  const act = new Set([...active].map((k) => String(k).toLowerCase()));
+  const supporters = [...signers].filter((k) => act.has(k)).length;
+  const needed = Math.ceil((act.size * FUNDING_SIGNAL_PCT) / 100);
+  const passed = act.size > 0 && supporters * 100 >= FUNDING_SIGNAL_PCT * act.size;
+  return { state: passed ? 'passed' : 'failed', signalEnd, signals: signers.size, supporters, active: act.size,
+    pct: act.size ? Math.round((supporters * 10000) / act.size) / 100 : 0, needed: Math.max(needed, 1) };
+}
+
+/**
+ * THE VOTE OF A PROPOSAL WHOSE SIGNAL PASSED (§27A.9.3 stage 2, kanban #397 slice 7): its period [signalEnd, signalEnd + vote) and
+ * its last block; when a seat may decide it - that last block `decideDepth` deep, counting the block itself (as #329's tally:
+ * decided at tip >= last + depth - 1). A failed or open signal has no vote.
+ */
+function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.spec }) {
+  if (!signal || signal.state !== 'passed') return null;
+  const from = proposal.publishedHeight + schedule.signal;
+  const until = from + schedule.vote;
+  return { from, until, last: until - 1, decidableAt: until - 1 + schedule.decideDepth - 1 };
+}
+
+/**
+ * THE COUNT (§27A.9.3 stage 2), #329's vote read for a funding proposal: `census` the bonds active at the vote's start -
+ * [{ pubkey, outpoint, bondSats }]; `votes` the "ARN" 'V' outputs found on chain - [{ payload, height, txid }]. A vote counts for every
+ * bond whose key its signature verifies under, only inside [from, until); per bond outpoint the last by height wins, a tie inside one
+ * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
+ * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
+ */
+function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
+  const prefix = toHex(proposalId.subarray(0, 8));
+  const latest = new Map();
+  for (const v of votes) {
+    const d = decodeVote(v.payload instanceof Uint8Array ? v.payload : null);
+    if (!d || toHex(d.idPrefix) !== prefix) continue;
+    if (!(v.height >= from && v.height < until)) continue;
+    const msg = voteMessage(proposalId, d.choice);
+    for (const b of census) {
+      let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; }
+      if (!good) continue;
+      const had = latest.get(b.outpoint);
+      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats) });
+    }
+  }
+  const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
+  let yes = 0n, no = 0n, abstain = 0n;
+  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
+  const turnout = yes + no + abstain;
+  const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
+  const decided = yes + no;
+  const approved = decided > 0n && yes * 100n >= FUNDING_APPROVAL_PCT * decided;
+  // RULE 3 (the owner 2026-10-17, comment 2820): 60 % of the votes say YES, and YES is at least 20 % of everyone who could vote - the
+  // 30 % turnout is gone, this asks real participation itself. `quorum` stays reported for the record
+  const absolute = total > 0n && yes * 100n >= FUNDING_ABSOLUTE_PCT * total;
+  return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved, absolute,
+    yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0, passed: approved && absolute, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
+}
+
+/** Rule 2: the age factor of a bond `age` blocks old - 1x under a year, 2x from one year, 3x from two. */
+const ageFactor = (age, schedule = FUNDING_SCHEDULES.spec) => (age >= 2 * schedule.year ? 3n : age >= schedule.year ? 2n : 1n);
+
+/**
+ * Rules 1 + 2: WHO VOTES AND HOW MUCH. `census` [{ pubkey, outpoint, bondSats, height (confirmation), maturity (CLTV height, or null)
+ * }]; `publishedHeight` the proposal's; `last` the vote's last block. A bond votes when it is at least `season` blocks old at the
+ * proposal's publication and its maturity is at least `lockAfterVote` past `last`; it weighs bondSats x its age factor at
+ * publication. Answers the voting census, each with its `weight`, and `totalWeight` - everyone who could vote (rule 3's base).
+ */
+function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec }) {
+  const voters = []; let totalWeight = 0n;
+  for (const b of census) {
+    if (!Number.isInteger(b.height)) continue;
+    const age = publishedHeight - b.height;
+    if (age < schedule.season) continue;
+    if (!(Number.isInteger(b.maturity) && b.maturity - last >= schedule.lockAfterVote)) continue;
+    const weight = BigInt(b.bondSats) * ageFactor(age, schedule);
+    voters.push({ ...b, weight, factor: Number(ageFactor(age, schedule)) });
+    totalWeight += weight;
+  }
+  return { voters, totalWeight };
+}
+
+/** The signal's ACTIVE nodes: served rounds in at least 3 of the 4 weeks before its end, `weeks` [Set of node hex] newest first. */
+function activeInWeeks(weeks) {
+  const n = new Map();
+  for (const w of weeks.slice(0, FUNDING_ACTIVE_WEEKS)) for (const k of w) n.set(String(k).toLowerCase(), (n.get(String(k).toLowerCase()) || 0) + 1);
+  return [...n.entries()].filter(([, c]) => c >= FUNDING_ACTIVE_WEEKS_NEEDED).map(([k]) => k);
+}
+
+/**
+ * Rule 5: THE PAYMENTS OF A PASSED PROPOSAL. One payment, or - above 1 % of the paying federation's reserves (`reservesSats`) - four
+ * tranches; payment k is due at `last + delay + k x trancheEvery` and may be made once that block is `decideDepth` deep and a count
+ * over every vote up to it still passes (a NO, or a YES turned NO, in the delay cancels it and every later one).
+ */
+function trancheSchedule({ amountSats, reservesSats, last, schedule = FUNDING_SCHEDULES.spec }) {
+  const amount = BigInt(amountSats);
+  const n = BigInt(reservesSats) > 0n && amount * 100n > FUNDING_LARGE_PCT * BigInt(reservesSats) ? FUNDING_TRANCHES : 1;
+  const each = amount / BigInt(n);
+  return Array.from({ length: n }, (_, k) => {
+    const dueAt = last + schedule.delay + k * schedule.trancheEvery;
+    return { k, of: n, amountSats: k === n - 1 ? amount - each * BigInt(n - 1) : each, dueAt, payableAt: dueAt + schedule.decideDepth - 1 };
+  });
+}
+
+/**
+ * Rule 4: MAY THIS PAYMENT GO NOW. One proposal at most 10 % of the paying federation's reserves (its whole amount, `proposalSats`,
+ * against the reserves held now plus what it already paid); everything paid in the last `capWindow` blocks (`paidInWindowSats`) plus
+ * this payment at most 25 % of what the reserves held at the window's start (held now + paid in the window). A payment over the
+ * window cap waits for the window to move; a proposal over its own cap is never paid.
+ */
+function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats = 0n, paidInWindowSats = 0n }) {
+  const held = BigInt(reservesSats), base = held + BigInt(paidByProposalSats);
+  if (BigInt(proposalSats) * 100n > FUNDING_CAP_PCT * base) return { ok: false, final: true, why: `the proposal asks ${proposalSats} sat, more than ${FUNDING_CAP_PCT} % of the ${base} sat reserves` };
+  const start = held + BigInt(paidInWindowSats);
+  if ((BigInt(paidInWindowSats) + BigInt(paymentSats)) * 100n > FUNDING_CAP_WINDOW_PCT * start)
+    return { ok: false, final: false, why: `${paidInWindowSats} sat paid in the window and ${paymentSats} now is more than ${FUNDING_CAP_WINDOW_PCT} % of ${start} sat` };
+  return { ok: true };
+}
+
+// ---- arena-protocol/src/fee-proposal.js
+// A PROPOSAL THAT CHANGES FEES, ANY OF THEM IN ANY COMBINATION (kanban #462, the owner 2026-10-17: "Proposal type change fees. Any of the
+// fees, all combinations can be changed with a proposal. Same things apply as usual"; ruled the same day: "Introduce hard limits where
+// any parameter could be maliciously used to brick or exploit the game. Approval remains high at current levels. Exclude donation
+// split. Exclude slashing. Exclude proposals. Donation amounts and percentages may never be nulled by a proposal, the devs will always
+// get a share ... any change to donation percentages requires majority approval by protocol devs"; the limits agreed in comment 3079).
+//
+//     FeeProposal { network_id, author, published_height, activation_height, changes: [(fee, value)], purpose }   signed by the author
+//     FeeApproval { proposal_id, dev, approve }                                                                       signed by a protocol dev
+//
+// ONE SIGNED FEE SET: a proposal carries any subset of the fees below with their new values. It is checked as a whole - every limit
+// and every sum after the change, and a majority of the protocol developers for every donation percentage it changes - and goes the
+// funding proposals' way (funding.js): the signal, then the 2-week bond-weighted vote. Accepted, the whole set applies from its
+// activation height on; refused, nothing of it applies, not even its valid parts.
+//
+// OUT OF REACH OF ANY PROPOSAL: the donation's 50/50 split between the protocol and the game developers (donation.js splitTwoSets),
+// slashing, every proposal rule, and the pools' split of the node fee (it follows the node fee).
+
+
+
+
+/**
+ * THE FEES A PROPOSAL MAY CHANGE, each with its code on the wire, its value today, its hard limit and whether it is a donation (a
+ * change needs the protocol developers' majority, and it is never 0). Round and market fees in basis points of a stake; an item's
+ * parts and the website's share in percent.
+ */
+const FEES = Object.freeze({
+  roundNodeBps:      Object.freeze({ code: 1,  today: 400, min: 100, max: 600 }),
+  roundDonationBps:  Object.freeze({ code: 2,  today: 400, min: 100, max: 600, donation: true }),
+  roundReserveBps:   Object.freeze({ code: 3,  today: 200, min: 50,  max: 400 }),
+  itemNodesPct:      Object.freeze({ code: 4,  today: 40,  min: 10,  max: 60 }),
+  itemReservesPct:   Object.freeze({ code: 5,  today: 20,  min: 5,   max: 40 }),
+  itemDevsPct:       Object.freeze({ code: 6,  today: 40,  min: 10,  max: 100, donation: true }),
+  marketNodeBps:     Object.freeze({ code: 7,  today: 40,  min: 10,  max: 100 }),
+  marketDonationBps: Object.freeze({ code: 8,  today: 40,  min: 10,  max: 100, donation: true }),
+  marketReserveBps:  Object.freeze({ code: 9,  today: 20,  min: 5,   max: 50 }),
+  websitePct:        Object.freeze({ code: 10, today: 20,  min: 0,   max: 40 }),
+});
+/** The sums the set must keep: a round at most 10 %, an item's parts exactly 100 %, a market at most 2 %. */
+const ROUND_TOTAL_MAX_BPS = 1000, ITEM_TOTAL_PCT = 100, MARKET_TOTAL_MAX_BPS = 200;
+/** The fees in force before any proposal. */
+const FEES_TODAY = Object.freeze(Object.fromEntries(Object.entries(FEES).map(([k, f]) => [k, f.today])));
+const BY_CODE = new Map(Object.entries(FEES).map(([k, f]) => [f.code, k]));
+const FEE_PURPOSE_MAX = 4000;
+
+const feeIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/**
+ * THE SET AS A WHOLE: every fee inside its limit, and the round, item and market sums. Answers { ok } or { ok: false, why } naming the
+ * first that does not hold.
+ */
+function feeSetStands(set) {
+  for (const [k, f] of Object.entries(FEES)) {
+    const v = set[k];
+    if (!Number.isInteger(v)) return { ok: false, why: `the fee set names no ${k}` };
+    if (v < f.min || v > f.max) return { ok: false, why: `${k} is ${v}, outside its limit ${f.min}..${f.max}` };
+  }
+  const round = set.roundNodeBps + set.roundDonationBps + set.roundReserveBps;
+  if (round > ROUND_TOTAL_MAX_BPS) return { ok: false, why: `a round's fees come to ${round} bps, above the ${ROUND_TOTAL_MAX_BPS} bps (10 %) a round may take` };
+  const item = set.itemNodesPct + set.itemReservesPct + set.itemDevsPct;
+  if (item !== ITEM_TOTAL_PCT) return { ok: false, why: `an item's nodes, reserves and developers' parts come to ${item} %, not ${ITEM_TOTAL_PCT} %` };
+  const market = set.marketNodeBps + set.marketDonationBps + set.marketReserveBps;
+  if (market > MARKET_TOTAL_MAX_BPS) return { ok: false, why: `a market's fees come to ${market} bps, above the ${MARKET_TOTAL_MAX_BPS} bps (2 %) a market may take` };
+  return { ok: true };
+}
+
+/** The set `base` with the proposal's changes applied: { ...base, fee: value }. */
+const applyFeeChanges = (base, changes) => Object.freeze({ ...base, ...Object.fromEntries(changes.map((c) => [c.fee, c.value])) });
+
+function encodeFeeProposal(p) {
+  if (!feeIs32(p.networkId) || !feeIs32(p.author)) throw new Error('a fee proposal names its network and its author by 32 bytes each');
+  if (!Number.isInteger(p.publishedHeight) || p.publishedHeight < 0) throw new Error('published_height is a block height');
+  if (!Number.isInteger(p.activationHeight) || p.activationHeight <= p.publishedHeight) throw new Error('a fee proposal applies from a height after its publication');
+  if (!Array.isArray(p.changes) || !p.changes.length) throw new Error('a fee proposal changes at least one fee');
+  const seen = new Set();
+  for (const c of p.changes) {
+    if (!FEES[c.fee]) throw new Error(`no proposal changes "${c.fee}": the fees a proposal may change are ${Object.keys(FEES).join(', ')}`);
+    if (seen.has(c.fee)) throw new Error(`a fee proposal names ${c.fee} once`);
+    if (!Number.isInteger(c.value) || c.value < 0 || c.value > 65535) throw new Error(`${c.fee} is a whole number`);
+    seen.add(c.fee);
+  }
+  if (typeof p.purpose !== 'string' || p.purpose.length > FEE_PURPOSE_MAX) throw new Error(`a fee proposal says why in at most ${FEE_PURPOSE_MAX} characters`);
+  const w = new Writer();
+  w.u8(TYPE_FEE_PROPOSAL); w.u16(PROTOCOL_VERSION);
+  w.bytes32(p.networkId); w.bytes32(p.author); w.u32(p.publishedHeight); w.u32(p.activationHeight);
+  const byCode = (a, b) => FEES[a.fee].code - FEES[b.fee].code;                // one encoding whatever order they were named in
+  w.vec([...p.changes].sort(byCode), (c, ww) => { ww.u8(FEES[c.fee].code); ww.u16(c.value); }, { sortedBy: byCode });
+  w.str(p.purpose);
+  return w.finish();
+}
+function decodeFeeProposal(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FEE_PROPOSAL) throw new Error('not a fee proposal');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const p = { networkId: r.bytes32(), author: r.bytes32(), publishedHeight: r.u32(), activationHeight: r.u32(),
+    changes: r.vec((rr) => { const code = rr.u8(), value = rr.u16(); const fee = BY_CODE.get(code); if (!fee) throw new Error(`no fee has code ${code}`); return { fee, value }; }),
+    purpose: r.str() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the fee proposal');
+  encodeFeeProposal(p);                       // the same rules on the way in
+  return p;
+}
+const feeProposalId = (p) => taggedHash(TAG.feeProposal, encodeFeeProposal(p));
+
+function encodeFeeApproval(a) {
+  if (!feeIs32(a.proposalId) || !feeIs32(a.dev)) throw new Error('a fee approval names its proposal and its protocol developer by 32 bytes each');
+  const w = new Writer();
+  w.u8(TYPE_FEE_APPROVAL); w.u16(PROTOCOL_VERSION);
+  w.bytes32(a.proposalId); w.bytes32(a.dev); w.u8(a.approve ? 1 : 0);
+  return w.finish();
+}
+function decodeFeeApproval(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_FEE_APPROVAL) throw new Error('not a fee approval');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const a = { proposalId: r.bytes32(), dev: r.bytes32(), approve: r.u8() === 1 };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the fee approval');
+  return a;
+}
+const feeApprovalId = (a) => taggedHash(TAG.feeApproval, encodeFeeApproval(a));
+
+/** The donation fees a proposal changes against `current`: those whose value it moves. */
+const donationChanges = (p, current) => p.changes.filter((c) => FEES[c.fee].donation && c.value !== current[c.fee]).map((c) => c.fee);
+
+/**
+ * AT SUBMISSION (a seat keeps it, the page offers it): its encoding, and the whole set it makes from the fees in force (`current`)
+ * standing - no limit broken, no sum broken, no donation nulled - and an activation height after its vote can be decided
+ * (published + signal + vote + decideDepth). Answers { ok, fees, donations } or { ok: false, why }.
+ */
+function feeProposalStands(p, { current = FEES_TODAY, schedule = FUNDING_SCHEDULES.spec } = {}) {
+  try { encodeFeeProposal(p); } catch (e) { return { ok: false, why: e.message }; }
+  const fees = applyFeeChanges(current, p.changes);
+  const st = feeSetStands(fees);
+  if (!st.ok) return st;
+  const earliest = p.publishedHeight + schedule.signal + schedule.vote + schedule.decideDepth;
+  if (p.activationHeight < earliest) return { ok: false, why: `a fee proposal published at ${p.publishedHeight} applies from ${earliest} at the earliest, after its signal and its vote` };
+  return { ok: true, fees, donations: donationChanges(p, current) };
+}
+
+/**
+ * THE PROTOCOL DEVELOPERS' ANSWER: more than half of `devKeys` (32-byte hex) approve it, each counted once, by a signature
+ * `verify(signature, id, key)` checks. `approvals` [{ approval: { proposalId, dev, approve }, signature }].
+ */
+function devMajority({ proposalId, approvals = [], devKeys = [], verify }) {
+  const keys = new Set(devKeys.map((k) => String(k).toLowerCase()));
+  const said = new Map();
+  for (const x of approvals) {
+    const a = x.approval;
+    if (!a || toHex(a.proposalId) !== toHex(proposalId) || !keys.has(toHex(a.dev))) continue;
+    let good = false; try { good = verify(x.signature, feeApprovalId(a), a.dev) === true; } catch { good = false; }
+    if (good) said.set(toHex(a.dev), a.approve);
+  }
+  const yes = [...said.values()].filter(Boolean).length;
+  return { yes, no: said.size - yes, of: keys.size, majority: keys.size > 0 && yes * 2 > keys.size };
+}
+
+/**
+ * THE OUTCOME OF ONE FEE PROPOSAL, AS A WHOLE: accepted only when its set stands against the fees in force (`current`), its signal
+ * passed (funding.js signalOutcome), its vote passed (fundingTally) and - when it changes a donation percentage - the protocol
+ * developers' majority approves it. Answers { accepted: true, fees, activationHeight } or { accepted: false, why }: a refusal applies
+ * nothing.
+ */
+function feeProposalOutcome({ proposal, current = FEES_TODAY, signal, tally, approvals = [], devKeys = [], verify, schedule = FUNDING_SCHEDULES.spec }) {
+  const st = feeProposalStands(proposal, { current, schedule });
+  if (!st.ok) return { accepted: false, why: st.why };
+  if (!signal || signal.state !== 'passed') return { accepted: false, why: 'its signal did not pass' };
+  if (!tally || tally.passed !== true) return { accepted: false, why: 'its vote did not pass' };
+  if (st.donations.length) {
+    const dm = devMajority({ proposalId: feeProposalId(proposal), approvals, devKeys, verify });
+    if (!dm.majority) return { accepted: false, why: `it changes ${st.donations.join(', ')}, and ${dm.yes} of ${dm.of} protocol developers approve it - a majority must` };
+  }
+  return { accepted: true, fees: st.fees, activationHeight: proposal.activationHeight };
+}
+
+/** THE FEES IN FORCE AT A HEIGHT: the latest accepted set whose activation height is at or below it, else `base`. */
+function feesAt({ height, accepted = [], base = FEES_TODAY }) {
+  let at = null;
+  for (const a of accepted) if (a && a.accepted !== false && Number.isInteger(a.activationHeight) && a.activationHeight <= height && (!at || a.activationHeight >= at.activationHeight)) at = a;
+  return at ? at.fees : base;
+}
+
+/** A round's split from a fee set, in bps of the gross stake: the donation half protocol developers (floored), half game. */
+function roundSplitBps(fees) {
+  const protocolDevs = Math.floor(fees.roundDonationBps / 2);
+  return { nodes: fees.roundNodeBps, protocolDevs, gameDevs: fees.roundDonationBps - protocolDevs, reserves: fees.roundReserveBps };
+}
+/** A market's rates from a fee set, as bookLockSettlement takes them: the reserve inside the donation's part (#454). */
+const marketBps = (fees) => ({ nodeBps: fees.marketNodeBps, donationBps: fees.marketDonationBps + fees.marketReserveBps, reserveBps: fees.marketReserveBps });
 
 // ---- arena-protocol/src/claim-key.js
 // THE ROUND'S CLAIM KEY, AND WHY ONE SIGNER NODE'S WORD FOR IT IS NOT ENOUGH.
@@ -12225,8 +13219,9 @@ const knownEntryBps = (gameId) => { const k = feeOfKnownGame(gameId); return k ?
 // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397); a market keeps its own (its fee lock holds its donation too)
 const knownIsMarket = (gameId) => { const k = feeOfKnownGame(gameId); return !!(k && k.donationBps !== undefined && k.donationBps !== null); };
 const roundPaysReserves = (round) => !!round && paysReserves(round) && !knownIsMarket(round.gameId);
+// `round.feeSet` (kanban #462): the fees in force at the round's census height, as the page read them from the nodes (GET /fees?height=)
 const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps) ? round.feeBps
-  : roundPaysReserves(round) ? RESERVES_NODE_FEE_BPS : knownEntryBps(round && round.gameId));
+  : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 
 
 
@@ -13764,12 +14759,14 @@ function settlementNonce(roundId) {
 // table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
 // else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined }) {
+  // `feeBps` / `websitePct`: the fees in force at the round (kanban #462, fee-proposal.js) - a version-11 round's node fee and the
+  // website's share of it; unset, today's (4 % and 20 %)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees });
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -14071,7 +15068,7 @@ function lateSettlementNonce(roundId, entryId) {
  * the first settlement paid nobody, nothing is claimed.
  */
 function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks = new Map(), fees,
-  signerNodes = null, contract = null, sends = new Map(), requireSends = false }) {
+  signerNodes = null, contract = null, sends = new Map(), requireSends = false, feeBps = undefined, websitePct = undefined }) {
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
   if (!entry) return refuse('there is no late entry to settle');
@@ -14120,8 +15117,8 @@ function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, sha
   }
 
   const feePart = feeLock
-    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees })
-    : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees });
+    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees, feeBps, websitePct })
+    : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees, feeBps, websitePct });
   if (!feePart.ok) return feePart;
   const done = finish({ roundId, claims: [{ pubkey: entry.pubkey, outpoint: lock.outpoint, amountMsat: net, kind: 'stake' }], payouts,
     unpaid, forfeits: [], poolMsat: net, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart);
@@ -14205,7 +15202,7 @@ function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, feeBps =
 // `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
 // donation rides in its fee locks (fee.js entryFeeBpsOf, kanban #235): what the fee locks hold above the node table is that
 // donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null }) {
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -14267,7 +15264,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, kanban #362 item 7, RULED path (a)): 20% of the nodes' fee on the stakes it brought,
   // one line per website key, off the top of the NODES' part - never the donation's, never the player's (its stake and fee locks
   // are what they were) - scaled to what the claimed locks pay as the nodes' shares are. The nodes share the rest.
-  const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross });
+  const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
   let frontendGross = 0n;
   for (const [k, siteMsat] of sites.shares) {
     const payoutPk = fromHex(k);
@@ -14326,7 +15323,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
 const RESERVE_LATER_PK = Uint8Array.from([0x02, ...new Uint8Array(32)]);
 
 function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null,
-  reserveBps = 0, reserveKey = null }) {
+  reserveBps = 0, reserveKey = null, websitePct = undefined }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
@@ -14363,7 +15360,7 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
   // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, kanban #362 comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
   // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
   // frontendBookShares). Its lines go before the seats'.
-  const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps });
+  const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
   if (sites.totalMsat > nodesMsat) return refuse(`the websites' share ${sites.totalMsat} msat is more than the nodes' part ${nodesMsat}`);
   for (const [k, msat] of sites.shares) {
     if (msat <= 0n) continue;
@@ -23986,6 +24983,7 @@ function settlementLine(s, nowMs = Date.now()) {
 
 
 
+
 async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000 } = {}) {
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) return { ok: false, why: 'the round names no federation to pay the reserves in' };
   const fed = toHex(federationId);
@@ -24006,13 +25004,14 @@ async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, 
 }
 
 /** What a version-11 entry gives beside its stake: { bps, donationMsat, reserveMsat, mandatory } - the developers' 4 % and the reserves' 2 %. */
-function reservesDonation(stakeMsat) {
-  const s = roundSplit(BigInt(stakeMsat));
-  return { bps: RESERVES_DONATION_BPS + ROUND_SPLIT_BPS.reserves, donationMsat: s.protocolDevsMsat + s.gameDevsMsat + s.reservesMsat, reserveMsat: s.reservesMsat, mandatory: true };
+// `split` (kanban #462): the round's split in force at its census height (fee-proposal.js roundSplitBps); unset, today's
+function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
+  const s = roundSplit(BigInt(stakeMsat), { split });
+  return { bps: split.protocolDevs + split.gameDevs + split.reserves, donationMsat: s.protocolDevsMsat + s.gameDevsMsat + s.reservesMsat, reserveMsat: s.reservesMsat, mandatory: true };
 }
 
-/** The same for a round as the page holds it (its stake as the join reads it, stakeOf). */
-const reservesDonationForRound = (round) => reservesDonation(stakeOf(round));
+/** The same for a round as the page holds it (its stake as the join reads it, stakeOf), at the fees in force there (`round.feeSet`). */
+const reservesDonationForRound = (round) => reservesDonation(stakeOf(round), round && round.feeSet ? roundSplitBps(round.feeSet) : ROUND_SPLIT_BPS);
 
 /**
  * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2, kanban #397 slice 4: "testnet.bitcoin-arena.io shows the total and the latest
@@ -24114,793 +25113,6 @@ function paymentOutLine(o) {
   const tx = o.txid ? ` · tx ${String(o.txid).slice(0, 16)}…` : '';
   if (o.kind === 'move') return `${o.purpose} to federation ${String(o.to).slice(0, 8)} · ${Number(o.amountSats).toLocaleString('en-US')} sat · ${o.status}${tx}`;
   return `${o.purpose} · ${o.lnurl} · ${Number(o.amountSats).toLocaleString('en-US')} sat · ${o.status}${vote}${proof}${tx}`;
-}
-
-// ---- arena-protocol/src/final-sig.js
-// A SEAT'S FINAL SIGNATURE (§13A, WINDOW-10-SPEC, RULED the owner 2026-10-01).
-//
-// "A result is FINAL only when five settlement seats have each signed FINAL for it, and a seat signs only once its own
-// clock reads final_after and it holds no valid objection." "Signed times are checked on arrival. A seat counts a result
-// or FINAL signature only if the time it carries is within the tolerance of the receiving seat's own clock. A
-// back-dated or forward-dated signature does not count and is itself evidence against its signer."
-//
-// The record: the round, the entry, the run it makes FINAL (the agreed run id - the first result's, or an agreed
-// re-run's), the seat that signs, and the time it signed on its own clock. The count: distinct committee seats whose
-// signature verifies, signed at or after the window's final_after, and received within the tolerance of the
-// receiving seat's clock (the `seenMs` it was stored with) - at the round's own threshold (5 of 7, 2 of 2).
-//
-// The curve is not this package's business: `verify(signature, digest, key)` is injected, as rerun.js takes it.
-
-
-
-
-
-/** 1 type + 2 version + 32 round + 32 entry + 32 run + 32 signer + 8 signed at. */
-const FINAL_SIG_BYTES = 1 + 2 + 32 + 32 + 32 + 32 + 8;
-const FINAL_SIG_SIGNATURE_BYTES = 64;
-const SIGNED_FINAL_SIG_BYTES = FINAL_SIG_BYTES + FINAL_SIG_SIGNATURE_BYTES;
-
-const fsIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-function encodeFinalSig({ roundId, entryId, runId, signerPubkey, signedAtMs }) {
-  const w = new Writer();
-  w.u8(TYPE_FINAL_SIGNATURE);
-  w.u16(PROTOCOL_VERSION);
-  w.bytes32(roundId);
-  w.bytes32(entryId);
-  w.bytes32(runId);
-  w.bytes32(signerPubkey);
-  w.u64(BigInt(signedAtMs));
-  return w.finish();
-}
-
-function decodeFinalSig(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_FINAL_SIGNATURE) throw new Error('not a FINAL signature');
-  const version = r.u16();
-  if (!speaksVersion(version)) throw new Error('protocol version ' + version);
-  const x = { roundId: r.bytes32(), entryId: r.bytes32(), runId: r.bytes32(), signerPubkey: r.bytes32(), signedAtMs: r.u64() };
-  r.end();
-  return x;
-}
-
-/** What the seat signs. */
-const finalSigId = (x) => taggedHash(TAG.finalSignature, encodeFinalSig(x));
-
-function joinSignedFinalSig(body, signature) {
-  if (body.length !== FINAL_SIG_BYTES) throw new Error(`a FINAL signature body is ${FINAL_SIG_BYTES} bytes, got ${body.length}`);
-  if (signature.length !== FINAL_SIG_SIGNATURE_BYTES) throw new Error(`a signature is ${FINAL_SIG_SIGNATURE_BYTES} bytes, got ${signature.length}`);
-  const out = new Uint8Array(SIGNED_FINAL_SIG_BYTES);
-  out.set(body, 0);
-  out.set(signature, FINAL_SIG_BYTES);
-  return out;
-}
-
-function splitSignedFinalSig(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_FINAL_SIG_BYTES)
-    throw new Error(`a signed FINAL signature is ${SIGNED_FINAL_SIG_BYTES} bytes`);
-  return { body: bytes.subarray(0, FINAL_SIG_BYTES), signature: bytes.subarray(FINAL_SIG_BYTES) };
-}
-
-/** Sign one FINAL record with `sign(digest) -> 64-byte signature`. */
-function signFinalSig(x, sign) {
-  const body = encodeFinalSig(x);
-  return joinSignedFinalSig(body, sign(finalSigId(x)));
-}
-
-/**
- * WHY ONE ARRIVING FINAL SIGNATURE DOES NOT COUNT, or null if it does: about this round, entry and run; a committee
- * seat; a signature that verifies; signed at or after `finalAfterMs`; and signed within the tolerance of `seenMs`, the
- * receiving seat's own clock when it arrived.
- */
-function finalSigFault({ bytes, seenMs }, { roundId, entryId, runId, committee, finalAfterMs, verify }) {
-  let x, signature;
-  try {
-    const split = splitSignedFinalSig(bytes);
-    signature = split.signature;
-    x = decodeFinalSig(split.body);
-  } catch (e) { return { why: `not a FINAL signature: ${e.message}` }; }
-  if (toHex(x.roundId) !== toHex(roundId) || toHex(x.entryId) !== toHex(entryId)) return { x, why: 'about another round or entry' };
-  if (runId && toHex(x.runId) !== toHex(runId)) return { x, why: 'about another run' };
-  if (!committee.map(toHex).includes(toHex(x.signerPubkey))) return { x, why: 'not signed by a seat of this round\'s committee' };
-  let good = false;
-  try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
-  if (!good) return { x, why: 'the signature does not verify' };
-  if (x.signedAtMs < BigInt(finalAfterMs))
-    return { x, evidence: true, why: `signed at ${x.signedAtMs}, before the window's final_after ${finalAfterMs}: a seat signed FINAL early` };
-  if (seenMs === null || seenMs === undefined || !withinTolerance(x.signedAtMs, seenMs))
-    return { x, evidence: true, why: `signed at ${x.signedAtMs} and received at ${seenMs}: outside the 5 s tolerance of the receiving seat's clock` };
-  return null;
-}
-
-/**
- * IS THIS RUN FINAL? The distinct committee seats whose FINAL signature on `runId` counts (finalSigFault), against the
- * round's threshold for `slots` seats. `records` are `{ bytes, seenMs }`.
- */
-function finalSigned({ roundId, entryId, runId, records, committee, slots, finalAfterMs, verify } = {}) {
-  if (!fsIs32(roundId) || !fsIs32(entryId) || !fsIs32(runId)) return { ok: false, signed: 0, why: 'FINAL is counted for one round, one entry and one run' };
-  if (typeof verify !== 'function') return { ok: false, signed: 0, why: 'counting FINAL signatures needs a verifier, and none was injected' };
-  if (!Array.isArray(committee) || !committee.length) return { ok: false, signed: 0, why: 'this round has no committee to sign FINAL' };
-  let needed;
-  try { needed = receiptsNeeded(slots); } catch (e) { return { ok: false, signed: 0, why: e.message }; }
-  const counted = new Set();
-  const refused = [];
-  for (const rec of records || []) {
-    const fault = finalSigFault(rec, { roundId, entryId, runId, committee, finalAfterMs, verify });
-    if (fault) { refused.push({ signer: fault.x ? toHex(fault.x.signerPubkey) : null, why: fault.why, evidence: !!fault.evidence }); continue; }
-    counted.add(toHex(decodeFinalSig(splitSignedFinalSig(rec.bytes).body).signerPubkey));
-  }
-  const signed = counted.size;
-  if (signed < needed) return { ok: false, signed, needed, refused, why: `${signed} of ${needed} seats have signed FINAL` };
-  return { ok: true, signed, needed, refused, signers: [...counted] };
-}
-
-// ---- arena-protocol/src/served-nodes.js
-// THE NODES THAT SERVED A ROUND IN THE LAST 24 HOURS (kanban #365, the owner 2026-10-15: an in-game item's price goes "50% an die
-// nodes die in den letzten 24h an einer Runde beteiligt waren"). The part of the item plan that moves no money (plan: comment 2310):
-// WHICH nodes, and in how many rounds each, read so that every node arrives at the same list.
-//
-// WHAT COUNTS AS SERVING: a seat's signed FINAL on a round (final-sig.js) - public, signed by the node's own key, and only a member
-// of that round's committee can give one. A round counts once per node, however many entries it signed FINAL for. The window is
-// [fromMs, toMs) on the signature's own clock; the caller fixes `toMs` from something every node reads alike (a purchase names its
-// anchor block, whose time it is), never its own clock.
-//
-// THE LIST AND ITS ROOT: the nodes sorted by key, each with its count of rounds; root = taggedHash('ARENA/v1/ServedNodes',
-// from || to || [key || rounds]...). A purchase names the root; a node that rebuilds another root from the FINAL signatures it holds
-// can show exactly which node or count differs (servedNodesDiffer). Equal or weighted shares are both read from this one list.
-//
-// NO CURVE: `verify(signature, digest, key)` is injected, as final-sig.js takes it.
-
-
-
-const SERVED_WINDOW_MS = 24 * 3600 * 1000;
-const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
-const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-/**
- * THE SERVED LIST over `rounds` = [{ roundId, committee: [key32...], finals: [signed FINAL bytes...] }], window [fromMs, toMs).
- * A FINAL counts when it is about that round, signed by a member of its committee, verifies, and was signed inside the window.
- * Answers { fromMs, toMs, nodes: [{ key (hex), rounds }], rounds (counted), root (hex), refused: [{ round, why }] }.
- */
-function servedNodes({ rounds, fromMs, toMs, verify }) {
-  if (typeof verify !== 'function') throw new Error('reading who served needs a verifier, and none was injected');
-  const from = BigInt(fromMs), to = BigInt(toMs);
-  if (!(to > from)) throw new Error('a served window ends after it starts');
-  const served = new Map();                                  // key hex -> Set of round hex
-  const refused = [];
-  let counted = 0;
-  for (const round of rounds || []) {
-    if (!round || !snIs32(round.roundId) || !Array.isArray(round.committee)) { refused.push({ round: null, why: 'a round is named by its id and committee' }); continue; }
-    const rid = toHex(round.roundId);
-    const committee = new Set(round.committee.map(toHex));
-    let any = false;
-    for (const bytes of round.finals || []) {
-      let x, signature;
-      try { ({ signature } = splitSignedFinalSig(bytes)); x = decodeFinalSig(bytes.subarray(0, bytes.length - signature.length)); }
-      catch (e) { refused.push({ round: rid, why: `not a FINAL signature: ${e.message}` }); continue; }
-      const key = toHex(x.signerPubkey);
-      if (toHex(x.roundId) !== rid) { refused.push({ round: rid, why: `a FINAL about another round (${toHex(x.roundId).slice(0, 16)})` }); continue; }
-      if (!committee.has(key)) { refused.push({ round: rid, why: `${key.slice(0, 16)} is not of this round's committee` }); continue; }
-      let good = false;
-      try { good = !!verify(signature, finalSigId(x), x.signerPubkey); } catch { good = false; }
-      if (!good) { refused.push({ round: rid, why: `${key.slice(0, 16)}'s FINAL does not verify` }); continue; }
-      if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
-      if (!served.has(key)) served.set(key, new Set());
-      served.get(key).add(rid); any = true;
-    }
-    if (any) counted++;
-  }
-  const nodes = [...served.entries()].map(([key, s]) => ({ key, rounds: s.size })).sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return { fromMs: from, toMs: to, nodes, rounds: counted, root: toHex(servedNodesRoot({ fromMs: from, toMs: to, nodes })), refused };
-}
-
-/** The root of a served list: what a purchase names and every node rebuilds. */
-function servedNodesRoot({ fromMs, toMs, nodes }) {
-  const w = new Writer();
-  w.u64(BigInt(fromMs)); w.u64(BigInt(toMs));
-  const sorted = [...nodes].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  for (let i = 1; i < sorted.length; i++) if (sorted[i].key === sorted[i - 1].key) throw new Error(`node ${sorted[i].key.slice(0, 16)} is listed twice`);
-  w.vec(sorted, (n, ww) => { ww.bytes32(Uint8Array.from(n.key.match(/../g).map((h) => parseInt(h, 16)))); ww.u32(n.rounds); });
-  return taggedHash(TAG_SERVED_NODES, w.finish());
-}
-
-/** WHERE TWO SERVED LISTS DIFFER (a claimed one against the reader's own): [] when they agree. */
-function servedNodesDiffer(claimed, mine) {
-  const out = [];
-  if (BigInt(claimed.fromMs) !== BigInt(mine.fromMs) || BigInt(claimed.toMs) !== BigInt(mine.toMs)) out.push({ why: 'another window' });
-  const a = new Map(claimed.nodes.map((n) => [n.key, n.rounds])), b = new Map(mine.nodes.map((n) => [n.key, n.rounds]));
-  for (const [k, r] of a) if (!b.has(k)) out.push({ key: k, why: `named with ${r} round(s), and served none here` }); else if (b.get(k) !== r) out.push({ key: k, why: `named with ${r} round(s), and ${b.get(k)} here` });
-  for (const [k, r] of b) if (!a.has(k)) out.push({ key: k, why: `served ${r} round(s) here, and is left out` });
-  return out;
-}
-
-/**
- * ONE SET OF ROUNDS FROM WHAT SEVERAL SEATS HOLD (kanban #365, measured 2026-10-15 17:3xZ: each seat holds only the FINALs of the
- * rounds it sat on - 14 seats gave 7 roots for one window). `held` is a list of seats' answers, each [{ roundId, committee, finals }];
- * a round's FINALs are joined (each signed FINAL once), and a round two seats name with different committees is left out and
- * named in `conflicts` - servedNodes then checks every FINAL itself, so a seat that hands over a forged one adds nothing.
- */
-function mergeServedRounds(held) {
-  const hx = (b) => toHex(b);
-  const rounds = new Map(), conflicts = new Set();
-  for (const seat of held || []) for (const r of seat || []) {
-    if (!r || !snIs32(r.roundId) || !Array.isArray(r.committee)) continue;
-    const k = hx(r.roundId), committee = r.committee.map(hx).sort().join();
-    if (!rounds.has(k)) rounds.set(k, { roundId: r.roundId, committee: r.committee, key: committee, finals: new Map() });
-    const into = rounds.get(k);
-    if (into.key !== committee) { conflicts.add(k); continue; }
-    for (const f of r.finals || []) if (f instanceof Uint8Array) into.finals.set(hx(f), f);
-  }
-  return { rounds: [...rounds.entries()].filter(([k]) => !conflicts.has(k)).map(([, r]) => ({ roundId: r.roundId, committee: r.committee, finals: [...r.finals.values()] })),
-    conflicts: [...conflicts] };
-}
-
-// ---- arena-protocol/src/ballot.js
-// THE CONFIG BALLOT (spec §27A.7.2-§27A.7.5, kanban #329), its first slice: the proposal object, the vote a bond key signs into
-// a Bitcoin OP_RETURN, and the tally - "a pure function of chain state. Every participant computes the same result, and
-// disagreement about the outcome reduces to disagreement about Bitcoin." Reading the chain (finding the proposal's publication
-// and the vote outputs) and activation (§27A.7.5) are the next slices; nothing here reads a chain or signs with a bond.
-//
-// NO CURVE, as everywhere in this package: `verify(signature, digest, pubkey)` is injected (BIP-340 over the node keys).
-//
-// Two choices the spec leaves open, made here and named:
-//   - the config travels as its bytes with the config_hash it declares, and the two must agree (configHashOf, 27A.7.1)
-//   - the vote's marker is "ARN" 'V' (RULED the owner 2026-10-13: "ARN", not the spec's "BLW" - one prefix finds all of the
-//     network's data on chain), with a kind byte as every other ARN payload has: a bare "ARN" vote would be 76 bytes, the same as
-//     a fork re-affirmation ("ARN" 'F', reaffirm.js), so the kind byte keeps them apart. 77 bytes, inside the 80-byte limit
-
-
-
-const CLASS = Object.freeze({ DESIGN: 1, MONEY: 2, UPGRADE: 3 });
-const CHOICE = Object.freeze({ YES: 1, NO: 2, ABSTAIN: 3 });
-/** The schedule in blocks (§27A.7.4, §27A.8.2) - genesis parameters; regtest runs 1 / 6 / 1. */
-const SCHEDULES = Object.freeze({
-  mainnet: Object.freeze({ [CLASS.DESIGN]: { review: 1008, voting: 1440, cooldown: 2016 }, [CLASS.MONEY]: { review: 1008, voting: 1440, cooldown: 2016 },
-    [CLASS.UPGRADE]: { review: 2016, voting: 2016, cooldown: 4320 } }),
-  regtest: Object.freeze({ [CLASS.DESIGN]: { review: 1, voting: 6, cooldown: 1 }, [CLASS.MONEY]: { review: 1, voting: 6, cooldown: 1 },
-    [CLASS.UPGRADE]: { review: 1, voting: 6, cooldown: 1 } }),
-});
-/**
- * A REPEAL (§27A.7.6): "review 0, voting 720, cooldown 0 - but only if its config is byte-identical to an ancestor that was live
- * before. It can go back, never forward." Regtest's is 0 / 6 / 0 (a choice made here, named: its voting phase as for the others).
- */
-const REPEAL_SCHEDULES = Object.freeze({
-  mainnet: Object.freeze({ review: 0, voting: 720, cooldown: 0 }),
-  regtest: Object.freeze({ review: 0, voting: 6, cooldown: 0 }),
-});
-/** Is `p` a repeal: its config byte-identical to one in `history` - the configs that were live before, [{ config }] - other than the current. */
-function isRepeal(p, history = []) {
-  const mine = toHex(p.config);
-  return history.slice(0, -1).some((h) => h.config && toHex(h.config) === mine);
-}
-/** Thresholds of the bonded capital in the snapshot (§27A.7.4, §27A.8.2): turnout percent, approval of non-abstaining weight. */
-const THRESHOLDS = Object.freeze({
-  [CLASS.DESIGN]: { turnoutPct: 30n, approvalPct: 50n, strict: true },     // > 50 %
-  [CLASS.MONEY]: { turnoutPct: 40n, approvalPct: 66n, strict: false },     // >= 66 %
-  [CLASS.UPGRADE]: { turnoutPct: 51n, approvalPct: 66n, strict: false },   // >= 66 %
-});
-const VOTE_MARKER = Uint8Array.from([0x41, 0x52, 0x4e, 0x56]);     // "ARN" 'V'
-const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77, inside the 80-byte OP_RETURN limit
-
-/**
- * THE HASH A CONFIG IS NAMED BY (§27A.7.1): "config_hash = H(canonical(game_config))" - the tagged hash of the config's bytes,
- * the hash every config of the network is named by (nextblock config/game-config.js TAG_GAME_CONFIG; the ballot's genesis
- * 2170f250 is exactly this over its bytes, ballot-genesis.test.js). A proposal carries the FULL config and the hash it names,
- * and the two must be one: otherwise a ballot could make live a hash whose bytes nobody voted on (kanban #329, the hole).
- */
-const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
-const configHashOf = (config) => taggedHash(TAG_GAME_CONFIG, config);
-
-const isVoteBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
-const className = (c) => Object.keys(CLASS).find((k) => CLASS[k] === c);
-
-/** THE BODY THE PROPOSER SIGNS (§27A.7.2): network, parent config, the full config, class, activation, proposer, deposit. */
-function encodeConfigProposalBody(p) {
-  if (!isVoteBytes32(p.networkId) || !isVoteBytes32(p.parent) || !isVoteBytes32(p.configHash) || !isVoteBytes32(p.proposer) || !isVoteBytes32(p.depositTxid))
-    throw new Error('a proposal names its network, parent config, config hash, proposer and deposit txid in 32 bytes each');
-  if (!(p.config instanceof Uint8Array) || !p.config.length) throw new Error('a proposal carries the FULL config, never a diff (27A.7.2)');
-  if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY or UPGRADE, not ${p.class}`);
-  if (!Number.isInteger(p.activationHeight) || p.activationHeight < 1 || p.activationHeight > 0xffffffff) throw new Error('activation_height is a block height');
-  const w = new Writer();
-  w.u8(TYPE_CONFIG_PROPOSAL); w.u16(PROTOCOL_VERSION);
-  w.bytes32(p.networkId); w.bytes32(p.parent); w.bytes32(p.configHash);
-  w.vec([...p.config], (x, ww) => ww.u8(x));
-  w.u8(p.class); w.u32(p.activationHeight); w.bytes32(p.proposer); w.bytes32(p.depositTxid);
-  return w.finish();
-}
-function decodeConfigProposalBody(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_CONFIG_PROPOSAL) throw new Error('not a config proposal');
-  if (r.u16() !== PROTOCOL_VERSION) throw new Error('unknown protocol version');
-  const p = { networkId: r.bytes32(), parent: r.bytes32(), configHash: r.bytes32(), config: Uint8Array.from(r.vec((rr) => rr.u8())),
-    class: r.u8(), activationHeight: r.u32(), proposer: r.bytes32(), depositTxid: r.bytes32() };
-  r.end();
-  encodeConfigProposalBody(p);
-  return p;
-}
-const proposalBodyId = (p) => taggedHash(TAG.configProposalBody, encodeConfigProposalBody(p));
-/** proposal_id = H(canonical(config_proposal)): the body and the proposer's signature together. */
-function proposalId(p) {
-  if (!(p.signature instanceof Uint8Array) || p.signature.length !== 64) throw new Error('a proposal carries its proposer\'s 64-byte signature');
-  const body = encodeConfigProposalBody(p);
-  const out = new Uint8Array(body.length + 64); out.set(body, 0); out.set(p.signature, body.length);
-  return taggedHash(TAG.configProposal, out);
-}
-
-/**
- * A PROPOSAL ON ITS FACE (§27A.7.2, §27A.7.4): signed by its proposer, activation at or after the end of cooldown counted from
- * the height it was published at, and its deposit within the cap - at most bond_min of the lowest bracket over 100.
- */
-function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats, schedule = SCHEDULES.mainnet, verify, history = null, repealSchedule = REPEAL_SCHEDULES.mainnet }) {
-  try { encodeConfigProposalBody(p); } catch (e) { return { ok: false, why: e.message }; }
-  // THE HASH IT NAMES IS THE HASH OF THE CONFIG IT CARRIES (27A.7.1), or nobody voted on the config it would make live
-  const named = toHex(p.configHash), carried = toHex(configHashOf(p.config));
-  if (named !== carried) return { ok: false, why: `config_hash ${named} is not the hash of the config the proposal carries (${carried}): config_hash = H(canonical(game_config)), 27A.7.1` };
-  if (typeof verify !== 'function' || !verify(p.signature, proposalBodyId(p), p.proposer)) return { ok: false, why: 'the proposal is not signed by the node it names as proposer' };
-  // a config the network already ran - before the current one - is a repeal, on the short schedule (§27A.7.6)
-  const repeal = !!history && isRepeal(p, history);
-  const s = repeal ? repealSchedule : schedule[p.class];
-  const earliest = publishedAt + s.review + s.voting + s.cooldown;
-  if (p.activationHeight < earliest) return { ok: false, why: `activation_height ${p.activationHeight} is before the end of cooldown (${earliest}): invalid on its face` };
-  const cap = BigInt(lowestBondMinSats) / 100n;
-  if (BigInt(depositSats) > cap) return { ok: false, why: `a deposit of ${depositSats} sat is over the cap of ${cap} (bond_min of the lowest bracket / 100)` };
-  return { ok: true, id: proposalId(p), class: className(p.class), repeal, votingFrom: publishedAt + s.review, votingUntil: publishedAt + s.review + s.voting, activationHeight: p.activationHeight };
-}
-
-/** What a bond key signs to vote: H(proposal_id || choice). */
-const voteMessage = (id, choice) => taggedHash(TAG.vote, Uint8Array.from([...id, choice]));
-/** THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes. */
-function encodeVote({ proposalId: id, choice, signature }) {
-  if (!isVoteBytes32(id)) throw new Error('a vote names a 32-byte proposal id');
-  if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
-  if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
-  const out = new Uint8Array(VOTE_BYTES);
-  out.set(VOTE_MARKER, 0); out.set(id.subarray(0, 8), 4); out[12] = choice; out.set(signature, 13);
-  return out;
-}
-function decodeVote(payload) {
-  if (!(payload instanceof Uint8Array) || payload.length !== VOTE_BYTES) return null;
-  if (VOTE_MARKER.some((b, i) => payload[i] !== b)) return null;
-  if (!Object.values(CHOICE).includes(payload[12])) return null;
-  return { idPrefix: payload.slice(4, 12), choice: payload[12], signature: payload.slice(13) };
-}
-
-/**
- * THE TALLY (§27A.7.3-4). `census`: the bonds active at the proposal's publication - [{ pubkey, outpoint, bondSats }];
- * `votes`: the vote outputs found on chain - [{ payload, height, txid }]. A vote counts for every bond whose key its signature
- * verifies under, only inside the voting phase; per bond outpoint the last by height wins (ties inside a block: lower txid).
- * ABSTAIN counts for turnout, not approval. Weight is the bond amount. Answers the weights, the percentages and `passed`.
- */
-function tally({ proposal, standing, census, votes, verify }) {
-  const id = standing.id;
-  const prefix = toHex(id.subarray(0, 8));
-  const latest = new Map();                          // outpoint -> { choice, height, txid, weight }
-  for (const v of votes || []) {
-    const d = decodeVote(v.payload);
-    if (!d || toHex(d.idPrefix) !== prefix) continue;
-    if (v.height < standing.votingFrom || v.height >= standing.votingUntil) continue;
-    const msg = voteMessage(id, d.choice);
-    for (const b of census || []) {
-      let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; }
-      if (!good) continue;
-      const had = latest.get(b.outpoint);
-      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.bondSats) });
-    }
-  }
-  const total = (census || []).reduce((a, b) => a + BigInt(b.bondSats), 0n);
-  let yes = 0n, no = 0n, abstain = 0n;
-  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
-  const t = THRESHOLDS[proposal.class];
-  const turnout = yes + no + abstain;
-  const quorum = total > 0n && turnout * 100n >= t.turnoutPct * total;
-  const decided = yes + no;
-  const approved = decided > 0n && (t.strict ? yes * 100n > t.approvalPct * decided : yes * 100n >= t.approvalPct * decided);
-  return { totalSats: total, yesSats: yes, noSats: no, abstainSats: abstain, bondsVoted: latest.size, quorum, approved, passed: quorum && approved,
-    turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
-}
-
-// ---- arena-protocol/src/lobby-name.js
-// A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
-//
-// The name decides nothing (§0.12): it is in no entry, no mark and no result,
-// and the board still shows the name made from a player's key. But a lobby two
-// players share shows each the other's name, so a tab hands its signer nodes ONE
-// RECORD: this round, the round key it is joined under, the tab's identity key
-// (its generated name is made from that), the name the player chose - empty
-// for none - and when. The joined player's round key signs it (BIP-340), so a
-// signer node that serves it can leave a name out but cannot write one, and a record
-// for one round is no record for another. The newest record of a player wins.
-
-
-
-/** The longest name a player may choose, in characters. */
-const LOBBY_NAME_MAX = 24;
-
-/**
- * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: trimmed, inner
- * spaces collapsed, 1 to 24 characters, letters and digits with space, dot,
- * dash and underscore between them. Anything else is refused by name.
- */
-function lobbyNameIsValid(text) {
-  const name = String(text == null ? '' : text).normalize('NFC').trim().replace(/\s+/g, ' ');
-  if (!name) return { ok: false, why: 'a name is at least one character' };
-  if ([...name].length > LOBBY_NAME_MAX) return { ok: false, why: `a name is at most ${LOBBY_NAME_MAX} characters` };
-  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$/u.test(name))
-    return { ok: false, why: 'a name is letters and digits, with space, dot, dash or underscore between them' };
-  return { ok: true, name };
-}
-
-const nameIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-function encodeLobbyName({ roundId, playerPubkey, identityPubkey, name = '', atMs } = {}) {
-  if (!nameIs32(roundId)) throw new Error('a name record names a 32-byte round id');
-  if (!nameIs32(playerPubkey)) throw new Error('a name record is signed by a 32-byte player key');
-  if (!nameIs32(identityPubkey)) throw new Error('a name record carries the 32-byte identity key its generated name is made from');
-  const at = BigInt(atMs);
-  if (at < 0n) throw new Error('a name record\'s time is not negative');
-  const text = name == null ? '' : name;
-  if (typeof text !== 'string') throw new Error('a name is text');
-  if (text !== '') {
-    const kept = lobbyNameIsValid(text);
-    if (!kept.ok) throw new Error(kept.why);
-    if (kept.name !== text) throw new Error('a name is signed as it is kept: trimmed, one space between words');
-  }
-  const w = new Writer();
-  w.bytes32(roundId);
-  w.bytes32(playerPubkey);
-  w.bytes32(identityPubkey);
-  w.u64(at);
-  w.str(text);
-  return w.finish();
-}
-
-/** A record as a signer node or a page receives it; held to the same rules as one written. */
-function decodeLobbyName(bytes) {
-  const r = new Reader(bytes);
-  const record = { roundId: r.bytes32(), playerPubkey: r.bytes32(), identityPubkey: r.bytes32(), atMs: r.u64(), name: r.str() };
-  r.end();
-  encodeLobbyName(record);
-  return record;
-}
-
-/** What the joined player signs (BIP-340, its round key) for its name in one round. */
-const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
-
-// ---- arena-protocol/src/player-name.js
-// A PLAYER'S NAME, AS THE WHOLE NETWORK SHOWS IT (kanban #397 PIP, the owner 2026-10-17: "Users can sign in with their ingame key and
-// their custom name or their generated name" - "Have custom names in the protocol").
-//
-// The lobby's name record (lobby-name.js) is one round's: signed by the round key, kept by that round's signer nodes. This one is
-// the player's own, for anywhere a player is named outside a round - the proposals forum first: the network it is for, the player's
-// IDENTITY key (the key its generated name is made from, display-name.js), when (ms), and the name the player chose - empty for
-// none, and then the generated one is shown. The identity key signs it (BIP-340), so a node can leave a name out but cannot write
-// one; nodes keep the newest per player and refuse one dated more than PLAYER_NAME_SKEW_MS ahead of their clock. The name is held
-// to the lobby's rule (lobbyNameIsValid): one rule names a player everywhere. Like every name, it decides nothing (§0.12).
-
-
-
-
-/** How far ahead of a node's clock a name may be dated and still be kept. */
-const PLAYER_NAME_SKEW_MS = 10 * 60 * 1000;
-
-const n32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-function encodePlayerName({ networkId, player, atMs, name = '' } = {}) {
-  if (!n32(networkId) || !n32(player)) throw new Error('a player name names its network and the player\'s identity key by 32 bytes each');
-  const at = BigInt(atMs);
-  if (at < 0n) throw new Error('a player name\'s time is not negative');
-  if (typeof name !== 'string') throw new Error('a name is text');
-  if (name !== '') {
-    const kept = lobbyNameIsValid(name);
-    if (!kept.ok) throw new Error(kept.why);
-    if (kept.name !== name) throw new Error('a name is signed as it is kept: trimmed, one space between words');
-  }
-  const w = new Writer();
-  w.u8(TYPE_PLAYER_NAME); w.u16(PROTOCOL_VERSION);
-  w.bytes32(networkId); w.bytes32(player); w.u64(at); w.str(name);
-  return w.finish();
-}
-
-function decodePlayerName(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_PLAYER_NAME) throw new Error('not a player name');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const n = { networkId: r.bytes32(), player: r.bytes32(), atMs: r.u64(), name: r.str() };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the player name');
-  encodePlayerName(n);                       // the same rules on the way in
-  return n;
-}
-
-/** What the player's identity key signs (BIP-340). */
-const playerNameId = (n) => taggedHash(TAG.playerName, encodePlayerName(n));
-
-/** Of two records of one player, the one that stands: the later; at the same ms, the lower id. */
-function newerPlayerName(a, b) {
-  if (!a) return b; if (!b) return a;
-  if (a.obj.atMs !== b.obj.atMs) return a.obj.atMs > b.obj.atMs ? a : b;
-  return a.idHex < b.idHex ? a : b;
-}
-
-// ---- arena-protocol/src/funding.js
-// PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
-// purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
-// 15 % or more of the nodes that served a round in the last 432 blocks, after 1008 blocks"; signals are "signed messages kept and
-// passed on by the seats. Not on-chain signals. A signal weighs one per node and moves no money").
-//
-//     FundingProposal { network_id, author, published_height, amount_sats, lnurl, purpose }     signed by the author, anyone (the owner 2026-10-17)
-//     FundingComment  { proposal_id, parent_id, author, at_height, text }                       signed by its writer, anyone
-//     FundingSignal   { proposal_id, node, at_height }                                          signed by the node
-//
-// Signatures are BIP340 over the object's id (its tagged hash), by the 32-byte x-only key it names; the verifier is injected.
-//
-// THE SIGNAL (signalOutcome): the signal runs [published_height, published_height + signal) - 1008 blocks by the rule, 1 on the short
-// schedule of a live proof. When it ends, the ACTIVE nodes are those that served a round - a signed FINAL (served-nodes.js) - in the
-// 432 blocks before its end: the window [time(end - 432), time(end)) on the chain's median time, which every seat reads alike and
-// which never runs backwards. A signal counts when it was given inside the signal period by an active node, once per node, whatever
-// its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
-
-
-
-
-
-
-/** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
-// THE HIJACK DEFENCES, FIVE RULES (§27A.9.5, kanban #397, the owner 2026-10-17: "It needs to be more simple so people understand it" -
-// "Make it 3 months" - "older nodes ... can get a factor that increases their weight"; comment 2820, Go), in blocks:
-//   season          1  a bond votes (and a node signals) only if it is at least this old when the proposal is published (~3 months)
-//   lockAfterVote   1  ... and only if its CLTV maturity is at least this far past the vote's last block (~3 months)
-//   year            2  its weight is bond x the age factor: 1x under a year, 2x from one year, 3x from two
-//   capWindow       4  the window of the 25 % cap (~3 months)
-//   delay, trancheEvery 5  the first payment is due `delay` after the vote's last block (~2 weeks), the next ones `trancheEvery` apart
-//   week               the signal's active node served rounds in 3 of the 4 weeks before it ends
-// The short schedule is a live proof's only (the T3 federation), scaled to its few blocks.
-const FUNDING_SCHEDULES = Object.freeze({
-  spec: Object.freeze({ signal: 1008, activeWindow: 432, vote: 2016, decideDepth: 6,
-    season: 12960, lockAfterVote: 12960, year: 52560, delay: 2016, trancheEvery: 4320, capWindow: 12960, week: 1008 }),
-  short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6,
-    season: 24, lockAfterVote: 48, year: 72, delay: 6, trancheEvery: 6, capWindow: 144, week: 108 }),
-});
-const FUNDING_ABSOLUTE_PCT = 20n;        // rule 3: YES of everyone who could vote
-const FUNDING_CAP_PCT = 10n;             // rule 4: one proposal of the paying federation's reserves
-const FUNDING_CAP_WINDOW_PCT = 25n;      // rule 4: all payments of a window of the reserves at its start
-const FUNDING_LARGE_PCT = 1n;            // rule 5: above this share of the reserves a payment goes out in tranches
-const FUNDING_TRANCHES = 4;
-const FUNDING_ACTIVE_WEEKS = 4, FUNDING_ACTIVE_WEEKS_NEEDED = 3;   // the signal's active node
-/** The vote's rule (§27A.9.3 stage 2, RULED the owner 2026-10-16): turnout of the snapshot's bonded capital, and YES of YES + NO. */
-const FUNDING_TURNOUT_PCT = 30n;
-const FUNDING_APPROVAL_PCT = 60n;
-const FUNDING_SIGNAL_PCT = 15;
-const FUNDING_PURPOSE_MAX = 4000;
-const FUNDING_COMMENT_MAX = 4000;
-const FUNDING_LNURL_MAX = 512;
-const FUNDING_SIG_BYTES = 64;
-
-const f32 = (b) => b instanceof Uint8Array && b.length === 32;
-const ZERO32 = new Uint8Array(32);
-/** An LNURL (bech32 "lnurl1...") or a Lightning address (user@host): where the amount would be paid. */
-function lnurlStands(s) {
-  if (typeof s !== 'string' || !s.length || s.length > FUNDING_LNURL_MAX) return false;
-  if (/^lnurl1[02-9ac-hj-np-z]{20,}$/i.test(s)) return true;
-  return /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(s);
-}
-
-function encodeFundingProposal(p) {
-  if (!f32(p.networkId) || !f32(p.author)) throw new Error('a funding proposal names its network and its author by 32 bytes each');
-  if (!Number.isInteger(p.publishedHeight) || p.publishedHeight < 0) throw new Error('published_height is a block height');
-  if (typeof p.amountSats !== 'bigint' || p.amountSats < 1n) throw new Error('a funding proposal asks at least 1 sat, as a BigInt');
-  if (!lnurlStands(p.lnurl)) throw new Error('a funding proposal names an LNURL or a Lightning address to be paid at');
-  if (typeof p.purpose !== 'string' || !p.purpose.trim() || p.purpose.length > FUNDING_PURPOSE_MAX) throw new Error(`a funding proposal says what the money is for, in at most ${FUNDING_PURPOSE_MAX} characters`);
-  const w = new Writer();
-  w.u8(TYPE_FUNDING_PROPOSAL); w.u16(PROTOCOL_VERSION);
-  w.bytes32(p.networkId); w.bytes32(p.author); w.u32(p.publishedHeight); w.u64(p.amountSats); w.str(p.lnurl); w.str(p.purpose);
-  return w.finish();
-}
-function decodeFundingProposal(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_FUNDING_PROPOSAL) throw new Error('not a funding proposal');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const p = { networkId: r.bytes32(), author: r.bytes32(), publishedHeight: r.u32(), amountSats: r.u64(), lnurl: r.str(), purpose: r.str() };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the funding proposal');
-  encodeFundingProposal(p);                       // the same rules on the way in
-  return p;
-}
-const fundingProposalId = (p) => taggedHash(TAG.fundingProposal, encodeFundingProposal(p));
-
-function encodeFundingComment(c) {
-  if (!f32(c.proposalId) || !f32(c.author)) throw new Error('a comment names its proposal and its writer by 32 bytes each');
-  const parent = c.parentId === undefined || c.parentId === null ? ZERO32 : c.parentId;
-  if (!f32(parent)) throw new Error('a comment answers a 32-byte comment id, or none');
-  if (!Number.isInteger(c.atHeight) || c.atHeight < 0) throw new Error('at_height is a block height');
-  if (typeof c.text !== 'string' || !c.text.trim() || c.text.length > FUNDING_COMMENT_MAX) throw new Error(`a comment says something, in at most ${FUNDING_COMMENT_MAX} characters`);
-  const w = new Writer();
-  w.u8(TYPE_FUNDING_COMMENT); w.u16(PROTOCOL_VERSION);
-  w.bytes32(c.proposalId); w.bytes32(parent); w.bytes32(c.author); w.u32(c.atHeight); w.str(c.text);
-  return w.finish();
-}
-function decodeFundingComment(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_FUNDING_COMMENT) throw new Error('not a funding comment');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const c = { proposalId: r.bytes32(), parentId: r.bytes32(), author: r.bytes32(), atHeight: r.u32(), text: r.str() };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the comment');
-  encodeFundingComment(c);
-  return c;
-}
-const fundingCommentId = (c) => taggedHash(TAG.fundingComment, encodeFundingComment(c));
-
-function encodeFundingSignal(s) {
-  if (!f32(s.proposalId) || !f32(s.node)) throw new Error('a signal names its proposal and its node by 32 bytes each');
-  if (!Number.isInteger(s.atHeight) || s.atHeight < 0) throw new Error('at_height is a block height');
-  const w = new Writer();
-  w.u8(TYPE_FUNDING_SIGNAL); w.u16(PROTOCOL_VERSION);
-  w.bytes32(s.proposalId); w.bytes32(s.node); w.u32(s.atHeight);
-  return w.finish();
-}
-function decodeFundingSignal(bytes) {
-  const r = new Reader(bytes);
-  if (r.u8() !== TYPE_FUNDING_SIGNAL) throw new Error('not a funding signal');
-  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
-  const s = { proposalId: r.bytes32(), node: r.bytes32(), atHeight: r.u32() };
-  if (r.at !== bytes.length) throw new Error('trailing bytes after the signal');
-  return s;
-}
-const fundingSignalId = (s) => taggedHash(TAG.fundingSignal, encodeFundingSignal(s));
-
-/** The object of a signed hex (body || 64-byte signature) of `kind` 'proposal' | 'comment' | 'signal' | 'name', its id, and whether its signer signed it. */
-function readSignedFunding(kind, bytes, verify) {
-  if (typeof verify !== 'function') throw new Error('a funding object is checked with a BIP340 verifier, and none was injected');
-  if (!(bytes instanceof Uint8Array) || bytes.length <= FUNDING_SIG_BYTES) return { ok: false, why: 'no signature' };
-  const body = bytes.slice(0, -FUNDING_SIG_BYTES), signature = bytes.slice(-FUNDING_SIG_BYTES);
-  let obj, id, signer;
-  try {
-    if (kind === 'proposal') { obj = decodeFundingProposal(body); id = fundingProposalId(obj); signer = obj.author; }
-    else if (kind === 'comment') { obj = decodeFundingComment(body); id = fundingCommentId(obj); signer = obj.author; }
-    else if (kind === 'signal') { obj = decodeFundingSignal(body); id = fundingSignalId(obj); signer = obj.node; }
-    else if (kind === 'name') { obj = decodePlayerName(body); id = playerNameId(obj); signer = obj.player; }   // the forum's names (PIP)
-    else return { ok: false, why: 'a proposal, a comment, a signal or a name' };
-  } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
-  let good = false; try { good = verify(signature, id, signer) === true; } catch { good = false; }
-  if (!good) return { ok: false, why: `the ${kind}'s signature does not verify` };
-  return { ok: true, kind, obj, id, signature };
-}
-
-/**
- * THE NODES ACTIVE BEFORE A SIGNAL ENDS: those that served a round (a signed FINAL) in [time(end - window), time(end)), `timeOf(height)`
- * the chain's median time in ms at that height. `rounds` as servedNodes takes them. Answers servedNodes' list with the window's heights.
- */
-function activeNodesBefore({ rounds, endHeight, timeOf, verify, windowBlocks = FUNDING_SCHEDULES.spec.activeWindow }) {
-  if (!Number.isInteger(endHeight) || endHeight < windowBlocks) throw new Error('a signal ends at a height above the active window');
-  const fromMs = BigInt(timeOf(endHeight - windowBlocks)), toMs = BigInt(timeOf(endHeight));
-  return { ...servedNodes({ rounds, fromMs, toMs: toMs > fromMs ? toMs : fromMs + 1n, verify }), fromHeight: endHeight - windowBlocks, toHeight: endHeight };
-}
-
-/**
- * THE SIGNAL OF ONE PROPOSAL. `proposal` decoded; `signals` [{ node (hex), atHeight }] whose signatures were checked; `active` the
- * active nodes' keys (hex) at the signal's end, or null before it; `tip` this seat's height. Answers { state: 'signalling' |
- * 'passed' | 'failed', signalEnd, supporters, active, pct, needed } - `needed` the supporters 15 % of the active nodes asks.
- */
-function signalOutcome({ proposal, signals = [], active = null, tip, schedule = FUNDING_SCHEDULES.spec }) {
-  const signalEnd = proposal.publishedHeight + schedule.signal;
-  const inPeriod = signals.filter((s) => s.atHeight >= proposal.publishedHeight && s.atHeight < signalEnd);
-  const signers = new Set(inPeriod.map((s) => String(s.node).toLowerCase()));
-  if (!(Number.isInteger(tip) && tip >= signalEnd) || active === null)
-    return { state: 'signalling', signalEnd, signals: signers.size, supporters: null, active: null, pct: null, needed: null };
-  const act = new Set([...active].map((k) => String(k).toLowerCase()));
-  const supporters = [...signers].filter((k) => act.has(k)).length;
-  const needed = Math.ceil((act.size * FUNDING_SIGNAL_PCT) / 100);
-  const passed = act.size > 0 && supporters * 100 >= FUNDING_SIGNAL_PCT * act.size;
-  return { state: passed ? 'passed' : 'failed', signalEnd, signals: signers.size, supporters, active: act.size,
-    pct: act.size ? Math.round((supporters * 10000) / act.size) / 100 : 0, needed: Math.max(needed, 1) };
-}
-
-/**
- * THE VOTE OF A PROPOSAL WHOSE SIGNAL PASSED (§27A.9.3 stage 2, kanban #397 slice 7): its period [signalEnd, signalEnd + vote) and
- * its last block; when a seat may decide it - that last block `decideDepth` deep, counting the block itself (as #329's tally:
- * decided at tip >= last + depth - 1). A failed or open signal has no vote.
- */
-function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.spec }) {
-  if (!signal || signal.state !== 'passed') return null;
-  const from = proposal.publishedHeight + schedule.signal;
-  const until = from + schedule.vote;
-  return { from, until, last: until - 1, decidableAt: until - 1 + schedule.decideDepth - 1 };
-}
-
-/**
- * THE COUNT (§27A.9.3 stage 2), #329's vote read for a funding proposal: `census` the bonds active at the vote's start -
- * [{ pubkey, outpoint, bondSats }]; `votes` the "ARN" 'V' outputs found on chain - [{ payload, height, txid }]. A vote counts for every
- * bond whose key its signature verifies under, only inside [from, until); per bond outpoint the last by height wins, a tie inside one
- * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
- * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
- */
-function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
-  const prefix = toHex(proposalId.subarray(0, 8));
-  const latest = new Map();
-  for (const v of votes) {
-    const d = decodeVote(v.payload instanceof Uint8Array ? v.payload : null);
-    if (!d || toHex(d.idPrefix) !== prefix) continue;
-    if (!(v.height >= from && v.height < until)) continue;
-    const msg = voteMessage(proposalId, d.choice);
-    for (const b of census) {
-      let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; }
-      if (!good) continue;
-      const had = latest.get(b.outpoint);
-      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
-      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.weight ?? b.bondSats) });
-    }
-  }
-  const total = census.reduce((a, b) => a + BigInt(b.weight ?? b.bondSats), 0n);
-  let yes = 0n, no = 0n, abstain = 0n;
-  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
-  const turnout = yes + no + abstain;
-  const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
-  const decided = yes + no;
-  const approved = decided > 0n && yes * 100n >= FUNDING_APPROVAL_PCT * decided;
-  // RULE 3 (the owner 2026-10-17, comment 2820): 60 % of the votes say YES, and YES is at least 20 % of everyone who could vote - the
-  // 30 % turnout is gone, this asks real participation itself. `quorum` stays reported for the record
-  const absolute = total > 0n && yes * 100n >= FUNDING_ABSOLUTE_PCT * total;
-  return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved, absolute,
-    yesOfAllPct: total > 0n ? Number((yes * 10000n) / total) / 100 : 0, passed: approved && absolute, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
-}
-
-/** Rule 2: the age factor of a bond `age` blocks old - 1x under a year, 2x from one year, 3x from two. */
-const ageFactor = (age, schedule = FUNDING_SCHEDULES.spec) => (age >= 2 * schedule.year ? 3n : age >= schedule.year ? 2n : 1n);
-
-/**
- * Rules 1 + 2: WHO VOTES AND HOW MUCH. `census` [{ pubkey, outpoint, bondSats, height (confirmation), maturity (CLTV height, or null)
- * }]; `publishedHeight` the proposal's; `last` the vote's last block. A bond votes when it is at least `season` blocks old at the
- * proposal's publication and its maturity is at least `lockAfterVote` past `last`; it weighs bondSats x its age factor at
- * publication. Answers the voting census, each with its `weight`, and `totalWeight` - everyone who could vote (rule 3's base).
- */
-function voteWeights({ census = [], publishedHeight, last, schedule = FUNDING_SCHEDULES.spec }) {
-  const voters = []; let totalWeight = 0n;
-  for (const b of census) {
-    if (!Number.isInteger(b.height)) continue;
-    const age = publishedHeight - b.height;
-    if (age < schedule.season) continue;
-    if (!(Number.isInteger(b.maturity) && b.maturity - last >= schedule.lockAfterVote)) continue;
-    const weight = BigInt(b.bondSats) * ageFactor(age, schedule);
-    voters.push({ ...b, weight, factor: Number(ageFactor(age, schedule)) });
-    totalWeight += weight;
-  }
-  return { voters, totalWeight };
-}
-
-/** The signal's ACTIVE nodes: served rounds in at least 3 of the 4 weeks before its end, `weeks` [Set of node hex] newest first. */
-function activeInWeeks(weeks) {
-  const n = new Map();
-  for (const w of weeks.slice(0, FUNDING_ACTIVE_WEEKS)) for (const k of w) n.set(String(k).toLowerCase(), (n.get(String(k).toLowerCase()) || 0) + 1);
-  return [...n.entries()].filter(([, c]) => c >= FUNDING_ACTIVE_WEEKS_NEEDED).map(([k]) => k);
-}
-
-/**
- * Rule 5: THE PAYMENTS OF A PASSED PROPOSAL. One payment, or - above 1 % of the paying federation's reserves (`reservesSats`) - four
- * tranches; payment k is due at `last + delay + k x trancheEvery` and may be made once that block is `decideDepth` deep and a count
- * over every vote up to it still passes (a NO, or a YES turned NO, in the delay cancels it and every later one).
- */
-function trancheSchedule({ amountSats, reservesSats, last, schedule = FUNDING_SCHEDULES.spec }) {
-  const amount = BigInt(amountSats);
-  const n = BigInt(reservesSats) > 0n && amount * 100n > FUNDING_LARGE_PCT * BigInt(reservesSats) ? FUNDING_TRANCHES : 1;
-  const each = amount / BigInt(n);
-  return Array.from({ length: n }, (_, k) => {
-    const dueAt = last + schedule.delay + k * schedule.trancheEvery;
-    return { k, of: n, amountSats: k === n - 1 ? amount - each * BigInt(n - 1) : each, dueAt, payableAt: dueAt + schedule.decideDepth - 1 };
-  });
-}
-
-/**
- * Rule 4: MAY THIS PAYMENT GO NOW. One proposal at most 10 % of the paying federation's reserves (its whole amount, `proposalSats`,
- * against the reserves held now plus what it already paid); everything paid in the last `capWindow` blocks (`paidInWindowSats`) plus
- * this payment at most 25 % of what the reserves held at the window's start (held now + paid in the window). A payment over the
- * window cap waits for the window to move; a proposal over its own cap is never paid.
- */
-function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats = 0n, paidInWindowSats = 0n }) {
-  const held = BigInt(reservesSats), base = held + BigInt(paidByProposalSats);
-  if (BigInt(proposalSats) * 100n > FUNDING_CAP_PCT * base) return { ok: false, final: true, why: `the proposal asks ${proposalSats} sat, more than ${FUNDING_CAP_PCT} % of the ${base} sat reserves` };
-  const start = held + BigInt(paidInWindowSats);
-  if ((BigInt(paidInWindowSats) + BigInt(paymentSats)) * 100n > FUNDING_CAP_WINDOW_PCT * start)
-    return { ok: false, final: false, why: `${paidInWindowSats} sat paid in the window and ${paymentSats} now is more than ${FUNDING_CAP_WINDOW_PCT} % of ${start} sat` };
-  return { ok: true };
 }
 
 // ---- arena-client/src/funding-page.js
@@ -25208,6 +25420,77 @@ async function giftDonation({ game = null, player = null, recipients, sat, walle
  * key the board names (32 bytes, `player`), as one payout contract to that key's refund key, recorded on the seats like a gift.
  */
 const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, nowMs });
+
+// ---- arena-client/src/fee-proposal-page.js
+// FEE PROPOSALS ON THE PAGE (kanban #462 slice 3, the owner 2026-10-17: "Proposal type change fees. Any of the fees, all combinations can
+// be changed with a proposal"): the fees in force as the testnet's nodes answer them (GET /fees - at a height when asked: a round's
+// census height, the set its entry pays and its settlement splits), a proposal built from what the form typed - any subset, refused
+// by the very limits and sums the seats enforce (fee-proposal.js feeProposalStands) before anything is signed - and signed by the
+// forum's key, handed to every node as a funding proposal is (funding-page.js postFunding, kind 'fee').
+
+
+const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+const feesCurveOf = (curve) => { const c = curve || globalThis.BLWP_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (blwp-curve.js)'); return c; };
+
+/**
+ * THE FEES AS THE NODES ANSWER THEM: every node asked GET /fees (with ?height=H when `height` is given); the set most of them name, kept
+ * only when `needed` agree. With `height` the set is the one in force there (`atHeight`), else at each node's tip (`inForce`). Answers
+ * { ok, fees, agreeing, asked, tip, limits, sums, schedule, proposals } - `proposals` of an agreeing node - or { ok: false, why }.
+ */
+async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
+  const asked = [...new Set((nodes || []).map(feesBaseOf))];
+  const q = Number.isInteger(height) && height >= 0 ? `?height=${height}` : '';
+  const answers = (await Promise.all(asked.map(async (b) => {
+    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
+  }))).filter((a) => a && (q ? a.atHeight : a.inForce));
+  const by = new Map();
+  for (const a of answers) { const set = q ? a.atHeight : a.inForce; const k = JSON.stringify(Object.keys(FEES).map((f) => set[f])); by.set(k, [...(by.get(k) || []), a]); }
+  const best = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
+  if (best.length < Math.min(needed, asked.length) || !best.length) return { ok: false, why: `only ${best.length} of ${asked.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${Math.min(needed, asked.length)} must`, asked: asked.length };
+  const a = best[0];
+  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: asked.length, tip: a.tip, limits: a.limits, sums: a.sums,
+    schedule: a.schedule, proposals: a.proposals || [] };
+}
+
+/** The changes a form typed against the fees in force: every fee whose typed whole number differs, in the fees' order. */
+function feeChangesFrom(current, typed) {
+  const out = [];
+  for (const k of Object.keys(FEES)) {
+    if (typed[k] === undefined || typed[k] === null || String(typed[k]).trim() === '') continue;
+    const v = Number(typed[k]);
+    if (!Number.isInteger(v)) throw new Error(`${k} is a whole number`);
+    if (v !== current[k]) out.push({ fee: k, value: v });
+  }
+  return out;
+}
+
+/**
+ * A FEE PROPOSAL CHECKED, THEN SIGNED: the same check a seat makes at submission (every limit and every sum of the whole set it makes
+ * from `current`, an activation height after its signal and its vote) - a proposal that would be refused is never signed. Answers
+ * { ok, id, hex, donations } or { ok: false, why }.
+ */
+function signedFeeProposal({ secretKey, networkId, publishedHeight, activationHeight, changes, purpose = '', current = FEES_TODAY, schedule, curve }) {
+  const c = feesCurveOf(curve);
+  if (!changes || !changes.length) return { ok: false, why: 'change at least one fee' };
+  const p = { networkId: fromHex(networkId), author: c.pointX(secretKey), publishedHeight, activationHeight, changes, purpose: String(purpose) };
+  const st = feeProposalStands(p, schedule ? { current, schedule } : { current });
+  if (!st.ok) return { ok: false, why: st.why };
+  const id = feeProposalId(p);
+  return { ok: true, id: toHex(id), hex: toHex(Uint8Array.from([...encodeFeeProposal(p), ...c.signSchnorr(id, secretKey)])), donations: st.donations };
+}
+
+/** The earliest height a proposal published at `tip` may apply from: after its signal, its vote and the vote's depth. */
+const earliestActivation = (tip, schedule) => tip + schedule.signal + schedule.vote + schedule.decideDepth;
+
+const pctOf = (v, unit) => `${(Number(v) / (unit === 'bps' ? 100 : 1)).toLocaleString('en-US', { maximumFractionDigits: 2 })} %`;
+/** A round's fees as a line: "nodes 4 % · developers 4 % · reserves 2 %". */
+const roundFeesLine = (fees) => { const s = roundSplitBps(fees); return `nodes ${pctOf(s.nodes, 'bps')} · developers ${pctOf(s.protocolDevs + s.gameDevs, 'bps')} · reserves ${pctOf(s.reserves, 'bps')}`; };
+/** A market's fees as a line: "nodes 0.4 % · developers 0.4 % · reserves 0.2 %". */
+const marketFeesLine = (fees) => `nodes ${pctOf(fees.marketNodeBps, 'bps')} · developers ${pctOf(fees.marketDonationBps, 'bps')} · reserves ${pctOf(fees.marketReserveBps, 'bps')}`;
+/** A market's whole rate under a fee set (its fee lock): node + donation + reserve, in bps. */
+const marketFeeBpsOf = (fees) => { const r = marketBps(fees); return r.nodeBps + r.donationBps; };
+/** Each fee's unit as the form shows it: bps for rounds and markets, percent for items and the website share. */
+const FEE_UNITS = Object.freeze(Object.fromEntries(Object.keys(FEES).map((k) => [k, /Bps$/.test(k) ? 'bps' : 'pct'])));
 
 // ---- arena-client/src/exchange-view.js
 // A MARKET AS AN EXCHANGE SHOWS IT (kanban #448, the owner 2026-10-17: "build a real desktop view with complete order book bids ask,
@@ -29877,7 +30160,7 @@ function encodePurchase(p) {
   const reserves = p.reserveKey !== undefined && p.reserveKey !== null;
   const share = p.devsPct === undefined || p.devsPct === null ? (reserves ? ITEM_DEV_SHARE_RESERVES_DEFAULT : ITEM_DEV_SHARE_DEFAULT) : Number(p.devsPct);
   if (reserves) {
-    if (!ITEM_DEV_SHARES_RESERVES.includes(share)) throw new Error(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    if (!Number.isInteger(share) || share < 0 || share > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent; which ones the fees in force allow, purchaseStands says');
     if (!pIs32(p.gameId) || !pIs33(p.reserveKey)) throw new Error('a purchase on the reserves\' terms names its game version by 32 bytes and the reserve key by 33');
   } else if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const w = new Writer();
@@ -29903,7 +30186,7 @@ function decodePurchase(bytes) {
     throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
   const terms = {};
   if (version === PURCHASE_RESERVES_LAYOUT) {
-    if (!ITEM_DEV_SHARES_RESERVES.includes(devsPct)) throw new Error(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    if (!Number.isInteger(devsPct) || devsPct < 0 || devsPct > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent');
     terms.gameId = r.bytes32(); terms.reserveKey = r.bytes(33);
     if (!pIs33(terms.reserveKey)) throw new Error('a reserve key is a 33-byte compressed key');
   }
@@ -29942,9 +30225,9 @@ function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, devsPct = 
  * the developers the buyer's share over the two donation sets as a round's donation is split. [{ pk, msat }] sorted by key, with
  * `reserve` { pk, msat } named apart. A reserve key that is also another payee's key is refused: the reserves' output stands alone.
  */
-function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, reserveKey }) {
+function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, reserveKey, fees = null }) {
   if (!pIs33(reserveKey)) throw new Error('no reserve key to pay the reserves\' 20 % to');
-  const split = itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) });
+  const split = itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct), fees });
   const keys = [...new Set((servedKeys || []).map((k) => String(k).toLowerCase()))].sort();
   if (!keys.length) throw new Error('no node served a round in the window: an item\'s 40 % for the nodes has nobody to go to');
   if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
@@ -29969,7 +30252,8 @@ function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, gameSet, de
  * `gameSet` the donation sets; `served` the reader's own merged list for the record's window ({ fromMs, toMs, nodes, root });
  * `verify(sig, digest, key)` BIP340. Answers { ok, id } or { ok: false, why }.
  */
-function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey = null }) {
+// `fees`: the fee set in force (kanban #462): the item parts on the reserves' terms; unset, today's
+function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey = null, fees = null }) {
   const no = (why) => ({ ok: false, why });
   let id; try { id = purchaseId(p); } catch (e) { return no(`that purchase does not encode: ${e.message}`); }
   if (!manifest || toHex(manifest.gameDevPubkey) !== toHex(p.gameDevPubkey) || manifest.gameName !== p.gameName)
@@ -29995,8 +30279,8 @@ function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, rese
     if (!pIs32(p.gameId) || mid !== toHex(p.gameId)) return no('the record names another version of the game than the manifest given');
     if (!pIs33(reserveKey)) return no(`no reserve key is known here for federation ${toHex(p.federationId).slice(0, 16)}`);
     if (toHex(reserveKey) !== toHex(p.reserveKey)) return no(`the record paid reserve key ${toHex(p.reserveKey).slice(0, 16)}, and federation ${toHex(p.federationId).slice(0, 16)}'s is ${toHex(reserveKey).slice(0, 16)}`);
-    if (!ITEM_DEV_SHARES_RESERVES.includes(Number(p.devsPct))) return no(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
-    try { want = purchaseOutputsReserves({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(p.devsPct), reserveKey }).outputs; }
+    if (!itemDevChoices(fees).includes(Number(p.devsPct))) return no(`on the reserves' terms a developers' share is one of ${itemDevChoices(fees).join(', ')} %`);
+    try { want = purchaseOutputsReserves({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(p.devsPct), reserveKey, fees }).outputs; }
     catch (e) { return no(e.message); }
   } else {
     // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is
@@ -33206,7 +33490,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,

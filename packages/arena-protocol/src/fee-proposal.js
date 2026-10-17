@@ -43,7 +43,7 @@ export const FEES_TODAY = Object.freeze(Object.fromEntries(Object.entries(FEES).
 const BY_CODE = new Map(Object.entries(FEES).map(([k, f]) => [f.code, k]));
 export const FEE_PURPOSE_MAX = 4000;
 
-const f32 = (b) => b instanceof Uint8Array && b.length === 32;
+const feeIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 /**
  * THE SET AS A WHOLE: every fee inside its limit, and the round, item and market sums. Answers { ok } or { ok: false, why } naming the
@@ -68,7 +68,7 @@ export function feeSetStands(set) {
 export const applyFeeChanges = (base, changes) => Object.freeze({ ...base, ...Object.fromEntries(changes.map((c) => [c.fee, c.value])) });
 
 export function encodeFeeProposal(p) {
-  if (!f32(p.networkId) || !f32(p.author)) throw new Error('a fee proposal names its network and its author by 32 bytes each');
+  if (!feeIs32(p.networkId) || !feeIs32(p.author)) throw new Error('a fee proposal names its network and its author by 32 bytes each');
   if (!Number.isInteger(p.publishedHeight) || p.publishedHeight < 0) throw new Error('published_height is a block height');
   if (!Number.isInteger(p.activationHeight) || p.activationHeight <= p.publishedHeight) throw new Error('a fee proposal applies from a height after its publication');
   if (!Array.isArray(p.changes) || !p.changes.length) throw new Error('a fee proposal changes at least one fee');
@@ -102,7 +102,7 @@ export function decodeFeeProposal(bytes) {
 export const feeProposalId = (p) => taggedHash(TAG.feeProposal, encodeFeeProposal(p));
 
 export function encodeFeeApproval(a) {
-  if (!f32(a.proposalId) || !f32(a.dev)) throw new Error('a fee approval names its proposal and its protocol developer by 32 bytes each');
+  if (!feeIs32(a.proposalId) || !feeIs32(a.dev)) throw new Error('a fee approval names its proposal and its protocol developer by 32 bytes each');
   const w = new Writer();
   w.u8(TYPE_FEE_APPROVAL); w.u16(PROTOCOL_VERSION);
   w.bytes32(a.proposalId); w.bytes32(a.dev); w.u8(a.approve ? 1 : 0);

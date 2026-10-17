@@ -135,7 +135,8 @@
     var bar = el('div', 'bar');
     var st = el('span', 'say', state.list ? state.list.length + ' proposal' + (state.list.length === 1 ? '' : 's') + ' · ' + state.agreeing + ' of ' + state.asked + ' nodes answered · block ' + state.tip : 'Reading the nodes…');
     var nw = el('a', 'btn primary grow', 'New proposal'); nw.href = '#new';
-    bar.append(st, nw); view.append(bar);
+    var fz = el('a', 'btn', 'Change fees'); fz.href = '#fees';
+    bar.append(st, fz, nw); view.append(bar);
     var t = el('div', 'topics');
     var th = el('div', 'th'); th.append(el('span', null, 'Proposal'), el('span', 'n', 'Amount'), el('span', 'n', 'Replies'), el('span', 'n', 'Stage')); t.append(th);
     if (state.list && !state.list.length) t.append(el('div', 'empty', 'No proposals yet. Start the first one.'));
@@ -258,9 +259,89 @@
     view.append(f);
   }
 
+  // CHANGE FEES (kanban #462, the owner 2026-10-17: "Proposal type change fees. Any of the fees, all combinations can be changed with a
+  // proposal"): the fees in force as the nodes answer them (GET /fees), one field per fee with its limit; any of them, in any
+  // combination, is one proposal - checked by the seats' own rule (every limit and every sum of the whole set, an activation after
+  // its signal and its vote) before it is signed, then handed to every node. Below, every fee proposal with its signal, its vote,
+  // the protocol developers' answers (a donation change needs most of them) and its decision.
+  var FEE_NAMES = { roundNodeBps: 'Game round: node fee', roundDonationBps: 'Game round: developers\' donation', roundReserveBps: 'Game round: protocol reserve',
+    itemNodesPct: 'Item: nodes', itemReservesPct: 'Item: protocol reserve', itemDevsPct: 'Item: developers', marketNodeBps: 'Market: node fee',
+    marketDonationBps: 'Market: developers\' donation', marketReserveBps: 'Market: protocol reserve', websitePct: 'Website share of the nodes\' fee' };
+  function feeVal(k, v) { return BLWPCLIENT.FEE_UNITS[k] === 'bps' ? (Number(v) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' %' : v + ' %'; }
+  function feesView() {
+    view.textContent = '';
+    var back = el('a', 'btn', '← All proposals'); back.href = '#';
+    var bar = el('div', 'bar'); bar.append(back); view.append(bar, el('h1', null, 'Change fees'));
+    var box = el('div', 'empty', 'Reading the fees from the nodes…'); view.append(box);
+    BLWPCLIENT.fetchFees({ nodes: state.nodes }).then(function (r) {
+      box.remove();
+      if (!r.ok) { view.append(el('div', 'empty', r.why)); return; }
+      state.fees = r;
+      var f = el('form', 'compose fees');
+      var rows = Object.keys(BLWPCLIENT.FEES).map(function (k) {
+        var lim = r.limits[k], unit = BLWPCLIENT.FEE_UNITS[k];
+        return '<tr><td>' + esc(FEE_NAMES[k] || k) + (lim.donation ? ' <span class="hint">donation</span>' : '') + '</td><td>' + feeVal(k, r.fees[k]) + '</td><td>' + feeVal(k, lim.min) + ' – ' + feeVal(k, lim.max)
+          + '</td><td><input name="' + k + '" type="number" step="1" min="' + lim.min + '" max="' + lim.max + '" placeholder="' + r.fees[k] + '"> ' + (unit === 'bps' ? 'bps' : '%') + '</td></tr>';
+      }).join('');
+      var earliest = BLWPCLIENT.earliestActivation(Number(r.tip), r.schedule);
+      f.innerHTML = '<p class="reserves-line">Fees in force at block ' + r.tip + ' (' + r.agreeing + ' of ' + r.asked + ' nodes agree). Fill in only the fees to change; leave the others empty. A round takes at most '
+        + r.sums.roundMaxBps / 100 + ' %, an item\'s parts add up to ' + r.sums.itemPct + ' %, a market takes at most ' + r.sums.marketMaxBps / 100 + ' %. A donation is never 0, and a change to one needs most of the protocol developers.</p>'
+        + '<div class="tbl"><table><thead><tr><th>Fee</th><th>In force</th><th>Limit</th><th>New value</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        + '<div class="row"><label>Applies from block<input name="activation" type="number" step="1" min="' + earliest + '" value="' + earliest + '"></label></div>'
+        + '<label>Why <span class="hint">what the change does and for whom</span><textarea name="purpose" rows="5" maxlength="4000"></textarea></label>'
+        + '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
+      var typed = function () { var t = {}; Object.keys(BLWPCLIENT.FEES).forEach(function (k) { t[k] = f[k].value; }); return t; };
+      var check = function () {
+        var out = f.querySelector('.out'), ch;
+        try { ch = BLWPCLIENT.feeChangesFrom(r.fees, typed()); } catch (e) { say(out, e.message, true); return null; }
+        if (!ch.length) { say(out, 'Change at least one fee.'); return null; }
+        var p = { networkId: new Uint8Array(32), author: new Uint8Array(32), publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch, purpose: f.purpose.value };
+        var st = BLWPCLIENT.feeProposalStands(p, { current: r.fees, schedule: r.schedule });
+        if (!st.ok) { say(out, st.why, true); return null; }
+        say(out, ch.length + ' fee' + (ch.length === 1 ? '' : 's') + ' in one proposal' + (st.donations.length ? ' · changes a donation: most of the protocol developers must approve' : '') + '.');
+        return ch;
+      };
+      f.addEventListener('input', check);
+      f.addEventListener('submit', function (e) {
+        e.preventDefault(); var out = f.querySelector('.out');
+        if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
+        var ch = check(); if (!ch) return;
+        say(out, 'Signing…');
+        (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+          if (!net) throw new Error('the nodes did not agree on their network');
+          state.network = net;
+          var p = BLWPCLIENT.signedFeeProposal({ secretKey: state.key, networkId: net, publishedHeight: Number(r.tip), activationHeight: Number(f.activation.value), changes: ch,
+            purpose: f.purpose.value, current: r.fees, schedule: r.schedule, curve: window.BLWP_CURVE });
+          if (!p.ok) throw new Error(p.why);
+          return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'fee', hex: p.hex }).then(function (x) { return { x: x, id: p.id }; });
+        }).then(function (y) {
+          if (!y.x.ok) { say(out, 'Not taken: ' + y.x.why, true); return; }
+          window.ARENA_FEE_PROPOSAL = { id: y.id, took: y.x.took, asked: y.x.asked };
+          say(out, 'Published to ' + y.x.took + ' of ' + y.x.asked + ' nodes. Its signal starts now.');
+          setTimeout(feesView, 1500);
+        }).catch(function (x) { say(out, x.message, true); });
+      });
+      view.append(f);
+      view.append(el('h2', null, 'Fee proposals'));
+      if (!r.proposals.length) view.append(el('div', 'empty', 'No fee proposals yet.'));
+      r.proposals.forEach(function (p) {
+        var c = el('div', 'fee-prop');
+        var d = p.decision ? (p.decision.accepted ? 'accepted · in force from block ' + p.activationHeight : 'refused · ' + p.decision.why)
+          : p.vote ? 'vote ' + p.vote.state : 'signal ' + (p.signal ? p.signal.state : '…');
+        c.innerHTML = '<div class="bar"><b>' + esc(p.id.slice(0, 12)) + '…</b><span class="say">' + esc(d) + '</span></div>'
+          + '<ul>' + p.changes.map(function (x) { return '<li>' + esc(FEE_NAMES[x.fee] || x.fee) + ': ' + feeVal(x.fee, x.from) + ' → ' + feeVal(x.fee, x.to) + '</li>'; }).join('') + '</ul>'
+          + (p.needsDevs ? '<p class="hint">Changes a donation: protocol developers ' + p.devs.filter(function (x) { return x.approve; }).length + ' approve, ' + p.devs.filter(function (x) { return !x.approve; }).length + ' deny.</p>' : '')
+          + (p.purpose ? '<div class="md">' + markdown(p.purpose) + '</div>' : '');
+        view.append(c);
+      });
+      window.ARENA_FEES_VIEW = { inForce: r.fees, tip: r.tip, proposals: r.proposals.length, agreeing: r.agreeing };
+    }).catch(function (e) { box.textContent = e.message; });
+  }
+
   function route() {
     var h = location.hash;
-    if (h === '#new') newView();
+    if (h === '#fees') feesView();
+    else if (h === '#new') newView();
     else if (h.indexOf('#pip=') === 0) { var q = (state.list || []).find(function (x) { return String(x.pip) === h.slice(5); }); threadView(q ? q.id : ''); }
     else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();
     showKey();

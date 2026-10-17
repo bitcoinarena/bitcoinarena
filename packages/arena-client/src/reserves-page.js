@@ -2,7 +2,8 @@
 // reserves' 2 % - mandatory, not the player's donation choice - and locks the reserves' part to its federation's 5-of-7 reserve
 // key. The key is read from the round's signer nodes (GET /reserves), and taken only when at least `needed` of them name the
 // same one for that federation: no single seat can point the reserves somewhere else.
-import { roundSplit, RESERVES_DONATION_BPS, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
+import { roundSplit, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
+import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { stakeOf } from './join.js';
 
@@ -26,13 +27,14 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
 }
 
 /** What a version-11 entry gives beside its stake: { bps, donationMsat, reserveMsat, mandatory } - the developers' 4 % and the reserves' 2 %. */
-export function reservesDonation(stakeMsat) {
-  const s = roundSplit(BigInt(stakeMsat));
-  return { bps: RESERVES_DONATION_BPS + ROUND_SPLIT_BPS.reserves, donationMsat: s.protocolDevsMsat + s.gameDevsMsat + s.reservesMsat, reserveMsat: s.reservesMsat, mandatory: true };
+// `split` (kanban #462): the round's split in force at its census height (fee-proposal.js roundSplitBps); unset, today's
+export function reservesDonation(stakeMsat, split = ROUND_SPLIT_BPS) {
+  const s = roundSplit(BigInt(stakeMsat), { split });
+  return { bps: split.protocolDevs + split.gameDevs + split.reserves, donationMsat: s.protocolDevsMsat + s.gameDevsMsat + s.reservesMsat, reserveMsat: s.reservesMsat, mandatory: true };
 }
 
-/** The same for a round as the page holds it (its stake as the join reads it, stakeOf). */
-export const reservesDonationForRound = (round) => reservesDonation(stakeOf(round));
+/** The same for a round as the page holds it (its stake as the join reads it, stakeOf), at the fees in force there (`round.feeSet`). */
+export const reservesDonationForRound = (round) => reservesDonation(stakeOf(round), round && round.feeSet ? roundSplitBps(round.feeSet) : ROUND_SPLIT_BPS);
 
 /**
  * THE RESERVES' TOTAL ON THE PAGE (§27A.9.2, kanban #397 slice 4: "testnet.bitcoin-arena.io shows the total and the latest

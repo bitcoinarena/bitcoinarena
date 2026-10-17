@@ -199,7 +199,7 @@ import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
-import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT } from '../../arena-protocol/src/fee-proposal.js';
+import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT, encodeFeeApproval, feeApprovalId } from '../../arena-protocol/src/fee-proposal.js';
 import { createReservePayouts, lnurlClient } from './reserve-payout.js';
 import { trancheIdOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
@@ -4397,6 +4397,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (r.ok && r.fresh) forwardBallot(kind, hex);
           return answer(r.ok ? 200 : (r.status || 400), r);
         }
+        // A PROTOCOL DEVELOPER'S ANSWER TO A FEE PROPOSAL FROM THE OWNER PAGE (kanban #462): signed here with that dev client's own key
+        // (BIP340 over the approval's id, its x-only key), kept only for a fee proposal this seat holds (funding-book.js: 404 otherwise),
+        // and handed on to the seats this node knows
+        if (url.pathname === '/owner/dev/fee-answer') {
+          const a = owner.authorize(body, 'dev/fee-answer');
+          if (!a.ok) return answer(a.status || 401, a);
+          if (!devClients || !fundingBook) return answer(501, { ok: false, why: 'this node runs no dev clients or keeps no fee proposals' });
+          const args = body.args || {};
+          const k = devClients.keyOf(args.slug);
+          if (!k) return answer(404, { ok: false, why: 'no such dev client on this node' });
+          if (!/^[0-9a-f]{64}$/.test(String(args.proposalId || ''))) return answer(400, { ok: false, why: 'name the fee proposal by its id' });
+          const secret = fromHex(k.secretHex);
+          const ap = { proposalId: fromHex(String(args.proposalId)), dev: schnorr.getPublicKey(secret), approve: !!args.approve };
+          const hex = toHex(encodeFeeApproval(ap)) + toHex(schnorr.sign(feeApprovalId(ap), secret));
+          const r = await fundingBook.add('fee-approval', hex);
+          if (r.ok && r.fresh) forwardFunding('fee-approval', hex);
+          return answer(r.ok ? 200 : (r.status || 400), r);
+        }
         if (url.pathname === '/owner/settings') { const r = owner.settings(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/stay') { const r = owner.stay(body); return answer(r.ok ? 200 : r.status, r); }
         if (url.pathname === '/owner/login') {
@@ -6870,7 +6888,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/fees') {
         let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        // ?height=H: the set in force at that height too - a round's census height, what a joining page pays its entry with
+        const asked = url.searchParams.has('height') ? Number(url.searchParams.get('height')) : null;
         return res.end(JSON.stringify({ tip: height, inForce: feesAtHeight(height), today: FEES_TODAY,
+          ...(Number.isInteger(asked) && asked >= 0 ? { height: asked, atHeight: feesAtHeight(asked) } : {}),
+          schedule: fundingBook ? fundingBook.schedule : null,
           limits: Object.fromEntries(Object.entries(FEES).map(([k, f]) => [k, { min: f.min, max: f.max, today: f.today, donation: !!f.donation }])),
           sums: { roundMaxBps: ROUND_TOTAL_MAX_BPS, itemPct: ITEM_TOTAL_PCT, marketMaxBps: MARKET_TOTAL_MAX_BPS },
           proposals: fundingBook ? fundingBook.feeList(height) : [] }));
