@@ -927,6 +927,10 @@ const TYPE_DONATION_PROPOSAL = 0x2b;
 const TYPE_DONATION_APPROVAL = 0x2c;
 // A SET OF KEYS WHOSE ENTRIES MAY VEST (§27A.4.1, kanban #382): a set without vesting keeps TYPE_DONATION_SET_KEYS and its id
 const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
+/** PROJECT FUNDING PROPOSALS (§27A.9.3, kanban #397 slice 6): a proposal signed by a bonded node, a comment signed by anyone, a node's signal. */
+const TYPE_FUNDING_PROPOSAL = 0x2e;
+const TYPE_FUNDING_COMMENT = 0x2f;
+const TYPE_FUNDING_SIGNAL = 0x30;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -999,6 +1003,9 @@ const TAG = {
   // §27A.4.1 (kanban #382): what a developer proposes and what each recipient signs
   donationProposal: 'ARENA/v1/DonationProposal',
   donationApproval: 'ARENA/v1/DonationApproval',
+  fundingProposal: 'ARENA/v1/FundingProposal',
+  fundingComment: 'ARENA/v1/FundingComment',
+  fundingSignal: 'ARENA/v1/FundingSignal',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
@@ -23880,6 +23887,82 @@ async function fetchReservesTotal({ nodes, needed = 5, fetcher = (u, o) => fetch
   return { ok: true, totalMsat: BigInt(best[0]), entries: Number(a.entries) || 0, paidIn: Array.isArray(a.paidIn) ? a.paidIn : [], agreeing: best[1].n, asked: asked.length };
 }
 
+// THE PAYMENTS OUT OF THE RESERVES ON THE PAGE (§27A.9.3, kanban #397, the owner 2026-10-17: "Yes. I agree with the payments-out plan"):
+// each node's payout records (GET /reserve-payouts) and its proposals with their votes (GET /funding). A payment out is shown only
+// when `needed` nodes list the same record, and - unless it is a drained federation's move, which no vote decides - only when as
+// many of them hold its proposal's bond-weighted vote as passed; a payout without that is never a payment here, it is an
+// inconsistency. A passed vote with no payout shown is listed as pending, so a passed vote is never silently missing.
+const OUT_STATUS = { PAID: 'paid', SENT: 'sent', REFUNDED: 'refunded to the reserves', SHORT: 'short', CLAIMED: 'moved' };
+const recordTag = (x) => { const p = x.plan || {};
+  return JSON.stringify([String(x.proposal || '').toLowerCase(), x.state, p.kind || 'payout', String(x.federation || '').toLowerCase(), p.to || null, String(p.amountSats ?? ''),
+    p.lnurl || null, x.txid || null, x.preimage || null, x.refundTxid || null, x.claimTxid || null]); };
+
+/**
+ * What the nodes' answers agree on. `answers` [{ payouts: [...] (GET /reserve-payouts), proposals: [...] (GET /funding) }], one per node
+ * that answered both. Answers { ok, out: [{ kind, proposal, purpose, lnurl, to, federation, amountSats, status, vote, preimage, txid,
+ * agreeing }], pending: [{ proposal, purpose, lnurl, amountSats, vote }], inconsistent: [{ proposal, why }], agreeing, asked } or why not.
+ */
+function reservesPaymentsOut({ answers, needed = 5, asked = answers.length }) {
+  if (answers.length < needed) return { ok: false, why: `only ${answers.length} of ${asked} nodes answered the payments out, and ${needed} must`, asked };
+  const recs = new Map(), passed = new Map(), info = new Map(), sets = new Map();
+  for (const a of answers) {
+    const mine = new Set();
+    for (const x of a.payouts || []) { const t = recordTag(x); if (mine.has(t)) continue; mine.add(t);
+      const had = recs.get(t) || { n: 0, x }; had.n++; recs.set(t, had); }
+    const fp = [...mine].sort().join('|'); sets.set(fp, (sets.get(fp) || 0) + 1);
+    for (const p of a.proposals || []) {
+      const id = String(p.id || '').toLowerCase();
+      if (!info.has(id)) info.set(id, p);
+      if (!(p.vote && p.vote.state === 'passed')) continue;
+      const c = p.vote.count || {};
+      const t = JSON.stringify([id, c.turnoutPct ?? null, c.approvalPct ?? null]);
+      const had = passed.get(t) || { n: 0, id, turnoutPct: c.turnoutPct ?? null, yesPct: c.approvalPct ?? null }; had.n++; passed.set(t, had);
+    }
+  }
+  const votes = new Map();
+  for (const v of passed.values()) if (v.n >= needed && !votes.has(v.id)) votes.set(v.id, { turnoutPct: v.turnoutPct, yesPct: v.yesPct, agreeing: v.n });
+  const out = [], inconsistent = [], paidFor = new Set();
+  for (const { n, x } of recs.values()) {
+    if (n < needed) continue;
+    const p = x.plan || {}, id = String(x.proposal || '').toLowerCase(), move = p.kind === 'move';
+    if (x.state === 'PLANNED') continue;
+    const vote = move ? null : votes.get(id);
+    if (!move && !vote) { inconsistent.push({ proposal: id, why: `${n} nodes list a payout (${x.state}) for proposal ${id.slice(0, 8)}, and its vote has not passed on ${needed} of them` }); continue; }
+    const prop = info.get(id) || {};
+    if (!move) paidFor.add(id);
+    out.push({ kind: move ? 'move' : 'payout', proposal: id, purpose: move ? `moved from federation ${String(x.federation || '').slice(0, 8)}` : (prop.purpose || ''),
+      lnurl: move ? null : (p.lnurl || prop.lnurl || null), to: move ? String(p.to || '') : null, federation: String(x.federation || ''),
+      amountSats: String(p.amountSats ?? prop.amountSats ?? ''), status: OUT_STATUS[x.state] || String(x.state).toLowerCase(), vote,
+      preimage: x.preimage || null, txid: x.claimTxid || x.txid || null, agreeing: n });
+  }
+  const pending = [...votes.entries()].filter(([id]) => !paidFor.has(id)).map(([id, vote]) => { const p = info.get(id) || {};
+    return { proposal: id, purpose: p.purpose || '', lnurl: p.lnurl || null, amountSats: String(p.amountSats ?? ''), vote }; });
+  return { ok: true, out, pending, inconsistent, agreeing: Math.max(0, ...sets.values()), asked };
+}
+
+/** The same, from the network's nodes: GET /reserve-payouts and GET /funding on each; a node that does not answer both counts for nothing. */
+async function fetchReservesPaymentsOut({ nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000 } = {}) {
+  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
+  const got = await Promise.all(asked.map(async (base) => {
+    try {
+      const [a, b] = await Promise.all(['/reserve-payouts', '/funding'].map((p) => fetcher(`${base}${p}`, { signal: AbortSignal.timeout(timeoutMs) })));
+      if (!a.ok || !b.ok) return null;
+      const [x, y] = [await a.json(), await b.json()];
+      return Array.isArray(x.payouts) && Array.isArray(y.proposals) ? { payouts: x.payouts, proposals: y.proposals } : null;
+    } catch { return null; }
+  }));
+  return reservesPaymentsOut({ answers: got.filter(Boolean), needed, asked: asked.length });
+}
+
+/** One line per payment out, as the page lists it. */
+function paymentOutLine(o) {
+  const vote = o.vote ? ` · vote ${o.vote.turnoutPct} % turnout, ${o.vote.yesPct} % YES` : '';
+  const proof = o.preimage ? ` · preimage ${String(o.preimage).slice(0, 16)}…` : '';
+  const tx = o.txid ? ` · tx ${String(o.txid).slice(0, 16)}…` : '';
+  if (o.kind === 'move') return `${o.purpose} to federation ${String(o.to).slice(0, 8)} · ${Number(o.amountSats).toLocaleString('en-US')} sat · ${o.status}${tx}`;
+  return `${o.purpose} · ${o.lnurl} · ${Number(o.amountSats).toLocaleString('en-US')} sat · ${o.status}${vote}${proof}${tx}`;
+}
+
 // ---- arena-client/src/backup-gate.js
 // THE BACKUP WARNING (§24B, as ruled 2026-09-21 20:01): nothing is refused, and the player is told.
 //
@@ -31862,7 +31945,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,

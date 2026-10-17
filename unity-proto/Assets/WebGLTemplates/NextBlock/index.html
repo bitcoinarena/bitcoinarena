@@ -405,6 +405,8 @@
     #arena-games .reserves summary { cursor: pointer; color: #c9d1d9; }
     #arena-games .reserves summary b { color: #f7931a; font-weight: 700; }
     #arena-games .reserves ol { margin: 8px 0 0; padding-left: 20px; }
+    #arena-games .reserves .out-head { margin: 10px 0 0; color: #c9d1d9; }
+    #arena-games .reserves ol.out li { overflow-wrap: anywhere; }
     #arena-games.compact h2 { padding-right: 84px; }
     #arena-games.compact .grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
     @media (min-width: 560px) { #arena-games.compact .grid { grid-template-columns: repeat(3, 1fr); } }
@@ -6620,6 +6622,22 @@
       if (!r.paidIn.length) { const li = document.createElement('li'); li.textContent = 'No payments in yet: they start with the first paid round of protocol version 11.'; list.append(li); }
       d.append(s, list); box.append(d); box.hidden = false;
       console.log('[arena] reserves: ' + sat(r.totalMsat) + ', ' + r.entries + ' payment(s) in, ' + r.agreeing + ' of ' + r.asked + ' nodes agree');
+      // PAYMENTS OUT (§27A.9.3, kanban #397): payouts of passed funding proposals and drained federations' moves, under the payments
+      // in - each shown only when five nodes list it, a payout only with its passed vote; a passed vote without one is pending
+      if (!BLWPCLIENT.fetchReservesPaymentsOut) return;
+      let o;
+      try { o = await BLWPCLIENT.fetchReservesPaymentsOut({ nodes }); } catch (e) { o = { ok: false, why: e.message }; }
+      window.ARENA_PAYMENTS_OUT = o.ok ? { out: o.out.length, pending: o.pending.length, inconsistent: o.inconsistent, agreeing: o.agreeing, asked: o.asked } : { why: o.why };
+      const h = document.createElement('p'); h.className = 'out-head';
+      const outs = document.createElement('ol'); outs.className = 'out';
+      if (!o.ok) { h.textContent = 'Payments out: ' + o.why; d.append(h); return; }
+      h.textContent = 'Payments out' + (o.out.length || o.pending.length ? '' : ': none yet') + ' · ' + o.agreeing + ' of ' + o.asked + ' nodes agree';
+      for (const x of o.out) { const li = document.createElement('li'); li.textContent = BLWPCLIENT.paymentOutLine(x); outs.append(li); }
+      for (const x of o.pending) { const li = document.createElement('li');
+        li.textContent = x.purpose + ' · ' + x.lnurl + ' · ' + Number(x.amountSats).toLocaleString('en-US') + ' sat · vote passed – payout pending'; outs.append(li); }
+      d.append(h, outs);
+      for (const x of o.inconsistent) console.warn('[arena] payments out: ' + x.why);
+      console.log('[arena] payments out: ' + o.out.length + ' out, ' + o.pending.length + ' pending, ' + o.agreeing + ' of ' + o.asked + ' nodes agree');
     }
     // A GAME'S CLIENT THAT IS NOT ITS MANIFEST'S IS NOT RUN, and the player is told why, with the way back to the games
     function gameNotLoaded(e) {
