@@ -48,9 +48,9 @@ test('the panel sits under the fees on bitcoin-arena.io, and the games screen ca
   assert.equal(/more-sep"> · <\/span><a href="https:\/\/bitcoin-arena.io\/">/.test(GAMES), false, 'no "← bitcoin-arena.io" in the footer links');
 });
 
-test('the website and the docs say the protocol 11 split, the reserves and that anyone may propose a payout', () => {
+test('the website and the docs say the current split, the reserves and that anyone may propose a payout', () => {
   const DOCS = readFileSync(new URL('../../../deploy/doc-site/www/index.html', import.meta.url), 'utf8');
-  assert.match(HTML, /aria-label="A paid stake on protocol 11: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves"/);
+  assert.match(HTML, /aria-label="A paid stake: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves"/);
   assert.match(HTML, /<b>Anyone<\/b> can propose a payout/);
   for (const id of ['money', 'reserves', 'proposals']) assert.ok(DOCS.includes(`id="${id}"`), `docs section #${id}`);
   assert.match(DOCS, /<b>Anyone can propose a payout<\/b>/);
@@ -60,12 +60,21 @@ test('the website and the docs say the protocol 11 split, the reserves and that 
   assert.equal(readFileSync(new URL('../../../deploy/home-site/www/docs/index.html', import.meta.url), 'utf8'), DOCS, 'the homepage\'s /docs copy is the same page');
 });
 
-test('the homepage has a Project proposals section: the five rules, the key, the list and the propose form, run by js/proposals.js', () => {
-  const a = HTML.indexOf('<section id="proposals"'), b = HTML.indexOf('<section id="build"');
-  assert.ok(a > HTML.indexOf('<section id="split"') && a < b, 'after the fees, before Build');
-  const sec = HTML.slice(a, b);
+test('the website names only the current configuration; the proposals forum is its own page beside the Arena, on the player key', () => {
+  const GAMES_PAGE = readFileSync(new URL('games/index.html', HOME), 'utf8');
+  for (const page of [HTML, GAMES_PAGE]) {
+    assert.equal(/protocol 11|Protocol 11|versions? before|optional donations? of 2\.5/.test(page), false, 'no protocol version or older terms');
+  }
+  assert.ok(GAMES_PAGE.includes('<s>nodes 4 %</s><s>protocol developers 2 %</s><s>you 2 %</s><s>reserves 2 %</s>'));
+  assert.equal(HTML.includes('<section id="proposals"'), false, 'no proposals section on the homepage');
+  assert.ok(HTML.includes('<a href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a>'));
+  const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
+  const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
   for (const t of ['bonds at least 3 months old that stay locked at least 3 months after the vote', '60% of the votes say YES, and YES is at least 20% of everyone who could vote',
-    'at most 10% of the reserves per proposal, 25% per 3 months', 'class="p-list"', 'class="p-propose', 'Use my nsec']) assert.ok(sec.includes(t), t);
-  assert.ok(HTML.includes('<a href="#proposals">Proposals</a>'));
-  assert.ok(HTML.includes('<script src="js/proposals.js" defer></script>'));
+    'at most 10% of the reserves per proposal, 25% per 3 months', 'Use my Arena key', 'Use my nsec', '<script src="/proposals/forum.js" defer></script>']) assert.ok(FORUM.includes(t), t);
+  assert.match(JS, /BLWPCLIENT\.itemsKeyFor\(/, 'signs with the player items key of the kept wallet phrase');
+  assert.match(JS, /localStorage\.getItem\('arena\.seeds'\)/);
+  assert.match(JS, /var CAP_PCT = 10;/);
+  assert.match(JS, /it could never be paid/, 'an amount over 10 % of the reserves is refused before posting');
+  assert.match(readFileSync(new URL('proposals/index.html', HOME), 'utf8'), /url=https:\/\/testnet\.bitcoin-arena\.io\/proposals\//, 'bitcoin-arena.io/proposals sends readers there');
 });
