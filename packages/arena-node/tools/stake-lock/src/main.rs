@@ -282,7 +282,12 @@ async fn main() -> anyhow::Result<()> {
         // THE SLASH'S PAYOUTS (kanban #307, spec §5A.3B): each wronged player's share, from the arbiter's own e-cash (the escrow
         // it pegged in), as a settlement pays a qualifier - a pre-expired lock only that player's key ever moves
         "pay" => pay(&a, &client, lnv2, &api).await,
-        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay or id"),
+        // THE PROTOCOL RESERVES MOVED BETWEEN FEDERATIONS (kanban #397, the owner 2026-10-17 decision A: "Add the two receive-and-claim
+        // modes to the stake-lock tool"): an invoice of a gateway of THIS federation whose incoming contract only the destination's
+        // reserve key - a 5-of-7 key nobody holds alone - can claim; and that claim, FROST-signed by the seats, into a reserve output
+        "receive-to-key" => receive_to_key(&a, &client, lnv2).await,
+        "claim-incoming" => claim_incoming(&a, &client, lnv2, &api).await,
+        other => bail!("no mode {other}: lock, redeem, settle, status, fees, guardians, gateways, send, serve, pegin-address, pegin-claim, pay, receive-to-key, claim-incoming or id"),
     }
 }
 
@@ -917,5 +922,127 @@ async fn pegin_claim(a: &Args, client: &ClientHandle) -> anyhow::Result<()> {
     let mut after = client.get_balance_for_btc().await?;
     for _ in 0..30 { if after > before { break; } tokio::time::sleep(std::time::Duration::from_secs(1)).await; after = client.get_balance_for_btc().await?; }
     println!("{}", serde_json::json!({ "mode": "pegin-claim", "kind": kind, "balance_before_msat": before.msats, "balance_after_msat": after.msats }));
+    Ok(())
+}
+
+/// --mode receive-to-key --data-dir D --claim-pk HEX --amount-msat N --seed HEX32 --gateway URL [--expiry-secs S] [--description T]
+/// (kanban #397, the drained-federation move): an LNv2 incoming contract of THIS federation, as the stock client's receive builds
+/// one (lnv2-client create_contract_and_fetch_invoice), with three differences: its `claim_pk` is the given key - the destination's
+/// 5-of-7 reserve key, not a tweak of this client's own key; its encryption seed is given (the move's own, so every seat rebuilds
+/// the same contract) and its preimage is that seed's hash; its ephemeral key is the claim key (no ECDH: nobody derives a key from
+/// it). The gateway is asked for the invoice of exactly --amount-msat; the contract carries that less the gateway's receive fee.
+/// Prints the invoice, its payment hash, the contract id and the contract itself (consensus-encoded hex) for --mode claim-incoming.
+async fn receive_to_key(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId) -> anyhow::Result<()> {
+    use fedimint_core::encoding::Encodable;
+    use fedimint_lnv2_common::Bolt11InvoiceDescription;
+    use fedimint_lnv2_common::contracts::IncomingContract;
+    use fedimint_lnv2_common::gateway_api::{GatewayConnection, RealGatewayConnection};
+    let claim_pk = PublicKey::from_str(need(a, "claim-pk")?)?;
+    let amount = Amount::from_msats(need(a, "amount-msat")?.parse()?);
+    let seed: [u8; 32] = hex_bytes(need(a, "seed")?)?.try_into().map_err(|_| anyhow!("--seed is 32 bytes"))?;
+    let expiry_secs: u32 = a.get("expiry-secs").map_or(Ok(86400), |s| s.parse())?;
+    let gateway = fedimint_core::util::SafeUrl::parse(need(a, "gateway")?)?;
+    let config = client.config().await;
+    let cfg = config.modules.get(&lnv2).context("no lnv2 config")?.cast::<LightningClientConfig>()?;
+    let lnv2c = client.get_first_module::<fedimint_lnv2_client::LightningClientModule>()?;
+    let info = lnv2c.routing_info(&gateway).await.map_err(|e| anyhow!("the gateway did not answer: {e:?}"))?
+        .context("the gateway answered that it does not serve this federation")?;
+    let contract_amount = info.receive_fee.subtract_from(amount.msats);
+    if contract_amount < fedimint_lnv2_common::MINIMUM_INCOMING_CONTRACT_AMOUNT {
+        bail!("{} msat less the gateway's receive fee is below the federation's smallest incoming contract", amount.msats);
+    }
+    let preimage: [u8; 32] = seed.consensus_hash::<sha256::Hash>().to_byte_array();
+    let payment_hash: sha256::Hash = preimage.consensus_hash();
+    let expiration = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs().saturating_add(u64::from(expiry_secs));
+    let contract = IncomingContract::new(cfg.tpe_agg_pk, seed, preimage, PaymentImage::Hash(payment_hash), contract_amount, expiration,
+        claim_pk, info.module_public_key, claim_pk);
+    let connectors = ConnectorRegistry::build_from_client_defaults().with_env_var_overrides()?.bind().await?;
+    let conn = RealGatewayConnection { api: fedimint_lnv2_common::GatewayApi::new(None, connectors) };
+    let description = a.get("description").cloned().unwrap_or_else(|| "Bitcoin Arena protocol reserves".to_owned());
+    let invoice = conn.bolt11_invoice(gateway.clone(), client.federation_id(), contract.clone(), amount, Bolt11InvoiceDescription::Direct(description), expiry_secs)
+        .await.map_err(|e| anyhow!("the gateway made no invoice: {e:?}"))?;
+    if invoice.payment_hash().to_byte_array() != payment_hash.to_byte_array() { bail!("the gateway's invoice names another payment hash"); }
+    if invoice.amount_milli_satoshis() != Some(amount.msats) { bail!("the gateway's invoice asks another amount"); }
+    println!("{}", serde_json::json!({
+        "mode": "receive-to-key", "federation_id": client.federation_id().to_string(), "gateway": gateway.to_string(),
+        "invoice": invoice.to_string(), "payment_hash": payment_hash.to_string(), "amount_msat": amount.msats,
+        "contract_amount_msat": contract_amount.msats, "receive_fee_msat": amount.msats - contract_amount.msats,
+        "expiration": expiration, "claim_pk": claim_pk.to_string(), "contract_id": contract.contract_id().0.to_string(),
+        "contract_hex": hex(&contract.consensus_encode_to_vec()),
+    }));
+    Ok(())
+}
+
+/// --mode claim-incoming --data-dir D --contract HEX --seed HEX32 --payout-pk HEX --nonce HEX8 [--signature HEX] [--wait-s S]
+/// (kanban #397): the incoming contract --mode receive-to-key made, once a gateway funded it (the guardians answer its outpoint),
+/// claimed into ONE pre-expired output to --payout-pk (the destination's reserve key: only its 5-of-7 ever moves it), the largest the
+/// contract pays for after the guardians' fees. The guardians want the decryption key - derived here from the seed, checked against
+/// the contract - and the transaction signed by the contract's claim key. Without --signature this prints the 32 bytes to sign (the
+/// txid) and the payout; with one it submits, as --mode settle does.
+async fn claim_incoming(a: &Args, client: &ClientHandle, lnv2: ModuleInstanceId, api: &DynModuleApi) -> anyhow::Result<()> {
+    use fedimint_core::encoding::Decodable;
+    use fedimint_core::module::registry::ModuleDecoderRegistry;
+    use fedimint_lnv2_common::contracts::IncomingContract;
+    use fedimint_lnv2_common::endpoint_constants::AWAIT_INCOMING_CONTRACT_ENDPOINT;
+    let contract = IncomingContract::consensus_decode_whole(&hex_bytes(need(a, "contract")?)?, &ModuleDecoderRegistry::default())
+        .map_err(|e| anyhow!("that is no incoming contract: {e}"))?;
+    let seed: [u8; 32] = hex_bytes(need(a, "seed")?)?.try_into().map_err(|_| anyhow!("--seed is 32 bytes"))?;
+    let payout_pk = PublicKey::from_str(need(a, "payout-pk")?)?;
+    let nonce: [u8; 8] = hex_bytes(need(a, "nonce")?)?.try_into().map_err(|_| anyhow!("--nonce is 8 bytes"))?;
+    let config = client.config().await;
+    let cfg = config.modules.get(&lnv2).context("no lnv2 config")?.cast::<LightningClientConfig>()?;
+    let fee = cfg.fee_consensus.clone();
+    let agg_dk = tpe::derive_agg_dk(&cfg.tpe_agg_pk, &seed);
+    if !contract.verify_agg_decryption_key(&cfg.tpe_agg_pk, &agg_dk) { bail!("that seed is not the one this contract was made with"); }
+    let preimage = contract.decrypt_preimage(&agg_dk).context("the contract's preimage does not decrypt with that seed")?;
+    // WHAT THE CONTRACT COMMITS TO, for a signer that checks a move before it pays the invoice: whose key claims it, its payment hash
+    let commitment = serde_json::json!({ "claim_pk": contract.commitment.claim_pk.to_string(), "refund_pk": contract.commitment.refund_pk.to_string(),
+        "payment_hash": match &contract.commitment.payment_image { PaymentImage::Hash(h) => h.to_string(), PaymentImage::Point(p) => p.to_string() },
+        "amount_msat": contract.commitment.amount.msats, "expiration": contract.commitment.expiration_or_fee });
+    // FUNDED? the guardians answer the contract's outpoint once a gateway funded it (they wait until its expiration; this waits --wait-s)
+    let wait = Duration::from_secs(a.get("wait-s").map_or(Ok(30), |s| s.parse())?);
+    let req = api.request_current_consensus::<Option<OutPoint>>(AWAIT_INCOMING_CONTRACT_ENDPOINT.to_string(),
+        ApiRequestErased::new((contract.contract_id(), contract.commitment.expiration_or_fee)));
+    let outpoint = match tokio::time::timeout(wait, req).await {
+        Err(_) => { println!("{}", serde_json::json!({ "mode": "claim-incoming", "funded": false, "contract_id": contract.contract_id().0.to_string(),
+            "commitment": commitment, "why": format!("no gateway funded it within {}s", wait.as_secs()) })); return Ok(()); }
+        Ok(got) => got?.context("the contract expired unfunded")?,
+    };
+    let amount = contract.commitment.amount;
+    let spendable = amount.msats - fee.fee(amount).msats;
+    let mut out = spendable;
+    while out > 0 && out + fee.fee(Amount::from_msats(out)).msats > spendable { out -= 1; }
+    if out == 0 { bail!("the contract pays for no output after the guardians' fees"); }
+    let payout = OutgoingContract {
+        payment_image: PaymentImage::Hash(sha256::Hash::from_byte_array([0u8; 32])),
+        amount: Amount::from_msats(out), expiration: 0, claim_pk: payout_pk, refund_pk: payout_pk, ephemeral_pk: payout_pk,
+    };
+    let inputs = vec![LightningInput::V0(LightningInputV0::Incoming(outpoint, agg_dk)).into_dyn(lnv2)];
+    let outputs = vec![LightningOutput::V0(LightningOutputV0::Outgoing(payout.clone())).into_dyn(lnv2)];
+    let txid = Transaction::tx_hash_from_parts(&inputs, &outputs, nonce);
+    let mut report = serde_json::json!({
+        "mode": "claim-incoming", "funded": true, "contract_id": contract.contract_id().0.to_string(), "commitment": commitment,
+        "outpoint": format!("{}:{}", outpoint.txid, outpoint.out_idx), "contract_amount_msat": amount.msats,
+        "preimage": hex(&preimage), "txid": txid.to_string(), "message_hex": hex(&txid[..]),
+        "payout": { "out_idx": 0, "pk": payout_pk.to_string(), "msat": out, "contract_id": payout.contract_id().0.to_string() },
+        "fee_ppm": fee.parts_per_million, "fee_base_msat": fee.base.msats,
+    });
+    let Some(sig_hex) = a.get("signature") else { println!("{report}"); return Ok(()); };
+    let signature = Signature::from_slice(&hex_bytes(sig_hex)?)?;
+    let verifies = SECP256K1.verify_schnorr(&signature, &Message::from_digest_slice(&txid[..])?, &contract.commitment.claim_pk.x_only_public_key().0).is_ok();
+    if !verifies { bail!("that signature is not the contract's claim key's over this claim"); }
+    let tx = Transaction { inputs, outputs, nonce, signatures: TransactionSignature::NaiveMultisig(vec![signature]) };
+    let outcome = client.api().submit_transaction(tx).await.try_into_inner(client.decoders())
+        .map_err(|e| anyhow!("the guardians' answer did not decode: {e}"))?;
+    let (accepted, error) = match outcome.0 { Ok(_) => (true, None), Err(e) => (false, Some(e.to_string())) };
+    let at = OutPoint { txid, out_idx: 0 };
+    let mut stored = stored_at(api, at).await?;
+    let started = std::time::Instant::now();
+    while accepted && stored.is_none() && started.elapsed() < Duration::from_secs(60) { tokio::time::sleep(Duration::from_millis(500)).await; stored = stored_at(api, at).await?; }
+    let obj = report.as_object_mut().expect("an object");
+    obj.insert("accepted".into(), accepted.into());
+    obj.insert("error".into(), error.into());
+    obj.insert("payout_stored".into(), stored_json(stored));
+    println!("{report}");
     Ok(())
 }

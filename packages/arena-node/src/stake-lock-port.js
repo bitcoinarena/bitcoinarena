@@ -192,6 +192,27 @@ export function stakeLockPort({ bin, dataDir, readDataDir = dataDir, timeoutMs =
       return { contractId: String(j.contract_id), message: fromHex(String(j.auth_message_hex)),
         sent: j.sent === true, preimage: j.preimage ? fromHex(String(j.preimage)) : null, why: j.why || null };
     },
+    /**
+     * THE RESERVES' MOVE INTO THIS FEDERATION (kanban #397, decision A): an invoice of `gateway` whose incoming contract only
+     * `claimPk` - the destination's 5-of-7 reserve key - can claim, its preimage the hash of `seed` (the move's own).
+     */
+    async receiveToKey({ claimPk, amountMsat, seed, gateway, expirySecs = 86400 }) {
+      const j = await run(bin, ['--mode', 'receive-to-key', '--data-dir', dataDir, '--claim-pk', toHex(claimPk), '--amount-msat', String(amountMsat),
+        '--seed', toHex(seed), '--gateway', String(gateway), '--expiry-secs', String(expirySecs)], timeoutMs);
+      return { invoice: String(j.invoice), paymentHash: String(j.payment_hash), amountMsat: BigInt(j.amount_msat), contractAmountMsat: BigInt(j.contract_amount_msat),
+        contractId: String(j.contract_id), contractHex: String(j.contract_hex), claimPk: String(j.claim_pk), expiration: Number(j.expiration) };
+    },
+    /**
+     * AND ITS CLAIM: what the contract commits to (whoever asks, with `waitS` 0 nothing is waited for), and once a gateway funded it,
+     * the claim into one pre-expired output to `payoutPk` - without `signature` its 32 bytes to sign, with one submitted.
+     */
+    async claimIncoming({ contractHex, seed, payoutPk, nonce, signature = null, waitS = 30 }) {
+      const j = await run(bin, ['--mode', 'claim-incoming', '--data-dir', dataDir, '--contract', String(contractHex), '--seed', toHex(seed), '--payout-pk', toHex(payoutPk),
+        '--nonce', toHex(nonce), '--wait-s', String(waitS), ...(signature ? ['--signature', toHex(signature)] : [])], settleTimeoutMs);
+      return { funded: j.funded === true, commitment: j.commitment || null, contractId: String(j.contract_id), outpoint: j.outpoint || null,
+        txid: j.txid || null, message: j.message_hex || null, payout: j.payout || null, preimage: j.preimage || null,
+        accepted: j.accepted === true, error: j.error || null, why: j.why || null };
+    },
     /** The guardians' own LNv2 fee rule, off the federation's config (W4). */
     fees() { return feesKept(); },
     async feesRead() {
