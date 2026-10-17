@@ -20,7 +20,7 @@ import { decodeAttestation, attestationStands, attestationBodyId } from '../../a
 import { marketOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { entryFeeMsat, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
 import { termsOfKnownGame } from '../../arena-protocol/src/known-game.js';
-import { encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
+import { encodeEntryContract, entryId, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { handLock } from './page-lock.js';
 import { cancelId, sellId, PRICE_SCALE } from '../../arena-protocol/src/order-book.js';
@@ -376,3 +376,24 @@ export function orderCancelId({ roundId, entryId }) { return cancelId({ roundId,
 export function orderSellId({ roundId, entryId, outcome, price, sharesMsat, nonce }) { return sellId({ roundId, entryId, outcome, price, sharesMsat, nonce }); }
 /** The order book's price scale: a limit price of PRICE_SCALE is certainty (1 sat per share). */
 export const ORDER_PRICE_SCALE = Number(PRICE_SCALE);
+
+/**
+ * MY ORDERS, FROM THE SEATS (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and still no closed
+ * orders"; "Have the open orders from the nodes not from local storage"): of a round's entries as its signer seats hold them
+ * (`entries`: [{ idHex, bytes }], from GET /book's positions and resting buys, each fetched by GET /entry), the ones whose player key
+ * is one this wallet makes for that round - `keys`: Map(player key hex -> order index), playerFor(round, seed, order) - read back
+ * as orders: [{ entryIdHex, orderIndex, pick, limitPrice, orderExpiryMs, stakeMsat }]. An entry that does not decode, or is checked
+ * under another id than the one it was asked by, is skipped.
+ */
+export function myOrdersFromEntries({ entries, keys }) {
+  const out = [];
+  for (const { idHex, bytes } of entries || []) {
+    let e;
+    try { e = decodeEntryContract(bytes); } catch { continue; }
+    if (toHex(entryId(e)) !== String(idHex).toLowerCase()) continue;
+    const order = keys.get(toHex(e.playerPubkey));
+    if (order === undefined || e.limitPrice === undefined) continue;
+    out.push({ entryIdHex: toHex(entryId(e)), orderIndex: order, pick: e.pick, limitPrice: Number(e.limitPrice), orderExpiryMs: String(e.orderExpiryMs || 0n), stakeMsat: String(e.stakeMsat) });
+  }
+  return out;
+}

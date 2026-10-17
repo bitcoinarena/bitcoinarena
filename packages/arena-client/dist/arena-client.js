@@ -31882,6 +31882,27 @@ function orderSellId({ roundId, entryId, outcome, price, sharesMsat, nonce }) { 
 /** The order book's price scale: a limit price of PRICE_SCALE is certainty (1 sat per share). */
 const ORDER_PRICE_SCALE = Number(PRICE_SCALE);
 
+/**
+ * MY ORDERS, FROM THE SEATS (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and still no closed
+ * orders"; "Have the open orders from the nodes not from local storage"): of a round's entries as its signer seats hold them
+ * (`entries`: [{ idHex, bytes }], from GET /book's positions and resting buys, each fetched by GET /entry), the ones whose player key
+ * is one this wallet makes for that round - `keys`: Map(player key hex -> order index), playerFor(round, seed, order) - read back
+ * as orders: [{ entryIdHex, orderIndex, pick, limitPrice, orderExpiryMs, stakeMsat }]. An entry that does not decode, or is checked
+ * under another id than the one it was asked by, is skipped.
+ */
+function myOrdersFromEntries({ entries, keys }) {
+  const out = [];
+  for (const { idHex, bytes } of entries || []) {
+    let e;
+    try { e = decodeEntryContract(bytes); } catch { continue; }
+    if (toHex(entryId(e)) !== String(idHex).toLowerCase()) continue;
+    const order = keys.get(toHex(e.playerPubkey));
+    if (order === undefined || e.limitPrice === undefined) continue;
+    out.push({ entryIdHex: toHex(entryId(e)), orderIndex: order, pick: e.pick, limitPrice: Number(e.limitPrice), orderExpiryMs: String(e.orderExpiryMs || 0n), stakeMsat: String(e.stakeMsat) });
+  }
+  return out;
+}
+
 // ---- arena-protocol/src/head-to-head.js
 // HEAD-TO-HEAD ROUNDS (kanban #233, the owner 2026-10-09: "Head-to-head in engine"). A replayed round runs each entry alone, so
 // no entry's result can depend on another player's move; a head-to-head round is decided over all of them at once.
@@ -33022,7 +33043,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
