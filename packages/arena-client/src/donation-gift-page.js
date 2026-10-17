@@ -2,7 +2,7 @@
 // from 100, 500, 1000, 5000 satoshis or custom"; "B e cash"): the player's wallet pays the amount split over a donation set's keys in
 // one federation transaction (paySubmit, the item shop's payment), the donor signs the record (protocol donation-gift.js) and the
 // first seat that keeps it hands it on to every other. Nothing is paid before the split stands; every step that fails says which.
-import { encodeDonationGift, donationGiftId, giftOutputs, GIFT_TO_GAME, GIFT_TO_NETWORK, GIFT_MIN_SAT, GIFT_MAX_SAT } from '../../arena-protocol/src/donation-gift.js';
+import { encodeDonationGift, donationGiftId, giftOutputs, GIFT_TO_GAME, GIFT_TO_NETWORK, GIFT_TO_PLAYER, playerGiftRecipients, GIFT_MIN_SAT, GIFT_MAX_SAT } from '../../arena-protocol/src/donation-gift.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 /** Whether a typed amount is one the popup may pay: a whole number of sat from 1 to 10,000,000. Answers { ok, sat } or { ok: false, why }. */
@@ -23,8 +23,10 @@ export const giftRecipientsLine = (set) => (Array.isArray(set) ? set : []).map((
  * network's set); `recipients` that set; `sat` the amount; `wallet` the player wallet's lock client in `federationId` (hex);
  * `donor` { pubkey, sign }; `seats` the base URLs. Answers { ok, id, txid, sat, outputs, keptBy } or { ok: false, step, why }.
  */
-export async function giftDonation({ game = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
+export async function giftDonation({ game = null, player = null, recipients, sat, wallet, federationId, donor, seats, fetch, nowMs = () => Date.now() }) {
   const no = (step, why) => ({ ok: false, step, why });
+  // A ZAP (kanban #463): the player's identity key is the target and the whole set
+  if (player) { if (!(player instanceof Uint8Array) || player.length !== 32) return no('player', 'a zap names its player by a 32-byte identity key'); recipients = playerGiftRecipients(player); }
   const amt = giftAmountOf(sat); if (!amt.ok) return no('amount', amt.why);
   const totalMsat = BigInt(amt.sat) * 1000n;
   let outs;
@@ -37,7 +39,7 @@ export async function giftDonation({ game = null, recipients, sat, wallet, feder
   } catch (e) { return no('payment', String(e && e.message || e)); }
   const held = accepted.donations || [];
   if (held.length !== outs.length || !held.every((d) => d.ids_match)) return no('payment', 'the federation does not hold the outputs as they were built');
-  const record = { target: game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: game ? game.gameDevPubkey : new Uint8Array(32), gameName: game ? game.gameName : '',
+  const record = { target: player ? GIFT_TO_PLAYER : game ? GIFT_TO_GAME : GIFT_TO_NETWORK, gameDevPubkey: player || (game ? game.gameDevPubkey : new Uint8Array(32)), gameName: !player && game ? game.gameName : '',
     donor: donor.pubkey, federationId: fromHex(federationId), txid: fromHex(submitted.txid), totalMsat,
     outputs: held.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), atMs: BigInt(nowMs()) };
   const id = donationGiftId(record);
@@ -53,3 +55,10 @@ export async function giftDonation({ game = null, recipients, sat, wallet, feder
   if (!keptBy) return { ok: false, step: 'record', why: `paid (transaction ${submitted.txid}), but no seat kept the record yet: ${last}`, txid: submitted.txid, retry: body };
   return { ok: true, id: toHex(id), txid: submitted.txid, sat: amt.sat, outputs: outs.length, keptBy };
 }
+
+/**
+ * A ZAP FROM THE SEASON BOARD (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user not an
+ * external lightning payment, remove the configuration setting"): `sat` from this wallet in `federationId` to the player whose identity
+ * key the board names (32 bytes, `player`), as one payout contract to that key's refund key, recorded on the seats like a gift.
+ */
+export const zapPlayer = ({ player, sat, wallet, federationId, donor, seats, fetch, nowMs }) => giftDonation({ player, sat, wallet, federationId, donor, seats, fetch, nowMs });

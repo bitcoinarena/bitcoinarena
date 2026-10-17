@@ -10,12 +10,21 @@
 // already finds a round's donations, and hands the record on to every seat.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { splitDonation } from './donation.js';
+import { splitDonation, DONATION_BPS_TOTAL } from './donation.js';
+import { refundKeyOf } from './stake-lock.js';
 
 export const TAG_DONATION_GIFT = 'ARENA/v1/DonationGift';
 export const TYPE_DONATION_GIFT = 0x44;          // 'D'
 export const DONATION_GIFT_VERSION = 1;
 export const GIFT_TO_NETWORK = 0, GIFT_TO_GAME = 1;
+/**
+ * A ZAP FROM THE SEASON BOARD (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user not
+ * an external lightning payment"): a gift whose 32-byte target is the player's identity key - the key the board names - and whose
+ * one output is a pre-expired payout contract to refundKeyOf(identity) in the donor's federation, which only that player's page
+ * can spend (its identity secret). No set: the player is the whole of it. The name field stays empty.
+ */
+export const GIFT_TO_PLAYER = 2;
+export const playerGiftRecipients = (identity) => [{ recipientPk: refundKeyOf(identity), shareBps: DONATION_BPS_TOTAL, label: 'player' }];
 /** The amounts the popup offers, in sat (the owner 2026-10-17), and the smallest and largest custom amount. */
 export const GIFT_CHOICES_SAT = Object.freeze([100, 500, 1000, 5000]);
 export const GIFT_MIN_SAT = 1, GIFT_MAX_SAT = 10_000_000;
@@ -27,8 +36,9 @@ const giftIs33 = (b) => b instanceof Uint8Array && b.length === 33;
 const GIFT_ZERO32 = new Uint8Array(32);
 
 export function encodeDonationGift(g) {
-  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME) throw new Error('a gift is to the network\'s developers (0) or a game\'s (1)');
-  const dev = g.target === GIFT_TO_GAME ? g.gameDevPubkey : GIFT_ZERO32;
+  if (g.target !== GIFT_TO_NETWORK && g.target !== GIFT_TO_GAME && g.target !== GIFT_TO_PLAYER) throw new Error('a gift is to the network\'s developers (0), a game\'s (1) or a player (2)');
+  const dev = g.target === GIFT_TO_NETWORK ? GIFT_ZERO32 : g.gameDevPubkey;
+  if (g.target === GIFT_TO_PLAYER && (!giftIs32(dev) || dev.every((b) => b === 0) || g.gameName)) throw new Error('a zap names its player by a 32-byte identity key, and no game');
   const name = g.target === GIFT_TO_GAME ? String(g.gameName || '') : '';
   if (!giftIs32(dev) || (g.target === GIFT_TO_GAME && !name)) throw new Error('a gift to a game names its developer by 32 bytes and its name');
   if (!giftIs32(g.donor) || !giftIs32(g.federationId) || !giftIs32(g.txid)) throw new Error('a gift names its donor, its federation and its transaction by 32 bytes each');
