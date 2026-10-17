@@ -426,3 +426,18 @@ test('a lobby read that got no answer keeps its last open rows; one that answere
   assert.deepEqual(lobbyKeepWhenUnanswered(undefined, { rows: [], unanswered: ['x'] }, now), []);
   assert.deepEqual(lobbyKeepWhenUnanswered([free], { rows: [], refused: [], unanswered: [], pending: true }, now), [free], 'a side still in flight dropped its row');
 });
+
+// A ROUND JUST CLOSED THAT THE SEATS STILL LIST (kanban #452, the owner 2026-10-17: "When I reload the page my open orders are gone and
+// still no closed orders"; "Have the open orders from the nodes"): no row - its entry is closed - but named among `closed` for 2 h,
+// so the page reads a player's orders in it back from its seats and shows their results
+test('a listed round whose entry closed 10 min ago is no row but is named closed; one closed 3 h ago is not', async () => {
+  const closedAt = (msAgo) => BigInt(NOW) - BigInt(msAgo) - MIN_ENTRY_WINDOW_MS - 120000n;
+  const { contracts, id } = roundsOf({ recent: paying({}, closedAt(600000)), old: paying({ slashMinimumServed: 21 }, closedAt(3 * 3600000)), open: paying({ slashMinimumServed: 22 }) });
+  const said = (k) => [listing(k, id.recent, { free: false }), listing(k, id.old, { free: false }), listing(k, id.open, { free: false })];
+  const net = network({ nodes: { [A]: { secret: signerNodeA, rounds: said(signerNodeA) }, [B]: { secret: signerNodeB, rounds: said(signerNodeB) } }, contracts });
+  const got = await fetchLobby({ nodes: [A, B], fetcher: net.fetcher, nowMs: NOW, verify });
+  assert.deepEqual(got.rows.map((r) => r.id), [id.open]);
+  assert.deepEqual(got.closed.map((c) => c.id), [id.recent]);
+  assert.equal(got.closed[0].entryCloseMs, NOW - 600000);
+  assert.equal(toHex(roundId(got.closed[0].contract)), id.recent);
+});

@@ -28141,6 +28141,9 @@ const CONTRACTS = new Map();                     // round id hex -> its contract
 const UNREADABLE = new Map();
 const UNREADABLE_MS = 30000;
 
+/** How long after its entry closes a round the seats still list is named among the lobby's `closed` (kanban #452). */
+const CLOSED_KEPT_MS = 2n * 3600n * 1000n;
+
 async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
   if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
@@ -28188,7 +28191,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
       }
     } catch (e) { refused.push(`${node}: ${e.message}`); failed.push(String(node)); if (e && e.silent) unanswered.push(String(node)); }
   }
-  const rows = [];
+  const rows = [], closed = [];
   // A ROUND'S CONTRACT FROM A NODE THAT ANSWERED FIRST, so a silent one costs its limit once per paint, not once per row.
   const answeredFirst = [...unique.filter((n) => !unanswered.includes(String(n))), ...unique.filter((n) => unanswered.includes(String(n)))];
   // KEPT BY ID, FETCHED 16 AT A TIME (the owner 2026-09-30, testnet4 series 3cfbe516: ~450 rounds listed, each contract
@@ -28201,7 +28204,9 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     const contract = CONTRACTS.get(id);
     if (!contract) continue;
     const now = BigInt(Math.floor(nowMs));
-    if (now >= contract.entryCloseMs) continue;
+    // A ROUND WHOSE ENTRY HAS CLOSED takes no row - but one the seats still list, closed within the last 2 h, is named apart
+    // (kanban #452): a player's orders in it are read back from its seats after a reload, and its result follows
+    if (now >= contract.entryCloseMs) { if (now - contract.entryCloseMs < CLOSED_KEPT_MS) closed.push({ id, contract, entryCloseMs: Number(contract.entryCloseMs) }); continue; }
     const pays = roundPays(contract);
     // NO 2-OF-2 PAYING FEDERATION IS OFFERED (PRIORITIES item 5; the owner 2026-09-27 10:04). One node is one guardian, so
     // a paying round's committee is its federation's guardians - seven, 5 of 7 - and two signer nodes cannot be that.
@@ -28261,7 +28266,7 @@ async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, 
     });
   }
   rows.sort((x, y) => (x.phase === y.phase ? x.entryCloseMs - y.entryCloseMs : (x.phase === 'open' ? -1 : 1)));
-  return { rows, refused, unanswered, failed, asked: unique.length };
+  return { rows, closed, refused, unanswered, failed, asked: unique.length };
 }
 
 /**
