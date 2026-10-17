@@ -2991,14 +2991,20 @@
       for (const p of readPicks()) {
         if (Date.now() < Number(p.entryCloseMs)) continue;
         const had = MARKET_OUTCOMES.get(p.roundIdHex);
-        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified) continue;
+        // THE PICK'S ROW IN THE TABLE (kanban #447, measured live 18:05Z: a seat outside the round's committee answers ATTESTED with
+        // an empty table marked refunded - and the first answer was kept, so a won and a lost order both read "your pick is not in
+        // the signer nodes' table" and stayed "waiting for the result"): every seat asked at once, the answer holding this pick's
+        // entry kept, else the fullest; a final, verified answer is kept for good only once it holds the row
+        const hasRow = (o) => !!(o && o.table && Array.isArray(o.table.rows) && o.table.rows.some((x) => x.entryId === p.entryIdHex));
+        if (had && had.state === 'ATTESTED' && had.final && had.check && had.check.verified && (hasRow(had) || !p.entryIdHex)) continue;
         const market = marketOfPick(p);
         if (!market) continue;
-        for (const n of p.nodes || []) {
+        const answers = (await Promise.all((p.nodes || []).map((n) => fetch(String(n).replace(/\/+$/, '') + '/outcome?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(6000) })
+          .then((r) => (r.ok ? r.json() : null)).catch(() => null)))).filter(Boolean);
+        const rowsOf = (o) => (o && o.table && Array.isArray(o.table.rows) ? o.table.rows.length : -1);
+        const best = answers.find(hasRow) || answers.sort((a, b) => rowsOf(b) - rowsOf(a))[0];
+        for (const o of best ? [best] : []) {
           try {
-            const r = await fetch(String(n).replace(/\/+$/, '') + '/outcome?round=' + p.roundIdHex, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
-            if (!r.ok) continue;
-            const o = await r.json();
             // EVERY KIND CHECKED HERE (kanban #362): an outcome attestation, a scalar market's value attestation, or a market on a
             // game's source result - whose committee this page derives from the chain itself (clientCommittee), never the seats' list
             if (o.attestation || o.gameOutcome) o.check = BLWPCLIENT.checkMarketOutcome ? await BLWPCLIENT.checkMarketOutcome({ outcome: o, market,
