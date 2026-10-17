@@ -102,12 +102,14 @@ export function settlementNonce(roundId) {
 // table the locks are claimed and paid by is `lockActions`' over it, so a split round settles by the split and nothing
 // else here changes: the payouts are the table's rows, scaled to the claimed locks as any table's are.
 export function lockSettlement({ roundId, entries, minScore = 0, locks, fees, feeLocks = new Map(), signerNodes = null, contract = null,
-  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null }) {
+  sends = new Map(), addressed = null, requireSends = false, donationSet = null, payoutShares = null, feeBps = undefined, websitePct = undefined }) {
+  // `feeBps` / `websitePct`: the fees in force at the round (kanban #462, fee-proposal.js) - a version-11 round's node fee and the
+  // website's share of it; unset, today's (4 % and 20 %)
   if (!(locks instanceof Map)) return refuse('the verified stake locks are a Map by player key');
   if (!(feeLocks instanceof Map)) return refuse('the verified fee locks are a Map by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
-  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees });
+  const feePart = feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps, websitePct });
   if (!feePart.ok) return feePart;
   // THE STAKE PART'S VERDICT IS `lockActions`'. A round with losers and nobody to
   // pay is refused there ("the operator would keep ..."), and so its stakes are not
@@ -409,7 +411,7 @@ export function lateSettlementNonce(roundId, entryId) {
  * the first settlement paid nobody, nothing is claimed.
  */
 export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, shares, winnerLocks = new Map(), fees,
-  signerNodes = null, contract = null, sends = new Map(), requireSends = false }) {
+  signerNodes = null, contract = null, sends = new Map(), requireSends = false, feeBps = undefined, websitePct = undefined }) {
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint' || fees.ppm < 0n || fees.baseMsat < 0n)
     return refuse('the guardians\' fee rule is BigInt ppm and base msat, 0 or more');
   if (!entry) return refuse('there is no late entry to settle');
@@ -458,8 +460,8 @@ export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = nu
   }
 
   const feePart = feeLock
-    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees })
-    : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees });
+    ? feeSettlement({ entries: [entry], feeLocks: new Map([[toHex(entry.pubkey), feeLock]]), signerNodes, contract, fees, feeBps, websitePct })
+    : feeSettlement({ entries: [entry], feeLocks: new Map(), signerNodes, contract, fees, feeBps, websitePct });
   if (!feePart.ok) return feePart;
   const done = finish({ roundId, claims: [{ pubkey: entry.pubkey, outpoint: lock.outpoint, amountMsat: net, kind: 'stake' }], payouts,
     unpaid, forfeits: [], poolMsat: net, inputFeesMsat, spendableMsat, stakeWhy: null }, feePart);
@@ -543,7 +545,7 @@ export function feeLockPays({ contract, fees, players = MIN_PLAYERS_PER_ROUND, f
 // `donation`: { recipients } - a market's donation target (two sets: the protocol devs' and the game dev's, key sets), whose
 // donation rides in its fee locks (fee.js entryFeeBpsOf, kanban #235): what the fee locks hold above the node table is that
 // donation, split by `splitDonation` and paid to each key by a pre-expired payout contract, as a walk-away's 25 % is.
-function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null }) {
+function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps = undefined, donation = null, websitePct = undefined }) {
   const none = { ok: true, claims: [], payouts: [], unpaid: [], poolMsat: 0n, inputFeesMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unallocatedMsat: 0n };
   if (!feeLocks.size) return none;
   if (!contract || !signerNodes || !Array.isArray(signerNodes[GAME_VERIFY]) || !Array.isArray(signerNodes[SETTLEMENT]))
@@ -605,7 +607,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   // THE WEBSITE THAT BROUGHT AN ENTRY (2026.0.9, kanban #362 item 7, RULED path (a)): 20% of the nodes' fee on the stakes it brought,
   // one line per website key, off the top of the NODES' part - never the donation's, never the player's (its stake and fee locks
   // are what they were) - scaled to what the claimed locks pay as the nodes' shares are. The nodes share the rest.
-  const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross });
+  const sites = frontendShares({ entries: counted, fee: table.fee, gross: table.gross, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
   let frontendGross = 0n;
   for (const [k, siteMsat] of sites.shares) {
     const payoutPk = fromHex(k);
@@ -664,7 +666,7 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
 export const RESERVE_LATER_PK = Uint8Array.from([0x02, ...new Uint8Array(32)]);
 
 export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, contract, nodeBps, donationBps, donation = null,
-  reserveBps = 0, reserveKey = null }) {
+  reserveBps = 0, reserveKey = null, websitePct = undefined }) {
   if (!(locks instanceof Map) || !(feeLocks instanceof Map)) return refuse('the verified locks are Maps by player key');
   if (!fees || typeof fees.ppm !== 'bigint' || typeof fees.baseMsat !== 'bigint') return refuse('the guardians\' fee rule is BigInt ppm and base msat');
   if (!table || !Array.isArray(table.claimed)) return refuse('an order book is settled from its settlement table');
@@ -701,7 +703,7 @@ export function bookLockSettlement({ roundId, table, entries, locks, feeLocks, f
   // THE WEBSITE THAT BROUGHT AN ORDER (2026.0.9, kanban #362 comment 2295, path (a)): 20% of the nodes' part of the fee each claimed
   // row paid, to the payout key its entry signed - taken out of the nodes' part, never the donation's or a player's (fee.js
   // frontendBookShares). Its lines go before the seats'.
-  const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps });
+  const sites = frontendBookShares({ rows: table.claimed, entries: byId, nodeBps, donationBps, ...(websitePct !== undefined ? { pct: BigInt(websitePct) } : {}) });
   if (sites.totalMsat > nodesMsat) return refuse(`the websites' share ${sites.totalMsat} msat is more than the nodes' part ${nodesMsat}`);
   for (const [k, msat] of sites.shares) {
     if (msat <= 0n) continue;

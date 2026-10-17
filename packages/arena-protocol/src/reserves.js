@@ -45,13 +45,21 @@ export function roundSplit(grossMsat, { split = ROUND_SPLIT_BPS, devsBps = split
  * Answers { priceMsat, nodesMsat, reservesMsat, protocolDevsMsat, gameDevsMsat }: nodes 40 % and reserves 20 % of the list
  * price, the developers' share half protocol (floored), half game (the rest), and the price their sum - 60 % + the share.
  */
-export function itemSplitReserves({ listMsat, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT }) {
+/**
+ * THE DEVELOPERS' SHARES A BUYER MAY CHOOSE under a fee set (kanban #462): its devs' part, then today's lower steps below it. With
+ * today's fees, 40 30 20 10 0 as before.
+ */
+export const itemDevChoices = (fees = null) => { const top = fees ? fees.itemDevsPct : ITEM_DEV_SHARE_RESERVES_DEFAULT;
+  return [...new Set([top, ...ITEM_DEV_SHARES_RESERVES.filter((x) => x < top)])]; };
+// `fees`: the fee set in force (kanban #462, fee-proposal.js): its item nodes', reserves' and developers' parts; unset, today's
+export function itemSplitReserves({ listMsat, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, fees = null }) {
   const list = BigInt(listMsat);
   if (list < 1n) throw new Error('an item costs at least 1 msat');
-  if (!ITEM_DEV_SHARES_RESERVES.includes(Number(devsPct)))
-    throw new Error(`on protocol version ${RESERVES_VERSION} an item's developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %, not ${devsPct} %`);
-  const nodesMsat = (list * BigInt(ITEM_NODES_PCT)) / 100n;
-  const reservesMsat = (list * BigInt(ITEM_RESERVES_PCT)) / 100n;
+  const choices = itemDevChoices(fees);
+  if (!choices.includes(Number(devsPct)))
+    throw new Error(`on protocol version ${RESERVES_VERSION} an item's developers' share is one of ${choices.join(', ')} %, not ${devsPct} %`);
+  const nodesMsat = (list * BigInt(fees ? fees.itemNodesPct : ITEM_NODES_PCT)) / 100n;
+  const reservesMsat = (list * BigInt(fees ? fees.itemReservesPct : ITEM_RESERVES_PCT)) / 100n;
   const devs = (list * BigInt(devsPct)) / 100n;
   const protocolDevsMsat = devs / 2n;
   const gameDevsMsat = devs - protocolDevsMsat;
@@ -63,13 +71,13 @@ export function itemSplitReserves({ listMsat, devsPct = ITEM_DEV_SHARE_RESERVES_
  * federation's guardians. `kind` 'entry' (gross stake) or 'item' (list price and the chosen share). Answers
  * [{ federationId, amountMsat, to: 'reserves' }] - empty only for a free round, which pays nothing at all.
  */
-export function reserveOutputsExpected({ kind, federationId, grossMsat, listMsat, devsPct, free = false }) {
+export function reserveOutputsExpected({ kind, federationId, grossMsat, listMsat, devsPct, free = false, split = ROUND_SPLIT_BPS, fees = null }) {
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) throw new Error('a reserve output is paid in a 32-byte federation');
   if (kind === 'entry') {
     if (free) return [];
-    return [{ federationId, amountMsat: roundSplit(grossMsat).reservesMsat, to: 'reserves' }];
+    return [{ federationId, amountMsat: roundSplit(grossMsat, { split }).reservesMsat, to: 'reserves' }];
   }
-  if (kind === 'item') return [{ federationId, amountMsat: itemSplitReserves({ listMsat, devsPct }).reservesMsat, to: 'reserves' }];
+  if (kind === 'item') return [{ federationId, amountMsat: itemSplitReserves({ listMsat, devsPct, fees }).reservesMsat, to: 'reserves' }];
   throw new Error('a reserve output is paid by an entry or an item');
 }
 
@@ -89,20 +97,21 @@ export const RESERVES_DONATION_BPS = ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_
  * (donationOutputsExpected); and its `reserveOutpoint` the reserves' part, a payout contract to the federation's reserve key.
  * Answers { ok, fee, outputs, reserve: { outpoint, recipientPk, amountMsat } } or why not, by name.
  */
-export function reservesEntryExpected({ entry, recipients, reserveKey }) {
+// `split`: the round's split in force at its census height (kanban #462, fee-proposal.js roundSplitBps); unset, today's
+export function reservesEntryExpected({ entry, recipients, reserveKey, split = ROUND_SPLIT_BPS }) {
   if (!entry || typeof entry.stakeMsat !== 'bigint') return { ok: false, why: 'that entry names no stake' };
   if (!(reserveKey instanceof Uint8Array) || reserveKey.length !== 33) return { ok: false, why: 'no reserve key is known for that round\'s federation' };
-  const split = roundSplit(entry.stakeMsat);
-  const devs = split.protocolDevsMsat + split.gameDevsMsat;
-  if (entry.feeMsat !== split.nodesMsat) return { ok: false, why: `on protocol version ${RESERVES_VERSION} the node fee is ${split.nodesMsat} msat (4 %), not ${entry.feeMsat}` };
-  if (entry.donationMsat !== devs + split.reservesMsat)
-    return { ok: false, why: `on protocol version ${RESERVES_VERSION} the developers' 4 % and the reserves' 2 % are ${devs + split.reservesMsat} msat, not ${entry.donationMsat}` };
+  const parts = roundSplit(entry.stakeMsat, { split });
+  const devs = parts.protocolDevsMsat + parts.gameDevsMsat;
+  if (entry.feeMsat !== parts.nodesMsat) return { ok: false, why: `on protocol version ${RESERVES_VERSION} the node fee is ${parts.nodesMsat} msat (${split.nodes / 100} %), not ${entry.feeMsat}` };
+  if (entry.donationMsat !== devs + parts.reservesMsat)
+    return { ok: false, why: `on protocol version ${RESERVES_VERSION} the developers' ${(split.protocolDevs + split.gameDevs) / 100} % and the reserves' ${split.reserves / 100} % are ${devs + parts.reservesMsat} msat, not ${entry.donationMsat}` };
   if (!entry.reserveOutpoint) return { ok: false, why: `on protocol version ${RESERVES_VERSION} an entry names its reserve lock` };
   const dev = donationOutputsExpected({ ...entry, donationMsat: devs }, recipients);
   if (!dev.ok) return dev;
-  return { ok: true, fee: split.nodesMsat, outputs: dev.outputs,
-    reserve: { outpoint: entry.reserveOutpoint, recipientPk: reserveKey, amountMsat: split.reservesMsat },
-    why: `${dev.outputs.length} developer output(s) of ${devs} msat and ${split.reservesMsat} msat to the reserves` };
+  return { ok: true, fee: parts.nodesMsat, outputs: dev.outputs,
+    reserve: { outpoint: entry.reserveOutpoint, recipientPk: reserveKey, amountMsat: parts.reservesMsat },
+    why: `${dev.outputs.length} developer output(s) of ${devs} msat and ${parts.reservesMsat} msat to the reserves` };
 }
 
 /**

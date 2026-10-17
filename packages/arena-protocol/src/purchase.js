@@ -20,7 +20,7 @@ import { itemOf, itemSplit, itemDevShareOk, ITEM_DEV_SHARES, ITEM_DEV_SHARE_DEFA
 import { splitTwoSets } from './donation.js';
 import { refundKeyOf } from './stake-lock.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from './constants.js';
-import { itemSplitReserves, ITEM_DEV_SHARES_RESERVES, ITEM_DEV_SHARE_RESERVES_DEFAULT } from './reserves.js';
+import { itemSplitReserves, itemDevChoices, ITEM_DEV_SHARES_RESERVES, ITEM_DEV_SHARE_RESERVES_DEFAULT } from './reserves.js';
 import { gameIdOf } from './manifest.js';
 import { SERVED_WINDOW_MS } from './served-nodes.js';
 
@@ -55,7 +55,7 @@ export function encodePurchase(p) {
   const reserves = p.reserveKey !== undefined && p.reserveKey !== null;
   const share = p.devsPct === undefined || p.devsPct === null ? (reserves ? ITEM_DEV_SHARE_RESERVES_DEFAULT : ITEM_DEV_SHARE_DEFAULT) : Number(p.devsPct);
   if (reserves) {
-    if (!ITEM_DEV_SHARES_RESERVES.includes(share)) throw new Error(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    if (!Number.isInteger(share) || share < 0 || share > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent; which ones the fees in force allow, purchaseStands says');
     if (!pIs32(p.gameId) || !pIs33(p.reserveKey)) throw new Error('a purchase on the reserves\' terms names its game version by 32 bytes and the reserve key by 33');
   } else if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
   const w = new Writer();
@@ -81,7 +81,7 @@ export function decodePurchase(bytes) {
     throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
   const terms = {};
   if (version === PURCHASE_RESERVES_LAYOUT) {
-    if (!ITEM_DEV_SHARES_RESERVES.includes(devsPct)) throw new Error(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
+    if (!Number.isInteger(devsPct) || devsPct < 0 || devsPct > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent');
     terms.gameId = r.bytes32(); terms.reserveKey = r.bytes(33);
     if (!pIs33(terms.reserveKey)) throw new Error('a reserve key is a 33-byte compressed key');
   }
@@ -120,9 +120,9 @@ export function purchaseOutputs({ priceSat, servedKeys, networkSet, gameSet, dev
  * the developers the buyer's share over the two donation sets as a round's donation is split. [{ pk, msat }] sorted by key, with
  * `reserve` { pk, msat } named apart. A reserve key that is also another payee's key is refused: the reserves' output stands alone.
  */
-export function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, reserveKey }) {
+export function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, gameSet, devsPct = ITEM_DEV_SHARE_RESERVES_DEFAULT, reserveKey, fees = null }) {
   if (!pIs33(reserveKey)) throw new Error('no reserve key to pay the reserves\' 20 % to');
-  const split = itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct) });
+  const split = itemSplitReserves({ listMsat: BigInt(priceSat) * 1000n, devsPct: Number(devsPct), fees });
   const keys = [...new Set((servedKeys || []).map((k) => String(k).toLowerCase()))].sort();
   if (!keys.length) throw new Error('no node served a round in the window: an item\'s 40 % for the nodes has nobody to go to');
   if (!keys.every((k) => /^[0-9a-f]{64}$/.test(k))) throw new Error('a served node is named by its 32-byte key in hex');
@@ -147,7 +147,8 @@ export function purchaseOutputsReserves({ priceSat, servedKeys, networkSet, game
  * `gameSet` the donation sets; `served` the reader's own merged list for the record's window ({ fromMs, toMs, nodes, root });
  * `verify(sig, digest, key)` BIP340. Answers { ok, id } or { ok: false, why }.
  */
-export function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey = null }) {
+// `fees`: the fee set in force (kanban #462): the item parts on the reserves' terms; unset, today's
+export function purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey = null, fees = null }) {
   const no = (why) => ({ ok: false, why });
   let id; try { id = purchaseId(p); } catch (e) { return no(`that purchase does not encode: ${e.message}`); }
   if (!manifest || toHex(manifest.gameDevPubkey) !== toHex(p.gameDevPubkey) || manifest.gameName !== p.gameName)
@@ -173,8 +174,8 @@ export function purchaseStands(p, { manifest, networkSet, gameSet, served, verif
     if (!pIs32(p.gameId) || mid !== toHex(p.gameId)) return no('the record names another version of the game than the manifest given');
     if (!pIs33(reserveKey)) return no(`no reserve key is known here for federation ${toHex(p.federationId).slice(0, 16)}`);
     if (toHex(reserveKey) !== toHex(p.reserveKey)) return no(`the record paid reserve key ${toHex(p.reserveKey).slice(0, 16)}, and federation ${toHex(p.federationId).slice(0, 16)}'s is ${toHex(reserveKey).slice(0, 16)}`);
-    if (!ITEM_DEV_SHARES_RESERVES.includes(Number(p.devsPct))) return no(`on the reserves' terms a developers' share is one of ${ITEM_DEV_SHARES_RESERVES.join(', ')} %`);
-    try { want = purchaseOutputsReserves({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(p.devsPct), reserveKey }).outputs; }
+    if (!itemDevChoices(fees).includes(Number(p.devsPct))) return no(`on the reserves' terms a developers' share is one of ${itemDevChoices(fees).join(', ')} %`);
+    try { want = purchaseOutputsReserves({ priceSat: p.priceSat, servedKeys: served.nodes.map((n) => n.key), networkSet, gameSet, devsPct: Number(p.devsPct), reserveKey, fees }).outputs; }
     catch (e) { return no(e.message); }
   } else {
     // THE BUYER'S SHARE (kanban #377): one of ITEM_DEV_SHARES, the nodes' half whatever it is

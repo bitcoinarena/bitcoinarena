@@ -16,9 +16,10 @@ export const ITEM_PURCHASES_SQL = `CREATE TABLE IF NOT EXISTS item_purchases (
  * purchaseStands takes them; `port` the federation's lock port (status, contractId); `db` the seat's store; `verify` BIP340.
  * Answers { ok, id, kept: 'new' | 'held' } or { ok: false, status, why }.
  */
-export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null }) {
+// `fees`: the fee set in force (kanban #462): an item's parts on the reserves' terms; unset, today's
+export async function keepItemPurchase({ p, manifest, networkSet, gameSet, served, port, db, verify, nowMs = Date.now(), reserveKey = null, keepReserve = null, fees = null }) {
   const no = (status, why) => ({ ok: false, status, why });
-  const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey });
+  const st = purchaseStands(p, { manifest, networkSet, gameSet, served, verify, reserveKey, fees });
   if (!st.ok) return no(422, st.why);
   const id = toHex(st.id);
   db.exec(ITEM_PURCHASES_SQL);
