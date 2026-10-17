@@ -18,12 +18,16 @@ import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
 import { PROTOCOL_VERSION, speaksVersion, TYPE_FUNDING_PROPOSAL, TYPE_FUNDING_COMMENT, TYPE_FUNDING_SIGNAL, TAG } from './constants.js';
 import { servedNodes } from './served-nodes.js';
+import { decodeVote, voteMessage, CHOICE } from './ballot.js';
 
 /** The blocks of a signal, and the window that makes a node active (§27A.9.3). The short schedule is a live proof's only. */
 export const FUNDING_SCHEDULES = Object.freeze({
-  spec: Object.freeze({ signal: 1008, activeWindow: 432 }),
-  short: Object.freeze({ signal: 1, activeWindow: 432 }),
+  spec: Object.freeze({ signal: 1008, activeWindow: 432, vote: 2016, decideDepth: 6 }),
+  short: Object.freeze({ signal: 1, activeWindow: 432, vote: 6, decideDepth: 6 }),
 });
+/** The vote's rule (§27A.9.3 stage 2, RULED the owner 2026-10-16): turnout of the snapshot's bonded capital, and YES of YES + NO. */
+export const FUNDING_TURNOUT_PCT = 30n;
+export const FUNDING_APPROVAL_PCT = 60n;
 export const FUNDING_SIGNAL_PCT = 15;
 export const FUNDING_PURPOSE_MAX = 4000;
 export const FUNDING_COMMENT_MAX = 4000;
@@ -145,4 +149,50 @@ export function signalOutcome({ proposal, signals = [], active = null, tip, sche
   const passed = act.size > 0 && supporters * 100 >= FUNDING_SIGNAL_PCT * act.size;
   return { state: passed ? 'passed' : 'failed', signalEnd, signals: signers.size, supporters, active: act.size,
     pct: act.size ? Math.round((supporters * 10000) / act.size) / 100 : 0, needed: Math.max(needed, 1) };
+}
+
+/**
+ * THE VOTE OF A PROPOSAL WHOSE SIGNAL PASSED (§27A.9.3 stage 2, kanban #397 slice 7): its period [signalEnd, signalEnd + vote) and
+ * its last block; when a seat may decide it - that last block `decideDepth` deep, counting the block itself (as #329's tally:
+ * decided at tip >= last + depth - 1). A failed or open signal has no vote.
+ */
+export function votePeriodOf({ proposal, signal, schedule = FUNDING_SCHEDULES.spec }) {
+  if (!signal || signal.state !== 'passed') return null;
+  const from = proposal.publishedHeight + schedule.signal;
+  const until = from + schedule.vote;
+  return { from, until, last: until - 1, decidableAt: until - 1 + schedule.decideDepth - 1 };
+}
+
+/**
+ * THE COUNT (§27A.9.3 stage 2), #329's vote read for a funding proposal: `census` the bonds active at the vote's start -
+ * [{ pubkey, outpoint, bondSats }]; `votes` the "ARN" 'V' outputs found on chain - [{ payload, height, txid }]. A vote counts for every
+ * bond whose key its signature verifies under, only inside [from, until); per bond outpoint the last by height wins, a tie inside one
+ * block going to the lower txid. ABSTAIN counts for turnout only. Passed: turnout >= 30 % of the bonded capital and YES >= 60 % of
+ * YES + NO. Answers the weights in sat, the percentages, the bonds voted and `passed`.
+ */
+export function fundingTally({ proposalId, census = [], votes = [], from, until, verify }) {
+  const prefix = toHex(proposalId.subarray(0, 8));
+  const latest = new Map();
+  for (const v of votes) {
+    const d = decodeVote(v.payload instanceof Uint8Array ? v.payload : null);
+    if (!d || toHex(d.idPrefix) !== prefix) continue;
+    if (!(v.height >= from && v.height < until)) continue;
+    const msg = voteMessage(proposalId, d.choice);
+    for (const b of census) {
+      let good = false; try { good = verify(d.signature, msg, b.pubkey) === true; } catch { good = false; }
+      if (!good) continue;
+      const had = latest.get(b.outpoint);
+      const later = !had || v.height > had.height || (v.height === had.height && String(v.txid) < String(had.txid));
+      if (later) latest.set(b.outpoint, { choice: d.choice, height: v.height, txid: v.txid, weight: BigInt(b.bondSats) });
+    }
+  }
+  const total = census.reduce((a, b) => a + BigInt(b.bondSats), 0n);
+  let yes = 0n, no = 0n, abstain = 0n;
+  for (const x of latest.values()) { if (x.choice === CHOICE.YES) yes += x.weight; else if (x.choice === CHOICE.NO) no += x.weight; else abstain += x.weight; }
+  const turnout = yes + no + abstain;
+  const quorum = total > 0n && turnout * 100n >= FUNDING_TURNOUT_PCT * total;
+  const decided = yes + no;
+  const approved = decided > 0n && yes * 100n >= FUNDING_APPROVAL_PCT * decided;
+  return { totalSats: String(total), yesSats: String(yes), noSats: String(no), abstainSats: String(abstain), bondsVoted: latest.size, quorum, approved,
+    passed: quorum && approved, turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
 }

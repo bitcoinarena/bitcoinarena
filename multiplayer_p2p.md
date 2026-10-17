@@ -6904,6 +6904,25 @@ carry no weight in any count.
 - **Passes at 60 %** *(RULED the owner 2026-10-16: "Voting threshold is 60%")*: YES holds at least 60 % of
   the bond weight that voted YES or NO (ABSTAIN counts for turnout only).
 - Comments continue.
+- **As built** *(kanban #397 slice 7, the owner 2026-10-17: "The vote is the next slice. Use the sequence you just wrote")*:
+  - Only a signal a seat decided **passed** opens a vote. It runs [signalEnd, signalEnd + 2016), with signalEnd = published + 1008.
+  - **The census** is the bonds active at signalEnd: #329's `censusAt`, taken once and kept. Each bond weighs its amount.
+  - **A vote** is #329's 77-byte OP_RETURN "ARN" 'V': proposal_id[0:8], YES / NO / ABSTAIN, and the bond key's BIP340
+    signature over (proposal id, choice).
+    - It counts only inside the period.
+    - Per bond, the last vote by height counts; a tie in one block goes to the lower txid.
+  - **Passes** when turnout ≥ 30 % of the snapshot's bonded capital and YES ≥ 60 % of YES + NO. ABSTAIN counts for
+    turnout only.
+  - **Reading:** each voting block is read once for the proposal's votes and held to by its hash. A reorg of held blocks
+    reads them again.
+  - **Deciding:** a seat decides once the last voting block (signalEnd + 2015) is 6 deep, counting the block itself, as
+    #329. It writes the outcome once with that block's hash: YES / NO / ABSTAIN / total sat, turnout %, approval %, bonds
+    voted.
+    - Later votes, a later census or more blocks do not move it.
+    - A reorg that replaces the counted last block reopens it.
+  - `GET /funding` shows each proposal's `vote`: its period, the census height, the blocks read, the running count and the
+    outcome.
+  - Code: `funding.js` (votePeriodOf, fundingTally) and `funding-book.js` (voteRound).
 
 **Payout.**
 - Once the vote passes, X sat leave the reserves to the proposal's LNURL.
