@@ -11168,6 +11168,20 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
     terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
   }),
+  'c5478ded0e29d0f394d30b97400729b28bb852806bed60cf9366e18f2f314256': Object.freeze({
+    name: 'btc-updown-15m',
+    // kanban #447: manifest version 7, parent 33b8b298 - version 6 in every term, with the new client (the history)
+    requiredProtocolVersion: 2,
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze(['3b74d3284f0a1a5148e39b826feaa9b222cc6717a24fbcc9a0cb00f39fb1935d', '6e304439f7f82be4f16baf3668df9a324181f21bd755d5c44e413913b5c444ab', '7072d7a4eb29dbe9ebc380a6d10cbcd65707f243d58d9f3ad9280445fd32f70d']),
+      threshold: 2, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']) }),
+    fee: Object.freeze({ nodeBps: 50, donationBps: 50 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3 (kanban #369): manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
@@ -31573,7 +31587,10 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // EACH LINE ALSO SAID AS DATA (kanban #443, the owner 2026-10-17: "This looks pretty bad, make it prettier and more structured"): its
     // round and entry, the pick, the stake, the window's close and a state - a client draws its own row from these; the text stays
     const at = (state, more = {}) => ({ kind: 'market', round: p.roundIdHex, entry: p.entryIdHex || null, pick: p.pick, label, stakeMsat: String(p.stakeMsat),
-      entryCloseMs: Number(p.entryCloseMs), state, ...more });
+      entryCloseMs: Number(p.entryCloseMs), state,
+      // WHEN THE RESULT IS FINAL (kanban #447, the owner 2026-10-17: "show there if it's still pending (10 minute delay)"): the seats'
+      // finality of an attested outcome and its time, so a client counts the objection window down on every result, won or lost
+      ...(o && o.state === 'ATTESTED' ? { final: !!o.final, finalAtMs: Number(o.finalAtMs) || null } : {}), ...more });
     if (nowMs < Number(p.entryCloseMs)) {
       lines.push({ ...at('open'), text: `${p.market.name}: you picked '${label}' · ${sats(p.stakeMsat)} sats · closes in ${left(Number(p.entryCloseMs) - nowMs)}` });
       continue;
@@ -31614,8 +31631,8 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
     else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ ...at('refunded', { backMsat: String(row.stakeMsat || p.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
-    else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net), final: !!o.final }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
-    else if (row.won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay), final: !!o.final }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
+    else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
+    else if (row.won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay) }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ ...at('lost', { lostMsat: String(net) }), text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
   return lines;

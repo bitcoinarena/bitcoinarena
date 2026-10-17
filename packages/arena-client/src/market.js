@@ -319,7 +319,10 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // EACH LINE ALSO SAID AS DATA (kanban #443, the owner 2026-10-17: "This looks pretty bad, make it prettier and more structured"): its
     // round and entry, the pick, the stake, the window's close and a state - a client draws its own row from these; the text stays
     const at = (state, more = {}) => ({ kind: 'market', round: p.roundIdHex, entry: p.entryIdHex || null, pick: p.pick, label, stakeMsat: String(p.stakeMsat),
-      entryCloseMs: Number(p.entryCloseMs), state, ...more });
+      entryCloseMs: Number(p.entryCloseMs), state,
+      // WHEN THE RESULT IS FINAL (kanban #447, the owner 2026-10-17: "show there if it's still pending (10 minute delay)"): the seats'
+      // finality of an attested outcome and its time, so a client counts the objection window down on every result, won or lost
+      ...(o && o.state === 'ATTESTED' ? { final: !!o.final, finalAtMs: Number(o.finalAtMs) || null } : {}), ...more });
     if (nowMs < Number(p.entryCloseMs)) {
       lines.push({ ...at('open'), text: `${p.market.name}: you picked '${label}' · ${sats(p.stakeMsat)} sats · closes in ${left(Number(p.entryCloseMs) - nowMs)}` });
       continue;
@@ -360,8 +363,8 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
     else if (!p.market.scalar && row.won && BigInt(o.table.losingPoolMsat || 0) === 0n) lines.push({ ...at('refunded', { backMsat: String(row.stakeMsat || p.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(row.stakeMsat || p.stakeMsat)} sats come back whole when the lock expires` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
-    else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net), final: !!o.final }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
-    else if (row.won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay), final: !!o.final }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
+    else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
+    else if (row.won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay) }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
     else lines.push({ ...at('lost', { lostMsat: String(net) }), text: `${head}: ${signed} · you lost ${sats(net)} sats` });
   }
   return lines;
