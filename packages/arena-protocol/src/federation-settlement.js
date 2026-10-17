@@ -44,7 +44,7 @@ export function federationSettlementNonce(roundId, federationId) {
  * `payouts` [{ payoutPk, msat, ... }] - each payout's `msat` in the plan is its weight. Answers per federation id hex
  * { claims, payouts, poolMsat, inputFeesMsat, spendableMsat, paidMsat, outputFeesMsat, unspentMsat, unpaid }.
  */
-function splitPart({ claims, payouts, federationOf, feesOf, part }) {
+function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf = null }) {
   const byFed = new Map();
   for (const c of claims) {
     const fid = federationOf(c.outpoint);
@@ -83,6 +83,13 @@ function splitPart({ claims, payouts, federationOf, feesOf, part }) {
       if (dust > 0n) split[0].msat = largestPayoutMsat(fees, gross(split[0].msat) + dust);
     }
     const fp = split.map(({ p, msat }) => ({ ...p, owedMsat: p.owedMsat ?? p.msat, weightMsat: p.msat, msat, feeMsat: lnv2FeeMsat(fees, msat) }));
+    // A MARKET'S PROTOCOL RESERVE (kanban #454): this federation's part of the reserve line goes to this federation's reserve key
+    for (const p of fp) {
+      if (!p.reserve) continue;
+      const k = typeof reserveKeyOf === 'function' ? reserveKeyOf(fid) : null;
+      if (!(k instanceof Uint8Array) || k.length !== 33) return refuse(`federation ${fid.slice(0, 16)} names no reserve key, and this market pays the protocol reserve`);
+      p.payoutPk = k; p.pubkey = k.subarray(1);
+    }
     const paidMsat = fp.reduce((s, p) => s + p.msat, 0n);
     const outputFeesMsat = fp.reduce((s, p) => s + p.feeMsat, 0n);
     const unspentMsat = spendableMsat - paidMsat - outputFeesMsat;
@@ -98,7 +105,7 @@ function splitPart({ claims, payouts, federationOf, feesOf, part }) {
  * `federationOf(outpoint)` -> the federation id (hex or bytes) a claimed lock is in; `feesOf(fidHex)` -> that federation's
  * { ppm, baseMsat }. Answers { ok, settlements: [{ federation, nonce, claims, payouts, ... }] } in federation id order.
  */
-export function splitByFederation(plan, { roundId, federationOf, feesOf }) {
+export function splitByFederation(plan, { roundId, federationOf, feesOf, reserveKeyOf = null }) {
   if (!plan || !plan.ok) return refuse(plan && plan.why ? plan.why : 'no settlement plan to split');
   if (plan.nothing) return { ok: true, nothing: true, settlements: [] };
   if (typeof federationOf !== 'function' || typeof feesOf !== 'function') return refuse('the federations of the locks and their fee rules are named by the caller');
@@ -107,9 +114,9 @@ export function splitByFederation(plan, { roundId, federationOf, feesOf }) {
   const nodePay = new Set(plan.signerNodePayouts || []);
   const feePayouts = plan.payouts.filter((p) => nodePay.has(p));
   const stakePayouts = plan.payouts.filter((p) => !feePayouts.includes(p));
-  const stake = splitPart({ claims: plan.claims.filter((c) => !isFee(c)), payouts: stakePayouts, federationOf, feesOf, part: 'stake' });
+  const stake = splitPart({ claims: plan.claims.filter((c) => !isFee(c)), payouts: stakePayouts, federationOf, feesOf, part: 'stake', reserveKeyOf });
   if (!stake.ok) return stake;
-  const fee = splitPart({ claims: plan.claims.filter(isFee), payouts: feePayouts, federationOf, feesOf, part: 'fee' });
+  const fee = splitPart({ claims: plan.claims.filter(isFee), payouts: feePayouts, federationOf, feesOf, part: 'fee', reserveKeyOf });
   if (!fee.ok) return fee;
   const feds = [...new Set([...stake.byFed.keys(), ...fee.byFed.keys()])].sort();
   const empty = { claims: [], payouts: [], poolMsat: 0n, inputFeesMsat: 0n, spendableMsat: 0n, paidMsat: 0n, outputFeesMsat: 0n, unspentMsat: 0n, unpaid: [] };

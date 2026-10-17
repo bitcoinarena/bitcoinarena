@@ -28,7 +28,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { decodeRoundContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { bookBatchId, batchDeclineId, cancelId, sellId, BATCH_MS, PRICE_SCALE, TICK } from '../../arena-protocol/src/order-book.js';
 import { bookLedger, positionFilled } from '../../arena-protocol/src/book-ledger.js';
-import { entryFeeBpsOf, feeBpsOf, donationBpsOf } from '../../arena-protocol/src/fee.js';
+import { entryFeeBpsOf, feeBpsOf, donationBpsOf, reserveBpsOf } from '../../arena-protocol/src/fee.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
@@ -63,7 +63,7 @@ export class OrderBook {
     // A SCALAR MARKET'S BOOK (kanban #362, §0A.7e): its two sides trade as any two outcomes do; at resolution a LONG share is worth
     // (V - low) / (high - low) of a sat and a SHORT share the rest (book-ledger.js bookSettlement `scalar`)
     const m = found.plugin.manifest;
-    return { ok: true, contract, manifest: m, feeBps: entryFeeBpsOf(m), nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) || 0,
+    return { ok: true, contract, manifest: m, feeBps: entryFeeBpsOf(m), nodeBps: feeBpsOf(m), donationBps: donationBpsOf(m) || 0, reserveBps: reserveBpsOf(m),
       needed: receiptsNeeded(contract.nodes.length), seats: contract.nodes.map(toHex) };
   }
 

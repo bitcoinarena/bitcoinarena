@@ -1837,7 +1837,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const settlements = new LockSettlement(round, {
     conflictsFor,
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);

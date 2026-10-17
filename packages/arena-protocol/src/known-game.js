@@ -92,7 +92,7 @@ export function gameIsKnownGood(gameId, simCoreHash, configHash, { networkId = n
 export function feeOfKnownGame(gameId) {
   const game = isGameBytes32(gameId) ? KNOWN_GOOD_GAMES[toHex(gameId)] : null;
   if (!game) return null;
-  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps };
+  if (game.fee) return { nodeBps: game.fee.nodeBps, donationBps: game.fee.donationBps, reserveBps: game.fee.reserveBps || 0 };   // the reserve inside the donation (#454)
   return game.attested ? { nodeBps: 50, donationBps: 50 } : { nodeBps: 500, donationBps: null };
 }
 
