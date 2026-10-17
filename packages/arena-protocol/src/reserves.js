@@ -26,15 +26,16 @@ const bps = (gross, b) => (gross * BigInt(b)) / 10000n;
  * A PAID ROUND'S MONEY ON THE RESERVES VERSION: { nodesMsat, protocolDevsMsat, gameDevsMsat, reservesMsat, netMsat }.
  * There is no developers' share to choose: `devsBps`, if given, must be the mandatory 400, or the split is refused by name.
  */
-export function roundSplit(grossMsat, { devsBps = ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_BPS.gameDevs } = {}) {
+// `split`: the fees in force (kanban #462, fee-proposal.js roundSplitBps), else today's ROUND_SPLIT_BPS
+export function roundSplit(grossMsat, { split = ROUND_SPLIT_BPS, devsBps = split.protocolDevs + split.gameDevs } = {}) {
   const gross = BigInt(grossMsat);
   if (gross < 1n) throw new Error('a paid round has a stake of at least 1 msat');
-  if (Number(devsBps) !== ROUND_SPLIT_BPS.protocolDevs + ROUND_SPLIT_BPS.gameDevs)
-    throw new Error(`on protocol version ${RESERVES_VERSION} the developers' 4 % is mandatory: it is no donation a player can change`);
-  const nodesMsat = bps(gross, ROUND_SPLIT_BPS.nodes);
-  const protocolDevsMsat = bps(gross, ROUND_SPLIT_BPS.protocolDevs);
-  const gameDevsMsat = bps(gross, ROUND_SPLIT_BPS.gameDevs);
-  const reservesMsat = bps(gross, ROUND_SPLIT_BPS.reserves);
+  if (Number(devsBps) !== split.protocolDevs + split.gameDevs)
+    throw new Error(`on protocol version ${RESERVES_VERSION} the developers' ${(split.protocolDevs + split.gameDevs) / 100} % is mandatory: it is no donation a player can change`);
+  const nodesMsat = bps(gross, split.nodes);
+  const protocolDevsMsat = bps(gross, split.protocolDevs);
+  const gameDevsMsat = bps(gross, split.gameDevs);
+  const reservesMsat = bps(gross, split.reserves);
   const netMsat = gross - nodesMsat - protocolDevsMsat - gameDevsMsat - reservesMsat;
   return { nodesMsat, protocolDevsMsat, gameDevsMsat, reservesMsat, netMsat };
 }
