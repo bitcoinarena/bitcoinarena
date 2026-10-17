@@ -1220,15 +1220,6 @@
       </div>
       <div class="muted" id="blwp-name-why"></div>
     </section>
-    <section class="settings-card" id="arena-set-zaps">
-      <h3>Zaps</h3>
-      <div class="muted">Other players can zap you from a leaderboard. Where should their zaps go? Your Lightning address (name@host):</div>
-      <div class="name-row">
-        <input id="arena-zap-addr" type="text" autocomplete="off" spellcheck="false" maxlength="120" placeholder="you@your-wallet.example">
-        <button id="arena-zap-save" type="button" class="primary">Save</button>
-      </div>
-      <div class="muted" id="arena-zap-why"></div>
-    </section>
     <section class="settings-card" id="arena-set-graphics">
       <h3>Graphics</h3>
       <select id="arena-gfx-select" aria-label="Graphics">
@@ -6368,8 +6359,13 @@
     // tip (the address the developer key signed beside the manifest; a plain LNURL payment when it takes no zaps). WHO PAYS:
     // the wallet connected over Nostr Wallet Connect when there is one, else this tab's player wallet - each invoice checked
     // first (amount, description hash), never paid on a timer, only on the press. The last outcome is window.ARENA_ZAP_LAST.
-    // And Settings' "Zaps" card publishes this player's address (a kind 0 profile signed by the identity key) and reads back
-    // what was received.
+    // A PLAYER'S ZAP IN THE FEDERATION (kanban #463, the owner 2026-10-17: "zaps in the leaderboard go to the federation's account of the user
+    // not an external lightning payment, remove the configuration setting"): a zap from the board is e-cash from this wallet to the
+    // player's identity key (BLWPCLIENT.zapPlayer - one payout contract, recorded on the seats as a gift), and each page collects what
+    // was sent to its own key into its wallet (collectZaps, once a minute). No Lightning address, no Settings card; a developer's tip
+    // stays the plain LNURL payment.
+    // THE SEATS A ZAP IS RECORDED ON AND ASKED FROM: every listed game's
+    function zapSeats() { return [...new Set((window.ARENA_GAMES_FULL || []).flatMap((g) => (Array.isArray(g.nodes) ? g.nodes : [])).map(String))]; }
     (function zaps() {
       const box = document.getElementById('arena-zap');
       if (!box || !BLWPCLIENT.sendZap) return;
@@ -6413,6 +6409,11 @@
         title.textContent = j.title || 'Zap'; msg.value = ''; go.disabled = true; go.textContent = j.recipient ? 'Zap' : 'Tip';
         for (const x of amts.children) x.setAttribute('aria-pressed', String(BigInt(x.dataset.msat) === choice));
         box.classList.add('show');
+        msg.hidden = !!j.recipient;
+        if (j.recipient) {
+          to.textContent = 'to ' + (j.name || 'this player') + ' \u00b7 e-cash into their Bitcoin Arena wallet, from yours';
+          say(''); go.disabled = false; return;
+        }
         if (!job.address) {
           to.textContent = ''; say('Looking up ' + (j.name || 'this player') + '\u2019s Lightning address \u2026');
           const mine = job;
@@ -6424,7 +6425,31 @@
         to.textContent = 'to ' + job.address + (nwcUri() ? ' \u00b7 paid by your connected wallet' : ' \u00b7 paid from your player wallet');
         say(''); go.disabled = false;
       }
+      // A PLAYER'S ZAP: e-cash in one federation of this wallet that holds the amount, to the player's identity key
+      async function zapInFederation(mine) {
+        const key = typeof itemsKey === 'function' ? itemsKey() : null;
+        if (!key) return { ok: false, why: 'open your wallet first' };
+        const sat = Number(choice / 1000n);
+        const wallets = typeof donateWallets === 'function' ? await donateWallets() : [];
+        const w = wallets.find((x) => x.msat >= choice);
+        if (!w) return { ok: false, why: 'no federation of your wallet holds ' + sat.toLocaleString('en-US') + ' sat' };
+        say('Paying ' + BLWPCLIENT.zapSatLine(choice) + ' \u2026');
+        const got = await BLWPCLIENT.zapPlayer({ player: BLWPCLIENT.fromHex(mine.recipient), sat, wallet: w.c, federationId: w.fid,
+          donor: { pubkey: key.pubkey, sign: key.sign }, seats: zapSeats(), fetch: (u, o) => fetch(u, o) }).catch((e) => ({ ok: false, step: 'page', why: e.message }));
+        if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE();
+        return got.ok ? { ok: true, zapped: true, txid: got.txid } : { ok: false, why: (got.step ? got.step + ': ' : '') + got.why };
+      }
       go.addEventListener('click', async () => {
+        if (job && job.recipient && !busy) {
+          busy = true; go.disabled = true;
+          const mine = job;
+          const out = await zapInFederation(mine).catch((e) => ({ ok: false, why: e.message }));
+          busy = false;
+          window.ARENA_ZAP_LAST = { at: Date.now(), recipient: mine.recipient, msat: String(choice), ok: !!out.ok, zapped: !!out.ok, why: out.why || null, txid: out.txid || null, inFederation: true };
+          if (out.ok) say('Zapped ' + BLWPCLIENT.zapSatLine(choice) + ' \u2713 \u00b7 ' + (mine.name || 'the player') + ' collects it into their wallet', 'ok');
+          else { say('Not sent: ' + out.why, 'bad'); go.disabled = false; }
+          return;
+        }
         if (!job || !job.address || busy) return;
         busy = true; go.disabled = true;
         const mine = job;
@@ -6443,42 +6468,18 @@
       });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && box.classList.contains('show')) close(); });
       window.ARENA_ZAP = { open, close };
-      // SETTINGS: WHERE THIS PLAYER'S ZAPS GO - a profile signed by the identity key, published to the game's relay
-      const field = document.getElementById('arena-zap-addr'), save = document.getElementById('arena-zap-save'), why = document.getElementById('arena-zap-why');
-      if (!field || !save) return;
-      try { field.value = localStorage.getItem('arena.zap.address') || ''; } catch { /* none kept */ }
-      const received = async (address) => {
-        try {
-          const me = BLWPCLIENT.tabIdentity({ storage: store(), random: noSeed, curve: window.BLWP_CURVE });
-          const t = await BLWPCLIENT.zapTarget(address, 1000n);
-          if (!t.ok || !t.zaps) { why.textContent = t.ok ? address + ' takes payments but no zaps (no receipts to count).' : t.why; return; }
-          const got = await BLWPCLIENT.zapsReceived(me.pubkeyHex, { relays: RELAYS, nostrPubkey: t.nostrPubkey, lnurl: t.lnurl, curve: window.BLWP_CURVE });
-          window.ARENA_ZAPS_RECEIVED = { count: got.count, msat: String(got.msat) };
-          why.textContent = 'Zaps received: ' + got.count + (got.count ? ' \u00b7 ' + BLWPCLIENT.zapSatLine(got.msat) : '');
-        } catch (e) { why.textContent = e.message; }
+      // THE ZAPS SENT TO THIS PLAYER, COLLECTED INTO ITS WALLET (kanban #463): every seat of every listed game asked once a minute what was
+      // paid to this tab's identity key; each one in a federation this wallet holds is spent into it. The last pass is window.ARENA_ZAPS_IN
+      const collect = async () => {
+        if (!BLWPCLIENT.collectZaps || !window.BLWP_WALLETS || !window.BLWP_WALLETS.size) return;
+        try { if (!store().getItem('arena.player.seed')) return; } catch { return; }
+        const clients = new Map([...window.BLWP_WALLETS].map(([fid, c]) => [String(fid).toLowerCase(), c]));
+        const got = await BLWPCLIENT.collectZaps({ storage: store(), keep: localStorage, random: noSeed, curve: window.BLWP_CURVE, clients, seats: zapSeats() });
+        window.ARENA_ZAPS_IN = { at: Date.now(), ...got };
+        if (got.collected.length) { console.log('[arena] zaps collected: ' + got.collected.length + ', ' + got.totalMsat + ' msat'); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }
       };
-      save.addEventListener('click', async () => {
-        const address = field.value.trim().toLowerCase();
-        why.textContent = 'Publishing \u2026';
-        try {
-          const me = BLWPCLIENT.tabIdentity({ storage: store(), random: noSeed, curve: window.BLWP_CURVE });
-          const made = await BLWPCLIENT.zapProfileEvent({ name: me.name, lud16: address, sign });
-          if (!made.ok) { why.textContent = made.why; return; }
-          const sent = await Promise.all(RELAYS.map((r) => new Promise((done) => {
-            let ws; const t = setTimeout(() => { try { ws.close(); } catch { /* gone */ } done(false); }, 8000);
-            try { ws = new WebSocket(r); } catch { clearTimeout(t); return done(false); }
-            ws.onopen = () => ws.send(JSON.stringify(['EVENT', made.event]));
-            ws.onmessage = (m) => { let a; try { a = JSON.parse(m.data); } catch { return; } if (a[0] === 'OK' && a[1] === made.event.id) { clearTimeout(t); ws.close(); done(a[2] === true); } };
-            ws.onerror = () => { clearTimeout(t); done(false); };
-          })));
-          if (!sent.some(Boolean)) { why.textContent = 'No relay took your profile just now - try again.'; return; }
-          try { localStorage.setItem('arena.zap.address', address); } catch { /* the relay holds it */ }
-          window.ARENA_ZAP_PROFILE = { id: made.event.id, address };
-          why.textContent = address ? 'Saved: zaps go to ' + address + '.' : 'Saved: you take no zaps.';
-          if (address) received(address);
-        } catch (e) { why.textContent = e.message; }
-      });
-      if (field.value) received(field.value);
+      setTimeout(() => collect().catch(() => {}), 20000);
+      setInterval(() => collect().catch((e) => console.warn('[arena] zaps: ' + e.message)), 60000);
     })();
     (function seasonBoard() {
       const box = document.getElementById('arena-season');
@@ -6586,7 +6587,7 @@
           const slot = { icons: el('span', 'bdg'), say: el('div', 'bt') };
           n.append(el('span', 'nm', r.name), slot.icons);
           if (r.mine) n.append(el('span', 'you', 'you'));
-          // A ZAP FOR ANY OTHER PLAYER (kanban #362 item 14): their own Lightning address, from their profile, asked on the tap
+          // A ZAP FOR ANY OTHER PLAYER (kanban #362 item 14; #463: e-cash to their identity key, in the federation)
           else if (window.ARENA_ZAP && /^[0-9a-f]{64}$/.test(String(r.player))) {
             const z = el('button', 'zap', '\u26a1 Zap'); z.type = 'button'; z.title = 'Zap ' + r.name;
             z.addEventListener('click', (e) => { e.stopPropagation(); window.ARENA_ZAP.open({ title: 'Zap ' + r.name, recipient: r.player, name: r.name }); });

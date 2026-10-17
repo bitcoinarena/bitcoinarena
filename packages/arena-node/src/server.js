@@ -26,7 +26,7 @@ import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { keepItemPurchase, itemsOwned } from './item-purchase-seat.js';
 import { keepDonationGift, giftsOf } from './donation-gift-seat.js';
-import { decodeDonationGift, GIFT_TO_GAME } from '../../arena-protocol/src/donation-gift.js';
+import { decodeDonationGift, GIFT_TO_GAME, GIFT_TO_PLAYER, playerGiftRecipients } from '../../arena-protocol/src/donation-gift.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
@@ -5169,7 +5169,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let g; try { g = { ...decodeDonationGift(fromHex(String(j.gift || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
         catch (e) { return text(res, 400, `that is not a donation gift: ${e.message}`); }
         let recipients = null;
-        if (g.target === GIFT_TO_GAME) {
+        // A ZAP TO A PLAYER (kanban #463): its one output to the player's identity key, refundKeyOf - no set to hold
+        if (g.target === GIFT_TO_PLAYER) recipients = playerGiftRecipients(g.gameDevPubkey);
+        else if (g.target === GIFT_TO_GAME) {
           const dev = toHex(g.gameDevPubkey);
           const game = [...hosted.values()].find((x) => x && x.manifest && toHex(x.manifest.gameDevPubkey) === dev && x.manifest.gameName === g.gameName && Array.isArray(x.donationSet));
           if (!game) return text(res, 404, `this seat hosts no game "${g.gameName}" by ${dev.slice(0, 16)} with a donation set`);
