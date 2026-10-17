@@ -289,6 +289,9 @@
 
     #pct { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; }
     #stage { color: #8b949e; font-size: 13px; min-height: 1.5em; text-align: center; }
+    /* THE DOWNLOAD, IN MEGABYTES AND MB/s (kanban #441) */
+    #dl { color: #c9d1d9; font: 600 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; min-height: 1.4em; text-align: center; font-variant-numeric: tabular-nums; }
+    html.other-game #dl { display: none; }
     #note { color: #5c6570; font-size: 12px; max-width: 460px; text-align: center; }
 
     /* THE DEPOSIT A LOCK ROUND ASKS FOR, ON THE LOADING SCREEN - the only thing
@@ -1710,6 +1713,7 @@
     </div>
     <div id="pctwrap"><div id="pct">0%</div><div id="pct-steps" aria-hidden="true"><span style="animation-delay:0.0s">91 %</span><span style="animation-delay:0.3s">92 %</span><span style="animation-delay:0.6s">93 %</span><span style="animation-delay:0.9s">94 %</span><span style="animation-delay:1.2s">95 %</span><span style="animation-delay:1.5s">96 %</span><span style="animation-delay:1.8s">97 %</span><span style="animation-delay:2.1s">98 %</span><span style="animation-delay:2.4s">99 %</span></div></div>
     <div id="track"><div id="bar"></div><div id="creep"></div></div>
+    <div id="dl" aria-live="off"></div>
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
@@ -2198,6 +2202,57 @@
     // Written in by the build, which is the only place the real figure is
     // known: the template cannot see the files it will be shipped beside.
     const TOTAL_MB = '__TOTAL_MB__';
+    // THE DOWNLOAD AS IT ARRIVES (kanban #441, the owner 2026-10-17: "Show mb/s and downloaded mb and speed in the next block loading
+    // screen"): Unity's loader reads each build file with fetch and a stream reader; the page passes each body through a stream that
+    // counts its bytes (the files are served raw - .unityweb, no content-encoding - so Content-Length is the total). The line under the
+    // bar says got / total MB and the speed over the last second; when the files are in, the total, the time and the mean speed; a
+    // build Unity takes from its own cache downloads nothing, and the line says so.
+    const DL = window.ARENA_DOWNLOAD = { files: new Map(), t0: 0, t1: 0, samples: [] };
+    // the build's files are brotli, unpacked by the browser as they arrive (#265): the stream sees unpacked bytes, so each file's
+    // packed and unpacked size (written in when the page is filled - fill-template.mjs) turn them back into the bytes downloaded
+    const BUILD_SIZES = (() => { try { return JSON.parse('__BUILD_SIZES__'); } catch (e) { return {}; } })();
+    (() => {
+      const realFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        const url = String((input && input.url) || input);
+        if (!/(^|\/)Build\/[^?#]*\.unityweb/.test(url) || typeof TransformStream !== 'function') return realFetch(input, init);
+        return realFetch(input, init).then((r) => {
+          if (!r.ok || !r.body) return r;
+          const name = url.split(/[?#]/)[0].split('/').pop(), sz = BUILD_SIZES[name];
+          const packed = r.headers.get('content-encoding') && sz && sz[1] ? sz[0] / sz[1] : 1;   // downloaded bytes per byte read
+          const f = { total: (sz && sz[0]) || Number(r.headers.get('content-length')) || 0, got: 0, ratio: packed, done: false };
+          DL.files.set(url, f); if (!DL.t0) DL.t0 = performance.now();
+          const counted = r.body.pipeThrough(new TransformStream({
+            transform(chunk, c) { const n = chunk.byteLength * f.ratio; f.got += n; DL.samples.push([performance.now(), n]); c.enqueue(chunk); },
+            flush() {
+              f.done = true; if (f.total) f.got = f.total;
+              // all three in (the framework, the wasm, the data): the download's end
+              const names = [...DL.files.keys()].join(' ');
+              if (/\.framework\./.test(names) && /\.wasm\./.test(names) && /\.data\./.test(names) && [...DL.files.values()].every((x) => x.done)) DL.t1 = performance.now();
+            },
+          }));
+          return new Response(counted, { status: r.status, statusText: r.statusText, headers: r.headers });
+        });
+      };
+      const mb = (b) => (b / 1048576).toFixed(1);
+      const tick = setInterval(() => {
+        const el = document.getElementById('dl'); if (!el) { clearInterval(tick); return; }
+        const files = [...DL.files.values()];
+        const got = files.reduce((t, f) => t + f.got, 0), total = files.reduce((t, f) => t + f.total, 0);
+        const now = performance.now();
+        while (DL.samples.length && DL.samples[0][0] < now - 1000) DL.samples.shift();
+        const rate = DL.samples.reduce((t, x) => t + x[1], 0);           // bytes in the last second
+        if (!files.length) { if (document.getElementById('pctwrap') && document.getElementById('pctwrap').classList.contains('on')) el.textContent = 'from the browser cache'; return; }
+        if (DL.t1) {
+          const sec = (DL.t1 - DL.t0) / 1000;
+          // read in well under a second: the browser's own cache, not the network
+          el.textContent = sec < 0.75 ? mb(got) + ' MB from the browser cache' : mb(got) + ' MB in ' + sec.toFixed(1) + ' s \u00b7 ' + mb(got / sec) + ' MB/s';
+          window.ARENA_DOWNLOAD_LINE = el.textContent; clearInterval(tick); return; }
+        el.textContent = mb(got) + (total ? ' / ' + mb(total) : '') + ' MB \u00b7 ' + mb(rate) + ' MB/s';
+        const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) note.textContent = mb(total) + ' MB';
+        window.ARENA_DOWNLOAD_LINE = el.textContent;
+      }, 250);
+    })();
     document.getElementById('total').textContent =
       TOTAL_MB.indexOf('_') === 0 ? 'A few megabytes' : TOTAL_MB + ' MB';
 

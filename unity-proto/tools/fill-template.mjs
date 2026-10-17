@@ -106,6 +106,17 @@ if (GAME) {
   html = html.replace(tag, `<meta name="arena-site-game" content="${GAME}">`);
   console.log(`  site game -> ${GAME}`);
 }
+// EACH BUILD FILE'S PACKED AND UNPACKED SIZE (kanban #441): the .unityweb files are brotli and the browser unpacks them as they arrive,
+// so the page counts unpacked bytes; with both sizes it says the real download - got x packed / unpacked - in MB and MB/s
+{
+  const { brotliDecompressSync } = await import('node:zlib');
+  const sizes = {};
+  for (const f of inBuild.filter((x) => x.endsWith('.unityweb'))) {
+    const b = readFileSync(join(BUILD, 'Build', f));
+    try { sizes[f] = [b.length, brotliDecompressSync(b).length]; } catch { sizes[f] = [b.length, b.length]; }
+  }
+  html = html.replace("'__BUILD_SIZES__'", JSON.stringify(JSON.stringify(sizes)));
+}
 writeFileSync(page, html);
 for (const [k, v] of Object.entries(values)) console.log(`  ${k} -> ${v}`);
 console.log(`filled ${page}`);
