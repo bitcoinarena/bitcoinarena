@@ -307,10 +307,15 @@ test('the page joins a named round and still invents none', () => {
   // AND IT WRITES NO CONTRACT. A page that carried its own fields could name
   // its own committee and then satisfy its own choice, which is the exact
   // substitution the round id exists to stop.
-  for (const field of ['censusRoot', 'simCoreHash', 'gameVerifySlots', 'stakeMsat',
-                       'committeeTimeMs', 'blockTicks'])
+  // THE FIELDS ONLY A ROUND'S BUILDER WRITES never appear, and nothing encodes a contract (kanban #465): `stakeMsat` is an order's own
+  // amount since kanban #237 (a pick record, an order message) and `committeeTimeMs` is read off fetched rounds to sort them - the
+  // words alone no longer say a round is invented, so those two are checked as the page uses them: never encoded into a contract
+  for (const field of ['censusRoot', 'simCoreHash', 'gameVerifySlots', 'blockTicks'])
     assert.ok(!page.includes(field),
       'the page writes ' + field + ', so it is inventing a round rather than joining one');
+  for (const builder of ['encodeRoundContract', 'openGrid', 'standUpRound', 'roundContractFields'])
+    assert.ok(!page.includes(builder), 'the page calls ' + builder + ', so it is inventing a round rather than joining one');
+  assert.ok(!/committeeTimeMs\s*:/.test(page), 'the page sets a committee time, so it is inventing a round rather than joining one');
 
   // THE SESSION KEY IS PER TAB. localStorage would make two tabs one player,
   // and a player's own ghost is dropped - so the two tabs would show each
@@ -323,8 +328,10 @@ test('the page joins a named round and still invents none', () => {
   // heartbeat - named once, in BLWP_BROWSER_STORE, holding no player and no money.
   // (The one-time blwp.* to arena.* move, kanban #207, names it once more before all of these: storage-move.test.js.)
   const pageAfterMove = page.replace(/<script id="arena-storage-move">[\s\S]*?<\/script>/, '');
-  assert.equal((pageAfterMove.match(/localStorage/g) || []).length, 3, 'the page names localStorage outside vault(), the seed keeper and BLWP_BROWSER_STORE');
-  assert.match(page, /const browserStore = window\.BLWP_BROWSER_STORE = \(\) => \{ try \{ return window\.localStorage; \}/, 'the browser\'s own store is not the one named helper');
+  assert.equal((pageAfterMove.match(/localStorage/g) || []).length, 3, 'the page names localStorage outside vault(), the seed keeper and BLWP_BROWSER_STORE (every preference, cache and connection goes through that door, kanban #465)');
+  // THE ONE DOOR, FROM THE FIRST PAINT ON (kanban #465): defined in the first-paint script, so even the splash's game-name lookup uses it
+  assert.match(page, /window\.BLWP_BROWSER_STORE = function \(\) \{ try \{ return window\.localStorage; \}/, 'the browser\'s own store is not the one named helper');
+  assert.match(page, /const browserStore = window\.BLWP_BROWSER_STORE;/, 'the console\'s store is not that helper');
   assert.match(page, /window\.BLWP_SEED_KEEPER = blwpSeedKeeper\(\{ L: window\.localStorage, T: window\.sessionStorage,/, 'the phrases are not kept by blwpSeedKeeper');
   assert.match(page, /function vault\(\) \{\n\s+try \{ const s = window\.localStorage;/, 'localStorage is not the kept rounds\' vault()');
   for (const call of ['tabSeed', 'seedOrigin', 'importSeed', 'tabIdentity', 'setPlayerName', 'nameRecordFor'])

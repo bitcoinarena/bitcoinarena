@@ -30,7 +30,8 @@ test('Unity is handed the view, a purchase, "Play with it" and a fresh read; a p
 });
 
 test('the countdown box offers Buy add-ons beside exit game, shown when the game sells something, opening Unity\'s panel', () => {
-  assert.match(PAGE, /<div id="blwp-next" role="status"><span id="blwp-next-say"><\/span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons<\/button><button id="blwp-next-exit"/);
+  // the donate button (kanban #431) sits between add-ons and exit game
+  assert.match(PAGE, /<div id="blwp-next" role="status"><span id="blwp-next-say"><\/span><button id="blwp-next-addons" type="button" style="display:none">Buy add-ons<\/button>(<button id="blwp-next-donate" type="button">[^<]*<\/button>)?<button id="blwp-next-exit"/);
   assert.match(PAGE, /ad\.style\.display = window\.ARENA_ADDONS_VIEW && window\.ARENA_ADDONS_VIEW\(\)\.shop && window\.unityInstance \? '' : 'none';/);
   assert.match(PAGE, /getElementById\('blwp-next-addons'\)\.addEventListener\('click', \(\) => \{\n\s+try \{ window\.unityInstance\.SendMessage\('Bootstrap', 'OpenAddons'\);/);
 });
