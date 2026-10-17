@@ -146,6 +146,16 @@
   .legend div { font-size: 15px; color: var(--soft); }
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px; vertical-align: -1px; }
   .legend strong { display: block; font: 700 22px "Space Grotesk"; color: var(--text); }
+  /* THE PROTOCOL RESERVES, live under the fees (kanban #397) */
+  .reserves { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: clamp(18px, 4vw, 48px); align-items: center; margin-top: 36px; padding: clamp(20px, 4vw, 36px); border-radius: 22px; border: 1px solid rgba(247,147,26,.35); background: radial-gradient(120% 140% at 0% 0%, rgba(247,147,26,.16), transparent 60%), rgba(15,10,16,.55); }
+  .reserves .kicker { margin-bottom: 6px; }
+  .r-total { display: flex; align-items: baseline; gap: 10px; font: 700 clamp(44px, 7vw, 72px)/1 "Space Grotesk", Inter, sans-serif; color: var(--btc); font-variant-numeric: tabular-nums; }
+  .r-total small { font-size: .38em; color: var(--gold); }
+  .r-line { margin-top: 10px; font-size: 14px; color: var(--soft); }
+  .r-what { margin: 0; font-size: 16px; color: var(--soft); }
+  .r-what b { color: var(--text); }
+  .reserves[data-state="reading"] .r-total span { opacity: .4; }
+  @media (max-width: 760px) { .reserves { grid-template-columns: 1fr; } }
   .legend small { display: block; margin-top: 4px; font-size: 13px; line-height: 1.4; color: var(--dim); }
   .split .note { margin: 22px 0 0; padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(255,209,102,.28); background: rgba(255,209,102,.06); color: #eadbd0; font-size: 15px; }
   .split .note b { color: var(--gold); }
@@ -312,6 +322,14 @@
       <div><i style="background:var(--btc)"></i>Protocol developers<strong>2.5%</strong><small>Optional donation.</small></div>
     </div>
     <p class="note">Developer donations are <b>optional</b> and can be set to <b>0%</b>. Free rounds take nothing.</p>
+    <div class="reserves" id="reserves" data-state="reading">
+      <div class="r-head">
+        <div class="kicker">Protocol reserves · live</div>
+        <div class="r-total"><span data-r="total">…</span><small>sat</small></div>
+        <div class="r-line" data-r="line">Reading the nodes…</div>
+      </div>
+      <p class="r-what">On protocol 11, <b>2&nbsp;%</b> of every paid round and <b>20&nbsp;%</b> of every item go to the protocol reserves, locked to each federation&rsquo;s 5-of-7 key. They are paid out only to projects the bonded nodes vote for, to the project&rsquo;s Lightning address.</p>
+    </div>
   </div>
 </div></section>
 
@@ -356,6 +374,7 @@
   <span class="fl"><a href="https://testnet.bitcoin-arena.io/">Play on testnet</a><a href="/games">Live games</a><a href="https://docs.bitcoin-arena.io/">Docs</a><a href="https://docs.bitcoin-arena.io/#faq">FAQ</a></span>
 </div></footer>
 
+<script src="js/reserves.js" defer></script>
 <script>
   // sections fade in as they arrive
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } }), { threshold: 0.12 });

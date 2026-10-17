@@ -1,11 +1,10 @@
 // THE PAYMENTS OUT OF THE RESERVES ON THE ARENA PAGE (§27A.9.3, kanban #397, the owner 2026-10-17: "Build the Payments out list and its
 // 5 tests as named in comment 2647"): a payout is shown only once five nodes list it and hold its proposal's vote as passed; a passed
-// vote without a payout is pending; a drained federation's move needs no vote; the page lists them under the payments in.
+// vote without a payout is pending; a drained federation's move needs no vote. (The games screen's list was taken out again,
+// the owner 2026-10-17: "remove ... the reserve accordion"; the reserves are shown on bitcoin-arena.io - home-reserves.test.js.)
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reservesPaymentsOut, fetchReservesPaymentsOut, paymentOutLine } from '../src/reserves-page.js';
-import { readFileSync } from 'node:fs';
-import { pageFunction } from './page-script.js';
 
 const P = 'aa'.repeat(32), MOVE = 'bb'.repeat(32), FA = '33'.repeat(32), FB = '44'.repeat(32);
 const proposal = (state, count = { turnoutPct: 41.5, approvalPct: 72.25, passed: state === 'passed' }) => ({ id: P, purpose: 'Relay hosting', lnurl: 'dev@example.org',
@@ -53,38 +52,3 @@ test('4. a drained federation\'s move shows as moved to federation Y, with no vo
   assert.deepEqual([o.kind, o.to, o.status, o.vote, o.amountSats, o.txid], ['move', FB, 'moved', null, '120000', 'ff'.repeat(32)]);
   assert.equal(paymentOutLine(o), `moved from federation 33333333 to federation 44444444 · 120,000 sat · moved · tx ${'ff'.repeat(8)}…`);
 });
-
-test('5. the page lists the payments out under the payments in; the reserves line itself is unchanged', async () => {
-  const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url);
-  const HTML = readFileSync(PAGE, 'utf8'), a = HTML.indexOf('    async function showReserves(el, nodes) {');
-  const SHOW = HTML.slice(a, HTML.indexOf('\n    }\n', a) + 7);
-  const make = (tag) => { const e = { tag, children: [], textContent: '', title: '', className: '', hidden: true,
-    append(...k) { for (const c of k) this.children.push(typeof c === 'string' ? { tag: '#text', textContent: c, children: [] } : c); } }; return e; };
-  const text = (e) => e.tag === '#text' ? e.textContent : (e.textContent || '') + e.children.map(text).join('');
-  const run = async (answers) => {
-    const box = make('div'); const el = { querySelector: (q) => (q === '.reserves' ? box : null) };
-    const document = { createElement: make }; const window = {};
-    const fetcher = async (url) => { const i = Number(new URL(url).port) - 9000; const a = answers(i), path = new URL(url).pathname;
-      return { ok: true, async json() { return path === '/reserves' ? { totalMsat: '102000', entries: 2, paidIn: [{ at: '2026-10-17T01:00:00Z', game: 'Tick Tock', amountMsat: '2000' }] }
-        : path === '/reserve-payouts' ? { payouts: a.payouts } : { proposals: a.proposals }; } }; };
-    const { fetchReservesTotal } = await import('../src/reserves-page.js');
-    const BLWPCLIENT = { fetchReservesTotal: (o) => fetchReservesTotal({ ...o, fetcher }), fetchReservesPaymentsOut: (o) => fetchReservesPaymentsOut({ ...o, fetcher }), paymentOutLine };
-    const console = { log() {}, warn() {} };
-    const showReserves = pageFunction(PAGE, ['document', 'window', 'BLWPCLIENT', 'console'], SHOW, 'return showReserves;')(document, window, BLWPCLIENT, console);
-    await showReserves(el, Array.from({ length: 14 }, (_, i) => `http://127.0.0.1:${9000 + i}`));
-    const d = box.children[0];
-    return { box, d, window, summary: text(d.children[0]), rest: d.children.slice(1).map(text) };
-  };
-  const empty = await run(() => ({ payouts: [], proposals: [] }));
-  assert.equal(empty.summary, 'Protocol reserves: 102 sat · 2 payments in', 'the reserves line as before');
-  assert.equal(empty.d.children[0].title, '14 of 14 nodes name this total');
-  assert.equal(empty.rest[1], 'Payments out: none yet · 14 of 14 nodes agree');
-  assert.deepEqual(empty.window.ARENA_PAYMENTS_OUT, { out: 0, pending: 0, inconsistent: [], agreeing: 14, asked: 14 });
-  const full = await run(() => ({ payouts: [paid, moved], proposals: [proposal('passed')] }));
-  assert.equal(full.rest[1], 'Payments out · 14 of 14 nodes agree');
-  assert.match(full.rest[2], /Relay hosting · dev@example\.org · 50,000 sat · paid · vote 41\.5 % turnout, 72\.25 % YES/);
-  assert.match(full.rest[2], /moved from federation 33333333 to federation 44444444 · 120,000 sat · moved/);
-  const pend = await run(() => ({ payouts: [], proposals: [proposal('passed')] }));
-  assert.equal(pend.rest[2], 'Relay hosting · dev@example.org · 50,000 sat · vote passed – payout pending');
-});
-
