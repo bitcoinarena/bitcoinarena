@@ -67,7 +67,11 @@ test('the website names only the current configuration; the proposals forum is i
   }
   assert.ok(GAMES_PAGE.includes('<s>nodes 4 %</s><s>protocol developers 2 %</s><s>you 2 %</s><s>reserves 2 %</s>'));
   assert.equal(HTML.includes('<section id="proposals"'), false, 'no proposals section on the homepage');
-  assert.ok(HTML.includes('<a href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a>'));
+  assert.ok(HTML.includes('<a class="keep" href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a>'))
+  // #430: on a phone the menu keeps Proposals and Docs beside Play - only the section links are hidden
+  assert.ok(HTML.includes('<a class="keep" href="https://docs.bitcoin-arena.io/">Docs</a>'));
+  assert.match(HTML, /@media \(max-width: 860px\) \{ nav \.links a:not\(\.keep\) \{ display: none; \}/);
+  assert.ok(!/nav \.links \{ display: none; \}/.test(HTML), 'the phone menu hides every link again');
   const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
   const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
   for (const t of ['bonds at least 3 months old that stay locked at least 3 months after the vote', '60% of the votes say YES, and YES is at least 20% of everyone who could vote',
