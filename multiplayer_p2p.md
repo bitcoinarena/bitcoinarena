@@ -6929,6 +6929,32 @@ carry no weight in any count.
 - The payout is recorded beside the proposal on every node.
 - One payout per proposal.
 - A proposal larger than the reserves at payout time pays nothing and says so.
+- **As built** *(kanban #397 slice 8, the owner 2026-10-17: "Accepted: the 5-of-7 LNURL payout you just wrote. Build that slice.
+  No new fork.")*, in `arena-node/src/reserve-payout.js`:
+  - **Who signs:** the seven guardian seats of the federation that holds the reserves (its reserve key's DKG shares); any 5 of
+    7 sign.
+    - The lowest-key guardian coordinates; the next takes over after 2 blocks of silence.
+    - The other seats check what they are told and record it.
+  - **Which federation pays:** the lowest federation id whose unspent reserves cover X plus fees.
+  - **One payout plan per proposal:**
+    - the reserve outputs it spends (oldest first, no more than X plus fees needs);
+    - an invoice for exactly X sat from the proposal's LNURL (LUD-06/16: amount and description hash checked);
+    - the lowest live gateway;
+    - the outgoing contract to the invoice (output 0) and the change back to the reserve key (output 1).
+  - **Signing:** every signer rebuilds the plan from its own records and refuses anything else. Two 5-of-7 BIP340 signatures
+    under the reserve key: the federation transaction (`settle`, the inputs spent by `refunds`) and the invoice's consensus
+    hash the gateway checks (`send`).
+    - A nonce pair signs one list once. A coordinator that takes over gets fresh nonces.
+  - **Allowed** only when that seat's own record has the vote decided passed, no payout record exists for the proposal, and
+    that federation's unspent reserves cover X plus the federation's and the gateway's fees.
+  - **States:** PLANNED → SENT (accepted) → PAID (the preimage checked against the invoice) or REFUNDED (the gateway did not
+    pay; the expired contract was spent back to the reserve key). SHORT: the reserves cannot cover it; nothing is paid, for
+    good.
+    - A silent LNURL or a wrong invoice signs nothing, and the next pass asks again.
+  - **Records:** one record per proposal on every seat (`reserve_payouts`). A second plan for a proposal is refused, and a
+    spent output is never planned again.
+  - **Shown:** `GET /reserves` lists `payouts` and no longer counts spent outputs; `GET /reserve-payouts`.
+  - **Not built:** a re-try after a refund, a payout split over federations, giving up on an LNURL silent for days.
 
 ### 27A.9.4 Decided *(the owner 2026-10-16)*
 
