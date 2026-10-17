@@ -4159,10 +4159,16 @@
     // THE FEDERATION'S STATUS, SHOWN (kanban #321): under CRITICAL only Withdraw and Move stay; the note says why
     window.ARENA_PAINT_FEDERATION = () => {
       const fed = window.ARENA_FED_STATUS; const note = document.getElementById('arena-fed-note');
+      // THE NOTE SAYS THE WALLET'S OWN FEDERATION (kanban #402, the owner 2026-10-17): the one on its chip, looked up among the statuses
+      // this page verified - not the last round the lobby checked, which took turns between A (load 4.33, shown) and B (0.72, hidden)
+      // and made the note come and go. Joining a round still asks that round's own federation (ARENA_FED_STATUS).
+      const own = window.BLWP_LEDGER_FEDERATION && window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get ? window.ARENA_FED_LOADS.get(window.BLWP_LEDGER_FEDERATION) : null;
+      const mine = own ? { ...own, federation: window.BLWP_LEDGER_FEDERATION } : null;
       // AND ITS LOAD (§23A.3, kanban #324): said when the federation holds more than its guardians' bonds cover - shown, not refused
-      const says = fed ? [BLWPCLIENT.federationSays(fed.status), BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(fed) : '',
-        BLWPCLIENT.moveSays && window.ARENA_FED_MOVE && window.ARENA_FED_MOVE.from === fed.federation ? BLWPCLIENT.moveSays(window.ARENA_FED_MOVE) : ''].filter(Boolean).join(' ') : '';
-      if (note) { note.textContent = says; note.style.display = says ? '' : 'none'; }
+      const said = mine ? [BLWPCLIENT.federationSays(mine.status), BLWPCLIENT.loadSays ? BLWPCLIENT.loadSays(mine) : '',
+        BLWPCLIENT.moveSays && window.ARENA_FED_MOVE && window.ARENA_FED_MOVE.from === mine.federation ? BLWPCLIENT.moveSays(window.ARENA_FED_MOVE) : ''].filter(Boolean).join(' ') : '';
+      const says = said ? 'Federation ' + mine.federation.slice(0, 8) + ' · ' + said : '';   // named, as on the chip
+      if (note) { if (note.textContent !== says) note.textContent = says; note.style.display = says ? '' : 'none'; }
       for (const s of ['DRAINING', 'CRITICAL', 'HALTED', 'CLOSED']) document.body.classList.toggle('arena-fed-' + s.toLowerCase(), !!fed && fed.status === s);
     };
     function openMoney(which, say = (t) => { document.getElementById('blwp-money-why').textContent = t; }) {
@@ -4721,7 +4727,9 @@
       let fed;
       try { const wasm = await window.BLWP_LOCK_WASM(); await wasm.default(); fed = String(wasm.LockClient.federationIdOf(lob.federation)).toLowerCase(); }
       catch (e) { fedEl.textContent = 'The federation id could not be read: ' + (e && e.message ? e.message : e); return; }
+      const knew = window.BLWP_LEDGER_FEDERATION === fed;
       window.BLWP_LEDGER_FEDERATION = fed;
+      if (!knew && window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();   // the note follows this chip (#402)
       fedEl.textContent = '';
       { const chip = document.createElement('span'); chip.className = 'fed-chip'; chip.title = fed + ' - tap to copy';
         chip.textContent = 'Federation ' + fed.slice(0, 8) + '\u2026' + fed.slice(-4);
