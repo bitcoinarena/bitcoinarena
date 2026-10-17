@@ -16,4 +16,6 @@ test('the frame CSS is for Up/Down only and keeps its columns one width', () => 
   assert.match(block, /\.ord\{grid-template-columns:72px minmax\(0,1fr\) auto!important\}\.ord \.sd\{display:block;text-align:center;/);
   assert.match(block, /\.pastc \.ph \.sd\{width:72px;flex:none;/);
   assert.match(block, /\.pastc \.ph \.fin\{flex:1 0 100%;order:3;text-align:right\}/);
+  // kanban #453 ("In einer Zeile auf mobile"): on a phone the History totals take their own line, never wrapped
+  assert.match(block, /@media \(max-width:999px\)\{#histhead\{flex-wrap:wrap;row-gap:2px\}#histhead \.tot\{flex:1 0 100%;text-align:left;white-space:nowrap;font-size:11px;/);
 });
