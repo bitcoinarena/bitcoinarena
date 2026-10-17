@@ -931,6 +931,8 @@ const TYPE_DONATION_SET_KEYS_VESTING = 0x2d;
 const TYPE_FUNDING_PROPOSAL = 0x2e;
 const TYPE_FUNDING_COMMENT = 0x2f;
 const TYPE_FUNDING_SIGNAL = 0x30;
+// A PLAYER'S NAME, NETWORK-WIDE (kanban #397 PIP, the owner 2026-10-17: "Have custom names in the protocol"): player-name.js
+const TYPE_PLAYER_NAME = 0x31;
 
 // A SEALED SHARE IS A FIXED SIZE, and it is not a choice: 32 bytes of scalar
 // under AES-GCM plus the 16-byte tag that makes a wrong key a REFUSAL rather
@@ -1006,6 +1008,7 @@ const TAG = {
   fundingProposal: 'ARENA/v1/FundingProposal',
   fundingComment: 'ARENA/v1/FundingComment',
   fundingSignal: 'ARENA/v1/FundingSignal',
+  playerName: 'ARENA/v1/PlayerName',
   // The player's lock client's root, per round, from their seed (W1b). Its own
   // tag: it must never be the player key the same seed makes for the round.
   lockClientSecret: 'ARENA/v1/LockClientSecret',
@@ -24347,6 +24350,128 @@ function tally({ proposal, standing, census, votes, verify }) {
     turnoutPct: total > 0n ? Number((turnout * 10000n) / total) / 100 : 0, approvalPct: decided > 0n ? Number((yes * 10000n) / decided) / 100 : 0 };
 }
 
+// ---- arena-protocol/src/lobby-name.js
+// A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
+//
+// The name decides nothing (§0.12): it is in no entry, no mark and no result,
+// and the board still shows the name made from a player's key. But a lobby two
+// players share shows each the other's name, so a tab hands its signer nodes ONE
+// RECORD: this round, the round key it is joined under, the tab's identity key
+// (its generated name is made from that), the name the player chose - empty
+// for none - and when. The joined player's round key signs it (BIP-340), so a
+// signer node that serves it can leave a name out but cannot write one, and a record
+// for one round is no record for another. The newest record of a player wins.
+
+
+
+/** The longest name a player may choose, in characters. */
+const LOBBY_NAME_MAX = 24;
+
+/**
+ * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: trimmed, inner
+ * spaces collapsed, 1 to 24 characters, letters and digits with space, dot,
+ * dash and underscore between them. Anything else is refused by name.
+ */
+function lobbyNameIsValid(text) {
+  const name = String(text == null ? '' : text).normalize('NFC').trim().replace(/\s+/g, ' ');
+  if (!name) return { ok: false, why: 'a name is at least one character' };
+  if ([...name].length > LOBBY_NAME_MAX) return { ok: false, why: `a name is at most ${LOBBY_NAME_MAX} characters` };
+  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$/u.test(name))
+    return { ok: false, why: 'a name is letters and digits, with space, dot, dash or underscore between them' };
+  return { ok: true, name };
+}
+
+const nameIs32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodeLobbyName({ roundId, playerPubkey, identityPubkey, name = '', atMs } = {}) {
+  if (!nameIs32(roundId)) throw new Error('a name record names a 32-byte round id');
+  if (!nameIs32(playerPubkey)) throw new Error('a name record is signed by a 32-byte player key');
+  if (!nameIs32(identityPubkey)) throw new Error('a name record carries the 32-byte identity key its generated name is made from');
+  const at = BigInt(atMs);
+  if (at < 0n) throw new Error('a name record\'s time is not negative');
+  const text = name == null ? '' : name;
+  if (typeof text !== 'string') throw new Error('a name is text');
+  if (text !== '') {
+    const kept = lobbyNameIsValid(text);
+    if (!kept.ok) throw new Error(kept.why);
+    if (kept.name !== text) throw new Error('a name is signed as it is kept: trimmed, one space between words');
+  }
+  const w = new Writer();
+  w.bytes32(roundId);
+  w.bytes32(playerPubkey);
+  w.bytes32(identityPubkey);
+  w.u64(at);
+  w.str(text);
+  return w.finish();
+}
+
+/** A record as a signer node or a page receives it; held to the same rules as one written. */
+function decodeLobbyName(bytes) {
+  const r = new Reader(bytes);
+  const record = { roundId: r.bytes32(), playerPubkey: r.bytes32(), identityPubkey: r.bytes32(), atMs: r.u64(), name: r.str() };
+  r.end();
+  encodeLobbyName(record);
+  return record;
+}
+
+/** What the joined player signs (BIP-340, its round key) for its name in one round. */
+const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
+
+// ---- arena-protocol/src/player-name.js
+// A PLAYER'S NAME, AS THE WHOLE NETWORK SHOWS IT (kanban #397 PIP, the owner 2026-10-17: "Users can sign in with their ingame key and
+// their custom name or their generated name" - "Have custom names in the protocol").
+//
+// The lobby's name record (lobby-name.js) is one round's: signed by the round key, kept by that round's signer nodes. This one is
+// the player's own, for anywhere a player is named outside a round - the proposals forum first: the network it is for, the player's
+// IDENTITY key (the key its generated name is made from, display-name.js), when (ms), and the name the player chose - empty for
+// none, and then the generated one is shown. The identity key signs it (BIP-340), so a node can leave a name out but cannot write
+// one; nodes keep the newest per player and refuse one dated more than PLAYER_NAME_SKEW_MS ahead of their clock. The name is held
+// to the lobby's rule (lobbyNameIsValid): one rule names a player everywhere. Like every name, it decides nothing (§0.12).
+
+
+
+
+/** How far ahead of a node's clock a name may be dated and still be kept. */
+const PLAYER_NAME_SKEW_MS = 10 * 60 * 1000;
+
+const n32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+function encodePlayerName({ networkId, player, atMs, name = '' } = {}) {
+  if (!n32(networkId) || !n32(player)) throw new Error('a player name names its network and the player\'s identity key by 32 bytes each');
+  const at = BigInt(atMs);
+  if (at < 0n) throw new Error('a player name\'s time is not negative');
+  if (typeof name !== 'string') throw new Error('a name is text');
+  if (name !== '') {
+    const kept = lobbyNameIsValid(name);
+    if (!kept.ok) throw new Error(kept.why);
+    if (kept.name !== name) throw new Error('a name is signed as it is kept: trimmed, one space between words');
+  }
+  const w = new Writer();
+  w.u8(TYPE_PLAYER_NAME); w.u16(PROTOCOL_VERSION);
+  w.bytes32(networkId); w.bytes32(player); w.u64(at); w.str(name);
+  return w.finish();
+}
+
+function decodePlayerName(bytes) {
+  const r = new Reader(bytes);
+  if (r.u8() !== TYPE_PLAYER_NAME) throw new Error('not a player name');
+  if (!speaksVersion(r.u16())) throw new Error('unknown protocol version');
+  const n = { networkId: r.bytes32(), player: r.bytes32(), atMs: r.u64(), name: r.str() };
+  if (r.at !== bytes.length) throw new Error('trailing bytes after the player name');
+  encodePlayerName(n);                       // the same rules on the way in
+  return n;
+}
+
+/** What the player's identity key signs (BIP-340). */
+const playerNameId = (n) => taggedHash(TAG.playerName, encodePlayerName(n));
+
+/** Of two records of one player, the one that stands: the later; at the same ms, the lower id. */
+function newerPlayerName(a, b) {
+  if (!a) return b; if (!b) return a;
+  if (a.obj.atMs !== b.obj.atMs) return a.obj.atMs > b.obj.atMs ? a : b;
+  return a.idHex < b.idHex ? a : b;
+}
+
 // ---- arena-protocol/src/funding.js
 // PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
 // purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
@@ -24364,6 +24489,7 @@ function tally({ proposal, standing, census, votes, verify }) {
 // 432 blocks before its end: the window [time(end - 432), time(end)) on the chain's median time, which every seat reads alike and
 // which never runs backwards. A signal counts when it was given inside the signal period by an active node, once per node, whatever
 // its bond; the proposal passes when those nodes are at least 15 % of the active ones. Nothing is paid on a signal.
+
 
 
 
@@ -24471,7 +24597,7 @@ function decodeFundingSignal(bytes) {
 }
 const fundingSignalId = (s) => taggedHash(TAG.fundingSignal, encodeFundingSignal(s));
 
-/** The object of a signed hex (body || 64-byte signature) of `kind` 'proposal' | 'comment' | 'signal', its id, and whether its signer signed it. */
+/** The object of a signed hex (body || 64-byte signature) of `kind` 'proposal' | 'comment' | 'signal' | 'name', its id, and whether its signer signed it. */
 function readSignedFunding(kind, bytes, verify) {
   if (typeof verify !== 'function') throw new Error('a funding object is checked with a BIP340 verifier, and none was injected');
   if (!(bytes instanceof Uint8Array) || bytes.length <= FUNDING_SIG_BYTES) return { ok: false, why: 'no signature' };
@@ -24481,7 +24607,8 @@ function readSignedFunding(kind, bytes, verify) {
     if (kind === 'proposal') { obj = decodeFundingProposal(body); id = fundingProposalId(obj); signer = obj.author; }
     else if (kind === 'comment') { obj = decodeFundingComment(body); id = fundingCommentId(obj); signer = obj.author; }
     else if (kind === 'signal') { obj = decodeFundingSignal(body); id = fundingSignalId(obj); signer = obj.node; }
-    else return { ok: false, why: 'a proposal, a comment or a signal' };
+    else if (kind === 'name') { obj = decodePlayerName(body); id = playerNameId(obj); signer = obj.player; }   // the forum's names (PIP)
+    else return { ok: false, why: 'a proposal, a comment, a signal or a name' };
   } catch (e) { return { ok: false, why: `that is no funding ${kind}: ${e.message}` }; }
   let good = false; try { good = verify(signature, id, signer) === true; } catch { good = false; }
   if (!good) return { ok: false, why: `the ${kind}'s signature does not verify` };
@@ -24636,6 +24763,9 @@ function capStands({ proposalSats, paymentSats, reservesSats, paidByProposalSats
 
 
 
+
+
+
 const fundingBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const fundingMost = (xs) => { const c = new Map(); for (const x of xs) c.set(x, (c.get(x) || 0) + 1); return [...c.entries()].sort((a, b) => b[1] - a[1])[0] || [null, 0]; };
 
@@ -24659,7 +24789,7 @@ const npubOfKey = (pkHex) => bech32Encode('npub', convertBits(fromHex(pkHex), 8,
  * What the nodes hold: every proposal at least `needed` of them hold, its stage as most of those say, and every comment any of
  * them holds (comments carry no weight; each node checked its signature). Answers { ok, tip, network, proposals, agreeing, asked }.
  */
-async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
+async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000, verify = null } = {}) {
   const asked = [...new Set((nodes || []).map(fundingBaseOf))];
   const answers = (await Promise.all(asked.map(async (b) => {
     try { const r = await fetcher(`${b}/funding`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
@@ -24672,6 +24802,18 @@ async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, 
     for (const c of p.comments || []) had.comments.set(c.id, c);
     by.set(p.hex, had);
   }
+  // EVERY PLAYER'S NAME (PIP, player-name.js): the newest record any node holds whose signature this page checks itself - a node can
+  // leave a name out, never write one; without `verify` (a test) the nodes' word is taken
+  const names = new Map();
+  for (const a of answers) for (const n of a.names || []) {
+    const player = String(n.player || '').toLowerCase(); if (!/^[0-9a-f]{64}$/.test(player)) continue;
+    if (verify) { const bytes = fromHex(String(n.hex || '')); if (bytes.length <= 64) continue;
+      let ok = false; try { const rec = decodePlayerName(bytes.slice(0, -64));
+        ok = toHex(rec.player) === player && rec.name === String(n.name) && String(rec.atMs) === String(n.atMs) && verify(bytes.slice(-64), playerNameId(rec), rec.player) === true; } catch { ok = false; }
+      if (!ok) continue; }
+    const had = names.get(player);
+    if (!had || BigInt(n.atMs) > BigInt(had.atMs)) names.set(player, { name: String(n.name), atMs: String(n.atMs) });
+  }
   const proposals = [];
   for (const { views, comments } of by.values()) {
     if (views.length < needed) continue;
@@ -24682,9 +24824,12 @@ async function fetchProposals({ nodes, needed = 5, fetcher = (u, o) => fetch(u, 
       publishedHeight: p.publishedHeight, signal: v.signal, vote: v.vote, cancelled: v.cancelled || null, signals: (v.signals || []).length,
       comments: [...comments.values()].sort((a, b) => a.atHeight - b.atHeight || (a.id < b.id ? -1 : 1)), holding: views.length });
   }
+  // PIP NUMBERS (the owner 2026-10-17: "Project improvement proposals, PIP - each item set to vote is prefixed with PIP"): the earliest
+  // published is PIP-1 - by its published block, then its id - so a number never changes once the proposals before it are held
+  [...proposals].sort((a, b) => a.publishedHeight - b.publishedHeight || (a.id < b.id ? -1 : 1)).forEach((p, i) => { p.pip = i + 1; });
   proposals.sort((a, b) => b.publishedHeight - a.publishedHeight);
   const tips = answers.map((a) => Number(a.tip)).filter(Number.isInteger).sort((a, b) => a - b);
-  return { ok: true, tip: tips.length ? tips[Math.floor(tips.length / 2)] : null, proposals, agreeing: answers.length, asked: asked.length };
+  return { ok: true, tip: tips.length ? tips[Math.floor(tips.length / 2)] : null, proposals, names: Object.fromEntries(names), agreeing: answers.length, asked: asked.length };
 }
 
 /** The network the nodes run, as most of them name it (GET /network). */
@@ -24708,6 +24853,25 @@ function signedComment({ secretKey, proposalId, parentId = null, atHeight, text,
   const c = { proposalId: fromHex(proposalId), parentId: parentId ? fromHex(parentId) : null, author: k.pointX(secretKey), atHeight, text: String(text) };
   const id = fundingCommentId(c);
   return { id: toHex(id), hex: toHex(Uint8Array.from([...encodeFundingComment(c), ...k.signSchnorr(id, secretKey)])) };
+}
+
+/**
+ * THE PLAYER'S IN-GAME KEY (PIP, the owner 2026-10-17: "Users can sign in with their ingame key"): the identity key a wallet seed makes -
+ * the key the lobby, the board and the generated name use (identity.js) - and that generated name.
+ */
+function forumIdentity(seedHex, curve) {
+  const secret = identitySecretFor(fromHex(String(seedHex).toLowerCase()));
+  const pubkey = curveOf(curve).pointX(secret);
+  return { secret, pubkey: toHex(pubkey), generated: displayNameFromKey(pubkey) };
+}
+/** The name a player is shown by: its own from the nodes (`names` as fetchProposals answers), else the one made from its key. */
+const forumNameOf = (pkHex, names = {}) => { const n = names[String(pkHex).toLowerCase()]; return n && n.name ? n.name : displayNameFromKey(fromHex(String(pkHex))); };
+/** A player's name, signed by its identity key ('' = back to its generated name): the hex a node takes as kind 'name'. */
+function signedName({ secretKey, networkId, name = '', atMs = Date.now(), curve }) {
+  const c = curveOf(curve);
+  const rec = { networkId: fromHex(networkId), player: c.pointX(secretKey), atMs: BigInt(atMs), name: String(name) };
+  const id = playerNameId(rec);
+  return { id: toHex(id), hex: toHex(Uint8Array.from([...encodePlayerName(rec), ...c.signSchnorr(id, secretKey)])) };
 }
 
 /** Hand a signed object to every node; kept when any took it (they pass it on to each other). */
@@ -27016,73 +27180,6 @@ function matchRecordId({ gameId, roundId, identities, score, previousRoundId = n
 }
 
 const matchHex = toHex;
-
-// ---- arena-protocol/src/lobby-name.js
-// A PLAYER'S CHOSEN NAME, AS THE OTHER PLAYERS OF ITS ROUND ARE SHOWN IT (M3.3-34).
-//
-// The name decides nothing (§0.12): it is in no entry, no mark and no result,
-// and the board still shows the name made from a player's key. But a lobby two
-// players share shows each the other's name, so a tab hands its signer nodes ONE
-// RECORD: this round, the round key it is joined under, the tab's identity key
-// (its generated name is made from that), the name the player chose - empty
-// for none - and when. The joined player's round key signs it (BIP-340), so a
-// signer node that serves it can leave a name out but cannot write one, and a record
-// for one round is no record for another. The newest record of a player wins.
-
-
-
-/** The longest name a player may choose, in characters. */
-const LOBBY_NAME_MAX = 24;
-
-/**
- * WHETHER A CHOSEN NAME STANDS, and the name as it is kept: trimmed, inner
- * spaces collapsed, 1 to 24 characters, letters and digits with space, dot,
- * dash and underscore between them. Anything else is refused by name.
- */
-function lobbyNameIsValid(text) {
-  const name = String(text == null ? '' : text).normalize('NFC').trim().replace(/\s+/g, ' ');
-  if (!name) return { ok: false, why: 'a name is at least one character' };
-  if ([...name].length > LOBBY_NAME_MAX) return { ok: false, why: `a name is at most ${LOBBY_NAME_MAX} characters` };
-  if (!/^[\p{L}\p{N}](?:[\p{L}\p{N} ._-]*[\p{L}\p{N}])?$/u.test(name))
-    return { ok: false, why: 'a name is letters and digits, with space, dot, dash or underscore between them' };
-  return { ok: true, name };
-}
-
-const nameIs32 = (b) => b instanceof Uint8Array && b.length === 32;
-
-function encodeLobbyName({ roundId, playerPubkey, identityPubkey, name = '', atMs } = {}) {
-  if (!nameIs32(roundId)) throw new Error('a name record names a 32-byte round id');
-  if (!nameIs32(playerPubkey)) throw new Error('a name record is signed by a 32-byte player key');
-  if (!nameIs32(identityPubkey)) throw new Error('a name record carries the 32-byte identity key its generated name is made from');
-  const at = BigInt(atMs);
-  if (at < 0n) throw new Error('a name record\'s time is not negative');
-  const text = name == null ? '' : name;
-  if (typeof text !== 'string') throw new Error('a name is text');
-  if (text !== '') {
-    const kept = lobbyNameIsValid(text);
-    if (!kept.ok) throw new Error(kept.why);
-    if (kept.name !== text) throw new Error('a name is signed as it is kept: trimmed, one space between words');
-  }
-  const w = new Writer();
-  w.bytes32(roundId);
-  w.bytes32(playerPubkey);
-  w.bytes32(identityPubkey);
-  w.u64(at);
-  w.str(text);
-  return w.finish();
-}
-
-/** A record as a signer node or a page receives it; held to the same rules as one written. */
-function decodeLobbyName(bytes) {
-  const r = new Reader(bytes);
-  const record = { roundId: r.bytes32(), playerPubkey: r.bytes32(), identityPubkey: r.bytes32(), atMs: r.u64(), name: r.str() };
-  r.end();
-  encodeLobbyName(record);
-  return record;
-}
-
-/** What the joined player signs (BIP-340, its round key) for its name in one round. */
-const lobbyNameId = (record) => taggedHash(TAG.lobbyName, encodeLobbyName(record));
 
 // ---- arena-client/src/identity.js
 // WHO THIS TAB IS IN THE LOBBY (M3.3-34): a key the page generated, a name
@@ -32487,7 +32584,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
-         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
+         fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
          playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,

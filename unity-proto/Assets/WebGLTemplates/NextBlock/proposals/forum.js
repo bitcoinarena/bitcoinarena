@@ -1,9 +1,11 @@
 // THE PROPOSALS FORUM (kanban #397, the owner 2026-10-17: "Proposals are on a separate page and look like a forum"). Three views, by the
 // address's hash: the thread list (#), one thread (#p=<proposal id>) and a new proposal (#new). What is shown is what five of the
 // testnet's nodes hold (GET /funding); a thread or a reply is signed and handed to every node (POST /funding). It lives beside the
-// Arena page (testnet.bitcoin-arena.io/proposals/) so it signs with THE KEY THE PLAYER USES IN GAMES AND MARKETS (the owner
-// 2026-10-17): the player items key of the wallet phrase this browser keeps (itemsKeyFor) - or an nsec, or a key kept here. A new
-// proposal shows the reserves and is refused before posting when it asks more than 10 % of them (rule 4).
+// Arena page (testnet.bitcoin-arena.io/proposals/) so it signs with THE PLAYER'S IN-GAME KEY (the owner 2026-10-17: "Users can sign in with
+// their ingame key and their custom name or their generated name"): the identity key of the wallet phrase this browser keeps - the key
+// the lobby and the board name a player by - or an nsec, or a key kept here. Everyone is shown by name: the one the player set (a
+// signed name record the nodes keep, player-name.js), else the one made from the key. Each proposal is a PIP, numbered by
+// publication. A new proposal shows the reserves and is refused before posting when it asks more than 10 % of them (rule 4).
 (function () {
   var ARENA = window.ARENA_BASE || '/';
   var KEY = 'arena.proposals.key', MODE = 'arena.proposals.keymode';
@@ -12,7 +14,7 @@
   var forum = document.getElementById('forum');
   var view = document.getElementById('view');
   var $ = function (q) { return forum.querySelector(q); };
-  var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, replyTo: null, reserves: null };
+  var state = { nodes: [], tip: null, network: null, key: null, keyFrom: null, list: null, replyTo: null, reserves: null, names: {} };
 
   function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
   function npub(hex) { return BLWPCLIENT.npubOfKey(hex); }
@@ -20,17 +22,20 @@
   function sats(n) { return Number(n).toLocaleString('en-US') + ' sat'; }
   function title(p) { var t = String(p.purpose).split('\n')[0].trim(); return t.length > 90 ? t.slice(0, 88) + '…' : t; }
   function colour(hex) { var h = parseInt(hex.slice(0, 6), 16) % 360; return 'hsl(' + h + ' 70% 62%)'; }
-  function avatar(hex) { var a = el('div', 'ava', npub(hex).slice(5, 7).toUpperCase()); a.style.background = colour(hex); return a; }
+  function who(hex) { return BLWPCLIENT.forumNameOf(hex, state.names); }
+  function pip(p) { return 'PIP-' + p.pip; }
+  function avatar(hex) { var a = el('div', 'ava', (who(hex).match(/[\p{L}\p{N}]/u) || ['?'])[0].toUpperCase()); a.style.background = colour(hex); a.title = npub(hex); return a; }
+  function mine() { return state.key ? BLWPCLIENT.toHex(window.BLWP_CURVE.pointX(state.key)) : null; }
   function load(src) { return new Promise(function (ok, bad) { var s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = function () { bad(new Error('could not load ' + src)); }; document.head.appendChild(s); }); }
-  // THE ARENA KEY: the wallet phrases this browser keeps for the Arena page (arena.seeds); the one whose wallet holds the most here,
-  // as the page itself picks it - its player items key, the key that buys items and plays in rounds
+  // THE IN-GAME KEY: the wallet phrases this browser keeps for the Arena page (arena.seeds); the one whose wallet holds the most here,
+  // as the page itself picks it - its identity key, the one the lobby, the board and the player's name go by
   function arenaKey() {
     try {
       var list = JSON.parse(localStorage.getItem('arena.seeds') || '[]').filter(function (x) { return x && /^[0-9a-f]{64}$/i.test(x.hex); });
       if (!list.length) return null;
       var n = function (x) { try { return BLWPCLIENT.phraseWalletEntries ? BLWPCLIENT.phraseWalletEntries(localStorage, x.hex) : 0; } catch (e) { return 0; } };
       var best = list.map(function (x, i) { return { x: x, i: i, n: n(x) }; }).sort(function (a, b) { return (b.n - a.n) || (a.i - b.i); })[0].x;
-      return BLWPCLIENT.itemsKeyFor(BLWPCLIENT.fromHex(best.hex.toLowerCase()), window.BLWP_CURVE).secret;
+      return BLWPCLIENT.forumIdentity(best.hex, window.BLWP_CURVE).secret;   // the in-game identity key (PIP)
     } catch (e) { return null; }
   }
   function storedKey() { try { var h = localStorage.getItem(KEY); return h && /^[0-9a-f]{64}$/.test(h) ? BLWPCLIENT.fromHex(h) : null; } catch (e) { return null; } }
@@ -48,10 +53,14 @@
     if (k) { state.key = k; state.keyFrom = 'own'; showKey(); } else pickKey();
   }
   function showKey() {
-    $('.key .id').textContent = state.key ? 'Posting as ' + short(BLWPCLIENT.npubOf(state.key)) + (state.keyFrom === 'arena' ? ' · your Arena key' : ' · your own key')
-      : 'Read freely. To post, open the Arena once to make your wallet, or use your nsec.';
+    var id = $('.key .id'); id.textContent = '';
+    if (state.key) { var b = el('b', null, who(mine())); b.title = BLWPCLIENT.npubOf(state.key);
+      id.append(document.createTextNode('Signed in as '), b, document.createTextNode(state.keyFrom === 'arena' ? ' · your in-game key' : ' · your own key')); }
+    else id.textContent = 'Read freely. To post, open the Arena once to make your wallet, or use your nsec.';
     $('.forget').hidden = state.keyFrom !== 'own';
     $('.use-arena').hidden = !(state.keyFrom === 'own' && arenaKey());
+    var nf = $('.name-form'); nf.hidden = !state.key;
+    if (state.key && document.activeElement !== nf.name) { var n = state.names[mine()]; nf.name.value = n && n.name ? n.name : ''; nf.name.placeholder = BLWPCLIENT.forumNameOf(mine(), {}); }
   }
   function say(node, text, bad) { node.textContent = text; node.classList.toggle('bad', !!bad); }
 
@@ -83,8 +92,8 @@
     var th = el('div', 'th'); th.append(el('span', null, 'Proposal'), el('span', 'n', 'Amount'), el('span', 'n', 'Replies'), el('span', 'n', 'Stage')); t.append(th);
     if (state.list && !state.list.length) t.append(el('div', 'empty', 'No proposals yet. Start the first one.'));
     (state.list || []).forEach(function (p) {
-      var a = el('a', 'topic'); a.href = '#p=' + p.id;
-      var c = el('span', 't', title(p)); c.append(el('span', 'by', short(npub(p.author)) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl));
+      var a = el('a', 'topic'); a.href = '#pip=' + p.pip;
+      var c = el('span', 't'); c.append(el('span', 'pip', pip(p)), document.createTextNode(' ' + title(p)), el('span', 'by', who(p.author) + ' · block ' + p.publishedHeight + ' · to ' + p.lnurl));
       var sg = stage(p);
       a.append(c, el('span', 'amt', sats(p.amountSats)), el('span', 'n', String(p.comments.length)), el('span', 'stage ' + sg.cls, sg.text));
       t.append(a);
@@ -95,8 +104,8 @@
   function postNode(hex, head, body, extra, depth) {
     var p = el('article', 'post' + (depth ? ' reply' : '')); if (depth) p.style.setProperty('--depth', Math.min(depth, 4));
     var col = el('div');
-    var who = el('div', 'who'); var b = el('b', null, short(npub(hex))); who.append(b, document.createTextNode(' · ' + head));
-    col.append(who, el('div', 'body', body));
+    var line = el('div', 'who'); var b = el('b', null, who(hex)); b.title = npub(hex); line.append(b, document.createTextNode(' · ' + head));
+    col.append(line, el('div', 'body', body));
     if (extra) col.append(extra);
     p.append(avatar(hex), col);
     return { node: p, col: col };
@@ -109,7 +118,7 @@
     var bar = el('div', 'bar'); bar.append(back); view.append(bar);
     if (!p) { view.append(el('div', 'empty', state.list ? 'That proposal is not held by five nodes.' : 'Reading the nodes…')); return; }
     var sg = stage(p);
-    view.append(el('h1', null, title(p)));
+    view.append(el('h1', null, pip(p) + ' · ' + title(p)));
     var facts = el('div', 'facts');
     var amt = el('span'); amt.append(el('b', null, sats(p.amountSats)), document.createTextNode(' to ' + p.lnurl)); facts.append(amt, el('span', 'stage ' + sg.cls, sg.text), el('span', null, stageLine(p)));
     view.append(postNode(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes', p.purpose, facts, 0).node);
@@ -118,7 +127,7 @@
     (function walk(parent, depth) {
       (byParent[parent] || []).forEach(function (c) {
         var acts = el('div', 'acts'); var r = el('button', null, 'Reply'); r.type = 'button';
-        r.addEventListener('click', function () { state.replyTo = c.id; ta.placeholder = 'Reply to ' + short(npub(c.author)); ta.focus(); });
+        r.addEventListener('click', function () { state.replyTo = c.id; ta.placeholder = 'Reply to ' + who(c.author); ta.focus(); });
         acts.append(r);
         view.append(postNode(c.author, 'block ' + c.atHeight, c.text, acts, depth + 1).node);
         walk(c.id, depth + 1);
@@ -176,7 +185,7 @@
       }).then(function (x) {
         if (!x.r.ok) { say(out, 'Not taken: ' + x.r.why, true); return; }
         say(out, 'Published to ' + x.r.took + ' of ' + x.r.asked + ' nodes. Its 1-week signal starts now.');
-        setTimeout(function () { refresh().then(function () { location.hash = '#p=' + x.id; }); }, 1500);
+        setTimeout(function () { refresh().then(function () { var q = (state.list || []).find(function (y) { return y.id === x.id; }); location.hash = q ? '#pip=' + q.pip : '#p=' + x.id; }); }, 1500);
       }).catch(function (x) { say(out, x.message, true); });
     });
     view.append(f);
@@ -184,8 +193,11 @@
 
   function route() {
     var h = location.hash;
-    if (h === '#new') newView(); else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();
-    window.ARENA_FORUM = { view: h || '#', keyFrom: state.keyFrom, reserves: state.reserves, proposals: state.list ? state.list.length : null, comments: state.list ? state.list.reduce(function (t, p) { return t + p.comments.length; }, 0) : null, agreeing: state.agreeing, tip: state.tip };
+    if (h === '#new') newView();
+    else if (h.indexOf('#pip=') === 0) { var q = (state.list || []).find(function (x) { return String(x.pip) === h.slice(5); }); threadView(q ? q.id : ''); }
+    else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();
+    showKey();
+    window.ARENA_FORUM = { view: h || '#', keyFrom: state.keyFrom, me: mine(), name: mine() ? who(mine()) : null, pips: (state.list || []).map(function (p) { return pip(p); }), reserves: state.reserves, proposals: state.list ? state.list.length : null, comments: state.list ? state.list.reduce(function (t, p) { return t + p.comments.length; }, 0) : null, agreeing: state.agreeing, tip: state.tip };
   }
   function refresh() {
     BLWPCLIENT.fetchReservesTotal({ nodes: state.nodes }).then(function (r) {
@@ -193,9 +205,9 @@
       var typed = document.querySelector('.compose input[name=amount]');
       if (location.hash === '#new' && !(typed && typed.value)) newView();
     }).catch(function (e) { state.reservesWhy = e.message; });
-    return BLWPCLIENT.fetchProposals({ nodes: state.nodes }).then(function (r) {
+    return BLWPCLIENT.fetchProposals({ nodes: state.nodes, verify: window.BLWP_CURVE.verify }).then(function (r) {
       if (!r.ok) { state.list = []; state.agreeing = 0; state.asked = r.asked; return; }
-      state.list = r.proposals; state.tip = r.tip; state.agreeing = r.agreeing; state.asked = r.asked;
+      state.list = r.proposals; state.tip = r.tip; state.agreeing = r.agreeing; state.asked = r.asked; state.names = r.names || {};
     });
   }
 
@@ -208,6 +220,22 @@
     $('.new-key').addEventListener('click', function () { setKey(BLWPCLIENT.newProposalKey()); });
     $('.forget').addEventListener('click', function () { setKey(null); });
     $('.use-arena').addEventListener('click', function () { try { localStorage.removeItem(MODE); } catch (e) { /* none */ } pickKey(); });
+    // YOUR NAME (PIP): signed by the key in use and handed to every node; empty = the name made from the key again
+    $('.name-form').addEventListener('submit', function (e) {
+      e.preventDefault(); var out = $('.key-say'), typed = $('.name-form').name.value.trim().replace(/\s+/g, ' ');
+      if (!state.key) return;
+      (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
+        if (!net) throw new Error('the nodes did not agree on their network');
+        state.network = net;
+        var n = BLWPCLIENT.signedName({ secretKey: state.key, networkId: net, name: typed });
+        say(out, 'Saving…');
+        return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'name', hex: n.hex });
+      }).then(function (r) {
+        if (!r.ok) { say(out, 'Not taken: ' + r.why, true); return; }
+        say(out, (typed ? 'Your name is ' + typed : 'Back to the name made from your key') + ' - on ' + r.took + ' of ' + r.asked + ' nodes.');
+        setTimeout(function () { refresh().then(route); }, 1200);
+      }).catch(function (x) { say(out, x.message, true); });
+    });
     $('.nsec-form').addEventListener('submit', function (e) { e.preventDefault(); var i = $('.nsec');
       try { setKey(BLWPCLIENT.keyOfNsec(i.value)); i.value = ''; say($('.key-say'), 'Kept in this browser only.'); } catch (x) { say($('.key-say'), x.message, true); } });
     window.addEventListener('hashchange', route);

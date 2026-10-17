@@ -6763,7 +6763,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/funding') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
-        return ans(200, { tip: height, schedule: fundingBook ? fundingBook.schedule : null, signalPct: 15, proposals: fundingBook ? fundingBook.list(height) : [] });
+        return ans(200, { tip: height, schedule: fundingBook ? fundingBook.schedule : null, signalPct: 15, proposals: fundingBook ? fundingBook.list(height) : [],
+          names: fundingBook && fundingBook.names ? fundingBook.names() : [] });   // every player's newest name (PIP, player-name.js)
       }
       // THE PAYOUT'S DOORS (kanban #397 slice 8): a guardian seat's FROST commitment and share for a plan it rebuilt itself, and a
       // payout record any seat keeps (a PAID one only with the invoice's preimage)

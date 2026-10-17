@@ -11,6 +11,7 @@
 //                    (`activeAt(endHeight)`, from the seats' signed FINALs) - written down, so a seat's answer does not move later
 import { readSignedFunding, signalOutcome, votePeriodOf, fundingTally, voteWeights, trancheSchedule, FUNDING_SCHEDULES, FUNDING_TRANCHES } from '../../arena-protocol/src/funding.js';
 import { createHash } from 'node:crypto';
+import { newerPlayerName, PLAYER_NAME_SKEW_MS } from '../../arena-protocol/src/player-name.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
 export const FUNDING_SQL = `CREATE TABLE IF NOT EXISTS funding_items (id TEXT PRIMARY KEY, kind TEXT NOT NULL, proposal TEXT NOT NULL, hex TEXT NOT NULL, at_ms INTEGER NOT NULL);
@@ -174,6 +175,21 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const id = toHex(r.id);
       if (db.prepare('SELECT 1 FROM funding_items WHERE id = ?').get(id)) return { ok: true, fresh: false, id };
       const height = await Promise.resolve(tip()).catch(() => null);
+      // A PLAYER'S NAME (kanban #397 PIP, player-name.js): the newest per player is kept, the one it replaces dropped; one dated
+      // more than the skew ahead of this seat's clock is refused, so nobody pins a name by dating it in the future
+      if (kind === 'name') {
+        if (r.obj.atMs > BigInt(now() + PLAYER_NAME_SKEW_MS)) return { ok: false, status: 422, why: 'that name is dated ahead of this seat\'s clock' };
+        const key = 'name:' + toHex(r.obj.player);
+        const held = db.prepare("SELECT id, hex FROM funding_items WHERE kind = 'name' AND proposal = ?").get(key);
+        if (held) {
+          const h = read('name', held.hex);
+          const keep = newerPlayerName(h.ok ? { ...h, idHex: held.id } : null, { ...r, idHex: id });
+          if (keep.idHex !== id) return { ok: true, fresh: false, id, why: 'this seat keeps a newer name of that player' };
+          db.prepare('DELETE FROM funding_items WHERE id = ?').run(held.id);
+        }
+        db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, key, String(hex).toLowerCase(), now());
+        return { ok: true, fresh: true, id, player: toHex(r.obj.player) };
+      }
       let proposal;
       if (kind === 'proposal') {
         // ANYONE MAY PROPOSE (kanban #397, the owner 2026-10-17: "Anyone can do a proposal to pay out, doesn't have to be the dev"): the
@@ -205,6 +221,11 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         return { id: row.id, network: toHex(o.networkId), author: toHex(o.author), publishedHeight: o.publishedHeight, amountSats: String(o.amountSats),
           lnurl: o.lnurl, purpose: o.purpose, signal: st, vote: voteView(row.id, o, st), cancelled: cancelledOf(row.id), signals, comments, hex: row.hex };
       }).filter(Boolean).sort((a, b) => b.publishedHeight - a.publishedHeight);
+    },
+    /** Every player's newest name this seat holds (PIP): the player's identity key, the name ('' = its generated one), when, the hex. */
+    names() {
+      return db.prepare("SELECT hex FROM funding_items WHERE kind = 'name' ORDER BY at_ms, id").all().map((x) => ({ x, r: read('name', x.hex) })).filter(({ r }) => r.ok)
+        .map(({ x, r }) => ({ player: toHex(r.obj.player), name: r.obj.name, atMs: String(r.obj.atMs), network: toHex(r.obj.networkId), hex: x.hex }));
     },
     /** The objects of one proposal as hex - what another seat is handed to hold it too. */
     hexOf(pid) { return db.prepare('SELECT kind, hex FROM funding_items WHERE proposal = ? ORDER BY at_ms').all(String(pid).toLowerCase()); },

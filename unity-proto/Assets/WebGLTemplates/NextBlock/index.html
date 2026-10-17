@@ -6938,6 +6938,23 @@
       // Unity draws it (SplashScreen, DailyLobby.cs); it is decided here. The
       // name decides nothing.
       const tabRandom = (n) => crypto.getRandomValues(new Uint8Array(n));
+      // THE NAME, NETWORK-WIDE (kanban #397 PIP, the owner 2026-10-17: "Have custom names in the protocol"): a name chosen here is also signed
+      // by the identity key and handed to the network's nodes (player-name.js), so the proposals forum - and anywhere else outside a
+      // round - shows it; '' says "the generated one again". Fire and forget: the lobby's own round record is unchanged.
+      const publishName = (name) => {
+        (async () => {
+          const d = await (await fetch('/daily.json', { cache: 'no-store' })).json();
+          const nodes = ((d.testnet || {}).node || []);
+          const net = await BLWPCLIENT.fetchNetworkId({ nodes });
+          if (!net) throw new Error('the nodes did not agree on their network');
+          const me = BLWPCLIENT.forumIdentity(BLWPCLIENT.toHex(BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: tabRandom })), window.BLWP_CURVE);
+          const n = BLWPCLIENT.signedName({ secretKey: me.secret, networkId: net, name, curve: window.BLWP_CURVE });
+          const r = await BLWPCLIENT.postFunding({ nodes, kind: 'name', hex: n.hex });
+          window.ARENA_NAME_PUBLISHED = { name, took: r.took || 0, asked: r.asked, why: r.ok ? null : r.why };
+          console.log('[arena] name ' + JSON.stringify(name || '(generated)') + ' handed to ' + (r.took || 0) + ' of ' + r.asked + ' nodes' + (r.ok ? '' : ': ' + r.why));
+        })().catch((e) => console.warn('[arena] name not published: ' + e.message));
+      };
+      window.ARENA_PUBLISH_NAME = publishName;
       let me = null;
       const who = () => {
         try { me = BLWPCLIENT.tabIdentity({ storage: window.sessionStorage, random: tabRandom, curve: window.BLWP_CURVE }); }
@@ -7423,12 +7440,14 @@
           if (typed === null) return '';
           const r = BLWPCLIENT.setPlayerName(typed, { storage: window.sessionStorage });
           who();
+          if (r.ok) publishName(r.custom ? r.name : '');
           return r.ok ? '' : r.why;
         },
         // THE NAME FROM SETTINGS (the owner 2026-09-29 12:47: the name lives in Settings only). Answers why not, or ''.
         setName(typed) {
           const r = BLWPCLIENT.setPlayerName(typed, { storage: window.sessionStorage });
           who();
+          if (r.ok) publishName(r.custom ? r.name : '');
           return r.ok ? '' : r.why;
         },
         // THE PRIVATE KEY BACKUP, shown where it can be selected and copied.

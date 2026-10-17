@@ -75,8 +75,11 @@ test('the website names only the current configuration; the proposals forum is i
   const FORUM = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/index.html', import.meta.url), 'utf8');
   const JS = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/proposals/forum.js', import.meta.url), 'utf8');
   for (const t of ['bonds at least 3 months old that stay locked at least 3 months after the vote', '60% of the votes say YES, and YES is at least 20% of everyone who could vote',
-    'at most 10% of the reserves per proposal, 25% per 3 months', 'Use my Arena key', 'Use my nsec', '<script src="/proposals/forum.js" defer></script>']) assert.ok(FORUM.includes(t), t);
-  assert.match(JS, /BLWPCLIENT\.itemsKeyFor\(/, 'signs with the player items key of the kept wallet phrase');
+    'at most 10% of the reserves per proposal, 25% per 3 months', 'Use my in-game key', 'Use my nsec', 'Project improvement proposals', 'Save name', '<script src="/proposals/forum.js" defer></script>']) assert.ok(FORUM.includes(t), t);
+  assert.match(JS, /BLWPCLIENT\.forumIdentity\(best\.hex/, 'signs with the in-game identity key of the kept wallet phrase (PIP)');
+  assert.match(JS, /'PIP-' \+ p\.pip/, 'every proposal is a PIP');
+  assert.match(JS, /kind: 'name'/, 'a name is signed and handed to the nodes');
+  assert.match(JS, /verify: window\.BLWP_CURVE\.verify/, 'names are checked by the page, not taken from a node');
   assert.match(JS, /localStorage\.getItem\('arena\.seeds'\)/);
   assert.match(JS, /var CAP_PCT = 10;/);
   assert.match(JS, /it could never be paid/, 'an amount over 10 % of the reserves is refused before posting');
