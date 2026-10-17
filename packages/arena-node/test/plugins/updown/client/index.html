@@ -66,6 +66,24 @@
   .ord .st .amt { font:800 14px system-ui; font-variant-numeric:tabular-nums; } .amt.won { color:var(--up); } .amt.lost { color:var(--down); }
   .ord .st .fin { font-size:11px; color:var(--dim); white-space:nowrap; } .ord .st .fin.pend { color:#f7931a; }
   .hist { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin:12px 0 6px; }
+  /* PAST ORDERS (version 9, kanban #447, the owner 2026-10-17: "Don't forget past orders also for the desktop view and mobile. Shows round
+     (human readable name eg 18:45-19:00), result, stake, p/l"): on a phone each past order's card names its round, stake, result and
+     P/L; on a desktop a table under the order book; kept in this browser, so they outlive the tab */
+  .pastc { padding:9px 10px; border-radius:11px; background:#11151d; border:1px solid var(--line); }
+  .pastc .ph { display:flex; align-items:center; gap:8px; } .pastc .ph .rd { flex:1; font:700 14px system-ui; white-space:nowrap; }
+  .pastc .ph .sd { font:800 12.5px system-ui; padding:4px 8px; border-radius:8px; white-space:nowrap; }
+  .pastc .ph .sd.up { color:var(--up); background:rgba(47,211,138,.12); } .pastc .ph .sd.down { color:var(--down); background:rgba(255,90,106,.12); }
+  .pastc .ph .fin { font-size:11px; color:var(--dim); white-space:nowrap; } .pastc .ph .fin.pend { color:#f7931a; }
+  .pastc .pg { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-top:7px; }
+  .pastc .pg span { display:block; font-size:10.5px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  .pastc .pg b { font:700 13.5px system-ui; font-variant-numeric:tabular-nums; } .pastc .pg b.won { color:var(--up); } .pastc .pg b.lost { color:var(--down); }
+  .pastc .pg div:last-child { text-align:right; }
+  #pastd { display:none; } table.past { width:100%; border-collapse:collapse; font:13.5px system-ui; font-variant-numeric:tabular-nums; }
+  table.past th { color:var(--dim); font:600 11.5px system-ui; text-transform:uppercase; letter-spacing:.05em; text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  table.past td { padding:7px 8px; border-bottom:1px solid var(--line); } table.past tr:last-child td { border:0; }
+  table.past td.n, table.past th.n { text-align:right; } table.past .won { color:var(--up); font-weight:700; } table.past .lost { color:var(--down); font-weight:700; }
+  table.past .up { color:var(--up); font-weight:700; } table.past .down { color:var(--down); font-weight:700; } table.past .pend { color:#f7931a; }
+  @media (min-width:1000px) { #pastd { display:block; } #histhead, #hist { display:none !important; } }
   .hist h3 { margin:0 !important; } .tot { font:600 12px system-ui; color:var(--dim); text-align:right; } .tot b.won { color:var(--up); } .tot b.lost { color:var(--down); }
   .side.up { background:#12301f; color:var(--up); } .side.down { background:#3a1216; color:#ff8a94; }
   .side.on.up { outline:2px solid var(--up); } .side.on.down { outline:2px solid var(--down); }
@@ -118,7 +136,8 @@ if (!A || !A.market) {
     <div class="card"><div class="q" id="q">…</div><div class="sub"><span id="left"></span> · <a id="poly" target="_blank" rel="noopener">Polymarket</a></div>
       <div class="row3"><div><b id="beat">…</b><span>price to beat</span></div><div><b id="now">…</b><span>BTC now</span></div><div><b id="delta">…</b><span>change</span></div></div>
       <div class="odds"><span class="sub">chance of Up</span><b id="chance">50%</b></div></div>
-    <div id="xv"></div></div><div class="colR">
+    <div id="xv"></div>
+    <div class="card" id="pastd"><div class="hist" style="margin-top:0"><h3>Past orders</h3><span class="tot" id="totd"></span></div><div id="pastt"></div></div></div><div class="colR">
     <div class="sides"><button class="side up" id="s0">Buy ${esc(outcomes[0])} <span id="p0">50¢</span></button><button class="side down" id="s1">Buy ${esc(outcomes[1])} <span id="p1">50¢</span></button></div>
     <div class="sheet">
       <div class="top"><span class="pill" id="mode">Buy · Market</span><button class="gear" id="gear" aria-label="order type">⚙︎</button></div>
@@ -272,17 +291,39 @@ if (!A || !A.market) {
       const cancel = !o.cancelled && o.entryCloseMs > Date.now() && !(l && l.state && l.state !== 'open') ? `<button data-cancel="${o.entry}">cancel</button>` : '';
       return card(Number(o.pick), satsOf(o.stakeMsat), Math.round(o.limitPrice / TICK), o.entryCloseMs, r, cancel);
     }).join('') : (flight ? '' : `<div class="sub">${closed.length ? 'No open orders.' : 'No orders yet. Pick Up or Down and buy: your orders and their results show here.'}</div>`));
-    $('histhead').hidden = !closed.length;
-    $('hist').innerHTML = closed.map(({ o, l }) => {
+    // PAST ORDERS, KEPT IN THIS BROWSER (version 9): each closed order's summary - no key, no secret - under its entry, merged with
+    // the tab's live ones (the live line wins), newest round first, at most 200
+    const PAST_KEY = 'arena.updown.past.v1';
+    let kept = []; try { kept = JSON.parse(window.localStorage.getItem(PAST_KEY) || '[]'); } catch { kept = []; }
+    const byEntry = new Map((Array.isArray(kept) ? kept : []).filter((x) => x && x.entry).map((x) => [x.entry, x]));
+    for (const { o, l } of closed) {
       const r = resultOf(o, l);
-      return card(Number(o.pick), satsOf(o.stakeMsat), Math.round(o.limitPrice / TICK), o.entryCloseMs, r,
-        (r[2] ? `<span class="amt ${r[3]}">${esc(r[2])}</span>` : '') + finOf(l));
-    }).join('');
-    const won = closed.reduce((t, { o, l }) => { const d = resultOf(o, l)[4]; return t + (d > 0 ? d : 0); }, 0);
-    const lost = closed.reduce((t, { o, l }) => { const d = resultOf(o, l)[4]; return t + (d < 0 ? -d : 0); }, 0);
-    const pend = closed.filter(({ l }) => l && l.final === false).length;
-    $('tot').innerHTML = `${closed.length} closed · won <b class="won">+${esc(satsOf(won))}</b> · lost <b class="lost">−${esc(satsOf(lost))}</b> · net <b class="${won >= lost ? 'won' : 'lost'}">${won >= lost ? '+' : '−'}${esc(satsOf(Math.abs(won - lost)))}</b>${pend ? ` · ${pend} pending` : ''}`;
-    window.UPDOWN_CLIENT.history = closed.map(({ o, l }) => { const r = resultOf(o, l); return { entry: o.entry, chip: r[1], amount: r[2], final: l ? l.final : undefined, finalAtMs: l ? l.finalAtMs : undefined }; });
+      byEntry.set(o.entry, { entry: o.entry, closeMs: Number(o.entryCloseMs), side: Number(o.pick), stakeMsat: Number(o.stakeMsat), limit: Math.round(o.limitPrice / TICK),
+        state: o.cancelled ? 'cancelled' : (l && l.state) || '', pnlMsat: r[4], final: l ? l.final : undefined, finalAtMs: l ? l.finalAtMs : undefined });
+    }
+    const past = [...byEntry.values()].sort((x, y) => y.closeMs - x.closeMs || (x.entry < y.entry ? -1 : 1)).slice(0, 200);
+    try { window.localStorage.setItem(PAST_KEY, JSON.stringify(past)); } catch { /* private window: this tab's only */ }
+    const resultLine = (p) => p.state === 'won' ? `${outcomes[p.side]} won` : p.state === 'lost' ? `${outcomes[1 - p.side]} won`
+      : p.state === 'refunded' || p.state === 'void' ? 'refunded' : p.state === 'disputed' ? 'disputed · refunded' : p.state === 'cancelled' ? 'cancelled' : p.state || '–';
+    const plLine = (p) => (p.pnlMsat > 0 ? '+' + satsOf(p.pnlMsat) : p.pnlMsat < 0 ? '−' + satsOf(-p.pnlMsat) : '±0');
+    const plCls = (p) => (p.pnlMsat > 0 ? 'won' : p.pnlMsat < 0 ? 'lost' : '');
+    const isFinal = (p) => p.final === true || (p.finalAtMs && Date.now() >= p.finalAtMs) || p.state === 'cancelled';
+    const statusLine = (p) => (isFinal(p) ? 'final' : p.finalAtMs ? 'pending · final in ' + mmss(p.finalAtMs - Date.now()) : 'pending');
+    $('histhead').hidden = !past.length;
+    $('hist').innerHTML = past.map((p) => `<div class="pastc"><div class="ph"><span class="sd ${p.side === 0 ? 'up' : 'down'}">${p.side === 0 ? '▲' : '▼'} ${esc(outcomes[p.side] || p.side)}</span>`
+      + `<b class="rd">${win(p.closeMs)}</b><span class="fin${isFinal(p) ? '' : ' pend'}">${esc(statusLine(p))}</span></div>`
+      + `<div class="pg"><div><span>Stake</span><b>${satsOf(p.stakeMsat)}</b></div><div><span>Result</span><b>${esc(resultLine(p))}</b></div>`
+      + `<div><span>P/L</span><b class="${plCls(p)}">${esc(plLine(p))}</b></div></div></div>`).join('');
+    $('pastt').innerHTML = past.length ? `<table class="past"><thead><tr><th>Round</th><th>Side</th><th class="n">Stake</th><th>Result</th><th class="n">P/L</th><th>Status</th></tr></thead><tbody>`
+      + past.map((p) => `<tr><td>${win(p.closeMs)}</td><td class="${p.side === 0 ? 'up' : 'down'}">${p.side === 0 ? '▲' : '▼'} ${esc(outcomes[p.side] || p.side)}</td><td class="n">${satsOf(p.stakeMsat)} <span class="sub">≤ ${p.limit}¢</span></td>`
+        + `<td>${esc(resultLine(p))}</td><td class="n ${plCls(p)}">${esc(plLine(p))}</td><td class="${isFinal(p) ? '' : 'pend'}">${esc(statusLine(p))}</td></tr>`).join('') + '</tbody></table>'
+      : '<div class="sub">No past orders yet: an order shows here once its round has a result.</div>';
+    const won = past.reduce((t, p) => t + (p.pnlMsat > 0 ? p.pnlMsat : 0), 0);
+    const lost = past.reduce((t, p) => t + (p.pnlMsat < 0 ? -p.pnlMsat : 0), 0);
+    const pend = past.filter((p) => !isFinal(p)).length;
+    const tot = `${past.length} closed · won <b class="won">+${esc(satsOf(won))}</b> · lost <b class="lost">−${esc(satsOf(lost))}</b> · net <b class="${won >= lost ? 'won' : 'lost'}">${won >= lost ? '+' : '−'}${esc(satsOf(Math.abs(won - lost)))}</b>${pend ? ` · ${pend} pending` : ''}`;
+    $('tot').innerHTML = tot; $('totd').innerHTML = tot;
+    window.UPDOWN_CLIENT.history = past.map((p) => ({ entry: p.entry, round: win(p.closeMs), side: outcomes[p.side], stake: satsOf(p.stakeMsat), result: resultLine(p), pl: plLine(p), status: statusLine(p), final: isFinal(p), finalAtMs: p.finalAtMs }));
     window.UPDOWN_CLIENT.status = js;
     window.UPDOWN_CLIENT.state = { round: current.id, free: current.free, window: [start, current.entryCloseMs], beat: live.beat, now: live.now, pick, mode, asked: a, orders: mine.length, upCents: upCents() };
   }
