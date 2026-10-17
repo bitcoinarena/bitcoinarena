@@ -6883,7 +6883,8 @@
               return m && m.outcomes && m.outcomes.length ? m.outcomes : (game.outcomes && game.outcomes.length ? game.outcomes : ['Yes', 'No']);
             })(),
             fetchBook: async () => { const id = opts.round ? opts.round() : null; return id ? window.ARENA_GAME.market.book(id) : null; },
-            onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000 }) : null),
+            onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000,
+            closeMs: () => { const id = opts.round ? opts.round() : null, row = (window.BLWP_LOBBY_ROWS || []).find((r) => r.id === id); return row ? Number(row.entryCloseMs) || 0 : 0; } }) : null),
           orders: () => readPicks().filter((x) => x.order && x.gameId === game.id).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
             limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled })),
           cancel: async (entryIdHex) => {
