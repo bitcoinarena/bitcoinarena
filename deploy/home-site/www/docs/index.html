@@ -155,6 +155,8 @@
   <a href="#game-markets">Markets on games</a>
   <a href="#scalar-markets">Scalar markets</a>
   <a href="#money">Where the money goes</a>
+  <a href="#reserves">Protocol reserves</a>
+  <a href="#proposals">Funding proposals</a>
 </aside>
 
 <main id="top">
@@ -193,6 +195,7 @@
     <dt>Template</dt><dd>A market manifest whose rounds each ask their own question with their own outcome labels. See <a href="#templates">Event-market templates</a>.</dd>
     <dt>Leaderboard</dt><dd>One game's board across its finished rounds over a window of days. See <a href="#leaderboard">Leaderboard</a>.</dd>
     <dt>Donation</dt><dd>The player's optional 0 to 5 % of a paid stake, split between the game's developer and the protocol developers. Collected with a <a href="#donor">dev client</a>.</dd>
+    <dt>Protocol reserves</dt><dd>The network's own fund: 2% of every paid round and 20% of every item on protocol 11, held in the federations under each one's 5-of-7 reserve key. Paid out only to proposals the bonded nodes vote for. See <a href="#reserves">Protocol reserves</a>.</dd>
     <dt>Objection window</dt><dd>The 10 minutes after a result is signed in which anyone can prove it wrong. See <a href="#cheat">When a node cheats</a>.</dd>
   </dl>
 
@@ -219,7 +222,7 @@
   </ol>
   <div class="note"><b>There are only paid rounds.</b> Free rounds, without a stake, are for development: on a <a href="#devnet">devnet</a>, and to try a newly signed game before its paid rounds open. They are not part of the game.</div>
   <h3 id="settings">Settings</h3>
-  <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, and a link to the community on Armada.</p>
+  <p>The gear opens Settings: your balance and history, Deposit, Withdraw and Move, your <b>name</b> in the lobby (up to 32 characters), your <b>donation</b> (0 to 5 %, 5 % by default, for games before protocol 11; on 11 the developers' 4 % is fixed; see <a href="#money">Where the money goes</a>), your seed phrase (show it, check it word by word, restore), the federations you confirmed, and a link to the community on Armada.</p>
 
   </div></details>
   <details class="sec" open><summary><h2 id="wallet">Your wallet</h2></summary><div class="sec-body">
@@ -409,7 +412,7 @@
     <li>as a guardian, holds one key of the federation that keeps the stakes.</li>
   </ul>
   <p>A node is checked by the others in everything it signs. See <a href="#cheat">When a node cheats</a>.</p>
-  <p>For that work the nodes of a round share the round's <b>node fee</b> (5% of every paid stake today). It is split three ways: the nodes that replay the runs, the nodes that sign the payouts, and the guardians that hold the money. A node operator gets a share of the fees of every round their node serves.</p>
+  <p>For that work the nodes of a round share the round's <b>node fee</b> (4% of every paid stake on protocol 11, 5% before it). It is split three ways: the nodes that replay the runs, the nodes that sign the payouts, and the guardians that hold the money. A node operator gets a share of the fees of every round their node serves.</p>
 
   <h3 id="seats">Seats and committees</h3>
   <p>Every round has a <b>committee</b>: 7 seated nodes, drawn for that round, of which 5 must sign the same result and the same payout. The draw is weighted by bond and seeded by a Bitcoin block: <code>committee_seed = H(census roots ‖ round id ‖ hash of the beacon block)</code>, where the beacon block is the first block after the round's committee time. The page computes the committee itself and checks every signature against it. Game and verification seats are drawn only from nodes that host the game.</p>
@@ -509,14 +512,14 @@ arena-donor sign &lt;dir&gt; # sign a game's manifest</pre>
     <div class="box"><h4>Payouts are already built</h4><p>Pick a payout rule in your manifest: the rank curve for games, pari-mutuel for markets. Every node computes the same table to the millisatoshi.</p></div>
     <div class="box"><h4>No server, no approval</h4><p>A game exists once its developer signs its manifest. Nobody has to approve it; each node chooses which games it hosts.</p></div>
     <div class="box"><h4>Players arrive with a wallet</h4><p>One seed and one wallet work across every game, so a player of one game can stake on yours without a new sign-up.</p></div>
-    <div class="box"><h4>You earn on every paid entry</h4><p>Half of every player donation goes to the game's developer, on every node that hosts it, for as long as people play.</p></div>
+    <div class="box"><h4>You earn on every paid entry</h4><p>2% of every paid stake on protocol 11 (half the player's donation before it) goes to the game's developer, on every node that hosts it, for as long as people play.</p></div>
   </div>
   <p>There are two kinds: <b>games</b>, whose runs the nodes replay, and <b>prediction markets</b>, whose outcome named attestors sign. Start here:</p>
   <div class="grid">
     <a class="box link" href="#game"><h4>Build a game</h4><p>Rules, client, donation key and a signed manifest.</p></a>
     <a class="box link" href="#h2h"><h4>A head-to-head game</h4><p>Hidden moves, revealed together, like Rock Paper Scissors.</p></a>
     <a class="box link" href="#market"><h4>Build a market</h4><p>Outcomes, attestors and a pari-mutuel payout.</p></a>
-    <a class="box link" href="#run"><h4>Run a node and earn</h4><p>A bond, a seat and 5% of every paid stake for the work.</p></a>
+    <a class="box link" href="#run"><h4>Run a node and earn</h4><p>A bond, a seat and 4% of every paid stake for the work (5% before protocol 11).</p></a>
     <a class="box link" href="#devnet"><h4>Run a devnet</h4><p>A chain, a federation and seven nodes on your own machine, in one command.</p></a>
   </div>
 
@@ -799,14 +802,31 @@ for (const node of committeeNodes)
 
   </div></details>
   <details class="sec" open><summary><h2 id="money">Where the money goes</h2></summary><div class="sec-body">
-  <p>Every paid entry is split the same way, fixed by the protocol. A 10,000 sat stake with the default donation:</p>
-  <div class="tbl"><table><thead><tr><th>Part</th><th>Share</th><th>Goes to</th></tr></thead><tbody>
-    <tr><td>In play</td><td>90%</td><td>the round: what is won or lost</td></tr>
-    <tr><td>Node fee</td><td>5%</td><td>the nodes that ran the round: replay, settlement, guardians, a third each</td></tr>
-    <tr><td>Donation, half</td><td>2.5%</td><td>the game's developer</td></tr>
-    <tr><td>Donation, half</td><td>2.5%</td><td>the protocol developers</td></tr>
+  <p>Every paid entry is split by the protocol version the game requires. Versions run side by side: a round keeps the split of its own version.</p>
+  <div class="tbl"><table><thead><tr><th>Part of a paid stake</th><th>Protocol 11 (reserves)</th><th>Before 11</th><th>Goes to</th></tr></thead><tbody>
+    <tr><td>In play</td><td>90%</td><td>90% or more</td><td>the round: what is won or lost</td></tr>
+    <tr><td>Node fee</td><td>4%</td><td>5%</td><td>the nodes that ran the round: replay, settlement, guardians, a third each</td></tr>
+    <tr><td>Game developer</td><td>2%</td><td>2.5% donation</td><td>the game's developer</td></tr>
+    <tr><td>Protocol developers</td><td>2%</td><td>2.5% donation</td><td>the protocol developers</td></tr>
+    <tr><td>Protocol reserves</td><td>2%</td><td>-</td><td>the network's own fund (see <a href="#reserves">Protocol reserves</a>)</td></tr>
   </tbody></table></div>
-  <p><b>Donations are split. The developer takes no fees, only donations.</b> The donation is the player's choice: 5% by default, down to zero. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
+  <p><b>On protocol 11 the whole split is fixed</b>: the developers' 4% is no longer a donation the player lowers. Before 11 the developers' 5% is a donation, 5% by default, down to zero. A 100 sat entry on protocol 11 pays the nodes 4 sat, the developers 2 + 2 sat, the reserves 2 sat, and puts 90 sat in play. A prediction market charges its own manifest's fees instead: 1% by default (0.5% nodes, 0.5% donation), due when it resolves (see <a href="#market">Implement a prediction market</a>).</p>
+  <p><b>Items</b> (an add-on bought in a game, such as Tick Tock's larger truck) on protocol 11: 40% of the list price to the nodes and 20% to the protocol reserves, both fixed, plus the developers' share the player chooses (40, 30, 20, 10 or 0%, half game, half protocol). The player pays 60% plus that share: a 500 sat item costs 500 sat at the 40% default and 300 sat at 0%.</p>
+  <h3 id="reserves">Protocol reserves</h3>
+  <p>The protocol reserves are the network's own fund. No company and no single key holds them, and they are spent only on what the bonded nodes vote for.</p>
+  <ul>
+    <li><b>Where they are</b>: in the federations. Each paid entry and item locks its reserve share in its own federation to that federation's <b>reserve key</b>, a 5-of-7 key its seven guardian seats made together. No seat holds the key alone; 5 of the 7 must sign to move anything.</li>
+    <li><b>How you see them</b>: every node answers <code>GET /reserves</code> with the total, per federation, the payments in and every payment out. bitcoin-arena.io shows the live total under the fees once five nodes name the same one, and the node dashboard shows what each round paid in.</li>
+    <li><b>When a federation is drained</b> (it is closing or has lost guardians), its reserves move on their own to a healthy federation: its successor, or else the open federation with the lowest id. No vote is needed for that move; every node records it.</li>
+  </ul>
+  <h3 id="proposals">Funding proposals: how the reserves pay out</h3>
+  <p><b>Anyone can propose a payout</b>: a player, a developer or a node operator, for any project and to any Lightning address. It does not have to be a developer. A proposal names its purpose, the amount in sat and the Lightning address (LNURL) to pay, and is signed by its author's key. Anyone can comment on it, in threads; comments carry no weight.</p>
+  <ol class="steps">
+    <li><b>Signal (1 week, 1008 blocks)</b><p>Nodes signal support. The proposal goes on to the vote if the nodes supporting it are at least 15% of the nodes that served a round in the 72 hours (432 blocks) before the week ends. Nothing is paid on a signal.</p></li>
+    <li><b>Vote (2 weeks, 2016 blocks)</b><p>Bonded nodes vote YES, NO or ABSTAIN on Bitcoin, weighted by their bond. It passes when the bonds that voted are at least 30% of all bonded capital and YES is at least 60% of YES + NO. It is decided once its last block is 6 deep.</p></li>
+    <li><b>Payout</b><p>The federation that holds the reserves pays the proposal's Lightning address once, signed by 5 of its 7 guardian seats. If the payment fails, the money returns to the reserve key. Every node records the payout with its proof (the payment's preimage and the federation transaction).</p></li>
+  </ol>
+  <p>To post a proposal, sign it and send it to any node: <code>POST /funding</code> with <code>{ "kind": "proposal", "hex": ... }</code>; the nodes pass it on to each other. <code>GET /funding</code> lists every proposal with its comments, signals and vote. A node owner can propose, comment and signal from the owner area.</p>
   </div></details>
   <details class="sec" open><summary><h2 id="faq">FAQ</h2></summary><div class="sec-body">
   <details><summary>Where are my sats?</summary><p>As Fedimint e-cash in your browser's wallet, under your 24 words or your Nostr key, in one of the federations. No company holds them. While you play, your stake sits in a lock in the federation that only the round's result, or its expiry, can open.</p></details>
@@ -816,7 +836,8 @@ for (const node of committeeNodes)
   <details><summary>Why does my federation show a load above 1?</summary><p>It holds more bitcoin than its guardians' bonds cover. On testnet4 that is a warning only. On mainnet the page would refuse deposits into it and point you to another federation.</p></details>
   <details><summary>Federation A or B?</summary><p>You do not have to choose: a deposit goes to the open federation with the lower load, and every game can be paid through either. A federation the page does not know is shown with its guardians and must be confirmed by you first.</p></details>
   <details><summary>Are there free rounds?</summary><p>No. There are only paid rounds. Free rounds are for development: on a <a href="#devnet">devnet</a>, and for a newly signed game before its paid rounds open.</p></details>
-  <details><summary>What is taken from a paid stake?</summary><p>A 5 % node fee and your donation, 0 to 5 % (5 % by default), split between the game's developer and the protocol developers. Up or Down charges 1 % instead, only on what fills. See <a href="#money">Where the money goes</a>.</p></details>
+  <details><summary>Who can ask for money from the protocol reserves?</summary><p>Anyone. Post a funding proposal with what it is for, the amount and your Lightning address. It is paid only after the nodes signal it (15% within a week) and the bonded capital votes for it (2 weeks, 30% turnout, 60% YES). See <a href="#proposals">Funding proposals</a>.</p></details>
+  <details><summary>What is taken from a paid stake?</summary><p>On protocol 11: 4 % to the nodes, 2 % to the game's developer, 2 % to the protocol developers and 2 % to the protocol reserves, all fixed. Before 11: a 5 % node fee and your donation, 0 to 5 % (5 % by default). Up or Down charges 1 % instead, only on what fills. See <a href="#money">Where the money goes</a>.</p></details>
   <details><summary>What if a node cheats?</summary><p>One node cannot decide anything: 5 of the round's 7 seats must sign the same result, every run is replayed, and anyone can object for 10 minutes. If the committee cannot agree, the entry is void and your stake comes back. See <a href="#cheat">When a node cheats</a>.</p></details>
   <details><summary>What if nobody settles my round?</summary><p>Your lock expires and your own client takes it back with your key. Nobody has to act for you.</p></details>
   <details><summary>Can I join a round that has started?</summary><p>Yes, while entries are open. The run still ends with the round, so you have less time.</p></details>
