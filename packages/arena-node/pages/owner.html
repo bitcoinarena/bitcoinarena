@@ -504,10 +504,11 @@ async function donations() {
 // protocol developers' set in force, every proposal with its votes and state, Accept / Deny for this node's dev clients that
 // are recipients, and a form to propose a new split (it starts from the set in force; a new row adds a developer by key)
 async function ballotsPanel() {
-  let b, d, v;
+  let b, d, v, fz;
   try {
-    [b, d, v] = await Promise.all([fetch(at('/donation-ballots'), { cache: 'no-store' }).then((r) => r.json()),
-      fetch(at('/owner/donations'), { cache: 'no-store' }).then((r) => r.json()), fetch(at('/owner/dev'), { cache: 'no-store' }).then((r) => r.json())]);
+    [b, d, v, fz] = await Promise.all([fetch(at('/donation-ballots'), { cache: 'no-store' }).then((r) => r.json()),
+      fetch(at('/owner/donations'), { cache: 'no-store' }).then((r) => r.json()), fetch(at('/owner/dev'), { cache: 'no-store' }).then((r) => r.json()),
+      fetch(at('/fees'), { cache: 'no-store' }).then((r) => (r.ok ? r.json() : { proposals: [] })).catch(() => ({ proposals: [] }))]);
   } catch (e) { $('ballots').innerHTML = `<div class="card"><p class="err">${esc(e.message)}</p></div>`; return; }
   const set = (d.sets || []).find((x) => x.kind === 'protocol');
   const mine = (v.clients || []).map((c) => ({ slug: c.slug, key: c.recipientPk, label: c.label || c.slug }));
@@ -534,7 +535,30 @@ async function ballotsPanel() {
       <button id="padd">Add a developer</button>
       <label>Propose as</label><select id="pby">${proposers.map((m) => `<option value="${esc(m.slug)}">${esc(m.label)}</option>`).join('')}</select>
       <button class="primary" id="pgo">Propose</button><div class="err" id="perr2"></div></div>` : '';
-  $('ballots').innerHTML = now + props + form;
+  // FEE PROPOSALS THAT CHANGE A DONATION (kanban #462, the owner 2026-10-17: "any change to donation percentages requires majority approval
+  // by protocol devs. The dev ui client shows this and the protocol dev may deny or give his approval"): each one this seat holds, its
+  // changes, the developers' answers so far, and - for every dev client here that has not answered - Approve and Deny, signed on this
+  // node with that client's key (POST /owner/dev/fee-answer)
+  const feeName = (k) => k.replace(/Bps$|Pct$/, '').replace(/([A-Z])/g, ' $1').toLowerCase();
+  const feeVal = (k, x) => (/Bps$/.test(k) ? (Number(x) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 }) : String(x)) + ' %';
+  const feeProps = (fz.proposals || []).filter((p) => p.needsDevs).map((p) => {
+    const answered = new Set((p.devs || []).map((x) => x.dev));
+    const open = !p.decision;
+    const voters = mine.filter((m) => m.key && !answered.has(String(m.key).slice(2)));
+    return `<div class="card"><h3>Fee proposal <span class="sub">${esc(p.id.slice(0, 12))}</span></h3>
+      ${p.changes.map((c) => `<div class="row"><span>${esc(feeName(c.fee))}${c.donation ? ' <span class="sub">donation</span>' : ''}</span><b>${feeVal(c.fee, c.from)} → ${feeVal(c.fee, c.to)}</b></div>`).join('')}
+      <div class="row"><span>In force from</span><b>block ${esc(String(p.activationHeight))}</b></div>
+      <div class="row"><span>State</span><b>${p.decision ? (p.decision.accepted ? '<span class="ok">accepted</span>' : `<span class="err">refused · ${esc(p.decision.why || '')}</span>`) : esc(p.vote ? 'vote ' + p.vote.state : 'signal ' + ((p.signal || {}).state || '…'))}</b></div>
+      ${(p.devs || []).map((x) => `<div class="row"><span>${esc(x.dev.slice(0, 12))}…</span><b>${x.approve ? '<span class="ok">approved</span>' : '<span class="err">denied</span>'}</b></div>`).join('')}
+      ${open ? voters.map((m) => `<button class="primary" data-fee="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="1">Approve as ${esc(m.label)}</button><button data-fee="${esc(m.slug)}" data-p="${esc(p.id)}" data-a="0">Deny as ${esc(m.label)}</button>`).join('') : ''}
+      <div class="err" id="fe-${esc(p.id.slice(0, 16))}"></div></div>`;
+  }).join('');
+  $('ballots').innerHTML = now + props + form + feeProps;
+  for (const x of document.querySelectorAll('[data-fee]')) x.onclick = async () => {
+    const box = $('fe-' + x.dataset.p.slice(0, 16)); box.textContent = '';
+    try { await post('/owner/dev/fee-answer', signed('dev/fee-answer', { slug: x.dataset.fee, proposalId: x.dataset.p, approve: x.dataset.a === '1' })); ballotsPanel(); }
+    catch (e) { box.textContent = e.message; }
+  };
   for (const x of document.querySelectorAll('[data-vote]')) x.onclick = async () => {
     const box = $('ve-' + x.dataset.p.slice(0, 16)); box.textContent = '';
     try { await post('/owner/dev/vote', signed('dev/vote', { slug: x.dataset.vote, proposalId: x.dataset.p, accept: x.dataset.a === '1' })); ballotsPanel(); }
