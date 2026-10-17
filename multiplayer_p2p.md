@@ -6865,8 +6865,9 @@ a 100 sat entry pays nodes 4,000, protocol devs 2,000, game devs 2,000, reserves
     in `arena-node/src/reserve-book.js`.
   - So every seat that reaches the federation comes to the same total.
   - The node dashboard's round list has a Reserves column: what each round paid in.
-  - The Arena page's games screen shows "Protocol reserves: X sat · N payments in" once five nodes name the same total.
-    A tap lists the latest payments in.
+  - bitcoin-arena.io shows the reserves' live total under the fees (Economics), with its payments in and how many nodes agree,
+    once five nodes name the same total *(the owner 2026-10-17: "Find a prominent place on the website ... Under the fees")*. The
+    Arena games screen no longer carries a reserves box (the owner 2026-10-17: "no need to show the details").
 
 ### 27A.9.3 Project funding proposals
 
@@ -6874,13 +6875,14 @@ A **project funding proposal** is a forum post with threads:
 
 - `purpose` (free text: what the money is for);
 - `amount_sats` (X) and `lnurl` (where X is paid);
-- `author`: a bonded node's key, which signs it.
+- `author`: **any key**, which signs it - a player, a developer or a node *(the owner 2026-10-17: "Anyone can do a proposal to
+  pay out, doesn't have to be the dev"; it replaces "a bonded node's key")*. The proposal may pay anyone's LNURL.
 
 Anyone - node or player - may comment, in threads; comments are signed by their writer's key and
 carry no weight in any count.
 
 **Stage 1 - the signal (1 week, 1008 blocks).**
-- Any bonded node may post a proposal.
+- Anyone may post a proposal; the seats keep any one that its author's key signed.
 - Nodes signal support.
 - It passes when the nodes supporting it are **at least 15 % of the nodes active in the 72 hours
   (432 blocks) before** its signal period ends.
@@ -6890,7 +6892,8 @@ carry no weight in any count.
 - **As built** *(kanban #397 slice 6, the owner 2026-10-16: signals are "signed messages kept and passed on by the seats. Not on-chain
   signals"; the spec timings are the rule on testnet4 and mainnet)*:
   - `FundingProposal` { network_id, author, published_height, amount_sats, lnurl, purpose } (type 0x2e), signed BIP340 by its
-    author. A seat keeps it only when the author is a bonded node in its census and it is not dated ahead of the seat's chain.
+    author. A seat keeps it when its signature stands and it is not dated ahead of the seat's chain; the author may be any key
+    (the owner 2026-10-17; until then only a bonded node in the seat's census).
   - `FundingComment` { proposal_id, parent_id, author, at_height, text } (0x2f), signed by anyone.
   - `FundingSignal` { proposal_id, node, at_height } (0x30), signed by a bonded node.
   - `arena-protocol/src/funding.js` holds these objects, the window and the rule; `arena-node/src/funding-book.js` is the seat's

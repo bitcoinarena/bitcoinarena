@@ -1,9 +1,9 @@
 // PROJECT FUNDING PROPOSALS AND THEIR SIGNAL (§27A.9.3 stage 1, kanban #397 slice 6, the owner 2026-10-16: "a signed proposal names
-// purpose, amount, LNURL and a bonded author. Seats keep and pass on proposals, signed comments and node signals. The signal passes at
+// purpose, amount, LNURL and a bonded author" - since 2026-10-17 any author: "Anyone can do a proposal to pay out". Seats keep and pass on proposals, signed comments and node signals. The signal passes at
 // 15 % or more of the nodes that served a round in the last 432 blocks, after 1008 blocks"; signals are "signed messages kept and
 // passed on by the seats. Not on-chain signals. A signal weighs one per node and moves no money").
 //
-//     FundingProposal { network_id, author, published_height, amount_sats, lnurl, purpose }     signed by the author, a bonded node
+//     FundingProposal { network_id, author, published_height, amount_sats, lnurl, purpose }     signed by the author, anyone (the owner 2026-10-17)
 //     FundingComment  { proposal_id, parent_id, author, at_height, text }                       signed by its writer, anyone
 //     FundingSignal   { proposal_id, node, at_height }                                          signed by the node
 //

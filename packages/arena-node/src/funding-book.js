@@ -2,8 +2,9 @@
 // owner's own node, by a writer, or forwarded by another seat - checked, kept in its store and listed with the signal's state. Signals
 // are signed messages the seats keep and pass on (the owner 2026-10-16), never on chain; they weigh one per node and move no money.
 //
-//   add(kind, hex)   a new object (body || 64-byte BIP340 signature): kept when it stands - a proposal by a bonded node and not dated
-//                    ahead of this seat's chain, a comment or signal on a proposal held here; `fresh` when it was new (the server
+//   add(kind, hex)   a new object (body || 64-byte BIP340 signature): kept when it stands - a proposal by ANY key (the owner 2026-10-17:
+//                    "Anyone can do a proposal to pay out"; its signal and vote stay with the bonded nodes) not dated ahead of this
+//                    seat's chain, a comment or signal on a proposal held here; `fresh` when it was new (the server
 //                    forwards it once)
 //   list()           every proposal with its comments, its signals and its signal's state
 //   decide()         each proposal whose signal period is over is decided ONCE, on the nodes active in the 432 blocks before its end
@@ -115,10 +116,9 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       const height = await Promise.resolve(tip()).catch(() => null);
       let proposal;
       if (kind === 'proposal') {
+        // ANYONE MAY PROPOSE (kanban #397, the owner 2026-10-17: "Anyone can do a proposal to pay out, doesn't have to be the dev"): the
+        // author is any key that signs it; only the nodes' signal and the bonded capital's vote decide whether it is paid
         proposal = id;
-        const bonded = isBonded(toHex(r.obj.author));
-        if (bonded === null) return { ok: false, status: 503, why: 'this seat cannot read the bonded nodes yet' };
-        if (!bonded) return { ok: false, status: 422, why: `${toHex(r.obj.author).slice(0, 16)} is no bonded node: a funding proposal is posted by one` };
         if (Number.isInteger(height) && r.obj.publishedHeight > height + 1) return { ok: false, status: 422, why: `published at ${r.obj.publishedHeight}, and this seat's chain is at ${height}` };
       } else {
         proposal = toHex(r.obj.proposalId);

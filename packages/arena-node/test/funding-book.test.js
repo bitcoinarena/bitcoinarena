@@ -1,4 +1,4 @@
-// THE FUNDING PROPOSALS A SEAT KEEPS (§27A.9.3 stage 1, kanban #397 slice 6): a proposal only by a bonded node and not dated ahead of
+// THE FUNDING PROPOSALS A SEAT KEEPS (§27A.9.3 stage 1, kanban #397 slice 6): a proposal by anyone (the owner 2026-10-17), not dated ahead of
 // the chain; comments and signals only on a proposal held; a signal only by a bonded node; each signal decided ONCE when its 1008 blocks
 // are over, on the nodes active in the 432 blocks before its end - 14 of 100 fails, 15 passes - and not moved by a later reading.
 import { test } from 'node:test';
@@ -26,11 +26,13 @@ function book({ tip = 156850, active = NODES } = {}) {
   return { b, state };
 }
 
-test('kept: a proposal by a bonded node, then comments by anyone and signals by nodes; refused by name otherwise', async () => {
+test('kept: a proposal by anyone - a player as well as a node - then comments by anyone and signals by nodes; refused by name otherwise', async () => {
   const { b } = book();
   assert.match((await b.add('signal', signalHex(2))).why, /holds no such proposal/, 'a signal before its proposal');
-  const notBonded = { ...P, author: pk(900) };
-  assert.match((await b.add('proposal', proposalHex(notBonded, 900))).why, /is no bonded node/);
+  const byPlayer = { ...P, author: pk(900), purpose: 'A player asks for a faucet' };
+  const pl = await b.add('proposal', proposalHex(byPlayer, 900));
+  assert.deepEqual([pl.ok, pl.fresh], [true, true], 'a proposal by a key that is no bonded node is kept (anyone may propose)');
+  assert.match((await b.add('proposal', proposalHex(byPlayer, 901).slice(0, -2) + '00')).why, /signature does not verify/, 'but only signed by its author');
   assert.match((await b.add('proposal', proposalHex({ ...P, publishedHeight: 156852 }))).why, /published at 156852, and this seat's chain is at 156850/);
   const a = await b.add('proposal', proposalHex());
   assert.deepEqual([a.ok, a.fresh], [true, true]);
@@ -42,7 +44,7 @@ test('kept: a proposal by a bonded node, then comments by anyone and signals by 
   assert.match((await b.add('signal', hexOf(encodeFundingSignal(s9), fundingSignalId(s9), 901))).why, /given by a bonded node/);
   assert.match((await b.add('signal', signalHex(2).slice(0, -2) + '00')).why, /signature does not verify/);
   assert.match((await b.add('signal', signalHex(3, 156852))).why, /dated 156852, and this seat's chain is at 156850/);
-  const [listed] = b.list(156850);
+  const listed = b.list(156850).find((x) => x.purpose === 'A second relay');
   assert.deepEqual([listed.amountSats, listed.lnurl, listed.signals.length, listed.comments[0].text, listed.signal.state, listed.signal.signalEnd],
     ['250000', 'dev@bitcoin-arena.io', 1, 'Who runs it?', 'signalling', 157808]);
 });

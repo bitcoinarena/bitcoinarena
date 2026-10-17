@@ -47,3 +47,13 @@ test('the panel sits under the fees on bitcoin-arena.io, and the games screen ca
   assert.equal(GAMES.includes('class="reserves"'), false, 'no reserves box on the games screen');
   assert.equal(/more-sep"> · <\/span><a href="https:\/\/bitcoin-arena.io\/">/.test(GAMES), false, 'no "← bitcoin-arena.io" in the footer links');
 });
+
+test('the website and the docs say the protocol 11 split, the reserves and that anyone may propose a payout', () => {
+  const DOCS = readFileSync(new URL('../../../deploy/doc-site/www/index.html', import.meta.url), 'utf8');
+  assert.match(HTML, /aria-label="A paid stake on protocol 11: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves"/);
+  assert.match(HTML, /<b>Anyone<\/b> can propose a payout/);
+  for (const id of ['money', 'reserves', 'proposals']) assert.ok(DOCS.includes(`id="${id}"`), `docs section #${id}`);
+  assert.match(DOCS, /<b>Anyone can propose a payout<\/b>/);
+  assert.match(DOCS, /at least 30% of all bonded capital and YES is at least 60% of YES \+ NO/);
+  assert.equal(readFileSync(new URL('../../../deploy/home-site/www/docs/index.html', import.meta.url), 'utf8'), DOCS, 'the homepage\'s /docs copy is the same page');
+});
