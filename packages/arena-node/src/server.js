@@ -24,6 +24,8 @@ import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS } from '../../arena-pr
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { keepItemPurchase, itemsOwned } from './item-purchase-seat.js';
+import { keepDonationGift, giftsOf } from './donation-gift-seat.js';
+import { decodeDonationGift, GIFT_TO_GAME } from '../../arena-protocol/src/donation-gift.js';
 import { federationGatewayCount } from '../../arena-protocol/src/gateways.js';
 import { receiptsNeeded as committeeThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
@@ -5145,6 +5147,47 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ id: got.id, kept: got.kept }));
+      }
+      // A DONATION TO THE DEVELOPERS OUTSIDE ANY ROUND (kanban #431, the owner 2026-10-17, "B e cash"): the donor's signed record of a
+      // payment to a donation set's keys, checked against the set this seat holds for its target - a hosted game's, or the network's
+      // in force - and against the federation output by output; kept, its outputs are indexed for GET /donations?key= and the record
+      // is handed on to every other seat, each checking it for itself
+      if (req.method === 'POST' && url.pathname === '/donation-gift') {
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a donation gift is JSON { gift, signature } in hex'); }
+        let g; try { g = { ...decodeDonationGift(fromHex(String(j.gift || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
+        catch (e) { return text(res, 400, `that is not a donation gift: ${e.message}`); }
+        let recipients = null;
+        if (g.target === GIFT_TO_GAME) {
+          const dev = toHex(g.gameDevPubkey);
+          const game = [...hosted.values()].find((x) => x && x.manifest && toHex(x.manifest.gameDevPubkey) === dev && x.manifest.gameName === g.gameName && Array.isArray(x.donationSet));
+          if (!game) return text(res, 404, `this seat hosts no game "${g.gameName}" by ${dev.slice(0, 16)} with a donation set`);
+          recipients = game.donationSet;
+        } else {
+          let latest = null; try { latest = round.db.prepare('SELECT contract FROM rounds ORDER BY rowid DESC LIMIT 1').get(); } catch { latest = null; }
+          const net = latest ? decodeRoundContract(new Uint8Array(latest.contract)) : null;
+          const keys = net ? donationKeysForNetworkId(net.networkId) : null;
+          if (!keys) return text(res, 503, 'this seat knows no network donation authority to check a gift to the protocol developers against');
+          let height = net.censusHeight; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { /* the newest round's height */ }
+          const forced = donationSetInForce({ networkId: net.networkId, authority: keys.authority, recovery: keys.recovery, sets: donationSets,
+            rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
+          if (!forced.ok) return text(res, 503, `no network donation set in force here: ${forced.why}`);
+          recipients = vestedShares(forced.recipients, height);
+        }
+        const got = await keepDonationGift({ g, recipients, port: await portOfFederation(g.federationId), db: round.db,
+          verify: (sg, m, k) => schnorr.verify(sg, m, k), keepRows: (rows) => round.putDonationOutputs(rows) });
+        if (!got.ok) return text(res, got.status || 422, got.why);
+        if (got.kept === 'new') {
+          const body = JSON.stringify({ gift: j.gift, signature: j.signature });
+          for (const s2 of networkSeats()) seasonFetch(`${s2}/donation-gift`, { method: 'POST', body, signal: AbortSignal.timeout(60000) }).catch(() => {});
+        }
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ id: got.id, kept: got.kept, outputs: got.outputs || null }));
+      }
+      if (req.method === 'GET' && url.pathname === '/donation-gifts') {
+        const donor = String(url.searchParams.get('donor') || '').toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(donor)) return text(res, 400, 'gifts are asked for by the donor\'s 32-byte key');
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ donor, gifts: giftsOf(round.db, donor) }));
       }
       if (req.method === 'GET' && url.pathname === '/items') {
         const player = String(url.searchParams.get('player') || '').toLowerCase();

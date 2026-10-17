@@ -474,6 +474,21 @@ leaves the wallet in the same transaction as the stake: a stake that is locked i
 - One key across federations links a dev's donations together; for named devs that is the point. A per-federation
   tweak of the key is possible later without changing the set.
 
+**A donation outside any round** *(kanban #431, the owner 2026-10-17: "donate to developer, a popup opens with an amount to choose from
+100, 500, 1000, 5000 satoshis or custom"; "B e cash")*:
+- The player gives from the popup in three places: Tick Tock's countdown box, the footer strip of every other game, and the main
+  testnet UI's footer (the protocol developers).
+- The wallet pays the amount split over the set's keys exactly as a round's donation is split, in one federation transaction of
+  pre-expired payout contracts with the donor's key as their image (`paySubmit`, as an item is paid).
+- The donor signs a `DonationGift` { target (network 0 / game 1), game developer, game name, donor, federation, txid, total, outputs,
+  at_ms } (type 0x44, `arena-protocol/src/donation-gift.js`) and hands it to a seat (`POST /donation-gift`).
+- The seat keeps it only if:
+  - the outputs are exactly that split over the set it holds for the target (a hosted game's set, or the network's set in force);
+  - the federation holds each output as built;
+  - the transaction is not already another gift's.
+- A kept gift's outputs are indexed under each recipient key (`GET /donations?key=`), where the developer's own client already
+  redeems a round's donations. The record is then handed on to every seat. `GET /donation-gifts?donor=` lists a donor's gifts.
+
 **What changes, all of it a hard fork of the formats:** the donation set's recipient record (key instead of LNURL),
 the Entry Contract (donation outpoints), the signer nodes' entry check and index, the page's lock transaction, a
 recipient client. Rounds already published keep the LNURL set they name (and the 10-03/10-04 forwarder). Brought into
