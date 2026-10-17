@@ -87,7 +87,7 @@ const XV_CSS = `
  * read every `everyMs` from `fetchBook()` (the seats' /book of the market's current round, or null). `outcomes` the market's two
  * labels; `onPrice(cents, side)` when a level is tapped (a client fills its limit with it). Answers { refresh, setSide, stop, last }.
  */
-export function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice = null, everyMs = 3000, label = null }) {
+export function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice = null, everyMs = 3000, label = null, closeMs = null }) {
   const doc = el.ownerDocument, win = doc.defaultView;
   if (!doc.getElementById('xv-style')) { const st = doc.createElement('style'); st.id = 'xv-style'; st.textContent = XV_CSS; doc.head.appendChild(st); }
   const esc = (v) => String(v).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
@@ -130,8 +130,11 @@ export function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice
     const yOf = (c) => pad.t + (1 - c / 100) * (h - pad.t - pad.b);
     axes(g, w, h, pad, [0, 25, 50, 75, 100], yOf, (v) => v + '¢');
     const pts = exchangeHistory(s.book, { side: s.side });
-    const now = Date.now();
-    const t0 = pts.length ? Math.min(pts[0].t, now - 60000) : now - 15 * 60000, t1 = now;
+    // THE AXIS RUNS TO THE MARKET'S CLOSE (measured live: from the first match to now it spanned one minute, 17:48-17:49): from
+    // the first match or 5 min back, whichever is earlier, to its close when that is ahead - the line ends at now
+    const now = Date.now(), close = closeMs ? Number(closeMs()) || 0 : 0;
+    const t1 = close > now ? close : now;
+    const t0 = Math.min(pts.length ? pts[0].t : now, now - 5 * 60000);
     const xOf = (t) => pad.l + ((t - t0) / Math.max(1, t1 - t0)) * (w - pad.l - pad.r);
     g.fillStyle = '#8d99a8'; g.font = '11px system-ui';
     for (const t of [t0, (t0 + t1) / 2, t1]) { const d = new Date(t); const lbl = d.toISOString().slice(11, 16); g.fillText(lbl, Math.min(w - pad.r - 30, Math.max(pad.l, xOf(t) - 14)), h - 6); }
@@ -139,8 +142,10 @@ export function mountExchange({ el, fetchBook, outcomes = ['Yes', 'No'], onPrice
     if (pts.length) {
       g.strokeStyle = color; g.lineWidth = 2; g.beginPath();
       pts.forEach((p, i) => { const x = xOf(p.t), y = yOf(p.cents); if (i) { g.lineTo(x, yOf(pts[i - 1].cents)); g.lineTo(x, y); } else g.moveTo(x, y); });
-      g.lineTo(xOf(t1), yOf(pts[pts.length - 1].cents)); g.stroke();
-      const lastC = pts[pts.length - 1].cents; g.fillStyle = color; g.beginPath(); g.arc(xOf(t1), yOf(lastC), 3.5, 0, Math.PI * 2); g.fill();
+      g.lineTo(xOf(now), yOf(pts[pts.length - 1].cents)); g.stroke();
+      const lastC = pts[pts.length - 1].cents; g.fillStyle = color; g.beginPath(); g.arc(xOf(now), yOf(lastC), 3.5, 0, Math.PI * 2); g.fill();
+    }
+    if (close > now) { g.strokeStyle = 'rgba(141,153,168,.35)'; g.setLineDash([2, 4]); g.beginPath(); g.moveTo(xOf(now), pad.t); g.lineTo(xOf(now), h - pad.b); g.stroke(); g.setLineDash([]);
     }
     if (ladder.mid !== null) { g.setLineDash([4, 4]); g.strokeStyle = 'rgba(232,237,243,.35)'; g.beginPath(); g.moveTo(pad.l, yOf(ladder.mid)); g.lineTo(w - pad.r, yOf(ladder.mid)); g.stroke(); g.setLineDash([]); }
     const vol = exchangeVolume(s.book);
