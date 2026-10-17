@@ -6927,7 +6927,10 @@
           if (!d || !d.head) return;
           const st = d.createElement('style');
           st.textContent = 'html{height:100%}body{overflow-y:auto!important;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}'
-            + (game.name === 'btc-updown-15m' ? '.list{flex:1 0 auto!important;overflow:visible!important}' : '')
+            + (game.name === 'btc-updown-15m' ? '.list{flex:1 0 auto!important;overflow:visible!important}'
+              // A PAST ORDER'S STATUS ON ITS OWN LINE (kanban #447, the owner 2026-10-17 on the phone card: "pending final breaks the
+              // layout" - "pending · final in 6:57" ran past the card's edge at 390): it wraps under the round, right-aligned
+              + '.pastc .ph{flex-wrap:wrap;row-gap:3px}.pastc .ph .rd{flex:1 1 auto;min-width:0}.pastc .ph .fin{flex:1 0 100%;order:3;text-align:right}' : '')
             // the way back is the bar's (kanban #398): the client's own "← Arena" goes
             + '#back,button.back{display:none!important}';
           d.head.appendChild(st);
