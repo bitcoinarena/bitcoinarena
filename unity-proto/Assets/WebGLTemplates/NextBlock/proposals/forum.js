@@ -19,7 +19,60 @@
   function npub(hex) { return BLWPCLIENT.npubOfKey(hex); }
   function short(n) { return n.slice(0, 10) + '…' + n.slice(-4); }
   function sats(n) { return Number(n).toLocaleString('en-US') + ' sat'; }
-  function title(p) { var t = String(p.purpose).split('\n')[0].trim(); return t.length > 90 ? t.slice(0, 88) + '…' : t; }
+  function title(p) { var t = parts(p.purpose).title; return t.length > 90 ? t.slice(0, 88) + '…' : t; }
+  // A PIP'S THREE PARTS (kanban #432, the owner 2026-10-17: "Separate title field. Content on what the proposal does, in markdown including
+  // tables. Separate text field how does it improve bitcoin arena"): kept in the proposal's one signed text (purpose, at most 4,000
+  // characters) as its title line, the content, and a last section under IMPROVES - so the seats and the record stay as they are. An
+  // older proposal has no such section: all of it after the title is its content.
+  var IMPROVES = '## How it improves Bitcoin Arena';
+  function parts(purpose) {
+    var t = String(purpose || ''), nl = t.indexOf('\n');
+    var head = (nl < 0 ? t : t.slice(0, nl)).trim(), rest = nl < 0 ? '' : t.slice(nl + 1);
+    var at = rest.lastIndexOf('\n' + IMPROVES + '\n'), lead = rest.indexOf(IMPROVES + '\n') === 0 ? 0 : -1;
+    var cut = at >= 0 ? at + 1 : lead;
+    return { title: head, content: (cut >= 0 ? rest.slice(0, cut) : rest).trim(), improves: cut >= 0 ? rest.slice(cut + IMPROVES.length + 1).trim() : '' };
+  }
+  function purposeOf(t, content, improves) { return String(t).trim() + '\n\n' + String(content).trim() + '\n\n' + IMPROVES + '\n\n' + String(improves).trim(); }
+  // MARKDOWN, SAFELY (#432): headings, paragraphs, **bold**, *italic*, `code`, fenced code, lists, quotes, links (http/https only) and
+  // tables. Everything is escaped first; no HTML a writer types reaches the page.
+  function esc(x) { return String(x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function inline(x) {
+    var codes = [];
+    x = esc(x).replace(/`([^`]+)`/g, function (_, c) { codes.push(c); return '\u0000' + (codes.length - 1) + '\u0000'; });
+    x = x.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_, t, u) { return '<a href="' + u + '" rel="noopener nofollow" target="_blank">' + t + '</a>'; })
+      .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
+    return x.replace(/\u0000(\d+)\u0000/g, function (_, i) { return '<code>' + codes[Number(i)] + '</code>'; });
+  }
+  function cells(line) { return line.trim().replace(/^\||\|$/g, '').split('|').map(function (c) { return c.trim(); }); }
+  function markdown(src) {
+    var lines = String(src || '').replace(/\r/g, '').split('\n'), out = [], i = 0;
+    while (i < lines.length) {
+      var l = lines[i];
+      if (/^```/.test(l)) { var code = []; i++; while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]); i++; out.push('<pre><code>' + esc(code.join('\n')) + '</code></pre>'); continue; }
+      var h = /^(#{1,6})\s+(.*)$/.exec(l);
+      if (h) { var n = Math.min(6, h[1].length + 2); out.push('<h' + n + '>' + inline(h[2]) + '</h' + n + '>'); i++; continue; }
+      if (/\|/.test(l) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1])) {
+        var head = cells(l), rows = []; i += 2;
+        while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) rows.push(cells(lines[i++]));
+        out.push('<div class="tbl"><table><thead><tr>' + head.map(function (c) { return '<th>' + inline(c) + '</th>'; }).join('') + '</tr></thead><tbody>'
+          + rows.map(function (r) { return '<tr>' + head.map(function (_, k) { return '<td>' + inline(r[k] || '') + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>');
+        continue;
+      }
+      if (/^\s*([-*+]|\d+\.)\s+/.test(l)) {
+        var ordered = /^\s*\d+\./.test(l), items = [];
+        while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*([-*+]|\d+\.)\s+/, ''));
+        out.push((ordered ? '<ol>' : '<ul>') + items.map(function (x) { return '<li>' + inline(x) + '</li>'; }).join('') + (ordered ? '</ol>' : '</ul>'));
+        continue;
+      }
+      if (/^>\s?/.test(l)) { var q = []; while (i < lines.length && /^>\s?/.test(lines[i])) q.push(lines[i++].replace(/^>\s?/, '')); out.push('<blockquote>' + inline(q.join(' ')) + '</blockquote>'); continue; }
+      if (!l.trim()) { i++; continue; }
+      var para = [];
+      while (i < lines.length && lines[i].trim() && !/^(#{1,6}\s|```|>\s?|\s*([-*+]|\d+\.)\s+)/.test(lines[i]) && !(/\|/.test(lines[i]) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1]))) para.push(lines[i++]);
+      out.push('<p>' + para.map(inline).join('<br>') + '</p>');
+    }
+    return out.join('\n');
+  }
+  window.ARENA_FORUM_MD = markdown;
   function colour(hex) { var h = parseInt(hex.slice(0, 6), 16) % 360; return 'hsl(' + h + ' 70% 62%)'; }
   function who(hex) { return BLWPCLIENT.forumNameOf(hex, state.names); }
   function pip(p) { return 'PIP-' + p.pip; }
@@ -100,7 +153,8 @@
     var p = el('article', 'post' + (depth ? ' reply' : '')); if (depth) p.style.setProperty('--depth', Math.min(depth, 4));
     var col = el('div');
     var line = el('div', 'who'); var b = el('b', null, who(hex)); b.title = npub(hex); line.append(b, document.createTextNode(' · ' + head));
-    col.append(line, el('div', 'body', body));
+    var bd = el('div', 'body'); if (body && body.html !== undefined) { bd.classList.add('md'); bd.innerHTML = body.html; } else bd.textContent = body;
+    col.append(line, bd);
     if (extra) col.append(extra);
     p.append(avatar(hex), col);
     return { node: p, col: col };
@@ -116,7 +170,10 @@
     view.append(el('h1', null, pip(p) + ' · ' + title(p)));
     var facts = el('div', 'facts');
     var amt = el('span'); amt.append(el('b', null, sats(p.amountSats)), document.createTextNode(' to ' + p.lnurl)); facts.append(amt, el('span', 'stage ' + sg.cls, sg.text), el('span', null, stageLine(p)));
-    view.append(postNode(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes', p.purpose, facts, 0).node);
+    var pp = parts(p.purpose);
+    // an older proposal of one line: its whole line is what it says (the title above is cut at 90 characters)
+    var html = markdown(pp.content || pp.title) + (pp.improves ? '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(pp.improves) : '');
+    view.append(postNode(p.author, 'proposed at block ' + p.publishedHeight + ' · held by ' + p.holding + ' nodes', { html: html }, facts, 0).node);
     var byParent = {};
     p.comments.forEach(function (c) { (byParent[c.parent] = byParent[c.parent] || []).push(c); });
     (function walk(parent, depth) {
@@ -153,7 +210,10 @@
     var reservesLine = r ? 'The protocol reserves hold <b>' + r.sats.toLocaleString('en-US') + ' sat</b> (' + r.agreeing + ' of ' + r.asked + ' nodes agree). A proposal may ask at most <b>' + CAP_PCT + '%: ' + max.toLocaleString('en-US') + ' sat</b>.'
       : 'The reserves could not be read' + (state.reservesWhy ? ': ' + state.reservesWhy : '') + '. A proposal may ask at most ' + CAP_PCT + '% of them.';
     f.innerHTML = '<p class="reserves-line">' + reservesLine + '</p>' +
-      '<label>What is it for? The first line is its title.<textarea name="purpose" rows="8" maxlength="4000" required></textarea></label>' +
+      '<label>Title<input name="title" maxlength="120" required placeholder="A short name for the PIP"></label>' +
+      '<label>What the proposal does <span class="hint">Markdown: # headings, **bold**, lists, `code`, links and tables (| a | b |)</span><textarea name="content" rows="10" required></textarea></label>' +
+      '<div class="bar"><button type="button" class="btn preview-go">Preview</button><span class="say count"></span></div><div class="md preview" hidden></div>' +
+      '<label>How it improves Bitcoin Arena <span class="hint">its games, its protocol, its tools or its players</span><textarea name="improves" rows="4" required></textarea></label>' +
       '<div class="row"><label>Amount (sat)<input name="amount" type="number" min="1" step="1" required' + (max ? ' max="' + max + '"' : '') + '></label><label>Lightning address to pay<input name="lnurl" placeholder="you@wallet.example" required></label></div>' +
       '<div class="bar"><button class="btn primary" type="submit">Sign and publish</button><span class="say out"></span></div>';
     var check = function () {
@@ -166,16 +226,28 @@
       say(out, 'Within the cap: ' + (a * 100 / r.sats).toFixed(2) + '% of the reserves.'); return true;
     };
     f.amount.addEventListener('input', check); f.lnurl.addEventListener('input', check);
+    // the one signed text holds all three parts: at most 4,000 characters (the record's limit), counted as typed
+    var used = function () { return purposeOf(f.title.value, f.content.value, f.improves.value).length; };
+    var count = function () { var n = used(); say(f.querySelector('.count'), n.toLocaleString('en-US') + ' of 4,000 characters', n > 4000); return n <= 4000; };
+    [f.title, f.content, f.improves].forEach(function (x) { x.addEventListener('input', count); });
+    f.querySelector('.preview-go').addEventListener('click', function () {
+      var pv = f.querySelector('.preview'); pv.hidden = !pv.hidden; this.textContent = pv.hidden ? 'Preview' : 'Hide preview';
+      pv.innerHTML = '<h3>' + esc(f.title.value) + '</h3>' + markdown(f.content.value) + '<h3 class="improves">How it improves Bitcoin Arena</h3>' + markdown(f.improves.value);
+    });
+    count();
     f.addEventListener('submit', function (e) {
       e.preventDefault(); var out = f.querySelector('.out');
       if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
+      if (!f.title.value.trim() || !f.content.value.trim() || !f.improves.value.trim()) { say(out, 'Fill in the title, what it does, and how it improves Bitcoin Arena.', true); return; }
+      if (/\n/.test(f.title.value)) { say(out, 'The title is one line.', true); return; }
+      if (!count()) { say(out, 'The three parts together are more than 4,000 characters.', true); return; }
       if (!check() || !f.lnurl.value.trim()) { if (!f.lnurl.value.trim()) say(out, 'Name the Lightning address to pay.', true); return; }
       var amount = Number(f.amount.value);
       say(out, 'Signing…');
       (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
         if (!net) throw new Error('the nodes did not agree on their network');
         state.network = net;
-        var p = BLWPCLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: Math.floor(amount), lnurl: f.lnurl.value, purpose: f.purpose.value });
+        var p = BLWPCLIENT.signedProposal({ secretKey: state.key, networkId: net, publishedHeight: state.tip, amountSats: Math.floor(amount), lnurl: f.lnurl.value, purpose: purposeOf(f.title.value, f.content.value, f.improves.value) });
         return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'proposal', hex: p.hex }).then(function (r) { return { r: r, id: p.id }; });
       }).then(function (x) {
         if (!x.r.ok) { say(out, 'Not taken: ' + x.r.why, true); return; }

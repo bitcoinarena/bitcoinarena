@@ -7041,6 +7041,10 @@ with PIP. Users can sign in with their ingame key and their custom name or their
   nsec or a new key also works.
 - Everyone is shown by name: their `PlayerName`, else the name made from their key. A name set in the game's Settings or on the
   forum is signed and handed to every node.
+- A PIP has three parts *(kanban #432, the owner 2026-10-17)*: a title, what it does (Markdown, tables included), and how it improves
+  Bitcoin Arena (its games, protocol, tools or players, not only the protocol). They are kept in the proposal's one signed
+  `purpose` (at most 4,000 characters) as the title line, the content, and a last section `## How it improves Bitcoin Arena`. The
+  forum renders the Markdown safely: no HTML a writer types reaches the page.
 
 # 28. Failure matrix
 
