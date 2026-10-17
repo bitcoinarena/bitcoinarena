@@ -6884,7 +6884,10 @@
       const hereProofs = new Map();   // this tab's signed presence, one per round's table (ARENA_GAME.here)
       window.ARENA_GAME = {
         game: { id: game.id, name: game.name, title: game.title, known: game.known, devKey: game.devKey, attested: game.attested,
-          outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length },
+          outcomes: game.manifest.outcomes || [], attestThreshold: game.manifest.attestThreshold || 0, attestors: (game.manifest.attestors || []).length,
+          // A MARKET'S FEE AS ITS TERMS NAME IT (kanban #454): node, donation and the protocol reserve inside the donation, in bps
+          fees: game.manifest.marketTerms ? { node: game.manifest.marketTerms.nodeFeeBps, donation: game.manifest.marketTerms.donationBps,
+            reserve: game.manifest.marketTerms.reserveBps || 0 } : null },
         clientHash: file.hash,
         rows: () => moneyFirst(window.BLWP_LOBBY || []).map((r) => ({ id: r.id, line: r.line, free: r.free, joinable: !!r.joinable,
           stakeSats: r.stakeSats, entryCloseMs: r.raw ? Number(r.raw.entryCloseMs) : null, startTimeMs: r.raw ? Number(r.raw.startTimeMs) : null })),

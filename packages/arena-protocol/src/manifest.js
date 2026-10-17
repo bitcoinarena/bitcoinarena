@@ -259,6 +259,17 @@ export const isScalar = (m) => !!m && m.resultType === RESULT_TYPE.ATTESTED && !
  * payout rule 3 - cannot even read the manifest to host it.
  */
 export const PAYOUT_SHARES_MARKER = 0x03;
+/**
+ * A MARKET'S PROTOCOL RESERVE (kanban #454, the owner 2026-10-17: "Prediction markers brauchen auch eine protocol reserve fee: 0.4%
+ * donation (50/50 protocol / market dev), 0.4% node, 0.2% protocol reserve fee"): `marketTerms.reserveBps`, the part of the
+ * market's donation rate that goes to the protocol reserves of the federation each lock is in - written after its own marker,
+ * after a scalar's, and only when a market names it: every manifest before keeps its bytes and its game id. It is
+ * MARKET_RESERVE_BPS exactly (0.2 % of a stake) and inside `donationBps` (0.6 % = 0.4 % to the developers, 50/50 protocol and
+ * market dev, + 0.2 % reserve); the whole fee stays `nodeFeeBps + donationBps`. A node too old to read the marker cannot read the
+ * manifest, and so never hosts or settles such a market.
+ */
+export const MARKET_RESERVE_MARKER = 0x08;
+export const MARKET_RESERVE_BPS = 20;
 export const MARKET_FEE_BPS_MAX = 500;
 export const MARKET_DONATION_BPS_MAX = 500;
 export const MARKET_TOTAL_FEE_BPS_MAX = 1000;
@@ -273,6 +284,10 @@ export function marketTermsFit(t) {
   // in total"): the node fee and the donation together, each at most 5 % - a market takes no more of a stake than the
   // network's own games can (5 % node fee + up to 5 % donation)
   if (t.nodeFeeBps + t.donationBps > MARKET_TOTAL_FEE_BPS_MAX) return { ok: false, why: `a market's node fee and donation come to at most ${MARKET_TOTAL_FEE_BPS_MAX} bps (10 %) together; these come to ${t.nodeFeeBps + t.donationBps}` };
+  if (t.reserveBps !== undefined && t.reserveBps !== null) {
+    if (t.reserveBps !== MARKET_RESERVE_BPS) return { ok: false, why: `a market's protocol reserve is ${MARKET_RESERVE_BPS} bps (0.2 %), not ${t.reserveBps}` };
+    if (t.donationBps < t.reserveBps) return { ok: false, why: `a market's protocol reserve (${t.reserveBps} bps) is part of its donation (${t.donationBps} bps)` };
+  }
   if (typeof t.question !== 'string' || t.question.length < 1 || t.question.length > 256) return { ok: false, why: 'a market asks its question in 1 to 256 characters' };
   if (typeof t.resolveAfterCloseMs !== 'bigint' || t.resolveAfterCloseMs < 0n || t.resolveAfterCloseMs > MARKET_RESOLVE_MAX_MS) return { ok: false, why: 'a market resolves 0 to 30 days after its entry close' };
   if (typeof t.deadlineAfterResolveMs !== 'bigint' || t.deadlineAfterResolveMs < MARKET_DEADLINE_MIN_MS || t.deadlineAfterResolveMs > MARKET_DEADLINE_MAX_MS) return { ok: false, why: 'a market gives its attestors 1 minute to 7 days after its resolution time' };
@@ -443,6 +458,8 @@ export function encodeManifestBody(m) {
       const sc = m.scalar;
       w.u8(SCALAR_MARKER); w.i64(sc.low); w.i64(sc.high); w.str(sc.unit);
     }
+    // ITS PROTOCOL RESERVE (kanban #454), after its own marker and only when its terms name one: every manifest before keeps its bytes
+    if (m.marketTerms && m.marketTerms.reserveBps) { w.u8(MARKET_RESERVE_MARKER); w.u16(m.marketTerms.reserveBps); }
   }
   // A HEAD-TO-HEAD GAME'S OWN TERMS, likewise after everything else: no other manifest's bytes move
   if (isHeadToHead(m)) {
@@ -499,6 +516,11 @@ function readBody(r) {
     if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === SCALAR_MARKER) {
       r.u8();
       body.scalar = { low: r.i64(), high: r.i64(), unit: r.str() };
+    }
+    if (r.at < r.b.length - MANIFEST_SIGNATURE_BYTES && r.b[r.at] === MARKET_RESERVE_MARKER) {
+      r.u8();
+      if (!body.marketTerms) throw new Error('a market\'s protocol reserve is part of its terms, and this manifest names none');
+      body.marketTerms.reserveBps = r.u16();
     }
   }
   if (body.resultType === RESULT_TYPE.HEAD_TO_HEAD) {
