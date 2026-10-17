@@ -812,6 +812,15 @@ for (const node of committeeNodes)
     <li><b>Vote (2 weeks, 2016 blocks)</b><p>Bonded nodes vote YES, NO or ABSTAIN on Bitcoin, weighted by their bond. It passes when the bonds that voted are at least 30% of all bonded capital and YES is at least 60% of YES + NO. It is decided once its last block is 6 deep.</p></li>
     <li><b>Payout</b><p>The federation that holds the reserves pays the proposal's Lightning address once, signed by 5 of its 7 guardian seats. If the payment fails, the money returns to the reserve key. Every node records the payout with its proof (the payment's preimage and the federation transaction).</p></li>
   </ol>
+  <p><b>Why nobody can rent a majority.</b> Bonding a lot of bitcoin for a few weeks to vote yourself a payout does not work:</p>
+  <ul>
+    <li><b>Seasoned bonds only</b>: a bond votes only if it was confirmed about 6 months before the proposal was published. Bonds posted after a proposal appears have no vote.</li>
+    <li><b>Locked through the payout</b>: a bond votes only if it stays locked at least about 3 months after the vote, and it weighs more the longer it stays locked (full weight at a year). A bond past its lock date still serves rounds but no longer votes.</li>
+    <li><b>Caps</b>: one proposal can take at most 10% of the reserves, and all payouts together at most 25% in any 90 days.</li>
+    <li><b>Absolute support</b>: besides 30% turnout and 60% YES, the YES votes must be at least 20% of all seasoned bonded capital.</li>
+    <li><b>Delay and veto</b>: a passed proposal waits about 2 weeks before it is paid, and NO votes in that window cancel it. Payouts above 1% of the reserves go out in 4 monthly tranches, and each one can still be cancelled the same way.</li>
+    <li><b>The signal</b> counts only nodes with seasoned bonds that served rounds in 3 of the last 4 weeks.</li>
+  </ul>
   <p>To post a proposal, sign it and send it to any node: <code>POST /funding</code> with <code>{ "kind": "proposal", "hex": ... }</code>; the nodes pass it on to each other. <code>GET /funding</code> lists every proposal with its comments, signals and vote. A node owner can propose, comment and signal from the owner area.</p>
   <h2 id="faq">FAQ</h2>
   <details><summary>Where are my sats?</summary><p>As Fedimint e-cash in your browser's wallet, under your 24 words or your Nostr key, in one of the federations. No company holds them. While you play, your stake sits in a lock in the federation that only the round's result, or its expiry, can open.</p></details>
