@@ -179,8 +179,9 @@
       display: flex; align-items: center; justify-content: flex-end; font-size: var(--bf); color: rgba(255, 255, 255, 0.5); z-index: 1; }
     html:not(.other-game) #boot.paneled { padding: var(--ct) var(--ir) var(--cb) var(--ix); justify-content: center; }
     html:not(.other-game) #boot.paneled #track { width: min(440px, var(--iw)); }
-    html:not(.other-game) #boot.paneled #howto { --h: min(calc((var(--iw) - 18px) / 6.248), 30vh); }
-    @media (orientation: portrait) { html:not(.other-game) #boot.paneled #howto { width: min(var(--iw), 66vh); } }
+    html:not(.other-game) #boot.paneled #howto { --h: min(calc((min(var(--iw), var(--hw)) - 18px) / 6.248), 30vh); }
+    @media (orientation: portrait) { html:not(.other-game) #boot.paneled #howto { width: min(var(--iw), var(--hw)); } }
+    html:not(.other-game) #boot.paneled { gap: var(--gap); }
 
     #track { width: min(440px, 82vw); height: 8px; border-radius: 99px; background: #222932; overflow: hidden; position: relative; }
     /* 90 -> 100 % NEVER STANDS STILL (kanban #266, the owner 2026-10-08: "add 90-100 sub steps ... so it never feels like it
@@ -200,6 +201,13 @@
     #arena-fps-bench { display: block; color: #c9d1d9; font-weight: 500; white-space: pre-line; text-align: left; }
     #arena-fps-bench:empty { display: none; }
     body.blwp-clean #arena-fps { display: none; }
+    /* OFF UNLESS ASKED (kanban #445): the meter shows only with Settings' "Show FPS" on - kept in this browser */
+    body:not(.arena-fps-on) #arena-fps { display: none !important; }
+    #arena-set-graphics .fps-toggle { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; cursor: pointer; }
+    #arena-set-graphics .fps-toggle input { width: 18px; height: 18px; accent-color: #f7931a; }
+    /* IN A GAME, UNDER THE HEADER (kanban #444, the owner 2026-10-17: "And backup overlapping"): the header row holds the mark, the way back,
+       the backup warning, Leaderboard, Shop and Settings - the meter lay over the warning; it sits just under the row there */
+    body.arena-game-chosen:not(.arena-own-client) #arena-fps { top: calc(env(safe-area-inset-top, 0px) + 46px); }
     /* THE BUILD AND THE UI NUMBER, ALWAYS ON SCREEN (the owner 2026-10-12 18:13: "Also always include build number in
        testnet.bitcoin-arena.io including ui number that is separate"): Unity's build and this page's own number, bottom left,
        over every layer (a game's own client too), never in the way of a tap */
@@ -1147,6 +1155,8 @@
         <option value="auto" selected>Auto (by device)</option><option value="high">High</option><option value="low">Low</option>
       </select>
       <div class="muted" id="arena-gfx-now"></div>
+      <!-- SHOW FPS (kanban #445, the owner 2026-10-17: "show fps is default off everywhere, there is a toggle in settings") -->
+      <label class="fps-toggle"><input type="checkbox" id="arena-fps-toggle"> Show FPS</label>
     </section>
     <section class="settings-card" id="blwp-set-logs">
       <h3>Client logs</h3>
@@ -1696,7 +1706,12 @@
             tf = Math.max(12, Math.round(tf * 0.92));
           }
           const by = py + hh + ph * 0.008, bh = Math.max(12, sub * 1.3);
-          const set = { '--px': px, '--py': py, '--pw': pw, '--ph': ph, '--hh': hh, '--tf': tf, '--tm': mark, '--tg': gap, '--ix': px + pad, '--iw': pw - pad * 2,
+          // THE PICTURES SIZED TO THE ROOM LEFT IN THE FRAME (kanban #444, the owner 2026-10-17: "Ui version overlapping border"): on a tall
+          // phone the 2x2 pictures, the percent, the bar and the words were taller than the panel and ran over its edges; the rest of the
+          // column is ~290 px, the pictures take what is left (two rows ~0.9 of their width, one row 1/6.25)
+          const restH = 290, roomH = Math.max(80, (py + ph - padV) - (by + bh + ph * 0.02) - restH);
+          const portrait = h > w, howtoW = Math.max(120, Math.min(pw - pad * 2, portrait ? roomH / 0.9 : roomH * 6.25));
+          const set = { '--hw': howtoW, '--gap': roomH < 260 ? 8 : 14, '--px': px, '--py': py, '--pw': pw, '--ph': ph, '--hh': hh, '--tf': tf, '--tm': mark, '--tg': gap, '--ix': px + pad, '--iw': pw - pad * 2,
             '--ir': w - (px + pw - pad), '--by': by, '--bh': bh, '--bf': Math.max(10, Math.round(sub * 0.8)), '--ct': by + bh + ph * 0.02,
             '--cb': h - (py + ph) + padV };
           for (const k in set) boot.style.setProperty(k, set[k].toFixed(1) + 'px');
@@ -2247,6 +2262,7 @@
           const sec = (DL.t1 - DL.t0) / 1000;
           // read in well under a second: the browser's own cache, not the network
           el.textContent = sec < 0.75 ? mb(got) + ' MB from the browser cache' : mb(got) + ' MB in ' + sec.toFixed(1) + ' s \u00b7 ' + mb(got / sec) + ' MB/s';
+          const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) note.textContent = mb(total) + ' MB';
           window.ARENA_DOWNLOAD_LINE = el.textContent; clearInterval(tick); return; }
         el.textContent = mb(got) + (total ? ' / ' + mb(total) : '') + ' MB \u00b7 ' + mb(rate) + ' MB/s';
         const note = document.getElementById('total'); if (note && total && /few/.test(note.textContent)) note.textContent = mb(total) + ' MB';
@@ -2918,9 +2934,13 @@
     }
     setInterval(() => { readMarketOutcomes().catch((e) => console.warn('[blwp] market outcomes: ' + e.message)); }, 10000);
     // the lobby's market lines (Unity draws them under the round rows, as the collect lines)
-    function marketViewLines() {
+    function marketViewLines(onlyThisGame = false) {
       if (!BLWPCLIENT.marketLines) return [];
-      const picks = readPicks().map((p) => Object.assign({}, p, { market: marketOfPick(p) })).filter((p) => p.market);
+      // THE GAME SHOWN ONLY, in a lobby (kanban #444, the owner 2026-10-17: "Btc orders showing up in tick tock"): Tick Tock's lobby listed
+      // Up/Down's orders - every market pick of the tab, whatever game is open
+      const ids = onlyThisGame ? new Set((window.ARENA_GAME_IDS || [window.ARENA_GAME_ID]).filter(Boolean).map((x) => String(x).toLowerCase())) : null;
+      const picks = readPicks().filter((p) => !ids || ids.has(String(p.gameId || '').toLowerCase()))
+        .map((p) => Object.assign({}, p, { market: marketOfPick(p) })).filter((p) => p.market);
       try { return BLWPCLIENT.marketLines({ picks, outcomes: MARKET_OUTCOMES, nowMs: Date.now() }); } catch (e) { return [{ kind: 'market', text: 'markets: ' + e.message }]; }
     }
     window.BLWP_MARKET_LINES = marketViewLines;
@@ -7348,7 +7368,7 @@
         // THE COLLECT'S LINES (kanban #153): another kept seed's records, a failed collect, an uncollectable record - the
         // page's words; Unity draws them under the round rows
         // AND THE TAB'S MARKET LINES after them (kanban #206 slice 2): its picks, then their outcomes as this page checked them
-        collect: BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.BLWP_RECORDS || [], { failed: window.BLWP_COLLECT_FAILED || new Map(), held: window.BLWP_COLLECT_HELD || new Set() }).concat(marketViewLines()) : marketViewLines() });
+        collect: BLWPCLIENT.collectLines ? BLWPCLIENT.collectLines(window.BLWP_RECORDS || [], { failed: window.BLWP_COLLECT_FAILED || new Map(), held: window.BLWP_COLLECT_HELD || new Set() }).concat(marketViewLines(true)) : marketViewLines(true) });
       window.BLWP_LOBBY_ACT = {
         // PLAY: the round's own link, so the round is joined by exactly the path a
         // shared round link takes - IN THIS PAGE (the owner 2026-09-13 07:11: "after
@@ -7929,6 +7949,15 @@
         txt.textContent = line; box.classList.toggle('ok', cls === 'ok' || cls === 'held'); box.classList.toggle('bad', cls === 'bad'); box.classList.add('on');
         window.ARENA_JOIN_STATUS = { line, cls, state: j.state };
       }, 500);
+    })();
+    // SHOW FPS (kanban #445): off by default; the toggle in Settings' Graphics keeps the choice in this browser
+    (() => {
+      let on = false; try { on = localStorage.getItem('arena.fps.show') === '1'; } catch { /* off */ }
+      document.body.classList.toggle('arena-fps-on', on);
+      const box = document.getElementById('arena-fps-toggle'); if (!box) return;
+      box.checked = on;
+      box.addEventListener('change', () => { try { localStorage.setItem('arena.fps.show', box.checked ? '1' : '0'); } catch { /* this page only */ }
+        document.body.classList.toggle('arena-fps-on', box.checked); });
     })();
     window.ARENA_DONATE_OPEN = (gameName = null) => {
       let el = document.getElementById('arena-donate');
