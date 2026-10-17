@@ -3041,8 +3041,10 @@
       try { if (window.sessionStorage.getItem('arena.player.seed')) seed = BLWPCLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) }); } catch { seed = null; }
       if (!seed) return;                                  // no wallet in this tab yet: nothing is minted for this
       const known = new Set(readPicks().map((x) => x.entryIdHex));
-      const rows = (window.BLWP_LOBBY_ROWS || []).filter((r) => r && !r.free && r.contract && BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(r.contract)
-        && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
+      // the rounds the lobby lists, and those just closed that the seats still list (an order there has its result to show)
+      const listed = [...(window.BLWP_LOBBY_ROWS || []), ...(window.BLWP_LOBBY_CLOSED || []).map((c) => ({ id: c.id, contract: c.contract, free: false }))];
+      const rows = listed.filter((r) => r && !r.free && r.contract && BLWPCLIENT.roundPays && BLWPCLIENT.roundPays(r.contract) !== false
+        && BLWPCLIENT.marketForRound && BLWPCLIENT.marketForRound(r.contract) && BLWPCLIENT.toHex(r.contract.gameId) === String(G.game.id));
       for (const r of rows) {
         const round = Object.assign({}, r.contract, { id: BLWPCLIENT.fromHex(r.id) });
         const keys = new Map();
@@ -7393,6 +7395,9 @@
         for (const r of mine) rowSearch.set(r.id, search);
         for (const r of theirs) rowSearch.set(r.id, testnet.search);
         window.BLWP_LOBBY_ROWS = [...mine, ...theirs];    // every round listed, for the next one after a run (below)
+        // THE ROUNDS JUST CLOSED THAT THE SEATS STILL LIST (kanban #452): a player's orders in them are read back after a reload
+        { const closedOf = (g, srch) => ((g && g.closed) || []).filter((c) => !c.contract || paysHere(c)).map((c) => { rowSearch.set(c.id, srch); return c; });
+          window.BLWP_LOBBY_CLOSED = [...closedOf(got, search), ...(got2 && testnet ? closedOf(got2, testnet.search) : [])]; }
         // the seats of a listed round: its side's lobby nodes (a head-to-head table says who sits at it to them, ARENA_GAME.here)
         window.BLWP_ROW_NODES = (id) => (testnet && rowSearch.get(id) === testnet.search ? testnet.named.nodes : named.nodes) || [];
         lobbyNow();
