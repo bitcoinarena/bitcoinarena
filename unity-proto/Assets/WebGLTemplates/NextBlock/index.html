@@ -122,6 +122,29 @@
     #title { display: flex; align-items: center; gap: 0.45em; }
     #logo { width: 1.5em; height: 1.5em; flex: none; }
     #sub { color: #8b949e; font-size: 14px; margin-top: -14px; }
+    /* THE GAME'S OWN PANEL, ALREADY ON THE LOADING SCREEN (kanban #400, the owner 2026-10-17: "the header slightly jumps between the
+       screens 'loading a game' and 'the game' ... make it consistent"). Measured on UI 188: the loading title sat unframed ~1,100 px
+       wide; Unity's lobby (SplashScreen.Measure) draws it in a gold head of a panel min(86 % w, 900) x min(88 % h, 760) - the
+       title jumped up into the frame and to capitals as Unity took over. The page now draws that panel at Unity's rectangle
+       (bootPanel() below, the same arithmetic in CSS pixels - BlwpUiScale makes Unity's units the canvas's CSS pixels), so only
+       what is inside it changes. Another game's loading screen keeps its own look (#385). */
+    #boot-panel { display: none; }
+    html:not(.other-game) #boot.paneled > #boot-panel { display: block; position: absolute; left: var(--px); top: var(--py); width: var(--pw); height: var(--ph);
+      box-sizing: border-box; border: 2px solid rgba(255, 214, 79, 0.85); background: linear-gradient(#1a1d26f0, #0e0f13f0);
+      box-shadow: 0 0 0 1px rgba(255, 214, 79, 0.12), 0 0 6px rgba(255, 214, 79, 0.34); pointer-events: none; z-index: -1; }   /* under the words, over #boot's ground */
+    #boot-panel .head { position: absolute; left: -2px; right: -2px; top: -2px; height: var(--hh);
+      background: linear-gradient(#2b2412fa, #12110dfa); border-bottom: 3px solid #ffd64f; box-sizing: border-box; }
+    html:not(.other-game) #boot.paneled > #title { position: absolute; left: var(--px); top: var(--py); width: var(--pw); height: var(--hh);
+      justify-content: center; gap: var(--tg); font-size: var(--tf); line-height: 1; letter-spacing: 0; color: #ffd64f; text-transform: uppercase;
+      text-shadow: 3px 4px 0 rgba(0, 0, 0, 0.6); z-index: 1; margin: 0; }
+    html:not(.other-game) #boot.paneled > #title span { color: inherit; }
+    html:not(.other-game) #boot.paneled > #title #logo { width: var(--tm); height: var(--tm); }
+    html:not(.other-game) #boot.paneled > #sub { position: absolute; left: var(--ix); top: var(--by); width: var(--iw); height: var(--bh); margin: 0;
+      display: flex; align-items: center; justify-content: flex-end; font-size: var(--bf); color: rgba(255, 255, 255, 0.5); z-index: 1; }
+    html:not(.other-game) #boot.paneled { padding: var(--ct) var(--ir) var(--cb) var(--ix); justify-content: center; }
+    html:not(.other-game) #boot.paneled #track { width: min(440px, var(--iw)); }
+    html:not(.other-game) #boot.paneled #howto { --h: min(calc((var(--iw) - 18px) / 6.248), 30vh); }
+    @media (orientation: portrait) { html:not(.other-game) #boot.paneled #howto { width: min(var(--iw), 66vh); } }
 
     #track { width: min(440px, 82vw); height: 8px; border-radius: 99px; background: #222932; overflow: hidden; position: relative; }
     /* 90 -> 100 % NEVER STANDS STILL (kanban #266, the owner 2026-10-08: "add 90-100 sub steps ... so it never feels like it
@@ -1575,12 +1598,44 @@
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
   <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><a class="home-back" href="https://bitcoin-arena.io/">&larr; bitcoin-arena.io</a><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
   <div id="boot">
+    <div id="boot-panel"><div class="head"></div></div>
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
     <script>
       if (window.ARENA_SITE_TITLE) { document.getElementById('site-name').textContent = window.ARENA_SITE_TITLE[0]; document.getElementById('site-icons').textContent = window.ARENA_SITE_TITLE[1]; }
     </script>
     <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
+    <script>
+      // UNITY'S LOBBY PANEL, MEASURED THE SAME WAY (kanban #400): SplashScreen.Measure and Styles in CSS pixels - the panel, its gold
+      // head, the title fitted on one line with the mark beside it (x 0.92 until it fits, as Unity does), the build row under the head.
+      (function () {
+        const boot = document.getElementById('boot'), title = document.getElementById('title');
+        const ctx = document.createElement('canvas').getContext('2d');
+        const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+        function bootPanel() {
+          if (!boot || !title || document.documentElement.classList.contains('other-game')) return;
+          const w = window.innerWidth, h = window.innerHeight, min = Math.min(w, h);
+          const pw = Math.min(w * 0.86, 900), ph = Math.min(h * 0.88, 760), px = (w - pw) / 2, py = (h - ph) / 2;
+          const hh = clamp(ph * 0.13, 44, 96), pad = pw * 0.07, padV = Math.min(pad, ph * 0.07);
+          const sub = Math.round(clamp(min * 0.028, 14, 24));
+          let tf = Math.round(clamp(min * 0.070, 30, 68)), mark = 0, gap = 0;
+          for (let i = 0; i < 24; i++) {
+            ctx.font = `700 ${tf}px system-ui, sans-serif`;
+            const nx = ctx.measureText('TICK TOCK, NEXT BLOCK').width, ny = tf * 1.15;
+            mark = Math.min(hh * 0.78, ny * 1.15); gap = Math.max(6, mark * 0.25);
+            if ((nx + mark + gap + 24 <= pw && ny <= hh) || tf <= 12) break;
+            tf = Math.max(12, Math.round(tf * 0.92));
+          }
+          const by = py + hh + ph * 0.008, bh = Math.max(12, sub * 1.3);
+          const set = { '--px': px, '--py': py, '--pw': pw, '--ph': ph, '--hh': hh, '--tf': tf, '--tm': mark, '--tg': gap, '--ix': px + pad, '--iw': pw - pad * 2,
+            '--ir': w - (px + pw - pad), '--by': by, '--bh': bh, '--bf': Math.max(10, Math.round(sub * 0.8)), '--ct': by + bh + ph * 0.02,
+            '--cb': h - (py + ph) + padV };
+          for (const k in set) boot.style.setProperty(k, set[k].toFixed(1) + 'px');
+          boot.classList.add('paneled');
+        }
+        bootPanel(); window.addEventListener('resize', bootPanel); window.ARENA_BOOT_PANEL = bootPanel;
+      })();
+    </script>
     <div id="howto">
       <img src="howto-1.png" alt="How to play, 1 of 4">
       <img src="howto-2.png" alt="How to play, 2 of 4">
@@ -6875,6 +6930,7 @@
       if (window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.BLWP_LEDGER_LOBBY);
       // NEXT BLOCK'S LOADING SCREEN, ONCE IT IS THE GAME (kanban #350): the bare root showed Bitcoin Arena's splash until here
       if (window.ARENA_UNITY && document.documentElement.classList.contains('arena-root')) document.documentElement.classList.remove('other-game', 'arena-root');
+      if (window.ARENA_BOOT_PANEL) window.ARENA_BOOT_PANEL();   // Tick Tock's loading screen: Unity's panel (kanban #400)
       // WHICH LOBBY A ROW CAME FROM, so its join - PLAY, or the next round after a run - carries that lobby's own link
       const rowSearch = window.BLWP_ROW_SEARCH = new Map();
       // WHO THIS TAB IS (M3.3-34): the identity key the page generated from the
