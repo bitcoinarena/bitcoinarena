@@ -22,8 +22,9 @@ function run(picks, outcomes = new Map()) {
   const asked = [];
   const fetch = async (url) => { const base = url.split('/outcome')[0]; asked.push(base); const a = SEATS[base]; return { ok: !!a, json: async () => JSON.parse(JSON.stringify(a)) }; };
   const BLWPCLIENT = { checkMarketOutcome: async () => ({ verified: true, why: 'signed by 2 of 3' }), checkAttestation: async () => ({ verified: true }) };
-  const fn = pageFunction(PAGE, ['readPicks', 'MARKET_OUTCOMES', 'marketOfPick', 'BLWPCLIENT', 'window', 'fetch', 'AbortSignal'], [SRC], 'return readMarketOutcomes;');
-  const read = fn(() => picks, outcomes, () => ({ name: 'btc-updown-15m' }), BLWPCLIENT, { BLWP_CURVE: {} }, fetch, { timeout: () => undefined });
+  // OUTCOMES_READ (kanban #464): the rounds whose outcome the page has asked for once
+  const fn = pageFunction(PAGE, ['readPicks', 'MARKET_OUTCOMES', 'marketOfPick', 'BLWPCLIENT', 'window', 'fetch', 'AbortSignal', 'OUTCOMES_READ'], [SRC], 'return readMarketOutcomes;');
+  const read = fn(() => picks, outcomes, () => ({ name: 'btc-updown-15m' }), BLWPCLIENT, { BLWP_CURVE: {} }, fetch, { timeout: () => undefined }, new Set());
   return { read, outcomes, asked };
 }
 

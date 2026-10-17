@@ -64,6 +64,7 @@ test('logout: the tab has no account until its reload, and the Nostr login and i
   pageFunction(PAGE, ['window', 'sessionStorage'], DECIDE, 'return 0;')(window, S);
   window.ARENA_WALLET_SCREEN = { shown: false, done: true };
   assert.equal(window.ARENA_START_PENDING(), false, 'a player with an account');
+  window.BLWP_BROWSER_STORE = () => local;   // the page's one door to the browser's store (kanban #465)
   const del = pageFunction(PAGE, ['window', 'vault', 'sessionStorage', 'localStorage', 'BLWPCLIENT', 'console'], DELETE, 'return window.ARENA_DELETE_ACCOUNT;')(
     window, () => L, S, local, { forgetPhrase: () => 3 }, { log: () => {} });
   assert.deepEqual(del(), { ok: true, forgot: 3 });

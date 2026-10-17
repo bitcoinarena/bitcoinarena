@@ -39,7 +39,7 @@ test('the price at the share: 500 sat at the default 50 %, 250 sat at 0 %, kept 
   const src = html.slice(html.indexOf("    const ITEMS_SHARE_KEY = 'arena.items.devsPct';"), html.indexOf('    async function openShop() {'));
   const kept = new Map();
   const localStorage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => kept.set(k, String(v)) };
-  const window = {};
+  const window = { BLWP_BROWSER_STORE: () => localStorage };   // the page's one door to the browser's store (kanban #465)
   pageFunction(PAGE, ['window', 'localStorage', 'BLWPCLIENT'], src, '')(window, localStorage, { itemPriceFor, ITEM_DEV_SHARES });
   assert.equal(window.ARENA_ITEMS_SHARE(), 50);
   assert.equal(window.ARENA_ITEM_PRICE(500), 500n);
@@ -67,7 +67,7 @@ test('#442: with no game chosen the share and the price are the newest selling v
   const kept = new Map();
   const localStorage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => kept.set(k, String(v)) };
   const items = [{ id: 'large-truck', name: 'Large truck', priceSat: 500n }];
-  const window = { ARENA_GAME_CHOSEN: null, ARENA_GAMES_FULL: [
+  const window = { BLWP_BROWSER_STORE: () => localStorage, ARENA_GAME_CHOSEN: null, ARENA_GAMES_FULL: [
     { name: 'rock-paper-scissors', manifest: { gameName: 'rock-paper-scissors', version: 3, requiredProtocolVersion: 2, items: [] } },
     { name: 'nextblock', manifest: { gameName: 'nextblock', version: 3, requiredProtocolVersion: 10, items } },
     { name: 'nextblock', manifest: { gameName: 'nextblock', version: 4, requiredProtocolVersion: 11, items } }] };

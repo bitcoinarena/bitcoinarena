@@ -28,7 +28,8 @@ test('Settings has a Benchmark card with its button, inside the settings sheet',
 
 test('the switch: off with nothing kept, on only with "1" kept; a blocked store is off', () => {
   const line = PAGE.slice(PAGE.indexOf('    window.ARENA_BENCH_ON = '), PAGE.indexOf('\n', PAGE.indexOf('    window.ARENA_BENCH_ON = ')));
-  const on = (localStorage) => { const window = {}; new Function('window', 'localStorage', line)(window, localStorage); return window.ARENA_BENCH_ON(); };
+  // the page reaches the browser's store through its one door, window.BLWP_BROWSER_STORE (kanban #465)
+  const on = (localStorage) => { const window = { BLWP_BROWSER_STORE: () => localStorage }; new Function('window', 'localStorage', line)(window, localStorage); return window.ARENA_BENCH_ON(); };
   assert.equal(on({ getItem: () => null }), false, 'off by default');
   assert.equal(on({ getItem: () => '0' }), false);
   assert.equal(on({ getItem: (k) => (k === 'arena.bench.on' ? '1' : null) }), true);
