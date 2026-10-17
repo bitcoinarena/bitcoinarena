@@ -146,31 +146,6 @@
   .legend div { font-size: 15px; color: var(--soft); }
   .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px; vertical-align: -1px; }
   .legend strong { display: block; font: 700 22px "Space Grotesk"; color: var(--text); }
-  /* PROJECT PROPOSALS (kanban #397) */
-  .p-rules { margin: 22px 0 6px; padding-left: 22px; color: var(--soft); display: grid; gap: 6px; max-width: 80ch; }
-  .p-rules b { color: var(--text); }
-  .p-first { color: var(--dim); margin: 6px 0 22px; }
-  .p-key { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin-bottom: 14px; }
-  .p-key-id { color: var(--gold); font-weight: 600; margin-right: auto; }
-  .p-key form { display: flex; gap: 8px; }
-  .p-key input, .p-propose input, .p-propose textarea, .p-cform textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font: inherit; }
-  .p-say { font-size: 14px; color: var(--dim); } .p-say.bad { color: var(--bear); }
-  .p-list { display: grid; gap: 14px; margin: 12px 0 22px; }
-  .p-empty { color: var(--dim); }
-  .p-card { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); padding: 18px 20px; }
-  .p-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline; }
-  .p-amt { font: 700 20px "Space Grotesk"; color: var(--btc); } .p-to { color: var(--soft); overflow-wrap: anywhere; }
-  .p-stage { margin-left: auto; font-size: 13px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--line); }
-  .p-stage.on { color: var(--cyan); } .p-stage.ok { color: var(--bull); } .p-stage.no { color: var(--bear); }
-  .p-purpose { white-space: pre-wrap; margin: 10px 0 6px; color: var(--text); }
-  .p-meta, .p-who { font-size: 13px; color: var(--dim); }
-  .p-thread { margin-top: 10px; display: grid; gap: 8px; }
-  .p-comment { border-left: 2px solid var(--line); padding-left: 10px; } .p-comment p { margin: 2px 0; white-space: pre-wrap; }
-  .p-reply { background: none; border: 0; color: var(--gold); cursor: pointer; padding: 0; font-size: 13px; }
-  .p-cform { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; } .p-cform textarea { flex: 1 1 260px; }
-  .p-propose { display: grid; gap: 10px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); }
-  .p-propose h3 { margin: 0; } .p-propose label { display: grid; gap: 6px; color: var(--soft); font-size: 14px; }
-  .p-row { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; } @media (max-width: 600px) { .p-row { grid-template-columns: 1fr; } .p-stage { margin-left: 0; } }
   /* THE PROTOCOL RESERVES, live under the fees (kanban #397) */
   .reserves { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: clamp(18px, 4vw, 48px); align-items: center; margin-top: 36px; padding: clamp(20px, 4vw, 36px); border-radius: 22px; border: 1px solid rgba(247,147,26,.35); background: radial-gradient(120% 140% at 0% 0%, rgba(247,147,26,.16), transparent 60%), rgba(15,10,16,.55); }
   .reserves .kicker { margin-bottom: 6px; }
@@ -179,6 +154,7 @@
   .r-line { margin-top: 10px; font-size: 14px; color: var(--soft); }
   .r-what { margin: 0; font-size: 16px; color: var(--soft); }
   .r-what b { color: var(--text); }
+  .r-link { display: inline-block; margin-top: 8px; color: var(--gold); font-weight: 600; }
   .reserves[data-state="reading"] .r-total span { opacity: .4; }
   @media (max-width: 760px) { .reserves { grid-template-columns: 1fr; } }
   .legend small { display: block; margin-top: 4px; font-size: 13px; line-height: 1.4; color: var(--dim); }
@@ -227,7 +203,7 @@
 <body>
 <nav><div class="wrap">
   <a class="brand" href="#top"><i>₿</i>Bitcoin Arena</a>
-  <div class="links"><a href="#games">Games</a><a href="#how">How it works</a><a href="#nostr">Nostr</a><a href="#proposals">Proposals</a><a href="#build">Build &amp; run</a><a href="https://docs.bitcoin-arena.io/">Docs</a></div>
+  <div class="links"><a href="#games">Games</a><a href="#how">How it works</a><a href="#nostr">Nostr</a><a href="https://testnet.bitcoin-arena.io/proposals/">Proposals</a><a href="#build">Build &amp; run</a><a href="https://docs.bitcoin-arena.io/">Docs</a></div>
   <a class="play" href="https://testnet.bitcoin-arena.io/">Play on testnet <span aria-hidden="true">→</span></a>
 </div></nav>
 
@@ -337,7 +313,7 @@
   <div class="split reveal">
     <div class="kicker">Economics</div>
     <h2>Know where <em>every&nbsp;sat</em> goes.</h2>
-    <div class="bar" role="img" aria-label="A paid stake on protocol 11: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves">
+    <div class="bar" role="img" aria-label="A paid stake: 90 % in play, 4 % node fee, 2 % game developer, 2 % protocol developers, 2 % protocol reserves">
       <div class="pool">90 % in play</div><div class="b-nodes"></div><div class="b-game"></div><div class="b-proto"></div><div class="b-res"></div>
     </div>
     <div class="legend">
@@ -347,44 +323,16 @@
       <div><i style="background:var(--btc)"></i>Protocol developers<strong>2%</strong><small>To the protocol developers.</small></div>
       <div><i style="background:var(--nostr)"></i>Protocol reserves<strong>2%</strong><small>The network&rsquo;s own fund, below.</small></div>
     </div>
-    <p class="note">The split above is protocol 11, and it is <b>fixed</b>. Game versions before it keep their own: a 5% node fee and an <b>optional</b> 5% developer donation. Items pay 40% to the nodes and 20% to the reserves, plus the developers&rsquo; share you choose.</p>
+    <p class="note">The split is <b>fixed</b>. An item pays 40% to the nodes and 20% to the protocol reserves, plus the developers&rsquo; share you choose.</p>
     <div class="reserves" id="reserves" data-state="reading">
       <div class="r-head">
         <div class="kicker">Protocol reserves · live</div>
         <div class="r-total"><span data-r="total">…</span><small>sat</small></div>
         <div class="r-line" data-r="line">Reading the nodes…</div>
       </div>
-      <p class="r-what">On protocol 11, <b>2&nbsp;%</b> of every paid round and <b>20&nbsp;%</b> of every item go to the protocol reserves, locked to each federation&rsquo;s 5-of-7 key. <b>Anyone</b> can propose a payout. It is paid only if the bonded nodes vote for it, to the Lightning address the proposal names.</p>
+      <p class="r-what"><b>2&nbsp;%</b> of every paid round and <b>20&nbsp;%</b> of every item go to the protocol reserves, locked to each federation&rsquo;s 5-of-7 key. <b>Anyone</b> can propose a payout; it is paid only if the bonded nodes vote for it. <a class="r-link" href="https://testnet.bitcoin-arena.io/proposals/">Read and discuss the proposals &rarr;</a></p>
     </div>
   </div>
-</div></section>
-
-<section id="proposals" style="padding-top:0"><div class="wrap">
-  <div class="kicker reveal">Project proposals</div>
-  <h2 class="reveal">Propose. Review. The bonded nodes decide.</h2>
-  <p class="intro reveal">Anyone can ask the protocol reserves to fund a project, for any Lightning address. Read the proposals, ask questions and comment. Your comments are signed with your own key; nobody can sign them for you.</p>
-  <ol class="p-rules reveal">
-    <li><b>Who votes:</b> bonds at least 3 months old that stay locked at least 3 months after the vote.</li>
-    <li><b>How much they count:</b> bond &times; age: 1&times; under a year, 2&times; from one year, 3&times; from two.</li>
-    <li><b>When it passes:</b> 60% of the votes say YES, and YES is at least 20% of everyone who could vote.</li>
-    <li><b>How much it can take:</b> at most 10% of the reserves per proposal, 25% per 3 months.</li>
-    <li><b>Time to say no:</b> nothing is paid for 2 weeks after the vote, and NO votes in that time stop it. Above 1% of the reserves, it is paid in 4 monthly parts, each stoppable.</li>
-  </ol>
-  <p class="p-first reveal">First, at least 15% of the active nodes must signal a proposal within a week.</p>
-  <div class="p-key reveal">
-    <span class="p-key-id">Loading…</span>
-    <form class="p-nsec-form"><input class="p-nsec" type="password" placeholder="nsec1… (stays in this browser)" autocomplete="off"><button class="btn ghost" type="submit">Use my nsec</button></form>
-    <button class="btn ghost p-new" type="button">Use a new key</button><button class="btn ghost p-forget" type="button" hidden>Forget key</button>
-    <span class="p-say p-key-say"></span>
-  </div>
-  <div class="p-status p-say"></div>
-  <div class="p-list"></div>
-  <form class="p-propose reveal">
-    <h3>Propose a project</h3>
-    <label>What is it for?<textarea name="purpose" rows="3" maxlength="4000" required></textarea></label>
-    <div class="p-row"><label>Amount (sat)<input name="amount" type="number" min="1" step="1" required></label><label>Lightning address<input name="lnurl" placeholder="you@wallet.example" required></label></div>
-    <button class="btn primary" type="submit">Sign and propose</button><span class="p-say p-prop-say"></span>
-  </form>
 </div></section>
 
 <section id="build" style="padding-top:0"><div class="wrap">
@@ -429,7 +377,6 @@
 </div></footer>
 
 <script src="js/reserves.js" defer></script>
-<script src="js/proposals.js" defer></script>
 <script>
   // sections fade in as they arrive
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('on'); io.unobserve(e.target); } }), { threshold: 0.12 });
