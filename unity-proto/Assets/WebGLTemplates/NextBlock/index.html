@@ -417,6 +417,19 @@
       background: radial-gradient(1200px 600px at 50% -10%, #1b2230 0%, #0d1014 60%); font-family: system-ui, sans-serif; color: #e6edf3;
       padding: 28px 16px 40px; box-sizing: border-box; }
     #arena-games.show { display: flex; }
+    /* A GAME THAT CANNOT BE LOADED, LIKE THE LOADING SCREEN (kanban #406: "it should look like the loading screen: having a header,
+       being vertically and horizontally centered. only on back link - to the arena"): the header bar, then the game's name, why,
+       and "← Arena" - centered, nothing of the games screen around them */
+    #arena-games.refused { align-items: center; }
+    #arena-games.refused .box { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 12px;
+      width: min(560px, 100%); min-height: 100%; }
+    #arena-games.refused .layout-switch, #arena-games.refused .brand, #arena-games.refused .lead, #arena-games.refused .more,
+    #arena-games.refused .foot-row, #arena-games.refused .home-back { display: none !important; }
+    #arena-games.refused h2 { margin: 0; font-size: clamp(22px, 5vw, 30px); }
+    #arena-games.refused .why { margin: 0; color: #ffcf8a; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+    #arena-games.refused .list { display: flex; justify-content: center; margin-top: 6px; order: 2; } #arena-games.refused .why { order: 1; }
+    #arena-games.refused .list .game { width: auto; min-width: 0; padding: 9px 18px; border-radius: 10px; font: 600 14px system-ui, sans-serif; cursor: pointer;
+      background: #11161d; color: #e6edf3; border: 1px solid #2a3442; box-shadow: none; } #arena-games.refused .list .game:hover { border-color: #f7931a; color: #f7931a; }
     #arena-games .box { width: min(980px, 100%); }
     #arena-games .brand { color: #f7931a; font: 700 12px/1 system-ui, sans-serif; letter-spacing: .18em; text-transform: uppercase; margin: 0 0 8px; }
     #arena-games h2 { margin: 0 0 6px; font-size: 26px; font-weight: 750; }
@@ -861,6 +874,15 @@
       font-size:13px; font-weight:600; line-height:1.25; }
     #blwp-backup-cta { flex:none; font-size:13px; font-weight:700; padding:6px 10px; cursor:pointer;
       background:#ff9d2e; color:#241400; border:0; border-radius:4px; }
+    /* A PHONE: THE WARNING IS ITS BUTTON (the owner 2026-10-17, UI 199: "Still Backup overflowing" - "No backup" on two lines beside "Back up
+       now" made the box taller than the header row and it hung over Tick Tock's panel): under 480 px the words go, the orange
+       "⚠ Back up now" stays on one line, as tall as the header's other buttons */
+    @media (max-width: 480px) {
+      #blwp-backup-warn { padding: 0; border: 0; background: none; flex: 0 1 auto; max-width: none; min-width: 0; }
+      #blwp-backup-notice { display: none; }
+      #blwp-backup-cta { white-space: nowrap; padding: 7px 10px; font-size: 12.5px; border-radius: 7px; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+      #blwp-backup-cta::before { content: '\26A0\FE0E  '; }
+    }
     #arena-platform-go { flex: none; font: 600 13px/1 system-ui, sans-serif; padding: 9px 10px; text-decoration: none;
       background: rgba(13,16,20,0.9); color: #f7931a; border: 1px solid #3a4452; border-radius: 6px; white-space: nowrap; }
     #arena-set-platform a { color: #f7931a; font-weight: 600; }
@@ -6812,11 +6834,13 @@
       const b = document.createElement('button'); b.type = 'button'; b.className = 'game'; b.textContent = '\u2190 Arena';   // kanban #396: every way back says Arena
       b.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.delete('game'); location.search = q.toString(); });
       list.append(b);
-      el.classList.add('show');
+      el.classList.add('show', 'refused');
+      document.body.classList.add('arena-picking');   // the header bar, as on the games screen (kanban #406)
       if (boot.parentNode) boot.remove();
       window.ARENA_GAME_REFUSED = e.message;
       console.error('[arena] ' + e.message);
     }
+    window.ARENA_SHOW_GAME_NOT_LOADED = (why) => gameNotLoaded(new Error(String(why)));   // a probe's way to the screen (#406)
     async function showTheLobbyIfOneWasNamed() {
       if (typeof BLWPCLIENT === 'undefined' || !BLWPCLIENT.lobbyQuery) return false;
       let search = location.search;
