@@ -97,6 +97,13 @@
   .menu button.on { color:var(--blue); font-weight:700; }
   .amount { text-align:center; font:800 42px system-ui; margin:6px 0 0; font-variant-numeric:tabular-nums; }
   .amount input { width:100%; text-align:center; background:none; border:0; color:var(--text); font:inherit; outline:none; }
+  /* LESS AND MORE (version 12, kanban #456, the owner 2026-10-17: "This amount is pretty bad on mobile, can only increase but never
+     increase. Include plus minus buttons to make it easier, and default to 100 Sats. It saves the last user amount in local storage
+     and loads it again"): − and + beside the amount, a step that grows with it; 100 sats unless this browser kept another */
+  .amount { display:flex; align-items:center; justify-content:center; gap:10px; }
+  .amount input { flex:1; min-width:0; }
+  .amount .step { flex:none; width:46px; height:46px; border:0; border-radius:12px; background:#2a3040; color:var(--text); font:700 26px/1 system-ui; }
+  .amount .step:active { background:#38415a; }
   .center { text-align:center; } .win { color:var(--up); font-weight:800; }
   .chips { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; margin:6px 0; }
   .chips button { background:#2a3040; border:0; border-radius:10px; padding:6px 11px; font-weight:600; }
@@ -193,7 +200,7 @@ if (!A || !A.market) {
       <div class="top"><span class="pill" id="mode">Buy · Market</span><button class="gear" id="gear" aria-label="order type">⚙︎</button></div>
       <div class="menu" id="menu"><button data-mode="market">Market</button><button data-mode="limit">Limit</button></div>
       <div id="market">
-        <div class="amount"><input id="amt" inputmode="numeric" value="1000" aria-label="amount in sats"></div>
+        <div class="amount"><button type="button" class="step" data-step="-1" aria-label="less">−</button><input id="amt" inputmode="numeric" value="100" aria-label="amount in sats"><button type="button" class="step" data-step="1" aria-label="more">+</button></div>
         <div class="center sub">sats · <span id="side">Up</span></div>
         <div class="chips"><button data-add="100">+100</button><button data-add="500">+500</button><button data-add="1000">+1,000</button><button data-add="10000">+10,000</button></div>
         <div class="center">To win <span class="win" id="mwin">…</span> <span class="sub" id="mprice"></span></div>
@@ -355,10 +362,23 @@ if (!A || !A.market) {
   $('s0').onclick = () => { pick = 0; draw(); }; $('s1').onclick = () => { pick = 1; draw(); };
   $('gear').onclick = () => $('menu').classList.toggle('open');
   $('menu').onclick = (e) => { const m = e.target.dataset && e.target.dataset.mode; if (m) { mode = m; $('menu').classList.remove('open'); if (m === 'limit') $('lp').value = String(priceOf(pick)); draw(); } };
-  for (const b of document.querySelectorAll('[data-add]')) b.onclick = () => { $('amt').value = String(Math.min(MAX_SAT, (Math.floor(Number($('amt').value)) || 0) + Number(b.dataset.add))); draw(); };
+  // THE AMOUNT KEPT (version 12): the last one set, in this browser, read back on the next visit; 100 sats else
+  const AMOUNT_KEY = 'arena.updown.amount';
+  const keepAmount = () => { try { const v = Math.floor(Number($('amt').value)); if (v >= MIN_SAT && v <= MAX_SAT) window.localStorage.setItem(AMOUNT_KEY, String(v)); } catch { /* this visit only */ } };
+  try { const k = Math.floor(Number(window.localStorage.getItem(AMOUNT_KEY))); if (k >= MIN_SAT && k <= MAX_SAT) $('amt').value = String(k); } catch { /* 100 */ }
+  // − AND +: a step that grows with the amount - 10 below 100, 100 below 1,000, 1,000 below 10,000, 10,000 above; − takes the step of
+  // the amount just below, so 100 goes to 90 and 1,000 to 900
+  const stepAt = (v) => (v < 100 ? 10 : v < 1000 ? 100 : v < 10000 ? 1000 : 10000);
+  for (const b of document.querySelectorAll('.amount .step')) b.onclick = () => {
+    const v = Math.floor(Number($('amt').value)) || 0, up = Number(b.dataset.step) > 0;
+    const next = up ? v + stepAt(v) : v - stepAt(Math.max(1, v - 1));
+    $('amt').value = String(Math.min(MAX_SAT, Math.max(MIN_SAT, next))); keepAmount(); draw();
+  };
+  for (const b of document.querySelectorAll('[data-add]')) b.onclick = () => { $('amt').value = String(Math.min(MAX_SAT, (Math.floor(Number($('amt').value)) || 0) + Number(b.dataset.add))); keepAmount(); draw(); };
   for (const b of document.querySelectorAll('[data-sh]')) b.onclick = () => { $('sh').value = String(Math.max(0, (Math.floor(Number($('sh').value)) || 0) + Number(b.dataset.sh))); draw(); };
   for (const b of document.querySelectorAll('[data-lp]')) b.onclick = () => { $('lp').value = String(Math.min(99, Math.max(1, (Math.floor(Number($('lp').value)) || 50) + Number(b.dataset.lp)))); draw(); };
-  for (const id of ['amt', 'lp', 'sh', 'exp']) $(id).oninput = draw;
+  for (const id of ['lp', 'sh', 'exp']) $(id).oninput = draw;
+  $('amt').oninput = () => { keepAmount(); draw(); };
   $('mine').onclick = async (e) => {
     const id = e.target && e.target.dataset && e.target.dataset.cancel; if (!id) return;
     e.target.disabled = true; const r = await A.market.cancel(id); $('err').textContent = r.ok ? '' : 'Cancel refused: ' + (r.why || (r.seats || []).map((s) => s.why).join('; ')); draw();

@@ -8149,12 +8149,37 @@
     // one popup for every place. A game's developers are paid over that game's donation set, the protocol developers over the
     // network's - both read from a listed paid round of the game (its seats sign them), as the shop reads them - in e-cash from the
     // player wallet (giftDonation: paySubmit, the signed record, the seats). `gameName` null = the protocol developers.
+    const PAID_ROUND_KEPT = new Map();   // the games' ids joined -> a paid round read from their seats
+    async function paidRoundFromSeats(games) {
+      const key = games.map((g) => g.id).sort().join(',');
+      if (PAID_ROUND_KEPT.has(key)) return PAID_ROUND_KEPT.get(key);
+      const nodes = [...new Set(games.flatMap((g) => g.nodes || []))].slice(0, 8);
+      const gameIds = new Set(games.map((g) => String(g.id)));
+      for (const n of nodes) {
+        try {
+          const r = await fetch(String(n).replace(/\/+$/, '') + '/rounds?next=4', { cache: 'no-store', signal: AbortSignal.timeout(8000) });
+          if (!r.ok) continue;
+          const listed = ((await r.json()).rounds || []).filter((x) => x && !x.free && x.id && (!gameIds.size || gameIds.has(String(x.game && x.game.id || x.game))));
+          for (const x of listed.slice(0, 3)) {
+            try {
+              const got = await BLWPCLIENT.fetchRound(String(x.id), nodes);
+              if (got && got.contract) { const row = { id: String(x.id), contract: got.contract, free: false, said: nodes.map((node) => ({ node })) }; PAID_ROUND_KEPT.set(key, row); return row; }
+            } catch { /* the next round */ }
+          }
+        } catch { /* the next seat */ }
+      }
+      return null;
+    }
     async function donateSets(gameName) {
       const games = window.ARENA_GAMES_FULL || [];
       const ids = new Set(games.filter((g) => !gameName || g.name === gameName || (g.manifest && g.manifest.gameName === gameName)).map((g) => g.id));
       // every round the lobby lists, not only its current pick: the sets are the same in every paid round of the game
       const listed = [...(window.BLWP_LOBBY_ROWS || []), ...(window.BLWP_LOBBY || []).map((x) => x.raw)];
-      const row = listed.find((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
+      let row = listed.find((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
+      // NO LOBBY ON THE GAMES SCREEN (kanban #455, the owner 2026-10-17 22:22: "No donations possible from Testnet Screen" - "no paid round is
+      // listed to read the donation sets from"): a paid round of the game(s) asked from their own seats (GET /rounds), its contract
+      // fetched by its id (fetchRound: it hashes to the id) - the sets are the same in every paid round of a game
+      if (!row) row = await paidRoundFromSeats(games.filter((g) => !gameName || ids.has(g.id)));
       if (!row) return { ok: false, why: gameName ? 'no paid round of this game is listed to read its donation set from' : 'no paid round is listed to read the donation sets from' };
       const ds = await BLWPCLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: BLWPCLIENT.fromHex(row.id) }),
         nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
