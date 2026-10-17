@@ -88,3 +88,16 @@ test('a scalar book splits its pool between LONG and SHORT by where the value li
   const yes = bookSettlement({ positions: L.positions, outcome: YES });
   assert.equal(sum(yes.claimed.map((r) => r.outMsat)) + yes.feesDueMsat, locksOf(yes));
 });
+
+test('the ledger names what stands, priced: each resting buy\'s outcome, limit and rest, each resting sell (kanban #448)', () => {
+  // A buys Up 10 sat at 0.40 and B Down 10 sat at 0.50: 0.40 + 0.50 < 1, nothing matches, both stand; C buys Up at 0.30 beside them
+  const b1 = { k: 1, cutoffMs: 1000n, orders: [o('a', YES, 40, 10), o('b', NO, 50, 10), o('c', YES, 30, 5, 5000n)] };
+  const L = bookLedger({ batches: [b1], feeBps: FEE });
+  assert.deepEqual(L.levels.buys.map((x) => [x.outcome, String(x.price), String(x.netMsat), String(x.expiryMs)]).sort(),
+    [[0, '30000', '4950', '5000'], [0, '40000', '9900', '0'], [1, '50000', '9900', '0']]);
+  assert.deepEqual(L.levels.sells, []);
+  assert.equal(L.resting.buys.length, 3, 'the ids stay as they were');
+  // a fill takes its order out of the levels
+  const L2 = bookLedger({ batches: [b1, { k: 2, cutoffMs: 2000n, orders: [o('d', NO, 70, 10)] }], feeBps: FEE });
+  assert.ok(!L2.levels.buys.some((x) => x.outcome === 0 && x.price === 40000n && x.netMsat === 9900n), 'a filled buy still stands');
+});

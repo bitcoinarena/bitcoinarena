@@ -85,7 +85,12 @@ export function bookLedger({ batches, feeBps }) {
   }
   // THE FEE A BUY OWES: its fee lock's share of what its fills spent, F x cost / N - the same over one batch or many
   for (const p of positions.values()) p.buyFee = p.N === 0n ? 0n : (p.F * p.cost) / p.N;
-  return { positions, batches: out, refused, resting: { buys: [...buys.keys()], sells: [...sells.keys()] } };
+  // WHAT STANDS, PRICED (kanban #448, the owner 2026-10-17: "a real desktop view with complete order book bids ask, chart, depth"): each
+  // resting buy's outcome, limit and the rest of its budget, each resting sell's outcome, price and unsold shares - the book a page
+  // draws, no id and no entry named
+  const levels = { buys: [...buys.values()].map((o) => ({ outcome: o.outcome, price: o.price, netMsat: o.net, expiryMs: o.expiryMs || 0n })),
+    sells: [...sells.values()].map((x) => ({ outcome: x.outcome, price: x.price, sharesMsat: x.sharesMsat })) };
+  return { positions, batches: out, refused, resting: { buys: [...buys.keys()], sells: [...sells.keys()] }, levels };
 }
 
 /** Whether an entry's locks can come back now: no fill at all, and a certified cancel (or, at settlement, simply no fill). */

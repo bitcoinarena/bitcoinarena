@@ -1109,6 +1109,10 @@
     #blwp-seed-modal .modal-box { width: 100%; max-width: 460px; max-height: 100%; overflow-y: auto; box-sizing: border-box;
       background: #141a21; border: 1px solid #f7931a; border-radius: 12px; padding: 16px; }
     #blwp-seed-modal h3 { margin: 0 0 12px; color: #f7931a; font-size: 17px; }
+    #blwp-seed-modal .seed-why { margin: -4px 0 12px; padding: 9px 11px; border-radius: 8px; background: #1b1408; border: 1px solid #5a4a22;
+      color: #e8dcc6; font-size: 13px; line-height: 1.45; }
+    #blwp-seed-modal .seed-why b { color: #f7a64a; }
+    @media (max-width: 420px) { #blwp-seed-modal .seed-why { font-size: 12.5px; padding: 8px 10px; } }
     #blwp-seed-modal .seed-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
     #blwp-seed-modal .seed-cell { display: flex; gap: 6px; align-items: baseline; padding: 7px 8px; border-radius: 6px;
       background: #0d1218; border: 1px solid #263240; font-weight: 600; }
@@ -1400,6 +1404,11 @@
     <div class="modal-box">
       <div id="blwp-seed-words">
         <h3>Your seed phrase</h3>
+        <!-- WHY, SAID WHERE THE WORDS ARE (kanban #449, the owner 2026-10-17: "when it says back up now and the modal opens there is space
+             for a message explaining why user needs to do it. Needs to fit mobile as well") -->
+        <div class="seed-why" id="blwp-seed-why"><b>These 24 words are your wallet.</b> Your sats are kept only in this browser: if it is cleared, or
+          this phone is lost or replaced, these words are the only way to get them back. Write them on paper, in order, and keep them
+          offline. Never share them: whoever has them can take your sats.</div>
         <div id="blwp-phrase" class="seed-grid"></div>
         <button id="blwp-verify-start" type="button" class="primary">Verify seed phrase</button>
         <button id="blwp-seed-close" type="button">Close</button>
@@ -6854,6 +6863,12 @@
             }
             return null;
           },
+          // THE EXCHANGE VIEW (kanban #448, the owner 2026-10-17: "a real desktop view with complete order book bids ask, chart, depth
+          // (switchable) like an exchange"; "For all prediction markets"): the page draws it into an element of the client's own
+          // document - the order book, the chart and the depth of the round `opts.round()` names, read from its seats
+          exchange: (el, opts = {}) => (BLWPCLIENT.mountExchange ? BLWPCLIENT.mountExchange({ el, outcomes: (game.outcomes && game.outcomes.length ? game.outcomes : ['Yes', 'No']),
+            fetchBook: async () => { const id = opts.round ? opts.round() : null; return id ? window.ARENA_GAME.market.book(id) : null; },
+            onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000 }) : null),
           orders: () => readPicks().filter((x) => x.order && x.gameId === game.id).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
             limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled })),
           cancel: async (entryIdHex) => {

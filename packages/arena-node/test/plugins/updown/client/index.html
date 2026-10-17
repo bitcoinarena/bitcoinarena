@@ -35,6 +35,18 @@
   .status .spin { flex:none; width:15px; height:15px; border-radius:50%; border:2px solid var(--line); border-top-color:#f7931a; animation:spin .8s linear infinite; }
   .status.ok .spin, .status.bad .spin { display:none; } @keyframes spin { to { transform:rotate(360deg); } }
   .r .pend { color:#f7931a; }
+  /* THE DESKTOP VIEW, AS AN EXCHANGE (version 8, kanban #448, the owner 2026-10-17: "build a real desktop view with complete order book
+     bids ask, chart, depth (switchable) like an exchange. Like Polymarket is doing"): from 1000 px the window's card, the chart or
+     the depth and the full order book on the left - drawn by the page (ARENA_GAME.market.exchange) - and the buy panel, my orders
+     and the history on the right, beside them; a phone keeps the one column */
+  .cols, .colL, .colR { display:contents; } #xv { display:none; }
+  @media (min-width:1000px) {
+    body { max-width:1320px; margin:0 auto; width:100%; padding-left:20px; padding-right:20px; }
+    .cols { display:grid; grid-template-columns:minmax(0,1fr) 390px; gap:16px; align-items:start; }
+    .colL, .colR { display:flex; flex-direction:column; gap:10px; min-width:0; }
+    .colR { position:sticky; top:10px; }
+    #xv { display:flex; }
+  }
   /* MY ORDERS AS CARDS (version 6, kanban #443, the owner 2026-10-17: "This looks pretty bad, make it prettier and more structured"): one
      card per order - the side, the amount and the limit, the window, and where it stands - its result in the same card */
   .ords { display:flex; flex-direction:column; gap:6px; }
@@ -102,10 +114,11 @@ if (!A || !A.market) {
   try { window.parent.ARENA_CLIENT_SAYS_JOIN = true; } catch {}
   $('back').onclick = () => A.back();
   const outcomes = A.game.outcomes.length ? A.game.outcomes : ['Up', 'Down'];
-  $('view').innerHTML = `
+  $('view').innerHTML = `<div class="cols"><div class="colL">
     <div class="card"><div class="q" id="q">…</div><div class="sub"><span id="left"></span> · <a id="poly" target="_blank" rel="noopener">Polymarket</a></div>
       <div class="row3"><div><b id="beat">…</b><span>price to beat</span></div><div><b id="now">…</b><span>BTC now</span></div><div><b id="delta">…</b><span>change</span></div></div>
       <div class="odds"><span class="sub">chance of Up</span><b id="chance">50%</b></div></div>
+    <div id="xv"></div></div><div class="colR">
     <div class="sides"><button class="side up" id="s0">Buy ${esc(outcomes[0])} <span id="p0">50¢</span></button><button class="side down" id="s1">Buy ${esc(outcomes[1])} <span id="p1">50¢</span></button></div>
     <div class="sheet">
       <div class="top"><span class="pill" id="mode">Buy · Market</span><button class="gear" id="gear" aria-label="order type">⚙︎</button></div>
@@ -128,7 +141,7 @@ if (!A || !A.market) {
       <div class="center sub" id="fee">Fee 1 %: 0.5 % nodes + 0.5 % donation, due when the market resolves; all back if it is void.</div>
     </div>
     <div class="card list"><h3>My orders</h3><div id="mine" class="ords"></div>
-      <div class="hist" id="histhead" hidden><h3>History</h3><span class="tot" id="tot"></span></div><div id="hist" class="ords"></div></div>`;
+      <div class="hist" id="histhead" hidden><h3>History</h3><span class="tot" id="tot"></span></div><div id="hist" class="ords"></div></div></div></div>`;
   let pick = 0, mode = 'market', current = null, book = null, live = { now: null, beat: null, beatFor: null };
   // THE WINDOW AN ORDER CAN JOIN (version 5, kanban #438: Buy was refused "this round is no longer listed in the lobby" - the client had
   // picked a window the page could not join, one at its close or a federation's row its seats did not yet agree on): the soonest
@@ -295,6 +308,18 @@ if (!A || !A.market) {
   };
   draw(); prices(); readBook();
   setInterval(draw, 1000); setInterval(prices, 5000); setInterval(readBook, 3000);
+  // THE EXCHANGE, ON A WIDE SCREEN ONLY (kanban #448): mounted once the window is wide enough, never on a phone (no second poll there);
+  // a tapped level fills a limit order on that side at that price
+  let xv = null;
+  const wide = window.matchMedia('(min-width:1000px)');
+  const mountXv = () => {
+    if (xv || !wide.matches || typeof A.market.exchange !== 'function') return;
+    xv = A.market.exchange($('xv'), { round: () => current && current.id, label: (side) => 'Chance of ' + outcomes[side],
+      onPrice: (cents, side) => { pick = side; mode = 'limit'; $('lp').value = String(Math.min(99, Math.max(1, cents))); draw(); } });
+    window.UPDOWN_CLIENT.exchange = xv;
+  };
+  mountXv();
+  if (wide.addEventListener) wide.addEventListener('change', mountXv);
 }
 </script>
 </body></html>

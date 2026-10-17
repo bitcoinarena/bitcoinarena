@@ -38,3 +38,15 @@ test('Settings keeps the 24 words and their check; the lobby\'s backup line lead
   assert.ok(HTML.includes('id="blwp-verify-start"'), 'the check of the words');
   assert.ok(HTML.includes("document.getElementById('blwp-backup-cta').addEventListener('click'"), 'the lobby line opens Settings on the words');
 });
+
+// kanban #449 (the owner 2026-10-17: "when it says back up now and the modal opens there is space for a message explaining why user needs
+// to do it. Needs to fit mobile as well"): the reason, above the words, small on a phone
+test('the seed modal says why the words must be written down, above them', async () => {
+  const { readFileSync } = await import('node:fs');
+  const HTML = readFileSync(new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index.html', import.meta.url), 'utf8');
+  const box = HTML.slice(HTML.indexOf('<div id="blwp-seed-words">'), HTML.indexOf('<div id="blwp-verify-step"'));
+  assert.ok(box.indexOf('id="blwp-seed-why"') > box.indexOf('<h3>Your seed phrase</h3>') && box.indexOf('id="blwp-seed-why"') < box.indexOf('id="blwp-phrase"'));
+  assert.match(box, /These 24 words are your wallet\.<\/b> Your sats are kept only in this browser/);
+  assert.match(box, /Never share them: whoever has them can take your sats\./);
+  assert.match(HTML, /@media \(max-width: 420px\) \{ #blwp-seed-modal \.seed-why \{ font-size: 12\.5px;/);
+});

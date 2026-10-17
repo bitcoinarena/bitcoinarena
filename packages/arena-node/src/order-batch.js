@@ -467,7 +467,7 @@ export class OrderBook {
     const L = this.ledger(roundIdBytes);
     if (!L.ok) return L;
     const ids = this.db.prepare('SELECT k, batch_id FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(Buffer.from(roundIdBytes));
-    return { ok: true, batches: L.batches.map((b, i) => ({ ...b, batchId: ids[i] && ids[i].batch_id })), refused: L.refused, resting: L.resting, pending: this.pending(roundIdBytes),
+    return { ok: true, batches: L.batches.map((b, i) => ({ ...b, batchId: ids[i] && ids[i].batch_id })), refused: L.refused, resting: L.resting, levels: L.levels, pending: this.pending(roundIdBytes),
       positions: [...L.positions.values()].map((p) => ({ entry: p.entry, outcome: p.outcome, shares: p.shares, cost: p.cost, buyFee: p.buyFee, sellDebt: p.sellDebt, sellFee: p.sellFee, cancelled: p.cancelled })) };
   }
 }
