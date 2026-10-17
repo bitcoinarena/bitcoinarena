@@ -22,6 +22,14 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
   for (const id of ['blwp-deposit-go', 'blwp-move-go', 'blwp-withdraw-lobby', 'blwp-money-why', 'blwp-settings', 'blwp-settings-go',
     'arena-wallet-bar', 'arena-wb-sats', 'arena-wb-pending', 'arena-wb-deposit', 'arena-wb-withdraw', 'arena-wb-gear', 'arena-wb-why']) el(id);
   els['blwp-settings'].style.display = settingsShown ? '' : 'none';
+  // kanban #399: the withdraw overlay, and Settings' panel with its home to go back to
+  const home = { kids: [], insertBefore: (n) => { home.kids.push(n.id); n.parentNode = home; } };
+  for (const id of ['blwp-withdraw-panel', 'blwp-money-why']) { el(id).parentNode = home; els[id].nextSibling = null; }
+  const body = { kids: [], append: (...n) => { for (const x of n) { body.kids.push(x.id); x.parentNode = body; } } };
+  const close = {}; const shown = new Set();
+  els['arena-withdraw'] = { id: 'arena-withdraw', querySelector: (q) => (q === '.wd-body' ? body : close),
+    classList: { add: (c) => shown.add(c), remove: (c) => shown.delete(c), contains: (c) => shown.has(c) } };
+  els.withdrawBox = { body, close, shown, home };
   const did = [];
   const document = { getElementById: (id) => els[id] || null, body: { classList: { contains: (c) => c === 'arena-own-client' && ownClient } } };
   const window = { BLWP_WALLET_BALANCE: balance, sessionStorage: {}, BLWP_PAINT_SETTINGS: () => did.push('paint settings'),
@@ -45,11 +53,19 @@ test('Settings\' Deposit and the wallet bar\'s Deposit open the same offer and t
   }
 });
 
-test('Withdraw from a game\'s bar opens Settings\' own panel over the client, painted once; from Settings it stays as it is', () => {
+test('Withdraw from a game\'s bar opens its own overlay with Settings\' panel in it, back on close; from Settings it stays as it is', () => {
+  // kanban #399 (the owner 2026-10-17: "make withdrawals an overlay like deposits ... do not touch deposit or withdrawal in the settings overlay")
   const p = page();
   p.click('arena-wb-withdraw');
-  assert.equal(p.els['blwp-settings'].style.display, '', 'Settings is shown');
-  assert.deepEqual(p.did, ['paint settings', ['withdraw', 'fed1']]);
+  const b = p.els.withdrawBox;
+  assert.equal(p.els['blwp-settings'].style.display, 'none', 'Settings stays closed');
+  assert.ok(b.shown.has('show'), 'the overlay is shown');
+  assert.deepEqual(b.body.kids, ['blwp-withdraw-panel', 'blwp-money-why']);
+  assert.deepEqual(p.did, [['withdraw', 'fed1']]);
+  b.close.onclick();
+  assert.ok(!b.shown.has('show'));
+  assert.deepEqual(b.home.kids, ['blwp-withdraw-panel', 'blwp-money-why'], 'the panel is back in Settings');
+  assert.equal(p.els['blwp-withdraw-panel'].style.display, 'none');
   const q = page({ settingsShown: true });
   q.click('blwp-withdraw-lobby');
   assert.deepEqual(q.did, [['withdraw', 'fed1']], 'already open: not painted again');
@@ -89,10 +105,32 @@ test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw
   const api = slice('        wallet: {', '\n        },\n');
   assert.match(api, /balance: \(\) => \(window\.BLWP_WALLET_BALANCE \?/);
   assert.match(api, /deposit: \(\) => openMoney\('deposit', window\.ARENA_WALLET_BAR_SAY\)/);
-  assert.match(api, /withdraw: \(\) => openMoney\('withdraw', window\.ARENA_WALLET_BAR_SAY\)/);
+  assert.match(api, /withdraw: \(\) => openMoney\('withdraw', window\.ARENA_WALLET_BAR_SAY, \{ overlay: true \}\)/);
   // the bar over a game's own client and over the games screen share one rule since kanban #350 (UI 88)
   const css = slice('    body.arena-picking #arena-wallet-bar, body.arena-own-client #arena-wallet-bar {', '\n    #arena-wb-why:empty { display: none; }');
   assert.match(css, /body\.arena-own-client #arena-client \{ top: calc\(41px \+ env\(safe-area-inset-top, 0px\)\)/, 'the frame starts under the 40 px bar and its border');
   assert.match(css, /height: 40px/);
   assert.match(HTML, /<div id="arena-wallet-bar" role="toolbar" aria-label="wallet">/);
+});
+
+// kanban #398 (the owner 2026-10-17: "leave the back link always in the header and move the balance to the other buttons"): the bar's own
+// ← right after the logo, the balance pushed right beside Deposit, the client's own "← Arena" hidden in its frame; ← closes an open sheet
+// first, else ARENA_GAME.back
+test('the way back is in the bar, the balance on the right, the client\'s own back hidden', () => {
+  const HTML = readFileSync(PAGE, 'utf8');
+  assert.match(HTML, /<span>Bitcoin Arena<\/span><\/a>\s*<button id="arena-wb-back" type="button"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/button>\s*<a id="arena-wb-site"/);
+  assert.match(HTML, /#arena-wallet-bar \.wb-bal \{ flex: 0 1 auto; min-width: 0; margin-left: auto;/);
+  // kanban #403/#404: on the games screen, in the same place, "← bitcoin-arena.io"
+  assert.match(HTML, /<a id="arena-wb-site" href="https:\/\/bitcoin-arena\.io\/"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">bitcoin-arena\.io<\/span><\/a>\s*<span class="wb-bal">/);
+  assert.match(HTML, /body\.arena-picking:not\(\.arena-own-client\) #arena-wb-site \{ display: inline-flex;/);
+  assert.match(HTML, /body\.arena-own-client #arena-wb-back \{ display: inline-flex;/);
+  assert.match(HTML, /'#back,button\.back\{display:none!important\}'/);
+  const from = HTML.indexOf("      { const wbBack = document.getElementById('arena-wb-back');");
+  const src = HTML.slice(from, HTML.indexOf('\n', HTML.indexOf('wbBack.onclick', from)) + 1);
+  let sheet = null, closed = 0, backs = 0; const btn = {};
+  const document = { getElementById: () => btn, querySelector: () => (sheet ? { click: () => { closed++; } } : null) };
+  const window = { ARENA_GAME: { back: () => { backs++; } } };
+  pageFunction(PAGE, ['document', 'window'], src)(document, window);
+  sheet = true; btn.onclick(); sheet = null; btn.onclick();
+  assert.deepEqual([closed, backs], [1, 1]);
 });

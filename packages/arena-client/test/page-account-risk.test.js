@@ -19,6 +19,8 @@ test('the section says in red, before any click, that the money is lost without 
   const risk = section.match(/<div class="risk" id="arena-acct-risk">([^<]+)<\/div>/);
   assert.ok(risk, 'a risk line');
   assert.match(risk[1], /24 words/); assert.match(risk[1], /Nostr key/); assert.match(risk[1], /lost/);
-  assert.ok(section.indexOf('arena-acct-risk') < section.indexOf('arena-acct-delete'), 'above the button');
+  // kanban #401 (the owner 2026-10-17): the warning moved BELOW the button, smaller and centered
+  assert.ok(section.indexOf('id="arena-acct-risk"') > section.indexOf('id="arena-acct-delete"'), 'below the button');
+  assert.match(HTML, /#arena-set-account #arena-acct-risk \{ margin: 10px auto 0; max-width: 34em; text-align: center; font-size: 12\.5px;/);
   assert.match(HTML, /#arena-set-account \.risk \{ color: #ff8a80;/);
 });
