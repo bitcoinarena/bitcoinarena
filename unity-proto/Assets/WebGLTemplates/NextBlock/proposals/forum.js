@@ -62,6 +62,14 @@
     var nf = $('.name-form'); nf.hidden = !state.key;
     if (state.key && document.activeElement !== nf.name) { var n = state.names[mine()]; nf.name.value = n && n.name ? n.name : ''; nf.name.placeholder = BLWPCLIENT.forumNameOf(mine(), {}); }
   }
+  // THE BALANCE ON TOP (the owner 2026-10-17): the reserves the nodes agree on, and the most one PIP may ask
+  function showBalance() {
+    var b = document.getElementById('balance'); if (!b) return;
+    var r = state.reserves;
+    b.querySelector('.sats').textContent = r ? sats(r.sats) : '–';
+    b.querySelector('.sub').textContent = r ? r.agreeing + ' of ' + r.asked + ' nodes agree · a PIP may ask up to ' + sats(Math.floor(r.sats * CAP_PCT / 100))
+      : (state.reservesWhy ? 'could not be read: ' + state.reservesWhy : 'reading the nodes');
+  }
   function say(node, text, bad) { node.textContent = text; node.classList.toggle('bad', !!bad); }
 
   function stage(p) {
@@ -197,14 +205,15 @@
     else if (h.indexOf('#pip=') === 0) { var q = (state.list || []).find(function (x) { return String(x.pip) === h.slice(5); }); threadView(q ? q.id : ''); }
     else if (h.indexOf('#p=') === 0) threadView(h.slice(3)); else listView();
     showKey();
-    window.ARENA_FORUM = { view: h || '#', keyFrom: state.keyFrom, me: mine(), name: mine() ? who(mine()) : null, pips: (state.list || []).map(function (p) { return pip(p); }), reserves: state.reserves, proposals: state.list ? state.list.length : null, comments: state.list ? state.list.reduce(function (t, p) { return t + p.comments.length; }, 0) : null, agreeing: state.agreeing, tip: state.tip };
+    window.ARENA_FORUM = { balance: (document.querySelector('#balance') || {}).textContent, view: h || '#', keyFrom: state.keyFrom, me: mine(), name: mine() ? who(mine()) : null, pips: (state.list || []).map(function (p) { return pip(p); }), reserves: state.reserves, proposals: state.list ? state.list.length : null, comments: state.list ? state.list.reduce(function (t, p) { return t + p.comments.length; }, 0) : null, agreeing: state.agreeing, tip: state.tip };
   }
   function refresh() {
     BLWPCLIENT.fetchReservesTotal({ nodes: state.nodes }).then(function (r) {
       if (r.ok) { state.reserves = { sats: Number(r.totalMsat / 1000n), agreeing: r.agreeing, asked: r.asked }; state.reservesWhy = null; } else state.reservesWhy = r.why;
+      showBalance();
       var typed = document.querySelector('.compose input[name=amount]');
       if (location.hash === '#new' && !(typed && typed.value)) newView();
-    }).catch(function (e) { state.reservesWhy = e.message; });
+    }).catch(function (e) { state.reservesWhy = e.message; showBalance(); });
     return BLWPCLIENT.fetchProposals({ nodes: state.nodes, verify: window.BLWP_CURVE.verify }).then(function (r) {
       if (!r.ok) { state.list = []; state.agreeing = 0; state.asked = r.asked; return; }
       state.list = r.proposals; state.tip = r.tip; state.agreeing = r.agreeing; state.asked = r.asked; state.names = r.names || {};

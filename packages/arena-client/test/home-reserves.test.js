@@ -79,6 +79,9 @@ test('the website names only the current configuration; the proposals forum is i
   assert.match(JS, /BLWPCLIENT\.forumIdentity\(best\.hex/, 'signs with the in-game identity key of the kept wallet phrase (PIP)');
   assert.match(JS, /'PIP-' \+ p\.pip/, 'every proposal is a PIP');
   assert.match(JS, /kind: 'name'/, 'a name is signed and handed to the nodes');
+  // the reserves' balance first on the page (the owner 2026-10-17: "Proposals page shows the current balance on top")
+  assert.ok(FORUM.indexOf('id="balance"') > 0 && FORUM.indexOf('id="balance"') < FORUM.indexOf('<h1>'), 'the balance sits above the title');
+  assert.match(JS, /function showBalance\(\)/);
   assert.match(JS, /verify: window\.BLWP_CURVE\.verify/, 'names are checked by the page, not taken from a node');
   assert.match(JS, /localStorage\.getItem\('arena\.seeds'\)/);
   assert.match(JS, /var CAP_PCT = 10;/);
