@@ -1228,10 +1228,10 @@
       </section>
       <section class="settings-card" id="blwp-set-items-share">
         <h3>In-game items</h3>
-        <div class="muted">Your share to the protocol and game developers (25/25); the nodes' half is always paid</div>
+        <div class="muted" id="arena-items-share-lead">Your share to the protocol and game developers, on top of the nodes' 40 % and the protocol reserves' 20 %</div>
         <select id="arena-items-share-select" aria-label="In-game items: developers' share">
-          <option value="50" selected>50%</option><option value="40">40%</option><option value="30">30%</option>
-          <option value="20">20%</option><option value="10">10%</option><option value="0">0%</option>
+          <option value="40" selected>40%</option><option value="30">30%</option><option value="20">20%</option>
+          <option value="10">10%</option><option value="0">0%</option>
         </select>
         <div class="muted" id="arena-items-share-what"></div>
       </section>
@@ -5129,6 +5129,10 @@
         for (const v of terms.shares) { const o = document.createElement('option'); o.value = String(v); o.textContent = v + '%'; shareSel.append(o); }
       }
       if (shareSel && shareSel.value !== String(share)) shareSel.value = String(share);
+      const shareLead = document.getElementById('arena-items-share-lead');
+      if (shareLead && terms) shareLead.textContent = terms.reserves
+        ? 'Your share to the protocol and game developers, on top of the nodes\' ' + terms.nodesPct + ' % and the protocol reserves\' ' + terms.reservesPct + ' %'
+        : 'Your share to the protocol and game developers (25/25); the nodes\' half is always paid';
       const shareWhat = document.getElementById('arena-items-share-what');
       const nodes500 = terms ? BigInt(5 * terms.nodesPct) : 250n, reserves500 = terms ? BigInt(5 * terms.reservesPct) : 0n;
       if (shareWhat && window.ARENA_ITEM_PRICE) shareWhat.textContent = 'A 500 sat item costs ' + String(window.ARENA_ITEM_PRICE(500)) + ' sat: ' + nodes500 + ' sat to the nodes'
@@ -7776,7 +7780,15 @@
     const ITEMS_SHARE_KEY = 'arena.items.devsPct';
     // ON THE TERMS OF THE VERSION THE SHOP SELLS FROM (kanban #397 slice 5): a version requiring protocol 11 pays the protocol reserves
     // 20 % and the nodes 40 %, the share 40 .. 0 % on top; an older one #377's nodes' half and 50 .. 0 %
-    const itemsManifest = () => { const c = window.ARENA_GAME_CHOSEN; const s = c && BLWPCLIENT.shopOf ? BLWPCLIENT.shopOf(window.ARENA_GAMES_FULL || [], c.name) : null; return s ? s.game.manifest : null; };
+    // AND OUTSIDE A SELLING GAME (kanban #442, the owner 2026-10-17: "This 50% is wrong if 20% are taken by a ingame item"): Settings opened
+    // from the games screen or another game read no shop and fell back to #377's 50 % terms; it now takes the newest version that
+    // sells items - today Tick Tock v4, on the reserves' terms - so the choice there is the one a purchase uses
+    const itemsManifest = () => {
+      const games = window.ARENA_GAMES_FULL || []; const c = window.ARENA_GAME_CHOSEN;
+      const s = c && BLWPCLIENT.shopOf ? BLWPCLIENT.shopOf(games, c.name) : null; if (s) return s.game.manifest;
+      const selling = games.filter((g) => g && g.manifest && (g.manifest.items || []).length).sort((a, b) => Number(b.manifest.requiredProtocolVersion || 0) - Number(a.manifest.requiredProtocolVersion || 0) || Number(b.manifest.version) - Number(a.manifest.version));
+      return selling.length ? selling[0].manifest : null;
+    };
     window.ARENA_ITEMS_TERMS = () => (BLWPCLIENT.itemTermsOf ? BLWPCLIENT.itemTermsOf(itemsManifest()) : { reserves: false, shares: [50, 40, 30, 20, 10, 0], defaultShare: 50, nodesPct: 50, reservesPct: 0 });
     window.ARENA_ITEMS_SHARE = () => {
       let v = null; try { const k = localStorage.getItem(ITEMS_SHARE_KEY); if (k !== null) v = Number(k); } catch { /* the default */ }

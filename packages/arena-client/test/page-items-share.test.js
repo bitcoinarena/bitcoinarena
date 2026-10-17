@@ -13,7 +13,7 @@ const PAGE = new URL('../../../unity-proto/Assets/WebGLTemplates/NextBlock/index
 const html = readFileSync(PAGE, 'utf8');
 
 // the owner ~13:40Z: "Advanced settings muss ein eigener Menüpunkt sein ganz unten und dann geht ein neuer Screen auf"
-test('Advanced settings is the last menu item of Settings and opens a screen of its own: the donation dropdown and the in-game share 50 .. 0 %', () => {
+test('Advanced settings is the last menu item of Settings and opens a screen of its own: the donation dropdown and the in-game share 40 .. 0 %', () => {
   const settings = html.slice(html.indexOf('<div id="blwp-settings"'), html.indexOf('  <script>\n  // SETTINGS OPENS ON THE FIRST CLICK'));
   const screenAt = settings.indexOf('<div id="blwp-settings-advanced"');
   assert.ok(screenAt > 0, 'the Advanced screen');
@@ -28,7 +28,7 @@ test('Advanced settings is the last menu item of Settings and opens a screen of 
   assert.match(screen, /<select id="blwp-donation-select"/);
   const share = screen.slice(screen.indexOf('<select id="arena-items-share-select"'), screen.indexOf('</select>', screen.indexOf('arena-items-share-select')));
   assert.deepEqual([...share.matchAll(/<option value="(\d+)"( selected)?>(\d+)%<\/option>/g)].map((m) => [Number(m[1]), !!m[2]]),
-    [[50, true], [40, false], [30, false], [20, false], [10, false], [0, false]]);
+    [[40, true], [30, false], [20, false], [10, false], [0, false]]);   // the reserves' terms (kanban #442): 40 .. 0 %
   // the menu item opens the screen, Back and Settings' Close hide it
   assert.match(html, /getElementById\('blwp-advanced-go'\)\.addEventListener\('click', \(\) => \{\n\s+document\.getElementById\('blwp-settings-advanced'\)\.style\.display = '';/);
   assert.match(html, /getElementById\('blwp-advanced-back'\)\.addEventListener\('click', \(\) => \{ document\.getElementById\('blwp-settings-advanced'\)\.style\.display = 'none'; \}\);/);
@@ -57,4 +57,25 @@ test('every buy screen prices at the share: the shop sheet, its paying line, the
   assert.match(html, /priceSat: Number\(window\.ARENA_ITEM_PRICE\(it\.priceSat\)\), listSat: Number\(it\.priceSat\)/);
   assert.match(html, /BLWPCLIENT\.buyItem\(\{ manifest: shop\.game\.manifest, itemId: it\.id, networkSet: ds\.target\.network, gameSet: ds\.target\.game, wallet, federationId, devsPct,/);
   assert.equal((html.match(/String\(it\.priceSat\)/g) || []).length, 0, 'no list price shown as the price anywhere');
+});
+
+// OUTSIDE A SELLING GAME (kanban #442, the owner 2026-10-17: "This 50% is wrong if 20% are taken by a ingame item"): Settings opened from the
+// games screen or another game takes the terms of the newest version that sells items - the reserves' 40 .. 0 % - not #377's 50 %
+test('#442: with no game chosen the share and the price are the newest selling version\'s - nodes 40 %, reserves 20 %, 40 .. 0 %', async () => {
+  const { itemTermsOf, itemShareOn, itemPriceOn, shopOf } = await import('../src/item-buy.js');
+  const src = html.slice(html.indexOf("    const ITEMS_SHARE_KEY = 'arena.items.devsPct';"), html.indexOf('    async function openShop() {'));
+  const kept = new Map();
+  const localStorage = { getItem: (k) => (kept.has(k) ? kept.get(k) : null), setItem: (k, v) => kept.set(k, String(v)) };
+  const items = [{ id: 'large-truck', name: 'Large truck', priceSat: 500n }];
+  const window = { ARENA_GAME_CHOSEN: null, ARENA_GAMES_FULL: [
+    { name: 'rock-paper-scissors', manifest: { gameName: 'rock-paper-scissors', version: 3, requiredProtocolVersion: 2, items: [] } },
+    { name: 'nextblock', manifest: { gameName: 'nextblock', version: 3, requiredProtocolVersion: 10, items } },
+    { name: 'nextblock', manifest: { gameName: 'nextblock', version: 4, requiredProtocolVersion: 11, items } }] };
+  pageFunction(PAGE, ['window', 'localStorage', 'BLWPCLIENT'], src, '')(window, localStorage, { itemTermsOf, itemShareOn, itemPriceOn, shopOf, ITEM_DEV_SHARES });
+  const t = window.ARENA_ITEMS_TERMS();
+  assert.deepEqual([t.reserves, t.shares, t.nodesPct, t.reservesPct], [true, [40, 30, 20, 10, 0], 40, 20]);
+  assert.equal(window.ARENA_ITEMS_SHARE(), 40, 'the default share on the reserves\' terms');
+  assert.equal(window.ARENA_ITEM_PRICE(500), 500n, '200 nodes + 100 reserves + 200 developers');
+  window.ARENA_ITEMS_SHARE_SET(0); assert.equal(window.ARENA_ITEM_PRICE(500), 300n, 'at 0 %: the nodes\' 40 % and the reserves\' 20 %');
+  window.ARENA_ITEMS_SHARE_SET(50); assert.equal(window.ARENA_ITEMS_SHARE(), 40, 'a kept 50 % (the old terms) is 40 % on these');
 });
