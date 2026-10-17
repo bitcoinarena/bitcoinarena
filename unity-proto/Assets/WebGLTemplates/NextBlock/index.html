@@ -56,6 +56,10 @@
        own splash from the first paint, and that game is the one the page opens. Empty: nextblock's page, as before. -->
   <meta name="arena-site-game" content="">
   <script>
+    // THE BROWSER'S OWN STORE, FROM THE FIRST PAINT ON (kanban #465): everything this page keeps per browser that holds no player and
+    // no money - preferences, caches, connections - goes through this one door; a tab's player and money are vault()'s and the seed
+    // keeper's (join.test.js names the three)
+    window.BLWP_BROWSER_STORE = function () { try { return window.localStorage; } catch (e) { return null; } };
     (function () {
       try {
         var q = new URLSearchParams(location.search).get('game');
@@ -63,7 +67,7 @@
         // A GAME NAMED BY ITS 64-HEX MANIFEST ID (a link from before kanban #350) is read through the name this browser kept
         // for it at the choice (arena.game-name.<id>); unknown, nextblock's page as before. the owner 2026-10-12 16:42: "Der
         // loading screen ist immer der next block loading screen obwohl ich rps starte".
-        if (q && /^[0-9a-f]{64}$/i.test(q)) { var kept = null; try { kept = localStorage.getItem('arena.game-name.' + q.toLowerCase()); } catch (e) { /* storage blocked */ } q = kept; }
+        if (q && /^[0-9a-f]{64}$/i.test(q)) { var kept = null; try { kept = window.BLWP_BROWSER_STORE().getItem('arena.game-name.' + q.toLowerCase()); } catch (e) { /* storage blocked */ } q = kept; }
         var g = (q || (m && m.content) || '').trim();
         window.ARENA_SITE_GAME = g || null;
         if (g && g !== 'nextblock') {
@@ -1449,7 +1453,7 @@
     // THIS BROWSER'S OWN STORE, for what is the browser's and no player's: this log, the console's verbose switch and the
     // one-paid-run heartbeat (and a read of the kept phrases, only to cut them out of a copy). A tab's player and money are
     // vault()'s and the seed keeper's, nowhere else.
-    const browserStore = window.BLWP_BROWSER_STORE = () => { try { return window.localStorage; } catch { return null; } };
+    const browserStore = window.BLWP_BROWSER_STORE;
     const KEY = 'arena.clientlog', MOST = 800, LONGEST = 400;
     let lines = [];
     try { lines = JSON.parse(browserStore().getItem(KEY) || '[]'); if (!Array.isArray(lines)) lines = []; } catch { lines = []; }
@@ -2103,7 +2107,7 @@
       requestAnimationFrame(tick);
     })();
     // THE BENCHMARK SWITCH (kanban #373, the owner 2026-10-16: "Benchmark is disabled by default"): Settings turns it on, this browser keeps it
-    window.ARENA_BENCH_ON = () => { try { return localStorage.getItem('arena.bench.on') === '1'; } catch { return false; } };
+    window.ARENA_BENCH_ON = () => { try { return window.BLWP_BROWSER_STORE().getItem('arena.bench.on') === '1'; } catch { return false; } };
     // THE FRAME-RATE TEST (kanban #266, the owner 2026-10-08: "measure it alone and display the data you need in the fps line"): what
     // costs the frames on THIS phone. Eleven modes, 1.5 s to settle and 3 s measured each - as built, 1x pixels, no post-processing,
     // no shadows, no HDR, the shadow map's parts (cascades, size, reach), all of them off - then back as built. The result stays under the frame rate with the drawing buffer
@@ -2128,8 +2132,8 @@
           ['shadows off · HDR off · ½ scale', { shadows: 0, hdr: 0, scale: 0.5 }]],
         desktop: [AS_BUILT],
       }[device];
-      const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
-                      set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* this visit only */ } } };
+      const store = { get: (k) => { try { return window.BLWP_BROWSER_STORE().getItem(k); } catch { return null; } },
+                      set: (k, v) => { try { window.BLWP_BROWSER_STORE().setItem(k, v); } catch { /* this visit only */ } } };
       const stepKey = 'arena.gfx.step.' + device;
       const urlMode = new URLSearchParams(location.search).get('gfx');
       let mode = ['auto', 'high', 'low'].includes(urlMode) ? urlMode : (['auto', 'high', 'low'].includes(store.get('arena.gfx.mode')) ? store.get('arena.gfx.mode') : 'auto');
@@ -2677,7 +2681,7 @@
     // THE CHAIN CHECKED OUTSIDE THE NETWORK (§5A.4, kanban #299): a paid join's census and tip are spot-checked against a block explorer -
     // mempool.space for testnet4 rounds by default; `arena.explorer` in this browser's storage names another Esplora base, or `off`
     window.ARENA_EXPLORER_FOR = (round) => {
-      let said = null; try { said = localStorage.getItem('arena.explorer'); } catch { /* no storage: the default */ }
+      let said = null; try { said = window.BLWP_BROWSER_STORE().getItem('arena.explorer'); } catch { /* no storage: the default */ }
       if (said === 'off') return null;
       if (said && /^https:\/\//.test(said)) return said;
       return round && round.networkId && BLWPCLIENT.toHex(round.networkId) === '1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15' ? 'https://mempool.space/testnet4/api' : null;
@@ -4496,7 +4500,7 @@
       if (!fid) return { ok: true };
       if (invite && !BLWPCLIENT.inviteNamesFederation(invite, fid)) return { ok: false, why: `That invite names another federation than the round's ${fid.slice(0, 16)}: nothing is deposited or staked.` };
       if (BLWPCLIENT.federationIsKnown(fid)) return { ok: true, known: true };
-      if (BLWPCLIENT.federationConfirmed(localStorage, fid)) return { ok: true, confirmed: true };
+      if (BLWPCLIENT.federationConfirmed(window.BLWP_BROWSER_STORE(), fid)) return { ok: true, confirmed: true };
       let census = BLWPCLIENT.checkedCensusFor(round);
       if (!census && roundIdHex && nodes && nodes.length) {
         try { await BLWPCLIENT.clientCommittee(roundIdHex, round, nodes, { curve: window.BLWP_CURVE, compare: false }); } catch { /* shown without guardians */ }
@@ -4527,7 +4531,7 @@
       const trusted = await new Promise((done) => { $('afc-trust').onclick = () => done(true); $('afc-cancel').onclick = () => done(false); });
       box.style.display = 'none';
       if (!trusted) return { ok: false, why: 'This federation is not on this page\'s known-good list and was not confirmed: nothing is deposited or staked.' };
-      BLWPCLIENT.confirmFederation(localStorage, fid);
+      BLWPCLIENT.confirmFederation(window.BLWP_BROWSER_STORE(), fid);
       if (window.ARENA_PAINT_CONFIRMED) window.ARENA_PAINT_CONFIRMED();
       return { ok: true, confirmed: true, asked: true };
     };
@@ -4570,13 +4574,13 @@
     window.ARENA_PAINT_CONFIRMED = () => {
       const el = document.getElementById('arena-fed-confirmed'); if (!el) return;
       el.textContent = '';
-      const list = BLWPCLIENT.confirmedFederations(localStorage);
+      const list = BLWPCLIENT.confirmedFederations(window.BLWP_BROWSER_STORE());
       if (!list.length) { el.innerHTML = '<div class="muted">none</div>'; return; }
       for (const c of list) {
         const d = document.createElement('div'); d.className = 'name-row';
         const t = document.createElement('code'); t.textContent = c.federation.slice(0, 16) + '…';
         const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Forget'; b.dataset.federation = c.federation;
-        b.addEventListener('click', () => { BLWPCLIENT.forgetFederation(localStorage, c.federation); window.ARENA_PAINT_CONFIRMED(); });
+        b.addEventListener('click', () => { BLWPCLIENT.forgetFederation(window.BLWP_BROWSER_STORE(), c.federation); window.ARENA_PAINT_CONFIRMED(); });
         d.append(t, b); el.appendChild(d);
       }
     };
@@ -4819,14 +4823,14 @@
       nwcLink.style.cssText = 'display:none;font:13px ui-monospace,monospace;padding:9px;border-radius:9px;border:1px solid #3a4655;background:#0b0f14;color:#e8eaed';
       const nwcNote = document.createElement('div'); nwcNote.style.cssText = 'font-size:12.5px;color:#a9b3c1';
       nwc.append(nwcPay, nwcLink, nwcNote);
-      const nwcUri = () => { try { return localStorage.getItem('arena.nwc') || ''; } catch { return ''; } };
+      const nwcUri = () => { try { return window.BLWP_BROWSER_STORE().getItem('arena.nwc') || ''; } catch { return ''; } };
       const nwcPaint = () => {
         const u = nwcUri();
         nwcPay.textContent = u ? 'Pay with my wallet (Nostr Wallet Connect)' : 'Connect my wallet to pay in one tap (Nostr Wallet Connect)';
         nwcLink.style.display = 'none';
         nwcNote.innerHTML = '';
         if (u) { nwcNote.textContent = 'Wallet connected in this browser · '; const x = document.createElement('a'); x.href = '#'; x.textContent = 'disconnect'; x.style.color = '#c9a8ff';
-          x.onclick = (e) => { e.preventDefault(); try { localStorage.removeItem('arena.nwc'); } catch { /* none */ } nwcPaint(); }; nwcNote.appendChild(x); }
+          x.onclick = (e) => { e.preventDefault(); try { window.BLWP_BROWSER_STORE().removeItem('arena.nwc'); } catch { /* none */ } nwcPaint(); }; nwcNote.appendChild(x); }
       };
       let nwcBalanceMsat = null;
       const nwcReadBalance = async () => {
@@ -4858,8 +4862,8 @@
           u = nwcLink.value.trim();
           try { N.parseNwc(u); } catch (e) { nwcNote.textContent = e.message; return; }
           nwcPay.disabled = true; nwcNote.textContent = 'Asking your wallet …';
-          try { const i = await N.nwcGetInfo(u, { timeoutMs: 20000 }); try { localStorage.setItem('arena.nwc', u); } catch { /* the session only */ } window.ARENA_NWC = { connected: true, alias: i.alias || null, network: i.network || null }; }
-          catch (e) { if (!/does not|unknown|NOT_IMPLEMENTED/i.test(e.code || e.message)) { nwcNote.textContent = e.message; nwcPay.disabled = false; return; } try { localStorage.setItem('arena.nwc', u); } catch { /* none */ } }
+          try { const i = await N.nwcGetInfo(u, { timeoutMs: 20000 }); try { window.BLWP_BROWSER_STORE().setItem('arena.nwc', u); } catch { /* the session only */ } window.ARENA_NWC = { connected: true, alias: i.alias || null, network: i.network || null }; }
+          catch (e) { if (!/does not|unknown|NOT_IMPLEMENTED/i.test(e.code || e.message)) { nwcNote.textContent = e.message; nwcPay.disabled = false; return; } try { window.BLWP_BROWSER_STORE().setItem('arena.nwc', u); } catch { /* none */ } }
         }
         const invoice = current;
         if (!invoice) { nwcNote.textContent = 'No invoice yet - pick an amount first'; return; }
@@ -5057,7 +5061,7 @@
       const statuses = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.size ? [...window.ARENA_FED_LOADS.values()] : [];
       const pick = BLWPCLIENT.depositFederation ? BLWPCLIENT.depositFederation({ lobbyInvite, statuses,
         held: BLWPCLIENT.ledgerFederations(vault()),
-        known: (fid) => BLWPCLIENT.federationIsKnown(fid) || BLWPCLIENT.federationConfirmed(localStorage, fid),
+        known: (fid) => BLWPCLIENT.federationIsKnown(fid) || BLWPCLIENT.federationConfirmed(window.BLWP_BROWSER_STORE(), fid),
         sameFederation: (inv, fid) => { try { return BLWPCLIENT.inviteNamesFederation(inv, fid); } catch { return false; } } }) : { invite: lobbyInvite };
       window.ARENA_DEPOSIT_FEDERATION = pick;
       return pick;
@@ -5331,7 +5335,7 @@
     {
       const on = document.getElementById('blwp-bench-on'), go = document.getElementById('blwp-bench-go');
       on.checked = window.ARENA_BENCH_ON(); go.disabled = !on.checked;
-      on.addEventListener('change', () => { try { localStorage.setItem('arena.bench.on', on.checked ? '1' : '0'); } catch { /* this page only */ } go.disabled = !on.checked; });
+      on.addEventListener('change', () => { try { window.BLWP_BROWSER_STORE().setItem('arena.bench.on', on.checked ? '1' : '0'); } catch { /* this page only */ } go.disabled = !on.checked; });
     }
     document.getElementById('blwp-bench-go').addEventListener('click', () => {
       if (!window.ARENA_BENCH_ON()) return;   // off by default (kanban #373)
@@ -5483,7 +5487,7 @@
           L.removeItem('arena.nostr');
         }
         // THE NOSTR LOGIN AND THE WALLET IT CONNECTED (kanban #339: "On Nostr logout, clear the local login")
-        try { localStorage.removeItem('arena.nostr'); localStorage.removeItem('arena.nwc'); } catch { /* none */ }
+        try { window.BLWP_BROWSER_STORE().removeItem('arena.nostr'); window.BLWP_BROWSER_STORE().removeItem('arena.nwc'); } catch { /* none */ }
         sessionStorage.removeItem('arena.player.seed'); sessionStorage.removeItem('arena.player.seed.from'); sessionStorage.removeItem('arena.nostr.showWords');
         sessionStorage.setItem('arena.wallet.fresh', '1');
       } catch (e) { return { ok: false, why: 'This account could not be removed: ' + e.message }; }
@@ -5497,7 +5501,7 @@
     (function accountCard() {
       const $ = (id) => document.getElementById(id);
       const who = () => {
-        let n = null; try { n = JSON.parse(localStorage.getItem('arena.nostr') || 'null'); } catch { n = null; }
+        let n = null; try { n = JSON.parse(window.BLWP_BROWSER_STORE().getItem('arena.nostr') || 'null'); } catch { n = null; }
         $('arena-acct-who').textContent = n && n.npub ? 'Logged in with Nostr: ' + (n.name ? n.name + ' · ' : '') + n.npub.slice(0, 16) + '…' : 'This wallet\'s key is its 24 words, kept in this browser.';
       };
       who();
@@ -6410,7 +6414,7 @@
       const store = () => window.sessionStorage;
       const noSeed = () => { throw new Error('this tab has no wallet yet: create or restore one first'); };
       const sign = (t) => BLWPCLIENT.identitySignEvent(t, { storage: store(), random: noSeed, curve: window.BLWP_CURVE });
-      const nwcUri = () => { try { return localStorage.getItem('arena.nwc') || ''; } catch { return ''; } };
+      const nwcUri = () => { try { return window.BLWP_BROWSER_STORE().getItem('arena.nwc') || ''; } catch { return ''; } };
       // THE WALLET THAT PAYS: NWC when connected, else the player wallet (its withdraw, to exactly this invoice)
       async function pay(invoice) {
         const u = nwcUri();
@@ -6508,7 +6512,7 @@
         if (!BLWPCLIENT.collectZaps || !window.BLWP_WALLETS || !window.BLWP_WALLETS.size) return;
         try { if (!store().getItem('arena.player.seed')) return; } catch { return; }
         const clients = new Map([...window.BLWP_WALLETS].map(([fid, c]) => [String(fid).toLowerCase(), c]));
-        const got = await BLWPCLIENT.collectZaps({ storage: store(), keep: localStorage, random: noSeed, curve: window.BLWP_CURVE, clients, seats: zapSeats() });
+        const got = await BLWPCLIENT.collectZaps({ storage: store(), keep: window.BLWP_BROWSER_STORE(), random: noSeed, curve: window.BLWP_CURVE, clients, seats: zapSeats() });
         window.ARENA_ZAPS_IN = { at: Date.now(), ...got };
         if (got.collected.length) { console.log('[arena] zaps collected: ' + got.collected.length + ', ' + got.totalMsat + ' msat'); if (window.BLWP_READ_BALANCE) window.BLWP_READ_BALANCE(); }
       };
@@ -6815,12 +6819,12 @@
           }
           // THE LAYOUT (kanban #354): compact unless this browser chose the details; the switch flips it and keeps the choice
           {
-            let layout = 'compact'; try { if (localStorage.getItem('arena.games.layout') === 'list') layout = 'list'; } catch { /* storage blocked */ }
+            let layout = 'compact'; try { if (window.BLWP_BROWSER_STORE().getItem('arena.games.layout') === 'list') layout = 'list'; } catch { /* storage blocked */ }
             const apply = (l) => { el.classList.toggle('compact', l === 'compact'); for (const x of el.querySelectorAll('.layout-switch button')) x.setAttribute('aria-pressed', String(x.dataset.layout === l)); };
             apply(layout);
             for (const x of el.querySelectorAll('.layout-switch button')) if (!x.dataset.wired) {
               x.dataset.wired = '1';
-              x.addEventListener('click', () => { apply(x.dataset.layout); try { localStorage.setItem('arena.games.layout', x.dataset.layout); } catch { /* not kept */ } });
+              x.addEventListener('click', () => { apply(x.dataset.layout); try { window.BLWP_BROWSER_STORE().setItem('arena.games.layout', x.dataset.layout); } catch { /* not kept */ } });
             }
           }
           el.classList.add('show');
@@ -6834,7 +6838,7 @@
         // THE GAME'S NAME IN THE LINK (kanban #350), its id only when two listed games share the name: the loading screen
         // reads the name before anything loads, and a reload shows this game's splash, not Next Block's
         const byName = got.games.filter((g) => g.name === game.name).length === 1;
-        try { localStorage.setItem('arena.game-name.' + game.id, game.name); } catch (e) { /* storage blocked */ }
+        try { window.BLWP_BROWSER_STORE().setItem('arena.game-name.' + game.id, game.name); } catch (e) { /* storage blocked */ }
         const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', byName ? game.name : game.id);
         history.replaceState(null, '', location.pathname + '?' + q.toString());
       }
@@ -7160,7 +7164,7 @@
         // this merge ran before viaAlt was defined, so a phone's kept list - the seats' Funnel addresses - went in as they were,
         // beside daily.json's tn4 addresses; off the tailnet both answer, and each seat was counted twice
         try {
-          const kept = JSON.parse(localStorage.getItem(NODES_KEY) || '[]');
+          const kept = JSON.parse(window.BLWP_BROWSER_STORE().getItem(NODES_KEY) || '[]');
           if (Array.isArray(kept) && kept.length && BLWPCLIENT.mergeNodes) { const m = BLWPCLIENT.mergeNodes(list(), kept.map(viaAlt)); list().splice(0, list().length, ...m); }
         } catch { /* storage blocked: the census adds them again */ }
         window.ARENA_LEARN_NODES = (entries) => {
@@ -7169,7 +7173,7 @@
           if (!found.length) return;
           const before = list().length;
           const m = BLWPCLIENT.mergeNodes(list(), found); list().splice(0, list().length, ...m);
-          try { localStorage.setItem(NODES_KEY, JSON.stringify(found)); } catch { /* not kept */ }
+          try { window.BLWP_BROWSER_STORE().setItem(NODES_KEY, JSON.stringify(found)); } catch { /* not kept */ }
           window.ARENA_NODES_FOUND = { census: found.length, known: list().length };
           if (list().length > before) console.log('[arena] nodes found on the fly: ' + (list().length - before) + ' new from the census, ' + list().length + ' in all');
         };
@@ -7341,7 +7345,7 @@
           const st = all.get(fid);
           if (!st || !['DRAINING', 'CRITICAL'].includes(st.status) || evacuating.has(fid)) continue;
           const target = BLWPCLIENT.safeFederation({ ...st, federation: fid }, statuses,
-            { known: (f) => BLWPCLIENT.federationIsKnown(f) || BLWPCLIENT.federationConfirmed(localStorage, f) });
+            { known: (f) => BLWPCLIENT.federationIsKnown(f) || BLWPCLIENT.federationConfirmed(window.BLWP_BROWSER_STORE(), f) });
           if (!target) { console.warn('[arena] federation ' + fid.slice(0, 16) + ' is ' + st.status + ' and no safe federation is OPEN: the notes stay, tried again at the next status read'); continue; }
           evacuating.add(fid);
           try {
@@ -8081,8 +8085,8 @@
     // sells it plays with it when the player chose "Play with it": the entry names it with the items key's proof for that entry,
     // and the core starts the run with its unlock.
     const ITEMS_USE = (game) => 'arena.items.use.' + game;
-    const itemsUse = (game) => { try { const v = JSON.parse(localStorage.getItem(ITEMS_USE(game)) || 'null'); return Array.isArray(v) ? v : null; } catch { return null; } };
-    const setItemsUse = (game, ids) => { try { localStorage.setItem(ITEMS_USE(game), JSON.stringify(ids)); } catch { /* not kept */ } };
+    const itemsUse = (game) => { try { const v = JSON.parse(window.BLWP_BROWSER_STORE().getItem(ITEMS_USE(game)) || 'null'); return Array.isArray(v) ? v : null; } catch { return null; } };
+    const setItemsUse = (game, ids) => { try { window.BLWP_BROWSER_STORE().setItem(ITEMS_USE(game), JSON.stringify(ids)); } catch { /* not kept */ } };
     const itemsKey = () => { const seed = walletSeed(); return seed ? BLWPCLIENT.itemsKeyFor(seed, window.BLWP_CURVE) : null; };
     let ownedCache = null;
     async function itemsOwnedNow(gameName, seats, { fresh = false } = {}) {
@@ -8123,11 +8127,11 @@
     };
     window.ARENA_ITEMS_TERMS = () => (BLWPCLIENT.itemTermsOf ? BLWPCLIENT.itemTermsOf(itemsManifest()) : { reserves: false, shares: [50, 40, 30, 20, 10, 0], defaultShare: 50, nodesPct: 50, reservesPct: 0 });
     window.ARENA_ITEMS_SHARE = () => {
-      let v = null; try { const k = localStorage.getItem(ITEMS_SHARE_KEY); if (k !== null) v = Number(k); } catch { /* the default */ }
+      let v = null; try { const k = window.BLWP_BROWSER_STORE().getItem(ITEMS_SHARE_KEY); if (k !== null) v = Number(k); } catch { /* the default */ }
       if (BLWPCLIENT.itemShareOn) return BLWPCLIENT.itemShareOn(itemsManifest(), v === null ? window.ARENA_ITEMS_TERMS().defaultShare : v);
       return (BLWPCLIENT.ITEM_DEV_SHARES || [50]).includes(v) ? v : 50;
     };
-    window.ARENA_ITEMS_SHARE_SET = (v) => { try { localStorage.setItem(ITEMS_SHARE_KEY, String(Number(v))); } catch { /* this page only */ } };
+    window.ARENA_ITEMS_SHARE_SET = (v) => { try { window.BLWP_BROWSER_STORE().setItem(ITEMS_SHARE_KEY, String(Number(v))); } catch { /* this page only */ } };
     window.ARENA_ITEM_PRICE = (priceSat) => (BLWPCLIENT.itemPriceOn ? BLWPCLIENT.itemPriceOn(itemsManifest(), BigInt(priceSat), window.ARENA_ITEMS_SHARE())
       : BLWPCLIENT.itemPriceFor ? BLWPCLIENT.itemPriceFor(BigInt(priceSat), window.ARENA_ITEMS_SHARE()) : BigInt(priceSat));
     async function openShop() {
@@ -8289,11 +8293,11 @@
     })();
     // SHOW FPS (kanban #445): off by default; the toggle in Settings' Graphics keeps the choice in this browser
     (() => {
-      let on = false; try { on = localStorage.getItem('arena.fps.show') === '1'; } catch { /* off */ }
+      let on = false; try { on = window.BLWP_BROWSER_STORE().getItem('arena.fps.show') === '1'; } catch { /* off */ }
       document.body.classList.toggle('arena-fps-on', on);
       const box = document.getElementById('arena-fps-toggle'); if (!box) return;
       box.checked = on;
-      box.addEventListener('change', () => { try { localStorage.setItem('arena.fps.show', box.checked ? '1' : '0'); } catch { /* this page only */ }
+      box.addEventListener('change', () => { try { window.BLWP_BROWSER_STORE().setItem('arena.fps.show', box.checked ? '1' : '0'); } catch { /* this page only */ }
         document.body.classList.toggle('arena-fps-on', box.checked); });
     })();
     window.ARENA_DONATE_OPEN = (gameName = null) => {
@@ -8489,7 +8493,7 @@
         const hex = Array.from(got.seed, (b) => b.toString(16).padStart(2, '0')).join('');
         let profile = made ? { name: made.name || null } : null;
         if (!made) try { busy('Reading your Nostr profile\u2026'); profile = await N.profileOf(signer.pubkey); } catch { profile = null; }
-        try { localStorage.setItem('arena.nostr', JSON.stringify({ npub: N.npubOf(signer.pubkey), how, name: profile && profile.name || null, at: Date.now() })); } catch { /* shown once */ }
+        try { window.BLWP_BROWSER_STORE().setItem('arena.nostr', JSON.stringify({ npub: N.npubOf(signer.pubkey), how, name: profile && profile.name || null, at: Date.now() })); } catch { /* shown once */ }
         window.ARENA_WALLET_SCREEN.nostr = { how, created: got.created, from: got.from, relays: got.relays, npub: N.npubOf(signer.pubkey) };
         try { await signer.close(); } catch { /* gone */ }
         busy(got.created ? 'Your wallet is made and kept on Nostr - opening it\u2026' : 'Your wallet is back - opening it\u2026');

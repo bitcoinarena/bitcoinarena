@@ -43,7 +43,8 @@ function node(tag) {
 function page({ storage = memStorage(), status = null, checked = null } = {}) {
   const els = {};
   const document = { getElementById: (id) => (els[id] = els[id] || node(id)), createElement: node };
-  const window = { ARENA_FED_STATUS: status, BLWP_CURVE: {}, BLWP_LEDGER_LOBBY: { nodes: ['https://seat.example'] } };
+  // the browser's store through the page's one door, window.BLWP_BROWSER_STORE (kanban #465): the same fake as `localStorage`
+  const window = { ARENA_FED_STATUS: status, BLWP_CURVE: {}, BLWP_LEDGER_LOBBY: { nodes: ['https://seat.example'] }, BLWP_BROWSER_STORE: () => storage };
   const asked = [];
   const BLWPCLIENT = { ...fed, federationStatus: async () => (asked.push('status'), { status: 'OPEN', signers: 6, nominal: 7 }), checkedCensusFor: () => checked, clientCommittee: async () => { asked.push('committee'); }, federationSays: fed.federationSays,
     depositDonationMsat: () => 0n, marketForRound: () => null, settingsDepositOffer: async () => ({}) };
