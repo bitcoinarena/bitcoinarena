@@ -142,9 +142,10 @@
     #arena-donate .row { margin-top: 10px; } #arena-donate .go { width: 100%; background: #f7931a; color: #111; border-color: #f7931a; } #arena-donate .go:disabled { opacity: .45; cursor: default; }
     #arena-donate .say { min-height: 1.4em; margin: 8px 0 0; } #arena-donate .say.bad { color: #f85149; }
     #arena-donate-go { display: none; }
-    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(13px + env(safe-area-inset-bottom, 0px) + 3px); z-index: 38; height: 25px; padding: 0 10px;
+    /* ONE LINE AT THE FOOT (the owner 2026-10-17: "This can be better in the same line, Donate on right and build numbers before in one line
+       so the vertical space is less"): the build line and Donate share one 30 px row; the settlement facts above it only when there are any */
+    body.arena-own-client #arena-donate-go { display: block; position: fixed; right: 6px; bottom: calc(env(safe-area-inset-bottom, 0px) + 3px); z-index: 38; height: 24px; padding: 0 10px;
       border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a; font: 600 12px system-ui, sans-serif; cursor: pointer; }
-    body.arena-own-client #arena-approval { padding-right: 96px; }
     body.blwp-clean #arena-donate-go { display: none !important; }
     #boot-panel { display: none; }
     html:not(.other-game) #boot.paneled > #boot-panel { display: block; position: absolute; left: var(--px); top: var(--py); width: var(--pw); height: var(--ph);
@@ -212,6 +213,12 @@
     body.blwp-clean #arena-approval { display: none !important; }
     /* a game with its own client (Rock Paper Scissors) shows no frame rate (the owner 2026-10-09: "FPS ausgabe beim RPS client deaktivieren") */
     body.arena-own-client #arena-fps { display: none; }
+    /* THE FOOT IN ONE ROW (the owner 2026-10-17): build line left of Donate, 30 px; the settlement facts above it only when there are any */
+    html body.arena-own-client #arena-build { height: calc(30px + env(safe-area-inset-bottom, 0px)); line-height: 30px; padding-right: 100px; font-size: 10px; }
+    html body.arena-own-client #arena-approval { bottom: calc(30px + env(safe-area-inset-bottom, 0px)); }
+    html body.arena-own-client #arena-approval:empty { display: none; }
+    html body.arena-own-client:has(#arena-approval:empty) #arena-client { height: calc(100% - 41px - 30px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+    html body.arena-own-client:not(:has(#arena-approval:empty)) #arena-client { height: calc(100% - 41px - 61px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
     /* ONE BAR, NOT TWO (kanban #341, the owner 2026-10-11: "split in two: one stretch to 90, then another to 100. It should be
        one bar"): the creep starts on the colour the bar ends on, and while it runs the bar's own end is square - before, a
        rounded cap at 90 % and a lighter second gradient after it read as a second bar */
@@ -659,12 +666,25 @@
        Testnet.bitcoin-arena.io and that link goes to the main page"): the homepage's mark on the games screen's bar; a game's own
        client keeps its own left end (its back button) */
     #arena-wb-home { display: none; }
-    body.arena-picking #arena-wb-home { display: inline-flex; flex: none; align-items: center; gap: 8px; margin-right: 6px; color: #e8eaed; text-decoration: none;
+    body.arena-picking #arena-wb-home, body.arena-own-client #arena-wb-home { display: inline-flex; flex: none; align-items: center; gap: 8px; margin-right: 6px; color: #e8eaed; text-decoration: none;
       font: 700 16px/1 system-ui, sans-serif; letter-spacing: -0.01em; white-space: nowrap; }
     #arena-wb-home i { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-style: normal; font-weight: 800; color: #1a0f00;
       background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
     #arena-wb-home:hover span { color: #f7931a; }
-    @media (max-width: 420px) { body.arena-picking #arena-wb-home span { display: none; } }
+    @media (max-width: 420px) { body.arena-picking #arena-wb-home span, body.arena-own-client #arena-wb-home span { display: none; } }
+    /* AND IN EVERY GAME (the owner 2026-10-17: "The games also need to have the Bitcoin arena logo as the main Testnet page has"): a game's
+       own client keeps the games screen's bar with the logo; Tick Tock's header starts with the mark, before "← Arena" */
+    #arena-game-home { display: none; }
+    body.arena-game-chosen:not(.arena-own-client) #arena-game-home { display: inline-grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 7px;
+      text-decoration: none; font: 800 16px/1 system-ui, sans-serif; color: #1a0f00; background: conic-gradient(from 210deg, #f7931a, #ffd166, #f7931a); }
+    body.arena-game-chosen:not(.arena-own-client) #arena-game-home i { font-style: normal; }
+    body.blwp-clean #arena-game-home { display: none !important; }
+    /* THE GAMES SCREEN'S FOOT, AS IN A GAME (the owner 2026-10-17: "have the donate button be the same as in the game"): the build line and
+       the same "Donate" button in one row */
+    #arena-games .foot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; }
+    #arena-games .foot-row .build-line { margin: 0; }
+    #arena-games .donate-btn { flex: none; height: 24px; padding: 0 10px; border: 1px solid #f7931a; border-radius: 8px; background: #1b1408; color: #f7931a;
+      font: 600 12px system-ui, sans-serif; cursor: pointer; }
     /* THE BALANCE, TAPPED (the owner 2026-10-13: "Die UI muss auch anzeigen wenn ich auf die balances klicke wieviel Geld in welcher
        Federation gespeichert ist"): every balance opens the split over the federations */
     #arena-wallet-bar .wb-bal, #blwp-lobby-balance, #blwp-set-wallet .bal-grid { cursor: pointer; }
@@ -1015,6 +1035,7 @@
   <div id="arena-build" aria-hidden="true">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
   <div id="arena-fps" role="button" title="tap: frame-rate test"><span id="arena-fps-now">– fps</span><span id="arena-fps-bench"></span></div>
   <div id="blwp-money">
+    <a id="arena-game-home" href="https://bitcoin-arena.io/" title="bitcoin-arena.io" aria-label="Bitcoin Arena - bitcoin-arena.io"><i aria-hidden="true">&#8383;</i></a>
     <button id="arena-games-back" type="button" title="Back to Bitcoin Arena" aria-label="Back to Bitcoin Arena"><span aria-hidden="true">&larr;</span><span class="word">Arena</span></button>
     <!-- THE WARNING IS IN THE LOBBY (the owner 2026-09-21 20:01), with its own way out. PLAY is never refused, so the
          warning is the only thing standing between a player and losing a wallet he never wrote down. -->
@@ -1023,7 +1044,6 @@
       <button id="blwp-backup-cta" type="button">Back up now</button>
     </div>
     <!-- BUILD ON BITCOIN ARENA, RUN A NODE (kanban #208, the owner 2026-10-08 11:38): the platform page, beside the gear -->
-    <a id="arena-platform-go" href="https://docs.bitcoin-arena.io/#why-build" title="Build a game or a market on Bitcoin Arena, or run a node and earn">Build &amp; earn</a>
     <!-- THE SEASON BOARD OF THE CHOSEN GAME (kanban #362), beside the gear once a game is chosen -->
     <button id="blwp-season-go" type="button" title="Leaderboard: this game's players ahead over the last days" aria-label="Leaderboard"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2h7v3.5a3.5 3.5 0 0 1-7 0z"/><path d="M4.5 3.5H2.2a2.3 2.3 0 0 0 2.6 3M11.5 3.5h2.3a2.3 2.3 0 0 1-2.6 3M8 9v3M5.5 14h5"/></svg><span class="word">Leaderboard</span></button>
     <!-- THE GAME'S SHOP (kanban #365, #369), beside the Leaderboard once a game that sells items is chosen -->
@@ -1106,11 +1126,6 @@
         <option value="auto" selected>Auto (by device)</option><option value="high">High</option><option value="low">Low</option>
       </select>
       <div class="muted" id="arena-gfx-now"></div>
-    </section>
-    <section class="settings-card" id="arena-set-platform">
-      <h3>Build on Bitcoin Arena</h3>
-      <div class="muted">Bitcoin Arena runs games and prediction markets for bitcoin. Build your own and earn half of every donation, or run a node and earn from every paid entry.</div>
-      <a class="primary" href="https://docs.bitcoin-arena.io/#why-build">How it works &rarr;</a>
     </section>
     <section class="settings-card" id="blwp-set-logs">
       <h3>Client logs</h3>
@@ -1629,7 +1644,7 @@
   <div id="arena-shop" role="dialog" aria-modal="true" aria-labelledby="arena-shop-title"><div class="box"><button type="button" class="back">&larr; Back</button><div class="brand">Shop</div><h2 id="arena-shop-title">Shop</h2><div class="head">Bought once with your wallet, yours for good in every round of this game.</div><div class="items"></div><div class="state" role="status" aria-live="polite"></div></div></div>
   <div id="arena-zap" role="dialog" aria-modal="true" aria-labelledby="arena-zap-title"><div class="zb"><div class="zt"><h3 id="arena-zap-title">Zap</h3><button type="button" class="x" aria-label="Close">&times;</button></div><div class="to"></div><div class="amts" role="group" aria-label="amount"></div><input class="msg" type="text" maxlength="140" autocomplete="off" placeholder="A message (optional)"><button type="button" class="go" disabled>Zap</button><div class="st" role="status"></div></div></div>
   <div id="arena-pop" role="dialog" aria-modal="true" aria-labelledby="arena-pop-title"><div class="card"><div class="top"><h3 id="arena-pop-title"></h3><button type="button" aria-label="Close">&times;</button></div><div class="body"></div></div></div>
-  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/#why-build">Build your own game or market, or run a node &rarr;</a><span class="more-sep"> · </span><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a><span class="more-sep"> · </span><a href="#donate" class="donate-link" onclick="event.preventDefault(); window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate to the developers</a></div><div class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div></div></div>
+  <div id="arena-games" class="compact"><div class="box"><div class="layout-switch" role="group" aria-label="layout"><button type="button" data-layout="compact" title="Tiles" aria-label="Tiles" aria-pressed="true"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg></button><button type="button" data-layout="list" title="Details" aria-label="Details" aria-pressed="false"><svg viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="2" width="14" height="3" rx="1"/><rect x="1" y="6.5" width="14" height="3" rx="1"/><rect x="1" y="11" width="14" height="3" rx="1"/></svg></button></div><div class="brand">Bitcoin Arena</div><h2>Choose a game</h2><p class="lead">Games and prediction markets for bitcoin, run by independent nodes.</p><div class="list"></div><div class="why"></div><div class="more"><a href="https://docs.bitcoin-arena.io/">Docs &rarr;</a></div><div class="foot-row"><span class="build-line">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</span><button type="button" class="donate-btn" title="Donate to the protocol developers" onclick="window.ARENA_DONATE_OPEN && window.ARENA_DONATE_OPEN(null)">&hearts; Donate</button></div></div></div>
   <div id="boot">
     <div id="boot-panel"><div class="head"></div></div>
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
@@ -1680,7 +1695,6 @@
     <div id="stage">Connecting …</div>
     <div id="note"><span id="total">…</span> to load. The first time is the
       slowest — after that most of it is in the browser cache.</div>
-    <div id="arena-platform"><a href="https://docs.bitcoin-arena.io/#why-build">Build a game or a market on Bitcoin Arena, or run a node and earn &rarr;</a></div>
     <div class="build-line" id="boot-build">build {{{ PRODUCT_VERSION }}} · UI {{{ UI_VERSION }}}</div>
     <div id="blwp-deposit"></div>
     <div id="err"></div>
@@ -6532,7 +6546,13 @@
     async function loadTheGameClient(game) {
       const digest = (b) => crypto.subtle.digest('SHA-256', b);
       const t0 = Date.now();
-      const file = await BLWPCLIENT.gameClientFile({ game, url: 'games/' + encodeURIComponent(game.name) + '/index.html', digest });
+      // EVERY VERSION OF THE GAME, HOWEVER IT WAS NAMED (the owner 2026-10-17, a reload of Bitcoin Up or Down: "games/btc-updown-15m/index.html
+      // hashes to 7b9c9c74275d8801, which btc-updown-15m's manifest does not name"): the tile hands its versions as `older`, but a reload
+      // names the round's version (v2 f5f3f187) alone, and the page holds v4's newer file. The same developer's other versions of the
+      // game are its family here too; gameClientFile still keeps only those under the same developer key and name.
+      const family = (window.ARENA_GAMES_FULL || []).filter((g) => g && g !== game && g.id !== game.id && g.name === game.name && g.manifest);
+      const checkedAs = Object.assign({}, game, { older: [...(Array.isArray(game.older) ? game.older : []), ...family] });
+      const file = await BLWPCLIENT.gameClientFile({ game: checkedAs, url: 'games/' + encodeURIComponent(game.name) + '/index.html', digest });
       if (!file.ok) throw new Error(file.why);
       // WHAT THE CLIENT IS HANDED: the engine's (this page's lobby, pick sheet, wallet and seed), never a second copy of them
       const hereProofs = new Map();   // this tab's signed presence, one per round's table (ARENA_GAME.here)
