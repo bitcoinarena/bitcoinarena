@@ -54,6 +54,18 @@ test('the website and the docs say the protocol 11 split, the reserves and that 
   assert.match(HTML, /<b>Anyone<\/b> can propose a payout/);
   for (const id of ['money', 'reserves', 'proposals']) assert.ok(DOCS.includes(`id="${id}"`), `docs section #${id}`);
   assert.match(DOCS, /<b>Anyone can propose a payout<\/b>/);
-  assert.match(DOCS, /at least 30% of all bonded capital and YES is at least 60% of YES \+ NO/);
+  assert.match(DOCS, /It passes when 60% of the votes say YES and YES is at least 20% of everyone who could vote/);
+  assert.match(DOCS, /<b>Five rules, so nobody can rent a majority.<\/b>/);
+  assert.match(DOCS, /bond &times; age: 1&times; under a year, 2&times; from one year, 3&times; from two/);
   assert.equal(readFileSync(new URL('../../../deploy/home-site/www/docs/index.html', import.meta.url), 'utf8'), DOCS, 'the homepage\'s /docs copy is the same page');
+});
+
+test('the homepage has a Project proposals section: the five rules, the key, the list and the propose form, run by js/proposals.js', () => {
+  const a = HTML.indexOf('<section id="proposals"'), b = HTML.indexOf('<section id="build"');
+  assert.ok(a > HTML.indexOf('<section id="split"') && a < b, 'after the fees, before Build');
+  const sec = HTML.slice(a, b);
+  for (const t of ['bonds at least 3 months old that stay locked at least 3 months after the vote', '60% of the votes say YES, and YES is at least 20% of everyone who could vote',
+    'at most 10% of the reserves per proposal, 25% per 3 months', 'class="p-list"', 'class="p-propose', 'Use my nsec']) assert.ok(sec.includes(t), t);
+  assert.ok(HTML.includes('<a href="#proposals">Proposals</a>'));
+  assert.ok(HTML.includes('<script src="js/proposals.js" defer></script>'));
 });

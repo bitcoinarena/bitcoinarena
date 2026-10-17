@@ -6914,10 +6914,10 @@ carry no weight in any count.
 - A proposal that passed its signal goes to a vote of the bonded nodes, **weighted by bond**.
 - The votes are Bitcoin transactions, as §27A.7.3's: `OP_RETURN`, signed by the bond key, YES / NO /
   ABSTAIN, the last one by height counts.
-- Eligible: the bonds active at the start of the vote (snapshot), and of those only the **seasoned bonds locked past the vote**,
-  weighted by their lock (§27A.9.5 D1, D2).
-- **Turnout** *(the owner 2026-10-16: "30%")*: at least **30 % of all bonded capital** in the snapshot
-  votes (YES, NO or ABSTAIN). Below that the vote fails and nothing is paid.
+- Eligible: the bonds active at the start of the vote (snapshot), and of those only bonds **3 months old and locked 3 months
+  past the vote**, weighted by their age (§27A.9.5 rules 1, 2).
+- ~~**Turnout** *(the owner 2026-10-16: "30%")*: at least 30 % of all bonded capital votes.~~ *Replaced 2026-10-17 by §27A.9.5
+  rule 3: YES at least 20 % of everyone who could vote.*
 - **Passes at 60 %** *(RULED the owner 2026-10-16: "Voting threshold is 60%")*: YES holds at least 60 % of
   the bond weight that voted YES or NO (ABSTAIN counts for turnout only).
 - Comments continue.
@@ -6985,38 +6985,48 @@ carry no weight in any count.
 5. An active node for the 15 % served a round in the last 72 hours, counted one per node.
    *Superseded 2026-10-17 by §27A.9.5 D6: served rounds in 3 of the last 4 weeks, with a seasoned bond.*
 
-### 27A.9.5 The hijack defences *(LOCKED the owner 2026-10-17: "Take D1-D6 as proposed, the full set"; kanban #397 comment 2819)*
+### 27A.9.5 The hijack defences: five rules *(LOCKED the owner 2026-10-17: "Make it 3 months", "older nodes that have been longer in the game can get a factor that increases their weight", "It needs to be more simple so people understand it" - comment 2820, "Yes and document it"; it replaces D1-D6 of comment 2819)*
 
 **The attack they close:** anyone may propose a payout to themselves (§27A.9.3). Without these rules an attacker bonds a lot of
-bitcoin after seeing the proposal, votes YES, takes the payout and unbonds when the ~30-day bond lock ends. That parks capital for
-about 5 weeks to take all of the reserves.
+bitcoin after seeing the proposal, votes YES, takes the payout and unbonds when the ~30-day bond lock ends: about 5 weeks of parked
+capital for all of the reserves.
 
-| | Rule | Numbers (blocks) |
+| # | Rule | Numbers (blocks) |
 |---|---|---|
-| **D1** seasoned bonds | A bond votes only if it confirmed at least **~6 months** before the proposal was published. | `season` 26,208 |
-| **D2** locked through the payout | A bond votes only if its CLTV `bond_maturity` is at least **~3 months** past the vote's last block. Its weight is `bond_sats × min(1, (maturity − last) / ~1 year)`. A bond past its lock date still serves rounds but no longer votes *(the accepted trade-off)*. | `lockAfterVote` 12,960; `fullLock` 52,560 |
-| **D3** caps | One proposal at most **10 %** of the paying reserves. All payments in **~90 days** at most **25 %** of what the reserves held at the window's start. A proposal over its own cap is never paid; a payment over the window cap waits. | `capWindow` 12,960 |
-| **D4** absolute support | Besides turnout ≥ 30 % of the voting weight and YES ≥ 60 % of YES + NO, YES must be at least **20 % of all seasoned bonded capital** (D1's bonds, whatever their lock). | |
-| **D5** delay and veto | A passed proposal pays nothing for **~2 weeks** after its last voting block. Above **1 %** of the reserves it pays in **4 tranches ~1 month apart**. Each payment is due at `last + delay + k × trancheEvery`. It is payable once that block is 6 deep **and a re-count of every vote up to it still passes**: a new NO, or a YES turned NO, in the window cancels that payment and every later one, for good. | `delay` 2,016; `trancheEvery` 4,320 |
-| **D6** signal sybil | The 15 % signal counts only nodes with a **seasoned bond** (D1) that **served rounds in 3 of the last 4 weeks** before the signal's end. | `week` 1,008 |
+| 1 | **Who votes:** a bond at least **3 months old** when the proposal is published, that stays **locked** (CLTV `bond_maturity`) at least **3 months after the vote's last block**. A bond past its lock date still serves rounds but no longer votes. | `season` 12,960; `lockAfterVote` 12,960 |
+| 2 | **How much it counts:** bond sats × **age factor** at publication: **1×** under a year, **2×** from one year, **3×** from two. Old nodes outweigh new money up to 3 : 1. | `year` 52,560 |
+| 3 | **When it passes:** **60 %** of the votes cast (YES of YES + NO; ABSTAIN counts for neither) say YES, **and** YES is at least **20 % of everyone who could vote** (the total weight of rule 1's bonds). | |
+| 4 | **How much it can take:** one proposal at most **10 %** of the paying reserves; all payments in **3 months** at most **25 %** of what the reserves held at the window's start. Over its own cap a proposal is never paid; a payment over the window cap waits. | `capWindow` 12,960 |
+| 5 | **Time to say no:** nothing is paid for **2 weeks** after the vote's last block. Above **1 %** of the reserves the payout goes in **4 monthly parts**. Each payment is due at `last + delay + k × trancheEvery` and is paid only when that block is 6 deep **and a re-count of every vote up to it still passes rule 3**: a new NO, or a YES turned NO, stops that payment and every later one, for good. | `delay` 2,016; `trancheEvery` 4,320 |
 
-**As built** *(kanban #397, `arena-protocol/src/funding.js`: `voteWeights`, `fundingTally` with `seasonedSats`, `capStands`,
+**The signal** counts only active nodes: a bond 3 months old (rule 1's age) and rounds served in **3 of the last 4 weeks**
+(`week` 1,008).
+
+**As built** *(kanban #397, `arena-protocol/src/funding.js`: `voteWeights`, `ageFactor`, `fundingTally`, `capStands`,
 `trancheSchedule`, `activeInWeeks`; `arena-node/src/funding-book.js`: `payments`)*:
 - The vote's census keeps each bond's confirmation height and its advertisement's `bond_maturity` (template 2). A bond without one
   has no vote.
+- "Age" is the age of the node's current bond. An advertisement update keeps it; a new bond starts again at zero.
 - A passed vote is read on through its last payment's due block.
-- The tranche count is fixed the first time the seat asks: amount above 1 % of the reserves it holds then. Each tranche is its own
-  payout (id: the proposal's for a single payment, else a tagged hash of the proposal and the tranche).
-- A cancelled proposal keeps listing the tranches due before the cancelling one, so their records still stand on every seat.
+- The number of parts is fixed the first time the seat asks: the amount over 1 % of the reserves it holds then. Each part is its
+  own payout (id: the proposal's for a single payment, else a tagged hash of the proposal and the part).
+- A stopped proposal keeps listing the parts due before the stopping one, so their records still stand on every seat.
 - The payout's signers apply the same caps and re-count to their own records before they sign. A seat without the chain tip pays
   nothing.
-- The short schedule of a live proof (the T3 federation) scales these: season 24, lockAfterVote 48, fullLock 144, delay 6,
+- The short schedule of a live proof (the T3 federation) scales these: season 24, lockAfterVote 48, year 72, delay 6,
   trancheEvery 6, capWindow 144, week 108.
 - **Known limit (fail-safe):** a seat finds bonds by scanning blocks, 2,016 back from a census height after a restart
-  (`CENSUS_LOOKBACK`). A bond older than its scan is not in its census, so it neither votes nor counts as seasoned capital. Votes
-  only lose weight this way, never gain it.
-  - Until a bond index exists, no testnet4 vote on the spec schedule can pass: no bond there is 6 months old yet.
-  - Mainnet needs that index before D1 can be met.
+  (`CENSUS_LOOKBACK`). A bond older than its scan is not in its census, so it does not vote and is not counted in "everyone who
+  could vote". Votes lose weight this way, never gain it.
+  - No vote can pass in a network's first 3 months.
+  - Mainnet needs a bond index before rule 1 can be met after restarts.
+
+**On bitcoin-arena.io** *(the owner 2026-10-17: "Add a Project Proposals section to the website where people can comment and
+review")*:
+- A **Project proposals** section lists every proposal five of the testnet's nodes hold, with its stage and every comment, threaded.
+- A visitor comments, replies or proposes with their own key: an nsec, or a key that browser keeps. The page builds and signs the
+  same `FundingComment` / `FundingProposal` the seats read (`arena-client/src/funding-page.js`, the Arena page's bundle) and hands
+  it to every node (`POST /funding`).
 
 # 28. Failure matrix
 

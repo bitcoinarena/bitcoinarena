@@ -1,5 +1,6 @@
 // THE BOND-WEIGHTED VOTE OF A FUNDING PROPOSAL (§27A.9.3 stage 2, kanban #397 slice 7): #329's on-chain votes, counted on the bonds
-// active at the vote's start, weighted by bond. the owner's edges: turnout 29.99 % fails and 30 % passes; YES at 59.99 % of YES + NO fails
+// active at the vote's start, weighted by bond. the owner's edges: YES 19.99 % of everyone who could vote fails and 20 % passes (rule 3,
+// 2026-10-17, replacing the 30 % turnout); YES at 59.99 % of YES + NO fails
 // and 60 % passes; ABSTAIN moves turnout, not approval; votes at signalEnd - 1 and signalEnd + 2016 do not count, at signalEnd and
 // signalEnd + 2015 they do; the last vote per bond counts, a tie in one block to the lower txid; a key that is no bond does not count;
 // a failed signal opens no vote.
@@ -27,12 +28,12 @@ test('the period: it opens at signalEnd (published + 1008) for 2016 blocks; deci
   assert.equal(votePeriodOf({ proposal: P, signal: { state: 'signalling' } }), null);
 });
 
-test('turnout: 29.99 % of the bonded capital fails, 30 % passes', () => {
-  const census = [bond(1, 2999), bond(2, 1), bond(3, 7000)];
+test('rule 3: YES at 19.99 % of everyone who could vote fails, 20 % passes - however few voted', () => {
+  const census = [bond(1, 1999), bond(2, 1), bond(3, 8000)];
   const low = count(census, [vote(1, CHOICE.YES, IN)]);
-  assert.deepEqual([low.turnoutPct, low.quorum, low.passed], [29.99, false, false]);
+  assert.deepEqual([low.yesOfAllPct, low.absolute, low.passed], [19.99, false, false]);
   const at = count(census, [vote(1, CHOICE.YES, IN), vote(2, CHOICE.YES, IN)]);
-  assert.deepEqual([at.turnoutPct, at.quorum, at.approvalPct, at.passed], [30, true, 100, true]);
+  assert.deepEqual([at.yesOfAllPct, at.turnoutPct, at.approvalPct, at.passed], [20, 20, 100, true], '20 % turnout is enough when all of it says YES');
 });
 
 test('approval: YES at 59.99 % of YES + NO fails, 60 % passes; ABSTAIN moves turnout, not approval', () => {

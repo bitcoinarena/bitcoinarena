@@ -54,12 +54,12 @@ export const VOTE_BYTES = 4 + 8 + 1 + 64;                                  // 77
 export const TAG_GAME_CONFIG = 'BLWP/v1/GameConfig';
 export const configHashOf = (config) => taggedHash(TAG_GAME_CONFIG, config);
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
+const isVoteBytes32 = (b) => b instanceof Uint8Array && b.length === 32;
 const className = (c) => Object.keys(CLASS).find((k) => CLASS[k] === c);
 
 /** THE BODY THE PROPOSER SIGNS (§27A.7.2): network, parent config, the full config, class, activation, proposer, deposit. */
 export function encodeConfigProposalBody(p) {
-  if (!is32(p.networkId) || !is32(p.parent) || !is32(p.configHash) || !is32(p.proposer) || !is32(p.depositTxid))
+  if (!isVoteBytes32(p.networkId) || !isVoteBytes32(p.parent) || !isVoteBytes32(p.configHash) || !isVoteBytes32(p.proposer) || !isVoteBytes32(p.depositTxid))
     throw new Error('a proposal names its network, parent config, config hash, proposer and deposit txid in 32 bytes each');
   if (!(p.config instanceof Uint8Array) || !p.config.length) throw new Error('a proposal carries the FULL config, never a diff (27A.7.2)');
   if (!className(p.class)) throw new Error(`a proposal's class is DESIGN, MONEY or UPGRADE, not ${p.class}`);
@@ -114,7 +114,7 @@ export function proposalStands(p, { publishedAt, depositSats, lowestBondMinSats,
 export const voteMessage = (id, choice) => taggedHash(TAG.vote, Uint8Array.from([...id, choice]));
 /** THE OP_RETURN PAYLOAD (§27A.7.3): "ARN" 'V', proposal_id[0:8], choice, the bond key's signature - 77 bytes. */
 export function encodeVote({ proposalId: id, choice, signature }) {
-  if (!is32(id)) throw new Error('a vote names a 32-byte proposal id');
+  if (!isVoteBytes32(id)) throw new Error('a vote names a 32-byte proposal id');
   if (!Object.values(CHOICE).includes(choice)) throw new Error('a vote is YES, NO or ABSTAIN');
   if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('a vote carries a 64-byte signature');
   const out = new Uint8Array(VOTE_BYTES);
