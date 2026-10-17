@@ -28,6 +28,13 @@
   .odds { display:flex; justify-content:space-between; align-items:baseline; margin-top:6px; } .odds b { font:800 26px system-ui; }
   .sides { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   .side { border:0; border-radius:12px; padding:12px 6px; font:700 16px system-ui; }
+  /* AN ORDER'S PROGRESS IN THE SHEET (version 5, kanban #438, the owner 2026-10-17: "When I press buy up nothing happens no order no
+     error. There needs to be feedback and some sort of progress indicator while we wait for the result") */
+  .status { display:none; align-items:center; gap:8px; margin-top:8px; padding:9px 11px; border-radius:10px; border:1px solid var(--line); font:600 13px/1.35 system-ui; }
+  .status.on { display:flex; } .status.ok { border-color:var(--up); color:var(--up); } .status.bad { border-color:var(--down); color:#ffb4ad; }
+  .status .spin { flex:none; width:15px; height:15px; border-radius:50%; border:2px solid var(--line); border-top-color:#f7931a; animation:spin .8s linear infinite; }
+  .status.ok .spin, .status.bad .spin { display:none; } @keyframes spin { to { transform:rotate(360deg); } }
+  .r .pend { color:#f7931a; }
   .side.up { background:#12301f; color:var(--up); } .side.down { background:#3a1216; color:#ff8a94; }
   .side.on.up { outline:2px solid var(--up); } .side.on.down { outline:2px solid var(--down); }
   .sheet { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:12px; position:relative; }
@@ -71,6 +78,8 @@ if (!A || !A.market) {
   $('view').innerHTML = '<div class="none">This market runs inside the Bitcoin Arena page, which hands it the market.</div>';
 } else {
   window.UPDOWN_CLIENT = { hash: A.clientHash, game: A.game.id, state: {} };
+  // this client says its orders' progress itself: the page's strip over it stays away (kanban #438)
+  try { window.parent.ARENA_CLIENT_SAYS_JOIN = true; } catch {}
   $('back').onclick = () => A.back();
   const outcomes = A.game.outcomes.length ? A.game.outcomes : ['Up', 'Down'];
   $('view').innerHTML = `
@@ -95,12 +104,35 @@ if (!A || !A.market) {
         <div class="line"><span>Total</span><span class="total" id="ltotal">…</span></div>
         <div class="line"><span>To win</span><span class="bigwin" id="lwin">…</span></div>
       </div>
-      <div class="err" id="err"></div><button class="go" id="go">Buy Up</button>
+      <div class="err" id="err"></div><button class="go" id="go">Buy Up</button><div class="status" id="status" role="status" aria-live="polite"><span class="spin"></span><span id="statustxt"></span></div>
       <div class="center sub" id="fee">Fee 1 %: 0.5 % nodes + 0.5 % donation, due when the market resolves; all back if it is void.</div>
     </div>
     <div class="card list"><h3>My orders</h3><div id="mine"></div><h3 style="margin-top:8px">Results</h3><div id="results"></div></div>`;
   let pick = 0, mode = 'market', current = null, book = null, live = { now: null, beat: null, beatFor: null };
-  const windowNow = () => (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs && r.entryCloseMs > Date.now()).sort((x, y) => x.entryCloseMs - y.entryCloseMs)[0] || null;
+  // THE WINDOW AN ORDER CAN JOIN (version 5, kanban #438: Buy was refused "this round is no longer listed in the lobby" - the client had
+  // picked a window the page could not join, one at its close or a federation's row its seats did not yet agree on): the soonest
+  // joinable one, else the soonest open one as before
+  const windowNow = () => {
+    const open = (A.allRows ? A.allRows() : A.rows()).filter((r) => r.entryCloseMs && r.entryCloseMs > Date.now()).sort((x, y) => x.entryCloseMs - y.entryCloseMs);
+    return open.find((r) => r.joinable) || open[0] || null;
+  };
+  // THE ORDER IN FLIGHT: the page's join and the pick it carries, said in the sheet and in My orders until the order is the page's
+  let placing = null;
+  function joinStatus() {
+    const j = A.state().join, box = $('status'), txt = $('statustxt');
+    if (!j || !placing || j.round !== placing.round) { box.className = 'status'; return null; }
+    let line, cls = '';
+    const st = String(j.stage || ''), starts = /round starts in ([0-9:]+)/.exec(st);
+    if (j.state === 'refused') { line = 'Order not placed: ' + (j.why || 'refused'); cls = 'bad'; }
+    else if (j.state === 'joining' && starts) { line = '\u2713 Order locked \u00b7 the window starts in ' + starts[1]; cls = 'ok'; }
+    else if (j.state === 'joining') { line = 'Placing your order \u2026 ' + (/^stake lock/.test(st) ? 'locking your stake in the federation' : (st || 'asking the round\'s seats')); }
+    else { line = '\u2713 Order placed'; cls = 'ok'; }
+    if (cls && !placing.doneAt) placing.doneAt = Date.now();
+    if (!cls) placing.doneAt = 0;
+    if (placing.doneAt && Date.now() - placing.doneAt > (cls === 'bad' ? 20000 : 10000) && !starts) { placing = null; box.className = 'status'; return null; }
+    txt.textContent = line; box.className = 'status on' + (cls ? ' ' + cls : '');
+    return { state: j.state, line, cls };
+  }
   // THE PRICE OF UP: the last certified batch's, else 50¢; Down is 1 less it
   const upCents = () => { const b = book && book.batches ? book.batches.filter((x) => x.price) : []; return b.length ? Math.round(Number(b[b.length - 1].price) / TICK) : 50; };
   const priceOf = (i) => (i === 0 ? upCents() : 100 - upCents());
@@ -161,13 +193,17 @@ if (!A || !A.market) {
     if (mode === 'market') { $('mwin').textContent = a.why ? '–' : sats(a.win); $('mprice').textContent = a.why ? '' : 'at ' + priceOf(pick) + '¢'; }
     else { $('ltotal').textContent = a.why ? '–' : sats(a.stakeSat); $('lwin').textContent = a.why ? '–' : sats(a.win); }
     $('err').textContent = current.free ? 'Orders need a paid round' : (a.why || '');
-    $('go').disabled = !!a.why || current.free;
+    const js = joinStatus();
+    $('go').disabled = !!a.why || current.free || !!(js && js.state === 'joining' && !js.cls);
     $('go').textContent = 'Buy ' + outcomes[pick];
     const mine = A.market.orders();
-    $('mine').innerHTML = mine.length ? mine.slice(-4).reverse().map((o) => `<div class="r"><span>${esc(outcomes[o.pick] || o.pick)} ≤ ${Math.round(o.limitPrice / TICK)}¢ · ${sats(Number(o.stakeMsat) / 1000)} · ${hhmm(o.entryCloseMs - PERIOD_MS)}</span>`
-      + `<span>${o.cancelled ? 'cancelled' : o.entryCloseMs > Date.now() ? `<button data-cancel="${o.entry}">cancel</button>` : 'closed'}</span></div>`).join('') : '<div class="sub">No orders yet.</div>';
+    const flight = placing && js && !mine.some((o) => o.round === placing.round && o.placedMs >= placing.at - 1000)
+      ? `<div class="r"><span>${esc(outcomes[placing.pick] || placing.pick)} ≤ ${placing.limitCents}¢ · ${sats(placing.stakeSat)} · ${hhmm(placing.entryCloseMs - PERIOD_MS)}</span><span class="pend">${js.cls === 'bad' ? 'not placed' : js.cls ? (js.line.includes('locked') ? 'locked' : 'placed') : 'placing\u2026'}</span></div>` : '';
+    $('mine').innerHTML = flight + (mine.length ? mine.slice(-4).reverse().map((o) => `<div class="r"><span>${esc(outcomes[o.pick] || o.pick)} ≤ ${Math.round(o.limitPrice / TICK)}¢ · ${sats(Number(o.stakeMsat) / 1000)} · ${hhmm(o.entryCloseMs - PERIOD_MS)}</span>`
+      + `<span>${o.cancelled ? 'cancelled' : o.entryCloseMs > Date.now() ? `<button data-cancel="${o.entry}">cancel</button>` : 'closed'}</span></div>`).join('') : (flight ? '' : '<div class="sub">No orders yet.</div>'));
     const lines = (A.state().picks || []).filter((l) => l && l.text).slice(-3);
     $('results').innerHTML = lines.length ? lines.map((l) => `<div class="r"><span>${esc(l.text)}</span></div>`).join('') : '<div class="sub">Results of your windows show here.</div>';
+    window.UPDOWN_CLIENT.status = js;
     window.UPDOWN_CLIENT.state = { round: current.id, free: current.free, window: [start, current.entryCloseMs], beat: live.beat, now: live.now, pick, mode, asked: a, orders: mine.length, upCents: upCents() };
   }
   $('s0').onclick = () => { pick = 0; draw(); }; $('s1').onclick = () => { pick = 1; draw(); };
@@ -184,8 +220,10 @@ if (!A || !A.market) {
   $('go').onclick = () => {
     const a = asked(); if (a.why) return;
     $('err').textContent = '';
+    placing = { round: current.id, pick, limitCents: a.limitCents, stakeSat: a.stakeSat, entryCloseMs: current.entryCloseMs, at: Date.now(), doneAt: 0 };
     const ok = A.market.order(current.id, pick, a.limitCents * TICK, a.expiryMs, a.stakeSat * 1000);
-    if (ok === false) $('err').textContent = 'The page did not take the order.';
+    if (ok === false) { placing = null; $('err').textContent = 'The page did not take the order: ' + ((A.state().join || {}).why || 'no answer'); }
+    draw();
     setTimeout(draw, 500);
   };
   draw(); prices(); readBook();
