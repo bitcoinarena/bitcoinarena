@@ -7761,7 +7761,9 @@
     async function donateSets(gameName) {
       const games = window.ARENA_GAMES_FULL || [];
       const ids = new Set(games.filter((g) => !gameName || g.name === gameName || (g.manifest && g.manifest.gameName === gameName)).map((g) => g.id));
-      const row = (window.BLWP_LOBBY || []).map((x) => x.raw).find((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
+      // every round the lobby lists, not only its current pick: the sets are the same in every paid round of the game
+      const listed = [...(window.BLWP_LOBBY_ROWS || []), ...(window.BLWP_LOBBY || []).map((x) => x.raw)];
+      const row = listed.find((r) => r && !r.free && r.contract && (!gameName || ids.has(r.game)));
       if (!row) return { ok: false, why: gameName ? 'no paid round of this game is listed to read its donation set from' : 'no paid round is listed to read the donation sets from' };
       const ds = await BLWPCLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: BLWPCLIENT.fromHex(row.id) }),
         nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });

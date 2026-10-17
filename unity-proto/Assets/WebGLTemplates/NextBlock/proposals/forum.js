@@ -3,12 +3,11 @@
 // testnet's nodes hold (GET /funding); a thread or a reply is signed and handed to every node (POST /funding). It lives beside the
 // Arena page (testnet.bitcoin-arena.io/proposals/) so it signs with THE PLAYER'S IN-GAME KEY (the owner 2026-10-17: "Users can sign in with
 // their ingame key and their custom name or their generated name"): the identity key of the wallet phrase this browser keeps - the key
-// the lobby and the board name a player by - or an nsec, or a key kept here. Everyone is shown by name: the one the player set (a
+// the lobby and the board name a player by - and nothing else (the owner 2026-10-17: "no other options"). Everyone is shown by name: the one the player set (a
 // signed name record the nodes keep, player-name.js), else the one made from the key. Each proposal is a PIP, numbered by
 // publication. A new proposal shows the reserves and is refused before posting when it asks more than 10 % of them (rule 4).
 (function () {
   var ARENA = window.ARENA_BASE || '/';
-  var KEY = 'arena.proposals.key', MODE = 'arena.proposals.keymode';
   var CAP_PCT = 10;
   var ROOT = '00'.repeat(32);
   var forum = document.getElementById('forum');
@@ -38,29 +37,17 @@
       return BLWPCLIENT.forumIdentity(best.hex, window.BLWP_CURVE).secret;   // the in-game identity key (PIP)
     } catch (e) { return null; }
   }
-  function storedKey() { try { var h = localStorage.getItem(KEY); return h && /^[0-9a-f]{64}$/.test(h) ? BLWPCLIENT.fromHex(h) : null; } catch (e) { return null; } }
+  // ONLY THE IN-GAME KEY (the owner 2026-10-17: "Proposals always use the ingame key and name, no other options"): no nsec, no other key
   function pickKey() {
-    var mode = null; try { mode = localStorage.getItem(MODE); } catch (e) { mode = null; }
-    var a = arenaKey(), s = storedKey();
-    if (mode !== 'own' && a) { state.key = a; state.keyFrom = 'arena'; }
-    else if (s) { state.key = s; state.keyFrom = 'own'; }
-    else if (a) { state.key = a; state.keyFrom = 'arena'; }
-    else { state.key = null; state.keyFrom = null; }
+    var a = arenaKey();
+    state.key = a; state.keyFrom = a ? 'arena' : null;
     showKey();
-  }
-  function setKey(k) {
-    try { if (k) { localStorage.setItem(KEY, BLWPCLIENT.toHex(k)); localStorage.setItem(MODE, 'own'); } else { localStorage.removeItem(KEY); localStorage.removeItem(MODE); } } catch (e) { /* this visit only */ }
-    if (k) { state.key = k; state.keyFrom = 'own'; showKey(); } else pickKey();
   }
   function showKey() {
     var id = $('.key .id'); id.textContent = '';
     if (state.key) { var b = el('b', null, who(mine())); b.title = BLWPCLIENT.npubOf(state.key);
-      id.append(document.createTextNode('Signed in as '), b, document.createTextNode(state.keyFrom === 'arena' ? ' · your in-game key' : ' · your own key')); }
-    else id.textContent = 'Read freely. To post, open the Arena once to make your wallet, or use your nsec.';
-    $('.forget').hidden = state.keyFrom !== 'own';
-    $('.use-arena').hidden = !(state.keyFrom === 'own' && arenaKey());
-    var nf = $('.name-form'); nf.hidden = !state.key;
-    if (state.key && document.activeElement !== nf.name) { var n = state.names[mine()]; nf.name.value = n && n.name ? n.name : ''; nf.name.placeholder = BLWPCLIENT.forumNameOf(mine(), {}); }
+      id.append(document.createTextNode('Signed in as '), b, document.createTextNode(' · your in-game key and name')); }
+    else id.textContent = 'Read freely. To post, open the Arena once: the forum signs with the key and the name you play with.';
   }
   // THE BALANCE ON TOP (the owner 2026-10-17): the reserves the nodes agree on, and the most one PIP may ask
   function showBalance() {
@@ -146,7 +133,7 @@
     var row = el('div', 'bar'); row.append(send, out); form.append(ta, row);
     form.addEventListener('submit', function (e) {
       e.preventDefault(); if (!ta.value.trim()) return;
-      if (!state.key) { say(out, 'Use your nsec or a new key above first.', true); return; }
+      if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
       var c = BLWPCLIENT.signedComment({ secretKey: state.key, proposalId: p.id, parentId: state.replyTo, atHeight: state.tip, text: ta.value });
       say(out, 'Sending…');
       BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'comment', hex: c.hex }).then(function (r) {
@@ -181,7 +168,7 @@
     f.amount.addEventListener('input', check); f.lnurl.addEventListener('input', check);
     f.addEventListener('submit', function (e) {
       e.preventDefault(); var out = f.querySelector('.out');
-      if (!state.key) { say(out, 'Use your nsec or a new key above first.', true); return; }
+      if (!state.key) { say(out, 'Open the Arena once first: the forum signs with your in-game key.', true); return; }
       if (!check() || !f.lnurl.value.trim()) { if (!f.lnurl.value.trim()) say(out, 'Name the Lightning address to pay.', true); return; }
       var amount = Number(f.amount.value);
       say(out, 'Signing…');
@@ -226,27 +213,6 @@
     return load(ARENA + 'blwp-curve.js').then(function () { return load(ARENA + 'arena-client.js'); });
   }).then(function () {
     pickKey();
-    $('.new-key').addEventListener('click', function () { setKey(BLWPCLIENT.newProposalKey()); });
-    $('.forget').addEventListener('click', function () { setKey(null); });
-    $('.use-arena').addEventListener('click', function () { try { localStorage.removeItem(MODE); } catch (e) { /* none */ } pickKey(); });
-    // YOUR NAME (PIP): signed by the key in use and handed to every node; empty = the name made from the key again
-    $('.name-form').addEventListener('submit', function (e) {
-      e.preventDefault(); var out = $('.key-say'), typed = $('.name-form').name.value.trim().replace(/\s+/g, ' ');
-      if (!state.key) return;
-      (state.network ? Promise.resolve(state.network) : BLWPCLIENT.fetchNetworkId({ nodes: state.nodes })).then(function (net) {
-        if (!net) throw new Error('the nodes did not agree on their network');
-        state.network = net;
-        var n = BLWPCLIENT.signedName({ secretKey: state.key, networkId: net, name: typed });
-        say(out, 'Saving…');
-        return BLWPCLIENT.postFunding({ nodes: state.nodes, kind: 'name', hex: n.hex });
-      }).then(function (r) {
-        if (!r.ok) { say(out, 'Not taken: ' + r.why, true); return; }
-        say(out, (typed ? 'Your name is ' + typed : 'Back to the name made from your key') + ' - on ' + r.took + ' of ' + r.asked + ' nodes.');
-        setTimeout(function () { refresh().then(route); }, 1200);
-      }).catch(function (x) { say(out, x.message, true); });
-    });
-    $('.nsec-form').addEventListener('submit', function (e) { e.preventDefault(); var i = $('.nsec');
-      try { setKey(BLWPCLIENT.keyOfNsec(i.value)); i.value = ''; say($('.key-say'), 'Kept in this browser only.'); } catch (x) { say($('.key-say'), x.message, true); } });
     window.addEventListener('hashchange', route);
     return refresh().then(route);
   }).catch(function (e) { view.textContent = ''; view.append(el('div', 'empty', e.message)); });
