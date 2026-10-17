@@ -26,13 +26,16 @@ export const UPDOWN_ATTESTOR_WORDS = Object.freeze(['updown attestor A', 'updown
 export const UPDOWN_CLIENT_FILE = new URL('./client/index-v2.html', import.meta.url);
 export const UPDOWN_CLIENT_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_FILE)).digest();
 // version 3's client (#388) is kept as client/index-v3.html; version 4's ("← Arena", kanban #396) as client/index-v4.html;
-// client/index.html is version 5's (an order's progress in the sheet, a joinable window first - kanban #438)
+// version 5's (an order's progress in the sheet, a joinable window first - kanban #438) as client/index-v5.html; client/index.html is
+// version 6's (My orders as cards, each with its result - kanban #443)
 export const UPDOWN_CLIENT_V3_FILE = new URL('./client/index-v3.html', import.meta.url);
 export const UPDOWN_CLIENT_V3_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V3_FILE)).digest();
 export const UPDOWN_CLIENT_V4_FILE = new URL('./client/index-v4.html', import.meta.url);
 export const UPDOWN_CLIENT_V4_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V4_FILE)).digest();
-export const UPDOWN_CLIENT_V5_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V5_FILE = new URL('./client/index-v5.html', import.meta.url);
 export const UPDOWN_CLIENT_V5_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V5_FILE)).digest();
+export const UPDOWN_CLIENT_V6_FILE = new URL('./client/index.html', import.meta.url);
+export const UPDOWN_CLIENT_V6_HASH = createHash('sha256').update(readFileSync(UPDOWN_CLIENT_V6_FILE)).digest();
 // ITS DONATION KEY IS A POINT ON THE CURVE (kanban #237, measured on the regtest stack: the settlement failed with
 // "blwp-stake-lock: Error: malformed public key"): sign.js testDonationSet takes 0x02 || sha256(word), an x that is on the
 // curve only half the time; this market's key is the public key of a test secret, so a payout to it can be made
