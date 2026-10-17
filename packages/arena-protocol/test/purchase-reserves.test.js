@@ -88,5 +88,8 @@ test('refused: the reserve share missing, 1 msat short or long, to another key, 
   assert.match(why(old), /requires protocol 11: its items pay the protocol reserves, and this record does not/);
   assert.equal(purchaseStands(old, { manifest: V3, networkSet: NETWORK, gameSet: GAME, served: SERVED, verify }).ok, true, 'version 3 keeps its terms');
   assert.match(purchaseStands(bought(), { manifest: V3, networkSet: NETWORK, gameSet: GAME, served: SERVED, verify, reserveKey: RESERVE }).why, /does not sell on those terms/);
-  assert.throws(() => encodePurchase({ ...bought(), devsPct: 50 }), /one of 40, 30, 20, 10, 0/);
+  // the record carries any whole percent since the fees can change by proposal (kanban #462); which ones a buyer may choose is the
+  // fees in force' - with today's, 50 is refused where the outputs are built (above) and where a seat checks the record
+  assert.doesNotThrow(() => encodePurchase({ ...bought(), devsPct: 50 }));
+  assert.throws(() => encodePurchase({ ...bought(), devsPct: 101 }), /whole percent/);
 });

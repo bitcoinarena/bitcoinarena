@@ -199,6 +199,7 @@ import { reserveEpochId } from '../../arena-protocol/src/dkg.js';
 import { reservesEntryExpected, entryFeeBpsForRound, entryPaysReserves } from '../../arena-protocol/src/reserves.js';
 import { reserveFigures, verifyPeerReserveRow, RESERVES_LAST } from './reserve-book.js';
 import { createFundingBook } from './funding-book.js';
+import { FEES, FEES_TODAY, roundSplitBps, ROUND_TOTAL_MAX_BPS, MARKET_TOTAL_MAX_BPS, ITEM_TOTAL_PCT } from '../../arena-protocol/src/fee-proposal.js';
 import { createReservePayouts, lnurlClient } from './reserve-payout.js';
 import { trancheIdOf } from './funding-book.js';
 import { moveTargets } from './reserve-move.js';
@@ -1341,6 +1342,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     return mergeServedRounds(held).rounds;
   };
   const fundingBook = round.db ? createFundingBook({ db: round.db, schedule: fundingSchedule, log: (l) => console.log(l),
+    // THE PROTOCOL DEVELOPERS OF A NETWORK (kanban #462): the keys of the network's donation set in force at this seat's tip - their
+    // majority answers a fee proposal that changes a donation; a set of LNURLs names no key, and none can approve
+    devKeysOf: async (networkHex) => {
+      const keys = donationKeysForNetworkId(fromHex(networkHex)); if (!keys) return null;
+      let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
+      if (!Number.isInteger(height)) return null;
+      const forced = donationSetInForce({ networkId: fromHex(networkHex), authority: keys.authority, recovery: keys.recovery, sets: donationSets,
+        rotations: donationRotations, height, verify: verifyDonation, approved: approvedSets() });
+      if (!forced.ok) return null;
+      return forced.recipients.filter((r) => r.recipientPk instanceof Uint8Array && r.recipientPk.length === 33).map((r) => toHex(r.recipientPk).slice(2));
+    },
     // THE VOTE'S READS OF THIS SEAT'S OWN CHAIN (kanban #397 slice 7): the same as #329's ballot - tip, block hashes, the "ARN" 'V'
     // outputs of a block, the census with each bond's amount at a height
     voteChain: ballot && typeof ballot.votesAt === 'function' && typeof ballot.censusAt === 'function'
@@ -1444,7 +1456,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     broadcast: (rec) => { let seats = []; try { seats = networkSeats(); } catch { seats = []; }
       for (const base of seats) fetch(`${base}/reserve-payout/record`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(rec), signal: AbortSignal.timeout(15000) }).catch(() => {}); },
   }) : null;
-  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound())
+  // THE FEES IN FORCE (kanban #462): at a round's census height - what its entries pay and its settlement splits - or at a height
+  const feesAtHeight = (h) => (fundingBook && Number.isInteger(h) ? fundingBook.feesAt(h) : FEES_TODAY);
+  const feesFor = (contract) => feesAtHeight(Number(contract && contract.censusHeight));
+  if (fundingBook) { const t = setInterval(() => { fundingBook.decide().then(() => fundingBook.voteRound()).then(() => fundingBook.decideFees())
     .then(async () => { if (reservePayouts && typeof chainTip === 'function') { fundingTipSeen = Number(await chainTip()); await reservePayouts.round({ height: fundingTipSeen }); } }).catch(() => {}); }, 120000); if (t.unref) t.unref(); }
 
   // THE PLAYER'S FIRST MARK, FORWARDED TO THE ROUND'S OTHER SIGNER NODES.
@@ -1770,7 +1785,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     random: (n) => new Uint8Array(randomBytes(n)), peersFor: winningsPeers, fetcher: (u, o) => fetch(u, o),
     lnurlFetch, network: winningsNetwork }) : null;
   // THE MARKET ORDER BOOK (kanban #278 step 4): orders taken here, each batch's set agreed with the round's other seats
-  const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(),
+  const orderBook = new OrderBook(round, { plugins: hosted, intervalMs: orderBatchMs, now: () => round.now(), feesFor,
     peersFor: (rid) => { const picked = roster.committeeFor(rid, 'settlement'); return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []); } });
   // AT EVERY CUTOFF: the batch whose cutoff just passed, for each round holding orders not in a batch, if this seat leads it.
   // A little after the cutoff (orderBatchGraceMs), so an order a page posted just before it has landed at every seat.
@@ -1837,7 +1852,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   const settlements = new LockSettlement(round, {
     conflictsFor,
-    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor,
+    dkg, port: stakeLocks, curve: poolCurve, random: (n) => new Uint8Array(randomBytes(n)), stakeSecrets, winnings, finalityOf, donationSetFor, donationTargetFor, orderBook, reserveKeyFor, feesFor,
     peersFor: (rid) => {
       const picked = roster.committeeFor(rid, 'settlement');
       return picked.ok ? endpointsOf(picked.committee, round.pubkey) : (dkg.peers || []);
@@ -5149,7 +5164,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const merged = servedNodes({ rounds: mergeServedRounds(held).rounds, fromMs: from, toMs: to, verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
-          verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]) });
+          verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), fees: feesAtHeight(height) });
         if (!got.ok) return text(res, got.status || 422, got.why);
         // KEPT HERE THE FIRST TIME: handed on to every other seat, each of which checks it for itself and hands it on only when it
         // too keeps it for the first time - so an entry naming the item finds its purchase on whichever seats it is sent to
@@ -5438,7 +5453,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             // PROTOCOL 11 (§27A.9.2, kanban #397): the developers' outputs and the reserve lock, to the entry's federation's reserve key
             const efed = entryFederation(rc, contract);
             const rk = efed.ok ? await reserveKeyFor(toHex(efed.federationId)) : null;
-            const want = ds.ok ? reservesEntryExpected({ entry: contract, recipients: ds.target, reserveKey: rk }) : { ok: false, why: ds.why };
+            const want = ds.ok ? reservesEntryExpected({ entry: contract, recipients: ds.target, reserveKey: rk, split: roundSplitBps(feesFor(rc)) }) : { ok: false, why: ds.why };
             if (!want.ok) return text(res, 409, `entry refused: reserves: ${want.why}`);
           } else if (ds.ok || (contract.donationOutpoints || []).length) {
             const want = ds.ok ? donationOutputsExpected(contract, ds.target) : { ok: false, why: ds.why };
@@ -6237,11 +6252,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const ds = rr ? donationTargetFor(decodeRoundContract(new Uint8Array(rr.contract))) : { ok: false };
           if (ds.ok) donationRecipients = ds.target; }
         let got;
-        let reserveKey = null;
+        let reserveKey = null, split;
         { const se = decodeEntryContract(stored); const rr = round.get(se.roundId);
           if (rr && se.reserveOutpoint) { const rcx = decodeRoundContract(new Uint8Array(rr.contract)); const ef = entryFederation(rcx, se);
-            if (ef.ok) reserveKey = await reserveKeyFor(toHex(ef.federationId)); } }
-        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey }); }
+            if (ef.ok) reserveKey = await reserveKeyFor(toHex(ef.federationId)); split = roundSplitBps(feesFor(rcx)); } }
+        try { got = await verifyStakeLock({ round, port: (await portOfEntryBytes(stored)) || stakeLocks, entryIdBytes: new Uint8Array(eid), fields, claimPk, donationRecipients, reserveKey, split }); }
         catch (e) { got = { ok: false, why: `the federation could not be asked: ${e.message}` }; }
         if (!got.ok) return text(res, 409, got.why);
         // AN ORDER (comment 1127): tradable here once both its locks are verified
@@ -6849,6 +6864,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/reserve-payouts') {
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify({ payouts: reservePayouts ? reservePayouts.list() : [] }));
+      }
+      // THE FEES (kanban #462): the set in force at this seat's tip, every fee's limit and the sums, and every fee proposal with its
+      // changes, signal, vote, the protocol developers' answers and its decision
+      if (req.method === 'GET' && url.pathname === '/fees') {
+        let height = null; try { if (typeof chainTip === 'function') height = Number(await chainTip()); } catch { height = null; }
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify({ tip: height, inForce: feesAtHeight(height), today: FEES_TODAY,
+          limits: Object.fromEntries(Object.entries(FEES).map(([k, f]) => [k, { min: f.min, max: f.max, today: f.today, donation: !!f.donation }])),
+          sums: { roundMaxBps: ROUND_TOTAL_MAX_BPS, itemPct: ITEM_TOTAL_PCT, marketMaxBps: MARKET_TOTAL_MAX_BPS },
+          proposals: fundingBook ? fundingBook.feeList(height) : [] }));
       }
       if (req.method === 'POST' && url.pathname === '/funding') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };

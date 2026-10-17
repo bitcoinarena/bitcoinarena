@@ -170,7 +170,7 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
  * { shares: Map key -> msat (keys in ascending order), totalMsat }.
  */
 export const FRONTEND_FEE_PERCENT = 20n;
-export function frontendShares({ entries, fee, gross }) {
+export function frontendShares({ entries, fee, gross, pct = FRONTEND_FEE_PERCENT }) {
   const brought = new Map();
   for (const e of entries || []) {
     if (isRefund(e.outcome) || !(e.frontendPk instanceof Uint8Array)) continue;
@@ -180,10 +180,10 @@ export function frontendShares({ entries, fee, gross }) {
   const shares = new Map();
   let totalMsat = 0n;
   for (const k of [...brought.keys()].sort()) {
-    const msat = gross > 0n ? (fee * FRONTEND_FEE_PERCENT * brought.get(k)) / (100n * gross) : 0n;
+    const msat = gross > 0n ? (fee * pct * brought.get(k)) / (100n * gross) : 0n;
     shares.set(k, msat); totalMsat += msat;
   }
-  if (totalMsat > (fee * FRONTEND_FEE_PERCENT) / 100n) throw new Error('the websites\' shares exceed 20% of the nodes\' fee');
+  if (totalMsat > (fee * pct) / 100n) throw new Error(`the websites' shares exceed ${pct}% of the nodes' fee`);
   return { shares, totalMsat };
 }
 
@@ -194,7 +194,7 @@ export function frontendShares({ entries, fee, gross }) {
  * floor leaves stays with the nodes. The donation's part is never touched. Answers { shares: Map key -> msat (ascending keys),
  * totalMsat }.
  */
-export function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) {
+export function frontendBookShares({ rows, entries, nodeBps, donationBps = 0, pct = FRONTEND_FEE_PERCENT }) {
   const total = BigInt(nodeBps) + BigInt(donationBps);
   const byKey = new Map();
   for (const r of rows || []) {
@@ -202,7 +202,7 @@ export function frontendBookShares({ rows, entries, nodeBps, donationBps = 0 }) 
     if (!e || !(e.frontendPk instanceof Uint8Array) || total === 0n) continue;
     const nodesPart = ((r.buyFeeMsat + r.sellFeeMsat) * BigInt(nodeBps)) / total;
     const k = hex(e.frontendPk);
-    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * FRONTEND_FEE_PERCENT) / 100n);
+    byKey.set(k, (byKey.get(k) || 0n) + (nodesPart * pct) / 100n);
   }
   const shares = new Map([...byKey.keys()].sort().map((k) => [k, byKey.get(k)]));
   return { shares, totalMsat: [...shares.values()].reduce((a, b) => a + b, 0n) };
