@@ -6077,6 +6077,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
       }
+      // THE ROUNDS THAT TOOK ORDERS HERE LATELY (kanban #452, the owner 2026-10-17: "Have the open orders from the nodes not from local
+      // storage"): a page reads a player's own orders back from these rounds' books after a reload - the closed ones too
+      if (req.method === 'GET' && url.pathname === '/market-rounds') {
+        const since = url.searchParams.get('since');
+        if (since !== null && !/^[0-9]{1,15}$/.test(since)) return text(res, 400, 'GET /market-rounds?since=<ms>');
+        res.writeHead(200, { 'content-type': 'application/json', ...CORS });
+        return res.end(JSON.stringify({ rounds: orderBook.recentRounds(since === null ? 0 : Number(since)) }));
+      }
       if (req.method === 'GET' && (url.pathname === '/batch-proposal' || url.pathname === '/book' || url.pathname === '/book-certificates')) {
         const id = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (id.length !== 32) return text(res, 400, 'that is not a round id');
