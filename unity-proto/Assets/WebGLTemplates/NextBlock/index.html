@@ -7262,7 +7262,10 @@
         rows: lobbyNow().filter((r) => !closedRounds.has(r.id)).map((r) => lobbyViewRow(r, Date.now())),
         refused: refused.map(String), nodes: named.nodes.length,
         // THE SIGNER NODES THAT DID NOT ANSWER the last read within the limit, by address, for the lobby to say so on screen.
-        unanswered: unanswered.map(String), answerS: Math.round((BLWPCLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
+        // SILENT SEATS ARE SAID ONLY WHEN THEY STOP PLAY (kanban #435, the owner 2026-10-17 screenshot: "Signer nodes ... fed2-1 ... fed2-7 did not
+        // answer in 10 s" in red over the PLAY line while the round said "5 agree (5 needed)"): with a round joinable, slow seats are
+        // no error - the box is kept for when no listed round can be joined
+        unanswered: ((window.BLWP_LOBBY || []).some((x) => x && x.joinable) ? [] : unanswered).map(String), answerS: Math.round((BLWPCLIENT.SIGNER_ANSWER_MS || 10000) / 1000),
         // HOW MANY SEATS WERE ASKED, AND HOW MANY FAILED OUTRIGHT (kanban #6): none reached is not "no round open"
         asked: askedNodes, failed: failedNodes,
         // WHICH ROUND the join was for, by id and kind, so a refusal names the round rather than "the round"
