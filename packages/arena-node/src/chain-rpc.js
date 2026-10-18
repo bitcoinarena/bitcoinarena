@@ -41,18 +41,25 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
     }
   });
 
+  // THE COOKIE KEPT, AND READ AGAIN WHEN BITCOIND REFUSES IT (kanban #468 item 4, measured on seat 3's start 2026-10-18: reading
+  // the file on every call was 2.7 % of the main thread's first minute). bitcoind writes a new cookie at its restart, so a 401 -
+  // or no cookie kept yet - reads the file again and asks once more; a cookie that is gone is said as before.
+  let kept = null;
   return async function call(method, params = []) {
-    const auth = Buffer.from(cookie()).toString('base64');
-    let r;
-    try {
-      r = await fetcher(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Basic ${auth}` },
-        body: JSON.stringify({ jsonrpc: '1.0', id: 'blwp', method, params }),
-      });
-    } catch (e) {
-      throw new Error(`bitcoind at ${url} did not answer ${method}: ${e.message}`);
-    }
+    const ask = async () => {
+      if (kept === null) kept = cookie();
+      try {
+        return await fetcher(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Basic ${Buffer.from(kept).toString('base64')}` },
+          body: JSON.stringify({ jsonrpc: '1.0', id: 'blwp', method, params }),
+        });
+      } catch (e) {
+        throw new Error(`bitcoind at ${url} did not answer ${method}: ${e.message}`);
+      }
+    };
+    let r = await ask();
+    if (r.status === 401) { kept = null; r = await ask(); }
     const text = await r.text();
     if (!r.ok) throw new Error(`bitcoind answered ${r.status}: ${text.slice(0, 200)}`);
     let body;
@@ -72,10 +79,21 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
  * a first assignment does. The census checks the header links and merkle roots
  * itself; this only divides the bytes.
  */
+// A HEIGHT'S HASH IS ASKED ONLY NEAR THE TOP OF A VIEW (kanban #468 item 4, measured on seat 3's start 2026-10-18: every census view
+// asked bitcoind for all ~2,016 of its heights again, cached blocks or not - the chain RPC was 9 % of the main thread's first
+// minute). Below DEEP_BLOCKS under the view's top the hash read once is kept (cache.hashAt); a reorganisation that deep is not
+// followed by a kept hash - and the census checks the header links of every view itself, so a stale one is refused, not believed.
+export const DEEP_BLOCKS = 24;
+
 export async function blocksOver(call, from, to, { cache = null } = {}) {
   const blocks = [];
   for (let h = from; h <= to; h++) {
-    const hash = await call('getblockhash', [h]);
+    const deep = cache && cache.hashes && h <= to - DEEP_BLOCKS;
+    let hash = deep ? cache.hashes.get(h) : undefined;
+    if (hash === undefined) {
+      hash = await call('getblockhash', [h]);
+      if (deep) cache.putHash(h, hash);
+    }
     const had = cache ? cache.get(hash) : undefined;
     if (had) { blocks.push(had); continue; }
     // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (the owner 2026-09-18 02:40: name the leftover). The
@@ -111,12 +129,18 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
  */
 export function blockCache({ max = 50000 } = {}) {
   const kept = new Map();
+  const hashes = new Map();                  // height -> hash, for heights deep under the views that read them (blocksOver)
   return {
     inFlight: new Map(),                     // block hash -> the read of it still out (blocksOver)
     get: (hash) => kept.get(hash),
     put: (hash, block) => {
       kept.set(hash, block);
       if (kept.size > max) kept.delete(kept.keys().next().value);
+    },
+    hashes,
+    putHash: (height, hash) => {
+      hashes.set(height, hash);
+      if (hashes.size > max) hashes.delete(hashes.keys().next().value);
     },
     get size() { return kept.size; },
   };
