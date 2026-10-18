@@ -142,9 +142,13 @@ export async function cloudflareTunnel({ bin = 'cloudflared', name, hostname, po
   return { ok: true, id, config };
 }
 
-/** The tunnel's unit: the permanent one by its config, the quick one by the node's port (its name is read from the journal). */
+/** The tunnel's command: the permanent one by its config, the quick one by the node's port. */
+export const tunnelArgsOf = ({ bin, mode, config, port }) => (mode === 'permanent'
+  ? [bin, 'tunnel', '--no-autoupdate', '--config', config, 'run'] : [bin, 'tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`]);
+
+/** The tunnel's systemd unit (its name is read from the journal for a quick tunnel). */
 export function tunnelUnit({ bin, mode, config, port }) {
-  const exec = mode === 'permanent' ? `${bin} tunnel --no-autoupdate --config ${config} run` : `${bin} tunnel --no-autoupdate --url http://127.0.0.1:${port}`;
+  const exec = tunnelArgsOf({ bin, mode, config, port }).join(' ');
   return `# The Arena node's ${mode} Cloudflare tunnel (kanban #471), written by the installer.
 [Unit]
 Description=Arena node ${mode} tunnel
