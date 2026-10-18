@@ -18,6 +18,7 @@ import { execFile } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher } from './service.js';
 import { adhocSign } from './tor.js';
+import { INSTANCE } from './instance.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
@@ -120,7 +121,9 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
   }
   const dir = unitDir(env);
   const seatFile = join(dir, UNIT);
-  const files = () => (existsSync(dir) ? readdirSync(dir) : []).filter((f) => /^arena-.*\.service$/.test(f)).map((f) => join(dir, f));
+  // this node's units only: another node on the machine (instance.js) names its own with a --<instance> suffix
+  const mine = (f) => /^arena-.*\.service$/.test(f) && (INSTANCE ? f.endsWith(`--${INSTANCE}.service`) : !f.includes('--'));
+  const files = () => (existsSync(dir) ? readdirSync(dir) : []).filter(mine).map((f) => join(dir, f));
   const unit = (f) => f.split('/').pop();
   return {
     where: seatFile, seatText: () => (existsSync(seatFile) ? readFileSync(seatFile, 'utf8') : null), releaseOf: releaseOfUnit, files,

@@ -9,6 +9,7 @@
 //              and kept 0600 beside it; LND's channel backup file is not in the seed (said on the page)
 //   test       getinfo over REST with the admin macaroon: its key, block height and whether it is synced to the chain
 //   connect    an LND that already runs: its REST address, admin macaroon (hex) and TLS certificate, tested the same way
+import { port } from './instance.js';
 import { lndTorLines } from './tor.js';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,7 +28,7 @@ export const LND_FILES = Object.freeze({
   'win32-x64': { file: 'lnd-windows-amd64-v0.21.4-beta.zip', sha256: 'ddd334677f4eec19891f47b8277aa14a6c845852dcab351efe442fad35f176d2' },
 });
 /** LND's ports on this machine. */
-export const LND_PORTS = Object.freeze({ rpc: 10009, rest: 10080, p2p: 9735 });
+export const LND_PORTS = Object.freeze({ rpc: port(10009), rest: port(10080), p2p: port(9735) });   // + ARENA_PORT_OFFSET (instance.js)
 const LND_SEED_TAG = 'arena/lnd/v1';
 
 const run = (cmd, args, opts = {}) => new Promise((resolve) => execFile(cmd, args, { timeout: 600000, ...opts }, (e, out, err) => resolve({ ok: !e, out: String(out), err: String(err) })));

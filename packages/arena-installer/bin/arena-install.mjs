@@ -20,6 +20,7 @@
 // --join-federation  the node's gateway (set up in the wizard's Lightning step) joins a federation by its invite code (gateway.js)
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
+import { port as offsetPort } from '../src/instance.js';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -30,9 +31,9 @@ import { openQuickTunnel } from '../src/tunnel.js';
 
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
-const port = Number(opt('--port', 7800));
+const port = Number(opt('--port', offsetPort(7800)));   // + ARENA_PORT_OFFSET (instance.js)
 const seatPort = Number(opt('--seat-port', 8470));
-const bridgePort = Number(opt('--bridge-port', 8471));
+const bridgePort = Number(opt('--bridge-port', offsetPort(8471)));
 const home = resolve(opt('--home', defaultHome()));
 const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const state = nodeState(home);

@@ -12,7 +12,8 @@
 import { mkdirSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { UNIT, BRIDGE_UNIT, TUNNEL_UNIT, LAUNCHD_LABEL, WINDOWS_TASK, startupDir } from './service.js';
+import { UNIT, BRIDGE_UNIT, TUNNEL_UNIT, LAUNCHD_LABEL, WINDOWS_TASK, startupDir, unitName } from './service.js';
+import { named } from './instance.js';
 
 /** The services of a node from its state: { linux: units, darwin: launchd labels, win32: task names }. */
 export function servicesOf(s) {
@@ -27,9 +28,9 @@ export function servicesOf(s) {
   if (s.reach && s.reach.mode === 'workers') ids.push('workers');                       // the keeper of the workers.dev address
   return {
     // the node last when starting (its chain first), first when stopping
-    linux: [...ids.map((id) => (id === 'chain-bridge' ? BRIDGE_UNIT : `arena-${id}.service`)), UNIT, ...(tunnel ? [TUNNEL_UNIT] : [])],
-    darwin: [...ids.map((id) => `io.bitcoin-arena.${id}`), LAUNCHD_LABEL, ...(tunnel ? [`${LAUNCHD_LABEL}.tunnel`] : [])],
-    win32: [...ids.map((id) => `Arena ${id}`), WINDOWS_TASK, ...(tunnel ? [`${WINDOWS_TASK} tunnel`] : [])],
+    linux: [...ids.map((id) => (id === 'chain-bridge' ? BRIDGE_UNIT : unitName(id))), UNIT, ...(tunnel ? [TUNNEL_UNIT] : [])],
+    darwin: [...ids.map((id) => `${LAUNCHD_LABEL}.${id}`), LAUNCHD_LABEL, ...(tunnel ? [`${LAUNCHD_LABEL}.tunnel`] : [])],
+    win32: [...ids.map((id) => named(`Arena ${id}`, ' ')), WINDOWS_TASK, ...(tunnel ? [`${WINDOWS_TASK} tunnel`] : [])],
   };
 }
 
