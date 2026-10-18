@@ -50,7 +50,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .fed-ring { width: 170px; } .fed-explain .big { font-size: 16px; } .fed-explain p { margin: 6px 0; }
     .choices { display: grid; gap: 10px; margin: 8px 0 12px; } .choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer; }
     .choice:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); } .choice input[type=radio] { width: auto; margin-top: 4px; } .choice p { margin: 4px 0 0; font-size: 13px; opacity: .85; }
-    .choice .tag { font-size: 11px; background: #f7931a; color: #111; border-radius: 6px; padding: 1px 6px; margin-left: 4px; } .choice #fed-invite { margin-top: 8px; }
+    .choice .tag { font-size: 11px; background: #f7931a; color: #111; border-radius: 6px; padding: 1px 6px; margin-left: 4px; }
     .rules { display: grid; gap: 10px; margin: 6px 0 14px; } .rule { display: grid; grid-template-columns: 44px 1fr; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; align-items: start; }
     .rule .ic { font-size: 28px; line-height: 1; text-align: center; } .rule p { margin: 4px 0 0; font-size: 14px; } .rule.good { border-color: #2ea043; } .rule.bad { border-color: #da3633; background: rgba(218,54,51,.07); } .red { color: #ff7b72; }
     @media (max-width: 560px) { .fed-explain { grid-template-columns: 1fr; } .fed-ring { margin: 0 auto; } }
@@ -273,11 +273,13 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
         <p>&#9889; Its two gateways connect it to Lightning; every guardian earns a share of each round.</p>
       </div>
     </div>
+    <p class="big">How your node gets its seat - <b>automatically</b>, whichever comes first:</p>
     <div class="choices">
-      <label class="choice"><input type="radio" name="fedmode" value="found" checked><div><b>&#10024; Found a new federation</b> <span class="tag">recommended</span><p>Your node waits for <b>9 other new nodes</b>. When ten are ready they start one together - automatically, nothing to do.</p></div></label>
-      <label class="choice"><input type="radio" name="fedmode" value="invite"><div><b>&#127903; Join with an invitation</b><p>Someone in a federation gave you an invite code.</p><input id="fed-invite" placeholder="fed1…"></div></label>
+      <div class="choice"><div><b>&#10024; A new federation</b><p>Your node and <b>9 other new nodes</b> are drawn to start one together.</p></div></div>
+      <div class="choice"><div><b>&#128260; A seat in a successor</b><p>When a federation shrinks (a guardian leaves), a new one takes over its players' bitcoin: its remaining guardians first, the missing seats <b>drawn</b> from nodes like yours.</p></div></div>
     </div>
-    <button id="fed-save">Save and go on</button>
+    <p class="sub">Nobody is invited and nobody picks: the draw is fixed by the chain, so no one can choose who guards the money. A full federation takes no new guardian.</p>
+    <button id="fed-save">Continue</button>
     <div class="msg" id="fed-msg"></div>
   </section>
 
@@ -452,9 +454,7 @@ async function watchGw() {
 $('gw-setup').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/gateway/setup', { boot: true }); e.target.disabled = false; if (!r.ok) return say('gw-msg', r); watchGw(); };
 $('gw-later').onclick = async () => { const r = await post('/api/gateway/later'); if (!r.ok) return say('gw-msg', r); load(); };
 $('gw-next').onclick = () => load();
-$('fed-save').onclick = async (e) => { const mode = document.querySelector('input[name=fedmode]:checked').value; e.target.disabled = true;
-  const r = await post('/api/federation', { mode, invite: $('fed-invite').value }); e.target.disabled = false; if (!r.ok) return say('fed-msg', r); load(); };
-$('fed-invite').addEventListener('focus', () => { document.querySelector('input[name=fedmode][value=invite]').checked = true; });
+$('fed-save').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/federation'); e.target.disabled = false; if (!r.ok) return say('fed-msg', r); load(); };
 $('promise-text').addEventListener('input', () => { $('promise-save').disabled = $('promise-text').value.trim().toUpperCase() !== 'I UNDERSTAND'; });
 $('promise-save').onclick = async () => { const r = await post('/api/promise', { text: $('promise-text').value }); if (!r.ok) return say('promise-msg', r); load(); };
 

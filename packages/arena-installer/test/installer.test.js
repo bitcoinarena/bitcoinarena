@@ -226,11 +226,10 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.deepEqual([joined.ok, joined.federations[0].name, gwKit.joined], [true, 'T', 'fed1testinvite']);
   assert.equal((await c.get('/api/state')).json.gateway.passwordFile, undefined, 'the page is not told where the admin password is');
 
-  // THE FEDERATION, ITS OWN STEP (the owner 2026-10-18): found one with nine others (the default), or join by invitation
+  // THE FEDERATION, ITS OWN STEP (the owner 2026-10-18): explained, no choice - a guardian seat is drawn (founding or succession), never invited
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'federation');
-  assert.match((await c.post('/api/federation', { mode: 'invite', invite: 'not-an-invite' })).json.why, /starts with fed1/);
-  assert.equal((await c.post('/api/federation', { mode: 'found' })).json.mode, 'found');
+  assert.equal((await c.post('/api/federation', { mode: 'invite', invite: 'fed1x' })).json.mode, 'drawn', 'no invitation: a guardian seat is only drawn');
   // THE BOND'S RULES, UNDERSTOOD: no bond before them; only "I UNDERSTAND" goes on
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'promise');
