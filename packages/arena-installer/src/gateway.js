@@ -33,16 +33,17 @@ export const gatewayMnemonicOf = (seed) => phraseFromSeed(taggedHash(GATEWAY_SEE
  * <home>/gateway: data dir, admin password (kept), its bcrypt hash. `lnd`: { lnddir? tlsCert, macaroon, rpcHost }. Answers { dir, args,
  * vars, apiUrl, passwordFile }: `args` the command line, `vars` its environment (the mnemonic) for service.js installProgram.
  */
-export function configureGateway({ home, gatewayd, seed, lnd, port = GATEWAY_PORT, apiUrl = `http://127.0.0.1:${port}`, esplora = TESTNET4_ESPLORA, cost = 10 }) {
+export function configureGateway({ home, gatewayd, seed, lnd, port = GATEWAY_PORT, apiUrl = `http://127.0.0.1:${port}`, publicUrl = null, esplora = TESTNET4_ESPLORA, cost = 10 }) {
   const dir = join(home, 'gateway');
   mkdirSync(join(dir, 'data'), { recursive: true, mode: 0o700 });
   const passwordFile = join(dir, 'admin-password');
   if (!existsSync(passwordFile)) writeFileSync(passwordFile, randomBytes(24).toString('base64url'), { mode: 0o600 });
   const hash = bcrypt.hashSync(readFileSync(passwordFile, 'utf8').trim(), cost);
-  const args = [gatewayd, `--data-dir=${join(dir, 'data')}`, `--listen=127.0.0.1:${port}`, `--api-addr=${apiUrl}`, `--bcrypt-password-hash=${hash}`,
+  // --api-addr is where the federation's clients reach it: the node's public address /gateway/ (the seat carries it here); apiUrl, local, is ours
+  const args = [gatewayd, `--data-dir=${join(dir, 'data')}`, `--listen=127.0.0.1:${port}`, `--api-addr=${publicUrl || apiUrl}`, `--bcrypt-password-hash=${hash}`,
     '--network=testnet4', `--esplora-url=${esplora}`, '--skip-setup',   // the mnemonic is the seed's (FM_GATEWAY_MNEMONIC), not set up in its own UI
     'lnd', `--lnd-rpc-host=${lnd.rpcHost || `https://127.0.0.1:${LND_PORTS.rpc}`}`, `--lnd-tls-cert=${lnd.tlsCert}`, `--lnd-macaroon=${lnd.macaroon}`];
-  return { dir, args, vars: { FM_GATEWAY_MNEMONIC: gatewayMnemonicOf(seed) }, apiUrl, passwordFile };
+  return { dir, args, vars: { FM_GATEWAY_MNEMONIC: gatewayMnemonicOf(seed) }, apiUrl, publicUrl: publicUrl || apiUrl, passwordFile };
 }
 
 const call = async ({ apiUrl, passwordFile, path, method = 'GET', body, fetcher = fetch }) => {

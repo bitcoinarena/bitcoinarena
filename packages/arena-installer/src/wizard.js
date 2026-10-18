@@ -356,10 +356,10 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const f = gwKit.findGatewayd({ release });
       if (!f.ok) return { ok: false, why: f.why, noBinary: true };
       const g = gwKit.configureGateway({ home: state.home, gatewayd: f.gatewayd, seed: fromHex(state.readSecret('seed.hex')),
-        lnd: { rpcHost: l.rpcHost, tlsCert: l.tlsCert, macaroon: l.macaroon } });
+        lnd: { rpcHost: l.rpcHost, tlsCert: l.tlsCert, macaroon: l.macaroon }, publicUrl: s.reach && s.reach.url ? `${s.reach.url.replace(/\/+$/, '')}/gateway/` : null });
       const r = await gwKit.installProgram({ id: 'gateway', description: 'The Fedimint gateway of the Arena node (custody)', args: g.args, vars: g.vars, home: state.home, boot: b.boot !== false });
       if (!r.ok) return { ok: false, why: r.why };
-      state.save({ gateway: { apiUrl: g.apiUrl, passwordFile: g.passwordFile, dir: g.dir, startedMs: Date.now() } });
+      state.save({ gateway: { apiUrl: g.apiUrl, publicUrl: g.publicUrl, passwordFile: g.passwordFile, dir: g.dir, startedMs: Date.now() } });
       return { ok: true };
     },
     'POST /api/gateway/status': async () => {
