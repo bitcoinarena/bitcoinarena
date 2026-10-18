@@ -74,3 +74,26 @@ test('a tap on any balance opens the split: each federation\'s sats, its status 
   assert.ok(text.indexOf('bbbbbbbb') < text.indexOf('aaaaaaaa'), 'the larger first');
   for (const sel of Object.keys(bars)) assert.equal(typeof bars[sel].listeners.click, 'function', sel + ' opens it');
 });
+
+// A HELD FEDERATION'S FUNDS ONCE ITS STATUS IS KNOWN (kanban #467, live UI 220 2026-10-18: the statuses landed ~15 s after the first
+// sum; 2,500 sat in a second federation stayed out of the balance - 53 sat shown for 2,553 held - until some later read)
+test('when the statuses land, a held federation with no wallet open is summed again; all open - nothing more is read', async () => {
+  const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
+  const bal = { [A]: 53000n, [B]: 2500000n };
+  const window = { ARENA_FED_LOADS: new Map(), BLWP_LOCK_WASM: async () => ({ default: async () => {}, LockClient: {} }), BLWP_PENDING_SATS: 0 };
+  const client = (f) => ({ balanceMsat: async () => String(bal[f] || 0n) });
+  let opens = 0;
+  const BLWPCLIENT = { ledgerFederations: () => [A, B], fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')),
+    openPlayerWallet: async ({ federationId }) => { opens += 1; return client(Buffer.from(federationId).toString('hex')); } };
+  new Function('window', 'BLWPCLIENT', 'walletSeed', 'vault', src)(window, BLWPCLIENT, () => new Uint8Array(32), () => ({}));
+  window.BLWP_KEEP_WALLET(A, client(A));
+  await window.BLWP_SUM_BALANCES();               // the page's first sum: no statuses yet, B cannot open
+  assert.equal(window.BLWP_WALLET_BALANCE.sats, 53);
+  window.ARENA_FED_LOADS = new Map([[A, { federation: A, invite: 'invA' }], [B, { federation: B, invite: 'invB' }]]);
+  await window.BLWP_SUM_HELD();                    // the statuses land
+  assert.deepEqual([window.BLWP_WALLET_BALANCE.sats, opens], [2553, 1], 'B opened and summed');
+  assert.equal(window.BLWP_SUM_HELD(), null, 'every held federation open: no further read');
+  const calls = HTML.split('window.ARENA_FED_LOADS = all;').slice(1).map((s) => s.split('\n').slice(0, 2).join('\n'));
+  assert.equal(calls.length, 2, 'both places that set the statuses');
+  for (const c of calls) assert.match(c, /if \(window\.BLWP_SUM_HELD\) window\.BLWP_SUM_HELD\(\);/);
+});
