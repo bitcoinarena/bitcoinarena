@@ -1,6 +1,6 @@
 // IS THIS RELEASE OURS? (kanban #471 A.3, ruling 6). SHA256SUMS signed with the Arena release key (Ed25519, tools/release/sign.sh);
 // the installer and the updater accept an asset only when the signature verifies with the key below and the asset's SHA-256 is the
-// line SHA256SUMS names for it. The key's public half is also published on the Arena site (release-key.txt) and in
+// line SHA256SUMS names for it. The key's public half is also published on the Arena site (https://testnet.bitcoin-arena.io/release-key.txt) and in
 // deploy/release/arena-release-key.pub.pem.
 import { createPublicKey, verify, createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
