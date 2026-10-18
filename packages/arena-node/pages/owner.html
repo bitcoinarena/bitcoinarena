@@ -295,10 +295,11 @@ async function liquidityPanel() {
   const el = $('liquidity');
   if (!c) { el.innerHTML = `<p><b>This node is no liquidity provider.</b> A provider opens incoming Lightning channels to new nodes and earns a share of the 1 % liquidity pool of their federations. To become one, run <code>arena-install</code> again and choose <b>Liquidity provider</b> (it needs LND and a deposit of 500,000 sat on testnet4).</p>`; return; }
   const min = LIQUIDITY_DEPOSIT.testnet4, free = Number(c.freeSats), given = (c.channels || []);
-  const low = free < min;
+  // the minimum counts free coins + the channels it gave (the owner 2026-10-18): giving liquidity never removes the share
+  const held = free + given.reduce((a, x) => a + Number(x.capacitySats), 0), low = held < min;
   el.innerHTML = `<div class="row"><span>Free for new channels</span><b>${free.toLocaleString('en')} sat</b></div>
-    <div class="row"><span>Deposit minimum</span><b>${min.toLocaleString('en')} sat</b></div>
-    ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - free).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share of the liquidity pool.</p>'}
+    <div class="row"><span>Deposit minimum (free + channels given)</span><b>${min.toLocaleString('en')} sat</b></div>
+    ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - held).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share of the liquidity pool.</p>'}
     <div class="row"><span>Channels given to new nodes</span><b>${given.length} (${given.reduce((a, x) => a + Number(x.capacitySats), 0).toLocaleString('en')} sat)</b></div>
     ${given.map((x) => `<div class="row"><span><code>${esc(x.peer.slice(0, 16))}…</code></span><b>${Number(x.capacitySats).toLocaleString('en')} sat</b></div>`).join('')}
     <div class="row"><span>Top up (LND's wallet, testnet4)</span><b><code>${esc(c.depositAddress || '(not known yet)')}</code></b></div>

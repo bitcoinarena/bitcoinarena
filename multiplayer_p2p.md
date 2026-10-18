@@ -5443,8 +5443,10 @@ game/verify, settlement, custody, liquidity.
   - in the guardians' signed list (the liquidity seating) each weight is **floored to L** (100,000 sat testnet4, 250,000 mainnet):
     free balances move by the minute, and guardians reading a few minutes apart must still sign the same list to reach the threshold.
 - **Below the deposit, no share** *(the owner 2026-10-18: "Once a liquidity provider has not enough funds left he never receives
-  part of the 1%")*: a provider whose proven free balance is below the deposit minimum (5 × L on testnet4, 10 × L on mainnet) has
-  weight 0 and earns nothing of the liquidity pool, whatever channels it gave. Once topped up to the minimum it earns again.
+  part of the 1%")*: a provider whose **proven free balance + the capacity of the channels it gave** is below the deposit minimum
+  (5 × L on testnet4, 10 × L on mainnet) has weight 0 and earns nothing of the liquidity pool. Once topped up to the minimum it earns
+  again. *(the owner 2026-10-18, "ok accepted": the channels it gave count, so giving liquidity never removes the share - measured:
+  LND D held 600,000, gave one channel of 100,000 and kept 496,150 free; free-only it would have dropped out after one channel.)*
 - The federation's guardians check every provider's claim each epoch (144 blocks) and **sign the list**, the same way as the
   gateway seating (§23A.9: threshold of the seated guardians). The settlement pays only a signed list.
 - With no liquidity seat, the pool goes to the custody pool.
