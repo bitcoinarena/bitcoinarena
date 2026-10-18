@@ -123,9 +123,9 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
           <text x="320" y="198">shared by the 7 nodes</text><text x="320" y="214">seated on the round</text>
           <text x="480" y="198" fill="#58a6ff">&#8532; guardians</text><text x="480" y="214">the federation's 10</text>
           <text x="590" y="198" fill="#f7931a">&#8531; gateways</text><text x="590" y="214">the day's 2</text>
-          <text x="320" y="242" fill="#8b949e" font-size="12">Seats are drawn fresh for every round from the nodes that are up - the more you are up, the more rounds you serve.</text>
+          <text x="320" y="242" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
         </g>
-        <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker></defs>
+        <defs><marker id="ar2" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#8b949e"/></marker></defs>
       </svg>
       <div class="ff-ex"><div class="ff-ex-h">Example: rounds with <b>1,000,000 sat</b> of stakes - 40,000 sat go to the nodes. Each seated node gets:</div>
         <div class="ff-rows">
@@ -293,7 +293,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <p id="b-new">Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (fees included) to your node's own wallet:</p>
     <p><code id="b-addr" style="font-size:15px"></code></p>
     <div id="b-custody" hidden>
-      <p>Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, and the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning. Both stay in your node's wallet until then.</p>
+      <p id="b-custody-why">Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, and the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning. Both stay in your node's wallet until then.</p>
       <label>Peg-in for the gateway (sat)</label><input id="b-pegin" value="50000">
     </div>
     <button class="ghost" id="b-check">Check for my deposit</button>
@@ -332,7 +332,7 @@ async function load() {
   if (st.step === 'chain') pickElectrum();
   if (st.step === 'lightning' && st.lightning && st.lightning.pubkey) $('ln-gw').hidden = false;
   if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); $('b-custody').hidden = !st.roles.includes('custody');
-  $('b-later-custody').hidden = !st.custodyLater; $('b-new').hidden = st.custodyLater; $('b-post').textContent = st.custodyLater ? 'Update my bond for custody' : 'Post the bond'; }
+  $('b-later-custody').hidden = !st.custodyLater; $('b-custody-why').hidden = st.custodyLater; $('b-later').textContent = st.custodyLater ? 'Later' : 'I\'ll post it later'; $('b-new').hidden = st.custodyLater; $('b-post').textContent = st.custodyLater ? 'Update my bond for custody' : 'Post the bond'; }
   if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
