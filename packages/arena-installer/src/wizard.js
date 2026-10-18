@@ -438,16 +438,11 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     'POST /api/federation': async (b) => {
       const s = state.read();
       if (!(s.roles || []).includes('custody')) { mark('federation', { federation: null }); return { ok: true }; }
-      if (b.mode === 'invite') {
-        const invite = String(b.invite || '').trim();
-        if (!/^fed1[0-9a-z]+$/.test(invite)) return { ok: false, why: 'an invite code starts with fed1' };
-        let joined = null;
-        if (s.gateway) { const j = await gwKit.joinFederation({ ...s.gateway, invite }); if (!j.ok) return j; joined = j.federationId; }
-        mark('federation', { federation: { mode: 'invite', invite, gatewayJoined: joined, atMs: Date.now() } });
-        return { ok: true, mode: 'invite', federationId: joined };
-      }
-      mark('federation', { federation: { mode: 'found', atMs: Date.now() } });
-      return { ok: true, mode: 'found' };
+      // NO INVITATION (the owner 2026-10-18: "it cannot invite if it's already full ... Yes remove it"): stock Fedimint adds no guardian to a
+      // running federation, so a node is seated only by a draw - a new federation of ten, or the missing seats of a draining one's
+      // successor (§23A.6). An invite code only lets a gateway serve a federation: arena-install --join-federation does that.
+      mark('federation', { federation: { mode: 'drawn', atMs: Date.now() } });
+      return { ok: true, mode: 'drawn' };
     },
     // THE BOND'S RULES, UNDERSTOOD (the owner 2026-10-18: "Explain in detail, intuitive why we need a bond and leaving without clicking LEAVE will
     // slash the bond ... people have to type I UNDERSTAND. That is its own screen")
