@@ -16513,8 +16513,24 @@ async function awaitIssued(client, { untilMs = null, onStep = () => {} } = {}) {
     await new Promise((r) => setTimeout(r, ISSUE_POLL_MS));
   }
 }
+/**
+ * A WALLET SHORT OF THE STAKE IS ASKED AT THE PRESS (the owner 2026-10-18, playtest: "I have no money deposited yet it is trying to place
+ * the order. It takes a while then the deposit screen comes. It shouldn't take so long" - measured 27.25 s, 24.8 of them in front of the
+ * deposit waiting on the round's donation set from a seat that did not answer). Before the round's other steps: the player wallet opened
+ * and read; holding less than the stake it surely cannot enter, so the deposit offer is made now - `fundPlayerWallet({ early })` waits
+ * on this same offer instead of asking again. Holding the stake or more: null, and the round's own quote decides as before.
+ */
+async function earlyDepositOffer({ round, invite, seed, LockClient, storage, gateways = [], onDeposit = () => {}, onStep = () => {} } = {}) {
+  const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
+  const have = BigInt(await client.balanceMsat());
+  const issuing = await issuingMsat(client);
+  if (have + issuing >= stakeOf(round)) return null;
+  onStep(`the player wallet holds ${have} msat, less than this round's stake of ${stakeOf(round)} msat: a deposit is asked at once`);
+  return depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: null, gateways, onDeposit, storage, federationId: round.federationId });
+}
+
 async function fundPlayerWallet({ round, invite, seed, LockClient, storage, donationMsat = 0n, donationRecipients = null, gateways = [],
-  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null } = {}) {
+  estimateDeposit = false, askDeposit = null, onDeposit = () => {}, onStep = () => {}, entryClosesMs = null, early = null } = {}) {
   const client = await playerWallet({ round, invite, seed, LockClient, storage, onStep });
   const locks = await locksFor(round, client, donationMsat, donationRecipients);
   const deposits = [];
@@ -16544,15 +16560,28 @@ async function fundPlayerWallet({ round, invite, seed, LockClient, storage, dona
     if (askDeposit) {
       const short = (n.need !== null ? n.need : n.floor) - have;
       const restMsat = prev || shortOnlyByFees(have, short, stakeOf(round)) ? restOfFeesMsat(short > 0n ? short : 0n) : null;
-      const offer = depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
+      // THE OFFER ALREADY SHOWN AT THE PRESS (earlyDepositOffer, the owner 2026-10-18): a wallet short of the stake was asked at once,
+      // while the round's other steps ran - that offer is this one; it is waited for, not made or asked again
+      const adopt = !prev && early && !early.adopted && restMsat === null;
+      if (adopt) early.adopted = true;
+      const offer = adopt ? early : depositOffer({ client, stakeMsat: stakeOf(round), haveMsat: have, needMsat: n.need, gateways, onDeposit,
         storage, federationId: round.federationId, restMsat, sizeOf: (k) => roundsDepositMsat(k, locks, LockClient) });
-      if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
+      if (adopt) { /* already on the screen */ } else if (prev) prev.decided({ funded: false, rest: offer }); else askDeposit(offer);
       onStep(restMsat === null ? 'waiting for the deposit into the player wallet' : `waiting for the rest of this round's fees: ${restMsat} msat`);
       // NOT PAST THE ROUND'S ENTRY (kanban #6, MF 18: a deposit left open was still waiting 30 s and 151 s past the close, the round's
       // clock at 0:00 behind it, no error): at the round's last entry instant the request is closed with the reason - the join is
       // refused by name. Its invoice is still followed: paid later, it lands in the player wallet, for the next round.
       let closeTimer = null;
-      if (entryClosesMs !== null && entryClosesMs !== undefined && Number.isFinite(Number(entryClosesMs))) {
+      // A DEPOSIT ASKED BECAUSE THE WALLET WAS SHORT IS THE WALLET'S, NOT THE ROUND'S (the owner 2026-10-18 playtest, RPS with 0 sat: "No deposit
+      // screen comes" - measured on the test host: an RPS round's entry closed 3 s after the press, which closed the offer before it was ever
+      // seen): at the round's entry close the join ends by name, and the early offer stays on the screen - its invoice still followed, paid
+      // later it lands in the player wallet for the next round
+      if (adopt && entryClosesMs !== null && entryClosesMs !== undefined && Number.isFinite(Number(entryClosesMs))) {
+        const why = `the round's entry closed at ${new Date(Number(entryClosesMs)).toISOString().slice(11, 19)} UTC before the deposit arrived: nothing was taken for this round; the deposit is still open and goes into your wallet for the next round`;
+        const left = Math.max(0, Number(entryClosesMs) - Date.now());
+        await Promise.race([offer.claimed, new Promise((resolve, reject) => { closeTimer = setTimeout(() => reject(new Error(why)), left); })])
+          .finally(() => { if (closeTimer) clearTimeout(closeTimer); });
+      } else if (entryClosesMs !== null && entryClosesMs !== undefined && Number.isFinite(Number(entryClosesMs))) {
         const why = `the round's entry closed at ${new Date(Number(entryClosesMs)).toISOString().slice(11, 19)} UTC before the deposit arrived: nothing was taken for this round`;
         const left = Number(entryClosesMs) - Date.now();
         if (left <= 0) offer.close(why); else closeTimer = setTimeout(() => offer.close(why), left);
@@ -33738,7 +33767,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine,
          fetchReserveKey: fetchReserveKey, fetchReservesTotal: fetchReservesTotal, fetchReservesPaymentsOut: fetchReservesPaymentsOut, paymentOutLine: paymentOutLine, fetchProposals: fetchProposals, fetchNetworkId: fetchNetworkId, signedProposal: signedProposal, signedComment: signedComment, signedName: signedName, forumIdentity: forumIdentity, forumNameOf: forumNameOf, giftDonation: giftDonation, signedLeaderboardPayout: signedLeaderboardPayout, splitFromPercents: splitFromPercents, fetchLeaderboards: fetchLeaderboards, heightAtDate: heightAtDate, LB_SCOPE: LB_SCOPE, LB_PERIOD_DAYS: LB_PERIOD_DAYS, LB_TOP_MAX: LB_TOP_MAX, fetchFees: fetchFees, feeChangesFrom: feeChangesFrom, signedFeeProposal: signedFeeProposal, earliestActivation: earliestActivation, roundFeesLine: roundFeesLine, marketFeesLine: marketFeesLine, marketFeeBpsOf: marketFeeBpsOf, FEE_UNITS: FEE_UNITS, FEES: FEES, FEES_TODAY: FEES_TODAY, feeProposalStands: feeProposalStands, zapPlayer: zapPlayer, collectZaps: collectZaps, myOrdersFromEntries: myOrdersFromEntries, mountExchange: mountExchange, exchangeLadder: exchangeLadder, exchangeHistory: exchangeHistory, exchangeVolume: exchangeVolume, giftAmountOf: giftAmountOf, giftRecipientsLine: giftRecipientsLine, GIFT_CHOICES_SAT: GIFT_CHOICES_SAT, postFunding: postFunding, newProposalKey: newProposalKey, keyOfNsec: keyOfNsec, npubOf: npubOf, npubOfKey: npubOfKey, reservesDonation: reservesDonation, reservesDonationForRound: reservesDonationForRound, roundPaysReserves: roundPaysReserves,
-         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
+         playerWallet: playerWallet, openPlayerWallet: openPlayerWallet, walletDepositOffer: walletDepositOffer, walletDepositChoices: walletDepositChoices, fundPlayerWallet: fundPlayerWallet, earlyDepositOffer: earlyDepositOffer, walletSecretFor: walletSecretFor, markSeedRecover: markSeedRecover, seedRecovers: seedRecovers,
          withdrawPlayerWallet: withdrawPlayerWallet,
          saveLock: saveLock, savedLock: savedLock, markLockCommitted: markLockCommitted, keptLockUse: keptLockUse,
          roundEndMs: roundEndMs,
