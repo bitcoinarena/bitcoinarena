@@ -30,7 +30,9 @@ import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
 export const CUSTODY_PEG_IN_SATS = 50000;
-import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd } from './lnd.js';
+import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, lndFunds, lndOpenChannel, lndChannels } from './lnd.js';
+/** A gateway seat's requirements on testnet4 (spec §23A.9), said in the wizard. */
+export const GATEWAY_SEAT = Object.freeze({ minCapacitySats: 200000, minPegInSats: 50000, availability: 0.95, seats: 2, epochBlocks: 144 });
 import { findGatewayd, configureGateway, testGateway, joinFederation } from './gateway.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -49,7 +51,7 @@ const same = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(Strin
 export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_PORT, bridgePort = null, test = testConnection, install = installService,
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
-  lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram },
+  lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
   gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
@@ -94,7 +96,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
+      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS) } : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -330,6 +332,19 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
         macaroon: state.path('lnd-connect.macaroon'), rpcHost: b.rpcHost ? String(b.rpcHost) : `https://${restUrl.hostname}:10009`, pubkey: t.pubkey, alias: t.alias, testedMs: Date.now() };
       state.save({ lightning: l });
       return { ok: true, ...t };
+    },
+    // CHANNELS (§23A.9: a gateway seat needs public channel capacity): LND's deposit address and balances, a channel to a named peer
+    'POST /api/lightning/funds': async () => {
+      const l = state.read().lightning;
+      if (!l || !l.pubkey) return { ok: false, why: 'set up and test LND first' };
+      const [f, ch] = await Promise.all([lndKit.lndFunds(l), lndKit.lndChannels(l)]);
+      if (!f.ok) return f;
+      return { ...f, channels: ch.ok ? ch : null, seat: GATEWAY_SEAT };
+    },
+    'POST /api/lightning/channel': async (b) => {
+      const l = state.read().lightning;
+      if (!l || !l.pubkey) return { ok: false, why: 'set up and test LND first' };
+      return lndKit.lndOpenChannel(l, { peer: b.peer, sats: b.sats });
     },
     'POST /api/lightning/later': async () => { mark('lightning', { lightning: null }); return { ok: true }; },
 
