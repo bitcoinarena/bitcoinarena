@@ -23,7 +23,7 @@ import { bech32Encode, convertBits } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
 import { pendingWindowLine, savedLockExpiration, PAYOUT_GRACE_MS, ISSUE_POLL_MS, awaitIssued } from '../src/page-lock.js';
-import { lockStake, fundPlayerWallet, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
+import { lockStake, fundPlayerWallet, earlyDepositOffer, walletSecretFor, markSeedRecover, seedRecovers, walletStoreFor, withdrawPlayerWallet, handLock, lockSecretFor, lockAmountMsat, lockLine, saveLock, savedLock, markLockCommitted,
   refundStake, redeemStake, redeemPayout, redeemSlashPayout, payoutLine, returnStake, collectOwed, stakeBackLine, saveCollect, savedCollects, markCollectDone, keptLockUse, withdrawCollected, collectIntoPlayerWallet, invoiceAmountMsat, withdrawLine, refundKept, refundLine, lookOwed, owedToLine as owedLine, collectAndWithdraw, tabLockWallet, findOwedRounds, feeSecretFor, ledgerRows, ledgerReadSavedStakes, playerWallet, depositChoices, depositOffer, withdrawChoices, playerWithdrawable, pendingDeposits, resumeDeposits, restOfFeesMsat, shortOnlyByFees, restInvoiceMsat, ceilNote, NOTE_MSAT, roundsDepositMsat, locksForRound, settingsDepositOffer, DEPOSIT_INSUFFICIENT } from '../src/page-lock.js';
 import { replayLinkFor } from '../src/replay-link.js';
 import { lockFieldsFromJson } from '../../arena-protocol/src/stake-lock.js';
@@ -2116,4 +2116,37 @@ test('a slow wallet open is waited for, not joined twice: one client for every c
   assert.equal(joins, 1, 'the federation was joined once - no second client over the same store');
   assert.ok(steps.some((s) => /still opening \(over 0 s\) - one wallet, waited for/.test(s)), steps.join(' | '));
   assert.ok(!steps.some((s) => /joining the federation again/.test(s)), steps.join(' | '));
+});
+
+// PLAYTEST 2026-10-18 (the owner: "I have no money deposited yet it is trying to place the order. It takes a while then the deposit screen
+// comes. It shouldn't take so long" - 27.25 s measured, 24.8 s of it the donation set in front of the deposit)
+test('a wallet short of the stake is asked at the press: the early offer is the one the round waits on - never a second ask; a funded wallet gets none', async () => {
+  const { LockClient, log } = noteClient();
+  const tab = tabStorage(); const sd = b32(0xe1);
+  const early = await earlyDepositOffer({ round, invite: INVITE, seed: sd, LockClient, storage: tab });
+  assert.ok(early, 'an empty wallet: the offer at once');
+  assert.deepEqual(early.choices.map((c) => c.label), ['1 round', '2 rounds', '5 rounds', '10 rounds', 'Custom']);
+  let asked = 0;
+  const funding = fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, early, askDeposit: () => { asked++; } });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(asked, 0, 'the round did not ask again: the offer on the screen is its own');
+  early.invoice(early.choices[1].msat);   // the player pays "2 rounds"
+  await funding;
+  assert.equal(asked, 0);
+  assert.equal(log.filter((l) => l.receive).length, 1, 'one invoice, the early one');
+  assert.equal(await earlyDepositOffer({ round, invite: INVITE, seed: sd, LockClient, storage: tab }), null, 'now holding two rounds: no early ask');
+  await fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, askDeposit: () => assert.fail('a funded wallet asked for a deposit') });
+});
+
+test('the early offer outlives the round\'s entry: at the close the join ends by name, the offer stays open, and paid later it fills the wallet', async () => {
+  const { LockClient } = noteClient();
+  const tab = tabStorage(); const sd = b32(0xe2);
+  const early = await earlyDepositOffer({ round, invite: INVITE, seed: sd, LockClient, storage: tab });
+  let closed = null; const close0 = early.close; early.close = (why) => { closed = why; return close0 ? close0.call(early, why) : undefined; };
+  await assert.rejects(() => fundPlayerWallet({ round, invite: INVITE, seed: sd, LockClient, storage: tab, early, entryClosesMs: Date.now() + 80, askDeposit: () => assert.fail('asked again') }),
+    /entry closed .* before the deposit arrived: nothing was taken for this round; the deposit is still open and goes into your wallet for the next round/);
+  assert.equal(closed, null, 'the offer was not closed with the round');
+  early.invoice(early.choices[0].msat);
+  await early.claimed;
+  assert.equal(await earlyDepositOffer({ round, invite: INVITE, seed: sd, LockClient, storage: tab }), null, 'paid after the close: the wallet holds the stake now');
 });
