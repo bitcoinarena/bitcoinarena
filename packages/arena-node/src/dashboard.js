@@ -186,6 +186,7 @@ th{color:var(--dim);font-weight:600}td.n{text-align:right;font-variant-numeric:t
 <h2>Rounds checked</h2><div class="card scroll"><table id="rounds"></table></div>
 <h2>Settlements</h2><div class="card scroll"><div id="sstate" class="sub"></div><table id="settle"></table></div>
 <h2>Federations</h2><div class="card scroll"><table id="feds"></table></div>
+<div id="liqbox"></div>
 <script>
 const sat=(m)=>{const n=Number(m)/1000;return (n<10?n.toFixed(3):n.toFixed(n<1000?1:0)).replace(/\\.0+$/,'')+' sat'};
 const t=(ms)=>ms?new Date(ms).toISOString().replace('T',' ').slice(0,19)+' UTC':'-';
@@ -247,7 +248,9 @@ el('rounds').onclick=(ev)=>{const tr=ev.target.closest('tr.rr');if(!tr)return;co
 el('sstate').textContent=Object.entries(D.settlementsByState).map(([k,v])=>k+' '+v).join(' · ')||'none yet';
 el('settle').innerHTML='<tr><th>Round</th><th>Made</th><th>State</th><th>What</th></tr>'+D.settlements.map(s=>'<tr><td>'+s.round.slice(0,12)+'</td><td>'+t(s.madeMs)+'</td><td class="'+(s.state==='ACCEPTED'?'ok':s.state==='REFUSED'?'bad':'')+'">'+s.state+'</td><td>'+s.why.replace(/[<>&]/g,'')+'</td></tr>').join('');
 el('feds').innerHTML='<tr><th>Federation</th><th class="n">Paid rounds</th><th>First</th><th>Last</th></tr>'+D.federations.map(f=>'<tr><td>'+f.federation.slice(0,16)+'…</td><td class="n">'+f.rounds+'</td><td>'+t(f.firstMs)+'</td><td>'+t(f.lastMs)+'</td></tr>').join('')}
-async function load(){D=await (await fetch('dashboard.json',{cache:'no-store'})).json();
+// THE LIQUIDITY CARD (kanban #494, §23A.10): a provider's free coins against the deposit minimum, the channels it gave, the top-up address
+async function liquidity(){let c=null;try{const r=await fetch('liquidity-claim',{cache:'no-store'});c=r.ok?await r.json():null}catch{c=null}if(!c){el('liqbox').innerHTML='';return}const min=500000,free=Number(c.freeSats),g=c.channels||[];const r=(k,v)=>'<div class="row"><span>'+k+'</span><b>'+v+'</b></div>';el('liqbox').innerHTML='<h2>Liquidity provider</h2><div class="card">'+r('Free for new channels',free.toLocaleString('en')+' sat')+r('Deposit minimum',min.toLocaleString('en')+' sat')+(free<min?'<p class="bad">Below the deposit minimum: no share of the liquidity pool until topped up.</p>':'<p class="ok">Earning its share, by the balance it gives.</p>')+r('Channels given',g.length+' ('+g.reduce((a,x)=>a+Number(x.capacitySats),0).toLocaleString('en')+' sat)')+r('Top up (LND wallet)','<code>'+String(c.depositAddress||'-').replace(/[&<>"]/g,'')+'</code>')+'</div>'}
+async function load(){liquidity();D=await (await fetch('dashboard.json',{cache:'no-store'})).json();
 el('who').textContent='node '+D.node+' · active since '+t(D.sinceMs)+' · '+D.roundsChecked+' rounds checked · as of '+t(D.nowMs);totals();chart();tables()}
 load().catch(e=>{el('who').textContent='could not read dashboard.json: '+e.message});setInterval(()=>load().catch(()=>{}),60000);
 </script></body></html>`;

@@ -28,13 +28,14 @@ export function liquidityClaimHash(c) {
   w.bytes32(fromHex(c.node)); w.bytes(fromHex(c.lightningPubkey), 33); w.str(String(c.lightningAddr || ''));
   w.u64(BigInt(c.freeSats)); w.u64(BigInt(c.atMs));
   w.vec([...c.channels].sort((a, b) => (a.peer < b.peer ? -1 : a.peer > b.peer ? 1 : 0)), (x, ww) => { ww.bytes(fromHex(x.peer), 33); ww.u64(BigInt(x.capacitySats)); });
+  w.str(String(c.depositAddress || ''));   // where the provider is topped up (its LND wallet): the owner page and dashboard show it
   return taggedHash(LIQUIDITY_CLAIM_TAG, w.finish());
 }
 
 /** A claim signed with `sign(hash32) -> sig64` by node key `node` (hex). */
 export function signLiquidityClaim(f, sign) {
   const c = { node: String(f.node).toLowerCase(), lightningPubkey: String(f.lightningPubkey).toLowerCase(), lightningAddr: String(f.lightningAddr || ''),
-    freeSats: String(f.freeSats), atMs: String(f.atMs),
+    freeSats: String(f.freeSats), atMs: String(f.atMs), depositAddress: String(f.depositAddress || ''),
     channels: (f.channels || []).map((x) => ({ peer: String(x.peer).toLowerCase(), capacitySats: String(x.capacitySats) })) };
   return { ...c, signature: toHex(sign(liquidityClaimHash(c))) };
 }
