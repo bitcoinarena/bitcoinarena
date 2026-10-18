@@ -96,6 +96,8 @@ const wizard = createWizard({ state, release, seatPort, bridgePort, cloudflared,
   // the public address when the node has one (the owner 2026-10-18: "Always show the public address and not 127.0.0.1 when it's not localhost only")
   const pub = (state.read().reach || {}).url;
   console.log(`\nDone. Your node runs as the user service arena-node.\nIts owner page: ${pub || `http://127.0.0.1:${seatPort}`}/Dashboard/owner${pub ? '' : ' (this machine only)'}`);
+  const l = state.read().launchers;
+  if (l) console.log(`To start it again: ${l.app ? `open "Arena Node" in Applications (${l.app})` : l.menu && /Start Menu/.test(l.menu) ? 'Start menu > Arena Node' : 'Arena Node in your desktop menu'}, or run ${l.start}`);
   if (tunnel) tunnel.close();
   server.close(); setTimeout(() => process.exit(0), 300);
 } });
