@@ -171,7 +171,8 @@ paths are the ones every LNv2 payment runs; this use of them is not.
   keys) and the top ones open. No coordinator.
 - **Paid** from a guardian-signed list per epoch, like the gateway seats; with no provider, the pool goes to custody. With more than
   one provider the pool is split by **available balance** (the owner: "dependant on available balance"): each provider's channels to the
-  federation's nodes plus its proven free coins, floored to 10,000 sat.
+  federation's nodes plus its proven free coins, floored to 10,000 sat. A provider whose free coins are below the deposit minimum
+  earns nothing of it until topped up.
 - **Live on testnet4:** LND C and LND D on the test host.
 
 ## Who hosts the Lightning: two gateway seats, and what they earn (the owner 2026-10-18; spec §23A.9)

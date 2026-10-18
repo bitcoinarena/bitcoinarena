@@ -45,6 +45,9 @@ test('assignment: the same for every provider, at most 2 per node, the top by ti
 
 test('the weight: channels to the federation\'s nodes + free balance, floored to 10,000 sat', () => {
   const N = nodeN(9), O = nodeN(8);
-  const c = prov(1, { freeSats: 205000, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }, { peer: O.lightningPubkey, capacitySats: 100000 }] });
-  assert.equal(liquidityWeight(c, [N.lightningPubkey]), 300000n, '100,000 in the federation + 205,000 free -> 305,000 floored');
+  const c = prov(1, { freeSats: 505000, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }, { peer: O.lightningPubkey, capacitySats: 100000 }] });
+  assert.equal(liquidityWeight(c, [N.lightningPubkey]), 600000n, '100,000 in the federation + 505,000 free -> 605,000 floored');
+  const poor = prov(2, { freeSats: 499999, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }] });
+  assert.equal(liquidityWeight(poor, [N.lightningPubkey]), 0n, 'below the deposit minimum (500,000 on testnet4): no share, channels or not');
+  assert.equal(liquidityWeight({ ...poor, freeSats: '2499999' }, [N.lightningPubkey], 'mainnet'), 0n, 'mainnet minimum 2,500,000');
 });
