@@ -567,7 +567,9 @@ function feeSettlement({ entries, feeLocks, signerNodes, contract, fees, feeBps 
   let table;
   // A VERSION-11 GAME ROUND'S NODES TAKE 4 % (§27A.9.1, kanban #397): its fee locks hold that, and the table owes that
   const rate = feeBps !== undefined ? feeBps : (paysReserves(contract) ? RESERVES_NODE_FEE_BPS : undefined);
-  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
+  // the liquidity providers' weights (2026.0.16, §23A.10): `signerNodes.liquidityWeights` node hex -> sat, from the standing liquidity seating
+  const weights = signerNodes.liquidityWeights instanceof Map ? { liquidity: signerNodes.liquidityWeights } : null;
+  try { table = nodeFeeTable({ contract, entries: counted, pools: signerNodes, eligible, weights, ...(rate !== undefined ? { feeBps: rate } : {}) }); } catch (e) { return refuse(e.message); }
   const poolMsat = claims.reduce((s, c) => s + c.amountMsat, 0n);
   // A MARKET'S FEE LOCKS HOLD ITS DONATION TOO: the rest above the node table is the donation set's, never the nodes'
   const donationOwedMsat = donation ? poolMsat - table.fee : 0n;
