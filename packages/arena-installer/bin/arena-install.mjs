@@ -39,6 +39,11 @@ const release = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const state = nodeState(home);
 const cloudflared = process.env.ARENA_CLOUDFLARED || 'cloudflared';   // the release's own (arena-install sets it), else PATH
 
+// THE END OF A COMMAND THAT TALKED TO THE NETWORK OR RAN PROGRAMS: process.exit after 1.5 s, so the handles still closing close first
+// (measured in the Windows VM, rc.21 --update: after "Updated: ... the same node answers", an immediate process.exit aborted on
+// "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76"). Awaited: nothing after the command runs.
+const finish = (code) => new Promise(() => { setTimeout(() => process.exit(code), 1500); });
+
 // AN UPDATE (kanban #471 part E): checked, unpacked beside the running release, the node moved to it (update.js)
 if (args.includes('--update')) {
   const { updateNode } = await import('../src/update.js');
@@ -62,7 +67,7 @@ if (args.includes('--update')) {
     node: `${dir}/${name}/runtime/${process.platform === 'win32' ? 'node.exe' : 'node'}` });
   console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
-  process.exit(r.ok ? 0 : 1);
+  await finish(r.ok ? 0 : 1);
 }
 
 // A LARGER BOND (kanban #471 part D): the plan, then with --yes the broadcast
@@ -80,7 +85,7 @@ if (args.includes('--rebond')) {
     + `\nbecome a bond of ${p.bondSats} sat, locked until block ${p.maturity} (${p.lock.blocks} blocks, about ${new Date(p.lock.estimatedMs).toUTCString()}).`
     + `\nFees ${p.fees.funding} + ${p.fees.bond} sat${p.changeSats !== '0' ? `, ${p.changeSats} sat back to the wallet` : ''}.`);
   console.log(r.bond ? `Posted: the new bond is ${r.bond.txid}:0.` : 'Nothing sent. Run again with --yes to post it.');
-  process.exit(0);
+  await finish(0);
 }
 
 // A FEDERATION FOR THE GATEWAY (kanban #471 slice 5, ruling 3: by invite)
@@ -93,7 +98,7 @@ if (args.includes('--join-federation')) {
   const t = await testGateway(g);
   if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
   console.log(`Joined ${j.federationId}. The gateway serves: ${t.ok ? t.federations.map((f) => f.name || f.federationId).join(', ') : '(its list could not be read now)'}`);
-  process.exit(0);
+  await finish(0);
 }
 
 if (args.includes('--add-custody')) {
