@@ -1,6 +1,6 @@
 name: node release
 
-# THE ARENA NODE ON GITHUB RELEASES (kanban #471 part A, slice 1: Linux). A tag v<version> builds every asset with the same script
+# THE ARENA NODE ON GITHUB RELEASES (kanban #471 part A: Linux, macOS, Windows). A tag v<version> builds every asset with the same script
 # (tools/release/build-linux.sh), tests the installer and the seat doors it uses, installs each asset fresh and checks it runs,
 # and drafts the release with the assets and SHA256SUMS. The draft is signed outside CI with the Arena release key
 # (tools/release/sign.sh, ruling 6: the key never sits in CI) and then published; the installer refuses unsigned assets.
@@ -37,67 +37,96 @@ jobs:
         working-directory: packages/arena-node
         run: node --test --test-timeout=120000 test/reach-check.test.js
 
+  # EVERY ASSET IS ASSEMBLED ON LINUX (GNU tar and zip, fixed order and times: the same bytes from the same commit), then installed
+  # fresh on its own system (smoke)
   build:
     needs: test
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            os: ubuntu-latest
-          - arch: arm64
-            os: ubuntu-24.04-arm
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24.15.0
       - name: version
         id: v
         run: echo "version=${{ github.event.inputs.version || github.ref_name }}" | sed 's/=v/=/' >> "$GITHUB_OUTPUT"
       - name: build
-        run: tools/release/build-linux.sh "${{ steps.v.outputs.version }}" ${{ matrix.arch }} out
-      # A FRESH INSTALL OF THE ASSET (F.1): unpacked into an empty directory, its seat started on its own runtime hosting nextblock,
-      # its installer started and its setup link entered
-      - name: fresh install
+        run: |
+          for t in "linux x64" "linux arm64" "darwin arm64" "darwin x64" "windows x64"; do
+            set -- $t; tools/release/build-release.sh "${{ steps.v.outputs.version }}" $1 $2 out
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets
+          path: |
+            out/*.tar.gz
+            out/*.zip
+            out/SHA256SUMS
+
+  # A FRESH INSTALL OF EACH ASSET ON ITS OWN SYSTEM (F.1): unpacked into an empty directory, its seat started on its own runtime hosting
+  # nextblock, and (Linux, macOS) its installer started and its setup link entered
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, asset: linux-x64 }
+          - { os: ubuntu-24.04-arm, asset: linux-arm64 }
+          - { os: macos-latest, asset: darwin-arm64 }
+          - { os: macos-13, asset: darwin-x64 }
+          - { os: windows-latest, asset: windows-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: out
+      - name: fresh install (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
         run: |
           set -eu
-          mkdir run && tar -xzf out/arena-node-*-linux-${{ matrix.arch }}.tar.gz -C run
+          mkdir run && tar -xzf out/arena-node-*-${{ matrix.asset }}.tar.gz -C run
           R=$(echo "$PWD"/run/arena-node-*)
           (cd "$R/packages/arena-node" && ARENA_DONATION_NETWORK=testnet4 ARENA_GAMES="$R/packages/nextblock/plugin/nextblock.js" \
             "$R/runtime/node" src/main.js 31917 "$PWD/seat.db" > "$PWD/seat.log" 2>&1 &)
-          for i in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:31917/identity && break; sleep 1; done
-          curl -sf http://127.0.0.1:31917/games | grep -q '"name":"nextblock"'
+          for i in $(seq 1 90); do curl -sf -o /dev/null http://127.0.0.1:31917/identity && break; sleep 1; done
+          curl -sf http://127.0.0.1:31917/games | grep -q '"name":"nextblock"' || { cat seat.log; exit 1; }
           ("$R/arena-install" --port 31918 --seat-port 31919 --home "$PWD/home" > inst.log 2>&1 &)
           for i in $(seq 1 30); do grep -q '?t=' inst.log && break; sleep 1; done
           link=$(grep -oE 'http://127.0.0.1:31918/\?t=[A-Za-z0-9_-]+' inst.log)
           cookie=$(curl -s -o /dev/null -D - "$link" | grep -i set-cookie | grep -oE 'arena_wizard=[^;]+')
           curl -sf -H "cookie: $cookie" http://127.0.0.1:31918/api/state | grep -q '"step":"chain"'
           "$R/runtime/cloudflared" --version
-          echo "fresh install of $(cat "$R/VERSION") ($(cat "$R/COMMIT")) on ${{ matrix.arch }}: seat and installer run"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: asset-${{ matrix.arch }}
-          path: |
-            out/*.tar.gz
-            out/SHA256SUMS
+          echo "fresh install of $(cat "$R/VERSION") ($(cat "$R/COMMIT")) on ${{ matrix.asset }}: seat and installer run"
+      - name: fresh install (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path (Get-ChildItem out\arena-node-*-windows-x64.zip).FullName -DestinationPath run
+          $R = (Get-ChildItem run\arena-node-*).FullName
+          $env:ARENA_DONATION_NETWORK = 'testnet4'; $env:ARENA_GAMES = "$R\packages\nextblock\plugin\nextblock.js"
+          Start-Process -FilePath "$R\runtime\node.exe" -ArgumentList 'src\main.js','31917',"$PWD\seat.db" -WorkingDirectory "$R\packages\arena-node" -RedirectStandardOutput seat.log -RedirectStandardError seat.err
+          $ok = $false; for ($i = 0; $i -lt 90; $i++) { try { Invoke-WebRequest -UseBasicParsing http://127.0.0.1:31917/identity | Out-Null; $ok = $true; break } catch { Start-Sleep 1 } }
+          if (-not $ok) { Get-Content seat.log, seat.err; exit 1 }
+          if (-not ((Invoke-WebRequest -UseBasicParsing http://127.0.0.1:31917/games).Content -match '"name":"nextblock"')) { exit 1 }
+          & "$R\runtime\cloudflared.exe" --version
+          "fresh install of $(Get-Content $R\VERSION) on windows-x64: the seat runs"
 
   release:
-    needs: build
+    needs: smoke
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: assets
           path: assets
       - name: draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat assets/*/SHA256SUMS | sort -k2 > SHA256SUMS
+          sort -k2 assets/SHA256SUMS > SHA256SUMS
           gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft --title "Arena node ${{ github.ref_name }}" \
             --notes "Testnet4 only. Download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://testnet.bitcoin-arena.io/release-key.txt." \
-            assets/*/*.tar.gz SHA256SUMS
+            assets/*.tar.gz assets/*.zip SHA256SUMS

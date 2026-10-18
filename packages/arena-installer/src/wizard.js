@@ -183,7 +183,8 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const conf = { ...s, port, bridgePort };
       state.writeSecret('node.env', seatEnv(conf, { home: state.home, release }));
       const tunnel = s.reach.mode === 'direct' ? null : reach.tunnelUnit({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
-      const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, boot });
+      const tunnelArgs = s.reach.mode === 'direct' ? null : reach.tunnelArgsOf({ bin: cloudflared, mode: s.reach.mode, config: s.reach.config, port });
+      const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot });
       if (!r.ok) return { ok: false, why: r.why };
       // THE PUBLIC ADDRESS, TESTED: a tunnel from outside through Cloudflare's edge (a quick tunnel's name read first, and the node's
       // settings rewritten with it - it is new at every restart); a direct node was reached by the seats before it started
