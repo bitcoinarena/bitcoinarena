@@ -37,11 +37,12 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
     depositAddress: async (o) => { calls.push(['address', o.federationId]); return { ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' }; } };
   let clock = 1_800_000_000_000;
   // LND: one channel out so far (no inbound), announcing an address; the ring's other members from the seat; peers and channels faked
-  let open = [{ peer: '03' + '77'.repeat(32), capacitySats: 250000, public: true, active: true }];
+  let open = [{ peer: '03' + '77'.repeat(32), capacitySats: 250000, public: true, active: true, remoteSats: 40000 }];
+  const hub = '02' + '44'.repeat(32);
   let lndOnchain = 0; const lndCalls = []; const connected = new Set();
   const ring = [{ node: '00'.repeat(32), lightningPubkey: '02' + '11'.repeat(32), lightningAddr: '198.51.100.1:9735' },
     { node: 'ff'.repeat(32), lightningPubkey: '03' + '22'.repeat(32), lightningAddr: '' }];
-  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock,
+  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock, hubs: [`${hub}@hubhubhub.onion:9735`],
     channels: async () => ({ ok: true, open, pending: [], publicCapacitySats: 250000, inboundSats: 0, outboundSats: 250000 }),
     lndInfo: async () => ({ ok: true, uris: ['02' + '99'.repeat(32) + '@203.0.113.9:9735'] }),
     ringMembers: async () => [...ring, { node: toHex(schnorr.getPublicKey(nodeSecret)), lightningPubkey: '02' + '99'.repeat(32), lightningAddr: '203.0.113.9:9735' }],
@@ -82,12 +83,20 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   const claim = JSON.parse(readFileSync(join(home, 'gateway-claim.json'), 'utf8'));
   assert.equal(checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k)).ok, true, 'signed by the node key');
   assert.deepEqual([claim.node, claim.federationId, claim.gatewayUrl, claim.capacitySats, claim.pegInSats], [toHex(schnorr.getPublicKey(nodeSecret)), fid, 'https://node.example.com/gateway/', '250000', '50000']);
-  assert.deepEqual([claim.inboundSats, claim.outboundSats, claim.lightningAddr], ['0', '250000', '203.0.113.9:9735'], 'inbound and outbound apart, and where LND takes peers');
+  assert.deepEqual([claim.inboundSats, claim.outboundSats, claim.outsideInboundSats, claim.lightningAddr], ['0', '250000', '40000', '203.0.113.9:9735'], 'inbound and outbound apart, the inbound from outside the federation, and where LND takes peers');
+  // THE OUTSIDE CHANNEL first: to the hub (an onion address, dialled over Tor), funded into LND's wallet once
+  coins = [{ txid: '7c'.repeat(32), vout: 1, sats: 400000 }];
+  assert.equal((await agent.tick()).did, 'outside-fund');
+  assert.equal(parseTransaction(fromHex(sent[3])).outputs[0].value, 103000n);
+  assert.match((await agent.tick()).idle, /outside channel's 103000 sat are on their way/);
+  lndOnchain = 104000;
+  assert.equal((await agent.tick()).did, 'outside-channel');
+  assert.deepEqual(lndCalls.slice(-2), [['connect', hub, 'hubhubhub.onion:9735'], ['open', hub, 100000]]);
+  lndOnchain = 0; lndCalls.length = 0; connected.clear();
   // THE RING: members in node-key order (00.., this node, ff..); the next one after this node is ff.. (it takes no connections)
-  coins = [{ txid: '7c'.repeat(32), vout: 1, sats: 200000 }];
   const fund = await agent.tick();
   assert.equal(fund.did, 'ring-fund', 'LND\'s wallet is empty: the ring channel\'s funds go to it first');
-  assert.equal(parseTransaction(fromHex(sent[3])).outputs[0].value, 153000n);
+  assert.equal(parseTransaction(fromHex(sent[4])).outputs[0].value, 153000n);
   assert.match((await agent.tick()).idle, /on their way to LND/, 'once');
   lndOnchain = 160000;
   assert.match((await agent.tick()).idle, /waits for ffffffffffff… to connect/, 'the next node takes no connections and has not dialled in');
@@ -113,7 +122,7 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   assert.deepEqual(lndCalls.slice(-2), [['connect', '02' + '33'.repeat(32), '192.0.2.9:9735'], ['open', '02' + '33'.repeat(32), 150000]], 'the same coins, now to the newcomer');
   clock += 3_600_000;
   assert.equal((await agent.tick()).did, 'gateway-claim');
-  assert.equal(sent.length, 4, 'each payment once');
+  assert.equal(sent.length, 5, 'each payment once');
   state.save({ roles: ['verify'] });
   assert.match((await agent.tick()).idle, /no custody role/);
 });

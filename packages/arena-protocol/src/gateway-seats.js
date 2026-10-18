@@ -36,7 +36,9 @@ export function gatewayTicket(beacon, nodeKey) {
 export function ineligibleWhy(c, { minimums, bondMinGuardian }) {
   if (!c.seatedGuardian) return 'not a seated guardian of the federation';
   if (!c.registered) return 'its gateway is not registered with the federation';
-  if (BigInt(c.inboundSats || 0) < minimums.inboundSats) return `inbound liquidity ${c.inboundSats || 0} below ${minimums.inboundSats} sat (deposits come in through it)`;
+  // inbound from OUTSIDE the federation: a payer on the wider Lightning network reaches the gateway only through it (the ring's channels
+  // move money between the federation's own gateways)
+  if (BigInt(c.outsideInboundSats || 0) < minimums.inboundSats) return `inbound liquidity from outside the federation ${c.outsideInboundSats || 0} below ${minimums.inboundSats} sat (deposits come in through it)`;
   if (BigInt(c.outboundSats || 0) < minimums.outboundSats) return `outbound liquidity ${c.outboundSats || 0} below ${minimums.outboundSats} sat (payouts leave through it)`;
   if (BigInt(c.pegInSats) < minimums.pegInSats) return `peg-in ${c.pegInSats} below ${minimums.pegInSats} sat`;
   if (Math.floor(Number(c.availabilityPct)) < minimums.availabilityPct) return `available ${Math.floor(Number(c.availabilityPct))} % of the epoch, below ${minimums.availabilityPct} %`;

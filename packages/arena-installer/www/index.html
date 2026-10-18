@@ -304,7 +304,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <p><code id="b-addr" style="font-size:15px"></code></p>
     <p class="sub">No testnet4 coins? Get them free from <a href="https://coinfaucet.eu/en/btc-testnet4/" target="_blank" rel="noopener">coinfaucet.eu</a>.</p>
     <div id="b-custody" hidden>
-      <p id="b-custody-why">Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning - and the <b>ring channel</b> (150,000 sat) your node opens to the next node of the federation, which gives every gateway Lightning in and out. All of it stays in your node's wallet until then.</p>
+      <p id="b-custody-why">Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning - the <b>outside channel</b> (100,000 sat) to a well-connected Lightning node, which links your gateway to the wider network, and the <b>ring channel</b> (150,000 sat) your node opens to the next node of the federation. All of it stays in your node's wallet until then.</p>
       <label>Peg-in for the gateway (sat)</label><input id="b-pegin" value="50000">
     </div>
     <button class="ghost" id="b-check">Check for my deposit</button>
@@ -434,7 +434,7 @@ const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l
 let lnTimer = null;
 async function watchLn() {
   const r = await post('/api/lightning/status');
-  if (r.ok) { $('ln-msg').className = 'msg ok'; $('ln-msg').textContent = `LND ${r.version || ''} runs on ${r.network}: node ${String(r.pubkey).slice(0, 16)}…, block ${r.blockHeight}${r.syncedToChain ? ', synced' : ', catching up with the chain'}${r.created ? '; its wallet was made from your words' : ''}.`; $('ln-gw').hidden = false; return; }
+  if (r.ok) { $('ln-msg').className = 'msg ok'; $('ln-msg').textContent = `LND ${r.version || ''} runs on ${r.network}: node ${String(r.pubkey).slice(0, 16)}…, block ${r.blockHeight}${r.syncedToChain ? ', synced' : ', catching up with the chain'}${r.peers ? `. Lightning peers: ${r.peers}` : ''}${r.created ? '; its wallet was made from your words' : ''}.`; $('ln-gw').hidden = false; return; }
   $('ln-msg').className = 'msg ' + (r.waiting ? 'ok' : 'bad'); $('ln-msg').textContent = r.waiting ? `Starting LND… (${r.why})` : r.why;
   if (r.waiting) { clearTimeout(lnTimer); lnTimer = setTimeout(watchLn, 5000); }
 }
@@ -475,7 +475,7 @@ $('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await 
   say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
-  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', ring: 'ring channel' };
+  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel' };
   if (r.parts && r.parts.pegIn !== undefined) $(r.update ? 'b-need2' : 'b-need').textContent = `${r.needSats.toLocaleString('en')} (${Object.entries(r.parts).map(([k, v]) => `${PART[k] || k} ${v.toLocaleString('en')}`).join(', ')})`;
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
   m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';

@@ -7,7 +7,7 @@ import { toHex } from '../src/hash.js';
 
 const k = (n) => new Uint8Array(32).fill(n);
 const beacon = new Uint8Array(32).fill(0xbe);
-const ok = (n, over = {}) => ({ node: k(n), operatorId: `op${n}`, seatedGuardian: true, registered: true, volumeSats: 0n, inboundSats: 150_000n, outboundSats: 150_000n,
+const ok = (n, over = {}) => ({ node: k(n), operatorId: `op${n}`, seatedGuardian: true, registered: true, volumeSats: 0n, inboundSats: 300_000n, outsideInboundSats: 150_000n, outboundSats: 150_000n,
   pegInSats: 60_000n, availabilityPct: 99, bondSats: 50_000n, ...over });
 const seat = (candidates, incumbents = []) => seatGateways({ candidates, beacon, incumbents, network: 'testnet4', bondMinGuardian: 50_000n });
 
@@ -17,7 +17,8 @@ test('who may stand: each requirement named when it is missing', () => {
   assert.equal(why({}), null);
   assert.match(why({ seatedGuardian: false }), /not a seated guardian/);
   assert.match(why({ registered: false }), /not registered/);
-  assert.match(why({ inboundSats: 99_999n }), /inbound liquidity 99999 below 100000 sat \(deposits/, 'outbound only takes no deposit');
+  assert.match(why({ outsideInboundSats: 99_999n }), /inbound liquidity from outside the federation 99999 below 100000 sat \(deposits/, 'outbound only takes no deposit');
+  assert.match(why({ inboundSats: 900_000n, outsideInboundSats: 0n }), /from outside the federation 0 below/, 'inbound from the ring alone takes no deposit from the wider network');
   assert.match(why({ outboundSats: 0n }), /outbound liquidity 0 below 100000 sat \(payouts/);
   assert.match(why({ pegInSats: 49_999n }), /peg-in 49999 below 50000/);
   assert.match(why({ availabilityPct: 94.9 }), /available 94 %/);
@@ -25,7 +26,7 @@ test('who may stand: each requirement named when it is missing', () => {
 });
 
 test('the best two: routed volume first, then capacity, availability, bond, the ticket; one seat per operator', () => {
-  const r = seat([ok(1, { volumeSats: 5_000n }), ok(2, { volumeSats: 9_000n }), ok(3, { volumeSats: 9_400n }), ok(4, { volumeSats: 50_000n, operatorId: 'op3' }), ok(5, { inboundSats: 100n })]);
+  const r = seat([ok(1, { volumeSats: 5_000n }), ok(2, { volumeSats: 9_000n }), ok(3, { volumeSats: 9_400n }), ok(4, { volumeSats: 50_000n, operatorId: 'op3' }), ok(5, { outsideInboundSats: 100n })]);
   assert.deepEqual(r.seated, [toHex(k(4)), toHex(k(2))], 'op3\'s best node stands for it (one seat per operator); 9,400 and 9,000 floor apart');
   assert.deepEqual(r.ineligible.map((x) => x.node), [toHex(k(5))]);
   const tie = seat([ok(6, { volumeSats: 1_200n }), ok(7, { volumeSats: 1_900n })]);

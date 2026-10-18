@@ -72,7 +72,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const candidates = [...rows].map(([node, r]) => {
       const e = all.find((x) => toHex(x.pubkey) === node);
       return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (e && e.advert && e.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
-        registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(at) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
+        registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(at) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),
         availabilityPct: r.probes ? (100 * r.up) / r.probes : 0, bondSats: e ? BigInt(e.bondSats) : 0n, gatewayUrl: r.claim.gatewayUrl };
     });
     const beacon = await beaconAt(at * epochBlocks);
@@ -81,7 +81,7 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (at < epoch) incumbents = s.seated;
     return { ok: true, federationId: fid, epoch: at, measuredEpoch: at === epoch ? 'running' : 'whole', ...s,
       gateways: Object.fromEntries(candidates.map((c) => [toHex(c.node), { url: c.gatewayUrl, availabilityPct: Math.round(c.availabilityPct), probes: rows.get(toHex(c.node)).probes, volumeSats: String(c.volumeSats),
-        inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
+        inboundSats: String(c.inboundSats), outboundSats: String(c.outboundSats), outsideInboundSats: String(c.outsideInboundSats), lightningPubkey: rows.get(toHex(c.node)).claim.lightningPubkey, lightningAddr: rows.get(toHex(c.node)).claim.lightningAddr || '' }])) };
   }
   return { probe, view };
 }
