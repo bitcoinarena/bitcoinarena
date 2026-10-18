@@ -58,7 +58,7 @@ if (args.includes('--update')) {
   const s = state.read();
   const r = await updateNode({ home, newRelease: `${dir}/${name}`, port: (s.reach && s.reach.port) || (s.service && s.service.port) || seatPort,
     node: `${dir}/${name}/runtime/node` });
-  console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}`
+  console.log(r.ok ? `Updated: ${r.from} -> ${r.to}; the same node answers (${r.identity.slice(0, 16)}...). Backup: ${r.backup}${r.notStarted ? `\nNot running: ${r.notStarted}` : ''}`
     : `${r.rolledBack ? 'Rolled back' : 'Not updated'}: ${r.why}${r.backup ? ` (backup ${r.backup})` : ''}`);
   process.exit(r.ok ? 0 : 1);
 }
