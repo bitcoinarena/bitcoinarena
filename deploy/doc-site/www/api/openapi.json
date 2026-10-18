@@ -2,7 +2,7 @@
  "openapi": "3.0.3",
  "info": {
   "title": "Bitcoin Arena node API",
-  "version": "2026-10-17",
+  "version": "2026-10-18",
   "description": "Every request a Bitcoin Arena node (`arena-node`) answers, generated from `packages/arena-node/src/server.js` by `deploy/doc-site/gen-docs.py`. Concepts and guides: https://docs.bitcoin-arena.io/"
  },
  "servers": [
@@ -625,6 +625,80 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/block-random": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "Randomness from a block",
+    "description": "Numbers drawn from a block hash at a height that is deep enough, labelled for what they are for - reproducible by anyone with the chain.\n\nAccess: none\n\nReturns: 200 JSON {node, tip, depth, ...draw}; 400/409/503\n\nSource: `packages/arena-node/src/server.js` line 5317.",
+    "operationId": "get_block_random",
+    "parameters": [
+     {
+      "name": "height",
+      "in": "query",
+      "required": true,
+      "description": "The block height.",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "label",
+      "in": "query",
+      "required": false,
+      "description": "What the draw is for.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "n",
+      "in": "query",
+      "required": true,
+      "description": "The range drawn from.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "count",
+      "in": "query",
+      "required": false,
+      "description": "How many numbers, 1..1000.",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, tip, depth, values...}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Bad parameters.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "That block is not deep enough yet.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "503": {
+      "description": "This node reads no chain.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
    }
   },
   "/bond": {
@@ -1256,6 +1330,47 @@
     }
    }
   },
+  "/config": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "The config live on the chain",
+    "description": "The game config in force on this seat's chain and its history (genesis first): what a round created now names, and what a repeal is read against (\u00a727A.7.5).\n\nAccess: none\n\nReturns: 200 JSON {configHash, since, by, history}; 400; 404\n\nSource: `packages/arena-node/src/server.js` line 4546.",
+    "operationId": "get_config",
+    "parameters": [
+     {
+      "name": "network",
+      "in": "query",
+      "required": false,
+      "description": "Network id, 64 hex; this seat's chain by default.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{configHash, since, by, history}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No network.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "This seat counts no ballot.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/dashboard": {
    "get": {
     "tags": [
@@ -1488,6 +1603,145 @@
      },
      "409": {
       "description": "Refused, with the reason.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/donation-ballot": {
+   "post": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "[signed] Submit a developers' ballot record",
+    "description": "Keeps a signed proposal or approval of the developers' donation set and hands it on once.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the record's signature (a recipient of the set in force)\n\nReturns: 200 JSON {ok, ...}; 4xx; 501\n\nSource: `packages/arena-node/src/server.js` line 6968.",
+    "operationId": "post_donation_ballot",
+    "requestBody": {
+     "required": true,
+     "description": "{kind: proposal|approval, hex}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id, fresh}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON or not a record.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node keeps no ballots.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/donation-ballots": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Developers' ballots",
+    "description": "Every proposal and approval of the protocol developers' donation set this seat holds, with its tally, and the sets approved (\u00a727A.4.1, kanban #382).\n\nAccess: none\n\nReturns: 200 JSON {ballots[], approved[{serial, validFrom, setId, approvedBy}]}\n\nSource: `packages/arena-node/src/server.js` line 6913.",
+    "operationId": "get_donation_ballots",
+    "responses": {
+     "200": {
+      "description": "{ballots, approved}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/donation-gift": {
+   "post": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "[signed] Record a donation gift",
+    "description": "Keeps a donor's signed gift record - to a hosted game's donation set, the network's set in force, or a player (a zap) - checked against the set and the federation output by output; indexed for GET /donations?key= and handed on to every seat.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the donor's signature\n\nReturns: 200 JSON {id, kept, outputs}; 400/404/422/503\n\nSource: `packages/arena-node/src/server.js` line 5257.",
+    "operationId": "post_donation_gift",
+    "requestBody": {
+     "required": true,
+     "description": "{gift: hex, signature: hex}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{id, kept, outputs}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a gift record.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No such game set here.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "503": {
+      "description": "No network donation authority known.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/donation-gifts": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "A donor's gifts",
+    "description": "The donations a donor made outside any round (to a game's set, the protocol developers, or a player as a zap), as this seat keeps them (kanban #431, #463).\n\nAccess: none\n\nReturns: 200 JSON {donor, gifts[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 5290.",
+    "operationId": "get_donation_gifts",
+    "parameters": [
+     {
+      "name": "donor",
+      "in": "query",
+      "required": true,
+      "description": "The donor's 32-byte key, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{donor, gifts}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No valid donor key.",
       "content": {
        "text/plain": {}
       }
@@ -2138,6 +2392,35 @@
     "x-changes-state": true
    }
   },
+  "/fees": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Fees in force and fee proposals",
+    "description": "The protocol fees in force at this seat's tip (and at a named height), each fee's limits and the sums, and every fee proposal with its signal, vote, the protocol developers' answers and its decision (kanban #462).\n\nAccess: none\n\nReturns: 200 JSON {tip, inForce, today, height?, atHeight?, schedule, limits{fee:{min,max,today,donation}}, sums{roundMaxBps,itemPct,marketMaxBps}, proposals[]}\n\nSource: `packages/arena-node/src/server.js` line 6948.",
+    "operationId": "get_fees",
+    "parameters": [
+     {
+      "name": "height",
+      "in": "query",
+      "required": false,
+      "description": "A block height: the answer adds atHeight, the set in force there (a round's census height is what a joining page pays its entry with).",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{tip, inForce, today, height?, atHeight?, schedule, limits, sums, proposals}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/final-sig": {
    "get": {
     "tags": [
@@ -2663,6 +2946,68 @@
       }
      }
     }
+   }
+  },
+  "/funding": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Funding proposals and leaderboard payouts",
+    "description": "Every project funding proposal with its signal, comments and vote, every leaderboard payout request and its 25 % vote (kanban #460), and every player's newest name.\n\nAccess: none\n\nReturns: 200 JSON {tip, schedule, signalPct, proposals[], leaderboards[], names[]}\n\nSource: `packages/arena-node/src/server.js` line 6920.",
+    "operationId": "get_funding",
+    "responses": {
+     "200": {
+      "description": "{tip, schedule, signalPct: 15, proposals, leaderboards, names}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   },
+   "post": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "[signed] Submit a funding record",
+    "description": "Keeps a signed funding record - a proposal, signal, comment, vote, fee proposal, fee approval or leaderboard payout request - after checking it, and hands a new one on to every seat once.\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the record carries its author's signature\n\nReturns: 200 JSON {ok, id, fresh, ...}; 4xx {ok:false, why}; 501\n\nSource: `packages/arena-node/src/server.js` line 6920.",
+    "operationId": "post_funding",
+    "requestBody": {
+     "required": true,
+     "description": "{kind: proposal|signal|comment|vote|fee|fee-approval|leaderboard, hex: the signed record}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id, fresh}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON, unknown kind, or the record does not decode.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "422": {
+      "description": "The record breaks a rule (limits, heights, signature).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node keeps no funding proposals.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/game-donation-set": {
@@ -3321,6 +3666,105 @@
     }
    }
   },
+  "/item-purchase": {
+   "post": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "[signed] Record an item purchase",
+    "description": "Keeps a buyer's signed item purchase record after checking it against the hosted game's terms, the donation sets and the federation output by output; hands a new one on to every seat (kanban #365).\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the buyer's signature over the record\n\nReturns: 200 JSON {id, kept}; 400/404/422\n\nSource: `packages/arena-node/src/server.js` line 5206.",
+    "operationId": "post_item_purchase",
+    "requestBody": {
+     "required": true,
+     "description": "{purchase: hex, signature: hex}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{id, kept: new|held}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not a purchase record.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "This seat hosts no such game or item.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "422": {
+      "description": "The record does not check.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/items": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Items a player owns",
+    "description": "The in-game items a player bought (e.g. the larger truck), from the purchase records this seat keeps (kanban #365, #374).\n\nAccess: none\n\nReturns: 200 JSON {node, items[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 5296.",
+    "operationId": "get_items",
+    "parameters": [
+     {
+      "name": "player",
+      "in": "query",
+      "required": true,
+      "description": "The buyer's 32-byte items key, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "game",
+      "in": "query",
+      "required": false,
+      "description": "The game name.",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "dev",
+      "in": "query",
+      "required": false,
+      "description": "The game developer's key, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, items: [{itemId, gameName, txid, ...}]}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No valid player key.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
   "/late-first-mark": {
    "get": {
     "tags": [
@@ -3522,6 +3966,41 @@
      },
      "400": {
       "description": "Malformed id or request.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/market-rounds": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Rounds that took orders",
+    "description": "The market rounds that took orders on this seat since a time, so a page reads a player's own orders back from the nodes after a reload, closed ones too (kanban #452).\n\nAccess: none\n\nReturns: 200 JSON {rounds[]}; 400\n\nSource: `packages/arena-node/src/server.js` line 6176.",
+    "operationId": "get_market_rounds",
+    "parameters": [
+     {
+      "name": "since",
+      "in": "query",
+      "required": false,
+      "description": "Unix ms; rounds since then.",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{rounds}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Bad since.",
       "content": {
        "text/plain": {}
       }
@@ -4258,6 +4737,98 @@
     }
    }
   },
+  "/owner/dev/fee-answer": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] A developer's answer to a fee proposal",
+    "description": "From the owner page: a dev client of this node approves or denies a fee proposal, signed with that client's key, kept and handed on (kanban #462).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 400/401/404/501\n\nSource: `packages/arena-node/src/server.js` line 4460.",
+    "operationId": "post_owner_dev_fee_answer",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, proposalId (64 hex), approve: bool}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id, fresh}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No such dev client or fee proposal.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "No dev clients or no fee proposals on this node.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/dev/propose": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Propose a developers' set",
+    "description": "From the owner page: a dev client of this node proposes a new split of the protocol developers' donation set (with optional vesting), signed with its recipient key, kept and handed on (\u00a727A.4.1, kanban #382).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 401/404/409/501\n\nSource: `packages/arena-node/src/server.js` line 4419.",
+    "operationId": "post_owner_dev_propose",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, recipients}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "This dev key is not a recipient of the set in force.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "No dev clients or no ballots.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/dev/remove": {
    "post": {
     "tags": [
@@ -4386,6 +4957,52 @@
     "x-changes-state": true
    }
   },
+  "/owner/dev/vote": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Vote on a developers' set",
+    "description": "From the owner page: a dev client of this node accepts or denies a proposed developers' set, signed with its recipient key, kept and handed on.\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, ...}; 401/404/501\n\nSource: `packages/arena-node/src/server.js` line 4419.",
+    "operationId": "post_owner_dev_vote",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, proposalId, accept: bool}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "No such dev client.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "No dev clients or no ballots.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/dev/withdraw": {
    "post": {
     "tags": [
@@ -4472,6 +5089,144 @@
       }
      }
     }
+   }
+  },
+  "/owner/funding-comment": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Owner: comment (funding)",
+    "description": "From the owner page: a comment by this node on a funding proposal, written and signed with the node's own key, kept and handed on (\u00a727A.9.3, kanban #397).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
+    "operationId": "post_owner_funding_comment",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {proposal, parent?, text}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id, fresh}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node keeps no funding proposals.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "503": {
+      "description": "This node reads no chain height or network.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/funding-propose": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Owner: propose (funding)",
+    "description": "From the owner page: a funding proposal authored by this node (amount, LNURL, purpose), written and signed with the node's own key, kept and handed on (\u00a727A.9.3, kanban #397).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
+    "operationId": "post_owner_funding_propose",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {amountSats, lnurl, purpose}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id, fresh}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node keeps no funding proposals.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "503": {
+      "description": "This node reads no chain height or network.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/owner/funding-signal": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Owner: signal (funding)",
+    "description": "From the owner page: this node's signal for a funding proposal, written and signed with the node's own key, kept and handed on (\u00a727A.9.3, kanban #397).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: node owner\n\nReturns: 200 JSON {ok, id, ...}; 401/404/503\n\nSource: `packages/arena-node/src/server.js` line 4296.",
+    "operationId": "post_owner_funding_signal",
+    "requestBody": {
+     "required": true,
+     "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {proposal}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, id, fresh}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not signed by the owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This node keeps no funding proposals.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "503": {
+      "description": "This node reads no chain height or network.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
    }
   },
   "/owner/leave": {
@@ -5817,6 +6572,46 @@
     "x-changes-state": true
    }
   },
+  "/price-reading": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "[signed] A committee seat's price reading",
+    "description": "A committee seat's own signed price reading for a price round; a sample is the median of the readings, nobody proposes a price (protocol 5, kanban #312).\n\n**Needs a signature: the body or record must be signed by the key named below.**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: the committee seat's signature\n\nReturns: 200 JSON; 400/409\n\nSource: `packages/arena-node/src/server.js` line 6167.",
+    "operationId": "post_price_reading",
+    "requestBody": {
+     "required": true,
+     "description": "The signed reading.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The reading kept.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "409": {
+      "description": "The reading does not check.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/price-samples": {
    "get": {
     "tags": [
@@ -6294,7 +7089,7 @@
      "Operators"
     ],
     "summary": "Measured replay speed and capacity",
-    "description": "This seat's measured replay speed and the players a round can hold in the result window.\n\nAccess: none\n\nReturns: 200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention}\n\nSource: `packages/arena-node/src/server.js` line 5670.",
+    "description": "This seat's measured replay speed and the players a round can hold in the result window. Also how this seat keeps its storage lean: transcripts are deleted once the claim window ends (lastPrune), and rounds nobody used go with their committee and seating records after their windows (unusedRounds) (kanban #33, #468).\n\nAccess: none\n\nReturns: 200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}\n\nSource: `packages/arena-node/src/server.js` line 5670.",
     "operationId": "get_replay_budget",
     "parameters": [
      {
@@ -6310,7 +7105,7 @@
     ],
     "responses": {
      "200": {
-      "description": "{speedX, samples, runMs, maxPlayersPerRound, retention}.",
+      "description": "{speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune, unusedRounds}.",
       "content": {
        "application/json": {}
       }
@@ -6569,6 +7364,173 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/reserve-payout/commit": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Reserve payout: commit",
+    "description": "The reserve payout ceremony between guardian seats: a guardian seat's FROST commitment for a payout plan it rebuilt itself (kanban #397 slice 8).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
+    "operationId": "post_reserve_payout_commit",
+    "requestBody": {
+     "required": true,
+     "description": "The plan or plan id, kind, and commitments as the step needs.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, commitment | share | record kept}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON or the plan does not check.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node pays no reserves.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/reserve-payout/record": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Reserve payout: record",
+    "description": "The reserve payout ceremony between guardian seats: a payout record any seat keeps (a PAID one only with the invoice's preimage) (kanban #397 slice 8).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
+    "operationId": "post_reserve_payout_record",
+    "requestBody": {
+     "required": true,
+     "description": "The plan or plan id, kind, and commitments as the step needs.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, commitment | share | record kept}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON or the plan does not check.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node pays no reserves.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/reserve-payout/share": {
+   "post": {
+    "tags": [
+     "Nodes"
+    ],
+    "summary": "Reserve payout: share",
+    "description": "The reserve payout ceremony between guardian seats: a guardian seat's FROST signature share for that plan, given the commitments (kanban #397 slice 8).\n\n**Changes state on the node:** this page does not send it.\n\nAccess: none; every seat rebuilds and checks the plan itself\n\nReturns: 200 JSON {ok, ...}; 400; 501\n\nSource: `packages/arena-node/src/server.js` line 6929.",
+    "operationId": "post_reserve_payout_share",
+    "requestBody": {
+     "required": true,
+     "description": "The plan or plan id, kind, and commitments as the step needs.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, commitment | share | record kept}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not JSON or the plan does not check.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "501": {
+      "description": "This node pays no reserves.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
+  "/reserve-payouts": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Reserve payouts",
+    "description": "Every payout from the protocol reserves this seat knows: funding proposals and leaderboard payouts, with plan, state and txid (kanban #397, #460).\n\nAccess: none\n\nReturns: 200 JSON {payouts[]}\n\nSource: `packages/arena-node/src/server.js` line 6942.",
+    "operationId": "get_reserve_payouts",
+    "responses": {
+     "200": {
+      "description": "{payouts: [{proposal, kind, state, federation, plan, txid, preimage, ...}]}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/reserves": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Protocol reserves per federation",
+    "description": "Per federation this node knows guardians of: its reserve key (guardian seats, threshold, group key, public shares), what the reserves hold and what came in, and the reserve payouts (\u00a727A.9.2, kanban #397).\n\nAccess: none\n\nReturns: 200 JSON {node, totalMsat, entries, federations[{federationId, members, needed, key, heldMsat, paidIn, ...}], paidIn[], payouts[]}\n\nSource: `packages/arena-node/src/server.js` line 6875.",
+    "operationId": "get_reserves",
+    "parameters": [
+     {
+      "name": "all",
+      "in": "query",
+      "required": false,
+      "description": "1: list every payment in, not only the newest.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, totalMsat, entries, federations, paidIn, payouts}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
    }
   },
   "/results": {
@@ -7735,6 +8697,100 @@
      }
     },
     "x-changes-state": true
+   }
+  },
+  "/series-template": {
+   "get": {
+    "tags": [
+     "Builders"
+    ],
+    "summary": "A series template",
+    "description": "A series' template as its text line, for a page checking a series round it was handed; the reader believes it only once it hashes to the id it asked for (kanban #362).\n\nAccess: none\n\nReturns: 200 text/plain the template line (cache 1 h); 400; 404\n\nSource: `packages/arena-node/src/server.js` line 5335.",
+    "operationId": "get_series_template",
+    "parameters": [
+     {
+      "name": "id",
+      "in": "query",
+      "required": true,
+      "description": "The series id, 64 hex.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The template line.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "400": {
+      "description": "No valid id.",
+      "content": {
+       "text/plain": {}
+      }
+     },
+     "404": {
+      "description": "No such series here.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
+   }
+  },
+  "/served": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Who served rounds in a window",
+    "description": "The nodes that served rounds in a time window, from the FINAL signatures this seat holds, each checked against its committee; the root lets seats compare (kanban #365).\n\nAccess: none\n\nReturns: 200 JSON {node, fromMs, toMs, rounds, root, nodes, refused, held?}; 400\n\nSource: `packages/arena-node/src/server.js` line 5302.",
+    "operationId": "get_served",
+    "parameters": [
+     {
+      "name": "to",
+      "in": "query",
+      "required": true,
+      "description": "Window end, unix ms.",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "from",
+      "in": "query",
+      "required": false,
+      "description": "Window start, unix ms; at most 7 days before to.",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "finals",
+      "in": "query",
+      "required": false,
+      "description": "1: also hand over the rounds with committees and FINALs read.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{node, fromMs, toMs, rounds, root, nodes, refused, held?}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Bad window.",
+      "content": {
+       "text/plain": {}
+      }
+     }
+    }
    }
   },
   "/settle-commit": {
