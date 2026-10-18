@@ -357,6 +357,8 @@ if (url) {
       if (r && !r.allowed) throw new Error(`the mempool refuses it: ${r['reject-reason']}`);
       return String(await call('sendrawtransaction', [hex]));
     },
+    // A LIQUIDITY PROVIDER'S COIN, UNSPENT AND CONFIRMED (kanban #494, §23A.10: a guardian counts only coins its own chain shows)
+    chainTxOut: async (txid, vout) => { const o = await call('gettxout', [txid, vout, false]); return o ? { sats: BigInt(Math.round(Number(o.value) * 1e8)), script: o.scriptPubKey.hex } : null; },
     // THE CHAIN'S MEDIAN TIME AT A HEIGHT (kanban #397 slice 6): a funding signal's active window, read alike by every seat
     blockTimeAt: async (h) => Number((await call('getblockheader', [await call('getblockhash', [h])])).mediantime) * 1000,
     // ONE VIEW PER WHAT IT DEPENDS ON - census height, committee_time, confirmation depth - NOT PER ROUND, AND ONE READ

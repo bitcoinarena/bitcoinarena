@@ -214,6 +214,19 @@ export async function lndConnect(cfg, { pubkey, host }, { rest = lndRest } = {})
   const r = await rest({ ...c, method: 'POST', path: '/v1/peers', body: { addr: { pubkey: String(pubkey).toLowerCase(), host }, perm: true, timeout: 20 } });
   return r.status === 200 || /already connected/i.test(errOf(r)) ? { ok: true } : { ok: false, why: errOf(r) };
 }
+/** The wallet's confirmed coins (kanban #494, the proof of a provider's free balance). Answers { ok, coins: [{ txid, vout, address, sats }] }. */
+export async function lndCoins(cfg, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const r = await rest({ ...c, method: 'POST', path: '/v2/wallet/utxos', body: { min_confs: 1, max_confs: 2147483647 } });
+  if (r.status !== 200) return { ok: false, why: errOf(r) };
+  return { ok: true, coins: ((r.json || {}).utxos || []).map((u) => ({ txid: u.outpoint.txid_str, vout: Number(u.outpoint.output_index || 0), address: u.address, sats: Number(u.amount_sat) })) };
+}
+/** `message` signed by the key of the wallet's `address` (SignMessageWithAddr: compact ECDSA, base64). Answers { ok, signature }. */
+export async function lndSignWithAddr(cfg, { address, message }, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const r = await rest({ ...c, method: 'POST', path: '/v2/wallet/address/signmessage', body: { addr: address, msg: Buffer.from(message).toString('base64') } });
+  return r.status === 200 && r.json && r.json.signature ? { ok: true, signature: r.json.signature } : { ok: false, why: errOf(r) };
+}
 /** A public channel of `sats` to a peer LND is connected to. Answers { ok, fundingTxid, why }. */
 export async function lndOpenTo(cfg, { pubkey, sats }, { rest = lndRest } = {}) {
   let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }

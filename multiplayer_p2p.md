@@ -5434,6 +5434,11 @@ game/verify, settlement, custody, liquidity.
   - the channel capacities are public in the Lightning graph; the free balance is proven: the claim lists the wallet's outpoints,
     each with a signature by its address key (LND `SignMessageWithAddr`), and a guardian counts only outpoints that are unspent on
     its own chain and signed;
+    - the message is `BLWP/v1/LIQUIDITY_FUNDS:<node key hex>:<txid>:<vout>`, so a coin proves one provider's balance only; the
+      signature is Bitcoin's signmessage (sha256d of the prefixed message, 65-byte compact ECDSA, base64), for P2WPKH (the
+      recovered key's hash160) and P2TR addresses (LND signs with the internal key: the recovered key's BIP-86 output key);
+    - the coins are part of the signed claim (at most 50, largest first); the amount counted is the guardian's chain's
+      (`gettxout`, confirmed only), never the claimed one; a coin listed twice counts once;
   - the shares are floored, and the leftover millisatoshis go out in the round's order, as in every pool.
   - in the guardians' signed list (the liquidity seating) each weight is **floored to L** (100,000 sat testnet4, 250,000 mainnet):
     free balances move by the minute, and guardians reading a few minutes apart must still sign the same list to reach the threshold.

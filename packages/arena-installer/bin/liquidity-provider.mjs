@@ -16,7 +16,7 @@ import http from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { lndChannels, lndFunds, lndConnect, lndOpenTo, testLnd } from '../src/lnd.js';
+import { lndChannels, lndFunds, lndConnect, lndOpenTo, lndCoins, lndSignWithAddr, testLnd } from '../src/lnd.js';
 import { createLiquidityProvider } from '../src/liquidity-provider.js';
 const a = process.argv.slice(2); const opt = (k, d = null) => { const i = a.indexOf(k); return i >= 0 ? a[i + 1] : d; };
 const lnddir = opt('--lnddir'), net = opt('--network', 'testnet4');
@@ -49,7 +49,8 @@ const endpoints = async () => {
 };
 const log = (l) => console.log(`${new Date().toISOString()} ${l}`);
 const p = createLiquidityProvider({ node, sign: (h) => schnorr.sign(h, secret), verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } },
-  lnd: { channels: () => lndChannels(cfg), funds: () => lndFunds(cfg), info: () => testLnd(cfg), connect: (o) => lndConnect(cfg, o), openTo: (o) => lndOpenTo(cfg, o) },
+  lnd: { channels: () => lndChannels(cfg), funds: () => lndFunds(cfg), info: () => testLnd(cfg), connect: (o) => lndConnect(cfg, o), openTo: (o) => lndOpenTo(cfg, o),
+    coins: () => lndCoins(cfg), signWithAddr: (o) => lndSignWithAddr(cfg, o) },
   endpoints, network: net, state, log,
   writeClaim: async (c) => { current = c; if (claimFile) writeFileSync(claimFile, JSON.stringify(c, null, 2) + '\n'); } });
 const port = Number(opt('--listen', 0));

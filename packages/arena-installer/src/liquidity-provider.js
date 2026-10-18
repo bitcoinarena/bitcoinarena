@@ -8,14 +8,14 @@
 //   4. the assignment (liquidity.js), the same as every other provider computes; where this provider is named, it dials the node and
 //      opens one channel of L. A provider the assignment named that has not opened an hour later is skipped for that node.
 // It opens nothing below L, and nothing when its free balance is under L - its claim then says so, and the top-up address is LND's.
-import { signLiquidityClaim, checkLiquidityClaim, assignLiquidity, LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
+import { signLiquidityClaim, checkLiquidityClaim, assignLiquidity, fundsMessage, LIQUIDITY_TERMS, MAX_FUNDS } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 
 export const SKIP_AFTER_MS = 3600000;
 
 /**
  * `node` this provider's node key (hex) and `sign(hash) -> sig`; `lnd` { channels(), funds(), connect({ pubkey, host }), openTo({ pubkey,
- * sats }), info() }; `endpoints()` the network's seat addresses; `writeClaim(claim)`; `state` (kept between ticks: rankedAt, opened).
+ * sats }), info(), coins() and signWithAddr({ address, message }) - the last two optional: without them the claim proves no coin }; `endpoints()` the network's seat addresses; `writeClaim(claim)`; `state` (kept between ticks: rankedAt, opened).
  * Answers per tick { ok, claim, opened: [node], why }.
  */
 export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, writeClaim, network = 'testnet4', state = {}, fetcher = fetch, nowMs = () => Date.now(), log = () => {} }) {
@@ -27,7 +27,21 @@ export function createLiquidityProvider({ node, sign, verify, lnd, endpoints, wr
     const given = [...ch.open.filter((x) => x.initiator), ...ch.pending.filter((x) => x.initiator)].map((x) => ({ peer: x.peer, capacitySats: x.capacitySats }));
     const lightningAddr = ((info.uris || []).map((u) => String(u).split('@')[1]).find(Boolean)) || '';
     if (!state.depositAddress && f.address) state.depositAddress = f.address;   // one top-up address, kept (LND makes a new one per ask)
-    const claim = signLiquidityClaim({ node, lightningPubkey: info.pubkey, lightningAddr, freeSats: f.onchainSats, atMs: nowMs(), channels: given, depositAddress: state.depositAddress || '' }, sign);
+    // THE PROOF OF THE FREE BALANCE (§23A.10): every confirmed coin, largest first, signed by its address key for this node - a
+    // coin's signature is kept, so each is signed once
+    const funds = [];
+    const coins = lnd.coins ? await lnd.coins() : { ok: false };
+    if (coins.ok) {
+      state.fundSigs = state.fundSigs || {};
+      for (const k of [...coins.coins].sort((a, b) => b.sats - a.sats).slice(0, MAX_FUNDS)) {
+        const id = `${k.txid}:${k.vout}`;
+        if (!state.fundSigs[id]) { const s = await lnd.signWithAddr({ address: k.address, message: fundsMessage(node, k.txid, k.vout) }); if (s.ok) state.fundSigs[id] = s.signature; }
+        if (state.fundSigs[id]) funds.push({ txid: k.txid, vout: k.vout, address: k.address, sats: k.sats, signature: state.fundSigs[id] });
+      }
+      const live = new Set(coins.coins.map((k) => `${k.txid}:${k.vout}`));
+      for (const id of Object.keys(state.fundSigs)) if (!live.has(id)) delete state.fundSigs[id];
+    }
+    const claim = signLiquidityClaim({ node, lightningPubkey: info.pubkey, lightningAddr, freeSats: f.onchainSats, atMs: nowMs(), channels: given, depositAddress: state.depositAddress || '', funds }, sign);
     await writeClaim(claim);
     // the others, as every provider reads them
     const eps = (await endpoints()) || [];

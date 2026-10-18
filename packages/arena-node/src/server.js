@@ -38,7 +38,7 @@ import { createGatewayWatch } from './gateway-watch.js';
 import { lnv2ModuleId, incomingSince } from './gateway-volume.js';
 import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/gateway-seating.js';
 import { signLiquiditySeating, standingLiquiditySeating, liquiditySeatingFrom } from '../../arena-protocol/src/liquidity-seating.js';
-import { checkLiquidityClaim } from '../../arena-protocol/src/liquidity.js';
+import { checkLiquidityClaim, provenFreeSats } from '../../arena-protocol/src/liquidity.js';
 import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
@@ -135,7 +135,7 @@ import {
 // THE GROUP THE HANDOUT CHECK NEEDS. The protocol package carries no curve on
 // purpose, so the daemon brings one - the same secp256k1 it already brings to
 // the census, and the same one the bonds and BIP-340 use.
-import { feldmanGroup, tweakPoint } from './curve.js';
+import { feldmanGroup, tweakPoint, messageCurve } from './curve.js';
 import {
   SIGNED_RECEIPT_BYTES, decodeCheckpointReceipt, splitSignedReceipt,
 } from '../../arena-protocol/src/receipt.js';
@@ -474,6 +474,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   chainTip = null,
   // THE CHAIN'S MEMPOOL (kanban #471 part D): a raw transaction checked and broadcast by this seat's bitcoind (main.js chainSend)
   chainSend = null,
+  // AN UNSPENT OUTPUT FROM THE NODE'S OWN CHAIN (kanban #494): (txid, vout) -> { sats, script } or null; a liquidity provider's coins
+  chainTxOut = null,
   // THE CHAIN'S MEDIAN TIME AT A HEIGHT, in ms (kanban #397 slice 6: a funding signal's 432-block active window), as the launcher reads it
   blockTimeAt = null,
   expiry = {},
@@ -3770,7 +3772,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const lnKeys = [], claims = [];
           for (const node of seatedHex) { const ep = endpointOf(node); const g = ep && await getJson(`${ep}/gateway-claim`); if (g && g.node === node && checkGatewayClaim(g, schnorrVerify).ok) lnKeys.push(g.lightningPubkey); }
           for (const e of entries) { const ep = endpointOf(toHex(e.pubkey)); const c = ep && await getJson(`${ep}/liquidity-claim`); if (c && c.node === toHex(e.pubkey) && checkLiquidityClaim(c, schnorrVerify).ok) claims.push(c); }
-          const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys });
+          // each provider's free balance as this node's chain proves it (its coins signed and unspent); no chain, the claimed one
+          const proven = typeof chainTxOut === 'function' ? new Map() : null;
+          if (proven) for (const c of claims) proven.set(c.node, await provenFreeSats({ claim: c, curve: messageCurve, txOut: chainTxOut }));
+          const providers = liquiditySeatingFrom({ claims, federationLnKeys: lnKeys, proven });
           ownLiquiditySeatings.set(`${fid}:${epoch}`, signLiquiditySeating({ federationId: fid, epoch, providers }, me, (h) => schnorr.sign(h, round.identity.secret)));
         }
         if (liquiditySeatings.has(`${fid}:${epoch}`)) continue;
