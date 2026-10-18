@@ -3,7 +3,8 @@
 // paid from its wallet), then the gateway joins the federation, then the peg-in goes to the gateway's address - each once.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -34,7 +35,9 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   const gw = { joinFederation: async (o) => { calls.push(['join', o.invite]); return { ok: true, federationId: fid }; },
     testGateway: async () => ({ ok: true, federations: [{ federationId: fid, name: 'arena' }] }),
     depositAddress: async (o) => { calls.push(['address', o.federationId]); return { ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx' }; } };
-  const agent = createCustodyAgent({ state, release: home, chainKit, gw });
+  let clock = 1_800_000_000_000;
+  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock,
+    channels: async () => ({ ok: true, open: [], pending: [], publicCapacitySats: 250000 }) });
 
   assert.match((await agent.tick()).idle, /waits to be drawn/);
   const dir = join(home, 'node.db.guardian'); mkdirSync(dir);
@@ -61,8 +64,16 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   const pegTx = parseTransaction(fromHex(sent[2]));
   assert.equal(pegTx.outputs[0].value, 50000n);
   assert.equal(toHex(pegTx.outputs[0].script), '0014751e76e8199196d454941c45d1b3a323f1433bd6');
-  assert.match((await agent.tick()).idle, /custody is set up/);
-  assert.equal(sent.length, 3, 'each step once');
+  assert.match((await agent.tick()).idle, /custody is set up/, 'no public gateway address and no tested LND: no claim');
+  state.save({ gateway: { ...state.read().gateway, publicUrl: 'https://node.example.com/gateway/' }, lightning: { pubkey: '02' + '99'.repeat(32) } });
+  assert.equal((await agent.tick()).did, 'gateway-claim');
+  const claim = JSON.parse(readFileSync(join(home, 'gateway-claim.json'), 'utf8'));
+  assert.equal(checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k)).ok, true, 'signed by the node key');
+  assert.deepEqual([claim.node, claim.federationId, claim.gatewayUrl, claim.capacitySats, claim.pegInSats], [toHex(schnorr.getPublicKey(nodeSecret)), fid, 'https://node.example.com/gateway/', '250000', '50000']);
+  assert.match((await agent.tick()).idle, /gateway seat claimed/, 'renewed hourly, not every minute');
+  clock += 3_600_000;
+  assert.equal((await agent.tick()).did, 'gateway-claim');
+  assert.equal(sent.length, 3, 'each payment once');
   state.save({ roles: ['verify'] });
   assert.match((await agent.tick()).idle, /no custody role/);
 });

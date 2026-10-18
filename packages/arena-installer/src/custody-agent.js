@@ -14,6 +14,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast, addressScript } from './wallet.js';
 import { advertFor, buildAdvertUpdate, buildSend } from './bond.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
+import { lndChannels } from './lnd.js';
+import { signGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { writeFileSync } from 'node:fs';
 import { guardianSetupOf } from './state.js';
 import { readInvite } from '../../arena-node/src/invite.js';
 import { fromHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -30,7 +33,7 @@ export function guardianOfEntry(dir) {
   return { invite, federationId, guardianKey };
 }
 
-export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, log = () => {} }) {
+export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, log = () => {}, nowMs = () => Date.now() }) {
   const nodeSecretOf = () => {
     const db = new DatabaseSync(state.path('node.db'), { readOnly: true });
     try { return new Uint8Array(db.prepare('SELECT secret FROM identity WHERE one = 0').get().secret); } finally { db.close(); }
@@ -84,7 +87,24 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       log(`peg-in of ${c.pegInSats} sat to ${a.address}: ${txid}`);
       return { ok: true, did: 'peg-in', txid };
     }
-    return { ok: true, idle: 'custody is set up: guardian_of published, the gateway serves the federation, the peg-in sent' };
+    // 4. the gateway seat (§23A.9): the node stands for one with a claim its seat serves (GET /gateway-claim) - its gateway's public address,
+    // its Lightning key, its public channel capacity and its peg-in - signed by the node key, renewed every hour
+    if (s.gateway && s.gateway.publicUrl && /^https?:\/\/\S+\/$/.test(s.gateway.publicUrl) && c.pegIn && s.lightning && s.lightning.pubkey) {
+      const claimFile = state.path('gateway-claim.json');
+      const last = (state.read().custody || {}).claimAtMs || 0;
+      if (nowMs() - last >= 3600000) {
+        const ch = await channels(s.lightning);
+        const { schnorr } = await import('@noble/curves/secp256k1.js');
+        const nodeSecret = nodeSecretOf();
+        const claim = signGatewayClaim({ node: Buffer.from(schnorr.getPublicKey(nodeSecret)).toString('hex'), federationId: g.federationId, gatewayUrl: s.gateway.publicUrl,
+          lightningPubkey: s.lightning.pubkey, capacitySats: ch.ok ? ch.publicCapacitySats : 0, pegInSats: c.pegIn.sats, atMs: nowMs() }, (h) => schnorr.sign(h, nodeSecret));
+        writeFileSync(claimFile, JSON.stringify(claim, null, 2) + '\n');
+        state.save({ custody: { ...state.read().custody, claimAtMs: nowMs() } });
+        log(`gateway seat claimed: ${claim.capacitySats} sat of public channels, peg-in ${claim.pegInSats} sat`);
+        return { ok: true, did: 'gateway-claim' };
+      }
+    }
+    return { ok: true, idle: 'custody is set up: guardian_of published, the gateway serves the federation, the peg-in sent, the gateway seat claimed' };
   }
   return { tick };
 }
