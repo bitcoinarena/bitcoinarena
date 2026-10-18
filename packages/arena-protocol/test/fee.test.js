@@ -389,3 +389,18 @@ test('2026.0.16 (§23A.10): four quarters - game/verify, settlement, custody, li
   assert.equal(t15.pools.liquidity, undefined, 'a 2026.0.15 round pays no provider (thirds, as before)');
   assert.equal(POOLS.indexOf('liquidity'), 4, 'appended');
 });
+
+test('2026.0.16: with more than one provider the liquidity quarter follows available balance (floored to 10,000 sat)', () => {
+  const g = [b32(0x51)], lp = [b32(0x71), b32(0x72), b32(0x73)];
+  const elig = new Set([...game, ...settle, ...g, ...lp].map(toHex));
+  const weights = { liquidity: new Map([[toHex(lp[0]), 300_000n], [toHex(lp[1]), 109_999n], [toHex(lp[2]), 0n]]) };
+  const t = nodeFeeTable({ contract: { ...contract, protocolVersion: 16 }, entries, pools: { ...pools, guardian: g, liquidity: lp }, eligible: elig, weights });
+  const q = t.pools.liquidity;
+  const share = (k) => t.signerNodes.get(`liquidity:${toHex(k)}`) || 0n;
+  const w0 = 300_000n, w1 = 100_000n;   // 109,999 floors to 100,000; a provider with 0 available earns 0
+  assert.equal(share(lp[2]), 0n);
+  assert.ok(share(lp[0]) - (q * w0) / (w0 + w1) <= 1n && share(lp[1]) - (q * w1) / (w0 + w1) <= 1n, 'proportional, the leftover msat in the round\'s order');
+  assert.equal(share(lp[0]) + share(lp[1]), q, 'the whole quarter, nothing lost');
+  const even = nodeFeeTable({ contract: { ...contract, protocolVersion: 16 }, entries, pools: { ...pools, guardian: g, liquidity: lp }, eligible: elig });
+  assert.ok([...lp].every((k) => even.signerNodes.get(`liquidity:${toHex(k)}`) >= q / 3n), 'no weights: evenly');
+});
