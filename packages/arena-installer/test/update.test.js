@@ -228,3 +228,38 @@ test('node.env paths into an older release follow to the new one - from every ol
     `ARENA_GAMES=${win}\\packages\\nextblock\r\nX=1\r\n`, 'CRLF and backslashes on Windows');
   assert.equal(envForRelease(text, rel, () => true), envForRelease(envForRelease(text, rel, () => true), rel, () => true), 'a second update moves nothing more');
 });
+
+test('a node on a quick tunnel: the tunnel starts first, its new name goes into the settings, then the seat starts (macOS node A rc.16 -> rc.18 kept the dead name)', async (t) => {
+  const { launchdPlist, LAUNCHD_LABEL } = await import('../src/service.js');
+  const root = mkdtempSync(join(tmpdir(), 'arena-update-quick-'));
+  const env = { HOME: join(root, 'user') };
+  const agents = join(env.HOME, 'Library', 'LaunchAgents'); mkdirSync(agents, { recursive: true });
+  const home = join(root, 'home'); mkdirSync(home, { recursive: true });
+  const port = await freePort();
+  const sys = fakeLaunchd();
+  t.after(() => { sys.stopAll(); rmSync(root, { recursive: true, force: true }); });
+  const v1 = releaseFrom(join(root, 'releases/arena-node-0.1.0-rc.16-darwin-arm64')), v2 = releaseFrom(join(root, 'releases/arena-node-0.1.0-rc.18-darwin-arm64'));
+  const old = 'https://conventional-cube-iron-caused.trycloudflare.com', fresh = 'https://cult-turns-subscriptions-monitors.trycloudflare.com';
+  writeFileSync(join(home, 'node.env'), `ARENA_BIND=127.0.0.1\nARENA_WSS_${port}=${old}\nARENA_GUARDIAN_ENDPOINT_${port}=${old.replace('https:', 'wss:')}/guardian\n`);
+  writeFileSync(join(home, 'state.json'), JSON.stringify({ network: 'testnet4', roles: ['verify'], done: { service: 1 }, reach: { mode: 'quick', port, url: old } }));
+  const seat = join(agents, `${LAUNCHD_LABEL}.plist`), tunnel = join(agents, `${LAUNCHD_LABEL}.tunnel.plist`);
+  writeFileSync(seat, launchdPlist({ node: process.execPath, release: v1, home, port }));
+  writeFileSync(tunnel, `<plist><dict><key>Label</key><string>${LAUNCHD_LABEL}.tunnel</string><key>ProgramArguments</key><array><string>${join(v1, 'runtime/cloudflared')}</string></array></dict></plist>\n`);
+  await sys.sh('launchctl', ['bootstrap', 'gui/501', seat]);
+  const first = await waitHealthy({ port, waitMs: 60000, everyMs: 300 });
+  assert.equal(first.ok, true, first.why);
+
+  const order = [];
+  const quickUrl = async (o) => { order.push(['read the name', o.sinceMs > 0]); return fresh; };
+  const at = sys.calls.length;
+  const up = await updateNode({ home, newRelease: v2, port, env, sh: sys.sh, nowMs: () => 0, platform: 'darwin', quickUrl });
+  assert.equal(up.ok, true, up.why);
+  assert.equal(up.reach, fresh);
+  const boots = sys.calls.slice(at).filter((c) => c[0] === 'launchctl' && c[1] === 'bootstrap').map((c) => c[3].split('/').pop());
+  assert.deepEqual(boots, [`${LAUNCHD_LABEL}.tunnel.plist`, `${LAUNCHD_LABEL}.plist`], 'the tunnel first, the seat after the settings changed');
+  assert.deepEqual(order, [['read the name', true]], 'the name logged after the tunnel started');
+  const envNow = readFileSync(join(home, 'node.env'), 'utf8');
+  assert.ok(!envNow.includes('conventional-cube') && envNow.includes(`ARENA_WSS_${port}=${fresh}`) && envNow.includes(`=wss://cult-turns-subscriptions-monitors.trycloudflare.com/guardian`), envNow);
+  assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).reach.url, fresh);
+  assert.equal(up.identity, first.identity);
+});
