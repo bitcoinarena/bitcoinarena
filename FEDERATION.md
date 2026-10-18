@@ -164,7 +164,7 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 - **The fourth service:** a liquidity provider opens one channel **to** each new node so it can receive.
   It earns **1 % of the node fee** of its federation's rounds, as each of the other three services does from protocol 2026.0.16
   (game/verify 1 %, settlement 1 %, custody 1 %, liquidity 1 %).
-- **Amounts:** one channel L = 100,000 sat on testnet4 (2,500,000 on mainnet). The deposit is ≥ 5 × L on testnet4 (10 × L on
+- **Amounts:** one channel L = 100,000 sat on testnet4 (250,000 on mainnet). The deposit is ≥ 5 × L on testnet4 (10 × L on
   mainnet), coins in the provider's own LND wallet.
 - **At least 1, at most 2 per node:** every provider publishes a signed liquidity claim at its seat (its channels, its free funds).
   For a node with fewer than 2 provider channels, all providers rank the candidates the same way (a ticket on node and provider
@@ -185,7 +185,7 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   threshold of its guardians sign each epoch (144 blocks).
 - **To stand** (testnet4 / mainnet):
   - a seated guardian whose announced gateway is registered with the federation;
-  - inbound liquidity from outside the federation of at least 100,000 / 2,500,000 sat (deposits from the wider network come in through it;
+  - inbound liquidity from outside the federation of at least 100,000 / 250,000 sat (deposits from the wider network come in through it;
     the ring does not count) and outbound of at least the same (payouts);
   - one channel to a hub outside the federation (testnet4: the the test host's LND C over Tor); a node nobody can dial gets an onion address
     (Tor), measured at install: LND's port is tried from outside first;
