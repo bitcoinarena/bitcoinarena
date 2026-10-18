@@ -12,7 +12,7 @@
 import { mkdirSync, writeFileSync, chmodSync, accessSync, constants } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { UNIT, BRIDGE_UNIT, TUNNEL_UNIT, LAUNCHD_LABEL, WINDOWS_TASK } from './service.js';
+import { UNIT, BRIDGE_UNIT, TUNNEL_UNIT, LAUNCHD_LABEL, WINDOWS_TASK, startupDir } from './service.js';
 
 /** The services of a node from its state: { linux: units, darwin: launchd labels, win32: task names }. */
 export function servicesOf(s) {
@@ -86,8 +86,14 @@ export function writeLaunchers({ home, s, ownerUrl, addCustody = null, platform 
   }
   // WINDOWS: the tasks the installer made (schtasks), and the Start menu's own folder of shortcuts to these scripts
   const cmd = (lines) => ['@echo off', ...lines, ''].join('\r\n');
-  const start = put(join(bin, 'Arena node start.cmd'), cmd([`rem Start the Arena node's services: ${svc.join(', ')}`, ...svc.map((t) => `schtasks /run /tn "${t}" >nul`), `echo Started. Owner page: ${ownerUrl}`, `start "" "${ownerUrl}"`]));
-  const stop = put(join(bin, 'Arena node stop.cmd'), cmd([`rem Stop the Arena node's services`, ...[...svc].reverse().map((t) => `schtasks /end /tn "${t}" >nul 2>&1`), 'echo Stopped.', 'pause']));
+  // each service is a logon task, or - without administrator rights - a script in the Startup folder (service.js windowsAutostart)
+  const sd = startupDir(env);
+  const start = put(join(bin, 'Arena node start.cmd'), cmd([`rem Start the Arena node's services: ${svc.join(', ')}`,
+    ...svc.map((t) => `schtasks /run /tn "${t}" >nul 2>&1 || if exist "${join(sd, `${t}.vbs`)}" wscript "${join(sd, `${t}.vbs`)}"`), `echo Started. Owner page: ${ownerUrl}`, `start "" "${ownerUrl}"`]));
+  // stopped: the tasks ended, and every process of this node - each names its home in its command line (node.db, lnd, tor, ...)
+  const stop = put(join(bin, 'Arena node stop.cmd'), cmd([`rem Stop the Arena node's services`, ...[...svc].reverse().map((t) => `schtasks /end /tn "${t}" >nul 2>&1`),
+    `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${home.replace(/'/g, "''")}*' -and $_.CommandLine -notlike '*\\bin\\Arena node*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"`,
+    'echo Stopped.', 'pause']));
   const open = put(join(bin, 'Arena node owner page.cmd'), cmd([`start "" "${ownerUrl}"`]));
   const custody = addCustody ? put(join(bin, 'Arena node add custody.cmd'), cmd(['rem Add custody to this node: the installer\'s custody screens open in the browser', addCustody.map((a) => `"${a}"`).join(' ')])) : null;
   const menu = join(env.APPDATA || join(env.USERPROFILE || homedir(), 'AppData', 'Roaming'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Arena Node');
