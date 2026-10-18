@@ -6,7 +6,8 @@
 //   3. it is unpacked beside the old release (releases/<version>), never over it;
 //   4. never inside a market seating window (minutes 11-14 of a quarter hour), the node is stopped and BACKED UP - its database
 //      (and WAL), settings, state, seed and owner binding - into backups/<time>/;
-//   5. the units are written for the new release with the SAME settings file (nothing the user set changes), and started;
+//   5. the units are written for the new release with the SAME settings file (nothing the user set changes; only its paths into an
+//      older release - games, custody binaries - follow to the new one, envForRelease), and started;
 //   6. it must answer healthy as the same node (GET /identity, the same key) - else the old units and the backup are put back,
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
@@ -34,6 +35,19 @@ export function releaseOfUnit(text) {
 }
 
 const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeout: 120000 }, (e, out, err) => resolve({ ok: !e, out: String(out), err: String(err) })));
+
+/** node.env's paths into a release - the games, the custody binaries - moved to the new release, from EVERY older one, not only the
+ *  release the seat ran (macOS node A at rc.16 still read its games and fedimintd from the rc.12 folder it was installed from); a path
+ *  the new release does not hold is kept. */
+export function envForRelease(text, newRelease, exists = existsSync) {
+  return String(text).split('\n').map((line) => {
+    const cr = line.endsWith('\r') ? '\r' : '';   // a Windows node's settings end their lines in CRLF
+    const m = /^([A-Za-z0-9_]+)=(.*[\\/]arena-node-\d[^\\/\s]*)([\\/].*)?$/.exec(cr ? line.slice(0, -1) : line);
+    if (!m || m[2] === newRelease) return line;
+    const moved = newRelease + (m[3] || '');
+    return exists(moved) ? `${m[1]}=${moved}${cr}` : line;
+  }).join('\n');
+}
 
 /** Copy the node's files into backups/<stamp>/: { dir, files }. */
 export function backupNode(home, stamp = new Date().toISOString().replace(/[:.]/g, '-')) {
@@ -163,6 +177,10 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
   if (!stop.ok) return { ok: false, why: stop.why };
   const backup = backupNode(home);
   const state = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'));
+  const envFile = join(home, 'node.env');
+  const envText = readFileSync(envFile, 'utf8');
+  const envNew = envForRelease(envText, newRelease);
+  if (envNew !== envText) writeFileSync(envFile, envNew, { mode: 0o600 });
   for (const f of moving) {
     const text = f === svc.seatFile ? svc.seatFor(newRelease, oldTexts.get(f))
       : svc.bridgeFor && f.endsWith(BRIDGE_UNIT) ? svc.bridgeFor(newRelease, state)
