@@ -48,6 +48,7 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
     lnd: { funds: async () => ({ ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', onchainSats: lndOnchain }),
       peers: async () => ({ ok: true, peers: [...connected] }),
       connect: async (_c, o) => { lndCalls.push(['connect', o.pubkey, o.host]); connected.add(o.pubkey); return { ok: true }; },
+      close: async () => ({ ok: true }),
       openTo: async (_c, o) => { lndCalls.push(['open', o.pubkey, o.sats]); open = [...open, { peer: o.pubkey, capacitySats: o.sats, public: true, active: false }]; return { ok: true, fundingTxid: 'ab'.repeat(32) }; } } });
 
   assert.match((await agent.tick()).idle, /waits to be drawn/);
@@ -95,6 +96,21 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   assert.equal((await agent.tick()).did, 'ring-channel');
   assert.deepEqual(lndCalls.slice(-2), [['connect', '03' + '22'.repeat(32), '192.0.2.7:9735'], ['open', '03' + '22'.repeat(32), 150000]]);
   assert.match((await agent.tick()).idle, /custody is set up.*ring channel open/, 'one ring channel, once');
+  // A NODE JOINS between this node and its next (the owner: "When a node joins an existing federation it needs incoming liquidity too"):
+  // this node's channel moves to the newcomer - only after the newcomer opened its own channel (its outbound), so ff.. is never without inbound
+  open = open.map((x) => (x.peer === '03' + '22'.repeat(32) ? { ...x, active: true, channelPoint: 'ab'.repeat(32) + ':0' } : x));
+  const joiner = { node: 'fe'.repeat(32), lightningPubkey: '02' + '33'.repeat(32), lightningAddr: '192.0.2.9:9735', outboundSats: 0 };
+  ring.splice(1, 0, joiner);
+  const me = toHex(schnorr.getPublicKey(nodeSecret));
+  assert.ok(me < joiner.node, 'the joiner sorts right after this node');
+  assert.match((await agent.tick()).idle, /waits for the new member fefefefefefe… to open its own channel/);
+  joiner.outboundSats = 150000;
+  const closing = await agent.tick();
+  assert.equal(closing.did, 'ring-close');
+  assert.equal(closing.channelPoint, 'ab'.repeat(32) + ':0', 'the old ring channel (to ff..) closes, cooperatively');
+  open = open.filter((x) => x.peer !== '03' + '22'.repeat(32));   // closed; its coins back in LND's wallet
+  assert.equal((await agent.tick()).did, 'ring-channel');
+  assert.deepEqual(lndCalls.slice(-2), [['connect', '02' + '33'.repeat(32), '192.0.2.9:9735'], ['open', '02' + '33'.repeat(32), 150000]], 'the same coins, now to the newcomer');
   clock += 3_600_000;
   assert.equal((await agent.tick()).did, 'gateway-claim');
   assert.equal(sent.length, 4, 'each payment once');
