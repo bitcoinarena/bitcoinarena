@@ -2902,6 +2902,7 @@
             window.ARENA_FED_TRIED = true;   // checked, whatever it said: no longer "loading" (kanban #350)
             window.ARENA_FED_STATUS = { ...fs, federation: fedHex };
             window.ARENA_FED_LOADS = all;   // every listed federation's verified status - the lobby says each round's load (kanban #324)
+            if (window.BLWP_SUM_HELD) window.BLWP_SUM_HELD();   // a held federation's funds summed once its status is known (#467)
             if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);   // notes out of a DRAINING / CRITICAL federation, by themselves
             if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();   // and Settings' custody summary (kanban #347)
             window.ARENA_FED_MOVE = BLWPCLIENT.moveOffer ? BLWPCLIENT.moveOffer(window.ARENA_FED_STATUS, [...all.values()]) : null;
@@ -7240,6 +7241,7 @@
               window.ARENA_FED_TRIED = true;
               window.ARENA_FED_STATUS = { ...fs, federation: fs.federation || fedHex };
               window.ARENA_FED_LOADS = all;
+              if (window.BLWP_SUM_HELD) window.BLWP_SUM_HELD();   // a held federation's funds summed once its status is known (#467)
               if (window.ARENA_EVACUATE) window.ARENA_EVACUATE(all);
               if (window.ARENA_PAINT_CUSTODY) window.ARENA_PAINT_CUSTODY();
               if (window.ARENA_PAINT_FEDERATION) window.ARENA_PAINT_FEDERATION();
@@ -7296,6 +7298,14 @@
           }
         } finally { window.BLWP_BALANCE_TRIED = true; if (window.BLWP_PAINT_SETTINGS) window.BLWP_PAINT_SETTINGS(); }
       })().finally(() => { summing = null; }));
+      // A HELD FEDERATION'S FUNDS ONCE ITS STATUS IS KNOWN (kanban #467, measured 2026-10-18 on live UI 220: the statuses landed
+      // ~15 s after the page's first sum, which could open no wallet without them - 2,500 sat in federation b18947f0 stayed out of
+      // the balance, 53 sat shown for 2,553 held, until some later read): when the statuses land and a held federation has no wallet
+      // open, the balance is summed again (the owner 2026-10-13: every federation's funds always visible, summed)
+      window.BLWP_SUM_HELD = () => {
+        const held = BLWPCLIENT.ledgerFederations ? BLWPCLIENT.ledgerFederations(vault()) : [];
+        return held.some((f) => !window.BLWP_WALLETS.has(f)) ? window.BLWP_SUM_BALANCES() : null;
+      };
       // WHERE THE MONEY SITS, ON A TAP (the owner 2026-10-13: "Die UI muss auch anzeigen wenn ich auf die balances klicke wieviel
       // Geld in welcher Federation gespeichert ist"): every balance on the page - the wallet bar, the lobby's chips, Settings -
       // opens the split: each federation's sats, its status and load from the record this page verified, and the sum
