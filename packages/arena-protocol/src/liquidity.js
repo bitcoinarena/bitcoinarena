@@ -90,11 +90,13 @@ export function assignLiquidity({ needs, claims, network = 'testnet4', skipped =
 
 /**
  * A provider's weight for the liquidity pool: its channels to the federation's nodes + its free balance, floored to 10,000 sat - and 0
- * while its free balance is below the deposit minimum (the owner 2026-10-18: "Once a liquidity provider has not enough funds left he never
- * receives part of the 1%"): it earns again once topped up.
+ * while its liquidity is below the deposit minimum (the owner 2026-10-18: "Once a liquidity provider has not enough funds left he never
+ * receives part of the 1%"): it earns again once topped up. THE MINIMUM COUNTS FREE COINS + THE CHANNELS IT GAVE (the owner 2026-10-18,
+ * "ok accepted"): a provider at exactly 5 x L that gives a channel keeps its share - giving liquidity never removes the earning.
  */
+export const liquidityHeld = (claim, freeSats = BigInt(claim.freeSats)) => freeSats + claim.channels.reduce((a, x) => a + BigInt(x.capacitySats), 0n);
 export function liquidityWeight(claim, federationLnKeys, network = 'testnet4', freeSats = BigInt(claim.freeSats)) {
-  if (freeSats < LIQUIDITY_TERMS[network].depositSats) return 0n;
+  if (liquidityHeld(claim, freeSats) < LIQUIDITY_TERMS[network].depositSats) return 0n;
   const keys = new Set(federationLnKeys);
   const inFed = claim.channels.filter((x) => keys.has(x.peer)).reduce((a, x) => a + BigInt(x.capacitySats), 0n);
   return ((inFed + freeSats) / 10000n) * 10000n;

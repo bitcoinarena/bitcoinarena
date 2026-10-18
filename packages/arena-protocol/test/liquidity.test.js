@@ -47,9 +47,15 @@ test('the weight: channels to the federation\'s nodes + free balance, floored to
   const N = nodeN(9), O = nodeN(8);
   const c = prov(1, { freeSats: 505000, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }, { peer: O.lightningPubkey, capacitySats: 100000 }] });
   assert.equal(liquidityWeight(c, [N.lightningPubkey]), 600000n, '100,000 in the federation + 505,000 free -> 605,000 floored');
-  const poor = prov(2, { freeSats: 499999, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }] });
-  assert.equal(liquidityWeight(poor, [N.lightningPubkey]), 0n, 'below the deposit minimum (500,000 on testnet4): no share, channels or not');
-  assert.equal(liquidityWeight({ ...poor, freeSats: '2499999' }, [N.lightningPubkey], 'mainnet'), 0n, 'mainnet minimum 2,500,000');
+  const poor = prov(2, { freeSats: 399999, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }] });
+  assert.equal(liquidityWeight(poor, [N.lightningPubkey]), 0n, 'free + given 499,999: below the deposit minimum (500,000 on testnet4), no share');
+  assert.equal(liquidityWeight({ ...poor, freeSats: '2399999' }, [N.lightningPubkey], 'mainnet'), 0n, 'mainnet minimum 2,500,000');
+  // the owner 2026-10-18 "ok accepted": the channels it gave count toward the minimum - a provider at exactly 5 x L keeps its share
+  // after giving one (measured: LND D, 600,000 -> 496,150 free + a 100,000 channel)
+  const gave = prov(3, { freeSats: 496150, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }] });
+  assert.equal(liquidityWeight(gave, [N.lightningPubkey]), 590000n, '496,150 free + 100,000 given = 596,150 >= 500,000: weight 590,000');
+  const elsewhere = prov(4, { freeSats: 450000, channels: [{ peer: O.lightningPubkey, capacitySats: 100000 }] });
+  assert.equal(liquidityWeight(elsewhere, [N.lightningPubkey]), 450000n, 'a channel to another federation counts toward the minimum, not toward this weight');
 });
 
 test('a provider listed twice is one candidate: a node never gets both channels from the same provider', () => {

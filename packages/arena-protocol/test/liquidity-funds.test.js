@@ -54,10 +54,10 @@ test('the proven balance: signed and unspent at the chain\'s amount; spent, unsi
   assert.match(checkLiquidityClaim({ ...claim, funds: claim.funds.slice(1) }, verify).why, /not signed by its node key/, 'the coins are under the claim\'s signature');
   const proven = await provenFreeSats({ claim, curve: messageCurve, txOut: async (t, v) => chain.get(`${t}:${v}`) || null });
   assert.equal(proven, 710000n, '410,000 + 300,000: the chain\'s amounts, not the claimed 9,999,999');
-  // the seating weighs the proven balance: 710,000 free + a 100,000 channel -> 800,000; below the deposit by proof -> out
+  // the seating weighs the proven balance: 710,000 free + a 100,000 channel -> 800,000; proven 399,999 + the 100,000 given, below the deposit -> out
   const fedKey = '03' + '99'.repeat(32);
   const withCh = { ...claim, channels: [{ peer: fedKey, capacitySats: '100000' }] };
   assert.deepEqual(liquiditySeatingFrom({ claims: [withCh], federationLnKeys: [fedKey], proven: new Map([[P.node, proven]]) }).map((p) => p.weight), [800000n]);
-  assert.deepEqual(liquiditySeatingFrom({ claims: [withCh], federationLnKeys: [fedKey], proven: new Map([[P.node, 499999n]]) }), [], 'proven below 500,000: no share');
+  assert.deepEqual(liquiditySeatingFrom({ claims: [withCh], federationLnKeys: [fedKey], proven: new Map([[P.node, 399999n]]) }), [], 'proven below 500,000: no share');
   assert.deepEqual(liquiditySeatingFrom({ claims: [withCh], federationLnKeys: [fedKey], proven: new Map() }), [], 'nothing proven: no share');
 });

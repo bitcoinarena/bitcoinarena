@@ -171,8 +171,8 @@ paths are the ones every LNv2 payment runs; this use of them is not.
   keys) and the top ones open. No coordinator.
 - **Paid** from a guardian-signed list per epoch, like the gateway seats; with no provider, the pool goes to custody. With more than
   one provider the pool is split by **available balance** (the owner: "dependant on available balance"): each provider's channels to the
-  federation's nodes plus its proven free coins, floored to 10,000 sat. A provider whose free coins are below the deposit minimum
-  earns nothing of it until topped up.
+  federation's nodes plus its proven free coins, floored to 10,000 sat. A provider whose free coins plus the channels it gave are
+  below the deposit minimum earns nothing of it until topped up (the owner 2026-10-18: giving liquidity never removes the share).
 - **Proven free coins:** the claim lists the provider's coins, each signed by its address key for that provider's node. A guardian
   counts a coin only when the signature is good and its own Bitcoin Core shows it unspent, at the chain's amount, never the claimed
   one. A guardian therefore needs its own Core (Electrum mode serves no `gettxout`).
