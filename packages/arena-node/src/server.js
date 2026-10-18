@@ -1907,9 +1907,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // CONFLICTED NODES: none since the 2026-10-14 ruling (§5A.13, kanban #360) - the list stays for older readers, always empty
       // AND THE SERIES PUBLISHER'S FEE BACK, in the round that pays it (§5A.5, kanban #304)
       const publisher = publisherFor(rid, contract);
+      // AND WHERE EACH GUARDIAN IS PAID (2026.0.13, kanban #33 gap 2): its census advert's payout key, where it names a real one
+      let guardianPayout = null; try { const m = roster.guardianPayoutsFor(rid); if (m.size) guardianPayout = m; } catch { guardianPayout = null; }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
         settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian,
-        conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}) };
+        conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
     },
   });
   // AND THE WINNERS' SHARES OF MARKET ROUNDS SETTLED BEFORE THEY WERE KEPT (kanban #457): once, a minute after start
