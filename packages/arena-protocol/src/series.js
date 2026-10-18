@@ -193,10 +193,24 @@ const countOf = (template, count) => (count !== undefined ? count
   : (template && Number.isInteger(template.seriesCount) ? template.seriesCount : roundsPerSeries(periodOf(template))));
 export const TAIL_COMMITTEE_LEAD_MIN_MS = 12n * HOUR;
 
+// ONE TEMPLATE'S ID IS WORKED OUT ONCE PER PERIOD AND COUNT (kanban #468 item 4, measured on seat 3's start 2026-10-18:
+// seriesRoundCheck - every door that touches a round asks it - encoded and hashed every held template again on every ask,
+// 4.5 % of the main thread's first minute). Kept per template object: a series file read again makes new objects; nothing
+// changes a template after it is read.
+const idsOf = new WeakMap();   // template -> Map(`${periodMs}|${count}` -> id)
+
 /** series_id = H(template || round_period || round_count), tagged; a grid's with 'G' after its count. */
 export function seriesId(template, { periodMs, count } = {}) {
   periodMs = periodOf(template, periodMs);
   count = countOf(template, count);
+  const memo = template && typeof template === 'object' ? (idsOf.get(template) || (idsOf.set(template, new Map()), idsOf.get(template))) : null;
+  const key = `${periodMs}|${count}`;
+  if (memo && memo.has(key)) return memo.get(key);
+  const id = seriesIdOf(template, periodMs, count);
+  if (memo) memo.set(key, id);
+  return id;
+}
+function seriesIdOf(template, periodMs, count) {
   // a v2 template's `nodes` is no part of its id (2026.0.2, kanban #348): its rounds' seats are drawn after it
   const body = encodeRoundContract(idBodyOf(withoutSeries(template)));
   const bytes = new Uint8Array(body.length + 12 + (isGridSeries(template) ? 1 : 0));
