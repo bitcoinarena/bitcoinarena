@@ -26,7 +26,7 @@ import { Writer } from './encode.js';
 // places for it to differ. It also made this file unbundleable beside
 // hash.js, which is how it was found.
 import { taggedHash, fromHex } from './hash.js';
-import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG } from './constants.js';
+import { PROTOCOL_VERSION, TYPE_FEE_CLAIM, TAG, GATEWAY_SEAT_VERSION } from './constants.js';
 import { roundId } from './contracts.js';
 import { DELIVERED, FAILED, FORFEIT, isRefund, remainderOrder, netStakeMsat } from './payout.js';
 
@@ -45,7 +45,9 @@ export const SETTLEMENT = 'settlement';
 // the settlement pool ... and 2/3 % to the guardian pool, the seated guardians of the federation the round names"): the
 // third pool, divided evenly among those guardians. A round whose guardians are not named keeps the two-pool table.
 export const GUARDIAN = 'guardian';
-export const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN];
+// THE GATEWAY SEATS (2026.0.15, §23A.9): a third of the guardian pool, to the federation's two seated gateways
+export const GATEWAY = 'gateway';
+export const POOLS = [GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY];
 
 /**
  * WHICH POOL A ROLE IS PAID FROM, and it is not a formality.
@@ -117,6 +119,13 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
   if (guardians.length) {
     const third = fee / 3n;
     shareOf = { [GAME_VERIFY]: third, [SETTLEMENT]: third, [GUARDIAN]: fee - 2n * third };
+    // A 2026.0.15 ROUND WITH A SEATED GATEWAY (§23A.9): one third of the guardian pool is the gateway seats', the guardians keep the rest;
+    // with no eligible gateway the guardians keep it all, as before
+    const gateways = ((pools && pools[GATEWAY]) || []).filter((k) => eligible.has(hex(k)));
+    if (Number(contract && contract.protocolVersion) >= GATEWAY_SEAT_VERSION && gateways.length) {
+      const gw = shareOf[GUARDIAN] / 3n;
+      shareOf[GATEWAY] = gw; shareOf[GUARDIAN] -= gw;
+    }
   } else {
     // two halves of the fee (2.50% + 2.50% of the gross, the remainder msat to settlement), never a guardian third unspent
     const first = fee / 2n;
@@ -130,7 +139,7 @@ export function nodeFeeTable({ contract, entries, pools, eligible, feeBps = NODE
 
   for (const pool of POOLS) {
     const amount = shareOf[pool];
-    if (amount === 0n) continue;
+    if (!amount) continue;   // the gateway pool is named only when a 2026.0.15 round pays it
     const inPool = (pools && pools[pool]) || [];
     const earning = inPool.filter((k) => eligible.has(hex(k)));
 

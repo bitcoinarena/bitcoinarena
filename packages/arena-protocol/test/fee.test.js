@@ -81,7 +81,7 @@ test('a signer node in both pools earns both shares, and they do not merge', () 
 test('the rates are 22A\'s and are not a taste', () => {
   assert.equal(NODE_FEE_BPS, 500, '5.00% of gross_round_volume (§0A.8, kanban #205)');
   assert.equal(POOL_BPS, 250, '2.50% to each pool when the round names no guardian (two halves)');
-  assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN]);
+  assert.deepEqual(POOLS, [GAME_VERIFY, SETTLEMENT, GUARDIAN, 'gateway'], 'the gateway seats\' pool (2026.0.15) appended');
 });
 
 // THE GUARDIAN POOL (§22A v4.6.4, RULED 2026-09-21 / 2026-10-01 15:44): 2/3 % each to game/verify, settlement and the
@@ -353,4 +353,21 @@ test('a guardian seated in the successor and in its draining predecessor is list
   assert.ok(owed(g[2]) >= each && owed(g[2]) <= each + 1n, 'seated in the successor only: one');
   assert.ok(owed(old) >= each && owed(old) <= each + 1n, 'seated in the predecessor only: one');
   assert.equal(all.reduce((s, k) => s + owed(k), 0n), guardianPool, 'the whole guardian pool, nothing more');
+});
+
+test('2026.0.15 (§23A.9): a third of the guardian pool goes to the gateway seats; earlier rounds and rounds with no gateway as before', () => {
+  const g = [b32(0x51), b32(0x52), b32(0x53)], gw = [b32(0x52), b32(0x61)];   // one gateway is also a guardian, as every seat is
+  const elig = new Set([...game, ...settle, ...g, ...gw].map(toHex));
+  const t15 = nodeFeeTable({ contract: { ...contract, protocolVersion: 15 }, entries, pools: { ...pools, guardian: g, gateway: gw }, eligible: elig });
+  const fee = t15.fee, third = fee / 3n, guardianPool = fee - 2n * third, gwPool = guardianPool / 3n;
+  assert.deepEqual(t15.pools, { gameVerify: third, settlement: third, guardian: guardianPool - gwPool, gateway: gwPool });
+  const sum = (pool) => [...t15.signerNodes].filter(([k]) => k.startsWith(`${pool}:`)).reduce((a, [, v]) => a + v, 0n);
+  assert.equal(sum('gateway'), gwPool);
+  assert.equal(sum('guardian'), guardianPool - gwPool);
+  assert.equal([...t15.signerNodes.keys()].filter((k) => k.startsWith('gateway:')).length, 2, 'both seats paid');
+  const t13 = nodeFeeTable({ contract: { ...contract, protocolVersion: 13 }, entries, pools: { ...pools, guardian: g, gateway: gw }, eligible: elig });
+  assert.deepEqual(t13.pools, { gameVerify: third, settlement: third, guardian: guardianPool }, 'a 2026.0.13 round pays no gateway');
+  const none = nodeFeeTable({ contract: { ...contract, protocolVersion: 15 }, entries, pools: { ...pools, guardian: g, gateway: [b32(0x61)] }, eligible: new Set([...game, ...settle, ...g].map(toHex)) });
+  assert.deepEqual(none.pools, { gameVerify: third, settlement: third, guardian: guardianPool }, 'no eligible gateway: the guardians keep it');
+  assert.equal(POOLS.indexOf('gateway'), 3, 'appended: the fee table ids of every earlier table are as they were');
 });
