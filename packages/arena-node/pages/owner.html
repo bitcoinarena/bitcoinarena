@@ -301,7 +301,14 @@ async function liquidityPanel() {
     ${low ? `<p class="bad"><b>Below the deposit minimum: this provider earns no share of the liquidity pool</b> until it is topped up by ${(min - free).toLocaleString('en')} sat.</p>` : '<p class="ok">Above the deposit minimum: it earns its share of the liquidity pool.</p>'}
     <div class="row"><span>Channels given to new nodes</span><b>${given.length} (${given.reduce((a, x) => a + Number(x.capacitySats), 0).toLocaleString('en')} sat)</b></div>
     ${given.map((x) => `<div class="row"><span><code>${esc(x.peer.slice(0, 16))}…</code></span><b>${Number(x.capacitySats).toLocaleString('en')} sat</b></div>`).join('')}
-    <div class="row"><span>Top up (LND's wallet, testnet4)</span><b><code>${esc(c.depositAddress || '(not known yet)')}</code></b></div>`;
+    <div class="row"><span>Top up (LND's wallet, testnet4)</span><b><code>${esc(c.depositAddress || '(not known yet)')}</code></b></div>
+    <p><button id="liq-new-address">New address</button> <span id="liq-msg" class="sub"></span></p>`;
+  $('liq-new-address').onclick = async (e) => {
+    e.target.disabled = true; $('liq-msg').textContent = 'Asking LND for a new address…';
+    let r; try { r = await post('/owner/liquidity/new-address', await signed('liquidity/new-address')); } catch (x) { r = { ok: false, why: x.message }; }
+    if (!r.ok) { e.target.disabled = false; $('liq-msg').textContent = r.why || 'no new address'; return; }
+    await liquidityPanel(); $('liq-msg').textContent = `New address: ${r.address}`;
+  };
 }
 async function releasePanel() {
   let v = null;
