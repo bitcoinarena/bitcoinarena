@@ -72,7 +72,10 @@
         window.ARENA_SITE_GAME = g || null;
         if (g && g !== 'nextblock') {
           document.documentElement.classList.add('other-game');
-          var titles = { 'rock-paper-scissors': ['Rock Paper Scissors', '\u270A\u270B\u270C\uFE0F'] };
+          // THE GAME'S OWN ICON FROM THE FIRST PAINT (the owner 2026-10-18: "It doesn't load the logo at first and looks ugly" - the three emoji
+          // stood in a column until a seat answered the icon): the known games' icons are in the page, as data, no request
+          var titles = { 'rock-paper-scissors': ['Rock Paper Scissors', '', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiI+CiAgPHRpdGxlPlJvY2sgUGFwZXIgU2Npc3NvcnM8L3RpdGxlPgogIDwhLS0gdGhlIHNxdWFyZSBpY29uIChrYW5iYW4gIzMzOCksIG9uIHRoZSBwYWdlJ3MgZGFyayBncm91bmQgbGlrZSBUaWNrIFRvY2snczogcm9jaywgcGFwZXIgYW5kIHNjaXNzb3JzIGFyb3VuZCBhIGNvaW4gLS0+CiAgPHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIHJ4PSIxMTIiIGZpbGw9IiMwZDEwMTQiLz4KICA8IS0tIHRoZSByaW5nIHRoZSB0aHJlZSBjaGFzZSBlYWNoIG90aGVyIGFyb3VuZCAtLT4KICA8Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNjgiIHI9IjE1MCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjc5MzFhIiBzdHJva2Utd2lkdGg9IjEwIiBzdHJva2UtZGFzaGFycmF5PSIyMiAxOCIgb3BhY2l0eT0iMC41NSIvPgogIDwhLS0gdGhlIGNvaW4gLS0+CiAgPGNpcmNsZSBjeD0iMjU2IiBjeT0iMjY4IiByPSI2MiIgZmlsbD0iI2Y3OTMxYSIvPgogIDxwYXRoIGQ9Ik0yNDMgMjMydjcyTTI2MyAyMzJ2NzJNMjM0IDI0MGgzNGExNCAxNCAwIDAgMSAwIDI4aC0zNE0yMzQgMjY4aDM4YTE1IDE1IDAgMCAxIDAgMzBoLTM4IiBmaWxsPSJub25lIiBzdHJva2U9IiMwZDEwMTQiIHN0cm9rZS13aWR0aD0iMTEiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDwhLS0gcm9jaywgdG9wOiBhIGNsb3NlZCBmaXN0IC0tPgogIDxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDI1NiA5MikiPgogICAgPHJlY3QgeD0iLTU2IiB5PSItMzgiIHdpZHRoPSIxMTIiIGhlaWdodD0iNzYiIHJ4PSIzNCIgZmlsbD0iI2ZmZmZmZiIvPgogICAgPHBhdGggZD0iTS0zMCAtMzZ2MzBNMCAtMzh2MzJNMzAgLTM2djMwIiBzdHJva2U9IiMwZDEwMTQiIHN0cm9rZS13aWR0aD0iNyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgICA8cmVjdCB4PSItNjQiIHk9IjIiIHdpZHRoPSIzNiIgaGVpZ2h0PSIyOCIgcng9IjE0IiBmaWxsPSIjZmZmZmZmIiBzdHJva2U9IiMwZDEwMTQiIHN0cm9rZS13aWR0aD0iNiIvPgogIDwvZz4KICA8IS0tIHBhcGVyLCBsb3dlciBsZWZ0OiBhIHNoZWV0IHdpdGggYSBmb2xkZWQgY29ybmVyIC0tPgogIDxnIHRyYW5zZm9ybT0idHJhbnNsYXRlKDExMCAzODIpIHJvdGF0ZSgtMTQpIj4KICAgIDxwYXRoIGQ9Ik0tNDYgLTU4aDYybDMwIDMwdjg2aC05MnoiIGZpbGw9IiNmZmZmZmYiLz4KICAgIDxwYXRoIGQ9Ik0xNiAtNTh2MzBoMzAiIGZpbGw9IiNkOWRlZTUiIHN0cm9rZT0iIzBkMTAxNCIgc3Ryb2tlLXdpZHRoPSI1IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgICA8cGF0aCBkPSJNLTMwIC0xNGg1Nk0tMzAgNmg1Nk0tMzAgMjZoNDAiIHN0cm9rZT0iIzlhYTRiMiIgc3Ryb2tlLXdpZHRoPSI3IiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8L2c+CiAgPCEtLSBzY2lzc29ycywgbG93ZXIgcmlnaHQgLS0+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoNDAyIDM4Mikgcm90YXRlKDE2KSI+CiAgICA8cGF0aCBkPSJNLTYgNkw1MiAtNThNNiA2TC01MiAtNTgiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSIxNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgICA8Y2lyY2xlIGN4PSItMjYiIGN5PSI0MCIgcj0iMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y3OTMxYSIgc3Ryb2tlLXdpZHRoPSIxMyIvPgogICAgPGNpcmNsZSBjeD0iMjYiIGN5PSI0MCIgcj0iMjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y3OTMxYSIgc3Ryb2tlLXdpZHRoPSIxMyIvPgogICAgPGNpcmNsZSBjeD0iMCIgY3k9IjQiIHI9IjciIGZpbGw9IiMwZDEwMTQiIHN0cm9rZT0iI2ZmZmZmZiIgc3Ryb2tlLXdpZHRoPSI0Ii8+CiAgPC9nPgo8L3N2Zz4K'],
+            'btc-updown-15m': ['Bitcoin Up or Down', '', 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIiB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiI+CiAgPHRpdGxlPkJpdGNvaW4gVXAgb3IgRG93bjwvdGl0bGU+CiAgPCEtLSB0aGUgc3F1YXJlIGljb24gKGthbmJhbiAjMzM4KSwgb24gdGhlIHBhZ2UncyBkYXJrIGdyb3VuZCBsaWtlIFRpY2sgVG9jaydzOiBhIHByaWNlLCBhbmQgdGhlIHR3byBzaWRlcyBvZiB0aGUgbWFya2V0IC0tPgogIDxyZWN0IHdpZHRoPSI1MTIiIGhlaWdodD0iNTEyIiByeD0iMTEyIiBmaWxsPSIjMGQxMDE0Ii8+CiAgPCEtLSBjYW5kbGVzIGFsb25nIHRoZSBwcmljZSAtLT4KICA8ZyBzdHJva2UtbGluZWNhcD0icm91bmQiPgogICAgPHBhdGggZD0iTTExOCAzMDB2ODBNMTc0IDI1MHY4NE0yMzAgMjgydjc0TTI4NiAyMTR2ODRNMzQyIDE3OHY4ME0zOTggMTQwdjg2IiBzdHJva2U9IiM1YzY2NzIiIHN0cm9rZS13aWR0aD0iNiIvPgogICAgPHJlY3QgeD0iMTA0IiB5PSIzMTgiIHdpZHRoPSIyOCIgaGVpZ2h0PSI0NCIgcng9IjUiIGZpbGw9IiMzZmI5NTAiLz4KICAgIDxyZWN0IHg9IjE2MCIgeT0iMjY2IiB3aWR0aD0iMjgiIGhlaWdodD0iNTAiIHJ4PSI1IiBmaWxsPSIjM2ZiOTUwIi8+CiAgICA8cmVjdCB4PSIyMTYiIHk9IjI5MiIgd2lkdGg9IjI4IiBoZWlnaHQ9IjQwIiByeD0iNSIgZmlsbD0iI2Y4NTE0OSIvPgogICAgPHJlY3QgeD0iMjcyIiB5PSIyMzAiIHdpZHRoPSIyOCIgaGVpZ2h0PSI1MiIgcng9IjUiIGZpbGw9IiMzZmI5NTAiLz4KICAgIDxyZWN0IHg9IjMyOCIgeT0iMTkyIiB3aWR0aD0iMjgiIGhlaWdodD0iNDgiIHJ4PSI1IiBmaWxsPSIjM2ZiOTUwIi8+CiAgICA8cmVjdCB4PSIzODQiIHk9IjE1NCIgd2lkdGg9IjI4IiBoZWlnaHQ9IjU0IiByeD0iNSIgZmlsbD0iI2Y3OTMxYSIvPgogIDwvZz4KICA8IS0tIHRoZSBwcmljZSBsaW5lIG92ZXIgdGhlbSAtLT4KICA8cGF0aCBkPSJNOTYgMzQyTDE3NCAyOTBMMjMwIDMxMkwyODYgMjU0TDM0MiAyMTZMNDE0IDE3MiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZmZmZmIiBzdHJva2Utd2lkdGg9IjEyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8IS0tIHVwIG9yIGRvd246IHRoZSB0d28gc2lkZXMgLS0+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMTUwIDEzMikiPgogICAgPGNpcmNsZSByPSI1NCIgZmlsbD0iIzNmYjk1MCIvPgogICAgPHBhdGggZD0iTTAgMjZWLTI0TS0yMiAtMkwwIC0yNkwyMiAtMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMGQxMDE0IiBzdHJva2Utd2lkdGg9IjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8L2c+CiAgPGcgdHJhbnNmb3JtPSJ0cmFuc2xhdGUoMzcyIDM5MikiPgogICAgPGNpcmNsZSByPSI1NCIgZmlsbD0iI2Y4NTE0OSIvPgogICAgPHBhdGggZD0iTTAgLTI2VjI0TS0yMiAyTDAgMjZMMjIgMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMGQxMDE0IiBzdHJva2Utd2lkdGg9IjEzIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8L2c+CiAgPCEtLSB0aGUgY29pbiB0aGUgbWFya2V0IGlzIGFib3V0IC0tPgogIDxjaXJjbGUgY3g9IjQxNCIgY3k9IjE3MiIgcj0iMjAiIGZpbGw9IiNmNzkzMWEiIHN0cm9rZT0iIzBkMTAxNCIgc3Ryb2tlLXdpZHRoPSI2Ii8+Cjwvc3ZnPgo='] };
           var t = titles[g] || [g.replace(/-/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); }), ''];
           window.ARENA_SITE_TITLE = t;
           document.title = t[0];
@@ -1130,6 +1133,20 @@
     #blwp-seed-modal .verify-n { font-size: 20px; font-weight: 800; }
     #blwp-seed-modal .why { color: #ff7b72; min-height: 1.3em; }
     #blwp-seed-modal .done { color: #3fb950; font-size: 18px; font-weight: 800; }
+    /* ONE SCREEN, NO SCROLLING (the owner 2026-10-18: "it is slightly too high to fit on a normal macbook pro screen. We want to see everything
+       on one page without scrolling" - measured 80 px over at 1440 x 760; "not a two-column layout - optimise the space vertically"): the
+       same layout, less height - the tiles' logos 96 px, tighter tiles, headings and footer. Measured: 1512 x 830, 1440 x 760 and 1280 x 720 fit. */
+    body.arena-picking #arena-games { padding-top: calc(41px + env(safe-area-inset-top, 0px) + 10px); }
+    #arena-games .brand { margin-bottom: 4px; }
+    #arena-games h2 { margin-bottom: 2px; }
+    #arena-games .group { margin-bottom: 12px; }
+    #arena-games .group h3 { margin-bottom: 8px; }
+    #arena-games.compact button.tile { padding: 10px 10px 10px; gap: 6px; }
+    #arena-games.compact .head { gap: 6px; }
+    #arena-games.compact .logo { width: min(96px, 66%); border-radius: 20px; }
+    #arena-games.compact .name { min-height: 2.2em; }
+    #arena-games .more { margin-top: 0; }
+    #arena-games .foot-row { margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -1764,7 +1781,10 @@
     <div id="boot-panel"><div class="head"></div></div>
     <div id="site-splash"><div class="icons" id="site-icons"></div><div class="name" id="site-name"></div></div>
     <script>
-      if (window.ARENA_SITE_TITLE) { document.getElementById('site-name').textContent = window.ARENA_SITE_TITLE[0]; document.getElementById('site-icons').textContent = window.ARENA_SITE_TITLE[1]; }
+      if (window.ARENA_SITE_TITLE) { document.getElementById('site-name').textContent = window.ARENA_SITE_TITLE[0];
+        var ic = document.getElementById('site-icons');
+        if (window.ARENA_SITE_TITLE[2]) { var im = document.createElement('img'); im.alt = ''; im.src = window.ARENA_SITE_TITLE[2]; ic.textContent = ''; ic.append(im); }
+        else ic.textContent = window.ARENA_SITE_TITLE[1]; }
     </script>
     <div id="title"><img id="logo" src="nextblock-icon.svg" alt="">Tick Tock, <span>Next Block</span></div>
     <div id="sub">build {{{ PRODUCT_VERSION }}}</div>
@@ -3230,7 +3250,16 @@
       {
         const fid = named.round && named.round.federationId ? Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('') : null;
         if (fid && named.federation && !BLWPCLIENT.inviteNamesFederation(named.federation, fid)) {
-          const st = window.ARENA_FED_LOADS && typeof window.ARENA_FED_LOADS.get === 'function' ? window.ARENA_FED_LOADS.get(fid) : null;
+          // NOT YET READ IS NOT "NONE" (the owner 2026-10-18 playtest, RPS with 0 sat: "takes forever ... Order not placed: ... That invite names
+          // another federation than the round's b18947f0 ... No deposit screen comes" - measured: the press came before this fresh page had
+          // read federation B's record, so the lobby's invite (A's) stayed and the join was refused). The round's own preparation reads every
+          // federation's record (prepRound -> ARENA_FED_LOADS): it is waited for, 12 s at most, before the invite is chosen.
+          const loaded = () => (window.ARENA_FED_LOADS && typeof window.ARENA_FED_LOADS.get === 'function' ? window.ARENA_FED_LOADS.get(fid) : null);
+          if (!loaded() && named.nodes) {
+            console.log('[arena] join: the round is in federation ' + fid.slice(0, 16) + ', whose record this page has not read yet - reading it');
+            try { await Promise.race([prepRound(named.roundIdHex, named.round, named.nodes).signer, new Promise((r) => setTimeout(r, 12000))]); } catch (e) { /* said below by the gate */ }
+          }
+          const st = loaded();
           if (st && st.invite && BLWPCLIENT.inviteNamesFederation(st.invite, fid)) {
             named.federation = st.invite;
             console.log('[arena] join: the round is in federation ' + fid.slice(0, 16) + ', joined with its own invite');
@@ -3377,6 +3406,28 @@
       // second time. Kept per round in this tab, so a reload over a kept lock
       // writes the same amount. The rule is `chooseDonation`, where node --test
       // drives it; this page only asks and passes the answer on.
+      // A WALLET SHORT OF THE STAKE IS ASKED AT THE PRESS (the owner 2026-10-18, playtest: "It takes a while then the deposit screen comes.
+      // It shouldn't take so long" - measured on 0.0.3506: 27.25 s from Buy Up to the deposit, 24.8 s of it the donation set waiting on a
+      // seat that did not answer). Before the round's other steps and beside them: the player wallet opened and read; short of the stake,
+      // the deposit is shown now, and the round's funding below waits on this same offer (page-lock.js earlyDepositOffer).
+      let earlyDeposit = null;
+      if (pays && BLWPCLIENT.roundLocks(named.round) && BLWPCLIENT.earlyDepositOffer
+          && !BLWPCLIENT.savedLock(vault(), { roundId: BLWPCLIENT.fromHex(named.roundIdHex), playerPubkey: player.pubkey })) {
+        earlyDeposit = (async () => {
+          try {
+            const wasm = await window.BLWP_LOCK_WASM(); await wasm.default();
+            const offer = await BLWPCLIENT.earlyDepositOffer({ round: named.round, invite: named.federation, seed, LockClient: wasm.LockClient, storage: vault(),
+              gateways: (new URLSearchParams(location.search).get('gateway') || '').split(',').map((g) => g.trim()).filter(Boolean),
+              onStep: (step) => console.log('[blwp] early deposit: ' + step),
+              onDeposit: (d) => { window.BLWP_DEPOSIT = { invoice: d.invoice, amountMsat: String(d.amountMsat) }; console.log('[blwp] player wallet deposit: ' + String(d.amountMsat) + ' msat, ' + d.invoice); } });
+            if (offer) {
+              console.log('[blwp] join step: the deposit asked at the press (the wallet holds less than the stake)');
+              Promise.resolve(window.BLWP_ASK_JOIN_DEPOSIT(offer, (o) => showDepositOffer(o, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT }))).catch(() => {});
+            }
+            return offer;
+          } catch (e) { console.log('[blwp] early deposit: ' + (e && e.message ? e.message : e)); return null; }
+        })();
+      }
       // THE ROUND'S DONATION SET FIRST (M3.2 6e, §22A): from every signer node of the
       // round, checked - the network's Ed25519 donation authority at the round's
       // height, rotations included, and the set the round names - so the prompt
@@ -3567,7 +3618,8 @@
             }
           } catch (e) { console.warn('[arena] swap: ' + e.message); }
           // THE TOP-UP, ONLY IF THE PLAYER WALLET IS SHORT: into the wallet, not into the round.
-          await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, {
+          const early = earlyDeposit ? await earlyDeposit : null;
+          await BLWPCLIENT.fundPlayerWallet(Object.assign({}, wallet, { early,
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
             askDeposit: (offer) => window.BLWP_ASK_JOIN_DEPOSIT(offer, (o) => showDepositOffer(o, { message: BLWPCLIENT.DEPOSIT_INSUFFICIENT })),
             // NOT PAST THE ROUND'S ENTRY (kanban #6, MF 18): the request ends at the round's last entry instant, by name
@@ -6849,6 +6901,9 @@
       }
       if (!game) return null;
       window.ARENA_GAME_CHOSEN = game;
+      // THE WALLET'S CODE BEFORE THE FIRST PRESS (the owner 2026-10-18 playtest; measured on the test host: the lock client's download and start were
+      // 5.6 s of an empty wallet's wait for the deposit): fetched and started now, while the player looks at the game
+      if (window.BLWP_LOCK_WASM) window.BLWP_LOCK_WASM().catch(() => {});
       // THE SEASON BOARD'S WAY IN beside the gear and on the wallet bar: there is a game to show the board of now (kanban #362)
       document.body.classList.add('arena-game-chosen');
       // THE SHOP BUTTON, only for a game that sells items (kanban #369)
@@ -6862,7 +6917,8 @@
         // the loading screen's title: the game's name and its icon, as on its tile (kanban #385)
         if (document.documentElement.classList.contains('other-game')) { const n = document.getElementById('site-name'); if (n) n.textContent = game.title || game.name;
           const i = document.getElementById('site-icons');
-          if (i && game.icon) { const img = document.createElement('img'); const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(game.icon) : game.icon; img.alt = '';
+          const inPage = i && i.querySelector('img') && /^data:/.test(i.querySelector('img').src);   // the page's own copy since the first paint
+          if (i && game.icon && !inPage) { const img = document.createElement('img'); const via = window.BLWP_ROUTED_URL ? window.BLWP_ROUTED_URL(game.icon) : game.icon; img.alt = '';
             img.onerror = () => { if (img.src !== game.icon) img.src = game.icon; else img.remove(); }; img.src = via; i.textContent = ''; i.append(img); }
           else if (i && document.documentElement.classList.contains('arena-root')) i.textContent = ''; }
       }
