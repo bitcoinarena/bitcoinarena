@@ -190,7 +190,7 @@ export async function lndChannels(cfg, { rest = lndRest } = {}) {
   const [o, p] = await Promise.all([rest({ ...c, path: '/v1/channels' }), rest({ ...c, path: '/v1/channels/pending' })]);
   if (o.status !== 200) return { ok: false, why: errOf(o) };
   const open = (o.json.channels || []).map((x) => ({ peer: x.remote_pubkey, capacitySats: Number(x.capacity), active: Boolean(x.active), public: !x.private,
-    localSats: Number(x.local_balance || 0), remoteSats: Number(x.remote_balance || 0) }));
+    localSats: Number(x.local_balance || 0), remoteSats: Number(x.remote_balance || 0), channelPoint: x.channel_point || null }));
   const pending = ((p.json || {}).pending_open_channels || []).map((x) => ({ peer: x.channel.remote_node_pub, capacitySats: Number(x.channel.capacity) }));
   const live = open.filter((x) => x.public && x.active);
   return { ok: true, open, pending, publicCapacitySats: open.filter((x) => x.public).reduce((a, x) => a + x.capacitySats, 0),
@@ -218,4 +218,12 @@ export async function lndOpenTo(cfg, { pubkey, sats }, { rest = lndRest } = {}) 
     body: { node_pubkey: Buffer.from(String(pubkey), 'hex').toString('base64'), local_funding_amount: String(Math.floor(Number(sats))), private: false } });
   if (o.status !== 200) return { ok: false, why: `the channel was not opened: ${errOf(o)}` };
   return { ok: true, fundingTxid: o.json.funding_txid_bytes ? Buffer.from(o.json.funding_txid_bytes, 'base64').reverse().toString('hex') : o.json.funding_txid_str || null };
+}
+/** Close a channel cooperatively (`channelPoint` txid:index); its local balance returns to LND's wallet. Answers { ok, why }. */
+export async function lndClose(cfg, { channelPoint }, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const [txid, index] = String(channelPoint || '').split(':');
+  if (!/^[0-9a-f]{64}$/.test(txid || '') || !/^\d+$/.test(index || '')) return { ok: false, why: 'a channel point is txid:index' };
+  const r = await rest({ ...c, method: 'DELETE', path: `/v1/channels/${txid}/${index}?sat_per_vbyte=2`, timeoutMs: 20000 });
+  return r.status === 200 ? { ok: true } : { ok: false, why: errOf(r) };
 }
