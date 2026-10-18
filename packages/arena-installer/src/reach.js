@@ -217,7 +217,9 @@ export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, 
  * Is the node reachable at a public https URL? Asked from here, through Cloudflare's edge and back: GET <url>/identity must be this
  * node's key. Answers { ok, ms, why }.
  */
-export async function testPublicUrl({ url, identity, fetcher = fetch, tries = 10 }) {
+// A NEW QUICK TUNNEL'S NAME TAKES LONGER THAN 30 s TO RESOLVE everywhere (measured 2026-10-18 in the Linux VM, rc.6: ENOTFOUND for all 10
+// tries 3 s apart, then HTTP 200 a few minutes later): about 2 minutes of tries before the install step says it failed.
+export async function testPublicUrl({ url, identity, fetcher = fetch, tries = 30, waitMs = 4000 }) {
   let why = 'not tried';
   for (let i = 0; i < tries; i++) {
     const t0 = Date.now();
@@ -227,7 +229,7 @@ export async function testPublicUrl({ url, identity, fetcher = fetch, tries = 10
       if (r.status === 200 && b === identity) return { ok: true, ms: Date.now() - t0 };
       why = r.status === 200 ? 'another node answers there' : `HTTP ${r.status}`;
     } catch (e) { why = e.cause ? e.cause.code || e.message : e.message; }
-    await new Promise((ok) => setTimeout(ok, 3000));   // a new name takes a few seconds in DNS
+    if (i < tries - 1) await new Promise((ok) => setTimeout(ok, waitMs));
   }
   return { ok: false, why: `${url} does not answer as this node: ${why}` };
 }
