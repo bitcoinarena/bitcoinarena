@@ -16,6 +16,7 @@ import { waitHealthy, seatUnit } from '../src/service.js';
 import { probeCore, probeElectrum, tipsAgree, agreeHeights, TESTNET4_GENESIS, headerHash, testConnection } from '../src/chain-test.js';
 import { quickTunnelName } from '../src/tunnel.js';
 import * as reachKit from '../src/reach.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { createReachCheck } from '../../arena-node/src/reach-check.js';
 
 // AN ARENA SEAT'S REACH DOOR, the real one (arena-node reach-check.js), on loopback (allowPrivate: the test has no public address)
@@ -102,7 +103,11 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   const probe = { core: probeCore, electrum: async () => ({ ok: true, height: 0, tipHash: TESTNET4_GENESIS, atHashes: { 0: TESTNET4_GENESIS }, latencyMs: 1 }) };
   const seat = await reachSeat();
   const reach = { ...reachKit, checkDirect: (o) => reachKit.checkDirect({ ...o, seats: [seat.url, seat.url] }) };
-  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children) });
+  // THE CHAIN FOR THE BOND: a deposit of 60,000 sat at the wallet's address once asked twice; what is broadcast is kept
+  const sent = []; let asked = 0;
+  const chainKit = { coinsOf: async () => ({ tip: 156900, coins: ++asked > 1 ? [{ txid: '5a'.repeat(32), vout: 1, sats: 60000, height: 156899 }] : [] }),
+    broadcast: async (_chain, hex) => { sent.push(hex); return Buffer.from(parseTransaction(Buffer.from(hex, 'hex')).txid).reverse().toString('hex'); } };
+  const wizard = createWizard({ state, release: RELEASE, seatPort, reach, chainKit, test: (c) => testConnection(c, { probe, list: [{ host: 'second', port: 1 }] }), install: directInstall(children) });
   const server = http.createServer((q, s) => wizard.handle(q, s));
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
   const port = server.address().port;
@@ -169,6 +174,22 @@ test('a fresh node through the wizard: chain, roles, seed asked back, owner boun
   assert.equal(refused.status, 403);
   assert.equal(statSync(join(home, 'node.db')).isFile(), true);
 
+  s = (await c.get('/api/state')).json;
+  assert.equal(s.step, 'bond');
+  assert.match(s.wallet.address, /^tb1p/);
+  assert.equal((await c.post('/api/finish')).json.ok, false, 'not finished before the bond is posted or deferred');
+  const none = (await c.post('/api/bond/check')).json;
+  assert.deepEqual([none.ok, none.coins.length, none.enough, none.lock.maturity], [true, 0, false, 156900 + 151]);
+  const found = (await c.post('/api/bond/check')).json;
+  assert.deepEqual([found.totalSats, found.enough], [60000, true]);
+  const posted = (await c.post('/api/bond/post')).json;
+  assert.equal(posted.ok, true, posted.why);
+  assert.equal(sent.length, 2, 'the funding and the bond, broadcast in that order');
+  const { advertInTransaction } = await import('../../arena-protocol/src/census.js');
+  const advert = advertInTransaction(Buffer.from(sent[1], 'hex'));
+  assert.equal(Buffer.from(advert.nodePubkey).toString('hex'), svc.identity, 'the bond names this node\'s own key (read from its store)');
+  assert.deepEqual([advert.endpoint, advert.bondMaturityHeight], [`http://127.0.0.1:${seatPort}`, posted.bond.maturity]);
+  assert.equal((await c.post('/api/bond/post')).json.ok, false, 'one bond');
   s = (await c.get('/api/state')).json;
   assert.equal(s.step, 'done');
   const fin = (await c.post('/api/finish')).json;
