@@ -4637,6 +4637,82 @@
     }
    }
   },
+  "/owner/bond": {
+   "get": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "This node's bond and its lock",
+    "description": "This node's bond as the newest census this seat holds names it (outpoint, amount, confirmation height, maturity, template) and its lock at the tip: the maturity block, the blocks to it, an estimated date and whether it can be withdrawn now (kanban #471 part D). Public, as /owner/standing.\n\nAccess: none\n\nReturns: 200 JSON {node, bond, network, tip, lock, says}\n\nSource: `packages/arena-node/src/server.js` line 4246.",
+    "operationId": "get_owner_bond",
+    "responses": {
+     "200": {
+      "description": "{node, bond: {txid, vout, sats, height, maturity, template} or null, network, tip, lock: {maturity, tip, blocksLeft, estimatedMs, withdrawable}, says}.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
+  "/owner/bond-withdraw": {
+   "post": {
+    "tags": [
+     "Operators"
+    ],
+    "summary": "[signed] Withdraw the bond after its lock",
+    "description": "From its maturity block on, the whole bond to the owner's address on its template-2 recovery leaf, signed by this node's key, checked by testmempoolaccept and broadcast. Refused before maturity with the height, the blocks left and the date. The node leaves the census from the next census height (kanban #471 part D).\n\n**Needs the node owner: a request signed by the claimed owner key (BIP-340 JSON or a NIP-98 kind 27235 event).**\n\n**Changes state on the node:** this page does not send it.\n\nAccess: owner\n\nReturns: 200 JSON {ok, txid, value, fee}; 400; 401/403; 409; 503\n\nSource: `packages/arena-node/src/server.js` line 4524.",
+    "operationId": "post_owner_bond_withdraw",
+    "requestBody": {
+     "required": true,
+     "description": "An owner request (signOwnerRequest or a NIP-98 event) for action bond-withdraw with args {address: a segwit address of the bond's network, feeRate: sat/vB, 2 by default}.",
+     "content": {
+      "application/json": {
+       "schema": {}
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "{ok: true, txid, value, fee}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "Not an address of that network, or the spend failed.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "401": {
+      "description": "Not a valid owner signature.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "403": {
+      "description": "Not this node's owner.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "409": {
+      "description": "No bond of this node in the census, or still locked (the height, blocks left and date are named).",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "503": {
+      "description": "This seat reads no chain to send to.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    },
+    "x-changes-state": true
+   }
+  },
   "/owner/claim": {
    "post": {
     "tags": [
