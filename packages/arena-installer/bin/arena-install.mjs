@@ -4,6 +4,7 @@
 //     arena-install [--tunnel] [--port 7800] [--seat-port 8470] [--home ~/.arena-node]
 //     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
 //     arena-install --rebond <sats> [--yes] [--home ~/.arena-node]
+//     arena-install --join-federation <invite code> [--home ~/.arena-node]
 //
 // --tunnel     the machine is remote: open a Cloudflare quick tunnel (no account) and print its https link instead
 // --port       the wizard's local port (127.0.0.1 only)
@@ -13,6 +14,7 @@
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
 // --rebond     a larger bond in one step, once the posted bond's lock has ended: that bond and the wallet's coins become a new bond
 //              of <sats> with a new lock (rebond.js). Without --yes it only shows the plan.
+// --join-federation  the node's gateway (set up in the wizard's Lightning step) joins a federation by its invite code (gateway.js)
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
 import http from 'node:http';
@@ -71,6 +73,19 @@ if (args.includes('--rebond')) {
     + `\nbecome a bond of ${p.bondSats} sat, locked until block ${p.maturity} (${p.lock.blocks} blocks, about ${new Date(p.lock.estimatedMs).toUTCString()}).`
     + `\nFees ${p.fees.funding} + ${p.fees.bond} sat${p.changeSats !== '0' ? `, ${p.changeSats} sat back to the wallet` : ''}.`);
   console.log(r.bond ? `Posted: the new bond is ${r.bond.txid}:0.` : 'Nothing sent. Run again with --yes to post it.');
+  process.exit(0);
+}
+
+// A FEDERATION FOR THE GATEWAY (kanban #471 slice 5, ruling 3: by invite)
+if (args.includes('--join-federation')) {
+  const { joinFederation, testGateway } = await import('../src/gateway.js');
+  const g = state.read().gateway;
+  if (!g) { console.error('Not possible: this node has no gateway - set it up in the wizard\'s Lightning step'); process.exit(1); }
+  const j = await joinFederation({ ...g, invite: opt('--join-federation', '') });
+  if (!j.ok) { console.error(`Not joined: ${j.why}`); process.exit(1); }
+  const t = await testGateway(g);
+  if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
+  console.log(`Joined ${j.federationId}. The gateway serves: ${t.ok ? t.federations.map((f) => f.name || f.federationId).join(', ') : '(its list could not be read now)'}`);
   process.exit(0);
 }
 
