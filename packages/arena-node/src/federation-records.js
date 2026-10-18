@@ -32,6 +32,12 @@ export function guardiansOf(census, federationId) {
   return out;
 }
 
+/** A record's seated guardians (§23A.1: listed, not gone), by node key. */
+export function seatedOf(record) {
+  const gone = new Set((record.gone || []).map((g) => toHex(g.peerKey)));
+  return (record.guardians || []).filter((g) => !gone.has(toHex(g.peerKey))).map((g) => g.nodePubkey);
+}
+
 /** The federations a census knows: every federation some census node guards. */
 export function federationsOf(census) {
   const ids = new Map();
@@ -370,6 +376,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // DRAINING and names `fidHex` as its successor - not gone, by node key. A CLOSED predecessor names nobody. One that fell to
     // CRITICAL while draining is still drained by its seated guardians, and paid ("until its record is CLOSED"); a HALTED one
     // serves nothing
+    // THE FEDERATION'S SEATED GUARDIANS, BY NODE KEY (§22A v4.6.4 from SEATED_GUARDIAN_VERSION, kanban #33): its newest record's
+    // guardians that are not gone (§23A.1); null when this seat holds no record of it (the census rule then stands)
+    seatedGuardians(fidHex) {
+      const k = kept.get(String(fidHex).toLowerCase());
+      if (!k || !k.record) return null;
+      return seatedOf(k.record);
+    },
     predecessorGuardians(fidHex) {
       const out = [];
       for (const [, k] of kept) {

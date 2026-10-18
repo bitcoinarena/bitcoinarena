@@ -30,6 +30,9 @@ export const PROTOCOL_RELEASES = Object.freeze([
   Object.freeze({ version: 11, year: 2026, x: 0 }),
   // the leaderboard payout: a proposal that pays the top N of a season from the protocol reserves, in the federation (kanban #460)
   Object.freeze({ version: 12, year: 2026, x: 0 }),
+  // the guardian pool is the federation's seated guardians: a round's guardian third goes to the guardians its federation's record
+  // seats (not gone), in its census or not (kanban #33, §22A v4.6.4)
+  Object.freeze({ version: 13, year: 2026, x: 0 }),
 ]);
 
 const byVersion = new Map(PROTOCOL_RELEASES.map((r) => [r.version, r]));
