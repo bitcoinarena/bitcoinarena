@@ -14,7 +14,7 @@ import http from 'node:http';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
-import { existsSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { quickTunnelName } from './tunnel.js';
 
@@ -166,11 +166,16 @@ WantedBy=default.target
 }
 
 /** Read a quick tunnel's current name from its unit's journal. */
-export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, waitMs = 45000 }) {
+// ON macOS AND WINDOWS THE TUNNEL'S SERVICE WRITES TO <home>/tunnel.log (launchd's StandardOutPath, the task's redirect), not to a journal
+// (measured on the test host 2026-10-18, rc.4: "the node runs, but not at its public address: the quick tunnel gave no name" while the log
+// held it); the newest name there is the running tunnel's - the file keeps every start's
+export async function quickTunnelUrl({ unit = 'arena-tunnel.service', sh = run, waitMs = 45000, home = null, platform = process.platform, readLog = (f) => readFileSync(f, 'utf8') }) {
   const until = Date.now() + waitMs;
   while (Date.now() < until) {
-    const j = await sh('journalctl', ['--user', '-u', unit, '-o', 'cat', '--no-pager', '-n', '200']);
-    const url = quickTunnelName(j.out);
+    let text = '';
+    if (platform === 'linux') text = (await sh('journalctl', ['--user', '-u', unit, '-o', 'cat', '--no-pager', '-n', '200'])).out;
+    else if (home) { try { const all = readLog(join(home, 'tunnel.log')); const names = all.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/g); text = names ? names[names.length - 1] : ''; } catch { text = ''; } }
+    const url = quickTunnelName(text);
     if (url) return url;
     await new Promise((ok) => setTimeout(ok, 1500));
   }

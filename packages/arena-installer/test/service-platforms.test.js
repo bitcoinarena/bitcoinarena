@@ -73,3 +73,11 @@ test('Electrum mode on macOS and Windows: the chain bridge is its own service, s
     } finally { rmSync(root, { recursive: true, force: true }); }
   }
 });
+
+test('the quick tunnel\'s name on macOS and Windows: the newest in <home>/tunnel.log (measured on the test host: the journal does not exist there)', async () => {
+  const { quickTunnelUrl } = await import('../src/reach.js');
+  const log = 'INF Requesting new quick Tunnel\n|  https://old-name-one.trycloudflare.com  |\nINF restarted\n|  https://new-name-two.trycloudflare.com  |\n';
+  assert.equal(await quickTunnelUrl({ home: '/h', platform: 'darwin', readLog: (f) => { assert.equal(f, '/h/tunnel.log'); return log; }, waitMs: 1 }), 'https://new-name-two.trycloudflare.com');
+  assert.equal(await quickTunnelUrl({ home: '/h', platform: 'win32', readLog: () => log, waitMs: 1 }), 'https://new-name-two.trycloudflare.com');
+  assert.equal(await quickTunnelUrl({ home: '/h', platform: 'darwin', readLog: () => 'nothing yet', waitMs: 1 }), null);
+});
