@@ -14,7 +14,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast, addressScript } from './wallet.js';
 import { advertFor, buildAdvertUpdate, buildSend } from './bond.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
-import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo } from './lnd.js';
+import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClose } from './lnd.js';
 
 /** THE RING CHANNEL each custody node opens to the next node of its federation (sat), and what the deposit sets aside for it with fees. */
 export const RING_SATS = 150000;
@@ -38,13 +38,13 @@ export function guardianOfEntry(dir) {
 }
 
 export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd,
-  lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo }, ringMembers = null, log = () => {}, nowMs = () => Date.now() }) {
+  lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now() }) {
   // the federation's custody nodes with their Lightning key and address, from this node's own seat (GET /gateway-seats: the claims it
   // gathered as a guardian, its own among them)
   const membersOf = ringMembers || (async (s) => {
     const port = (s.reach && s.reach.port) || (s.service && s.service.port);
     try { const r = await fetch(`http://127.0.0.1:${port}/gateway-seats`, { signal: AbortSignal.timeout(10000) }); const v = await r.json();
-      return Object.entries((v && v.gateways) || {}).map(([node, g]) => ({ node, lightningPubkey: g.lightningPubkey, lightningAddr: g.lightningAddr || '' })); } catch { return []; }
+      return Object.entries((v && v.gateways) || {}).map(([node, g]) => ({ node, lightningPubkey: g.lightningPubkey, lightningAddr: g.lightningAddr || '', outboundSats: Number(g.outboundSats || 0) })); } catch { return []; }
   });
   // where this node's LND takes peer connections: the address LND announces (its uris, e.g. after NAT traversal), else the node's own
   // public address when it is reached directly; empty behind a tunnel - then only its ring neighbour dials out to it
@@ -140,11 +140,26 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
       // to the previous neighbour: dial it (once connected, it stays), so it can open its ring channel to us even when nobody can dial this node
       if (!has(prev.lightningPubkey) && prev.lightningAddr && peers.ok && !peers.peers.includes(prev.lightningPubkey) && prev.lightningPubkey !== next.lightningPubkey)
         await lnd.connect(s.lightning, { pubkey: prev.lightningPubkey, host: prev.lightningAddr });
+      // THE RING REPAIRED WHEN A NODE JOINS OR LEAVES (the owner 2026-10-18: "When a node joins an existing federation it needs incoming
+      // liquidity too"): this node's ring channel goes to a node that is no longer its next. When X joins between A and B, X opens to B
+      // with its own coins; once X shows that outbound, A closes its old channel to B and opens to X with the same coins - everyone
+      // again has one channel in and one out, and the joiner pays only its own. A channel to a node that left is closed at once.
+      const old = c.ring && c.ring.lightningPubkey !== next.lightningPubkey ? (ch.ok ? ch.open : []).find((x) => x.peer === c.ring.lightningPubkey) : null;
+      if (old && !has(next.lightningPubkey)) {
+        const stillMember = members.some((m) => m.lightningPubkey === c.ring.lightningPubkey);
+        const settled = Number(next.outboundSats || 0) >= RING_SATS * 0.9;
+        if (stillMember && !settled) return { ok: true, idle: `the ring waits for the new member ${next.node.slice(0, 12)}… to open its own channel before this one moves to it` };
+        const k = await lnd.close(s.lightning, { channelPoint: old.channelPoint });
+        if (!k.ok) return { ok: false, why: `the old ring channel did not close: ${k.why}` };
+        state.save({ custody: { ...state.read().custody, ring: { ...c.ring, closing: old.channelPoint, closingAtMs: nowMs() } } });
+        log(`ring moves to ${next.node.slice(0, 12)}…: closing the channel to ${c.ring.next.slice(0, 12)}… (${old.channelPoint})`);
+        return { ok: true, did: 'ring-close', channelPoint: old.channelPoint };
+      }
       if (!has(next.lightningPubkey)) {
         const f = await lnd.funds(s.lightning);
         if (!f.ok) return { ok: false, why: `the ring waits for LND: ${f.why}` };
         if (f.onchainSats < RING_SATS + 1000) {
-          if (c.ringFund) return { ok: true, idle: `the ring channel's ${RING_RESERVE_SATS} sat are on their way to LND (${c.ringFund.txid})` };
+          if (c.ringFund) return { ok: true, idle: c.ring ? `the ring channel's coins are on their way back to LND (the old channel closing)` : `the ring channel's ${RING_RESERVE_SATS} sat are on their way to LND (${c.ringFund.txid})` };
           const { coins } = await chainKit.coinsOf(s.chain, w.spk);
           let tx;
           try { tx = buildSend({ wallet: w, coins, script: addressScript(f.address), sats: RING_RESERVE_SATS }); }
