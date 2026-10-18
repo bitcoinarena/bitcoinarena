@@ -43,6 +43,7 @@ import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
+import { pruneTranscripts, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
@@ -2880,6 +2881,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     backfillingNow = settlements.backfillDonationKeys().catch((e) => console.error(`[settle] donation-key backfill: ${e.message}`)).finally(() => { backfillingNow = null; });
   }, 6 * 3600 * 1000);
   donationBackfillClock.unref();
+
+  // TRANSCRIPTS LEAVE WITH THEIR CLAIM WINDOW (§34, kanban #33, the owner 2026-10-17): every hour, a round's ticks, batches and checkpoints
+  // are deleted once max(entry close, close here) + W + claim_window_days has passed (transcript-prune.js); ARENA_TRANSCRIPT_PRUNE=0 stops it
+  let transcriptsLast = null;
+  const transcriptPrune = () => {
+    if (shuttingDown || process.env.ARENA_TRANSCRIPT_PRUNE === '0') return;
+    try { transcriptsLast = { atMs: Date.now(), ...pruneTranscripts({ db }) };
+      if (transcriptsLast.pruned.length) console.log(`[transcripts] ${transcriptsLast.pruned.length} round(s) past their claim window: ${transcriptsLast.rows} rows deleted, ${transcriptsLast.kept} kept`); }
+    catch (e) { console.error(`[transcripts] prune: ${e.message}`); }
+  };
+  const transcriptPruneClock = setInterval(transcriptPrune, PRUNE_EVERY_MS);
+  transcriptPruneClock.unref();
+  setTimeout(transcriptPrune, 60000).unref();
 
   // A ROUND'S PUBLIC RESULT, FOR ITS NOSTR EVENT (kanban #362 feature 2): only once this node holds its settlement ACCEPTED, and
   // only what is public already - /api/round-result's names, outcomes and scores, /lock-settlement's txids, and what the
@@ -6672,7 +6686,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify({ speedX, samples: verifier.pool && verifier.pool.samples ? verifier.pool.samples.length : 0, runMs,
           maxPlayersPerRound: speedX ? maxPlayersPerRound({ speedX, runMs }) : null,
-          retention: 'transcripts are kept: this seat prunes none, so they outlast the objection and claim windows' }));
+          retention: 'transcripts are kept through the objection window and the contract\'s claim window, then deleted (hourly)',
+          lastPrune: transcriptsLast ? { atMs: transcriptsLast.atMs, pruned: transcriptsLast.pruned.length, kept: transcriptsLast.kept, rows: transcriptsLast.rows } : null }));
       }
 
       // WHAT A ROUND'S CENSUS SUPPORTS (§5A.10, kanban #306): its stake against the ceiling its census's health derives - nodes and
@@ -7939,7 +7954,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
-        clearInterval(settleRecoverTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
+        clearInterval(settleRecoverTimer); clearInterval(transcriptPruneClock); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
         if (marketsTimer) clearInterval(marketsTimer);
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }
