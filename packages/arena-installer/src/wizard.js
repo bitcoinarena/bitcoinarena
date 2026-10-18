@@ -26,6 +26,10 @@ import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
+import { join } from 'node:path';
+/** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
+export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
+export const CUSTODY_PEG_IN_SATS = 50000;
 import { installLnd, configureLnd, lndArgs, createLndWallet, testLnd } from './lnd.js';
 import { findGatewayd, configureGateway, testGateway, joinFederation } from './gateway.js';
 import { signOwnerRequest, ownerEventTemplate } from '../../arena-node/src/owner.js';
@@ -366,13 +370,21 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       mark('lightning'); return { ok: true };
     },
 
-    'POST /api/bond/check': async () => {
+    // A CUSTODY NODE NEEDS MORE (the owner 2026-10-18: "This needs additional funds for the peg in"): beside the bond, a reserve for its
+    // advertisement update once its federation is founded (guardian_of), and the peg-in it sets aside for its gateway's e-cash - both stay
+    // in its wallet (the bond's change) until the custody agent spends them
+    'POST /api/bond/check': async (b) => {
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'install the node first: the bond is signed with its own key' };
       const w = walletOf(fromHex(state.readSecret('seed.hex')));
       const { tip, coins } = await chainKit.coinsOf(s.chain, w.spk);
       const total = coins.reduce((a, c) => a + c.sats, 0);
-      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats: Number(BOND_MIN_SATS), enough: total >= Number(BOND_MIN_SATS) + 2000, lock: lockOf(tip) };
+      const custody = (s.roles || []).includes('custody');
+      const pegInSats = custody ? Math.max(0, Math.floor(Number((b && b.pegInSats) ?? (s.custody || {}).pegInSats ?? CUSTODY_PEG_IN_SATS))) : 0;
+      if (custody) state.save({ custody: { ...(state.read().custody || {}), pegInSats } });
+      const parts = { bond: Number(BOND_MIN_SATS), fees: 2000, ...(custody ? { advertUpdate: CUSTODY_UPDATE_RESERVE_SATS, pegIn: pegInSats } : {}) };
+      const needSats = Object.values(parts).reduce((a, x) => a + x, 0);
+      return { ok: true, address: w.address, tip, coins, totalSats: total, needSats, parts, enough: total >= needSats, lock: lockOf(tip) };
     },
     'POST /api/bond/post': async (b) => {
       const s = state.read();
@@ -397,6 +409,12 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const bond = { txid: bondTxid, vout: 0, fundingTxid, sats: String(built.bondSats), maturity: built.maturity, advertId: built.advertId, postedAtTip: tip,
         lock: lockOf(tip, { maturity: built.maturity }), atMs: Date.now() };
       mark('bond', { bond });
+      // a custody node's agent: guardian_of, the gateway's own federation and the peg-in, once a founding has drawn it (custody-agent.js)
+      if ((s.roles || []).includes('custody')) {
+        const a = await gwKit.installProgram({ id: 'custody', description: 'The custody agent of the Arena node', home: state.home, boot: true,
+          args: [process.execPath, join(release, 'packages', 'arena-installer', 'bin', 'custody-agent.mjs'), '--home', state.home] });
+        state.save({ custodyAgent: a.ok ? { installedMs: Date.now() } : { why: a.why } });
+      }
       return { ok: true, bond };
     },
     'POST /api/bond/later': async () => { mark('bond', { bond: null }); return { ok: true }; },
