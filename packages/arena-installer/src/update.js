@@ -20,6 +20,7 @@ import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, windowsLauncher } from './service.js';
 import { adhocSign } from './tor.js';
 import { INSTANCE } from './instance.js';
+import { quickTunnelUrl } from './reach.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
@@ -155,7 +156,8 @@ function servicesOf({ platform, env, sh, home, port, node, pause = (ms) => new P
  * seating-window wait), `platform`. Answers { ok, from, to, backup, why, rolledBack, moved }.
  */
 export async function updateNode({ home, newRelease, port, node = process.execPath, asset = null, sums = null, sig = null, env = process.env, sh = run,
-  fetcher = fetch, nowMs = () => Date.now(), waitMs = 90000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform }) {
+  fetcher = fetch, nowMs = () => Date.now(), waitMs = 90000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), platform = process.platform,
+  quickUrl = quickTunnelUrl }) {
   if (asset) {
     const c = checkAsset({ file: asset, sums, sig });
     if (!c.ok) return { ok: false, why: c.why };
@@ -187,12 +189,32 @@ export async function updateNode({ home, newRelease, port, node = process.execPa
         : oldTexts.get(f).split(from).join(newRelease);
     writeFileSync(f, text);
   }
-  const started = await svc.start(moving);
+  // A QUICK TUNNEL COMES BACK UNDER A NEW NAME (measured on the test host, node A rc.16 -> rc.18: the tunnel restarted as
+  // cult-turns-….trycloudflare.com while node.env still named conventional-cube-…, so the node's public address, its guardian endpoint
+  // and the advert its bond posts named a host that no longer answers). The tunnel starts first, its new name is read from its log,
+  // the settings take the new host, and only then the seat starts - no second restart (on Windows stopping one launcher ends them all).
+  const isTunnel = (f) => { const b = f.split(/[\\/]/).pop(); return b === TUNNEL_UNIT || b === `${LAUNCHD_LABEL}.tunnel.plist` || b === 'arena-tunnel.cmd'; };
+  const tunnels = state.reach && state.reach.mode === 'quick' && state.reach.url ? moving.filter(isTunnel) : [];
+  let reachUrl = null, tunnelStarted = { ok: true };
+  if (tunnels.length) {
+    const startAt = Date.now();
+    tunnelStarted = await svc.start(tunnels);
+    const url = await quickUrl({ unit: TUNNEL_UNIT, home, platform, sh, sinceMs: startAt });
+    if (url && url !== state.reach.url) {
+      const oldHost = new URL(state.reach.url).host, newHost = new URL(url).host;
+      writeFileSync(envFile, readFileSync(envFile, 'utf8').split(oldHost).join(newHost), { mode: 0o600 });
+      reachUrl = url;
+    }
+  }
+  const rest = await svc.start(moving.filter((f) => !tunnels.includes(f)));
+  const started = !tunnelStarted.ok ? tunnelStarted : rest;
   const after = await waitHealthy({ port, fetcher, waitMs });
   const same = after.ok && (!before.ok || after.identity === before.identity);
   if (same) {
-    writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
-    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()), ...(started.ok ? {} : { notStarted: started.why }) };
+    writeFileSync(join(home, 'state.json'), JSON.stringify({ ...state, ...(reachUrl ? { reach: { ...state.reach, url: reachUrl } } : {}),
+      release: { path: newRelease, from, atMs: nowMs() } }, null, 2) + '\n', { mode: 0o600 });
+    return { ok: true, from, to: newRelease, backup: backup.dir, identity: after.identity, moved: moving.map((f) => f.split('/').pop()),
+      ...(reachUrl ? { reach: reachUrl } : {}), ...(started.ok ? {} : { notStarted: started.why }) };
   }
   // ROLLED BACK: the old services, the backup, the old release started
   await svc.stop(moving, newRelease);
