@@ -94,7 +94,8 @@ function guardianEntry(dir) {
 
 const plans = [];
 for (const n of (ONLY.length ? ONLY : [1, 2, 3, 4, 5, 6, 7])) {
-  const store = join(home, `node-${n}.db`);
+  // ARENA_ADVERT_STORE="<path with {n}>" - the stores of nodes kept elsewhere (kanban #495: the seven new macOS nodes, fed2/n495-{n}.db)
+  const store = env.ARENA_ADVERT_STORE ? env.ARENA_ADVERT_STORE.split('{n}').join(String(n)) : join(home, `node-${n}.db`);
   const db = openStore(store);
   const { secret, pubkey } = nodeIdentity(db);
   db.close?.();
