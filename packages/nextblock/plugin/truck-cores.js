@@ -8,6 +8,7 @@
 // a game only through its manifest (arena-protocol/src/manifest.js); this file is where nextblock hands it both.
 import { createRequire } from 'node:module';
 import { coreHashHex } from '../tools/hash-core.js';
+import { fileURLToPath } from 'node:url';
 import { GENESIS_CONFIG_HASH } from '../../arena-protocol/src/genesis-ids.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { NO_PARENT, RESULT_TYPE, PAYOUT_RULE } from '../../arena-protocol/src/manifest.js';
@@ -78,7 +79,7 @@ export const TRUCK = withAdapter({
  * free rounds the pair opened on it from 08:23Z are replayed by it, frozen in core/frozen/de2f263d. It plays its own
  * config dbb49344 (v2), and the founding config only for a round made before the 13:00Z cut-over.
  */
-const FROZEN_DE2F = new URL('../frozen/de2f263d', import.meta.url).pathname;
+const FROZEN_DE2F = fileURLToPath(new URL('../frozen/de2f263d', import.meta.url));
 if (coreHashHex(FROZEN_DE2F) !== DE2F_HASH) throw new Error(`core/frozen/de2f263d hashes to ${coreHashHex(FROZEN_DE2F)}, not the core it keeps`);
 export const TRUCK_DE2F = withAdapter({
   name: `${TRUCK_NAME} (de2f263d, exposure by C)`,
@@ -97,7 +98,7 @@ export const TRUCK_DE2F = withAdapter({
  * per-player v3 (f51759b6) of the 10-06 series.
  */
 export const TRUCK_7E21_HASH = '7e2123d1990d1443fcac12dc6c7575059935d89d794822bc69c67b184870ce20';
-const FROZEN_7E21 = new URL('../frozen/7e2123d1', import.meta.url).pathname;
+const FROZEN_7E21 = fileURLToPath(new URL('../frozen/7e2123d1', import.meta.url));
 if (coreHashHex(FROZEN_7E21) !== TRUCK_7E21_HASH) throw new Error(`core/frozen/7e2123d1 hashes to ${coreHashHex(FROZEN_7E21)}, not the core it keeps`);
 export const TRUCK_7E21 = withAdapter({
   name: `${TRUCK_NAME} (7e2123d1, objectives from the relief)`,
@@ -116,7 +117,7 @@ export const TRUCK_7E21 = withAdapter({
  * truck - its files in core/frozen/f0cc7b7b, its hash computed from them - until the series' rounds move onto it. The truck's configs.
  */
 export const TRUCK_F0CC_HASH = 'f0cc7b7b2e75e350149ff8a6e58a1cc861a3ab4969d1c81b2206564b57ffb7a8';
-const FROZEN_F0CC = new URL('../frozen/f0cc7b7b', import.meta.url).pathname;
+const FROZEN_F0CC = fileURLToPath(new URL('../frozen/f0cc7b7b', import.meta.url));
 if (coreHashHex(FROZEN_F0CC) !== TRUCK_F0CC_HASH) throw new Error(`core/frozen/f0cc7b7b hashes to ${coreHashHex(FROZEN_F0CC)}, not the core it keeps`);
 export const TRUCK_F0CC = withAdapter({
   name: `${TRUCK_NAME} (f0cc7b7b, the larger truck)`,
@@ -128,7 +129,7 @@ export const TRUCK_F0CC = withAdapter({
 }, '../frozen/f0cc7b7b/adapter.js');
 
 export const TRUCK_2069_HASH = '2069b4c2ab39466c79000aac1b091c75b066b814a0952f8037011691538a774e';
-const FROZEN_2069 = new URL('../frozen/2069b4c2', import.meta.url).pathname;
+const FROZEN_2069 = fileURLToPath(new URL('../frozen/2069b4c2', import.meta.url));
 if (coreHashHex(FROZEN_2069) !== TRUCK_2069_HASH) throw new Error(`core/frozen/2069b4c2 hashes to ${coreHashHex(FROZEN_2069)}, not the core it keeps`);
 export const TRUCK_2069 = withAdapter({
   name: `${TRUCK_NAME} (2069b4c2, C 0.7 and par 65 s)`,

@@ -11,11 +11,15 @@
 // always printed.
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../src', import.meta.url).pathname;
+// A FILE PATH, NOT A URL'S PATHNAME (kanban #471, measured on the windows-x64 release's first run: "/D:/a/..." became
+// "D:\\D:\\a\\...\\src" and the node did not start); and the hashed names are relative paths with "/" on every system, sorted as such
+// - on Windows relative() answers "\\", which would hash another core than the one on Linux and macOS.
+const ROOT = fileURLToPath(new URL('../src', import.meta.url));
+const relOf = (root, f) => relative(root, f).split(sep).join('/');
 
 export function coreSourceFiles(root = ROOT) {
   const files = [];
@@ -26,7 +30,7 @@ export function coreSourceFiles(root = ROOT) {
       else if (name.endsWith('.js')) files.push(p);
     }
   })(root);
-  return files.sort();
+  return files.sort((a, b) => { const x = relOf(root, a), y = relOf(root, b); return x < y ? -1 : x > y ? 1 : 0; });
 }
 
 /**
@@ -36,7 +40,7 @@ export function coreSourceFiles(root = ROOT) {
 export function coreHashHex(root = ROOT) {
   const h = createHash('sha256');
   for (const f of coreSourceFiles(root)) {
-    h.update(relative(root, f));
+    h.update(relOf(root, f));
     h.update('\0');
     h.update(readFileSync(f));
     h.update('\0');
