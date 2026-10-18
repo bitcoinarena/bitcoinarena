@@ -14,6 +14,7 @@
 // quick one) -> service (installed, started at boot if the user wants, healthy, reachable at its public address; then one signed
 // owner login against the running node) -> done. The state is on disk after every step (state.js), so the wizard can be closed and resumed.
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { testConnection, TESTNET4_ELECTRUM } from './chain-test.js';
@@ -26,6 +27,7 @@ import * as reachKit from './reach.js';
 import { DatabaseSync } from 'node:sqlite';
 import { walletOf, payoutKeyOf, coinsOf, broadcast } from './wallet.js';
 import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
+import { writeLaunchers } from './launchers.js';
 import { join } from 'node:path';
 /** A custody node's extra deposit: the advertisement update's reserve, and the default peg-in for its gateway (the owner can change it). */
 export const CUSTODY_UPDATE_RESERVE_SATS = 5000;
@@ -52,7 +54,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
   fetcher = fetch, reach = reachKit, cloudflared = 'cloudflared', chainKit = { coinsOf, broadcast },
   coreKit = { detectBitcoind, diskCheck, installCore, configureCore, coreArgs, syncStatus, installProgram },
   lndKit = { installLnd, configureLnd, lndArgs, createLndWallet, testLnd, installProgram, lndFunds, lndOpenChannel, lndChannels },
-  gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
+  gwKit = { findGatewayd, configureGateway, testGateway, joinFederation, installProgram }, launch = writeLaunchers, nowMs = () => Date.now(), onDone = () => {}, log = () => {} }) {
   let token = b64u(32);
   const tokenUntil = nowMs() + TOKEN_MS;
   const hashOf = (sid) => createHash('sha256').update(String(sid)).digest('hex');
@@ -96,7 +98,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     return { network: 'testnet4', step: nextStep(s), done: s.done || {}, chain: s.chain ? { ...s.chain, password: s.chain.password ? '(set)' : undefined } : null,
       chainTest: s.chainTest || null, roles: s.roles || [], roleInfo: ROLES, electrum: TESTNET4_ELECTRUM, owner: s.owner || null, service: s.service || null,
       seatPort: portOf(), defaultPort: seatPort, reach: s.reach || null, direct: s.direct || null, login: login ? { url: login.url, result: login.result } : null,
-      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS + 2000n) } : null,
+      lightning: s.lightning || null, gatewaySeat: GATEWAY_SEAT, launchers: s.launchers || null, gateway: s.gateway ? { ...s.gateway, passwordFile: undefined } : null, bond: s.bond || null, wallet: (s.done || {}).seed ? { address: walletOf(fromHex(state.readSecret('seed.hex'))).address, needSats: String(BOND_MIN_SATS + 2000n) } : null,
       confirm: pendingSeed ? { positions: pendingSeed.positions } : null, confirmWords: CONFIRM_WORDS };
   };
   const mark = (step, patch = {}) => { const s = state.read(); return state.save({ ...patch, done: { ...(s.done || {}), [step]: Date.now() } }); };
@@ -274,6 +276,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       if (reachTest && !reachTest.ok) return { ok: false, why: `the node runs, but not at its public address: ${reachTest.why}`, identity: r.identity };
       if (login && !login.ok) return { ok: false, why: `the node runs, but the owner login failed: ${login.why}`, identity: r.identity };
       if (login) mark('service', { ownerLoginMs: Date.now() });
+      saveLaunchers();
       return { ok: true, identity: r.identity, ms: r.ms, boot: r.boot, linger: r.linger, reachTest, url: s.reach.url, login,
         template: s.owner.mode === 'nostr' ? ownerEventTemplate({ node: r.identity, action: 'login' }) : null };
     },
@@ -435,6 +438,7 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
     'POST /api/bond/later': async () => { mark('bond', { bond: null }); return { ok: true }; },
 
     'POST /api/finish': async () => {
+      saveLaunchers();
       const s = state.read();
       if (!(s.done || {}).service) return { ok: false, why: 'the node is not installed and logged in yet' };
       if (!(s.done || {}).lightning) return { ok: false, why: 'set up Lightning for custody, or choose to set it up later' };
@@ -446,6 +450,19 @@ export function createWizard({ state, release, seatPort = reachKit.DEFAULT_NODE_
       const reachNow = state.read().reach || {};
       return { ok: true, owner: `${reachNow.url || `http://127.0.0.1:${portOf()}`}/Dashboard/owner`, url: reachNow.url || null, mode: reachNow.mode || null };
     },
+  };
+
+  // THE WAYS TO START IT AGAIN (launchers.js): scripts, the Start menu / the app / the desktop menu - written for the services this node has
+  const saveLaunchers = () => {
+    const s = state.read();
+    if (!s.service) return null;
+    const ownerUrl = `${(s.reach && s.reach.url) || `http://127.0.0.1:${portOf()}`}/Dashboard/owner`;
+    try {
+      const l = launch({ home: state.home, s, ownerUrl,
+        run: (cmd, args) => new Promise((ok) => execFile(cmd, args, { timeout: 60000 }, () => ok())) });
+      state.save({ launchers: { start: l.start, files: l.files, app: l.app, menu: l.menu, ownerUrl, atMs: Date.now() } });
+      return l;
+    } catch (e) { log(`launchers: ${e.message}`); return null; }
   };
 
   const chainOf = (b) => (b.kind === 'electrum'
