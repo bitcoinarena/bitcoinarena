@@ -125,8 +125,22 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <div class="msg" id="svc-msg"></div>
   </section>
 
+  <section id="s-lightning">
+    <h2>7. Lightning (custody)</h2>
+    <p>Custody needs a Lightning node. The installer can set up <b>LND</b> here - checked download, testnet4 on your Bitcoin Core, started as a service, its wallet made from your 24 words (one seed for everything; LND's channel backup file is separate, the owner page shows where) - or connect one you already run.</p>
+    <button id="ln-own">Set up LND here</button><button class="ghost" id="ln-conn-show">Connect my LND</button><button class="ghost" id="ln-later">Set it up later</button>
+    <div id="ln-conn" hidden>
+      <label>REST address</label><input id="ln-url" placeholder="https://127.0.0.1:8080">
+      <label>Admin macaroon (hex: <code>xxd -p -c 1000 admin.macaroon</code>)</label><input id="ln-mac">
+      <label>TLS certificate (tls.cert)</label><textarea id="ln-cert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+      <button id="ln-conn-go">Test and connect</button>
+    </div>
+    <div class="msg" id="ln-msg"></div>
+    <p class="sub">The gateway and the federation guardian come with the next release; until then your node is not offered for custody.</p>
+  </section>
+
   <section id="s-bond">
-    <h2>7. The bond</h2>
+    <h2>8. The bond</h2>
     <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (and a little for fees) to your node's own wallet:</p>
     <p><code id="b-addr" style="font-size:15px"></code></p>
     <button class="ghost" id="b-check">Check for my deposit</button>
@@ -144,7 +158,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['bond', 'Bond'], ['done', 'Done']];
+const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
 const say = (id, r, okText) => { const m = $(id); m.className = 'msg ' + (r.ok ? 'ok' : 'bad'); m.textContent = r.ok ? okText : (r.why || 'failed'); };
@@ -170,6 +184,7 @@ async function load() {
     <p>Node key: <code>${esc(sv.identity || '')}</code></p>
     <p>Owner page: <code>${esc((r.url || `http://127.0.0.1:${st.seatPort}`) + '/Dashboard/owner')}</code>, and on this machine <code>http://127.0.0.1:${st.seatPort}/Dashboard/owner</code> - log in with ${st.owner && st.owner.mode === 'nostr' ? 'your Nostr key' : 'your 24 words'}.</p>
     ${sv.boot && sv.linger === false ? '<p class="warn">Run <code>sudo loginctl enable-linger $USER</code> once so the node keeps running when you log out.</p>' : ''}
+    ${st.lightning ? `<p>Lightning: ${st.lightning.mode === 'own' ? 'LND set up here (the user service <code>arena-lnd</code>)' : 'your own LND, connected'}, node <code>${esc(st.lightning.pubkey || '')}</code>. The gateway and the federation guardian come with the next release.</p>` : ''}
     ${st.bond ? `<p>Bond: <code>${esc(st.bond.txid)}</code>, ${Number(st.bond.sats).toLocaleString('en')} sat, <b>locked until block ${st.bond.maturity}</b> (about ${new Date(st.bond.lock.estimatedMs).toUTCString()}). Until then it cannot be withdrawn; from that block on, the owner page withdraws it, or <code>arena-install --rebond &lt;sat&gt;</code> makes it larger in one step.</p>`
       : `<p>No bond yet: send it to <code>${esc(st.wallet ? st.wallet.address : '')}</code> and post it from the owner page. Until then your node is not drawn for rounds.</p>`}`; }
 }
@@ -240,6 +255,19 @@ $('r-login').onclick = async () => { $('rm-permanent').checked = true; const r =
 $('r-save').onclick = async (e) => { const mode = (document.querySelector('input[name=rm]:checked') || {}).value; if (!mode) return say('r-msg', { ok: false, why: 'test the direct connection first, or choose a tunnel' });
   e.target.disabled = true; const r = await post('/api/reach/save', { mode, hostname: $('r-host').value, port: Number($('r-port').value) }); e.target.disabled = false; if (r.ok) return load(); say('r-msg', r); };
 const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()} (testnet4 blocks come about every 10 minutes; the block height is the rule, the date an estimate). Until then it cannot be withdrawn; after that, the owner page withdraws it.`;
+let lnTimer = null;
+async function watchLn() {
+  const r = await post('/api/lightning/status');
+  if (r.ok) { $('ln-msg').className = 'msg ok'; $('ln-msg').textContent = `LND ${r.version || ''} runs on ${r.network}: node ${String(r.pubkey).slice(0, 16)}…, block ${r.blockHeight}${r.syncedToChain ? ', synced' : ', catching up with the chain'}${r.created ? '; its wallet was made from your words' : ''}.`; return setTimeout(load, 2500); }
+  $('ln-msg').className = 'msg ' + (r.waiting ? 'ok' : 'bad'); $('ln-msg').textContent = r.waiting ? `Starting LND… (${r.why})` : r.why;
+  if (r.waiting) { clearTimeout(lnTimer); lnTimer = setTimeout(watchLn, 5000); }
+}
+$('ln-own').onclick = async (e) => { e.target.disabled = true; $('ln-msg').className = 'msg ok'; $('ln-msg').textContent = 'Downloading and checking LND, then starting it…';
+  const r = await post('/api/lightning/own', { boot: true }); e.target.disabled = false; if (!r.ok) return say('ln-msg', r); watchLn(); };
+$('ln-conn-show').onclick = () => { $('ln-conn').hidden = false; };
+$('ln-conn-go').onclick = async () => { const r = await post('/api/lightning/connect', { restUrl: $('ln-url').value, macaroonHex: $('ln-mac').value, tlsCertPem: $('ln-cert').value });
+  if (!r.ok) return say('ln-msg', r); say('ln-msg', r, `Connected: ${r.alias || ''} ${String(r.pubkey).slice(0, 16)}…, block ${r.blockHeight}.`); setTimeout(load, 2000); };
+$('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check'); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
   m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` A bond needs ${r.needSats.toLocaleString('en')} sat and about 2,000 for fees.`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
