@@ -6320,9 +6320,13 @@
         verify: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="m10.4 10.4 3.8 3.8M5 7.1l1.4 1.4L9.2 5.6"/></svg>',
         settlement: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v12M4.5 14h7M3 4.5h10M3 4.5 1.2 9a2 2 0 0 0 3.6 0zM13 4.5 11.2 9a2 2 0 0 0 3.6 0z"/></svg>',
         custody: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="2.5" y="7" width="11" height="7.5" rx="1.6"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/><circle cx="8" cy="10.6" r="1.1" fill="currentColor"/></svg>' };
-      const ROLE_WORDS = { verify: 'verify', settlement: 'settlement', custody: 'custody' };
+      // THE FOURTH (kanban #494, the owner 2026-10-18: "Also change the UI for 494, we show node types there"): liquidity - it opens
+      // incoming channels to new nodes so they can receive (spec §23A.10); a node is one when its seat serves a liquidity claim
+      ROLE_ICONS.liquidity = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.8c2.4 3 3.8 5.2 3.8 7.2a3.8 3.8 0 0 1-7.6 0c0-2 1.4-4.2 3.8-7.2z"/><path d="M6.2 9.6 8 11.4l1.8-1.8"/></svg>';
+      const ROLE_WORDS = { verify: 'verify', settlement: 'settlement', custody: 'custody', liquidity: 'liquidity' };
+      const ROLE_KEYS = ['verify', 'settlement', 'custody', 'liquidity'];
       const icon = (k) => { const x = el('span'); x.innerHTML = ROLE_ICONS[k]; return x.firstChild; };
-      const legend = () => { const l = el('div', 'legend'); for (const k of ['verify', 'settlement', 'custody']) { const x = el('span'); x.append(icon(k), ROLE_WORDS[k]); l.append(x); } return l; };
+      const legend = () => { const l = el('div', 'legend'); for (const k of ROLE_KEYS) { const x = el('span'); x.append(icon(k), ROLE_WORDS[k]); l.append(x); } return l; };
       // a node's route name (guardian-3, fed2-5): the last part of its address, the same in its advert's endpoint and the page's URL
       const routeOf = (u) => { try { return new URL(String(u).replace(/^ws(s?):/, 'http$1:')).pathname.replace(/\/+$/, '').split('/').pop() || new URL(String(u).replace(/^ws(s?):/, 'http$1:')).host; } catch { return String(u); } };
       // GET /roles of the first node that answers: every census node's roles and custody, by node key and by route
@@ -6339,6 +6343,12 @@
           const v = { key: x.node, verify: roles.has('verify') || roles.has('game'), settlement: roles.has('settlement'), custody: feds.size > 0, feds, route: routeOf(x.endpoint) };
           byRoute.set(v.route, v); byKey.set(String(x.node).toLowerCase(), v);
         }
+        // liquidity providers: the nodes whose seat serves a liquidity claim (GET /liquidity-claim, §23A.10)
+        await Promise.allSettled((g.nodes || []).map(async (n) => {
+          const r = await fetch(via(String(n).replace(/\/+$/, '') + '/liquidity-claim'), { cache: 'no-store', signal: AbortSignal.timeout(6000) });
+          const v = byRoute.get(routeOf(n));
+          if (r.ok && v) { const c = await r.json(); v.liquidity = true; v.liquidityChannels = (c.channels || []).length; }
+        }));
         return { known: !!j, byRoute, byKey };
       }
       // the tile's rounds, from the first of its nodes that answers
@@ -6370,9 +6380,10 @@
             const r = row('Node ' + (i + 1), (u ? u.host + (u.pathname === '/' ? '' : u.pathname) : base) + (v ? ' \u00b7 ' + v.key.slice(0, 8) : ''), a);
             if (v) {
               const ic = el('span', 'roles');
-              for (const k of ['verify', 'settlement', 'custody']) {
+              for (const k of ROLE_KEYS) {
                 const b = el('span', 'role' + (v[k] ? ' on' : '')); b.append(icon(k));
-                b.title = (v[k] ? '' : 'not ') + ROLE_WORDS[k] + (k === 'custody' && v.custody ? ': guardian of ' + [...v.feds].map((f) => f.slice(0, 8)).join(', ') : '');
+                b.title = (v[k] ? '' : 'not ') + ROLE_WORDS[k] + (k === 'custody' && v.custody ? ': guardian of ' + [...v.feds].map((f) => f.slice(0, 8)).join(', ') : '')
+                  + (k === 'liquidity' && v.liquidity ? `: ${v.liquidityChannels} channel${v.liquidityChannels === 1 ? '' : 's'} given to new nodes` : '');
                 ic.append(b);
               }
               r.insertBefore(ic, a);
