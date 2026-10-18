@@ -35,6 +35,8 @@ import { createReachCheck } from './reach-check.js';
 import { ownBondOf, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { latestReleaseReader } from './release-latest.js';
 import { createGatewayWatch } from './gateway-watch.js';
+import { signGatewaySeating, standingSeating } from '../../arena-protocol/src/gateway-seating.js';
+import { GATEWAY_EPOCH_BLOCKS } from '../../arena-protocol/src/gateway-seats.js';
 import { addressScript, HRP_OF } from '../../arena-protocol/src/address.js';
 import { nostrBadges, badgesOn, imageBaseOf, badgeImage } from './nostr-badges.js';
 import { BADGES } from '../../arena-protocol/src/badges.js';
@@ -117,7 +119,7 @@ import { CLOCKS as FEDERATION_CLOCKS } from '../../arena-protocol/src/federation
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { lightningAddressEndpoint } from '../../arena-protocol/src/lnurl-pay.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
-import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
+import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_INPUT_BATCH_BYTES, decodeInputBatch } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -507,6 +509,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // ABSENCE ATTESTATIONS (§23A.4, kanban #322): taken at POST /absence, and what proves a guardian ABANDONED in the record
   // HELD ACROSS A RESTART (kanban #326): beside the store, as the other per-seat files are
   const absencesFile = db && db.blwpPath ? `${db.blwpPath}.held-absences.json` : null;
+  // THE GATEWAY SEATINGS (§23A.9): `${federation}:${epoch}` -> the standing seating / this guardian's own signed one (gathered below)
+  const gatewaySeatings = new Map(), ownSeatings = new Map();
   const absences = createAbsences({ verify: (sig, m, k) => { try { return schnorr.verify(sig, m, k); } catch { return false; } },
     store: absencesFile ? { read: () => JSON.parse(readFileSync(absencesFile, 'utf8')), write: (v) => writeFileSync(absencesFile, JSON.stringify(v)) } : null });
   let liquidations = null;                     // liquidations.js (kanban #323), over fedRecords
@@ -1913,8 +1917,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const publisher = publisherFor(rid, contract);
       // AND WHERE EACH GUARDIAN IS PAID (2026.0.13, kanban #33 gap 2): its census advert's payout key, where it names a real one
       let guardianPayout = null; try { const m = roster.guardianPayoutsFor(rid); if (m.size) guardianPayout = m; } catch { guardianPayout = null; }
+      // AND THE GATEWAY SEATS (2026.0.15, §23A.9): the seating its federation's guardians signed for the last whole epoch before the
+      // round's census height - none standing, none paid (the guardians keep the pool)
+      let gateway = [];
+      if (Number(contract.protocolVersion) >= GATEWAY_SEAT_VERSION && contract.federationId) {
+        const seating = gatewaySeatings.get(`${toHex(contract.federationId)}:${Math.floor(Number(contract.censusHeight) / GATEWAY_EPOCH_BLOCKS) - 1}`);
+        if (seating) gateway = seating.seats.map((k) => fromHex(k));
+      }
       return { gameVerify: game.ok ? game.committee.map((e) => e.pubkey) : contract.nodes,
-        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian,
+        settlement: settle.ok ? settle.committee.map((e) => e.pubkey) : contract.nodes, guardian, gateway,
         conflicted: [...conflictsFor(rid).conflicted.keys()], ...(publisher ? { publisher } : {}), ...(guardianPayout ? { guardianPayout } : {}) };
     },
   });
@@ -3692,6 +3703,43 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (gt.unref) gt.unref();
     gatewayWatch.probe().catch(() => {});
   }
+  // THE SIGNED SEATINGS, GATHERED BY EVERY SEAT (gateway-seating.js): a 2026.0.15 round's settlement pays the gateway seats only from a
+  // seating its federation's guardians signed at threshold, so every signer node - guardian or not - must hold the same one: every
+  // 10 min each seat reads, for every federation it holds a record of, the last whole epoch's seatings from the seated guardians' seats
+  // (GET /gateway-seating) and keeps the one that stands. A guardian seat signs its own ranking of that epoch first.
+  if (fedRecords && typeof chainTip === 'function') {
+    const gatherSeatings = async () => {
+      const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
+      if (gatewayWatch) {
+        const v = await gatewayWatch.view().catch(() => ({ ok: false }));
+        if (v.ok && v.measuredEpoch === 'whole' && v.epoch === epoch && !ownSeatings.has(`${v.federationId}:${epoch}`))
+          ownSeatings.set(`${v.federationId}:${epoch}`, signGatewaySeating({ federationId: v.federationId, epoch, seats: v.seated }, toHex(round.pubkey), (h) => schnorr.sign(h, round.identity.secret)));
+      }
+      const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
+      const entries = now.ok ? now.entries : [];
+      for (const { federation: fid } of fedRecords.list()) {
+        if (gatewaySeatings.has(`${fid}:${epoch}`)) continue;
+        const rec = fedRecords.recordOf(fid);
+        const seatedHex = (fedRecords.seatedGuardians(fid) || []).map((k) => toHex(k));
+        if (!rec || !rec.record || !seatedHex.length) continue;
+        const signed = ownSeatings.has(`${fid}:${epoch}`) ? [ownSeatings.get(`${fid}:${epoch}`)] : [];
+        for (const node of seatedHex) {
+          if (node === toHex(round.pubkey)) continue;
+          const e = entries.find((x) => toHex(x.pubkey) === node);
+          if (!e || !e.advert || !e.advert.endpoint) continue;
+          try {
+            const r = await fetch(`${String(e.advert.endpoint).replace(/\/+$/, '')}/gateway-seating?federation=${fid}&epoch=${epoch}`, { signal: AbortSignal.timeout(10000) });
+            if (r.status === 200) signed.push(await r.json());
+          } catch { /* that guardian's signature is missing this time */ }
+        }
+        const st = standingSeating({ signed, federationId: fid, epoch, seated: seatedHex, threshold: rec.record.threshold, verify: schnorrVerify });
+        if (st.ok) gatewaySeatings.set(`${fid}:${epoch}`, st.seating);
+        for (const k of [...gatewaySeatings.keys()]) if (Number(k.split(':')[1]) < epoch - 2) gatewaySeatings.delete(k);
+      }
+    };
+    const st = setInterval(() => { gatherSeatings().catch(() => {}); }, 600000);
+    if (st.unref) st.unref();
+  }
   // THIS GUARDIAN'S OWN ABSENCE ATTESTATIONS (§23A.4, kanban #322): every 10 min the node asks its guardian's admin status which
   // peers contributed to consensus lately, and signs - first at once, then once a day - an attestation for each one it has not
   // seen; kept here (GET /absences) and posted to every seat. The federation is the held record that names this node a guardian.
@@ -4191,6 +4239,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const f = process.env.ARENA_GATEWAY_CLAIM_FILE;
         let c = null; try { c = f ? JSON.parse(readFileSync(f, 'utf8')) : null; } catch { c = null; }
         return c ? answer(200, c) : answer(404, { ok: false, why: 'this node stands for no gateway seat' });
+      }
+      if (req.method === 'GET' && url.pathname === '/gateway-seating') {
+        const k = `${String(url.searchParams.get('federation') || '').toLowerCase()}:${Number(url.searchParams.get('epoch'))}`;
+        return ownSeatings.has(k) ? answer(200, ownSeatings.get(k)) : answer(404, { ok: false, why: 'this guardian signed no seating for that federation and epoch' });
       }
       if (req.method === 'GET' && url.pathname === '/gateway-seats') {
         if (!gatewayWatch) return answer(404, { ok: false, why: 'this node runs no guardian, so it ranks no gateways' });
