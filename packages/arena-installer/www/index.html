@@ -109,32 +109,38 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <h2>2. What your node does</h2>
     <div id="fee-flow">
       <div class="cx-title">Where your earnings come from</div>
-      <p class="ff-lead">Every paid round sends <b>4 %</b> of its stakes to the nodes that serve it. It is split into three equal pools, one per role:</p>
-      <svg viewBox="0 0 640 250" class="cx-flow" aria-hidden="true">
-        <g font-family="system-ui,sans-serif" font-size="13" text-anchor="middle" fill="#e6edf3">
-          <rect x="230" y="6" width="180" height="40" rx="10" fill="#f7931a"/><text x="320" y="24" fill="#111" font-weight="700">4 % of every round</text><text x="320" y="39" fill="#111" font-size="11">to the nodes</text>
-          <path d="M270 46 C270 72 105 62 105 90" stroke="#3fb950" stroke-width="10" fill="none" opacity=".75"/>
-          <path d="M320 46 L320 90" stroke="#a371f7" stroke-width="10" fill="none" opacity=".75"/>
-          <path d="M370 46 C370 72 535 62 535 90" stroke="#58a6ff" stroke-width="10" fill="none" opacity=".75"/>
-          <rect x="30" y="90" width="150" height="58" rx="10" fill="#132a1a" stroke="#3fb950"/><text x="105" y="111" font-size="20">&#127918;</text><text x="105" y="128" font-weight="700">Game / verify</text><text x="105" y="143" fill="#3fb950">1&#8531; %</text>
-          <rect x="245" y="90" width="150" height="58" rx="10" fill="#1f1530" stroke="#a371f7"/><text x="320" y="111" font-size="20">&#9997;&#65039;</text><text x="320" y="128" font-weight="700">Settlement</text><text x="320" y="143" fill="#a371f7">1&#8531; %</text>
-          <rect x="460" y="90" width="150" height="58" rx="10" fill="#0d1d33" stroke="#58a6ff"/><text x="535" y="111" font-size="20">&#127974;</text><text x="535" y="128" font-weight="700">Custody</text><text x="535" y="143" fill="#58a6ff">1&#8531; %</text>
-          <path d="M105 148 L105 176" stroke="#3fb950" stroke-width="4" marker-end="url(#ar2)"/><path d="M320 148 L320 176" stroke="#a371f7" stroke-width="4" marker-end="url(#ar2)"/>
-          <path d="M515 148 C515 162 480 160 480 176" stroke="#58a6ff" stroke-width="5" fill="none" marker-end="url(#ar2)"/><path d="M555 148 C555 162 590 160 590 176" stroke="#f7931a" stroke-width="3" fill="none" marker-end="url(#ar2)"/>
-          <text x="105" y="198">shared by the 7 nodes</text><text x="105" y="214">seated on the round</text>
-          <text x="320" y="198">shared by the 7 nodes</text><text x="320" y="214">seated on the round</text>
-          <text x="480" y="198" fill="#58a6ff">&#8532; guardians</text><text x="480" y="214">the federation's 10</text>
-          <text x="590" y="198" fill="#f7931a">&#8531; gateways</text><text x="590" y="214">the day's 2</text>
-          <text x="320" y="242" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
+      <p class="ff-lead">Every paid round sends <b>4 %</b> of its stakes to the nodes that serve it. It is split into four equal pools of <b>1 %</b>, one per service:</p>
+      <svg viewBox="0 0 640 262" class="cx-flow" aria-hidden="true">
+        <g font-family="system-ui,sans-serif" font-size="12.5" text-anchor="middle" fill="#e6edf3">
+          <rect x="230" y="6" width="180" height="40" rx="10" fill="#f7931a"/><text x="320" y="24" fill="#111" font-weight="700" font-size="13">4 % of every round</text><text x="320" y="39" fill="#111" font-size="11">to the nodes</text>
+          <path d="M262 46 C262 72 85 62 85 90" stroke="#3fb950" stroke-width="9" fill="none" opacity=".75"/>
+          <path d="M302 46 C302 70 245 66 245 90" stroke="#a371f7" stroke-width="9" fill="none" opacity=".75"/>
+          <path d="M338 46 C338 70 395 66 395 90" stroke="#58a6ff" stroke-width="9" fill="none" opacity=".75"/>
+          <path d="M378 46 C378 72 555 62 555 90" stroke="#39c5cf" stroke-width="9" fill="none" opacity=".75"/>
+          <rect x="15" y="90" width="140" height="58" rx="10" fill="#132a1a" stroke="#3fb950"/><text x="85" y="111" font-size="19">&#127918;</text><text x="85" y="128" font-weight="700">Game / verify</text><text x="85" y="143" fill="#3fb950">1 %</text>
+          <rect x="175" y="90" width="140" height="58" rx="10" fill="#1f1530" stroke="#a371f7"/><text x="245" y="111" font-size="19">&#9997;&#65039;</text><text x="245" y="128" font-weight="700">Settlement</text><text x="245" y="143" fill="#a371f7">1 %</text>
+          <rect x="325" y="90" width="140" height="58" rx="10" fill="#0d1d33" stroke="#58a6ff"/><text x="395" y="111" font-size="19">&#127974;</text><text x="395" y="128" font-weight="700">Custody</text><text x="395" y="143" fill="#58a6ff">1 %</text>
+          <rect x="485" y="90" width="140" height="58" rx="10" fill="#0c2629" stroke="#39c5cf"/><text x="555" y="111" font-size="19">&#128167;</text><text x="555" y="128" font-weight="700">Liquidity</text><text x="555" y="143" fill="#39c5cf">1 %</text>
+          <path d="M85 148 L85 172" stroke="#3fb950" stroke-width="4" marker-end="url(#ar2)"/><path d="M245 148 L245 172" stroke="#a371f7" stroke-width="4" marker-end="url(#ar2)"/>
+          <path d="M380 148 C380 160 360 162 360 172" stroke="#58a6ff" stroke-width="4" fill="none" marker-end="url(#ar2)"/><path d="M410 148 C410 160 432 162 432 172" stroke="#f7931a" stroke-width="3" fill="none" marker-end="url(#ar2)"/>
+          <path d="M555 148 L555 172" stroke="#39c5cf" stroke-width="4" marker-end="url(#ar2)"/>
+          <text x="85" y="194">the 7 nodes</text><text x="85" y="209">seated on the round</text>
+          <text x="245" y="194">the 7 nodes</text><text x="245" y="209">seated on the round</text>
+          <text x="360" y="194" fill="#58a6ff">&#8532; guardians</text><text x="360" y="209">10</text>
+          <text x="432" y="194" fill="#f7931a">&#8531; gateways</text><text x="432" y="209">the day's 2</text>
+          <text x="555" y="194">the providers</text><text x="555" y="209">by balance given</text>
+          <text x="320" y="240" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
+          <text x="320" y="256" fill="#8b949e" font-size="11">Four pools from protocol 2026.0.16; rounds of earlier versions pay three pools of 1&#8531; %.</text>
         </g>
         <defs><marker id="ar2" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#8b949e"/></marker></defs>
       </svg>
-      <div class="ff-ex"><div class="ff-ex-h">Example: rounds with <b>1,000,000 sat</b> of stakes - 40,000 sat go to the nodes. Each seated node gets:</div>
+      <div class="ff-ex"><div class="ff-ex-h">Example: rounds with <b>1,000,000 sat</b> of stakes - 40,000 sat go to the nodes, 10,000 per pool. Each node gets:</div>
         <div class="ff-rows">
-          <div class="ff-row"><span class="dot" style="background:#3fb950"></span>Game / verify<b>&asymp; 1,905 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement<b>&asymp; 1,905 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Guardian<b>&asymp; 889 sat</b></div>
-          <div class="ff-row"><span class="dot" style="background:#f7931a"></span>Gateway (on top of guardian)<b>&asymp; 2,222 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#3fb950"></span>Game / verify (seated)<b>&asymp; 1,429 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement (seated)<b>&asymp; 1,429 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Guardian<b>&asymp; 667 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#f7931a"></span>Gateway (on top of guardian)<b>&asymp; 1,667 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#39c5cf"></span>Liquidity provider (one of two, equal balance)<b>&asymp; 5,000 sat</b></div>
         </div>
         <div class="ff-note">One node can hold several roles and earns each share. All shares are paid in the round's settlement - no claims to file.</div>
       </div>
@@ -323,8 +329,8 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 <script>
 const $ = (id) => document.getElementById(id);
 // the roles' icons and their share of the 4 % (fee.js: three equal pools; the guardian pool's third to the day's 2 gateways)
-const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;' };
-const ROLE_EARN = { verify: '1&#8531; % of each round, shared by its 7 seated nodes', settlement: '1&#8531; % of each round, shared by its 7 seated nodes', custody: '1&#8531; % of each round of your federation: guardians &#8532;, the day\'s 2 gateways &#8531;' };
+const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;', liquidity: '&#128167;' };
+const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, the day\'s 2 gateways &#8531;', liquidity: '1 % of each round of the federations you give liquidity to, by the balance you give' };
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
@@ -475,8 +481,8 @@ $('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await 
   say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
-  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel' };
-  if (r.parts && r.parts.pegIn !== undefined) $(r.update ? 'b-need2' : 'b-need').textContent = `${r.needSats.toLocaleString('en')} (${Object.entries(r.parts).map(([k, v]) => `${PART[k] || k} ${v.toLocaleString('en')}`).join(', ')})`;
+  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in', outside: 'outside channel', ring: 'ring channel', liquidity: 'liquidity deposit (into LND)' };
+  if (r.parts && Object.keys(r.parts).length > 2) $(r.update ? 'b-need2' : 'b-need').textContent = `${r.needSats.toLocaleString('en')} (${Object.entries(r.parts).map(([k, v]) => `${PART[k] || k} ${v.toLocaleString('en')}`).join(', ')})`;
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
   m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
   $('b-lock').textContent = r.lock ? lockText(r.lock) : ''; $('b-post').disabled = !r.enough; };

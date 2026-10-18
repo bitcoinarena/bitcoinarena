@@ -32,6 +32,7 @@ export const LIGHTNING_HUBS = Object.freeze({
   mainnet: Object.freeze([]),
 });
 import { signGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
 import { writeFileSync } from 'node:fs';
 import { guardianSetupOf } from './state.js';
 import { readInvite } from '../../arena-node/src/invite.js';
@@ -73,7 +74,23 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
   const commitOf = () => { try { return sha256(readFileSync(join(release, 'COMMIT'))); } catch { return new Uint8Array(32); } };
   async function tick() {
     const s = state.read();
-    if (!(s.roles || []).includes('custody')) return { ok: true, idle: 'no custody role' };
+    // A LIQUIDITY PROVIDER'S DEPOSIT (§23A.10, kanban #494): 5 x L on testnet4 from the node's wallet into LND's, once - the provider
+    // service (bin/liquidity-provider.mjs) opens channels from it
+    if ((s.roles || []).includes('liquidity') && s.lightning && s.lightning.pubkey && !(s.custody || {}).liquidityFund) {
+      const f = await lnd.funds(s.lightning);
+      if (!f.ok) return { ok: false, why: `the liquidity deposit waits for LND: ${f.why}` };
+      const deposit = Number(LIQUIDITY_TERMS.testnet4.depositSats);
+      const w0 = walletOf(fromHex(state.readSecret('seed.hex')));
+      const { coins } = await chainKit.coinsOf(s.chain, w0.spk);
+      let tx;
+      try { tx = buildSend({ wallet: w0, coins, script: addressScript(f.address), sats: deposit }); }
+      catch (e) { return { ok: false, why: `the liquidity deposit is not sent yet: ${e.message}` }; }
+      const txid = await chainKit.broadcast(s.chain, tx.hex);
+      state.save({ custody: { ...(state.read().custody || {}), liquidityFund: { address: f.address, sats: deposit, txid, atMs: nowMs() } } });
+      log(`liquidity deposit: ${deposit} sat to LND (${txid})`);
+      return { ok: true, did: 'liquidity-fund', txid };
+    }
+    if (!(s.roles || []).includes('custody')) return { ok: true, idle: (s.roles || []).includes('liquidity') ? 'liquidity provider: deposit sent; the provider service opens the channels' : 'no custody role' };
     const g = guardianOfEntry(state.path('node.db.guardian'));
     if (!g) return { ok: true, idle: 'the guardian waits to be drawn (no federation founded yet)' };
     const c = s.custody || {};
