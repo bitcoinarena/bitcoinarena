@@ -20,7 +20,7 @@ import { selectCommittee, drawCommittee, slotsForRole } from '../../arena-protoc
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { merkleBranchOf } from '../../arena-protocol/src/chain.js';
-import { networkOf, namesNoDraw } from '../../arena-protocol/src/constants.js';
+import { networkOf, namesNoDraw, SEATED_GUARDIAN_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { timed } from './slow.js';
 import { committeeSeedFromBeacon, beaconFromChain, beaconIsTheChains } from '../../arena-protocol/src/beacon.js';
@@ -134,6 +134,18 @@ function keepCensus(round, key, census) {
  * bonds active at a proposal's publication height (§27A.7.3) - one derivation, so a vote is weighed by the census a round
  * would draw from. `readFrom`: the part of the view the scan reads (PICK B's slice), the whole view by default.
  */
+/**
+ * THE ROUND'S GUARDIAN POOL (§22A v4.6.4), by node key: from SEATED_GUARDIAN_VERSION the guardians its federation's record seats
+ * (`seated`: the record store's, null when this seat holds no record - then, as below the version, the census nodes whose
+ * advertisement names the federation), and after them a draining predecessor's seated guardians (`drain`).
+ */
+export function guardianPoolOf({ contract, census, seated = null, drain = [] }) {
+  const fid = toHex(contract.federationId);
+  const own = Number(contract.protocolVersion) >= SEATED_GUARDIAN_VERSION && Array.isArray(seated) ? seated
+    : (census.entries || []).filter((e) => ((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid)).map((e) => e.pubkey);
+  return [...own, ...drain];
+}
+
 export function censusOfView(view, contract, { network = networkOf(contract.networkId), readFrom = view } = {}) {
   // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
   // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
@@ -483,14 +495,12 @@ export class Roster {
     if (!census.ok) return census;
     const contract = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract));
     const fid = toHex(contract.federationId);
-    const own = census.entries
-      .filter((e) => ((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid))
-      .map((e) => e.pubkey);
     // AND THE DRAINING PREDECESSOR'S SEATED GUARDIANS (§23A.6 step 5, kanban #325: "one share per seat across both
     // federations, so a guardian seated in both ... earns two shares"), until its record is CLOSED - a key listed twice
     // is paid twice by the fee table. `predecessorGuardians(fid)` is the seat's record store (federation-records.js).
     const drain = typeof this.predecessorGuardians === 'function' ? (this.predecessorGuardians(fid) || []) : [];
-    return { ok: true, guardians: [...own, ...drain] };
+    const seated = typeof this.seatedGuardians === 'function' ? this.seatedGuardians(fid) : null;
+    return { ok: true, guardians: guardianPoolOf({ contract, census, seated, drain }) };
   }
 
   guardianBondsFor(roundIdBytes) {

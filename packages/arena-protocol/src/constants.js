@@ -23,7 +23,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (kanban #348, RULED the owner 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -101,6 +101,11 @@ export const ITEMS_VERSION = 10;
 export const RESERVES_VERSION = 11;
 /** 2026.0.12 (kanban #460): the leaderboard payout - a proposal that pays the top N of a season from the protocol reserves. */
 export const LEADERBOARD_VERSION = 12;
+// 2026.0.13 - THE GUARDIAN POOL IS THE FEDERATION'S SEATED GUARDIANS (§22A v4.6.4, kanban #33 gap 1; measured on Tick Tock round 32cfad1c,
+// 10-16: test host 7, seated in federation A - no absence, no departure - was out of that day's census and got no guardian share, while
+// the six in the census were paid). From this version a round's guardian third goes to the guardians its federation's record seats (not
+// gone, §23A.1), whether or not each is in the round's census; below it, the census nodes naming the federation, as before.
+export const SEATED_GUARDIAN_VERSION = 13;
 export const speaksVersion = (v) => SUPPORTED_PROTOCOL_VERSIONS.includes(v);
 
 /**
