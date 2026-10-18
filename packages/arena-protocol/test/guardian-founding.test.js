@@ -128,3 +128,18 @@ test('the cohort (protocol 2026.0.14, #471 ruling 3): COHORT_NOMINAL free operat
   const early = foundingTrigger({ capable, records: [{ federation: 'aa', status: 'DRAINING', height: 90 }], nominal: 4, abandonBlocks: 12, federationExists: true });
   assert.equal(early.kind, 'succession', 'the earliest event wins');
 });
+
+test('a founding that went void is passed over: the next trigger draws again; a voided cohort draws again later (§23A.2, measured on the test host seats: B\'s void notice at 156647 held every later trigger back)', async () => {
+  const { foundingTrigger, triggerKey } = await import('../src/guardian-founding.js');
+  const B = 'b1'.repeat(32);
+  const notice = { height: 156647, federation: B, wouldBe: 'DRAINING' };
+  const capable = [{ height: 156900, operators: 30, free: 9 }, { height: 156950, operators: 31, free: 10 }, { height: 156960, operators: 31, free: 10 }, { height: 156990, operators: 31, free: 11 }];
+  const first = foundingTrigger({ notices: [notice], capable, federationExists: true });
+  assert.deepEqual([first.kind, first.height], ['succession', 156647], 'the earliest event, as before');
+  const next = foundingTrigger({ notices: [notice], capable, federationExists: true, voided: [triggerKey(first)] });
+  assert.deepEqual([next.kind, next.height, next.nominal], ['cohort', 156950, 10], 'B\'s void notice passed over: the cohort of ten free operators starts');
+  const again = foundingTrigger({ notices: [notice], capable, federationExists: true, voided: [triggerKey(first), triggerKey(next)] });
+  assert.deepEqual([again.kind, again.height], ['cohort', 156960], 'the cohort went void too: it draws again from a later height of its run');
+  const none = foundingTrigger({ notices: [notice], capable: capable.slice(0, 2), federationExists: true, voided: [triggerKey(first), 'cohort::156950'] });
+  assert.equal(none.ok, false); assert.match(none.why, /went void/);
+});

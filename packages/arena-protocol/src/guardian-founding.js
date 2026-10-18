@@ -109,7 +109,17 @@ export const LOAD_TRIGGER = 0.8;
  * the run ends, and the next cohort is a later height). Before any federation exists the genesis trigger stands as it was.
  */
 export const COHORT_NOMINAL = 10;
-export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false, cohort = COHORT_NOMINAL }) {
+/** A trigger's identity: what a seat remembers of a founding that went void. */
+export const triggerKey = (t) => `${t.kind}:${t.federation || ''}:${t.height}`;
+/**
+ * `voided`: keys (triggerKey) of foundings whose window passed without a federation. §23A.2: "the founding is void and the next
+ * trigger draws again" - so a voided event is passed over, and a voided cohort draws again from a later height of its run (measured
+ * 2026-10-18 on the test host seats: federation B's departure notice at 156647 went void at 156666 and stayed the trigger, the earliest,
+ * so no later event - a cohort of ten new nodes among them - could ever start a founding).
+ */
+export function foundingTrigger({ capable = [], records = [], notices = [], loads = [], nominal, abandonBlocks, federationExists = false, cohort = COHORT_NOMINAL, voided = [] }) {
+  const skip = new Set(voided);
+  const cohortAfter = Math.max(-1, ...[...skip].filter((k) => k.startsWith('cohort:')).map((k) => Number(k.split(':').pop())));
   const found = [];
   if (!federationExists && Number.isInteger(nominal)) {
     const g = capable.find((x) => x.operators >= nominal);
@@ -117,7 +127,7 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
   }
   if (federationExists && Number.isInteger(cohort) && cohort > 0) {
     let start = null;
-    for (const x of capable) { if (typeof x.free !== 'number') continue; if (x.free >= cohort) { if (start === null) start = x; } else start = null; }
+    for (const x of capable) { if (typeof x.free !== 'number' || x.height <= cohortAfter) continue; if (x.free >= cohort) { if (start === null) start = x; } else start = null; }
     if (start) found.push({ kind: 'cohort', height: start.height, nominal: cohort,
       why: `${start.free} guardian-capable operators guarding no OPEN federation at ${start.height}, at least ${cohort}: they found a federation of their own` });
   }
@@ -148,5 +158,7 @@ export function foundingTrigger({ capable = [], records = [], notices = [], load
   }
   if (!found.length) return { ok: false, why: federationExists ? 'no federation is draining or replaced, and the OPEN ones are not all at 80 % for abandon_blocks' : `fewer than federation_nominal ${nominal} guardian-capable operators so far: no federation, and no paying round` };
   found.sort((a, b) => a.height - b.height);
-  return { ok: true, ...found[0] };
+  const live = found.filter((t) => !skip.has(triggerKey(t)));
+  if (!live.length) return { ok: false, why: `every trigger so far went void (${found.length}); the next one draws again` };
+  return { ok: true, ...live[0] };
 }
