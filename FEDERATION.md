@@ -171,7 +171,10 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   threshold of its guardians sign each epoch (144 blocks).
 - **To stand** (testnet4 / mainnet):
   - a seated guardian whose announced gateway is registered with the federation;
-  - inbound liquidity of at least 100,000 / 2,500,000 sat (deposits come in through it) and outbound of at least the same (payouts);
+  - inbound liquidity from outside the federation of at least 100,000 / 2,500,000 sat (deposits from the wider network come in through it;
+    the ring does not count) and outbound of at least the same (payouts);
+  - one channel to a hub outside the federation (testnet4: the the test host's LND C over Tor); a node nobody can dial gets an onion address
+    (Tor), measured at install: LND's port is tried from outside first;
   - a peg-in of at least 50,000 / 2,000,000 sat;
   - inbound comes from the federation's **channel ring**: once it is founded, each custody node opens one 150,000 sat channel to the
     next in node-key order (custody agent), so every gateway gets one channel in and one out from the federation's own nodes;
