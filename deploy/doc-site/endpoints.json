@@ -6278,8 +6278,8 @@
   "path": "/replay-budget",
   "params": "query runMs (default 82000)",
   "auth": "none",
-  "returns": "200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention}",
-  "purpose": "This seat's measured replay speed and the players a round can hold in the result window.",
+  "returns": "200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}",
+  "purpose": "This seat's measured replay speed and the players a round can hold in the result window. Also how this seat keeps its storage lean: transcripts are deleted once the claim window ends (lastPrune), and rounds nobody used go with their committee and seating records after their windows (unusedRounds) (kanban #33, #468).",
   "audience": "operator/monitoring",
   "line": 5670,
   "summary": "Measured replay speed and capacity",
@@ -6297,7 +6297,7 @@
    {
     "status": "200",
     "contentType": "application/json",
-    "description": "{speedX, samples, runMs, maxPlayersPerRound, retention}."
+    "description": "{speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune, unusedRounds}."
    }
   ],
   "headers": [],
@@ -8441,5 +8441,1030 @@
   "pathParams": [],
   "openapiPath": "/guardian",
   "skipOpenapi": true
+ },
+ {
+  "method": "GET",
+  "path": "/fees",
+  "params": "query height (optional, integer)",
+  "auth": "none",
+  "returns": "200 JSON {tip, inForce, today, height?, atHeight?, schedule, limits{fee:{min,max,today,donation}}, sums{roundMaxBps,itemPct,marketMaxBps}, proposals[]}",
+  "purpose": "The protocol fees in force at this seat's tip (and at a named height), each fee's limits and the sums, and every fee proposal with its signal, vote, the protocol developers' answers and its decision (kanban #462).",
+  "audience": "player/page",
+  "line": 6948,
+  "summary": "Fees in force and fee proposals",
+  "query": [
+   {
+    "name": "height",
+    "required": false,
+    "type": "integer",
+    "description": "A block height: the answer adds atHeight, the set in force there (a round's census height is what a joining page pays its entry with)."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{tip, inForce, today, height?, atHeight?, schedule, limits, sums, proposals}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/funding",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {tip, schedule, signalPct, proposals[], leaderboards[], names[]}",
+  "purpose": "Every project funding proposal with its signal, comments and vote, every leaderboard payout request and its 25 % vote (kanban #460), and every player's newest name.",
+  "audience": "player/page",
+  "line": 6920,
+  "summary": "Funding proposals and leaderboard payouts",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{tip, schedule, signalPct: 15, proposals, leaderboards, names}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/funding",
+  "params": "body JSON {kind, hex}",
+  "auth": "the record carries its author's signature",
+  "returns": "200 JSON {ok, id, fresh, ...}; 4xx {ok:false, why}; 501",
+  "purpose": "Keeps a signed funding record - a proposal, signal, comment, vote, fee proposal, fee approval or leaderboard payout request - after checking it, and hands a new one on to every seat once.",
+  "audience": "player/page",
+  "line": 6920,
+  "summary": "Submit a funding record",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{kind: proposal|signal|comment|vote|fee|fee-approval|leaderboard, hex: the signed record}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id, fresh}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not JSON, unknown kind, or the record does not decode."
+   },
+   {
+    "status": "422",
+    "contentType": "application/json",
+    "description": "The record breaks a rule (limits, heights, signature)."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node keeps no funding proposals."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/reserves",
+  "params": "query all=1 (optional)",
+  "auth": "none",
+  "returns": "200 JSON {node, totalMsat, entries, federations[{federationId, members, needed, key, heldMsat, paidIn, ...}], paidIn[], payouts[]}",
+  "purpose": "Per federation this node knows guardians of: its reserve key (guardian seats, threshold, group key, public shares), what the reserves hold and what came in, and the reserve payouts (§27A.9.2, kanban #397).",
+  "audience": "player/page",
+  "line": 6875,
+  "summary": "Protocol reserves per federation",
+  "query": [
+   {
+    "name": "all",
+    "required": false,
+    "type": "string",
+    "description": "1: list every payment in, not only the newest."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, totalMsat, entries, federations, paidIn, payouts}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/reserve-payouts",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {payouts[]}",
+  "purpose": "Every payout from the protocol reserves this seat knows: funding proposals and leaderboard payouts, with plan, state and txid (kanban #397, #460).",
+  "audience": "player/page",
+  "line": 6942,
+  "summary": "Reserve payouts",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{payouts: [{proposal, kind, state, federation, plan, txid, preimage, ...}]}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/reserve-payout/commit",
+  "params": "body JSON (the ceremony step)",
+  "auth": "none; every seat rebuilds and checks the plan itself",
+  "returns": "200 JSON {ok, ...}; 400; 501",
+  "purpose": "The reserve payout ceremony between guardian seats: a guardian seat's FROST commitment for a payout plan it rebuilt itself (kanban #397 slice 8).",
+  "audience": "node-to-node",
+  "line": 6929,
+  "summary": "Reserve payout: commit",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The plan or plan id, kind, and commitments as the step needs."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, commitment | share | record kept}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not JSON or the plan does not check."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node pays no reserves."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/reserve-payout/share",
+  "params": "body JSON (the ceremony step)",
+  "auth": "none; every seat rebuilds and checks the plan itself",
+  "returns": "200 JSON {ok, ...}; 400; 501",
+  "purpose": "The reserve payout ceremony between guardian seats: a guardian seat's FROST signature share for that plan, given the commitments (kanban #397 slice 8).",
+  "audience": "node-to-node",
+  "line": 6929,
+  "summary": "Reserve payout: share",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The plan or plan id, kind, and commitments as the step needs."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, commitment | share | record kept}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not JSON or the plan does not check."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node pays no reserves."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/reserve-payout/record",
+  "params": "body JSON (the ceremony step)",
+  "auth": "none; every seat rebuilds and checks the plan itself",
+  "returns": "200 JSON {ok, ...}; 400; 501",
+  "purpose": "The reserve payout ceremony between guardian seats: a payout record any seat keeps (a PAID one only with the invoice's preimage) (kanban #397 slice 8).",
+  "audience": "node-to-node",
+  "line": 6929,
+  "summary": "Reserve payout: record",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The plan or plan id, kind, and commitments as the step needs."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, commitment | share | record kept}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not JSON or the plan does not check."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node pays no reserves."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/items",
+  "params": "query player (64 hex), game, dev (optional)",
+  "auth": "none",
+  "returns": "200 JSON {node, items[]}; 400",
+  "purpose": "The in-game items a player bought (e.g. the larger truck), from the purchase records this seat keeps (kanban #365, #374).",
+  "audience": "player/page",
+  "line": 5296,
+  "summary": "Items a player owns",
+  "query": [
+   {
+    "name": "player",
+    "required": true,
+    "type": "string",
+    "description": "The buyer's 32-byte items key, 64 hex."
+   },
+   {
+    "name": "game",
+    "required": false,
+    "type": "string",
+    "description": "The game name."
+   },
+   {
+    "name": "dev",
+    "required": false,
+    "type": "string",
+    "description": "The game developer's key, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, items: [{itemId, gameName, txid, ...}]}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No valid player key."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/item-purchase",
+  "params": "body JSON {purchase, signature} hex",
+  "auth": "the buyer's signature over the record",
+  "returns": "200 JSON {id, kept}; 400/404/422",
+  "purpose": "Keeps a buyer's signed item purchase record after checking it against the hosted game's terms, the donation sets and the federation output by output; hands a new one on to every seat (kanban #365).",
+  "audience": "player/page",
+  "line": 5206,
+  "summary": "Record an item purchase",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{purchase: hex, signature: hex}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{id, kept: new|held}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a purchase record."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat hosts no such game or item."
+   },
+   {
+    "status": "422",
+    "contentType": "text/plain",
+    "description": "The record does not check."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/donation-ballots",
+  "params": "none",
+  "auth": "none",
+  "returns": "200 JSON {ballots[], approved[{serial, validFrom, setId, approvedBy}]}",
+  "purpose": "Every proposal and approval of the protocol developers' donation set this seat holds, with its tally, and the sets approved (§27A.4.1, kanban #382).",
+  "audience": "player/page",
+  "line": 6913,
+  "summary": "Developers' ballots",
+  "query": [],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ballots, approved}."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/donation-ballot",
+  "params": "body JSON {kind, hex}",
+  "auth": "the record's signature (a recipient of the set in force)",
+  "returns": "200 JSON {ok, ...}; 4xx; 501",
+  "purpose": "Keeps a signed proposal or approval of the developers' donation set and hands it on once.",
+  "audience": "player/page",
+  "line": 6968,
+  "summary": "Submit a developers' ballot record",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{kind: proposal|approval, hex}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id, fresh}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Not JSON or not a record."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "This node keeps no ballots."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/donation-gifts",
+  "params": "query donor (64 hex)",
+  "auth": "none",
+  "returns": "200 JSON {donor, gifts[]}; 400",
+  "purpose": "The donations a donor made outside any round (to a game's set, the protocol developers, or a player as a zap), as this seat keeps them (kanban #431, #463).",
+  "audience": "player/page",
+  "line": 5290,
+  "summary": "A donor's gifts",
+  "query": [
+   {
+    "name": "donor",
+    "required": true,
+    "type": "string",
+    "description": "The donor's 32-byte key, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{donor, gifts}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No valid donor key."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/donation-gift",
+  "params": "body JSON {gift, signature} hex",
+  "auth": "the donor's signature",
+  "returns": "200 JSON {id, kept, outputs}; 400/404/422/503",
+  "purpose": "Keeps a donor's signed gift record - to a hosted game's donation set, the network's set in force, or a player (a zap) - checked against the set and the federation output by output; indexed for GET /donations?key= and handed on to every seat.",
+  "audience": "player/page",
+  "line": 5257,
+  "summary": "Record a donation gift",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "{gift: hex, signature: hex}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{id, kept, outputs}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not a gift record."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such game set here."
+   },
+   {
+    "status": "503",
+    "contentType": "text/plain",
+    "description": "No network donation authority known."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/market-rounds",
+  "params": "query since (ms, optional)",
+  "auth": "none",
+  "returns": "200 JSON {rounds[]}; 400",
+  "purpose": "The market rounds that took orders on this seat since a time, so a page reads a player's own orders back from the nodes after a reload, closed ones too (kanban #452).",
+  "audience": "player/page",
+  "line": 6176,
+  "summary": "Rounds that took orders",
+  "query": [
+   {
+    "name": "since",
+    "required": false,
+    "type": "integer",
+    "description": "Unix ms; rounds since then."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{rounds}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Bad since."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/series-template",
+  "params": "query id (64 hex)",
+  "auth": "none",
+  "returns": "200 text/plain the template line (cache 1 h); 400; 404",
+  "purpose": "A series' template as its text line, for a page checking a series round it was handed; the reader believes it only once it hashes to the id it asked for (kanban #362).",
+  "audience": "game/market developer",
+  "line": 5335,
+  "summary": "A series template",
+  "query": [
+   {
+    "name": "id",
+    "required": true,
+    "type": "string",
+    "description": "The series id, 64 hex."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "text/plain",
+    "description": "The template line."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No valid id."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "No such series here."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/served",
+  "params": "query to (ms), from (ms, optional, default to - 24 h), finals=1 (optional)",
+  "auth": "none",
+  "returns": "200 JSON {node, fromMs, toMs, rounds, root, nodes, refused, held?}; 400",
+  "purpose": "The nodes that served rounds in a time window, from the FINAL signatures this seat holds, each checked against its committee; the root lets seats compare (kanban #365).",
+  "audience": "player/page",
+  "line": 5302,
+  "summary": "Who served rounds in a window",
+  "query": [
+   {
+    "name": "to",
+    "required": true,
+    "type": "integer",
+    "description": "Window end, unix ms."
+   },
+   {
+    "name": "from",
+    "required": false,
+    "type": "integer",
+    "description": "Window start, unix ms; at most 7 days before to."
+   },
+   {
+    "name": "finals",
+    "required": false,
+    "type": "string",
+    "description": "1: also hand over the rounds with committees and FINALs read."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, fromMs, toMs, rounds, root, nodes, refused, held?}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Bad window."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/block-random",
+  "params": "query height, label, n, count (1..1000)",
+  "auth": "none",
+  "returns": "200 JSON {node, tip, depth, ...draw}; 400/409/503",
+  "purpose": "Numbers drawn from a block hash at a height that is deep enough, labelled for what they are for - reproducible by anyone with the chain.",
+  "audience": "game/market developer",
+  "line": 5317,
+  "summary": "Randomness from a block",
+  "query": [
+   {
+    "name": "height",
+    "required": true,
+    "type": "integer",
+    "description": "The block height."
+   },
+   {
+    "name": "label",
+    "required": false,
+    "type": "string",
+    "description": "What the draw is for."
+   },
+   {
+    "name": "n",
+    "required": true,
+    "type": "string",
+    "description": "The range drawn from."
+   },
+   {
+    "name": "count",
+    "required": false,
+    "type": "integer",
+    "description": "How many numbers, 1..1000."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{node, tip, depth, values...}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Bad parameters."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "That block is not deep enough yet."
+   },
+   {
+    "status": "503",
+    "contentType": "text/plain",
+    "description": "This node reads no chain."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/price-reading",
+  "params": "body JSON (the signed reading)",
+  "auth": "the committee seat's signature",
+  "returns": "200 JSON; 400/409",
+  "purpose": "A committee seat's own signed price reading for a price round; a sample is the median of the readings, nobody proposes a price (protocol 5, kanban #312).",
+  "audience": "node-to-node",
+  "line": 6167,
+  "summary": "A committee seat's price reading",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "The signed reading."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "The reading kept."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "Not JSON."
+   },
+   {
+    "status": "409",
+    "contentType": "text/plain",
+    "description": "The reading does not check."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "signature",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
+  "path": "/config",
+  "params": "query network (64 hex, optional)",
+  "auth": "none",
+  "returns": "200 JSON {configHash, since, by, history}; 400; 404",
+  "purpose": "The game config in force on this seat's chain and its history (genesis first): what a round created now names, and what a repeal is read against (§27A.7.5).",
+  "audience": "game/market developer",
+  "line": 4546,
+  "summary": "The config live on the chain",
+  "query": [
+   {
+    "name": "network",
+    "required": false,
+    "type": "string",
+    "description": "Network id, 64 hex; this seat's chain by default."
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{configHash, since, by, history}."
+   },
+   {
+    "status": "400",
+    "contentType": "text/plain",
+    "description": "No network."
+   },
+   {
+    "status": "404",
+    "contentType": "text/plain",
+    "description": "This seat counts no ballot."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/dev/fee-answer",
+  "params": "body: Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, proposalId, approve}",
+  "auth": "node owner",
+  "returns": "200 JSON {ok, ...}; 400/401/404/501",
+  "purpose": "From the owner page: a dev client of this node approves or denies a fee proposal, signed with that client's key, kept and handed on (kanban #462).",
+  "audience": "operator/monitoring",
+  "line": 4460,
+  "summary": "A developer's answer to a fee proposal",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, proposalId (64 hex), approve: bool}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id, fresh}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "No such dev client or fee proposal."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "No dev clients or no fee proposals on this node."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/dev/propose",
+  "params": "body: Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, recipients[{key, shareBps, label, vestDays?, vestBps?}]}",
+  "auth": "node owner",
+  "returns": "200 JSON {ok, ...}; 401/404/409/501",
+  "purpose": "From the owner page: a dev client of this node proposes a new split of the protocol developers' donation set (with optional vesting), signed with its recipient key, kept and handed on (§27A.4.1, kanban #382).",
+  "audience": "operator/monitoring",
+  "line": 4419,
+  "summary": "Propose a developers' set",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, recipients}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "409",
+    "contentType": "application/json",
+    "description": "This dev key is not a recipient of the set in force."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "No dev clients or no ballots."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/dev/vote",
+  "params": "body: Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, proposalId, accept}",
+  "auth": "node owner",
+  "returns": "200 JSON {ok, ...}; 401/404/501",
+  "purpose": "From the owner page: a dev client of this node accepts or denies a proposed developers' set, signed with its recipient key, kept and handed on.",
+  "audience": "operator/monitoring",
+  "line": 4419,
+  "summary": "Vote on a developers' set",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {slug, proposalId, accept: bool}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "No such dev client."
+   },
+   {
+    "status": "501",
+    "contentType": "application/json",
+    "description": "No dev clients or no ballots."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/funding-propose",
+  "params": "body: Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {amountSats, lnurl, purpose}",
+  "auth": "node owner",
+  "returns": "200 JSON {ok, id, ...}; 401/404/503",
+  "purpose": "From the owner page: a funding proposal authored by this node (amount, LNURL, purpose), written and signed with the node's own key, kept and handed on (§27A.9.3, kanban #397).",
+  "audience": "operator/monitoring",
+  "line": 4296,
+  "summary": "Owner: propose (funding)",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {amountSats, lnurl, purpose}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id, fresh}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This node keeps no funding proposals."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "This node reads no chain height or network."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/funding-signal",
+  "params": "body: Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {proposal}",
+  "auth": "node owner",
+  "returns": "200 JSON {ok, id, ...}; 401/404/503",
+  "purpose": "From the owner page: this node's signal for a funding proposal, written and signed with the node's own key, kept and handed on (§27A.9.3, kanban #397).",
+  "audience": "operator/monitoring",
+  "line": 4296,
+  "summary": "Owner: signal (funding)",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {proposal}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id, fresh}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This node keeps no funding proposals."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "This node reads no chain height or network."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/owner/funding-comment",
+  "params": "body: Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {proposal, parent?, text}",
+  "auth": "node owner",
+  "returns": "200 JSON {ok, id, ...}; 401/404/503",
+  "purpose": "From the owner page: a comment by this node on a funding proposal, written and signed with the node's own key, kept and handed on (§27A.9.3, kanban #397).",
+  "audience": "operator/monitoring",
+  "line": 4296,
+  "summary": "Owner: comment (funding)",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "required": true,
+   "description": "Owner-signed request (BIP-340 JSON or NIP-98 kind 27235) with args {proposal, parent?, text}."
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, id, fresh}."
+   },
+   {
+    "status": "401",
+    "contentType": "application/json",
+    "description": "Not signed by the owner."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This node keeps no funding proposals."
+   },
+   {
+    "status": "503",
+    "contentType": "application/json",
+    "description": "This node reads no chain height or network."
+   }
+  ],
+  "headers": [],
+  "changesState": true,
+  "needsAuth": "owner",
+  "pathParams": []
  }
 ]
