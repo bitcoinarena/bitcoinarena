@@ -4,12 +4,14 @@
 // --claim-file (a seat serves that file as GET /liquidity-claim, ARENA_LIQUIDITY_CLAIM_FILE).
 //
 //     liquidity-provider --rest https://127.0.0.1:8182 --lnddir <lnd dir> --key <node key hex file> --state <file> [--listen 18860]
-//                        [--claim-file <file>] [--peers https://a,https://b] [--census https://<a seat>/roles]
+//                        [--claim-file <file>] [--peers https://a,https://b] [--seeds https://testnet.bitcoin-arena.io/daily.json]
 //
 // HOW A NEW NODE IS FOUND (the owner 2026-10-18: "How do new nodes communicate with the lnd liquidity providers?"): it does not call a
 // provider. It is bonded (so in the census, with its endpoint in its advertisement) and its seat serves its signed gateway claim (its
-// LND key and address). A provider reads the census from a seat (GET /roles: every census node and its endpoint) and asks each
-// endpoint for its gateway claim and its liquidity claim.
+// LND key and address). A provider reads the census from any node that answers (GET /roles: every census node and its endpoint) and
+// asks each endpoint for its gateway claim and its liquidity claim. FULLY DYNAMIC (the owner 2026-10-18: "The node discovery must be fully
+// dynamic never in just a daily.json. For a seed node daily.json is ok"): daily.json only seeds the first nodes to ask; every node the
+// census names is kept (in the state file) and asked next time, so the provider finds the network without it.
 import http from 'node:http';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,12 +26,24 @@ const node = Buffer.from(schnorr.getPublicKey(secret)).toString('hex');
 const stateFile = opt('--state'); const claimFile = opt('--claim-file');
 const state = existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : {};
 const peers = String(opt('--peers', '')).split(',').filter(Boolean);
-const censusUrl = opt('--census', 'https://tn4.bitcoin-arena.io/guardian-1/roles');
+const seedsUrl = opt('--seeds', 'https://testnet.bitcoin-arena.io/daily.json');
+const toHttp = (u) => String(u || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 let seats = [], seatsAt = 0, current = null;
+// one node's census: the endpoints of every census node (GET /roles), or null when it does not answer
+const rolesOf = async (n) => { try { const r = await fetch(`${toHttp(n)}/roles`, { signal: AbortSignal.timeout(10000) }); if (r.status !== 200) return null;
+  const d = await r.json(); const e = [...new Set((d.nodes || []).map((x) => toHttp(x.endpoint)).filter((u) => /^https?:\/\//.test(u)))]; return e.length ? e : null; } catch { return null; } };
 const endpoints = async () => {
-  if (Date.now() - seatsAt > 3600000) {
-    try { const d = await (await fetch(censusUrl, { signal: AbortSignal.timeout(15000) })).json();
-      seats = [...new Set((d.nodes || []).map((x) => String(x.endpoint || '').replace(/^ws(s?):/, 'http$1:')).filter((u) => /^https?:\/\//.test(u)))]; seatsAt = Date.now(); } catch { /* keep the last */ }
+  if (Date.now() - seatsAt > 600000) {          // a new node is found within 10 minutes of its bond
+    // the nodes to ask: every node learned before, then the seed list (daily.json) only if none of those answers
+    const askOrder = [...(state.known || [])];
+    let census = null;
+    for (const n of askOrder) { census = await rolesOf(n); if (census) break; }
+    if (!census) {
+      let seeds = [];
+      try { const d = await (await fetch(seedsUrl, { signal: AbortSignal.timeout(15000) })).json(); seeds = [...new Set(JSON.stringify(d).match(/https:\/\/[a-z0-9.-]+\/[a-z0-9-]+(?=")/g) || [])]; } catch { seeds = []; }
+      for (const n of seeds) { census = await rolesOf(n); if (census) break; }
+    }
+    if (census) { seats = census; state.known = census; seatsAt = Date.now(); }
   }
   return [...peers, ...seats];
 };
