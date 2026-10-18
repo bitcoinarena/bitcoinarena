@@ -20,7 +20,9 @@ import { quickTunnelName } from './tunnel.js';
 
 /** The node's port for connections from outside (ruling 7: "make up a default port"). */
 export const DEFAULT_NODE_PORT = 8470;
-export const REACH_MODES = Object.freeze(['direct', 'permanent', 'quick']);
+export const REACH_MODES = Object.freeze(['direct', 'permanent', 'quick', 'tailscale']);
+/** The modes that run a cloudflared tunnel as a service of the node (Tailscale Funnel is kept by tailscaled itself). */
+export const tunnelMode = (mode) => mode === 'permanent' || mode === 'quick';
 
 /** The seats asked to connect back: the testnet4 seats the Arena site lists (daily.json testnet.node), these when it cannot be read. */
 export const REACH_SEATS = Object.freeze(['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2',
@@ -140,6 +142,34 @@ export async function cloudflareTunnel({ bin = 'cloudflared', name, hostname, po
   const config = join(home, 'cloudflared.yml');
   writeFileSync(config, `# the node's permanent tunnel (kanban #471), written by the installer\ntunnel: ${id}\ncredentials-file: ${creds}\ningress:\n  - hostname: ${hostname}\n    service: http://127.0.0.1:${port}\n  - service: http_status:404\n`, { mode: 0o600 });
   return { ok: true, id, config };
+}
+
+// ---- a permanent name through Tailscale Funnel (the owner 2026-10-18: "add Tailscale funnel support so permanent tunnel with Tailscale") ----
+// The machine is on the user's tailnet already (tailscale up). `tailscale funnel --bg` keeps the route in tailscaled's own config, across
+// restarts, so the node needs no tunnel service: https://<machine>.<tailnet>.ts.net (or :8443 / :10000 - the ports Funnel allows) goes
+// to the node's port on 127.0.0.1. A Funnel port this machine already serves for something else is left alone (memory: a plain `serve`
+// once turned a whole :443 tailnet-only), the next free one is used; a port already pointing at this node is kept.
+export const FUNNEL_PORTS = Object.freeze([443, 8443, 10000]);
+export async function tailscaleFunnel({ bin = 'tailscale', port, sh = run }) {
+  const st = await sh(bin, ['status', '--json']);
+  let s = null;
+  try { s = JSON.parse(st.out); } catch { s = null; }
+  if (!s) return { ok: false, why: st.code === 'ENOENT' || /not found|ENOENT|not recognized/i.test(st.err || '') ? 'Tailscale is not installed: install it from tailscale.com and run "tailscale up"' : `tailscale status failed: ${(st.err || st.out || '').trim().slice(0, 200)}` };
+  if (s.BackendState !== 'Running') return { ok: false, why: `Tailscale is ${s.BackendState || 'not running'}: run "tailscale up" and log in` };
+  const dns = String((s.Self && s.Self.DNSName) || '').replace(/\.$/, '');
+  if (!dns) return { ok: false, why: 'this machine has no tailnet name: turn on MagicDNS and HTTPS certificates in the Tailscale admin console' };
+  const target = `http://127.0.0.1:${port}`;
+  let web = {};
+  try { web = (JSON.parse((await sh(bin, ['funnel', 'status', '--json'])).out || '{}').Web) || {}; } catch { web = {}; }
+  const proxyOf = (p) => { const h = web[`${dns}:${p}`]; return h && h.Handlers ? Object.values(h.Handlers).map((x) => x.Proxy).filter(Boolean) : null; };
+  const mine = FUNNEL_PORTS.find((p) => (proxyOf(p) || []).includes(target));
+  const httpsPort = mine || FUNNEL_PORTS.find((p) => !proxyOf(p));
+  if (!httpsPort) return { ok: false, why: `every Funnel port (${FUNNEL_PORTS.join(', ')}) of ${dns} serves something else already` };
+  if (!mine) {
+    const f = await sh(bin, ['funnel', '--bg', `--https=${httpsPort}`, target]);
+    if (!f.ok) return { ok: false, why: `tailscale funnel failed (Funnel must be allowed for this machine in the tailnet's access controls): ${(f.err || f.out || '').trim().slice(0, 300)}` };
+  }
+  return { ok: true, url: `https://${dns}${httpsPort === 443 ? '' : `:${httpsPort}`}`, httpsPort, host: dns };
 }
 
 /** The tunnel's command: the permanent one by its config, the quick one by the node's port. */
