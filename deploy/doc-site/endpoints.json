@@ -9466,5 +9466,42 @@
   "changesState": true,
   "needsAuth": "owner",
   "pathParams": []
+ },
+ {
+  "method": "POST",
+  "path": "/reach-check",
+  "params": "JSON body {port, nonce}",
+  "auth": "none",
+  "returns": "200 JSON {ok, reached, address, port, ms?}; 400; 429",
+  "purpose": "Can the internet reach a new node? The seat connects back to the asking address only (a public one), on the port named, asks GET /reach-nonce and answers whether the nonce came back - never what it read, never whether the port refused or stayed silent. 6 checks a minute per address, 60 in all. Used by the node installer's direct-connection test (kanban #471 ruling 7).",
+  "audience": "node-to-node",
+  "line": 5317,
+  "summary": "Connect back to the asker (installer reach test)",
+  "query": [],
+  "body": {
+   "contentType": "application/json",
+   "description": "{port: 1-65535, nonce: 16-64 characters of [A-Za-z0-9_-]}"
+  },
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, reached, address (the asker's public address as this seat saw it), port, ms (when reached)}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "Bad port or nonce, or the asker's address is not public (the address is named)."
+   },
+   {
+    "status": "429",
+    "contentType": "application/json",
+    "description": "More than 6 checks a minute from this address, or 60 in all."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
  }
 ]
