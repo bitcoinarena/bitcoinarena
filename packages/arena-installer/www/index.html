@@ -110,7 +110,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <div id="fee-flow">
       <div class="cx-title">Where your earnings come from</div>
       <p class="ff-lead">Every paid round: <b>4&nbsp;%</b> of its stakes to the nodes, <b>1&nbsp;%</b> per service.</p>
-      <svg viewBox="0 0 640 276" class="cx-flow" aria-hidden="true">
+      <svg viewBox="0 0 640 282" class="cx-flow" aria-hidden="true">
         <g font-family="system-ui,sans-serif" font-size="12.5" text-anchor="middle" fill="#e6edf3">
           <rect x="230" y="6" width="180" height="40" rx="10" fill="#f7931a"/><text x="320" y="24" fill="#111" font-weight="700" font-size="13">4 % of every round</text><text x="320" y="39" fill="#111" font-size="11">to the nodes</text>
           <path d="M262 46 C262 72 85 62 85 90" stroke="#3fb950" stroke-width="9" fill="none" opacity=".75"/>
@@ -127,10 +127,10 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
           <text x="85" y="194">the 7 nodes</text><text x="85" y="209">seated on the round</text>
           <text x="245" y="194">the 7 nodes</text><text x="245" y="209">seated on the round</text>
           <text x="352" y="194" fill="#58a6ff" font-size="11.5">&#8532; guardians</text><text x="352" y="209" font-size="11.5">the 10</text>
-          <text x="442" y="194" fill="#f7931a" font-size="11.5">&#8531; gateways</text><text x="442" y="209" font-size="11.5">2 random per day</text>
+          <text x="448" y="194" fill="#f7931a" font-size="11.5">&#8531; gateways</text><text x="446" y="209" font-size="10.5" fill="#8b949e">2 per federation,</text><text x="446" y="222" font-size="10.5" fill="#8b949e">randomly chosen</text><text x="446" y="235" font-size="10.5" fill="#8b949e">each day</text>
           <text x="562" y="194">liquidity providers</text><text x="562" y="209" font-size="11" fill="#8b949e">provides incoming</text><text x="562" y="223" font-size="11" fill="#8b949e">Lightning liquidity</text>
-          <text x="320" y="252" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
-          <text x="320" y="268" fill="#8b949e" font-size="11">Four pools from protocol 2026.0.16; rounds of earlier versions pay three pools of 1&#8531; %.</text>
+          <text x="320" y="258" fill="#8b949e" font-size="12">Seats are drawn fresh every round: the more your node is up, the more it serves.</text>
+          <text x="320" y="274" fill="#8b949e" font-size="11">Four pools from protocol 2026.0.16; rounds of earlier versions pay three pools of 1&#8531; %.</text>
         </g>
         <defs><marker id="ar2" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#8b949e"/></marker></defs>
       </svg>
@@ -329,7 +329,7 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 const $ = (id) => document.getElementById(id);
 // the roles' icons and their share of the 4 % (fee.js, 2026.0.16: four pools of 1 %; custody's third to 2 random gateways per day)
 const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;', liquidity: '&#128167;' };
-const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, gateways &#8531; (2 random per day)', liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share' };
+const ROLE_EARN = { verify: '1 % of each round, shared by its 7 seated nodes', settlement: '1 % of each round, shared by its 7 seated nodes', custody: '1 % of each round of your federation: guardians &#8532;, gateways &#8531; (2 per federation, randomly chosen each day)', liquidity: '1 % of each round, shared by the liquidity providers: the more coins you hold for new nodes, the bigger your share' };
 const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
