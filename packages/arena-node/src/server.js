@@ -43,7 +43,7 @@ import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { explorerAgrees } from '../../arena-client/src/explorer-check.js';
 import { rulesStand } from '../../arena-protocol/src/rules.js';
 import { stakeWithinCeiling, isTestNetwork } from '../../arena-protocol/src/census-health.js';
-import { pruneTranscripts, PRUNE_EVERY_MS } from './transcript-prune.js';
+import { pruneTranscripts, pruneUnusedRounds, PRUNE_EVERY_MS } from './transcript-prune.js';
 import { maxPlayersPerRound } from '../../arena-protocol/src/replay-budget.js';
 import { bondWeightedMedian } from '../../arena-protocol/src/census-median.js';
 import { publicationFee, publisherPayoutMsat, publisherRoundIndex } from '../../arena-protocol/src/publisher-payout.js';
@@ -2894,6 +2894,25 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const transcriptPruneClock = setInterval(transcriptPrune, PRUNE_EVERY_MS);
   transcriptPruneClock.unref();
   setTimeout(transcriptPrune, 60000).unref();
+  // AND ROUNDS NOBODY USED (kanban #468, the owner 2026-10-18 "make it lean"): one pass of at most UNUSED_PASS rounds every 10 s while the
+  // backlog lasts (measured on a copy of second-host seat 2: 154,244 of 206,582 rounds unused and past their windows, 675 -> 199 MB; a pass of
+  // 5,000 held the loop 1.0 s, so 1,000), then hourly; ARENA_LEAN_PRUNE=0 stops it
+  const UNUSED_PASS = Number(process.env.ARENA_UNUSED_PASS || 1000);
+  let unusedAfter = 0, unusedIdleUntil = 0;
+  const unusedTally = { deleted: 0, rows: 0, passes: 0, lastAtMs: null, caughtUpAtMs: null };
+  const unusedPass = () => {
+    if (shuttingDown || process.env.ARENA_LEAN_PRUNE === '0' || Date.now() < unusedIdleUntil) return;
+    try {
+      const r = pruneUnusedRounds({ db, afterRowid: unusedAfter, batch: UNUSED_PASS,
+        onDeleted: (rid) => { if (seating && seating.forget) seating.forget(toHex(new Uint8Array(rid))); } });
+      unusedTally.deleted += r.deleted; unusedTally.rows += r.rows; unusedTally.passes += 1; unusedTally.lastAtMs = Date.now();
+      unusedAfter = r.done ? 0 : r.lastRowid;
+      if (r.done) { unusedIdleUntil = Date.now() + PRUNE_EVERY_MS; unusedTally.caughtUpAtMs = Date.now();
+        console.log(`[lean] unused rounds: ${unusedTally.deleted} deleted (${unusedTally.rows} rows) in ${unusedTally.passes} passes; next look in an hour`); }
+    } catch (e) { console.error(`[lean] unused rounds: ${e.message}`); }
+  };
+  const unusedClock = setInterval(unusedPass, 10000);
+  unusedClock.unref();
 
   // A ROUND'S PUBLIC RESULT, FOR ITS NOSTR EVENT (kanban #362 feature 2): only once this node holds its settlement ACCEPTED, and
   // only what is public already - /api/round-result's names, outcomes and scores, /lock-settlement's txids, and what the
@@ -6687,7 +6706,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ speedX, samples: verifier.pool && verifier.pool.samples ? verifier.pool.samples.length : 0, runMs,
           maxPlayersPerRound: speedX ? maxPlayersPerRound({ speedX, runMs }) : null,
           retention: 'transcripts are kept through the objection window and the contract\'s claim window, then deleted (hourly)',
-          lastPrune: transcriptsLast ? { atMs: transcriptsLast.atMs, pruned: transcriptsLast.pruned.length, kept: transcriptsLast.kept, rows: transcriptsLast.rows } : null }));
+          lastPrune: transcriptsLast ? { atMs: transcriptsLast.atMs, pruned: transcriptsLast.pruned.length, kept: transcriptsLast.kept, rows: transcriptsLast.rows } : null,
+          unusedRounds: { ...unusedTally } }));
       }
 
       // WHAT A ROUND'S CENSUS SUPPORTS (§5A.10, kanban #306): its stake against the ceiling its census's health derives - nodes and
@@ -7954,7 +7974,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       close: () => new Promise((r) => {
         // NO RE-GATHER OUTLIVES THE DAEMON.
         shuttingDown = true;
-        clearInterval(settleRecoverTimer); clearInterval(transcriptPruneClock); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
+        clearInterval(settleRecoverTimer); clearInterval(transcriptPruneClock); clearInterval(unusedClock); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer); clearInterval(donationBackfillClock); clearTimeout(donationBackfillTimer);
         if (attestedSweep) { clearInterval(attestedSweep); attestedSweep = null; }
         if (marketsTimer) clearInterval(marketsTimer);
         if (orderBatchTimeout) { clearTimeout(orderBatchTimeout); orderBatchTimeout = null; }

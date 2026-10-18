@@ -7,6 +7,7 @@
 // seat, plus its objection window W, plus its contract's claim_window_days; after that it is deleted. A contract that names no claim
 // window (no rules block) keeps its transcript: there is no window to end. The round itself, its entries, receipts and results stay.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
 
 export const DAY_MS = 86400000;
 /** How often a seat looks (an hour: the windows are a day long). */
@@ -40,4 +41,59 @@ export function pruneTranscripts({ db, nowMs = Date.now(), keptUntil = (row) => 
     pruned.push(Buffer.from(rid).toString('hex'));
   }
   return { pruned, kept, rows };
+}
+
+// ROUNDS NOBODY USED LEAVE TOO (kanban #468, the owner 2026-10-18: "optimise cpu usage and space on nodes ... Make it lean"). Measured on
+// seat 2: 272,857 rounds (233 MB of contracts) of which 316 ever had an entry; their committee and seating records - 1,803,671
+// signer_nodes rows, 820,816 seat_presents, 460,725 seat_sigs, 265,768 round_beacons, 106,637 seat_certs - were never deleted, every
+// start decoded all 272k contracts (server.js, the posted rounds re-read) and the seating agent held every certificate in memory.
+//
+// A round is UNUSED when no table outside its committee and seating set holds a row for it: no entry, lock, result, posting, market
+// order, outcome, objection, forfeit, equivocation - whatever table a seat keeps per round, found from the schema, so a table added
+// later counts by itself. An unused round goes, with every committee and seating row, once its end + W + its claim window has
+// passed (a day where it names none). A used round is never touched here.
+export const COMMITTEE_TABLES = Object.freeze(['rounds', 'signer_nodes', 'round_beacons', 'seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed']);
+const TRANSCRIPT_TABLES = ['ticks', 'batches', 'checkpoints'];
+/** At most this many rounds looked at in one pass: the backlog goes in steps, never one long stall of the seat. */
+export const UNUSED_BATCH = 5000;
+
+/** When an unused round may go, in ms: its end (roundEndMs, else entry close) + W + its claim window (a day where none is named). */
+export function unusedRoundGoesAt(contract, endMs) {
+  const days = contract && contract.rules && Number.isInteger(contract.rules.claimWindowDays) ? contract.rules.claimWindowDays : 1;
+  return Number(endMs) + Number(contract.objectionWindowMs) + days * DAY_MS;
+}
+
+/** The tables that mark a round used: every table with a round_id column outside the committee, seating and transcript tables. */
+export function usedMarkerTables(db) {
+  const skip = new Set([...COMMITTEE_TABLES, ...TRANSCRIPT_TABLES]);
+  return db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name)
+    .filter((t) => !skip.has(t) && /^[a-z_0-9]+$/.test(t) && db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'round_id'));
+}
+
+/**
+ * One pass over at most `batch` rounds after rowid `afterRowid`: the unused ones past their time are deleted with their committee
+ * and seating rows. `goesAt(row)` answers a rounds row's time (default: its contract's). Answers { deleted, rows, looked, lastRowid,
+ * done } - done when the pass reached the table's end; the next pass starts from 0 again.
+ */
+export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batch = UNUSED_BATCH, goesAt = null, onDeleted = () => {} }) {
+  const at = goesAt || ((row) => { const c = decodeRoundContract(new Uint8Array(row.contract)); let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); } return unusedRoundGoesAt(c, end); });
+  const markers = usedMarkerTables(db).map((t) => db.prepare(`SELECT 1 FROM ${t} WHERE round_id = ? LIMIT 1`));
+  const present = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
+  const dels = [...COMMITTEE_TABLES.filter((t) => t !== 'rounds' && present.has(t)), ...TRANSCRIPT_TABLES.filter((t) => present.has(t)), 'rounds']
+    .map((t) => db.prepare(`DELETE FROM ${t} WHERE round_id = ?`));
+  const rowsOf = db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid LIMIT ?').all(afterRowid, batch);
+  let deleted = 0, rows = 0, lastRowid = afterRowid;
+  db.exec('BEGIN');
+  try {
+    for (const r of rowsOf) {
+      lastRowid = r.rowid;
+      let when; try { when = at(r); } catch { continue; }
+      if (!(nowMs >= when)) continue;
+      if (markers.some((m) => m.get(r.round_id))) continue;
+      for (const d of dels) rows += Number(d.run(r.round_id).changes);
+      deleted += 1; onDeleted(r.round_id);
+    }
+    db.exec('COMMIT');
+  } catch (e) { try { db.exec('ROLLBACK'); } catch { /* none open */ } throw e; }
+  return { deleted, rows, looked: rowsOf.length, lastRowid, done: rowsOf.length < batch };
 }
