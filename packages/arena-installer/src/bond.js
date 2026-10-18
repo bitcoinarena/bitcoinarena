@@ -46,13 +46,14 @@ export function bondKeyAt(nodeKey, maturity) {
 }
 
 /** The node's advertisement, unsigned. */
-export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, nowMs = Date.now() }) {
+export function advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint = null, nowMs = Date.now() }) {
   return {
     nodePubkey: nodeKey, operatorId, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS], roles: advertRoles(roles), hostedGames: [NEXTBLOCK_GAME_ID],
     endpoint, region: 'unknown', capacityClass: 1, softwareHash,
     settlementCapabilities: 0, lightningCapabilities: 0,
     bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: BOND_TEMPLATE_V2, bondMaturityHeight: maturity,
-    payoutPubkey, guardianOf: [], guardianCapable: false, guardianEndpoint: '', timestamp: BigInt(nowMs),
+    // a custody node's guardian can be drawn when nodes found a federation (§23A, ruling 3): capable, at its endpoint
+    payoutPubkey, guardianOf: [], guardianCapable: Boolean(guardianEndpoint), guardianEndpoint: guardianEndpoint || '', timestamp: BigInt(nowMs),
   };
 }
 
@@ -89,7 +90,7 @@ const txidOf = (hex) => toHex(Uint8Array.from(parseTransaction(fromHex(hex)).txi
  * { funding: { hex, txid }, bond: { hex, txid, vout: 0 }, advert, maturity, bondSats, changeSats, fees } or throws why not.
  */
 export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_SATS, operatorId, roles, endpoint, payoutPubkey,
-  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null }) {
+  softwareHash = new Uint8Array(32), feeRate = 2, nowMs = Date.now(), oldBond = null, guardianEndpoint = null }) {
   // A LARGER BOND, IN ONE STEP (kanban #471 part D, "increasing the bond size"; a template-2 bond cannot be topped up in place):
   // `oldBond` { txid, vout, sats, maturity } - from its maturity on - is the funding's first input, spent on its recovery leaf by the
   // node's key (the transaction's locktime is that maturity), and the wallet's coins add the rest; the new bond is built as any
@@ -98,7 +99,7 @@ export function buildBond({ wallet, nodeSecret, coins, tip, bondSats = BOND_MIN_
   if (!coins.length && !oldBond) throw new Error('the wallet holds no coins yet');
   const nodeKey = schnorr.getPublicKey(nodeSecret);
   const maturity = maturityHeightFor(tip, NETWORK);
-  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, nowMs });
+  const advert = advertFor({ nodeKey, operatorId, roles, endpoint, payoutPubkey, maturity, softwareHash, guardianEndpoint, nowMs });
   const id = advertId(advert);
   const body = joinSignedAdvert(encodeAdvert(advert), schnorr.sign(id, nodeSecret));
   const pieces = []; for (let at = 0; at < body.length; at += CHUNK) pieces.push(body.subarray(at, Math.min(at + CHUNK, body.length)));

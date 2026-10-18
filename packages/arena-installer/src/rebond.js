@@ -9,7 +9,7 @@ import { buildBond, lockOf, BOND_MIN_SATS } from './bond.js';
 import { fromHex } from '../../arena-protocol/src/hash.js';
 
 /** Plan (and with `post`, broadcast) the larger bond. Answers { ok, plan } / { ok, bond } or { ok: false, why }. */
-export async function rebond({ state, bondSats, post = false, chainKit = { coinsOf, broadcast }, softwareHash, feeRate = 2 }) {
+export async function rebond({ state, bondSats, post = false, chainKit = { coinsOf, broadcast }, softwareHash, feeRate = 2, guardianEndpoint = null }) {
   const s = state.read();
   const old = s.bond;
   if (!old || !old.txid) return { ok: false, why: 'this node has no posted bond to increase: post one in the wizard first' };
@@ -28,7 +28,7 @@ export async function rebond({ state, bondSats, post = false, chainKit = { coins
   let built;
   try {
     built = buildBond({ wallet: w, nodeSecret, coins, tip, bondSats: want, operatorId: `op-${s.owner.pubkey.slice(0, 12)}`, roles: s.roles,
-      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate,
+      endpoint: s.reach.url, payoutPubkey: payoutKeyOf(seed), softwareHash, feeRate, guardianEndpoint,
       oldBond: { txid: old.txid, vout: old.vout || 0, sats: old.sats, maturity: old.maturity } });
   } catch (e) { return { ok: false, why: e.message }; }
   const plan = { from: { txid: old.txid, sats: String(old.sats), maturity: old.maturity }, coins: coins.map((c) => ({ txid: c.txid, vout: c.vout, sats: c.sats })),
