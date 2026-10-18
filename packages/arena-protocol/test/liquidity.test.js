@@ -51,3 +51,10 @@ test('the weight: channels to the federation\'s nodes + free balance, floored to
   assert.equal(liquidityWeight(poor, [N.lightningPubkey]), 0n, 'below the deposit minimum (500,000 on testnet4): no share, channels or not');
   assert.equal(liquidityWeight({ ...poor, freeSats: '2499999' }, [N.lightningPubkey], 'mainnet'), 0n, 'mainnet minimum 2,500,000');
 });
+
+test('a provider listed twice is one candidate: a node never gets both channels from the same provider', () => {
+  const N = nodeN(9), a = prov(1), b = prov(2);
+  const once = assignLiquidity({ needs: [N], claims: [a, b] });
+  assert.deepEqual(assignLiquidity({ needs: [N], claims: [a, a, b, b] }), once);
+  assert.deepEqual(assignLiquidity({ needs: [N], claims: [a, a] })[0].open, [a.node], 'one provider: one channel');
+});
