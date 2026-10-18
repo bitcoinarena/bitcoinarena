@@ -22,7 +22,8 @@ export function servicesOf(s) {
   if (s.lightning && s.lightning.mode === 'own') ids.push('lnd');
   if (s.gateway) ids.push('gateway');
   if (s.custodyAgent && s.custodyAgent.installedMs) ids.push('custody');
-  const tunnel = s.reach && (s.reach.mode === 'permanent' || s.reach.mode === 'quick');   // Tailscale Funnel runs in tailscaled
+  const tunnel = s.reach && ['permanent', 'quick', 'workers'].includes(s.reach.mode);   // Tailscale Funnel runs in tailscaled
+  if (s.reach && s.reach.mode === 'workers') ids.push('workers');                       // the keeper of the workers.dev address
   return {
     // the node last when starting (its chain first), first when stopping
     linux: [...ids.map((id) => (id === 'chain-bridge' ? BRIDGE_UNIT : `arena-${id}.service`)), UNIT, ...(tunnel ? [TUNNEL_UNIT] : [])],

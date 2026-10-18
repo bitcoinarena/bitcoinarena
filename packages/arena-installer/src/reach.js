@@ -20,9 +20,10 @@ import { quickTunnelName } from './tunnel.js';
 
 /** The node's port for connections from outside (ruling 7: "make up a default port"). */
 export const DEFAULT_NODE_PORT = 8470;
-export const REACH_MODES = Object.freeze(['direct', 'permanent', 'quick', 'tailscale']);
-/** The modes that run a cloudflared tunnel as a service of the node (Tailscale Funnel is kept by tailscaled itself). */
-export const tunnelMode = (mode) => mode === 'permanent' || mode === 'quick';
+export const REACH_MODES = Object.freeze(['direct', 'permanent', 'quick', 'tailscale', 'workers']);
+/** The modes that run a cloudflared tunnel as a service of the node (Tailscale Funnel is kept by tailscaled itself; workers.dev forwards
+ * to a quick tunnel). */
+export const tunnelMode = (mode) => mode === 'permanent' || mode === 'quick' || mode === 'workers';
 
 /** The seats asked to connect back: the testnet4 seats the Arena site lists (daily.json testnet.node), these when it cannot be read. */
 export const REACH_SEATS = Object.freeze(['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2',

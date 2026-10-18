@@ -193,10 +193,13 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     <button class="ghost" id="r-test">Test direct connection</button>
     <div class="msg" id="r-direct"></div>
     <div class="role"><input type="radio" name="rm" value="direct" id="rm-direct"><div><b>Direct connection</b><p>Your node listens on the port above. Needs the port open in the firewall and, behind a router, forwarded to this machine.</p></div></div>
-    <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it (Cloudflare sells one for a few dollars a year). No open ports. <b>No domain?</b> Choose Tailscale Funnel below.</p>
+    <div class="role"><input type="radio" name="rm" value="permanent" id="rm-permanent"><div><b>Permanent Cloudflare tunnel</b><p>A fixed https name such as <code>node.example.com</code>, through your own free Cloudflare account and a domain on it (Cloudflare sells one for a few dollars a year). No open ports. <b>No domain?</b> Choose workers.dev or Tailscale Funnel below.</p>
       <button class="ghost" id="r-login">Sign up / log in to Cloudflare</button><div class="msg" id="r-login-msg"></div>
       <label>Your node's name (under a domain on that account)</label><input id="r-host" placeholder="node.example.com"></div></div>
     <div class="role"><input type="radio" name="rm" value="tailscale" id="rm-tailscale"><div><b>Permanent Tailscale Funnel</b><p>A fixed https name such as <code>my-pc.tail1234.ts.net</code> from your free Tailscale account - no domain needed, no open ports. Install Tailscale and log in (<code>tailscale up</code>) first; Funnel must be allowed for this machine in your tailnet.</p></div></div>
+    <div class="role"><input type="radio" name="rm" value="workers" id="rm-workers"><div><b>Permanent Cloudflare name, no domain (workers.dev)</b><p>A fixed name such as <code>arena-node-1a2b3c.yourname.workers.dev</code> on your own free Cloudflare account, no open ports: a small Worker there forwards to your node's tunnel and your node keeps it pointed at it. Free up to 100,000 requests a day (Workers Paid: $5 a month).</p>
+      <p>1. <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener">Create an API token</a> from the template <b>Edit Cloudflare Workers</b>, with your account. 2. Paste it here:</p>
+      <label>Cloudflare API token</label><input id="r-cftoken" type="password" autocomplete="off" placeholder="the token Cloudflare shows once"></div></div>
     <div class="role"><input type="radio" name="rm" value="quick" id="rm-quick"><div><b>Temporary anonymous tunnel</b><p>A random <code>trycloudflare.com</code> name, no account. It changes whenever the tunnel restarts, so others lose your node until it is announced again.</p></div></div>
     <button id="r-save">Save and go on</button>
     <div class="msg" id="r-msg"></div>
@@ -340,6 +343,7 @@ async function load() {
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
       : r.mode === 'permanent' ? `at <code>${esc(r.url)}</code> through your Cloudflare tunnel (the user service <code>arena-tunnel</code>)`
+      : r.mode === 'workers' ? `at <code>${esc(r.url)}</code> - your Worker on workers.dev, forwarding to the node's tunnel (the keeper service <code>arena-workers</code> follows every new tunnel name)`
       : r.mode === 'tailscale' ? `at <code>${esc(r.url)}</code> through Tailscale Funnel (kept by Tailscale itself; <code>tailscale funnel status</code> shows it)`
       : `at <code>${esc(r.url || '(no name yet)')}</code> through a temporary tunnel - <b>this name changes when the tunnel restarts</b>; set up a permanent tunnel later from the owner page`;
     $('done-text').innerHTML = `<p>Your node runs as the user service <code>arena-node</code>${sv.boot ? ' and starts again after a reboot' : ' (not started after a reboot)'}.</p>
@@ -419,7 +423,7 @@ $('r-test').onclick = async (e) => { e.target.disabled = true; $('r-direct').cla
   const r = await post('/api/reach/direct', { port: Number($('r-port').value) }); e.target.disabled = false; if (!r.ok) return say('r-direct', r); showDirect(r.result); };
 $('r-login').onclick = async () => { $('rm-permanent').checked = true; const r = await post('/api/reach/login'); if (!r.ok) return say('r-login-msg', r); showLogin(r); };
 $('r-save').onclick = async (e) => { const mode = (document.querySelector('input[name=rm]:checked') || {}).value; if (!mode) return say('r-msg', { ok: false, why: 'test the direct connection first, or choose a tunnel' });
-  e.target.disabled = true; const r = await post('/api/reach/save', { mode, hostname: $('r-host').value, port: Number($('r-port').value) }); e.target.disabled = false; if (r.ok) return load(); say('r-msg', r); };
+  e.target.disabled = true; const r = await post('/api/reach/save', { mode, hostname: $('r-host').value, port: Number($('r-port').value), cfToken: $('r-cftoken').value }); e.target.disabled = false; if (r.ok) return load(); say('r-msg', r); };
 const lockText = (l) => `The bond will be locked until block ${l.maturity} - ${l.blocks} blocks from now, about ${new Date(l.estimatedMs).toUTCString()} (testnet4 blocks come about every 10 minutes; the block height is the rule, the date an estimate). Until then it cannot be withdrawn; after that, the owner page withdraws it.`;
 let lnTimer = null;
 async function watchLn() {
