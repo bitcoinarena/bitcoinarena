@@ -15,13 +15,15 @@ export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
 export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');
 
-// THE ROLES (spec §27A roles; ruling 2: custody on Linux and macOS, and in slice 5): what each needs, said before it is chosen
+// THE ROLES (spec §27A roles; ruling 2: custody on Linux and macOS, and in slice 5): what each needs, said before it is chosen.
+// The roles step shows each as ONE line - `does` - and its needs as `chips`; `needs` is the full text behind "more" (kanban #497,
+// the owner 2026-10-18: "a wall of text that nobody reads. Make it more compact").
 export const ROLES = Object.freeze({
-  verify: { title: 'Game / verify', needs: 'Replays each round it is seated on and signs who won. 5 of the round\'s 7 seated nodes must agree. Needs a bond, a public https address, about 2 GB of disk and one CPU core.', slice: 1 },
-  settlement: { title: 'Settlement', needs: 'Pays the round out: once the result is signed, it co-signs the payment of the winners from the locked stakes (or the refunds, if a round fails). 5 of the round\'s 7 seated nodes must sign. Needs the same as game / verify, and to stay online until its rounds are paid.', slice: 1 },
-  custody: { title: 'Custody', needs: 'Holds the players\' bitcoin together with 9 other nodes: your node becomes one of a federation\'s 10 guardians and may run one of its 2 Lightning gateways (the next steps explain both). Needs your own Bitcoin Core (not Electrum), a Lightning node (LND: set up in the Lightning step, or your own), about 1 GB more disk and port 9735 open.', slice: 1 },
+  verify: { title: 'Game / verify', does: 'replays and signs rounds', chips: ['🔒 bond', '🌐 https address', '💽 2 GB', '⚙️ 1 CPU core'], needs: 'Replays each round it is seated on and signs who won. 5 of the round\'s 7 seated nodes must agree. Needs a bond, a public https address, about 2 GB of disk and one CPU core.', slice: 1 },
+  settlement: { title: 'Settlement', does: 'pays the winners out', chips: ['🔒 bond', '🌐 https address', '⏱️ online until paid'], needs: 'Pays the round out: once the result is signed, it co-signs the payment of the winners from the locked stakes (or the refunds, if a round fails). 5 of the round\'s 7 seated nodes must sign. Needs the same as game / verify, and to stay online until its rounds are paid.', slice: 1 },
+  custody: { title: 'Custody', does: 'holds the players\' bitcoin', chips: ['₿ own Bitcoin Core', '⚡ LND', '🚪 port 9735', '💽 +1 GB'], needs: 'Holds the players\' bitcoin together with 9 other nodes: your node becomes one of a federation\'s 10 guardians and may run one of its 2 Lightning gateways (the next steps explain both). Needs your own Bitcoin Core (not Electrum), a Lightning node (LND: set up in the Lightning step, or your own), about 1 GB more disk and port 9735 open.', slice: 1 },
   // THE FOURTH SERVICE (kanban #494, spec §23A.10)
-  liquidity: { title: 'Liquidity provider', needs: 'Opens incoming Lightning channels to new nodes so they can receive deposits. Any number of nodes can be providers; each new node gets a channel from one or two of them, picked by a fair draw. Needs a Lightning node (LND, set up in the Lightning step) and your own Bitcoin Core, and a deposit of 500,000 sat on testnet4 (5 x the 100,000 sat channel) in LND\'s wallet.', slice: 1 },
+  liquidity: { title: 'Liquidity provider', does: 'gives new nodes incoming Lightning', chips: ['₿ own Bitcoin Core', '⚡ LND', '💰 500,000 sat'], needs: 'Opens incoming Lightning channels to new nodes so they can receive deposits. Any number of nodes can be providers; each new node gets a channel from one or two of them, picked by a fair draw. Needs a Lightning node (LND, set up in the Lightning step) and your own Bitcoin Core, and a deposit of 500,000 sat on testnet4 (5 x the 100,000 sat channel) in LND\'s wallet.', slice: 1 },
 });
 
 const atomicWrite = (path, text) => {

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWizard } from '../src/wizard.js';
-import { nodeState, seatEnv } from '../src/state.js';
+import { nodeState, seatEnv, ROLES } from '../src/state.js';
 import { waitHealthy, seatUnit } from '../src/service.js';
 import { probeCore, probeElectrum, tipsAgree, agreeHeights, TESTNET4_GENESIS, headerHash, testConnection } from '../src/chain-test.js';
 import { quickTunnelName } from '../src/tunnel.js';
@@ -385,4 +385,19 @@ test('the intro (kanban #498): what a node is, one picture, what it earns and ne
   for (const need of ['A computer that stays on', 'About 3 GB of disk', 'Home internet', 'A bond of 50,000 sat']) assert.ok(intro.includes(need), need);
   assert.match(html, /const intro = st\.step === 'chain' && !st\.done\.chain && !introSeen\(\);/, 'shown only before the first step is done');
   assert.match(html, /\$\('intro-go'\)\.onclick = \(\) => \{ introSkipped = true; try \{ localStorage\.setItem/, '"Set up my node" goes on, remembered where the browser allows');
+});
+
+test('the roles step shows each role in one line, its needs as chips, the long text behind "more" (kanban #497: "a wall of text that nobody reads")', () => {
+  for (const [k, r] of Object.entries(ROLES)) {
+    assert.ok(r.does && r.does.length <= 40, `${k}: one short phrase`);
+    assert.ok(Array.isArray(r.chips) && r.chips.length >= 2 && r.chips.every((c) => c.length <= 24), `${k}: its needs as short chips`);
+    assert.ok(r.needs.length > 100, `${k}: the full text kept for "more"`);
+  }
+  assert.ok(ROLES.liquidity.chips.includes('💰 500,000 sat') && ROLES.custody.chips.includes('🚪 port 9735'));
+  const html = readFileSync(new URL('../www/index.html', import.meta.url), 'utf8');
+  const render = html.slice(html.indexOf("if (st.step === 'roles') $('roles').innerHTML"), html.indexOf("if (st.step === 'roles') { const cb"));
+  assert.match(render, /<span class="rc-pct">1 % of each round<\/span>/, 'the share as a badge');
+  assert.match(render, /OPT_IN_ROLES\.includes\(k\) \? '<span class="chip opt">needs coins \+ LND<\/span>'/, 'the opt-in roles marked');
+  assert.match(render, /<details class="rc-more"><summary>more<\/summary><p>\$\{ROLE_EARN\[k\] \|\| ''\}<\/p><p>\$\{esc\(r\.needs\)\}<\/p><\/details>/, 'the prose only behind "more"');
+  assert.ok(!/<p>\$\{esc\(r\.needs\)\}<\/p><\/div><\/label>/.test(render), 'no prose in the card itself');
 });
