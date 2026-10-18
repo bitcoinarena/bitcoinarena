@@ -158,6 +158,43 @@ paths are the ones every LNv2 payment runs; this use of them is not.
 
 ---
 
+## Who hosts the Lightning: two gateway seats, and what they earn (the owner 2026-10-18; spec §23A.9)
+
+> "We need 2 guardians per federation and there is currently no process who will host the guardian. Modify the spec for it and come
+> up with additional incentives from the custody node fee that people want to host a guardian. If more than 2 nodes in the federation
+> want to host a guardian a clear process must choose the best guardians possible, make the rules and requirements clear."
+
+Read as the **Lightning gateway**, the role that needs the peg-in. A federation keeps its 4 to 10 guardians: Fedimint cannot run on
+two. Every deposit and withdrawal above goes "through any of several gateways", and this is who runs them.
+
+- **Two gateway seats per federation**, held by two different operators among its seated guardians and named by a seating that a
+  threshold of its guardians sign each epoch (144 blocks).
+- **To stand** (testnet4 / mainnet):
+  - a seated guardian whose announced gateway is registered with the federation;
+  - public channel capacity of at least 200,000 / 5,000,000 sat;
+  - a peg-in of at least 50,000 / 2,000,000 sat;
+  - up 95 % of the epoch (every guardian probes every candidate every 10 minutes);
+  - a bond of at least `bond_min_guardian`.
+- **The best two**, ranked in order by:
+  1. Lightning volume routed for the federation;
+  2. public channel capacity;
+  3. availability;
+  4. bond;
+  5. a ticket on the epoch's beacon.
+
+  An incumbent stays unless it becomes ineligible or a challenger routes 25 % more. An empty seat is stated.
+- **What it earns, from the custody fee** (protocol 2026.0.15): the guardian pool (5/3 % of every round's volume) splits **2/3 to the
+  guardians, 1/3 to the two gateway seats**. With ten guardians that is about **0.278 %** of volume per gateway against 0.111 % per
+  guardian, plus the gateway's own Lightning routing fees.
+  - Unearned shares go to the other seat, then to the guardians.
+  - With no seating standing, the guardians keep the pool.
+- **The installer** says all of this in its custody step:
+  - it sets up LND, its channels, the gateway on it, and the peg-in from the node's wallet;
+  - the node's custody agent announces the gateway (a claim signed by the node key) once its federation is founded.
+
+Full rules: multiplayer_p2p.md §23A.9. Code: arena-protocol `gateway-seats.js`, `gateway-claim.js`, `gateway-seating.js`, `fee.js`
+(the 2026.0.15 split); arena-node `gateway-watch.js`; the installer's `gateway.js` and `custody-agent.js`.
+
 ## Residuals (§22)
 
 - **Guardians.** A threshold of guardians colluding can take the
