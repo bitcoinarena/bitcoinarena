@@ -6374,10 +6374,11 @@
           const roles = await rolesOf(g);
           if (!roles.known) body.append(note('No node said which roles the nodes have just now.'));
           nodes.forEach((n, i) => {
-            const base = String(n).replace(/\/+$/, ''); let u; try { u = new URL(base); } catch { u = null; }
+            const base = String(n).replace(/\/+$/, '');
             const a = el('a', null, 'Dashboard \u2197'); a.href = base + '/dashboard'; a.target = '_blank'; a.rel = 'noopener';
             const v = roles.byRoute.get(routeOf(base));
-            const r = row('Node ' + (i + 1), (u ? u.host + (u.pathname === '/' ? '' : u.pathname) : base) + (v ? ' \u00b7 ' + v.key.slice(0, 8) : ''), a);
+            // the node's id only, not its address (the owner 2026-10-18: "Don't display the address of the node, just the id is enough")
+            const r = row('Node ' + (i + 1), v ? v.key.slice(0, 8) : 'id not read yet', a);
             if (v) {
               const ic = el('span', 'roles');
               for (const k of ROLE_KEYS) {
