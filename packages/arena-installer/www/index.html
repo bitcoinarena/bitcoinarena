@@ -44,6 +44,26 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
     .need .ok { color: #3fb950; font-weight: 700; } .need .meter { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; } .need .meter i { display: block; height: 100%; background: #3fb950; }
     .seat details { font-size: 13px; margin-top: 6px; } .seat summary { cursor: pointer; color: var(--accent, #f7931a); }
     @media (max-width: 560px) { .need { grid-template-columns: 18px 1fr; } .need .meter, .need .num { grid-column: 2; } }
+    .fed-explain { display: grid; grid-template-columns: 170px 1fr; gap: 14px; align-items: center; margin: 6px 0 14px; }
+    .fed-ring { width: 170px; } .fed-explain .big { font-size: 16px; } .fed-explain p { margin: 6px 0; }
+    .choices { display: grid; gap: 10px; margin: 8px 0 12px; } .choice { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer; }
+    .choice:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); } .choice input[type=radio] { width: auto; margin-top: 4px; } .choice p { margin: 4px 0 0; font-size: 13px; opacity: .85; }
+    .choice .tag { font-size: 11px; background: #f7931a; color: #111; border-radius: 6px; padding: 1px 6px; margin-left: 4px; } .choice #fed-invite { margin-top: 8px; }
+    .rules { display: grid; gap: 10px; margin: 6px 0 14px; } .rule { display: grid; grid-template-columns: 44px 1fr; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; align-items: start; }
+    .rule .ic { font-size: 28px; line-height: 1; text-align: center; } .rule p { margin: 4px 0 0; font-size: 14px; } .rule.good { border-color: #2ea043; } .rule.bad { border-color: #da3633; background: rgba(218,54,51,.07); } .red { color: #ff7b72; }
+    @media (max-width: 560px) { .fed-explain { grid-template-columns: 1fr; } .fed-ring { margin: 0 auto; } }
+    #custody-explain { border: 1px solid #1f6feb; border-radius: 12px; padding: 12px; margin: 10px 0; background: rgba(31,111,235,.05); }
+    .cx-title { font-weight: 700; margin-bottom: 6px; } .cx-flow { width: 100%; height: auto; }
+    .cx-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 6px; } .cx { border: 1px solid var(--line); border-radius: 10px; padding: 10px; text-align: center; }
+    .cx-ic { font-size: 26px; } .cx p { margin: 4px 0 0; font-size: 12.5px; opacity: .85; line-height: 1.35; }
+    @media (max-width: 560px) { .cx-cards { grid-template-columns: 1fr; } }
+    #fee-flow { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .ff-lead { margin: 0 0 6px; font-size: 14px; } .ff-ex { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; font-size: 13.5px; }
+    .ff-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin: 8px 0; } .ff-row { display: flex; align-items: center; gap: 8px; }
+    .ff-row b { margin-left: auto; } .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+    .ff-note { color: var(--muted); font-size: 12.5px; }
+    .role-ic { font-size: 26px; line-height: 1; } .role-earn { color: #f7931a; font-size: 12.5px; margin-top: 3px; } .role:has(input:checked) { border-color: #f7931a; background: rgba(247,147,26,.06); }
+    @media (max-width: 560px) { .ff-rows { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -85,7 +105,58 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 
   <section id="s-roles">
     <h2>2. What your node does</h2>
+    <div id="fee-flow">
+      <div class="cx-title">Where your earnings come from</div>
+      <p class="ff-lead">Every paid round sends <b>4 %</b> of its stakes to the nodes that serve it. It is split into three equal pools, one per role:</p>
+      <svg viewBox="0 0 640 250" class="cx-flow" aria-hidden="true">
+        <g font-family="system-ui,sans-serif" font-size="13" text-anchor="middle" fill="#e6edf3">
+          <rect x="230" y="6" width="180" height="40" rx="10" fill="#f7931a"/><text x="320" y="24" fill="#111" font-weight="700">4 % of every round</text><text x="320" y="39" fill="#111" font-size="11">to the nodes</text>
+          <path d="M320 46 C320 70 105 60 105 88" stroke="#3fb950" stroke-width="10" fill="none" opacity=".75"/>
+          <path d="M320 46 L320 88" stroke="#a371f7" stroke-width="10" fill="none" opacity=".75"/>
+          <path d="M320 46 C320 70 535 60 535 88" stroke="#58a6ff" stroke-width="10" fill="none" opacity=".75"/>
+          <rect x="30" y="90" width="150" height="58" rx="10" fill="#132a1a" stroke="#3fb950"/><text x="105" y="111" font-size="20">&#127918;</text><text x="105" y="128" font-weight="700">Game / verify</text><text x="105" y="143" fill="#3fb950">1&#8531; %</text>
+          <rect x="245" y="90" width="150" height="58" rx="10" fill="#1f1530" stroke="#a371f7"/><text x="320" y="111" font-size="20">&#9997;&#65039;</text><text x="320" y="128" font-weight="700">Settlement</text><text x="320" y="143" fill="#a371f7">1&#8531; %</text>
+          <rect x="460" y="90" width="150" height="58" rx="10" fill="#0d1d33" stroke="#58a6ff"/><text x="535" y="111" font-size="20">&#127974;</text><text x="535" y="128" font-weight="700">Custody</text><text x="535" y="143" fill="#58a6ff">1&#8531; %</text>
+          <path d="M105 148 L105 176" stroke="#3fb950" stroke-width="4" marker-end="url(#ar2)"/><path d="M320 148 L320 176" stroke="#a371f7" stroke-width="4" marker-end="url(#ar2)"/>
+          <path d="M535 148 C535 165 480 160 480 176" stroke="#58a6ff" stroke-width="5" marker-end="url(#ar2)"/><path d="M535 148 C535 165 590 160 590 176" stroke="#f7931a" stroke-width="3" marker-end="url(#ar2)"/>
+          <text x="105" y="198">shared by the 7 nodes</text><text x="105" y="214">seated on the round</text>
+          <text x="320" y="198">shared by the 7 nodes</text><text x="320" y="214">seated on the round</text>
+          <text x="480" y="198" fill="#58a6ff">&#8532; guardians</text><text x="480" y="214">the federation's 10</text>
+          <text x="590" y="198" fill="#f7931a">&#8531; gateways</text><text x="590" y="214">the day's 2</text>
+          <text x="320" y="242" fill="#8b949e" font-size="12">Seats are drawn fresh for every round from the nodes that are up - the more you are up, the more rounds you serve.</text>
+        </g>
+        <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker></defs>
+      </svg>
+      <div class="ff-ex"><div class="ff-ex-h">Example: rounds with <b>1,000,000 sat</b> of stakes - 40,000 sat go to the nodes. Each seated node gets:</div>
+        <div class="ff-rows">
+          <div class="ff-row"><span class="dot" style="background:#3fb950"></span>Game / verify<b>&asymp; 1,905 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#a371f7"></span>Settlement<b>&asymp; 1,905 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#58a6ff"></span>Guardian<b>&asymp; 889 sat</b></div>
+          <div class="ff-row"><span class="dot" style="background:#f7931a"></span>Gateway (on top of guardian)<b>&asymp; 2,222 sat</b></div>
+        </div>
+        <div class="ff-note">One node can hold several roles and earns each share. All shares are paid in the round's settlement - no claims to file.</div>
+      </div>
+    </div>
     <div id="roles"></div>
+    <div id="custody-explain" hidden>
+      <div class="cx-title">Custody, in one picture</div>
+      <svg viewBox="0 0 600 150" class="cx-flow" aria-hidden="true">
+        <g font-family="system-ui,sans-serif" font-size="13" text-anchor="middle" fill="#e6edf3">
+          <circle cx="55" cy="75" r="26" fill="#30363d"/><text x="55" y="80" font-size="22">&#128100;</text><text x="55" y="125">Player</text>
+          <path d="M85 75h70" stroke="#f7931a" stroke-width="3" marker-end="url(#ar)"/><text x="120" y="65" fill="#f7931a">&#9889; Lightning</text>
+          <rect x="160" y="50" width="90" height="50" rx="10" fill="#f7931a"/><text x="205" y="80" fill="#111" font-weight="700">Gateway</text><text x="205" y="125">the door (2 per federation)</text>
+          <path d="M255 75h60" stroke="#8b949e" stroke-width="3" marker-end="url(#ar)"/><text x="285" y="65" fill="#8b949e">e-cash</text>
+          <rect x="320" y="15" width="270" height="120" rx="14" fill="none" stroke="#1f6feb" stroke-width="2"/><text x="455" y="35" fill="#58a6ff" font-weight="700">Federation</text>
+          <g fill="#58a6ff"><circle cx="350" cy="70" r="10"/><circle cx="376" cy="92" r="10"/><circle cx="402" cy="70" r="10"/><circle cx="428" cy="92" r="10"/><circle cx="454" cy="70" r="10"/><circle cx="480" cy="92" r="10"/><circle cx="506" cy="70" r="10"/><circle cx="532" cy="92" r="10"/><circle cx="558" cy="70" r="10"/><circle cx="584" cy="92" r="10"/></g><text x="455" y="127">10 guardians &#183; 7 of 10 must sign</text>
+        </g>
+        <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#8b949e"/></marker></defs>
+      </svg>
+      <div class="cx-cards">
+        <div class="cx"><div class="cx-ic">&#127974;</div><b>Federation</b><p>A group of 10 nodes holding the players' bitcoin together. Nobody alone can move it.</p></div>
+        <div class="cx"><div class="cx-ic">&#128273;</div><b>Guardian</b><p>One of those 10 key holders - this is your node. Earns a share of every round.</p></div>
+        <div class="cx"><div class="cx-ic">&#9889;</div><b>Gateway</b><p>The Lightning door in and out. Two guardians run one each - and earn about 3&times; more.</p></div>
+      </div>
+    </div>
     <button id="roles-save">Save and go on</button>
     <div class="msg" id="roles-msg"></div>
   </section>
@@ -180,17 +251,46 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
       </div>
       <button id="gw-setup">Set up the gateway</button><button class="ghost" id="gw-later">Without the gateway for now</button>
       <div class="msg" id="gw-msg"></div>
-      <div id="gw-join" hidden>
-        <label>Join a federation by its invite code (optional - also later on this machine: <code>arena-install --join-federation &lt;invite&gt;</code>)</label><input id="gw-invite" placeholder="fed1…">
-        <button class="ghost" id="gw-join-go">Join</button> <button id="gw-next">Continue</button>
+      <div id="gw-join" hidden><button id="gw-next">Continue</button></div>
+    </div>
+  </section>
+
+  <section id="s-federation">
+    <h2>8. Your federation</h2>
+    <div class="fed-explain">
+      <svg viewBox="0 0 200 180" class="fed-ring" aria-hidden="true"><circle cx="100.0" cy="20.0" r="11" fill="#f7931a"/><circle cx="141.1" cy="33.4" r="11" fill="#f7931a"/><circle cx="166.6" cy="68.4" r="11" fill="#f7931a"/><circle cx="166.6" cy="111.6" r="11" fill="#f7931a"/><circle cx="141.1" cy="146.6" r="11" fill="#f7931a"/><circle cx="100.0" cy="160.0" r="11" fill="#f7931a"/><circle cx="58.9" cy="146.6" r="11" fill="#f7931a"/><circle cx="33.4" cy="111.6" r="11" fill="#57606a"/><circle cx="33.4" cy="68.4" r="11" fill="#57606a"/><circle cx="58.8" cy="33.4" r="11" fill="#57606a"/><rect x="80" y="70" width="40" height="38" rx="6" fill="#1f6feb"/><circle cx="100" cy="86" r="6" fill="#fff"/><rect x="98" y="88" width="4" height="10" fill="#fff"/></svg>
+      <div>
+        <p class="big">A <b>federation</b> is a group of <b>10 nodes</b> that hold the players' bitcoin <b>together</b>.</p>
+        <p>&#128274; Moving any of it takes <b>7 of the 10</b>. No single node - not yours either - can take it.</p>
+        <p>&#9889; Its two gateways connect it to Lightning; every guardian earns a share of each round.</p>
       </div>
     </div>
-    <p class="sub">Your node's federation guardian runs from the start and waits to be drawn: when ten custody nodes guard no federation, they found one together (automatically).</p>
+    <div class="choices">
+      <label class="choice"><input type="radio" name="fedmode" value="found" checked><div><b>&#10024; Found a new federation</b> <span class="tag">recommended</span><p>Your node waits for <b>9 other new nodes</b>. When ten are ready they start one together - automatically, nothing to do.</p></div></label>
+      <label class="choice"><input type="radio" name="fedmode" value="invite"><div><b>&#127903; Join with an invitation</b><p>Someone in a federation gave you an invite code.</p><input id="fed-invite" placeholder="fed1…"></div></label>
+    </div>
+    <button id="fed-save">Save and go on</button>
+    <div class="msg" id="fed-msg"></div>
+  </section>
+
+  <section id="s-promise">
+    <h2>9. Your bond: the rules</h2>
+    <div class="rules">
+      <div class="rule"><div class="ic lock">&#128274;</div><div><b>Your bond is your promise.</b><p>Bitcoin your node locks on the chain. It makes cheating cost more than it could ever win - that is why players can trust a node they have never met.</p></div></div>
+      <div class="rule good"><div class="ic">&#9989;</div><div><b>Stopping? Press LEAVE first.</b><p>On your owner page. Your node finishes the rounds it holds and gives notice to its federation, then you are free. Your bond comes back when its lock ends.</p></div></div>
+      <div class="rule bad"><div class="ic">&#9888;&#65039;</div><div><b>Just switching off - without LEAVE:</b>
+        <p><b class="red">Your bond is slashed: you lose it.</b> A guardian that vanishes leaves its federation short, and the bitcoin it guards at risk.</p>
+</div></div>
+    </div>
+    <label>Type <b>I UNDERSTAND</b> to go on</label><input id="promise-text" autocomplete="off" placeholder="I UNDERSTAND">
+    <button id="promise-save" disabled>Continue</button>
+    <div class="msg" id="promise-msg"></div>
   </section>
 
   <section id="s-bond">
-    <h2>8. The bond</h2>
-    <p>Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (fees included) to your node's own wallet:</p>
+    <h2>10. The bond</h2>
+    <div id="b-later-custody" hidden><p>Your node has its bond already. Adding custody updates that bond's advertisement to say your node takes custody - <b>no second bond</b>. It needs a little for that update, a reserve for the update that names your federation once it is founded, and the gateway's peg-in. Send <b id="b-need2"></b> sat to your node's wallet:</p></div>
+    <p id="b-new">Your node serves rounds once it has a bond: bitcoin locked on testnet4 under your node's key. Send at least <b id="b-need"></b> sat (fees included) to your node's own wallet:</p>
     <p><code id="b-addr" style="font-size:15px"></code></p>
     <div id="b-custody" hidden>
       <p>Custody needs more: besides the bond, a little for the advertisement that names your federation once it is founded, and the <b>peg-in</b> for your gateway - bitcoin it moves into the federation so it can pay out Lightning. Both stay in your node's wallet until then.</p>
@@ -211,7 +311,10 @@ code { font-family: ui-monospace, monospace; font-size: 13px; word-break: break-
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['bond', 'Bond'], ['done', 'Done']];
+// the roles' icons and their share of the 4 % (fee.js: three equal pools; the guardian pool's third to the day's 2 gateways)
+const ROLE_IC = { verify: '&#127918;', settlement: '&#9997;&#65039;', custody: '&#127974;' };
+const ROLE_EARN = { verify: '1&#8531; % of each round, shared by its 7 seated nodes', settlement: '1&#8531; % of each round, shared by its 7 seated nodes', custody: '1&#8531; % of each round of your federation: guardians &#8532;, the day\'s 2 gateways &#8531;' };
+const STEPS = [['chain', 'Bitcoin'], ['roles', 'Roles'], ['seed', 'Seed'], ['owner', 'Owner'], ['reach', 'Reach'], ['service', 'Install'], ['lightning', 'Lightning'], ['federation', 'Federation'], ['promise', 'Bond rules'], ['bond', 'Bond'], ['done', 'Done']];
 let st = null, kind = 'core', nostrTemplate = null;
 const post = async (path, body) => (await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-arena-wizard': '1' }, body: JSON.stringify(body || {}) })).json();
 const say = (id, r, okText) => { const m = $(id); m.className = 'msg ' + (r.ok ? 'ok' : 'bad'); m.textContent = r.ok ? okText : (r.why || 'failed'); };
@@ -223,11 +326,13 @@ async function load() {
   $('steps').innerHTML = STEPS.map(([k, t]) => `<li class="${st.done[k] ? 'done' : st.step === k ? 'now' : ''}">${t}</li>`).join('');
   for (const [k] of STEPS) $('s-' + k).classList.toggle('on', st.step === k);
   if (st.step === 'roles') $('roles').innerHTML = Object.entries(st.roleInfo).map(([k, r]) =>
-    `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && k !== 'custody') ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div><b>${esc(r.title)}</b><p>${esc(r.needs)}</p></div></label>`).join('');
+    `<label class="role"><input type="checkbox" value="${k}" ${st.roles.includes(k) || (!st.roles.length && k !== 'custody') ? 'checked' : ''} ${r.slice > 1 ? 'disabled' : ''}><div class="role-ic">${ROLE_IC[k] || ''}</div><div><b>${esc(r.title)}</b><div class="role-earn">${ROLE_EARN[k] || ''}</div><p>${esc(r.needs)}</p></div></label>`).join('');
+  if (st.step === 'roles') { const cb = document.querySelector('#roles input[value=custody]'); const show = () => { $('custody-explain').hidden = !(cb && cb.checked); }; if (cb) cb.addEventListener('change', show); show(); }
   if (st.step === 'chain') $('e-pick').innerHTML = st.electrum.map((s, i) => `<option value="${i}">${esc(s.host)}:${s.port}${s.tls ? ' (TLS)' : ''} - ${esc(s.note)}</option>`).join('') + '<option value="own">another server</option>';
   if (st.step === 'chain') pickElectrum();
   if (st.step === 'lightning' && st.lightning && st.lightning.pubkey) $('ln-gw').hidden = false;
-  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); $('b-custody').hidden = !st.roles.includes('custody'); }
+  if (st.step === 'bond' && st.wallet) { $('b-addr').textContent = st.wallet.address; $('b-need').textContent = Number(st.wallet.needSats).toLocaleString('en'); $('b-custody').hidden = !st.roles.includes('custody');
+  $('b-later-custody').hidden = !st.custodyLater; $('b-new').hidden = st.custodyLater; $('b-post').textContent = st.custodyLater ? 'Update my bond for custody' : 'Post the bond'; }
   if (st.step === 'reach') { if (!$('r-port').value) $('r-port').value = (st.direct && st.direct.port) || st.defaultPort; if (st.direct) showDirect(st.direct); if (st.login) showLogin(st.login); }
   if (st.step === 'done' || st.done.service) { const r = st.reach || {}; const sv = st.service || {};
     const how = r.mode === 'direct' ? `directly at <code>${esc(r.url)}</code> (keep port ${r.port} open and forwarded)`
@@ -334,8 +439,13 @@ async function watchGw() {
 }
 $('gw-setup').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/gateway/setup', { boot: true }); e.target.disabled = false; if (!r.ok) return say('gw-msg', r); watchGw(); };
 $('gw-later').onclick = async () => { const r = await post('/api/gateway/later'); if (!r.ok) return say('gw-msg', r); load(); };
-$('gw-join-go').onclick = async () => { const r = await post('/api/gateway/join', { invite: $('gw-invite').value }); if (!r.ok) return say('gw-msg', r); say('gw-msg', r, 'Joined.' + fedList(r.federations)); };
 $('gw-next').onclick = () => load();
+$('fed-save').onclick = async (e) => { const mode = document.querySelector('input[name=fedmode]:checked').value; e.target.disabled = true;
+  const r = await post('/api/federation', { mode, invite: $('fed-invite').value }); e.target.disabled = false; if (!r.ok) return say('fed-msg', r); load(); };
+$('fed-invite').addEventListener('focus', () => { document.querySelector('input[name=fedmode][value=invite]').checked = true; });
+$('promise-text').addEventListener('input', () => { $('promise-save').disabled = $('promise-text').value.trim().toUpperCase() !== 'I UNDERSTAND'; });
+$('promise-save').onclick = async () => { const r = await post('/api/promise', { text: $('promise-text').value }); if (!r.ok) return say('promise-msg', r); load(); };
+
 async function showFunds() {
   const r = await post('/api/lightning/funds'); if (!r.ok) { $('ch-state').textContent = r.why; return; }
   $('gs-cap').textContent = r.seat.minCapacitySats.toLocaleString('en'); $('gs-peg').textContent = r.seat.minPegInSats.toLocaleString('en');
@@ -351,10 +461,11 @@ $('ch-open').onclick = async (e) => { e.target.disabled = true; const r = await 
   say('gw-msg', r, `Channel opening: ${r.fundingTxid || ''} (it counts once it is confirmed).`); showFunds(); };
 $('ln-later').onclick = async () => { await post('/api/lightning/later'); load(); };
 $('b-check').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/check', st.roles.includes('custody') ? { pegInSats: Number($('b-pegin').value) } : {}); e.target.disabled = false; if (!r.ok) return say('b-msg', r);
-  if (r.parts && r.parts.pegIn !== undefined) $('b-need').textContent = `${r.needSats.toLocaleString('en')} (bond ${r.parts.bond.toLocaleString('en')}, fees ${r.parts.fees.toLocaleString('en')}, advertisement update ${r.parts.advertUpdate.toLocaleString('en')}, peg-in ${r.parts.pegIn.toLocaleString('en')})`;
+  const PART = { bond: 'bond', fees: 'fees', custodyUpdate: 'this update', advertUpdate: 'advertisement update', pegIn: 'peg-in' };
+  if (r.parts && r.parts.pegIn !== undefined) $(r.update ? 'b-need2' : 'b-need').textContent = `${r.needSats.toLocaleString('en')} (${Object.entries(r.parts).map(([k, v]) => `${PART[k] || k} ${v.toLocaleString('en')}`).join(', ')})`;
   const m = $('b-msg'); m.className = 'msg ' + (r.enough ? 'ok' : 'bad');
   m.textContent = r.coins.length ? `Found ${r.totalSats.toLocaleString('en')} sat in ${r.coins.length} deposit(s) (${r.coins.map((c) => c.height ? `confirmed at ${c.height}` : 'unconfirmed').join(', ')}).${r.enough ? '' : ` Needed: ${r.needSats.toLocaleString('en')} sat in all (fees included).`}` : 'Nothing has arrived yet. A deposit shows once your Bitcoin connection sees it (Bitcoin Core: once it is confirmed).';
-  $('b-lock').textContent = lockText(r.lock); $('b-post').disabled = !r.enough; };
+  $('b-lock').textContent = r.lock ? lockText(r.lock) : ''; $('b-post').disabled = !r.enough; };
 $('b-post').onclick = async (e) => { e.target.disabled = true; const r = await post('/api/bond/post'); if (!r.ok) { e.target.disabled = false; return say('b-msg', r); } load(); };
 $('b-later').onclick = async () => { const r = await post('/api/bond/later'); if (r.ok) load(); };
 $('svc').onclick = async (e) => { e.target.disabled = true; $('svc-msg').className = 'msg ok'; $('svc-msg').textContent = 'Installing and starting the node (this can take a minute)...';

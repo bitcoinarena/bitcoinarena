@@ -5,6 +5,7 @@
 //     arena-install --update <arena-node-<version>-<os>-<arch>.tar.gz> [--home ~/.arena-node]
 //     arena-install --rebond <sats> [--yes] [--home ~/.arena-node]
 //     arena-install --join-federation <invite code> [--home ~/.arena-node]
+//     arena-install --add-custody [--home ~/.arena-node]
 //
 // --tunnel     the machine is remote: open a Cloudflare quick tunnel (no account) and print its https link instead
 // --port       the wizard's local port (127.0.0.1 only)
@@ -14,6 +15,8 @@
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
 // --rebond     a larger bond in one step, once the posted bond's lock has ended: that bond and the wallet's coins become a new bond
 //              of <sats> with a new lock (rebond.js). Without --yes it only shows the plan.
+// --add-custody  custody for a node installed without it: the wizard opens again at its roles step with custody chosen and shows the
+//              custody steps (Lightning, federation, the bond's rules); the posted bond's advertisement is updated, no second bond
 // --join-federation  the node's gateway (set up in the wizard's Lightning step) joins a federation by its invite code (gateway.js)
 //
 // The release root is two directories up from this file's package (release/packages/arena-installer/bin).
@@ -89,6 +92,12 @@ if (args.includes('--join-federation')) {
   if (t.ok) state.save({ gateway: { ...state.read().gateway, federations: t.federations } });
   console.log(`Joined ${j.federationId}. The gateway serves: ${t.ok ? t.federations.map((f) => f.name || f.federationId).join(', ') : '(its list could not be read now)'}`);
   process.exit(0);
+}
+
+if (args.includes('--add-custody')) {
+  const { beginAddCustody } = await import('../src/wizard.js');
+  const r = beginAddCustody(state);
+  if (!r.ok) { console.error(r.why); process.exit(1); }
 }
 
 let tunnel = null, server = null;

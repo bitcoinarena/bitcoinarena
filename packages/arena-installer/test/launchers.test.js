@@ -25,6 +25,9 @@ test('Linux: start, stop, status and open scripts, and the desktop menu entry', 
   assert.match(readFileSync(join(home, 'bin', 'arena-node-stop'), 'utf8'), /systemctl --user stop arena-tunnel.service arena-node.service/);
   assert.equal(statSync(l.start).mode & 0o111, 0o111, 'executable');
   assert.match(readFileSync(join(data, 'applications', 'arena-node.desktop'), 'utf8'), /Name=Arena Node[\s\S]*Exec=.*arena-node-start.*xdg-open https:\/\/x\.trycloudflare\.com\/Dashboard\/owner/);
+  assert.equal(existsSync(join(home, 'bin', 'arena-node-add-custody')), false, 'no "add custody" unless asked for');
+  writeLaunchers({ home, s, ownerUrl: owner, platform: 'linux', env: { XDG_DATA_HOME: data }, addCustody: ['/r/node', '/r/arena-install.mjs', '--add-custody', '--home', home] });
+  assert.match(readFileSync(join(home, 'bin', 'arena-node-add-custody'), 'utf8'), /'\/r\/node' '\/r\/arena-install\.mjs' '--add-custody' '--home'/, 'a node without custody can add it: the installer\'s custody screens');
 });
 
 test('macOS: the .command scripts and Arena Node.app - it starts the node\'s launchd services and opens the owner page', () => {

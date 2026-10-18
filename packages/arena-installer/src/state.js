@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, chmodSy
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
-export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 'service', 'lightning', 'bond', 'done']);
+export const STEPS = Object.freeze(['chain', 'roles', 'seed', 'owner', 'reach', 'service', 'lightning', 'federation', 'promise', 'bond', 'done']);
 
 /** Where a node lives unless told otherwise: $ARENA_HOME, else ~/.arena-node. */
 export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir(), '.arena-node');
@@ -16,7 +16,7 @@ export const defaultHome = (env = process.env) => env.ARENA_HOME || join(homedir
 export const ROLES = Object.freeze({
   verify: { title: 'Game / verify', needs: 'Replays and signs the rounds it is seated on. A bond, a reachable https endpoint, about 2 GB of disk and one core.', slice: 1 },
   settlement: { title: 'Settlement', needs: 'Co-signs the settlement of rounds it is seated on. The verify role\'s needs, and to be up through each settlement window.', slice: 1 },
-  custody: { title: 'Custody', needs: 'A Lightning node (LND): set up here in the Lightning step, or your own connected. Needs your own Bitcoin Core (not Electrum), about 1 GB more disk, port 9735 open for Lightning peers. The gateway and the federation guardian come with the next release; until then the node is not offered for custody.', slice: 1 },
+  custody: { title: 'Custody', needs: 'A Lightning node (LND): set up here in the Lightning step, or your own connected. Needs your own Bitcoin Core (not Electrum), about 1 GB more disk, port 9735 open for Lightning peers. Your node becomes one of a federation\'s 10 guardians and may run one of its 2 gateways (the next steps explain both).', slice: 1 },
 });
 
 const atomicWrite = (path, text) => {
